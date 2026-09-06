@@ -36,7 +36,7 @@ use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
 use crate::components::virtual_grid::metrics::{GridValue, active_metric_columns};
 use crate::global_state::craft_options::{self, CraftOptions};
-use crate::global_state::labs::LAB_ANALYZER_RECIPE;
+use crate::global_state::labs::{LAB_ANALYZER_RECIPE, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -760,10 +760,14 @@ fn recipe_query_columns(
     mut visible: HashSet<&'static str>,
     active: &HashSet<String>,
     sort: Option<&str>,
+    preview: bool,
 ) -> HashSet<&'static str> {
     let sort = sort.and_then(|token| token.strip_prefix("grid:"));
     for column in &RECIPE_COLUMNS {
-        if !column.id.is_empty() && (active.contains(column.id) || sort == Some(column.id)) {
+        if !column.id.is_empty()
+            && (column.lab.is_none() || preview)
+            && (active.contains(column.id) || sort == Some(column.id))
+        {
             visible.insert(column.id);
         }
     }
@@ -4630,10 +4634,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (sell_scope, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
-    // The shared analyzer grid graduates the recipe market model from Labs.
-    // Keep the compatibility helpers below so existing pricing URLs and
-    // previously saved layouts retain their interpretation.
-    let preview = Memo::new(|_| true);
+    // Shared grid interactions are always available. The experimental recipe
+    // market model remains opt-in until its production validation is complete.
+    let preview = use_lab(LAB_ANALYZER_RECIPE);
     // Sub-crafts drive the cost-column cap; read here so the fetch gate
     // (page level) and the pass (table) agree.
     let (use_subcrafts_page, _) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
@@ -4682,6 +4685,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 visible_cols.get(),
                 &active_metric_columns(q.get("gf").as_deref()),
                 q.get("sort").as_deref(),
+                preview.get(),
             )
         })
     });
@@ -9486,6 +9490,7 @@ mod test {
             visible.clone(),
             &active,
             Some(&format!("grid:{COL_VOLUME_30D}")),
+            true,
         );
         assert_eq!(visible, HashSet::from([COL_LISTING_WORLD]));
         assert!(!queried.contains("unknown-column"));
@@ -9495,9 +9500,21 @@ mod test {
         assert!(spark_rows_wanted(&queried));
         assert!(stats_30_wanted(&queried, None));
         assert_eq!(
-            recipe_query_columns(visible.clone(), &HashSet::new(), Some("profit")),
+            recipe_query_columns(visible.clone(), &HashSet::new(), Some("profit"), true),
             visible,
         );
+        let flag_off = recipe_query_columns(
+            visible.clone(),
+            &active,
+            Some(&format!("grid:{COL_VOLUME_30D}")),
+            false,
+        );
+        assert_eq!(
+            flag_off, visible,
+            "hidden queries cannot enable an experimental provider"
+        );
+        assert!(!spark_rows_wanted(&flag_off));
+        assert!(!stats_30_wanted(&flag_off, None));
     }
 
     #[test]
@@ -10586,7 +10603,7 @@ mod test {
     fn explicit_market_columns_fetch_without_viewport_or_query_overrides() {
         for token in [COL_VOLUME_30D, COL_VWAP_30D, COL_TREND, COL_DRIFT] {
             let visible = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
-            let queried = recipe_query_columns(visible.clone(), &HashSet::new(), None);
+            let queried = recipe_query_columns(visible.clone(), &HashSet::new(), None, true);
             assert_eq!(queried, visible);
             assert_eq!(
                 stats_30_wanted(&queried, None),

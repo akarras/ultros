@@ -4,6 +4,7 @@ pub mod fixture;
 pub mod layout;
 pub mod metrics;
 pub mod query_grid;
+pub mod row_source;
 pub mod saved_views;
 use crate::i18n::*;
 use layout::column_range;
@@ -45,7 +46,7 @@ struct Menu {
 
 #[component]
 pub fn VirtualGrid<T, K, KF, H, F, M>(
-    #[prop(into)] each: Signal<Vec<T>>,
+    each: row_source::RowSource<T>,
     #[prop(into)] columns: Signal<Vec<GridColumn>>,
     #[prop(into)] layout: Signal<Option<String>>,
     on_change: Callback<GridChange>,

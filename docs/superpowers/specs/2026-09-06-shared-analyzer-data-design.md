@@ -1,6 +1,8 @@
 # Shared analyzer data and column capabilities
 
-Status: implemented across all seven tools; build, CI, and browser validation complete.
+Status: implemented across all seven tools; review fixes validated. Integration
+with PR #1302 awaits its merge and will require a fresh combined build and
+browser validation before this PR merges.
 
 ## Implementation
 
@@ -10,15 +12,21 @@ set before virtualization, persists them in `gf`, and exposes hidden active
 filters and coverage. Incomplete feeds can filter known rows but cannot claim a
 global sort. Failed feeds remain unknown rather than counting as confirmed
 missing history. Named views preserve query, pricing, sorting, and layout state.
+The row source borrows the original data when no supported query is active and
+borrows the memoized result otherwise. Viewport and per-row reads do not clone
+the full table. Clone-count tests verify this behavior and reactive updates;
+600-row query tests preserve every match in both sort directions.
 
 `analyzer_kit/market.rs` supplies reusable market subjects, price controls,
 seven-day bulk statistics, optional thirty-day statistics, and lazy world trend
 providers to the six non-Recipe adapters. Recipe retains its richer column
-registry and custom travel provider through the generalized analyzer grid;
-its Labs capabilities are now available without a Labs toggle. The obsolete
-toggle is removed while its stored token remains readable.
+registry and custom travel provider through the generalized analyzer grid.
+Its experimental market model remains behind the Recipe Labs toggle until
+production validation satisfies the existing graduation criterion. Removing
+that toggle is a separate rollout decision.
 
-All seven adapters support the shared price bases and typed column queries.
+All seven adapters support the shared price bases and typed column queries;
+Recipe's experimental price bases require its Labs toggle.
 Venture, Leve, FC Crafting, and Scrip Sources no longer truncate results. Scrip
 Sources names its largest-cost ingredient as the market subject. Flip Finder
 retains its conservative default pricing and existing saved-view menu, with
@@ -238,7 +246,30 @@ compatibility, and world changes while enrichment is pending. Run check_ci.sh,
 cargo leptos build, local JavaScript regression tests, and the required E2E suite
 before shipping. Add a player-facing changelog entry with the implementation.
 
-## Validation record
+## Review revision validation
+
+- `check_ci.sh` passed on the revised source: both Clippy gates, 1,648 Rust
+  tests, and the pack sanity check. Thirteen existing ignored tests remain.
+  The new tests count clones and provider reads, exercise upstream updates,
+  and preserve all 600 sorted rows (350 after filtering) in both directions.
+- All 75 JavaScript regression tests passed.
+- Both WASM and native builds passed with
+  `CARGO_INCREMENTAL=0 cargo leptos build --bin-features ''`. The initial
+  incremental native link reported missing generated symbols; rebuilding the
+  same source without incremental compilation succeeded. Both overrides are
+  local Windows validation settings, not production configuration changes.
+- The revised source passed the existing VirtualGrid interaction suite, the
+  complete seven-analyzer pricing/filtering suite, the 250-row fixture, and the
+  required `scripts/run_e2e.sh` driver against fresh isolated services. Recipe
+  was tested with Labs enabled and disabled. All desktop/mobile/wide routes,
+  analyzer grids, cookie/localStorage restoration, FC breakdown, recipe planner,
+  and dashboard checks passed. Unrelated item-detail expansion probes skipped
+  when their guard item lacked seeded listings/history; all seven analyzer
+  adapters used populated deterministic market fixtures.
+- Review-run logs remain in `target/shared-analyzer-env/`; 277 fresh browser
+  artifacts are archived in `integration/artifacts/review-20260906/`.
+
+## Original implementation validation record
 
 - Final `cargo leptos build --bin-features ''`: passed for WASM and native server.
   The empty feature override is local to Windows validation: the repository's

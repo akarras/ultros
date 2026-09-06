@@ -593,6 +593,7 @@ pub fn MarketGrid<T, K, KF, H, F, M>(
     subject: Arc<dyn Fn(&T) -> MarketSubject + Send + Sync>,
     #[prop(optional)] metrics: Vec<GridMetric<T>>,
     #[prop(optional)] on_rows: Option<Callback<Vec<T>>>,
+    #[prop(default = true)] show_saved_views: bool,
     #[prop(default = 40.0)] row_height: f64,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
     #[prop(into)] id: String,
@@ -770,7 +771,7 @@ where
         }
     });
     view! {
-        <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows
+        <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views
             header=move |id| match MARKET_METRICS.into_iter().find(|m| m.id() == id) {
                 Some(metric) => metric_label(metric).into_any(),
                 None => native_header.with_value(|header| header(id)),

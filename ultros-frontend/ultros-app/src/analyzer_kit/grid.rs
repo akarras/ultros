@@ -613,7 +613,7 @@ mod tests {
                 .collect();
                 let result =
                     query_rows(&cells, std::slice::from_ref(&metric), &filters, None, true);
-                assert_eq!(result.rows, cells);
+                assert_eq!(result.rows.as_ref(), Some(&cells));
                 assert_eq!(result.lacking_data, cells.len());
             }
             assert_eq!(

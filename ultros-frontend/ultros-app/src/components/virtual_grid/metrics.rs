@@ -228,7 +228,8 @@ pub fn compare_values(a: &GridValue, b: &GridValue, ascending: bool) -> Ordering
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryResult<T> {
-    pub rows: Vec<T>,
+    /// None borrows the upstream rows unchanged; Some owns an active query's result.
+    pub rows: Option<Vec<T>>,
     pub lacking_data: usize,
     pub sort_pending: bool,
 }
@@ -249,6 +250,14 @@ pub fn query_rows<T: Clone>(
                 .map(|f| (m, f))
         })
         .collect();
+    let sort_metric = metrics.iter().find(|m| Some(m.id) == sort_id && !m.partial);
+    if active.is_empty() && sort_metric.is_none() {
+        return QueryResult {
+            rows: None,
+            lacking_data: 0,
+            sort_pending: false,
+        };
+    }
     let mut lacking_data = 0;
     let mut kept = Vec::new();
     for row in rows {
@@ -267,7 +276,7 @@ pub fn query_rows<T: Clone>(
         }
     }
     let mut sort_pending = false;
-    if let Some(metric) = metrics.iter().find(|m| Some(m.id) == sort_id && !m.partial) {
+    if let Some(metric) = sort_metric {
         // Compute each key once: never re-read a reactive provider O(n log n).
         let mut decorated: Vec<_> = kept
             .into_iter()
@@ -292,7 +301,7 @@ pub fn query_rows<T: Clone>(
         kept = decorated.into_iter().map(|(row, _)| row).collect();
     }
     QueryResult {
-        rows: kept,
+        rows: Some(kept),
         lacking_data,
         sort_pending,
     }
@@ -301,6 +310,98 @@ pub fn query_rows<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn untouched_queries_never_clone_rows_or_read_providers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountedRow(Arc<AtomicUsize>);
+        impl Clone for CountedRow {
+            fn clone(&self) -> Self {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Self(self.0.clone())
+            }
+        }
+        let clones = Arc::new(AtomicUsize::new(0));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let rows = (0..600)
+            .map(|_| CountedRow(clones.clone()))
+            .collect::<Vec<_>>();
+        let bulk_reads = reads.clone();
+        let partial_reads = reads.clone();
+        let metrics = vec![
+            GridMetric::number("value", move |_: &CountedRow| {
+                bulk_reads.fetch_add(1, Ordering::Relaxed);
+                GridValue::Number(1.0)
+            }),
+            GridMetric::number("partial", move |_: &CountedRow| {
+                partial_reads.fetch_add(1, Ordering::Relaxed);
+                GridValue::Pending
+            })
+            .partial(),
+        ];
+        let ignored_filters = BTreeMap::from([
+            (
+                "value".into(),
+                MetricFilter {
+                    op: FilterOp::Gte,
+                    value: "invalid".into(),
+                },
+            ),
+            (
+                "unregistered".into(),
+                MetricFilter {
+                    op: FilterOp::Eq,
+                    value: "1".into(),
+                },
+            ),
+        ]);
+        for filters in [&BTreeMap::new(), &ignored_filters] {
+            for sort in [None, Some("unregistered"), Some("partial")] {
+                let result = query_rows(&rows, &metrics, filters, sort, true);
+                assert!(result.rows.is_none());
+                assert_eq!(result.lacking_data, 0);
+                assert!(!result.sort_pending);
+            }
+        }
+        assert_eq!(clones.load(Ordering::Relaxed), 0);
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn sorting_and_filtering_preserve_every_match_beyond_former_result_caps() {
+        let rows = (0..600).rev().collect::<Vec<_>>();
+        let metric =
+            GridMetric::number("value", |value: &i32| GridValue::Number(f64::from(*value)));
+        for minimum in [None, Some(250)] {
+            let filters = minimum
+                .map(|minimum| {
+                    BTreeMap::from([(
+                        "value".into(),
+                        MetricFilter {
+                            op: FilterOp::Gte,
+                            value: minimum.to_string(),
+                        },
+                    )])
+                })
+                .unwrap_or_default();
+            for ascending in [true, false] {
+                let result = query_rows(
+                    &rows,
+                    std::slice::from_ref(&metric),
+                    &filters,
+                    Some("value"),
+                    ascending,
+                );
+                let mut expected = (minimum.unwrap_or(0)..600).collect::<Vec<_>>();
+                if !ascending {
+                    expected.reverse();
+                }
+                assert!(expected.len() > 250);
+                assert_eq!(result.rows, Some(expected));
+            }
+        }
+    }
 
     #[test]
     fn mixed_hop_values_support_status_and_numeric_filters() {
@@ -335,7 +436,7 @@ mod tests {
                 None,
                 true,
             );
-            assert_eq!(result.rows, expected, "{op:?} {value}");
+            assert_eq!(result.rows, Some(expected), "{op:?} {value}");
             assert_eq!(result.lacking_data, 0);
         }
         assert!(
@@ -382,13 +483,14 @@ mod tests {
                 None,
                 true,
             );
-            assert_eq!(result.rows, expected, "{op:?}");
+            assert_eq!(result.rows, Some(expected), "{op:?}");
             assert_eq!(result.lacking_data, 1, "{op:?}");
         }
         let result = query_rows(&rows, &[metric], &BTreeMap::new(), Some("median"), true);
         assert!(result.sort_pending);
         assert_eq!(
-            result.rows, rows,
+            result.rows,
+            Some(rows),
             "failed bulk data must not rank only known rows"
         );
     }
@@ -417,7 +519,12 @@ mod tests {
                 ascending,
             );
             assert_eq!(
-                result.rows.into_iter().map(|row| row.0).collect::<Vec<_>>(),
+                result
+                    .rows
+                    .unwrap()
+                    .into_iter()
+                    .map(|row| row.0)
+                    .collect::<Vec<_>>(),
                 expected
             );
         }
@@ -447,7 +554,7 @@ mod tests {
             Some("value"),
             false,
         );
-        assert_eq!(result.rows, vec![150, 151, 152]);
+        assert_eq!(result.rows, Some(vec![150, 151, 152]));
         assert_eq!(result.lacking_data, 1);
     }
     #[test]
@@ -465,7 +572,7 @@ mod tests {
                 Some("n"),
                 ascending,
             );
-            assert_eq!(r.rows.last(), Some(&GridValue::Missing));
+            assert_eq!(r.rows.as_ref().unwrap().last(), Some(&GridValue::Missing));
         }
         let f = MetricFilter {
             op: FilterOp::Missing,
@@ -490,7 +597,7 @@ mod tests {
             true,
         );
         assert!(r.sort_pending);
-        assert_eq!(r.rows, rows);
+        assert_eq!(r.rows, Some(rows));
     }
     #[test]
     fn world_sets_filter_by_membership_and_malformed_queries_are_ignored() {

@@ -1,6 +1,7 @@
 //! URL persistence shared by all analyzer tables. Existing `cols` and JSON
 //! `layout` links remain readable; new layouts use a small `l` delta.
 use super::metrics::{FilterOp, GridMetric, parse_filters, query_rows};
+use super::row_source::RowSource;
 use super::{GridChange, GridColumn, VirtualGrid};
 use crate::components::app_link::use_location_or_default;
 use crate::i18n::*;
@@ -17,6 +18,7 @@ pub fn QueryGrid<T, K, KF, H, F, M>(
     measure: M,
     #[prop(optional)] metrics: Vec<GridMetric<T>>,
     #[prop(optional)] on_rows: Option<Callback<Vec<T>>>,
+    #[prop(default = true)] show_saved_views: bool,
     #[prop(default = 40.0)] row_height: f64,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
     #[prop(into)] id: String,
@@ -56,10 +58,12 @@ where
             })
         })
     });
+    // Borrow the original rows when no query is active. Queried rows are cached
+    // in `result`, so each visible-row read never clones the full collection.
+    let queried = RowSource::new(each, result);
     if let Some(on_rows) = on_rows {
-        Effect::new(move |_| on_rows.run(result.with(|r| r.rows.clone())));
+        Effect::new(move |_| on_rows.run(queried.with(Clone::clone)));
     }
-    let queried = Signal::derive(move || result.with(|r| r.rows.clone()));
     let layout = Signal::derive(move || query.with(|q| q.get("l").or_else(|| q.get("layout"))));
     let resolved = Memo::new(move |_| {
         let mut defs = columns.get();
@@ -68,11 +72,13 @@ where
         for col in &mut defs {
             metrics.with_value(|metrics| {
                 if let Some(metric) = metrics.iter().find(|m| m.id == col.id) {
-                    col.filters.push(super::ColumnFilter::metric(
-                        col.id,
-                        col.label.clone(),
-                        metric.kind,
-                    ));
+                    if !col.filters.iter().any(|filter| filter.key == col.id) {
+                        col.filters.push(super::ColumnFilter::metric(
+                            col.id,
+                            col.label.clone(),
+                            metric.kind,
+                        ));
+                    }
                     col.query_sort = !metric.partial;
                     if sort.is_some() {
                         col.aria_sort = "none";
@@ -146,7 +152,6 @@ where
     });
     let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
     let saved_views_id = id.clone();
-    let show_saved_views = !id.starts_with("flip-finder");
     let clear_href = move || {
         let mut q = query.get();
         q.remove("gf");
@@ -156,7 +161,7 @@ where
         {show_saved_views.then(||view! {<div class="flex justify-end px-3 py-2"><super::saved_views::GridSavedViews id=saved_views_id/></div>})}
         {move || (!filters.with(|f|f.is_empty())).then(||view! {
             <div class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-grid-query-summary>
-                <span>{move ||t_string!(i18n,grid_query_count).to_string().replace("%count%",&result.with(|r|r.rows.len()).to_string())}</span>
+                <span>{t!(i18n, grid_query_count, count = move || queried.with(Vec::len))}</span>
                 <span>{t!(i18n,grid_query_filters)}</span>
                 {move ||filters.with(|f|f.iter().map(|(id,filter)| {
                     let label=columns.with(|defs|defs.iter().find(|c|c.id==id).map(|c|c.label.clone())).unwrap_or_else(||id.clone());
@@ -180,7 +185,7 @@ where
         })}
         {move || (result.with(|r|r.lacking_data)>0).then(||view! {
             <div class="px-3 py-2 text-xs text-[color:var(--color-text-muted)]" role="status" data-grid-query-coverage>
-                <span>{move ||t_string!(i18n,analyzer_rows_lacking_data).to_string().replace("%count%",&result.with(|r|r.lacking_data).to_string())}</span>
+                <span>{t!(i18n, analyzer_rows_lacking_data, count = move || result.with(|r| r.lacking_data))}</span>
                 " "{t!(i18n,grid_query_partial)}
             </div>
         })}

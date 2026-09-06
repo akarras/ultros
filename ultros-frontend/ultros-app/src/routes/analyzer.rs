@@ -2305,9 +2305,7 @@ fn AnalyzerTable(
                                 .then(|| {
                                     view! {
                                         <span class="text-xs text-[color:var(--color-text-muted)] truncate min-w-0">
-                                            {t_string!(i18n, analyzer_rows_lacking_data)
-                                                .to_string()
-                                                .replace("%count%", &n.to_string())}
+                                            {t!(i18n, analyzer_rows_lacking_data, count = n)}
                                         </span>
                                     }
                                 })
@@ -2795,6 +2793,7 @@ fn AnalyzerTable(
 
             <MarketGrid
                 id="flip-finder-grid"
+                show_saved_views=false
                 label=t_string!(i18n, flip_finder).to_string()
                 market
                 on_rows=Callback::new(move |rows| queried_rows.set(rows))
