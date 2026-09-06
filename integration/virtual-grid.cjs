@@ -85,6 +85,12 @@ async function main() {
     await page.goto(`${BASE}/__test/virtual-grid`, {waitUntil:'networkidle0',timeout:120000});
     await page.waitForSelector('.virtual-grid-cell');
     await page.waitForFunction(()=>window.__gridHydrated,{timeout:120000});
+    // Columns fit their content by default: the long value on row 9000 widens
+    // c00 without any gesture, and nothing about that lands in the URL.
+    await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > 0);
+    assert(await width('c00') > 350, 'columns auto-fit their content by default');
+    assert(Math.abs(await width('c01')-120) > 2, 'every visible column is measured, not left at its fallback');
+    assert(!new URL(page.url()).searchParams.has('l'), 'automatic widths stay out of the URL');
     await page.click('#fixture-update');
     await page.waitForFunction(() => document.querySelector('.virtual-grid-cell')?.textContent.includes('/ 1'));
     await verifyAlignment();
@@ -173,6 +179,7 @@ async function main() {
     await page.setViewport({width:393,height:844,isMobile:true,hasTouch:true,deviceScaleFactor:1});
     await page.goto(`${BASE}/__test/virtual-grid`,{waitUntil:'networkidle0'});
     await page.waitForFunction(()=>window.__gridHydrated,{timeout:120000});
+    await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > 0);
     await page.evaluate(()=>{
       window.__touchClicks=[];
       document.addEventListener('click',e=>window.__touchClicks.push(e.target.closest('button')?.textContent),true);

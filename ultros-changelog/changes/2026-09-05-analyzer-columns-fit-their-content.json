@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Analyzer columns size themselves to their content",
+  "blurb": "Every analyzer column now fits its heading and the values on screen, in whichever language you read Ultros in, instead of starting at a fixed width. Drag a border or set a width to pin a column; reset it to let it fit again. Flip Finder also shows ROI, Data Center and Trend out of the box.",
+  "link": "/flip-finder"
+}

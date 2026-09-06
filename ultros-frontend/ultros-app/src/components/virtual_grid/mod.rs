@@ -17,6 +17,27 @@ use web_sys::wasm_bindgen::JsCast;
 pub const GRID_HEADER_HEIGHT: f64 = 56.0;
 pub const GRID_OVERSCAN: usize = 4;
 
+/// Space a heading needs around its label: the drag grip and menu button
+/// (20px each) and the content wrapper's 4px side padding. That padding
+/// rule (`.grid-heading-content > div`) outranks the `px-3` the analyzers
+/// put on their own heading markup, so it is the whole story. Measured, not
+/// derived: a heading laid out at `max-content` is 48px wider than its
+/// label.
+#[cfg(feature = "hydrate")]
+const HEADING_CHROME: f64 = 48.0;
+/// The sort-direction icon (1em at the 12px heading size) and its 8px gap,
+/// present only on the sorted column.
+#[cfg(feature = "hydrate")]
+const HEADING_SORT_ICON: f64 = 20.0;
+/// Chunk of rows measured between yields to the event loop.
+#[cfg(feature = "hydrate")]
+const FIT_CHUNK_ROWS: usize = 512;
+/// Debounce for the automatic pass: live updates and lazy enrichment can
+/// change `each` several times a second, and one measurement after the burst
+/// is enough.
+#[cfg(feature = "hydrate")]
+const AUTO_FIT_DEBOUNCE_MS: u32 = 150;
+
 #[derive(Clone, Debug)]
 pub struct GridChange {
     pub layout: Option<String>,
@@ -90,8 +111,19 @@ where
     let active_column = StoredValue::new(None::<&'static str>);
     let interacting = RwSignal::new(false);
     let fit_generation = RwSignal::new(0usize);
+    // Widths measured from content for columns the user has not sized.
+    // Client-only and never serialized: the server and the first client
+    // render use each definition's fallback width, and the automatic pass
+    // below fills these in once rows exist. Kept apart from `state` so a
+    // re-measure (new rows, new locale) never shows up as a layout change.
+    let auto_widths = RwSignal::new(std::collections::BTreeMap::<String, f64>::new());
+    let auto_generation = RwSignal::new(0usize);
+    // How many automatic passes have applied, exposed as `data-auto-fitted`
+    // so a test can wait for the widths it is about to measure.
+    let auto_applied = RwSignal::new(0usize);
     on_cleanup(move || {
         fit_generation.update(|n| *n += 1);
+        auto_generation.update(|n| *n += 1);
     });
 
     Effect::new(move |_| {
@@ -101,7 +133,9 @@ where
             state.set(GridLayout::parse(raw.as_deref(), &defs));
         }
     });
-    let placed = Memo::new(move |_| state.with(|s| s.columns(&columns.get())));
+    let placed = Memo::new(move |_| {
+        state.with(|s| auto_widths.with(|fitted| s.columns_with(&columns.get(), fitted)))
+    });
     let total_width = Memo::new(move |_| {
         placed.with(|cols| cols.last().map(|c| c.left + c.width).unwrap_or(0.0))
     });
@@ -311,68 +345,135 @@ where
         search.set(String::new());
         menu.set(Some(Menu { id, x, y }));
     };
-    let fit = move |id: &'static str| {
-        #[cfg(feature = "hydrate")]
-        {
-            fit_generation.update(|n| *n += 1);
-            let generation = fit_generation.get_untracked();
-            let Some(def) =
-                columns.with_untracked(|defs| defs.iter().find(|c| c.id == id).cloned())
-            else {
-                return;
-            };
-            let data = each.get_untracked();
-            let font = port
-                .get_untracked()
-                .and_then(|el| web_sys::window()?.get_computed_style(&el).ok().flatten())
-                .and_then(|style| style.get_property_value("font").ok())
-                .unwrap_or_else(|| "14px sans-serif".into());
+    // Measures `ids` against their heading labels and every current row with
+    // the grid's real fonts, then hands the clamped widths to `apply`. Rows
+    // are processed in chunks with a yield between them, and a bump of
+    // `generation` (a newer request, cleanup) drops the pass on the floor.
+    // Values that are not cached yet measure as whatever the row's `measure`
+    // returns for them; nothing is fetched to size a column.
+    #[cfg(feature = "hydrate")]
+    let measure_columns =
+        move |ids: Vec<&'static str>,
+              generation: RwSignal<usize>,
+              delay_ms: u32,
+              apply: Box<dyn FnOnce(std::collections::BTreeMap<String, f64>)>| {
+            generation.update(|n| *n += 1);
+            let expected = generation.get_untracked();
             leptos::task::spawn_local(async move {
-                let Some(canvas) = web_sys::window()
-                    .and_then(|w| w.document())
-                    .and_then(|d| d.create_element("canvas").ok())
-                    .and_then(|c| c.dyn_into::<web_sys::HtmlCanvasElement>().ok())
-                else {
+                if delay_ms > 0 {
+                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+                }
+                await_fonts().await;
+                if generation.try_get_untracked() != Some(expected) {
+                    return;
+                }
+                let defs = columns.with_untracked(|defs| {
+                    defs.iter()
+                        .filter(|c| ids.contains(&c.id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+                let Some(port_el) = port.get_untracked() else {
                     return;
                 };
-                let Some(ctx) = canvas
-                    .get_context("2d")
+                if defs.is_empty() {
+                    return;
+                }
+                let cell_font = computed_font(&port_el).unwrap_or_else(|| "14px sans-serif".into());
+                let heading_font = port_el
+                    .query_selector(".virtual-grid-heading")
                     .ok()
                     .flatten()
-                    .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
-                else {
+                    .and_then(|h| computed_font(&h))
+                    .unwrap_or_else(|| "600 12px sans-serif".into());
+                let Some(ctx) = canvas_context() else {
                     return;
                 };
-                ctx.set_font(&font);
-                let mut width = ctx
-                    .measure_text(&def.label)
-                    .map(|m| m.width() + 64.0)
-                    .unwrap_or(def.width);
+                ctx.set_font(&heading_font);
+                let mut widths = defs
+                    .iter()
+                    .map(|def| {
+                        let icon = if def.aria_sort == "none" {
+                            0.0
+                        } else {
+                            HEADING_SORT_ICON
+                        };
+                        ctx.measure_text(&def.label)
+                            .map(|m| m.width())
+                            .unwrap_or(0.0)
+                            + HEADING_CHROME
+                            + icon
+                    })
+                    .collect::<Vec<_>>();
+                ctx.set_font(&cell_font);
+                let data = each.get_untracked();
                 let mut cache = std::collections::HashMap::<String, f64>::new();
-                for chunk in data.chunks(256) {
-                    if fit_generation.try_get_untracked() != Some(generation) {
+                for chunk in data.chunks(FIT_CHUNK_ROWS) {
+                    if generation.try_get_untracked() != Some(expected) {
                         return;
                     }
                     for row in chunk {
-                        let (text, adornments) = measure.with_value(|m| m(row, id));
-                        let text_width = *cache.entry(text.clone()).or_insert_with(|| {
-                            ctx.measure_text(&text).map(|m| m.width()).unwrap_or(0.0)
-                        });
-                        width = width.max(text_width + adornments);
+                        for (width, def) in widths.iter_mut().zip(&defs) {
+                            let (text, adornments) = measure.with_value(|m| m(row, def.id));
+                            let text_width = *cache.entry(text).or_insert_with_key(|text| {
+                                ctx.measure_text(text).map(|m| m.width()).unwrap_or(0.0)
+                            });
+                            *width = width.max(text_width + adornments);
+                        }
                     }
                     gloo_timers::future::TimeoutFuture::new(0).await;
                 }
-                if fit_generation.try_get_untracked() == Some(generation) {
-                    state.update(|s| {
-                        s.widths.insert(id.to_string(), def.clamp(width.ceil()));
-                    });
-                    commit(None);
+                if generation.try_get_untracked() != Some(expected) {
+                    return;
                 }
+                apply(
+                    defs.iter()
+                        .zip(widths)
+                        .map(|(def, width)| (def.id.to_string(), def.clamp(width.ceil())))
+                        .collect(),
+                );
             });
-        }
+        };
+    // The explicit action: pin the fitted width in the layout, so it survives
+    // new rows and lands in the URL like a drag would.
+    let fit = move |id: &'static str| {
+        #[cfg(feature = "hydrate")]
+        measure_columns(
+            vec![id],
+            fit_generation,
+            0,
+            Box::new(move |widths| {
+                state.update(|s| s.widths.extend(widths));
+                commit(None);
+            }),
+        );
         #[cfg(not(feature = "hydrate"))]
         let _ = (id, measure);
     };
+    // The default: every visible column fits its content unless the user has
+    // sized it. Re-runs when the rows change (filters, live updates) and when
+    // the definitions change (a column shown, the locale switched — labels
+    // are part of the definition), so a longer translation gets the room it
+    // needs instead of a truncated heading.
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        each.track();
+        let ids = columns.with(|defs| {
+            defs.iter()
+                .filter(|c| c.visible)
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
+        });
+        measure_columns(
+            ids,
+            auto_generation,
+            AUTO_FIT_DEBOUNCE_MS,
+            Box::new(move |widths| {
+                auto_widths.set(widths);
+                auto_applied.update(|n| *n += 1);
+            }),
+        );
+    });
     let render_cols = Memo::new(move |_| {
         let (start, end) = cols.get();
         let focus_col = active.get().1;
@@ -501,6 +602,7 @@ where
     view! {
         <div class="virtual-grid-shell">
             <div class="virtual-grid" node_ref=port role="grid" tabindex="0" aria-label=label
+                data-auto-fitted=move || auto_applied.get()
                 aria-activedescendant=move || { let (r,c)=active.get(); format!("{}-r{r}-c{c}",grid_id.get_value()) }
                 aria-rowcount=move || count.get() + 1 aria-colcount=move || placed.with(Vec::len)
                 on:keydown=on_key
@@ -644,6 +746,54 @@ where
                 </Portal>
             })}
         </div>
+    }
+}
+
+/// The element's resolved `font` shorthand, assembled from its parts where a
+/// browser leaves the shorthand empty.
+#[cfg(feature = "hydrate")]
+fn computed_font(el: &web_sys::Element) -> Option<String> {
+    let style = web_sys::window()?.get_computed_style(el).ok()??;
+    let part = |name: &str| style.get_property_value(name).unwrap_or_default();
+    let font = part("font");
+    if !font.is_empty() {
+        return Some(font);
+    }
+    let (weight, size, family) = (part("font-weight"), part("font-size"), part("font-family"));
+    (!size.is_empty() && !family.is_empty())
+        .then(|| format!("{weight} {size} {family}").trim().to_string())
+}
+
+#[cfg(feature = "hydrate")]
+fn canvas_context() -> Option<web_sys::CanvasRenderingContext2d> {
+    web_sys::window()?
+        .document()?
+        .create_element("canvas")
+        .ok()?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .ok()?
+        .get_context("2d")
+        .ok()??
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .ok()
+}
+
+/// Resolves once the page's web fonts have loaded, so a measurement never
+/// uses the fallback face's metrics for text the real face will draw.
+/// Resolves immediately where `document.fonts` is unavailable.
+#[cfg(feature = "hydrate")]
+async fn await_fonts() {
+    use web_sys::wasm_bindgen::JsValue;
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let ready = js_sys::Reflect::get(&document, &JsValue::from_str("fonts"))
+        .ok()
+        .filter(|fonts| !fonts.is_undefined())
+        .and_then(|fonts| js_sys::Reflect::get(&fonts, &JsValue::from_str("ready")).ok())
+        .and_then(|ready| ready.dyn_into::<js_sys::Promise>().ok());
+    if let Some(ready) = ready {
+        let _ = wasm_bindgen_futures::JsFuture::from(ready).await;
     }
 }
 
