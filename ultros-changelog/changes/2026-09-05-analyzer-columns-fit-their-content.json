@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Analyzer columns size themselves to their content",
+  "blurb": "Analyzer columns fit their headings and all matching results, and adjust when filters or market data change. Drag a border or set a width to pin a column; reset it to let it fit again. Flip Finder also shows ROI, Data Center and Trend by default.",
+  "link": "/flip-finder"
+}

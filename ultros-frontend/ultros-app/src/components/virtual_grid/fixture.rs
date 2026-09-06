@@ -142,6 +142,9 @@ mod development {
         let tick = RwSignal::new(0u32);
         let sorts = RwSignal::new(0u32);
         let size = RwSignal::new(10_000usize);
+        // Simulates late enrichment without changing the row vector.
+        let enriched = RwSignal::new(false);
+        let measure_version = Signal::derive(move || u64::from(enriched.get()));
         let rows = Memo::new(move |_| (0..size.get()).map(|i| (i, tick.get())).collect::<Vec<_>>());
         let columns = Signal::derive(move || {
             IDS.iter()
@@ -159,8 +162,11 @@ mod development {
                 })
                 .collect::<Vec<_>>()
         });
-        let text = |(row, tick): &(usize, u32), id: &str| {
-            if *row == 9000 && id == "c00" {
+        let text = move |(row, tick): &(usize, u32), id: &str| {
+            if *row == 9000 && id == "c01" && enriched.get() {
+                "Late market enrichment outside the rendered window needs a much wider column"
+                    .to_string()
+            } else if *row == 9000 && id == "c00" {
                 "A deliberately long value outside the rendered window for auto-fit".to_string()
             } else {
                 format!("Row {row} / {id} / {tick}")
@@ -171,11 +177,12 @@ mod development {
             <button id="fixture-update" on:click=move |_|tick.update(|t|*t+=1)>"Update values"</button>
             <button id="fixture-empty" on:click=move |_|size.set(0)>"Empty results"</button>
             <button id="fixture-restore" on:click=move |_|size.set(10_000)>"Restore results"</button>
+            <button id="fixture-enrich" on:click=move |_|enriched.update(|value| *value = !*value)>"Toggle late enrichment"</button>
             <span id="fixture-sorts">{move || sorts.get()}</span>
-            <QueryGrid id="fixture-grid" label="Grid fixture" each=rows columns
+            <QueryGrid id="fixture-grid" label="Grid fixture" each=rows columns measure_version
                 key=|r:&(usize,u32)|r.0
                 header=move |id|view!{<button on:click=move |_|sorts.update(|s|*s+=1)>{id}</button>}.into_any()
-                view=move |row,id|view!{<div>{text(&row,id)}</div>}.into_any()
+                view=move |row,id|view!{<div>{move || text(&row,id)}</div>}.into_any()
                 measure=move |row,id|(text(row,id),32.0)
             />
         }

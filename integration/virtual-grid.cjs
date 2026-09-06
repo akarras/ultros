@@ -85,8 +85,59 @@ async function main() {
     await page.goto(`${BASE}/__test/virtual-grid`, {waitUntil:'networkidle0',timeout:120000});
     await page.waitForSelector('.virtual-grid-cell');
     await page.waitForFunction(()=>window.__gridHydrated,{timeout:120000});
+    // Columns fit their content by default: the long value on row 9000 widens
+    // c00 without any gesture, and nothing about that lands in the URL.
+    await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > 0);
+    assert(await width('c00') > 350, 'columns auto-fit their content by default');
+    assert(Math.abs(await width('c01')-120) > 2, 'every visible column is measured, not left at its fallback');
+    assert(!new URL(page.url()).searchParams.has('l'), 'automatic widths stay out of the URL');
+    const fitCount = () => page.$eval('.virtual-grid', e => Number(e.dataset.autoFitted));
+    const waitForFit = previous => page.waitForFunction(
+      n => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > n,
+      {timeout:60000}, previous);
+    // Reading a lazy row memo must re-arm its dependency after every pass.
+    // Repeat the empty/refill sequence to catch a one-time recovery.
+    for (let cycle=0; cycle<2; cycle++) {
+      let previous = await fitCount();
+      await page.click('#fixture-empty');
+      await waitForFit(previous);
+      assert.equal(await page.$eval('.virtual-grid', e=>e.getAttribute('aria-rowcount')), '1');
+      assert(await width('c00') < 200, 'empty results fit the heading');
+      previous = await fitCount();
+      await page.click('#fixture-restore');
+      await waitForFit(previous);
+      assert.equal(await page.$eval('.virtual-grid', e=>e.getAttribute('aria-rowcount')), '10001');
+      assert(await width('c00') > 350, 'restored offscreen rows widen the column again');
+    }
+    // A provider revision must size newly loaded content even when each is unchanged.
+    let previous = await fitCount();
+    await page.click('#fixture-enrich');
+    await waitForFit(previous);
+    assert(await width('c01') > 400, 'late offscreen provider data triggers fitting');
+    previous = await fitCount();
+    await page.click('#fixture-enrich');
+    await waitForFit(previous);
+    assert(await width('c01') < 250, 'provider replacement also remeasures narrower content');
+    previous = await fitCount();
+    await menu('c01');
+    const widthEditor = '.grid-menu-panel input[type="number"]';
+    await page.click(widthEditor, {count:3});
+    await page.type(widthEditor, '280');
+    // Model an external feed update while the player is editing a menu.
+    await page.$eval('#fixture-enrich', button=>button.click());
+    await sleep(600);
+    assert.equal(await fitCount(),previous,'automatic fitting pauses while a menu is open');
+    assert.equal(await page.$eval(widthEditor,input=>input.value),'280','late data preserves the active editor');
+    await page.keyboard.press('Escape');
+    await waitForFit(previous);
+    assert(await width('c01') > 400,'closing the menu resumes fitting the latest provider data');
+    previous = await fitCount();
+    await page.click('#fixture-enrich');
+    await waitForFit(previous);
+    previous = await fitCount();
     await page.click('#fixture-update');
     await page.waitForFunction(() => document.querySelector('.virtual-grid-cell')?.textContent.includes('/ 1'));
+    await waitForFit(previous);
     await verifyAlignment();
     await scroll(2400,40000);
     await page.waitForSelector('[data-grid-row="1001"][data-column="c20"]');
@@ -100,6 +151,9 @@ async function main() {
     await scroll(0,0);
     const border = await page.$('.virtual-grid-heading[data-column="c00"] .grid-resize-handle');
     await border.click({count:2});
+    // The default width already fits: wait for the explicit async action to
+    // pin it, rather than accepting that pre-existing width as completion.
+    await page.waitForFunction(() => new URL(location.href).searchParams.has('l'));
     await page.waitForFunction(() => document.querySelector('[role=columnheader][data-column=c00]').getBoundingClientRect().width > 350);
     const fitted=await width('c00');
     assert(fitted<800,'auto-fit stays bounded');
@@ -118,6 +172,13 @@ async function main() {
     await page.mouse.move(cancelHandle.x+40,cancelHandle.y+20,{steps:4});
     await page.keyboard.press('Escape');await page.mouse.up();await sleep(150);
     assert.equal(await width('c00'),beforeCancel,'Escape restores resize');
+    previous = await fitCount();
+    await page.click('#fixture-enrich');
+    await waitForFit(previous);
+    assert.equal(await width('c00'),beforeCancel,'provider updates preserve a manually sized column');
+    previous = await fitCount();
+    await page.click('#fixture-enrich');
+    await waitForFit(previous);
     await menu('c00');await action('Insert column after…');await action('Column 60');
     await page.waitForSelector('[role=columnheader][data-column=c60]');
     assert(new URL(page.url()).searchParams.get('cols').split(',').includes('c60'));
@@ -173,6 +234,7 @@ async function main() {
     await page.setViewport({width:393,height:844,isMobile:true,hasTouch:true,deviceScaleFactor:1});
     await page.goto(`${BASE}/__test/virtual-grid`,{waitUntil:'networkidle0'});
     await page.waitForFunction(()=>window.__gridHydrated,{timeout:120000});
+    await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > 0);
     await page.evaluate(()=>{
       window.__touchClicks=[];
       document.addEventListener('click',e=>window.__touchClicks.push(e.target.closest('button')?.textContent),true);
@@ -206,12 +268,17 @@ async function main() {
     assert(await page.$eval('.virtual-grid',e=>e.scrollTop)>80,'finger swipe pans rows');
     await verifyAlignment();
     await scroll(0,0);
+    const initialWidth=await width('c00');
+    // Automatic fitting can make the first column wider than the phone.
+    // Pan its border into view before beginning the resize gesture.
+    await scroll(Math.max(0,initialWidth-phoneGrid.width+96),0);
     const touchBorder=await page.$('.virtual-grid-heading[data-column=c00] .grid-resize-handle');
     const tb=await touchBorder.boundingBox();
-    const initialWidth=await width('c00');
+    const resizeScroll=await page.$eval('.virtual-grid',e=>e.scrollLeft);
+    assert(tb.x>=0&&tb.x+tb.width+45<393,'resize handle and drag destination are on screen');
     await swipe(tb.x+tb.width/2,tb.y+tb.height/2,45,0);
     assert(Math.abs(await width('c00')-initialWidth-45)<2,'touch border drag resizes');
-    assert(Math.abs(await page.$eval('.virtual-grid',e=>e.scrollLeft))<1,'resize gesture does not pan');
+    assert(Math.abs(await page.$eval('.virtual-grid',e=>e.scrollLeft)-resizeScroll)<1,'resize gesture does not pan');
     await tapMenu('c00');await tapAction('Insert column after…');await tapAction('Column 60');
     await tapMenu('c60');await tapAction('Move left');
     assert.equal(decodeLayout(new URL(page.url()).searchParams.get('l')).order[0],'c60','tap controls reorder columns');

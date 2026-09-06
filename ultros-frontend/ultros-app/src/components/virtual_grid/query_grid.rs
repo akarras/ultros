@@ -16,6 +16,9 @@ pub fn QueryGrid<T, K, KF, H, F, M>(
     header: H,
     view: F,
     measure: M,
+    /// Invalidate sizing when a cell provider changes without replacing rows.
+    #[prop(default = Signal::derive(|| 0), into)]
+    measure_version: Signal<u64>,
     #[prop(optional)] metrics: Vec<GridMetric<T>>,
     #[prop(optional)] on_rows: Option<Callback<Vec<T>>>,
     #[prop(default = true)] show_saved_views: bool,
@@ -191,6 +194,6 @@ where
         })}
         {move || result.with(|r|r.sort_pending).then(||view! {<div class="px-3 py-2 text-xs" role="status">{t!(i18n,grid_query_pending)}</div>})}
         <VirtualGrid each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
-            key header view measure row_height id label/>
+            key header view measure measure_version row_height id label/>
     }
 }

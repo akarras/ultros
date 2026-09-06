@@ -281,6 +281,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     #[prop(into)] sort_mode: Signal<Option<M>>,
     #[prop(into)] sort_dir: Signal<Option<SortDir>>,
     #[prop(into)] ctx: Signal<CellCtx>,
+    /// External cell/header data changed without replacing the row collection.
+    #[prop(default = Signal::derive(|| 0), into)]
+    measure_version: Signal<u64>,
     /// Draws the [`CellValue::Custom`] cells, keyed by the column's kind
     /// (always-on columns have no `id` to key on).
     custom: CustomCell<T>,
@@ -389,6 +392,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     });
     view! {
         <QueryGrid id label metrics
+            measure_version=measure_version
             on_rows=on_rows.unwrap_or_else(||Callback::new(|_|{}))
             each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))
             key=move |(_, row): &(usize, T)| row.key()

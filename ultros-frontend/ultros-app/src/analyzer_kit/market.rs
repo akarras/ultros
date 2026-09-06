@@ -589,6 +589,7 @@ pub fn MarketGrid<T, K, KF, H, F, M>(
     header: H,
     view: F,
     measure: M,
+    #[prop(default = Signal::derive(|| 0), into)] measure_version: Signal<u64>,
     market: MarketData,
     subject: Arc<dyn Fn(&T) -> MarketSubject + Send + Sync>,
     #[prop(optional)] metrics: Vec<GridMetric<T>>,
@@ -628,6 +629,17 @@ where
     let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
     let filtered = RwSignal::new(Vec::<T>::new());
     let sparks = RwSignal::new(MarketSparkStore::default());
+    // Providers update independently of row identities and query results.
+    // Track their revisions without copying payloads or measuring every row
+    // in a reactive effect; the grid performs one debounced, chunked pass.
+    let sizing_version = Memo::new(move |previous: Option<&u64>| {
+        measure_version.get();
+        market.scope.with(|_| ());
+        market.stats_7.with(|_| ());
+        market.stats_30.with(|_| ());
+        sparks.with(|_| ());
+        previous.copied().unwrap_or_default().wrapping_add(1)
+    });
     let worlds_scope = worlds.clone();
     let scope_world = Memo::new(move |_| {
         let scope = market.scope.get();
@@ -771,7 +783,7 @@ where
         }
     });
     view! {
-        <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views
+        <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| match MARKET_METRICS.into_iter().find(|m| m.id() == id) {
                 Some(metric) => metric_label(metric).into_any(),
                 None => native_header.with_value(|header| header(id)),
@@ -799,7 +811,16 @@ where
                 }}</div> }.into_any()
             }
             measure=move |row: &T, id| match MARKET_METRICS.into_iter().find(|m| m.id() == id) {
-                Some(metric) => (display_value(metric, market_value(metric, &subject_measure(row), market, sparks, scope_world, &worlds_measure)), 24.0),
+                Some(metric) => {
+                    let subject = subject_measure(row);
+                    if matches!(metric, MarketMetric::Trend7)
+                        && sparks.with(|store| matches!(store.get(&spark_key(&subject, scope_world.get())), Some(MarketSpark::Ready(_)))) {
+                        // This cell renders a 120px SVG, rather than its numeric delta.
+                        (String::new(), 144.0)
+                    } else {
+                        (display_value(metric, market_value(metric, &subject, market, sparks, scope_world, &worlds_measure)), 24.0)
+                    }
+                },
                 None => native_measure.with_value(|measure| measure(row, id)),
             }
         />
