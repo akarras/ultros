@@ -616,7 +616,12 @@ pub(crate) fn RealPriceSummary(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
 ) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
+    // Not `use_i18n()`: `ListingsPanel` builds this inside a `<Transition>`,
+    // so on the server it can be constructed under the fresh, empty owner
+    // `ScopedFuture` substitutes when the request's owner was already
+    // disposed. The panicking accessor aborts the SSR response there
+    // (GlitchTip #7294); the default locale does not.
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
 
     view! {
         <Transition fallback=move || ()>
@@ -2020,5 +2025,27 @@ mod tests {
             elements[2]["item"],
             "https://ultros.app/item/Gilgamesh/12345"
         );
+    }
+
+    /// Reproduces GlitchTip #7294. `RealPriceSummary` renders inside
+    /// `ListingsPanel`'s `<Transition>`, so on the server it can be built
+    /// under the fresh, empty owner `ScopedFuture` substitutes once the
+    /// request's owner has been disposed. Reading i18n with the panicking
+    /// accessor there aborts the whole SSR response; the fallback renders the
+    /// default locale instead.
+    ///
+    /// The read happens in the component body, before the `<Transition>`, so
+    /// simply building the view is enough to trip the old bug -- the resource
+    /// never has to resolve.
+    #[test]
+    fn real_price_summary_builds_without_an_i18n_context() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let listing_resource = Resource::new(|| (), |_| async { Err(AppError::ParamMissing) });
+            let item_id = Memo::new(|_| 12345);
+            // Panicked with "I18n context is missing" before the fix.
+            let _ = view! { <RealPriceSummary listing_resource item_id /> };
+        });
     }
 }
