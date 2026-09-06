@@ -18,7 +18,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function main(){
   const dir=path.join(__dirname,'artifacts','analyzer-grids');fs.mkdirSync(dir,{recursive:true});
   const profile=fs.mkdtempSync(path.join(dir,'profile-'));
-  const launch=()=>puppeteer.launch({headless:'new',args:['--no-sandbox'],userDataDir:profile});
+  const launch=()=>puppeteer.launch({headless:true,args:['--no-sandbox'],userDataDir:profile});
   let browser=await launch();
   const errors=[];
   async function newPage(mobile=false){
@@ -78,7 +78,7 @@ async function main(){
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';
       if(filter==='scrip')await page.select(`${form} select`,selected);
-      else {await page.click(`${form} input`,{clickCount:3});await page.type(`${form} input`,selected);}
+      else {await page.click(`${form} input`,{count:3});await page.type(`${form} input`,selected);}
       const display=filter==='scrip'?await page.$eval(form+' select',e=>e.selectedOptions[0].textContent):selected;
       await page.click(`${form} button[type="submit"]`);
       await page.waitForFunction((filter,value)=>new URL(location.href).searchParams.get(filter)===value,{},filter,selected);

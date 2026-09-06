@@ -7,7 +7,7 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const WORLD = process.env.WORLD || 'Goblin';
 
 async function main() {
-  const browser = await puppeteer.launch({headless:'new',args:['--no-sandbox']});
+  const browser = await puppeteer.launch({headless:true,args:['--no-sandbox']});
   try {
     for (const mobile of [false,true]) {
       const page = await browser.newPage();
@@ -31,10 +31,18 @@ async function main() {
         assert.equal(page.url(),url,'opening a breakdown must not follow the item link');
         const result=await page.$eval('dialog[open]',e=>{
           const r=e.getBoundingClientRect();
-          return {insideGrid:!!e.closest('.virtual-grid'),text:e.textContent,height:r.height,left:r.left,right:r.right,viewport:innerWidth};
+          const probe=document.createElement('span');
+          probe.style.cssText='display:none;color:var(--color-text)';
+          e.append(probe);
+          const themeColor=getComputedStyle(probe).color;
+          probe.remove();
+          return {insideGrid:!!e.closest('.virtual-grid'),text:e.textContent,height:r.height,left:r.left,right:r.right,viewport:innerWidth,
+            color:getComputedStyle(e).color,themeColor,centerX:r.left+r.width/2,centerY:r.top+r.height/2,viewportHeight:innerHeight};
         });
         assert(!result.insideGrid,'details must escape the virtual row clip');
         assert(result.height>60 && result.left>=0 && result.right<=result.viewport+1);
+        assert.equal(result.color,result.themeColor,'dialog text must use the active theme color');
+        assert(Math.abs(result.centerX-result.viewport/2)<=1 && Math.abs(result.centerY-result.viewportHeight/2)<=1,'dialog must be centered in the viewport');
         assert(/\d+\s*x\s+/.test(result.text),'material quantities must render every time the dialog opens');
         const dir=path.join(__dirname,'artifacts','fc-crafting');fs.mkdirSync(dir,{recursive:true});
         if(attempt===0) await page.screenshot({path:path.join(dir,`breakdown-${mobile?'mobile':'desktop'}.png`),fullPage:true});

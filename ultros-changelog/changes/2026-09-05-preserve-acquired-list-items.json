@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Keep shopping lists working after marking items acquired",
+  "blurb": "Marking items as acquired no longer makes a shopping list fail to load on newer installations.",
+  "link": "/list"
+}

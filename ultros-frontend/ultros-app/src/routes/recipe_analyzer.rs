@@ -3078,6 +3078,7 @@ fn RecipeAnalyzerTable(
     let recipes = &data.recipes;
     let recipe_level_tables = &data.recipe_level_tables;
     let i18n = use_i18n();
+    let recipe_query = use_query_map();
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -3748,7 +3749,7 @@ fn RecipeAnalyzerTable(
                     <div  class=class>
                          <a
                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                            href=format!("/item/{}/{}", world(), item_id.0)
+                            href=crate::routes::recipe_view::recipe_href(data.recipe.key_id.0, &world(), &recipe_query.get())
                         >
                             <div class="shrink-0">
                                 <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />

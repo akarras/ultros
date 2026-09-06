@@ -20,6 +20,8 @@
 #                  all three passes — desktop, mobile, and the 2560px wide
 #                  pass that guards ad-rail-width layouts)
 #   SKIP_BUILD     1 to skip `cargo leptos build` before serve
+#   E2E_RELEASE    1 to build and serve the release profile, including routes
+#                  gated by debug_assertions (default 0)
 #   LEPTOS_FEATURES extra leptos-bin-features (space-separated). Set to an
 #                  explicit empty string to override metadata bin-features.
 #
@@ -37,6 +39,10 @@ ANALYZER_READY_PATH="${ANALYZER_READY_PATH-/api/v1/cheapest/North-America}"
 ANALYZER_READY_TIMEOUT="${ANALYZER_READY_TIMEOUT:-180}"
 DEVICE="${DEVICE:-both}"
 bin_feature_args=()
+profile_args=()
+if [ "${E2E_RELEASE:-0}" = "1" ]; then
+    profile_args=(--release)
+fi
 if [ "${LEPTOS_FEATURES+x}" = "x" ]; then
     bin_feature_args=(--bin-features "$LEPTOS_FEATURES")
 fi
@@ -104,7 +110,7 @@ else
     # bash 3.2 — the `+` expansion guard is the portable idiom.
     if [ "${SKIP_BUILD:-0}" != "1" ]; then
         log "cargo leptos build (set SKIP_BUILD=1 to skip)"
-        cargo leptos build ${bin_feature_args[@]+"${bin_feature_args[@]}"}
+        cargo leptos build ${profile_args[@]+"${profile_args[@]}"} ${bin_feature_args[@]+"${bin_feature_args[@]}"}
     fi
 
     set -m
@@ -112,6 +118,7 @@ else
         HOSTNAME="$BASE_URL" \
         LEPTOS_SITE_ADDR="127.0.0.1:$port" \
         cargo leptos serve \
+        ${profile_args[@]+"${profile_args[@]}"} \
         ${bin_feature_args[@]+"${bin_feature_args[@]}"} \
         >/tmp/ultros-e2e-server.log 2>&1 &
     server_pid=$!
@@ -187,6 +194,15 @@ if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
     ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-grids ) || analyzer_grids_exit=$?
     if [ "$analyzer_grids_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$analyzer_grids_exit"
+    fi
+fi
+
+if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
+    log "running recipe planner E2E"
+    recipe_planner_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:recipe-planner ) || recipe_planner_exit=$?
+    if [ "$recipe_planner_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$recipe_planner_exit"
     fi
 fi
 

@@ -11,7 +11,9 @@
  *              the 1280px desktop pass could never see.
  *  - ROUTES:   comma-separated list of routes to visit (default built-in list)
  *  - TIMEOUT_MS: navigation timeout in ms (default 60000)
- *  - HEADLESS: "new" | "true" | "false" (default "new")
+ *  - HEADLESS: "true" | "shell" | "false" (default "true", the new headless
+ *    mode; "shell" runs the old chrome-headless-shell, "new" is still accepted
+ *    as an alias for "true")
  *  - PUPPETEER_EXECUTABLE_PATH: path to Chrome/Chromium binary (optional)
  *  - CONCURRENCY: number of parallel pages to run (default 16)
  *  - STRICT_CONSOLE: "1" to fail on console errors / page errors (default "1")
@@ -24,14 +26,19 @@
 
 const fs = require("fs");
 const path = require("path");
+const { capture } = require("./capture.cjs");
 
+// Puppeteer 23 dropped the `headless: "new"` spelling: `true` is now the new
+// headless mode and `"shell"` selects the old chrome-headless-shell binary.
+// "new" is still accepted here so existing HEADLESS=new invocations keep working.
 function parseHeadless(value) {
-  if (value === undefined || value === null || value === "") return "new";
+  if (value === undefined || value === null || value === "") return true;
   const v = String(value).toLowerCase();
-  if (v === "new") return "new";
+  if (v === "new") return true;
+  if (v === "shell") return "shell";
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
-  return "new";
+  return true;
 }
 
 function envFlag(name, def) {
@@ -493,14 +500,14 @@ async function main() {
         // Promise.all — i.e. every remaining route's assertions — down with it.
         // A screenshot is a diagnostic; it must not decide whether the suite runs.
         try {
-          await page.screenshot({ path: file, fullPage: true });
+          await capture(page, { path: file, fullPage: true });
           console.log(`[ok] ${url} -> ${file}`);
         } catch (e) {
           console.warn(
             `[warn] ${r}: full-page screenshot failed (${e && e.message}); capturing viewport only`,
           );
           try {
-            await page.screenshot({ path: file });
+            await capture(page, { path: file });
             console.log(`[ok] ${url} -> ${file} (viewport only)`);
           } catch (e2) {
             console.warn(`[warn] ${r}: viewport screenshot also failed (${e2 && e2.message})`);

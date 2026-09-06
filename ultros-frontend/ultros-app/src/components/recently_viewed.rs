@@ -219,7 +219,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                         </button>
                     </div>
 
-                    <div class="max-h-[420px] overflow-y-auto overflow-x-hidden scrollbar-thin">
+                    <div class="max-h-[420px] overflow-y-auto overflow-x-hidden">
                         {move || {
                             let ids = recent_top.get();
                             if ids.is_empty() {

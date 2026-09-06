@@ -84,7 +84,7 @@ async function main() {
   const puppeteer = require("puppeteer");
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
-  const headless = process.env.HEADLESS === "false" ? false : "new";
+  const headless = process.env.HEADLESS !== "false";
 
   const browser = await puppeteer.launch({
     headless,
@@ -188,14 +188,18 @@ async function main() {
     await manualPage.waitForSelector('input[placeholder="Invite code"]', { timeout: 10000 });
     await manualPage.type('input[placeholder="Invite code"]', inviteId);
     await manualPage.click('button.btn-primary ::-p-text(Redeem)');
+    // Manual redemption closes the modal and refreshes the list index.
+    // Assert the newly accessible list instead of expecting direct-link navigation.
     await manualPage.waitForFunction(
-      (expected) => window.location.pathname === expected,
+      (expected) => Array.from(document.querySelectorAll('a[href]')).some(
+        a => new URL(a.href).pathname === expected,
+      ),
       { timeout: 10000 },
       `/list/${listId}`,
-    ).catch(() => {});
+    );
 
-    const manualUrl = manualPage.url();
-    failIf(!manualUrl.endsWith(`/list/${listId}`), failures, `manual user expected redirect to /list/${listId}, got ${manualUrl}`);
+    const manualList = await getListEntry(manualPage, listId);
+    failIf(!manualList || manualList.permission !== "Read", failures, "manual redemption did not grant Read access");
 
     // UI-level invite redemption (direct link)
     console.log(`[step] invited user redeems invite via direct link UI: /list/invite/${inviteId}`);
@@ -207,7 +211,7 @@ async function main() {
     ).catch(() => {});
 
     const invitedUrl = invitedPage.url();
-    failIf(!invitedUrl.endsWith(`/list/${listId}`), failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
+    failIf(new URL(invitedUrl).pathname !== `/list/${listId}`, failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
 
     const readInviteList = await getListEntry(invitedPage, listId);
     failIf(!readInviteList, failures, "read-invited list not returned to invited user");
@@ -253,7 +257,7 @@ async function main() {
 
     const inviteWriterUrl = inviteWriterPage.url();
     failIf(
-      !inviteWriterUrl.endsWith(`/list/${listId}`),
+      new URL(inviteWriterUrl).pathname !== `/list/${listId}`,
       failures,
       `invite writer expected redirect to /list/${listId}, got ${inviteWriterUrl}`,
     );
@@ -290,6 +294,13 @@ async function main() {
 
     // Find the row containing our new invite ID (first 10 chars)
     const shortId = deleteInviteId.substring(0, 10);
+    // The drawer appears before its sharing resource has loaded.
+    await ownerPage.waitForFunction(
+      id => Array.from(document.querySelectorAll('div.flex.items-center.gap-3.py-2'))
+        .some(row => row.innerText.includes(`Link: ${id}`)),
+      { timeout: TIMEOUT_MS },
+      shortId,
+    );
     const deleted = await ownerPage.evaluate((id) => {
       const rows = Array.from(document.querySelectorAll("div.flex.items-center.gap-3.py-2"));
       const targetRow = rows.find((row) => row.innerText.includes(`Link: ${id}`));

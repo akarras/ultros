@@ -57,7 +57,7 @@ pub fn SectionNav(#[prop(into)] item_id: Signal<i32>, children: Children) -> imp
                     on:focusin=keep_focused_link_visible
                     data-item-section-nav=""
                     aria-label=move || t_string!(i18n, item_view_nav_aria).to_string()
-                    class="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1"
+                    class="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto overscroll-x-contain"
                 >
                     {Section::ALL
                         .iter()

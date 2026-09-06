@@ -71,6 +71,7 @@ Knobs:
 | `E2E_PORT=N` | Pin to a specific port instead of a random one. |
 | `LEPTOS_FEATURES="test-auth"` | Build with the `test-auth` cargo feature; enables `/test/login` and triggers the login-flow test. |
 | `SKIP_BUILD=1` | Skip `cargo leptos build` (assumes a previous build is fresh). |
+| `E2E_RELEASE=1` | Build and serve the release profile; use this for changes to routes gated by `debug_assertions`. |
 | `STRICT_CONSOLE=0` | Suppress the console.error / pageerror failure mode. |
 | `SKIP_ASSERTS=1` | Skip per-route content assertions (screenshot smoke only). |
 | `CONSOLE_ALLOW="foo,bar"` | Extra substrings to allow-list in console errors. |

@@ -1746,7 +1746,7 @@
     "history_resend_failed_toast": "重新发送失败",
     "side_nav_aria_primary": "主导航",
     "profile_login_button": "登录",
-    "related_items_aria_open_recipe": "在分析器中打开此配方",
+    "related_items_aria_open_recipe": "查看配方",
     "related_items_costs_label": "成本：",
     "related_items_heading": "相关物品",
     "related_items_crafting_recipes_heading": "制作配方",
