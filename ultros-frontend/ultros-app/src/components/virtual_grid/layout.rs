@@ -7,6 +7,7 @@ pub struct ColumnFilter {
     pub label: String,
     pub numeric: bool,
     pub options: Vec<(&'static str, String)>,
+    pub metric: Option<super::metrics::ValueKind>,
 }
 
 impl ColumnFilter {
@@ -16,7 +17,14 @@ impl ColumnFilter {
             label,
             numeric,
             options: Vec::new(),
+            metric: None,
         }
+    }
+
+    pub fn metric(id: &'static str, label: String, kind: super::metrics::ValueKind) -> Self {
+        let mut filter = Self::new(id, label, kind == super::metrics::ValueKind::Number);
+        filter.metric = Some(kind);
+        filter
     }
 }
 
@@ -31,6 +39,7 @@ pub struct GridColumn {
     pub visible: bool,
     pub aria_sort: &'static str,
     pub filters: Vec<ColumnFilter>,
+    pub query_sort: bool,
 }
 
 impl GridColumn {
@@ -45,6 +54,7 @@ impl GridColumn {
             visible,
             aria_sort: "none",
             filters: Vec::new(),
+            query_sort: false,
         }
     }
 

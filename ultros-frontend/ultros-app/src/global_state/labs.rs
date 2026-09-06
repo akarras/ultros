@@ -13,12 +13,8 @@ use super::cookies::Cookies;
 
 pub const LABS_COOKIE: &str = "LABS";
 
-/// The recipe analyzer's market model: the profit formula as a control
-/// (kit Phase C), a column per price signal with its "use" pill plus Hop
-/// gain and Worlds to visit (Phase D), and the market columns — Profit/day,
-/// Trend, Drift, Volume (30d), VWAP (30d) (Phase E2). One token for the
-/// whole tool: separate flags per phase made "which permutation am I
-/// looking at" a question, and the phases only make sense together.
+/// Recipe's experimental formula controls, price-signal columns, and travel
+/// comparisons. Remains opt-in until its production validation is complete.
 pub const LAB_ANALYZER_RECIPE: &str = "analyzer-recipe";
 
 pub struct LabInfo {
@@ -30,8 +26,7 @@ pub struct LabInfo {
 /// comment names when it is deleted (a struct field for that would have
 /// no non-test reader, which `-D warnings` rejects).
 pub const LABS: &[LabInfo] = &[
-    // Deleted in the phase after Aaron has validated the market model on
-    // prod, which makes it the recipe analyzer's default (kit §11).
+    // Remove only after the recipe market model has passed production validation.
     LabInfo {
         token: LAB_ANALYZER_RECIPE,
     },
@@ -72,14 +67,8 @@ impl fmt::Display for Labs {
     }
 }
 
-/// Whether an experiment is on for this view: the cookie set, or the
-/// `?labs=` list in the URL (for sharing a link with a tester).
-///
-/// A `Memo`, not a bare derived signal: this depends on the whole query
-/// map, so every filter edit invalidates it, and its readers (a `title`
-/// closure per table row, the formula memo, the `Show`s) would all re-run
-/// for a value that practically never changes. The memo's diff stops that
-/// at one comparison.
+/// Read the server-visible cookie and optional tester URL override together.
+/// A memo prevents unrelated grid query changes from rebuilding the model.
 pub fn use_lab(token: &'static str) -> Signal<bool> {
     let cookie = use_context::<Cookies>().map(|c| c.use_cookie_typed::<_, Labs>(LABS_COOKIE).0);
     let query = use_query_map();
@@ -112,7 +101,7 @@ mod tests {
 
     /// The two tokens Phases C and D shipped are gone, not aliased: a
     /// stored cookie or a bookmarked `?labs=` holding one of them parses to
-    /// the empty set, and the tester re-toggles once in Settings.
+    /// the empty set. Testers opt in with the current experiment token.
     #[test]
     fn the_retired_analyzer_tokens_no_longer_parse() {
         let old: Labs = "analyzer-ledger,analyzer-signal-columns".parse().unwrap();
@@ -126,7 +115,15 @@ mod tests {
         tokens.sort_unstable();
         tokens.dedup();
         assert_eq!(tokens.len(), LABS.len());
-        assert_eq!(tokens, vec![LAB_ANALYZER_RECIPE]);
+    }
+
+    #[test]
+    fn recipe_model_remains_an_opt_in_settings_experiment() {
+        assert!(LABS.iter().any(|lab| lab.token == LAB_ANALYZER_RECIPE));
+        assert!(!Labs::default().has(LAB_ANALYZER_RECIPE));
+        let enabled: Labs = LAB_ANALYZER_RECIPE.parse().unwrap();
+        assert!(enabled.has(LAB_ANALYZER_RECIPE));
+        assert_eq!(enabled.to_string(), LAB_ANALYZER_RECIPE);
     }
 
     #[test]

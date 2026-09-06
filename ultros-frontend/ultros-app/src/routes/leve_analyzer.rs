@@ -1,4 +1,9 @@
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::use_realtime;
@@ -12,9 +17,9 @@ use crate::{
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
-        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell},
         tool_help::*,
-        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
+        virtual_grid::{ColumnFilter, GridColumn},
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -44,7 +49,13 @@ struct LeveProfitData {
     profit: i32,
     cost: i32,
     revenue: i32,
+    reward_fallback: bool,
     market_price: i32,
+    hq: bool,
+    listing_price: Option<i32>,
+    price_fallback: bool,
+    cost_pending: bool,
+    revenue_pending: bool,
     cheapest_world_id: i32,
     item_id: ItemId,
     item_count: u32,
@@ -147,6 +158,54 @@ fn compare_leves(mode: SortMode, a: &LeveProfitData, b: &LeveProfitData) -> Orde
     }
 }
 
+/// A listing fallback is displayable while history loads, but it cannot decide
+/// eligibility for a filter on the selected sale-based calculation.
+fn financial_value(value: i32, pending: bool) -> GridValue {
+    if pending {
+        GridValue::Pending
+    } else {
+        GridValue::Number(value as f64)
+    }
+}
+
+fn profit_meets_minimum(profit: i32, minimum: Option<i32>, pending: bool) -> bool {
+    pending || minimum.is_none_or(|minimum| profit >= minimum)
+}
+
+fn leve_metrics() -> Vec<GridMetric<(usize, Arc<LeveProfitData>)>> {
+    vec![
+        GridMetric::text("item", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            GridValue::Text(format!(
+                "{} {}",
+                row.leve.name,
+                tracked_data()
+                    .items
+                    .get(&row.item_id)
+                    .map(|item| item.name.as_str())
+                    .unwrap_or_default()
+            ))
+        }),
+        GridMetric::number("profit", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            financial_value(row.profit, row.cost_pending || row.revenue_pending)
+        }),
+        GridMetric::number("revenue", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            financial_value(row.revenue, row.revenue_pending)
+        }),
+        GridMetric::number("cost", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            financial_value(row.cost, row.cost_pending)
+        }),
+        GridMetric::number("avg-price", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            GridValue::Number(row.avg_price as f64)
+        }),
+        GridMetric::number("daily-sales", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            GridValue::Number(row.daily_sales as f64)
+        }),
+        GridMetric::number("level", |(_, row): &(usize, Arc<LeveProfitData>)| {
+            GridValue::Number(row.class_job_level as f64)
+        }),
+    ]
+}
+
 #[component]
 fn LeveAnalyzerTable(
     global_cheapest_listings: CheapestListings,
@@ -164,6 +223,9 @@ fn LeveAnalyzerTable(
     });
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
+    let market = use_market_data(world);
+    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -192,6 +254,15 @@ fn LeveAnalyzerTable(
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
+        let stats = market.stats7();
+        let cost_pending =
+            stats.is_none() && cost_basis.get().unwrap_or_default().sale_stat().is_some();
+        let reward_signal_pending = stats.is_none()
+            && revenue_basis
+                .get()
+                .unwrap_or_default()
+                .sale_stat()
+                .is_some();
         let filter_outliers = filter_outliers().unwrap_or(false);
 
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
@@ -241,9 +312,22 @@ fn LeveAnalyzerTable(
             }
 
             // Calculate Cost
-            let market_price_summary = prices.find_matching_listings(item_id);
-            // Default to high price if not found to discourage bad data
-            let market_price = market_price_summary.lowest_gil().unwrap_or(0);
+            let Some(resolved) = resolve_price(
+                &prices,
+                stats.as_deref(),
+                item_id,
+                None,
+                cost_basis.get().unwrap_or_default(),
+            ) else {
+                continue;
+            };
+            let market_price = resolved.price;
+            let hq = resolved.hq;
+            let listing = prices.find_matching_listings(item_id);
+            let listing = if hq { listing.hq } else { listing.lq };
+            let listing_price = listing.map(|entry| entry.price);
+            let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
+            let price_fallback = resolved.fallback;
 
             if market_price == 0 {
                 // Can't calculate profit without market price
@@ -260,12 +344,6 @@ fn LeveAnalyzerTable(
                 }
             };
 
-            let cheapest_world_id = market_price_summary
-                .lq
-                .map(|d| d.world_id)
-                .or(market_price_summary.hq.map(|d| d.world_id))
-                .unwrap_or(0);
-
             // Cost is price * count.
             // Note: If you turn in HQ, rewards are double. But let's assume NQ for baseline safety.
             // Or maybe add a toggle for HQ later. For now, assume NQ cost for NQ rewards.
@@ -276,6 +354,8 @@ fn LeveAnalyzerTable(
 
             // Calculate Item Rewards Expected Value
             let mut expected_item_value = 0.0;
+            let mut revenue_pending = false;
+            let mut reward_fallback = false;
             let reward_item_id = leve.leve_reward_item;
 
             if let Some(reward_item_entry) =
@@ -358,9 +438,18 @@ fn LeveAnalyzerTable(
                                 continue;
                             }
 
-                            let reward_price_summary =
-                                prices.find_matching_listings(g_item_id as i32);
-                            let reward_price = reward_price_summary.lowest_gil().unwrap_or(0);
+                            revenue_pending |= reward_signal_pending;
+                            let resolved_reward = resolve_price(
+                                &prices,
+                                stats.as_deref(),
+                                g_item_id as i32,
+                                None,
+                                revenue_basis.get().unwrap_or_default(),
+                            );
+                            reward_fallback |=
+                                resolved_reward.as_ref().is_some_and(|price| price.fallback);
+                            let reward_price =
+                                resolved_reward.map(|price| price.price).unwrap_or(0);
 
                             // Probability is for the GROUP.
                             // If the group has multiple items, it picks one?
@@ -376,9 +465,11 @@ fn LeveAnalyzerTable(
             let revenue = gil_reward + expected_item_value as i64;
             let profit = revenue - cost;
 
-            if let Some(min) = minimum_profit()
-                && (profit as i32) < min
-            {
+            if !profit_meets_minimum(
+                profit as i32,
+                minimum_profit(),
+                cost_pending || revenue_pending,
+            ) {
                 continue;
             }
 
@@ -388,7 +479,13 @@ fn LeveAnalyzerTable(
                 profit: profit as i32,
                 cost: cost as i32,
                 revenue: revenue as i32,
+                reward_fallback,
                 market_price,
+                hq,
+                listing_price,
+                price_fallback,
+                cost_pending,
+                revenue_pending,
                 cheapest_world_id,
                 item_id: ItemId(item_id),
                 item_count,
@@ -399,11 +496,17 @@ fn LeveAnalyzerTable(
             });
         }
 
-        // Sort
-        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
+        // Keep every eligible row; the grid virtualizes rendering, not the result set.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        sort_and_truncate(&mut results, dir, 100, |a, b| compare_leves(mode, a, b));
+        results.sort_by(|a, b| {
+            let order = compare_leves(mode, a, b);
+            if dir == SortDir::Asc {
+                order
+            } else {
+                order.reverse()
+            }
+        });
 
         results
             .into_iter()
@@ -572,8 +675,21 @@ fn LeveAnalyzerTable(
                     }}
                 </ControlBar>
 
+                <MarketPriceControls label=t_string!(i18n, market_turn_in_cost).to_string()
+                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                <MarketPriceControls label=t_string!(i18n, market_reward_value).to_string()
+                    basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
                 <div class="rounded-2xl panel">
-                    <QueryGrid id="leve-analyzer-grid" label=t_string!(i18n, leve_analyzer_col_leve_item).to_string()
+                    <MarketGrid market subject=Arc::new(move |(_, row): &(usize, Arc<LeveProfitData>)| {
+        let mut subject = MarketSubject::new(row.item_id.0, row.hq, row.cheapest_world_id);
+        subject.listing_price = row.listing_price;
+        subject.label = t_string!(i18n, market_turn_in_item).to_string();
+        subject
+     })
+     metrics=leve_metrics()
+     id="leve-analyzer-grid" label=t_string!(i18n, leve_analyzer_col_leve_item).to_string()
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, leve_analyzer_col_leve_item).to_string(), 320.0, false, true),
     { let mut col = GridColumn::new("profit",t_string!(i18n, leve_analyzer_col_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
@@ -626,7 +742,7 @@ fn LeveAnalyzerTable(
                                     sort_dir
                                  />}.into_any(), _ => ().into_any()}}
      each=computed_data
-                        key=move |(index, data): &(usize, Arc<LeveProfitData>)| (*index, data.leve.key_id)
+                        key=move |(_, data): &(usize, Arc<LeveProfitData>)| data.leve.key_id
 
      measure=move |(_, data): &(usize, Arc<LeveProfitData>), id| {match id {"item" => (data.leve.name.as_str().to_string(), 110.0),
     "profit" => (data.profit.separate_with_commas(), 42.0),
@@ -665,9 +781,11 @@ fn LeveAnalyzerTable(
                                     </div>}.into_any(),
     "revenue" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.revenue />
+                                        {data.reward_fallback.then(|| view! { <span class="block text-xs text-amber-300">{t!(i18n, market_listing_fallback)}</span> })}
                                     </div>}.into_any(),
     "cost" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.cost />
+                                        {data.price_fallback.then(|| view! { <span class="block text-xs text-amber-300">{t!(i18n, market_listing_fallback)}</span> })}
                                     </div>}.into_any(),
     "avg-price" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.avg_price />
@@ -843,6 +961,33 @@ pub fn LeveAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn sale_price_filters_wait_for_selected_basis_instead_of_rejecting_listing_fallback() {
+        use crate::components::virtual_grid::metrics::{FilterOp, MetricFilter};
+        let minimum = MetricFilter {
+            op: FilterOp::Gte,
+            value: "100".into(),
+        };
+        // Every fallback is below the threshold, including candidates beyond the old cap.
+        let candidates: Vec<_> = (0..150)
+            .filter(|_| profit_meets_minimum(20, Some(100), true))
+            .collect();
+        assert_eq!(candidates.len(), 150);
+        assert_eq!(minimum.matches(&financial_value(20, true), false), None);
+        // Once the selected statistic arrives, both legacy and grid filters use it.
+        assert!(profit_meets_minimum(140, Some(100), false));
+        assert_eq!(
+            minimum.matches(&financial_value(140, false), false),
+            Some(true)
+        );
+        assert!(!profit_meets_minimum(20, Some(100), false));
+        assert_eq!(
+            minimum.matches(&financial_value(20, false), false),
+            Some(false)
+        );
+        assert!(profit_meets_minimum(20, None, false));
+    }
 
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.
