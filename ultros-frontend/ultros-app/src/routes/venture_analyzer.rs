@@ -1,4 +1,9 @@
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::use_realtime;
@@ -12,9 +17,9 @@ use crate::{
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
-        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell},
         tool_help::*,
-        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
+        virtual_grid::{ColumnFilter, GridColumn},
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -41,10 +46,16 @@ use ultros_api_types::{
 
 #[derive(Clone, Debug, PartialEq)]
 struct VentureProfitData {
+    task_id: i32,
     task_level: i32,
     item_id: i32,
     quantity: i32,
     market_price: i32,
+    cheapest_world_id: i32,
+    hq: bool,
+    listing_price: Option<i32>,
+    price_fallback: bool,
+    pricing_pending: bool,
     profit: i32,
     avg_price: i32,
     daily_sales: f32,
@@ -117,6 +128,53 @@ fn compare_ventures(mode: SortMode, a: &VentureProfitData, b: &VentureProfitData
     }
 }
 
+/// A listing fallback is displayable while history loads, but it cannot decide
+/// eligibility for a filter on the selected sale-based calculation.
+fn financial_value(value: i32, pending: bool) -> GridValue {
+    if pending {
+        GridValue::Pending
+    } else {
+        GridValue::Number(value as f64)
+    }
+}
+
+fn profit_meets_minimum(profit: i32, minimum: Option<i32>, pending: bool) -> bool {
+    pending || minimum.is_none_or(|minimum| profit >= minimum)
+}
+
+fn venture_metrics() -> Vec<GridMetric<(usize, Arc<VentureProfitData>)>> {
+    vec![
+        GridMetric::text("item", |(_, row): &(usize, Arc<VentureProfitData>)| {
+            GridValue::Text(
+                tracked_data()
+                    .items
+                    .get(&xiv_gen::ItemId(row.item_id))
+                    .map(|item| item.name.as_str().to_string())
+                    .unwrap_or_default(),
+            )
+        }),
+        GridMetric::number("profit", |(_, row): &(usize, Arc<VentureProfitData>)| {
+            financial_value(row.profit, row.pricing_pending)
+        }),
+        GridMetric::number(
+            "unit-price",
+            |(_, row): &(usize, Arc<VentureProfitData>)| {
+                financial_value(row.market_price, row.pricing_pending)
+            },
+        ),
+        GridMetric::number("avg-price", |(_, row): &(usize, Arc<VentureProfitData>)| {
+            GridValue::Number(row.avg_price as f64)
+        }),
+        GridMetric::number(
+            "daily-sales",
+            |(_, row): &(usize, Arc<VentureProfitData>)| GridValue::Number(row.daily_sales as f64),
+        ),
+        GridMetric::number("level", |(_, row): &(usize, Arc<VentureProfitData>)| {
+            GridValue::Number(row.task_level as f64)
+        }),
+    ]
+}
+
 #[component]
 fn VentureAnalyzerTable(
     global_cheapest_listings: CheapestListings,
@@ -134,6 +192,8 @@ fn VentureAnalyzerTable(
     });
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
+    let market = use_market_data(world);
+    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -222,6 +282,13 @@ fn VentureAnalyzerTable(
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
+        let stats = market.stats7();
+        let pricing_pending = stats.is_none()
+            && revenue_basis
+                .get()
+                .unwrap_or_default()
+                .sale_stat()
+                .is_some();
         let selected_ids = selected_category_ids.get();
         let filter_outliers = filter_outliers().unwrap_or(false);
 
@@ -236,7 +303,7 @@ fn VentureAnalyzerTable(
         };
 
         // Iterate over RetainerTasks to find normal ventures
-        for (_task_id, task) in retainer_tasks.iter() {
+        for (task_id, task) in retainer_tasks.iter() {
             if task.is_random {
                 continue;
             }
@@ -266,8 +333,22 @@ fn VentureAnalyzerTable(
                 let task_level = task.retainer_level as i32;
 
                 // Market Price
-                let market_price_summary = prices.find_matching_listings(item_id);
-                let market_price = market_price_summary.lowest_gil().unwrap_or(0);
+                let Some(resolved) = resolve_price(
+                    &prices,
+                    stats.as_deref(),
+                    item_id,
+                    None,
+                    revenue_basis.get().unwrap_or_default(),
+                ) else {
+                    continue;
+                };
+                let market_price = resolved.price;
+                let hq = resolved.hq;
+                let listing = prices.find_matching_listings(item_id);
+                let listing = if hq { listing.hq } else { listing.lq };
+                let listing_price = listing.map(|entry| entry.price);
+                let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
+                let price_fallback = resolved.fallback;
 
                 if market_price == 0 {
                     continue;
@@ -288,17 +369,21 @@ fn VentureAnalyzerTable(
                 let revenue = market_price * quantity;
                 let profit = revenue;
 
-                if let Some(min) = minimum_profit()
-                    && profit < min
-                {
+                if !profit_meets_minimum(profit, minimum_profit(), pricing_pending) {
                     continue;
                 }
 
                 results.push(VentureProfitData {
+                    task_id: task_id.0,
                     task_level,
                     item_id,
                     quantity,
                     market_price,
+                    cheapest_world_id,
+                    hq,
+                    listing_price,
+                    price_fallback,
+                    pricing_pending,
                     profit,
                     avg_price: sales_stats.avg_price,
                     daily_sales: sales_stats.daily_sales,
@@ -306,11 +391,17 @@ fn VentureAnalyzerTable(
             }
         }
 
-        // Sort
-        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
+        // Keep every eligible row; the grid virtualizes rendering, not the result set.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        sort_and_truncate(&mut results, dir, 100, |a, b| compare_ventures(mode, a, b));
+        results.sort_by(|a, b| {
+            let order = compare_ventures(mode, a, b);
+            if dir == SortDir::Asc {
+                order
+            } else {
+                order.reverse()
+            }
+        });
 
         results
             .into_iter()
@@ -465,8 +556,18 @@ fn VentureAnalyzerTable(
                     </div>
                 </div>
 
+                <MarketPriceControls label=t_string!(i18n, market_returned_value).to_string()
+                    basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
                 <div class="rounded-2xl panel">
-                    <QueryGrid id="venture-analyzer-grid" label=t_string!(i18n, venture_analyzer_col_venture_item).to_string()
+                    <MarketGrid market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
+        let mut subject = MarketSubject::new(row.item_id, row.hq, row.cheapest_world_id);
+        subject.listing_price = row.listing_price;
+        subject.label = t_string!(i18n, market_returned_item).to_string();
+        subject
+     })
+     metrics=venture_metrics()
+     id="venture-analyzer-grid" label=t_string!(i18n, venture_analyzer_col_venture_item).to_string()
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, venture_analyzer_col_venture_item).to_string(), 320.0, false, true),
     { let mut col = GridColumn::new("profit",t_string!(i18n, venture_analyzer_col_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
@@ -511,7 +612,7 @@ fn VentureAnalyzerTable(
                                     sort_dir
                                  />}.into_any(), _ => ().into_any()}}
      each=computed_data
-                        key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
+                        key=move |(_, data): &(usize, Arc<VentureProfitData>)| data.task_id
 
      measure=move |(_, data): &(usize, Arc<VentureProfitData>), id| {match id {"item" => (items.get(&xiv_gen::ItemId(data.item_id)).map(|i| i.name.as_str()).unwrap_or_default().to_string(), 110.0),
     "profit" => (data.profit.separate_with_commas(), 42.0),
@@ -548,6 +649,7 @@ fn VentureAnalyzerTable(
                                     </div>}.into_any(),
     "unit-price" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.market_price />
+                                        {data.price_fallback.then(|| view! { <span class="block text-xs text-amber-300">{t!(i18n, market_listing_fallback)}</span> })}
                                     </div>}.into_any(),
     "avg-price" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.avg_price />
@@ -724,6 +826,33 @@ pub fn VentureAnalyzer() -> impl IntoView {
 mod test {
     use super::*;
 
+    #[test]
+    fn sale_price_filters_wait_for_selected_basis_instead_of_rejecting_listing_fallback() {
+        use crate::components::virtual_grid::metrics::{FilterOp, MetricFilter};
+        let minimum = MetricFilter {
+            op: FilterOp::Gte,
+            value: "100".into(),
+        };
+        // Every fallback is below the threshold, including candidates beyond the old cap.
+        let candidates: Vec<_> = (0..150)
+            .filter(|_| profit_meets_minimum(20, Some(100), true))
+            .collect();
+        assert_eq!(candidates.len(), 150);
+        assert_eq!(minimum.matches(&financial_value(20, true), false), None);
+        // Once the selected statistic arrives, both legacy and grid filters use it.
+        assert!(profit_meets_minimum(140, Some(100), false));
+        assert_eq!(
+            minimum.matches(&financial_value(140, false), false),
+            Some(true)
+        );
+        assert!(!profit_meets_minimum(20, Some(100), false));
+        assert_eq!(
+            minimum.matches(&financial_value(20, false), false),
+            Some(false)
+        );
+        assert!(profit_meets_minimum(20, None, false));
+    }
+
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.
     #[test]
@@ -743,10 +872,16 @@ mod test {
     #[test]
     fn compare_ventures_orders_ascending_by_column() {
         let row = |profit: i32, daily_sales: f32| VentureProfitData {
+            task_id: 1,
             task_level: profit,
             item_id: 1,
             quantity: 1,
             market_price: profit,
+            cheapest_world_id: 1,
+            hq: false,
+            listing_price: Some(profit),
+            price_fallback: false,
+            pricing_pending: false,
             profit,
             avg_price: profit,
             daily_sales,

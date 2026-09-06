@@ -2,7 +2,9 @@
 mod filter;
 pub mod fixture;
 pub mod layout;
+pub mod metrics;
 pub mod query_grid;
+pub mod saved_views;
 use crate::i18n::*;
 use layout::column_range;
 pub(crate) use layout::row_range;
@@ -541,7 +543,9 @@ where
                                     id=format!("{}-r0-c{ci}",grid_id.get_value()) data-column=id data-grid-row="0" data-grid-col=ci
                                     class:grid-active=move || active.get() == (0,ci)
                                     class:grid-filter-active=move || columns.with(|defs| defs.iter().find(|c|c.id==id).is_some_and(|c|
-                                        c.filters.iter().any(|f|filter_query.with(|q|q.get(f.key).is_some_and(|v|!v.is_empty())))))
+                                        c.filters.iter().any(|f|filter_query.with(|q| if f.metric.is_some() {
+                                            metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
+                                        } else {q.get(f.key).is_some_and(|v|!v.is_empty())}))))
                                     class:grid-insert-before=move || drag.get().is_some_and(|d| d.target == Some((id,false)))
                                     class:grid-insert-after=move || drag.get().is_some_and(|d| d.target == Some((id,true)))
                                     style=move || placed.with(|p| p.iter().find(|c| c.column.id == id).map(|c| format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
@@ -607,6 +611,7 @@ where
                         }
                     >
                         <strong>{columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.label.clone()).unwrap_or_default())}</strong>
+                        {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.query_sort)).then(||view! {<filter::MetricSortControls column=m.id/>})}
                         {columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.filters.clone()).unwrap_or_default()).into_iter()
                             .map(|filter|view! {<filter::ColumnFilterEditor filter/>}).collect_view()}
                         <button type="button" on:click=move |_| {fit(m.id);close_menu();}>{t!(i18n,grid_auto_fit)}</button>

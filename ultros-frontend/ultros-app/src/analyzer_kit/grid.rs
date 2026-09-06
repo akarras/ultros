@@ -10,6 +10,7 @@ use leptos_i18n::I18nContext;
 use crate::components::icon::Icon;
 use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::term_badge::TermRole;
+use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid};
 use crate::i18n::*;
 use icondata as i;
@@ -30,6 +31,7 @@ pub trait AnalyzerRow: Clone + Send + Sync + PartialEq + 'static {
 /// type trips `clippy::type_complexity` at every use site.
 pub type CustomCell<T> = Arc<dyn Fn(&T, ColumnKind, &'static str) -> AnyView + Send + Sync>;
 pub type CustomMeasure<T> = Arc<dyn Fn(&T, ColumnKind) -> (String, f64) + Send + Sync>;
+pub type CustomValue<T> = Arc<dyn Fn(&T, ColumnKind) -> GridValue + Send + Sync>;
 
 /// The sub-label a page hangs off each marked formula column's header
 /// (`"listing · Aether"`, `"per unit · after 5% tax"`). A column with
@@ -283,6 +285,10 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// (always-on columns have no `id` to key on).
     custom: CustomCell<T>,
     #[prop(optional)] custom_measure: Option<CustomMeasure<T>>,
+    #[prop(optional)] custom_value: Option<CustomValue<T>>,
+    #[prop(optional)] on_rows: Option<Callback<Vec<(usize, T)>>>,
+    #[prop(default = "recipe-analyzer-grid".to_string(), into)] id: String,
+    #[prop(optional, into)] label: String,
     #[prop(optional)] column_filters: Option<Callback<ColumnKind, Vec<ColumnFilter>>>,
     #[prop(default = 60.0)] row_height: f64,
     /// Per-role header sub-labels. `None` leaves every column unmarked.
@@ -307,6 +313,46 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     visible_range: Option<RwSignal<(usize, usize)>>,
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let label = if label.is_empty() {
+        t_string!(i18n, recipe_analyzer_title).to_string()
+    } else {
+        label
+    };
+    let metrics = columns
+        .iter()
+        .filter(|col| {
+            (col.lab.is_none() || lab_columns) && !matches!(col.spec.kind, ColumnKind::Actions)
+        })
+        .map(|col| {
+            let custom_value = custom_value.clone();
+            let value = move |(_, row): &(usize, T)| match (col.cell)(row, &ctx.get()) {
+                CellValue::Custom => custom_value
+                    .as_ref()
+                    .map(|f| f(row, col.spec.kind))
+                    .unwrap_or(GridValue::Missing),
+                value => query_cell(value, i18n),
+            };
+            let metric = if matches!(
+                col.spec.kind,
+                ColumnKind::Item
+                    | ColumnKind::ListingWorld
+                    | ColumnKind::ListingDc
+                    | ColumnKind::HopWorlds
+                    | ColumnKind::Confidence
+            ) {
+                GridMetric::text(grid_id(col), value)
+            } else if col.spec.kind == ColumnKind::HopGain {
+                GridMetric::mixed(grid_id(col), value)
+            } else {
+                GridMetric::number(grid_id(col), value)
+            };
+            if matches!(col.sort, Sortability::LazyNever) {
+                metric.partial()
+            } else {
+                metric
+            }
+        })
+        .collect::<Vec<_>>();
     let defs = Memo::new(move |_| {
         columns
             .iter()
@@ -342,9 +388,10 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
             .collect::<Vec<_>>()
     });
     view! {
-        <QueryGrid id="recipe-analyzer-grid" label=t_string!(i18n, recipe_analyzer_title).to_string()
+        <QueryGrid id label metrics
+            on_rows=on_rows.unwrap_or_else(||Callback::new(|_|{}))
             each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))
-            key=move |(index, row): &(usize, T)| (*index, row.key())
+            key=move |(_, row): &(usize, T)| row.key()
             header=move |id| {
                 let col = columns.iter().find(|c| grid_id(c) == id).expect("registered column");
                 (move || header_cell(col, sort_mode, sort_dir, i18n, marks, extras, on_pill)).into_any()
@@ -371,6 +418,77 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                 }
             }
         />
+    }
+}
+
+fn query_cell(value: CellValue, i18n: I18nContext<Locale, I18nKeys>) -> GridValue {
+    use super::{cells::Enrich, hop::HopGain};
+    match value {
+        CellValue::Gil(n) | CellValue::RoiBadge(n) | CellValue::GilWithNote { amount: n, .. } => {
+            GridValue::Number(n as f64)
+        }
+        CellValue::Count(n) => GridValue::Number(n as f64),
+        CellValue::LastSoldUnix(n) => {
+            if n > 0 {
+                GridValue::Number(n as f64)
+            } else {
+                GridValue::Missing
+            }
+        }
+        CellValue::Confidence(band) => {
+            crate::components::confidence_badge::get_confidence_verdict_display(band)
+                .map(|(label, _)| GridValue::Text(label.get_text(i18n)))
+                .unwrap_or(GridValue::Missing)
+        }
+        CellValue::GilWithPct { amount, .. } => {
+            if amount > 0 {
+                GridValue::Number(amount as f64)
+            } else {
+                GridValue::Missing
+            }
+        }
+        CellValue::MutedGil { amount, capped, .. } => {
+            if capped {
+                GridValue::Missing
+            } else {
+                amount
+                    .map(|n| GridValue::Number(n as f64))
+                    .unwrap_or(GridValue::Missing)
+            }
+        }
+        CellValue::SignedGil { delta, .. } => delta
+            .map(|n| GridValue::Number(n as f64))
+            .unwrap_or(GridValue::Missing),
+        CellValue::LateCount(Enrich::Ready(n)) => GridValue::Number(n as f64),
+        CellValue::LateGilWithPct(Enrich::Ready((n, _))) => {
+            if n > 0 {
+                GridValue::Number(n as f64)
+            } else {
+                GridValue::Missing
+            }
+        }
+        CellValue::LazyPct(Enrich::Ready(Some(n))) => GridValue::Number(n as f64),
+        CellValue::Sparkline(Enrich::Ready(s)) => s
+            .delta_pct
+            .map(|n| GridValue::Number(n as f64))
+            .unwrap_or(GridValue::Missing),
+        CellValue::Sparkline(Enrich::Loading) => GridValue::Pending,
+        CellValue::LateCount(Enrich::Loading)
+        | CellValue::LateGilWithPct(Enrich::Loading)
+        | CellValue::LazyPct(Enrich::Loading) => GridValue::Pending,
+        CellValue::Sparkline(Enrich::Unavailable)
+        | CellValue::LateCount(Enrich::Unavailable)
+        | CellValue::LateGilWithPct(Enrich::Unavailable)
+        | CellValue::LazyPct(Enrich::Unavailable) => GridValue::Unavailable,
+        CellValue::Hop {
+            gain: HopGain::Gain(n),
+            ..
+        } => GridValue::Number(n as f64),
+        CellValue::Hop {
+            gain: HopGain::Needed,
+            ..
+        } => GridValue::Text(t_string!(i18n, analyzer_hop_needed).to_string()),
+        _ => GridValue::Missing,
     }
 }
 
@@ -464,6 +582,46 @@ mod tests {
     };
     use leptos_i18n::context::init_i18n_context;
     use std::fmt;
+
+    #[test]
+    fn failed_enrichment_retains_rows_and_reports_filter_coverage() {
+        use crate::analyzer_kit::cells::Enrich;
+        use crate::components::virtual_grid::metrics::{
+            FilterOp, GridMetric, MetricFilter, query_rows,
+        };
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = init_i18n_context::<crate::i18n::Locale>();
+            let cells = vec![
+                CellValue::Sparkline(Enrich::Unavailable),
+                CellValue::LazyPct(Enrich::Unavailable),
+                CellValue::LateCount(Enrich::Unavailable),
+                CellValue::LateGilWithPct(Enrich::Unavailable),
+            ];
+            let metric = GridMetric::number("history", move |cell: &CellValue| {
+                query_cell(cell.clone(), i18n)
+            });
+            for op in [FilterOp::Gte, FilterOp::Missing, FilterOp::Present] {
+                let filters = [(
+                    "history".to_string(),
+                    MetricFilter {
+                        op,
+                        value: "10".into(),
+                    },
+                )]
+                .into_iter()
+                .collect();
+                let result =
+                    query_rows(&cells, std::slice::from_ref(&metric), &filters, None, true);
+                assert_eq!(result.rows, cells);
+                assert_eq!(result.lacking_data, cells.len());
+            }
+            assert_eq!(
+                query_cell(CellValue::LateCount(Enrich::Missing), i18n),
+                GridValue::Missing
+            );
+        });
+    }
 
     #[derive(Clone, PartialEq)]
     struct Row(i32);
@@ -597,7 +755,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div  class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -637,7 +795,7 @@ mod tests {
                             visible_cols=Signal::derive(HashSet::new)
                             sort_mode=Signal::derive(|| None::<Col>)
                             sort_dir=Signal::derive(|| None::<SortDir>)
-                            ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                            ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                             custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                             row_height=60.0
 
@@ -652,7 +810,7 @@ mod tests {
                             visible_cols=Signal::derive(HashSet::new)
                             sort_mode=Signal::derive(|| None::<Col>)
                             sort_dir=Signal::derive(|| None::<SortDir>)
-                            ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                            ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                             custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                             row_height=60.0
 
@@ -682,7 +840,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div  class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -718,7 +876,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, _: &'static str| {
                         view! { <div ></div> }.into_any()
                     })
@@ -1032,7 +1190,7 @@ mod tests {
                         visible_cols=Signal::derive(move || visible.iter().copied().collect::<HashSet<_>>())
                         sort_mode=Signal::derive(|| None::<Col>)
                         sort_dir=Signal::derive(|| None::<SortDir>)
-                        ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                        ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                         custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                         row_height=10.0
 
@@ -1065,7 +1223,7 @@ mod tests {
                     visible_cols=Signal::derive(|| ["extra"].into_iter().collect::<HashSet<_>>())
                     sort_mode=Signal::derive(|| Some(Col::Profit))
                     sort_dir=Signal::derive(|| Some(SortDir::Desc))
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                     row_height=10.0
 

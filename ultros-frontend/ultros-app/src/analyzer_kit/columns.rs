@@ -173,6 +173,8 @@ pub struct CellCtx {
     /// The page's client-only 30-day statistics body. `None` on a page
     /// without one; `Some(signal holding None)` while it is in flight.
     pub stats_30: Option<LateStats>,
+    /// Failure of the separate 30-day request, distinct from empty history.
+    pub stats_30_unavailable: Option<RwSignal<bool>>,
 }
 
 /// One page's binding of a [`ColumnSpec`]: its `?cols=` token (`""` for
@@ -557,6 +559,7 @@ mod tests {
             capped_cost: [false; 4],
             sparklines: None,
             stats_30: None,
+            stats_30_unavailable: None,
         };
         assert_eq!((COLS[1].cell)(&42, &ctx), CellValue::Gil(42));
         assert_eq!((COLS[0].cell)(&42, &ctx), CellValue::Custom);

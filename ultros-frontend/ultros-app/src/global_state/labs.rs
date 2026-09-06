@@ -6,19 +6,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
-use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
-
-use super::cookies::Cookies;
-
 pub const LABS_COOKIE: &str = "LABS";
 
-/// The recipe analyzer's market model: the profit formula as a control
-/// (kit Phase C), a column per price signal with its "use" pill plus Hop
-/// gain and Worlds to visit (Phase D), and the market columns — Profit/day,
-/// Trend, Drift, Volume (30d), VWAP (30d) (Phase E2). One token for the
-/// whole tool: separate flags per phase made "which permutation am I
-/// looking at" a question, and the phases only make sense together.
+/// Graduated recipe market model. Keep its token readable in old cookies,
+/// URLs and column metadata; the feature is now available to every player.
 pub const LAB_ANALYZER_RECIPE: &str = "analyzer-recipe";
 
 pub struct LabInfo {
@@ -29,13 +20,7 @@ pub struct LabInfo {
 /// Settings; deleting it is part of shipping the feature. Each entry's
 /// comment names when it is deleted (a struct field for that would have
 /// no non-test reader, which `-D warnings` rejects).
-pub const LABS: &[LabInfo] = &[
-    // Deleted in the phase after Aaron has validated the market model on
-    // prod, which makes it the recipe analyzer's default (kit §11).
-    LabInfo {
-        token: LAB_ANALYZER_RECIPE,
-    },
-];
+pub const LABS: &[LabInfo] = &[];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Labs {
@@ -49,7 +34,7 @@ impl Labs {
 }
 
 fn is_known(token: &str) -> bool {
-    LABS.iter().any(|l| l.token == token)
+    token == LAB_ANALYZER_RECIPE || LABS.iter().any(|l| l.token == token)
 }
 
 impl FromStr for Labs {
@@ -72,29 +57,6 @@ impl fmt::Display for Labs {
     }
 }
 
-/// Whether an experiment is on for this view: the cookie set, or the
-/// `?labs=` list in the URL (for sharing a link with a tester).
-///
-/// A `Memo`, not a bare derived signal: this depends on the whole query
-/// map, so every filter edit invalidates it, and its readers (a `title`
-/// closure per table row, the formula memo, the `Show`s) would all re-run
-/// for a value that practically never changes. The memo's diff stops that
-/// at one comparison.
-pub fn use_lab(token: &'static str) -> Signal<bool> {
-    let cookie = use_context::<Cookies>().map(|c| c.use_cookie_typed::<_, Labs>(LABS_COOKIE).0);
-    let query = use_query_map();
-    Memo::new(move |_| {
-        let from_cookie = cookie.is_some_and(|c| c.get().is_some_and(|l| l.has(token)));
-        let from_url = query.with(|q| {
-            q.get("labs")
-                .and_then(|v| v.parse::<Labs>().ok())
-                .is_some_and(|l| l.has(token))
-        });
-        from_cookie || from_url
-    })
-    .into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,7 +74,7 @@ mod tests {
 
     /// The two tokens Phases C and D shipped are gone, not aliased: a
     /// stored cookie or a bookmarked `?labs=` holding one of them parses to
-    /// the empty set, and the tester re-toggles once in Settings.
+    /// the empty set. The graduated market model no longer needs a flag.
     #[test]
     fn the_retired_analyzer_tokens_no_longer_parse() {
         let old: Labs = "analyzer-ledger,analyzer-signal-columns".parse().unwrap();
@@ -126,7 +88,14 @@ mod tests {
         tokens.sort_unstable();
         tokens.dedup();
         assert_eq!(tokens.len(), LABS.len());
-        assert_eq!(tokens, vec![LAB_ANALYZER_RECIPE]);
+    }
+
+    #[test]
+    fn graduated_recipe_model_has_no_settings_toggle() {
+        assert!(!LABS.iter().any(|lab| lab.token == LAB_ANALYZER_RECIPE));
+        let legacy: Labs = LAB_ANALYZER_RECIPE.parse().unwrap();
+        assert!(legacy.has(LAB_ANALYZER_RECIPE));
+        assert_eq!(legacy.to_string(), LAB_ANALYZER_RECIPE);
     }
 
     #[test]

@@ -140,27 +140,6 @@ fn column_aria_sort<M: SortColumn>(
     }
 }
 
-/// Sort `rows` under `cmp` oriented by `dir`, truncating to the best `limit`
-/// rows first when there are more than that. Both steps share the one
-/// oriented comparator — truncating in a fixed direction while sorting in the
-/// other would keep exactly the wrong rows.
-pub fn sort_and_truncate<T>(
-    rows: &mut Vec<T>,
-    dir: SortDir,
-    limit: usize,
-    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
-) {
-    let oriented = |a: &T, b: &T| match dir {
-        SortDir::Asc => cmp(a, b),
-        SortDir::Desc => cmp(a, b).reverse(),
-    };
-    if rows.len() > limit {
-        rows.select_nth_unstable_by(limit, oriented);
-        rows.truncate(limit);
-    }
-    rows.sort_unstable_by(oriented);
-}
-
 /// Compare two optional sort keys so rows without a value sort last in
 /// *both* directions. The direction flip applies only between two present
 /// values — reversing the whole comparator instead would drag the
@@ -473,38 +452,12 @@ mod test {
     }
 
     #[test]
-    fn sort_and_truncate_orders_both_directions() {
-        let mut rows = vec![3, 1, 2];
-        sort_and_truncate(&mut rows, SortDir::Asc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows, vec![1, 2, 3]);
-        sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows, vec![3, 2, 1]);
-    }
-
-    #[test]
     fn cmp_none_last_keeps_missing_values_last_in_both_directions() {
         let mut rows = vec![Some(2), None, Some(1), Some(3), None];
         rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Asc, Ord::cmp));
         assert_eq!(rows, vec![Some(1), Some(2), Some(3), None, None]);
         rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Desc, Ord::cmp));
         assert_eq!(rows, vec![Some(3), Some(2), Some(1), None, None]);
-    }
-
-    #[test]
-    fn truncation_follows_the_sort_direction() {
-        // The regression this helper exists to prevent: a truncation keyed to
-        // a fixed descending metric would keep the LARGEST rows and then sort
-        // them ascending — the cheapest rows, the ones the click asked for,
-        // would never make the cut.
-        let mut rows: Vec<i32> = (0..500).collect();
-        sort_and_truncate(&mut rows, SortDir::Asc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows.len(), 100);
-        assert_eq!(rows, (0..100).collect::<Vec<_>>());
-
-        let mut rows: Vec<i32> = (0..500).collect();
-        sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows.len(), 100);
-        assert_eq!(rows, (400..500).rev().collect::<Vec<_>>());
     }
 
     #[test]

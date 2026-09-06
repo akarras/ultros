@@ -197,6 +197,18 @@ if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
     fi
 fi
 
+# This fixture is deliberately absent from release builds. Its query assertions
+# do not require populated market data; enable CHECK_ANALYZER_ROUTES separately
+# to exercise the same shared columns on all seven market-backed tools.
+if [ "${E2E_RELEASE:-0}" != "1" ] && [ "${RUN_SHARED_ANALYZER_DATA:-1}" != "0" ]; then
+    log "running deterministic shared analyzer data E2E"
+    shared_analyzer_data_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-analyzer-data ) || shared_analyzer_data_exit=$?
+    if [ "$shared_analyzer_data_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$shared_analyzer_data_exit"
+    fi
+fi
+
 if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
     log "running recipe planner E2E"
     recipe_planner_exit=0
