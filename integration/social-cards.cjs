@@ -47,6 +47,9 @@ const ROUTES = [
     card: "item/5333",
     world: "Gilgamesh",
   },
+  { name: "recipe", page: "/recipe/1", card: "recipe/1" },
+  { name: "category", page: "/items/category/1", card: "category/1" },
+  { name: "gear-detail", page: "/items/jobset/SAM/set/640", card: "jobset-level/SAM-640" },
   { name: "jobset", page: "/items/jobset/SAM", card: "jobset/SAM" },
   { name: "currency", page: "/currency-exchange", card: "currency/default" },
   { name: "tool", page: "/flip-finder", card: "tool/flip-finder" },
@@ -432,6 +435,17 @@ async function main() {
   assert.deepEqual(privateFallback, japaneseHome, "private pages share the localized homepage card without reflecting path or query state");
   console.log("PASS private fallback: no account path or query state in social metadata");
 
+  const recipeRoute = { name: "recipe-plan", page: "/recipe/37872" };
+  const recipeMetadata = await metadataFor(recipeRoute, "en");
+  imagePathFor(recipeMetadata, { ...recipeRoute, card: "recipe/37872" }, "en");
+  const configuredRecipe = await metadataFor({
+    name: "recipe-plan-configured",
+    page: "/recipe/37872?world=Gilgamesh&require-hq=false&shards-exclude=true&buy-scope=region&craft=44033%3A5652&visits=1&quantity=1",
+  }, "en");
+  assert.deepEqual(configuredRecipe, recipeMetadata, "recipe settings must not fragment evergreen previews");
+  await readPng(new URL(recipeMetadata["og:image"]).pathname);
+  console.log("PASS recipe plan: configured share URL uses the recipe item's evergreen card");
+
   const tool = ROUTES.find((route) => route.name === "tool");
   const toolMetadata = await metadataFor(tool, "en");
   const filteredTool = await metadataFor(
@@ -470,6 +484,9 @@ async function main() {
     "/social/v2/en/item/not-an-item",
     "/social/v2/en/item/2147483647",
     "/social/v2/en/jobset/NOTAJOB",
+    "/social/v2/en/recipe/2147483647",
+    "/social/v2/en/category/2147483647",
+    "/social/v2/en/jobset-level/SAM-2147483647",
     "/social/v2/en/tool/not-a-tool",
     "/social/v2/en/item/5333?world=NotAWorld",
     "/itemcard/NotAWorld/49318",

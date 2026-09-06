@@ -381,6 +381,8 @@ mod tests {
             "cookie_policy_title",
             "currency_exchange",
             "help_meta_title",
+            "item_explorer_ilvl_prefix",
+            "category_list_desc",
         ];
         let mut missing = std::collections::BTreeSet::new();
         for code in ["en", "ja", "de", "fr", "ko", "cn", "tc"] {

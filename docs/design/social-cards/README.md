@@ -46,6 +46,9 @@ references guide the shared Rust renderer in `ultros-item-card`.
 | Item | Actual item name | Compare listings across worlds | Explicit URL market scope |
 | Job gear | Samurai gear sets | Compare gear across worlds | Samurai |
 | Currency tool | Currency Exchange | Find what your currency can buy | Currency tools |
+| Recipe plan | Crafted item name | Plan materials. Compare buying and crafting. | Final Fantasy XIV |
+| Item category | Localized category name | Compare listings across worlds | Final Fantasy XIV |
+| Gear-set detail | Localized job gear sets | Item level and gear comparison | Localized job name |
 | Home/fallback | Your next market board advantage. | Compare prices. Plan your purchases. | Final Fantasy XIV |
 
 Generic cards should not infer a market scope from the viewer's cookies.
@@ -76,6 +79,13 @@ game art and should not be reconstructed from the mockup.
 - Images use `/social/v2/{locale}/{kind}/{key}`, with an explicit `world` query
   only for scoped items. Generic keys are `default`. Supported locale codes
   are `en`, `ja`, `de`, `fr`, `ko`, `cn`, and `tc`.
+- Recipe plans use `recipe/{recipe-id}` and the result item's packed icon;
+  categories use `category/{numeric-id}` and the discovery hero; gear-set details
+  use `jobset-level/{JOB}-{item-level}` and the existing job glyph. Invalid or
+  regionally unavailable entities fall back to the localized home preview.
+  Legacy name-keyed category links retain the generic item-explorer preview.
+  Recipe planner quantities, crafting choices and market filters do not alter
+  the evergreen image or its cache identity.
 - Shared page URLs carry `?lang=<locale>`; unlocalized URLs have deterministic
   English social metadata. Private/unknown routes get the public home preview.
 - Server metadata and images use the same catalog-backed content model in
@@ -108,3 +118,6 @@ Set `SOCIAL_ARTIFACTS=1` to save returned images, and `SOCIAL_HYDRATION=1` to
 also check SSR/hydration parity and switching language in a browser.
 For concurrent local worktrees, set `METRICS_PORT` to another free port when
 starting the app; its default remains `9091`, independent of the web port.
+
+Catalog-backed route previews (no database): `cargo run -p ultros --example social_card_previews`.
+Outputs for all available regional catalogs appear in `target/route-card-previews/`.

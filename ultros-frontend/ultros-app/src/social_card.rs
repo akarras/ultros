@@ -5,13 +5,16 @@
 
 use crate::i18n::*;
 use crate::routes::item_explorer::canonical_job_acronym;
-use xiv_gen::{ClassJobId, ItemId, Language};
+use xiv_gen::{ClassJobCategoryId, ClassJobId, ItemId, ItemSearchCategoryId, Language, RecipeId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SocialCardKind {
     Home,
     Item(i32),
+    Recipe(i32),
+    Category(i32),
     Jobset(String),
+    JobsetLevel(String, i32),
     Currency(Option<i32>),
     Tool(String),
     Help(Option<String>),
@@ -133,10 +136,16 @@ impl SocialCardKind {
         let kind = match segments.as_slice() {
             [""] => Some(Self::Home),
             ["item", id] | ["item", _, id] => positive_id(id).map(Self::Item),
-            ["items", "jobset", job] | ["items", "jobset", job, "set", _] => {
-                canonical_job(job).map(|job| Self::Jobset(job.to_string()))
-            }
-            ["items", "category", _] => Some(Self::Tool("items".to_string())),
+            ["recipe", id] => positive_id(id).map(Self::Recipe),
+            ["items", "jobset", job, "set", level] => canonical_job(job).and_then(|job| {
+                positive_id(level).map(|level| Self::JobsetLevel(job.to_string(), level))
+            }),
+            ["items", "jobset", job] => canonical_job(job).map(|job| Self::Jobset(job.to_string())),
+            ["items", "category", id] => Some(
+                positive_id(id)
+                    .map(Self::Category)
+                    .unwrap_or_else(|| Self::Tool("items".to_string())),
+            ),
             ["currency-exchange"] => Some(Self::Currency(None)),
             ["currency-exchange", id] => positive_id(id).map(|id| Self::Currency(Some(id))),
             ["help"] => Some(Self::Help(None)),
@@ -160,6 +169,15 @@ impl SocialCardKind {
         match kind {
             "home" if key == "default" => Some(Self::Home),
             "item" => positive_id(key).map(Self::Item),
+            "recipe" => positive_id(key).map(Self::Recipe),
+            "category" => positive_id(key).map(Self::Category),
+            "jobset-level" => {
+                let (job, level) = key.split_once('-')?;
+                Some(Self::JobsetLevel(
+                    canonical_job(job)?.to_string(),
+                    positive_id(level)?,
+                ))
+            }
             "jobset" => canonical_job(key).map(|job| Self::Jobset(job.to_string())),
             "currency" if key == "default" => Some(Self::Currency(None)),
             "currency" => positive_id(key).map(|id| Self::Currency(Some(id))),
@@ -174,6 +192,9 @@ impl SocialCardKind {
         match self {
             Self::Home => ("home", "default".to_string()),
             Self::Item(id) => ("item", id.to_string()),
+            Self::Recipe(id) => ("recipe", id.to_string()),
+            Self::Category(id) => ("category", id.to_string()),
+            Self::JobsetLevel(job, level) => ("jobset-level", format!("{job}-{level}")),
             Self::Jobset(job) => ("jobset", job.to_string()),
             Self::Currency(id) => (
                 "currency",
@@ -260,7 +281,28 @@ pub fn social_card_content(
                 td_string!(locale, social_card_item_description, item = &item.name).to_string();
             content.hero = SocialCardHero::Item(*id);
         }
-        SocialCardKind::Jobset(acronym) => {
+        SocialCardKind::Recipe(id) => {
+            let recipe = data().recipes.get(&RecipeId(*id))?;
+            let item = lookup_item(recipe.item_result)?;
+            content.title = item.name.clone();
+            content.subtitle = td_string!(locale, social_card_recipe_subtitle).to_string();
+            content.eyebrow = td_string!(locale, social_card_recipe_eyebrow).to_string();
+            content.description =
+                td_string!(locale, social_card_recipe_description, item = &item.name).to_string();
+            content.hero = SocialCardHero::Item(item.key_id.0);
+        }
+        SocialCardKind::Category(id) => {
+            let category = data()
+                .item_search_categorys
+                .get(&ItemSearchCategoryId(*id))
+                .filter(|category| !category.name.trim().is_empty())?;
+            content.title = category.name.clone();
+            content.subtitle = td_string!(locale, social_card_item_subtitle).to_string();
+            content.description =
+                td_string!(locale, category_list_desc).replace("%category%", &category.name);
+            content.hero = SocialCardHero::Search;
+        }
+        SocialCardKind::Jobset(acronym) | SocialCardKind::JobsetLevel(acronym, _) => {
             let id = (1..=43).map(ClassJobId).find(|id| {
                 canonical_job_acronym(*id)
                     .is_some_and(|canonical| canonical.eq_ignore_ascii_case(acronym))
@@ -278,6 +320,35 @@ pub fn social_card_content(
             content.description =
                 td_string!(locale, social_card_jobset_description, job = &job.name).to_string();
             content.footer = sentence_case(job.name.clone());
+            if let SocialCardKind::JobsetLevel(_, level) = kind {
+                let acronym = canonical_job(acronym)?;
+                let catalog = data();
+                // Validate the gear itself, not a shared name prefix: localized
+                // item names may put the set name at different positions.
+                let pieces = catalog
+                    .items
+                    .values()
+                    .filter(|item| {
+                        item.level_item == *level
+                            && item.item_search_category > 0
+                            && catalog
+                                .class_job_categorys
+                                .get(&ClassJobCategoryId(item.class_job_category))
+                                .is_some_and(|category| {
+                                    crate::routes::item_explorer::job_category_lookup(
+                                        category, acronym,
+                                    )
+                                })
+                    })
+                    .take(2)
+                    .count();
+                if pieces < 2 {
+                    return None;
+                }
+                let level = format!("{} {level}", td_string!(locale, item_explorer_ilvl_prefix));
+                content.subtitle = format!("{level} · {}", content.subtitle);
+                content.description = format!("{level} · {}", content.description);
+            }
             // xivicon.css maps decimal job 34 to U+F034 (not U+F022).
             // The shipped font currently contains jobs 1..=42 only.
             content.hero = if (1..=42).contains(&id.0) {
@@ -363,6 +434,7 @@ mod tests {
         for route in [
             "/",
             "/item/Gilgamesh/5333",
+            "/recipe/37872",
             "/items/jobset/SAM/set/720",
             "/items/category/1",
             "/currency-exchange",
@@ -388,6 +460,10 @@ mod tests {
             "/retainers/listings/123",
             "/profile?username=someone",
             "/item/0",
+            "/recipe/0",
+            "/recipe/not-a-recipe",
+            "/items/jobset/SAM/set/0",
+            "/items/jobset/SAM/set/invalid",
             "/item/not-an-item",
             "/items/jobset/NOT_A_JOB",
             "/help/unpublished",
@@ -395,10 +471,85 @@ mod tests {
         ] {
             assert_eq!(SocialCardKind::from_route(path), SocialCardKind::Home);
         }
+        assert_eq!(SocialCardKind::from_parts("recipe", "-1"), None);
+        assert_eq!(SocialCardKind::from_parts("category", "0"), None);
+        assert_eq!(SocialCardKind::from_parts("jobset-level", "SAM-1-2"), None);
+        assert_eq!(
+            SocialCardKind::from_parts("jobset-level", "UNKNOWN-720"),
+            None
+        );
         assert_eq!(SocialCardKind::from_parts("tool", "unknown"), None);
         assert_eq!(SocialCardKind::from_parts("home", "arbitrary"), None);
         assert_eq!(parse_locale("zh-CN"), None);
         assert_eq!(parse_locale("unknown"), None);
+    }
+
+    #[test]
+    fn new_routes_use_specific_card_identities() {
+        assert_eq!(
+            SocialCardKind::from_route(
+                "/recipe/37872?world=Gilgamesh&craft=44033%3A5652&quantity=1"
+            ),
+            SocialCardKind::Recipe(37872)
+        );
+        assert_eq!(
+            SocialCardKind::from_route("/items/category/1"),
+            SocialCardKind::Category(1)
+        );
+        assert_eq!(
+            SocialCardKind::from_route("/items/jobset/sam/set/720"),
+            SocialCardKind::JobsetLevel("SAM".into(), 720)
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn recipe_category_and_gear_detail_cards_use_localized_catalog_entities() {
+        for code in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            let locale = parse_locale(code).unwrap();
+            let data = xiv_gen_db::data_for(game_language(locale));
+            // ARR fixtures also used by the crawler matrix, present in every pack.
+            let recipe = &data.recipes[&RecipeId(1)];
+            let item = &data.items[&ItemId(recipe.item_result)];
+            let card = social_card_content(locale, &SocialCardKind::Recipe(recipe.key_id.0), None)
+                .unwrap();
+            assert_eq!(card.title, item.name);
+            assert_eq!(card.hero, SocialCardHero::Item(item.key_id.0));
+            assert!(card.description.contains(&item.name));
+            assert_ne!(
+                card.subtitle,
+                social_card_content(locale, &SocialCardKind::Item(item.key_id.0), None)
+                    .unwrap()
+                    .subtitle
+            );
+            let category = &data.item_search_categorys[&ItemSearchCategoryId(1)];
+            let card =
+                social_card_content(locale, &SocialCardKind::Category(category.key_id.0), None)
+                    .unwrap();
+            assert_eq!(card.title, category.name);
+            assert!(card.description.contains(&category.name));
+            let card = social_card_content(
+                locale,
+                &SocialCardKind::JobsetLevel("SAM".into(), 640),
+                None,
+            )
+            .unwrap();
+            assert!(card.subtitle.contains("640"));
+            assert!(card.description.contains("640"));
+            assert_eq!(card.hero, SocialCardHero::Job('\u{f034}'));
+            for kind in [
+                SocialCardKind::Recipe(i32::MAX),
+                SocialCardKind::Category(i32::MAX),
+                SocialCardKind::JobsetLevel("SAM".into(), i32::MAX),
+            ] {
+                assert!(social_card_content(locale, &kind, None).is_none());
+            }
+        }
+        let data = xiv_gen_db::data_for(Language::En);
+        let recipe = &data.recipes[&RecipeId(37872)];
+        let card = social_card_content(Locale::en, &SocialCardKind::Recipe(37872), None).unwrap();
+        assert_eq!(card.title, data.items[&ItemId(recipe.item_result)].name);
+        assert_eq!(card.hero, SocialCardHero::Item(recipe.item_result));
     }
 
     #[cfg(feature = "ssr")]
