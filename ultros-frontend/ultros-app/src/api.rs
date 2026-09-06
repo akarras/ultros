@@ -789,6 +789,16 @@ where
     ))
 }
 
+/// Feed the server's `x-ultros-commit` header to the update detector. Runs on
+/// error statuses too: a 500 from a newer server still carries the header.
+#[cfg(not(feature = "ssr"))]
+fn report_server_commit(response: &gloo_net::http::Response) {
+    let header = response
+        .headers()
+        .get(ultros_api_types::app_version::APP_COMMIT_HEADER);
+    crate::global_state::app_update::observe_server_commit(header.as_deref());
+}
+
 #[cfg(not(feature = "ssr"))]
 #[instrument(skip())]
 pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
@@ -800,15 +810,15 @@ where
     let path = path.to_string();
     spawn_local(async move {
         let inner_impl = async move || -> AppResult<String> {
-            let json: String = gloo_net::http::Request::delete(&path)
+            let response = gloo_net::http::Request::delete(&path)
                 .credentials(web_sys::RequestCredentials::Include)
                 .send()
                 .await
                 .inspect_err(|e| {
                     error!("{}", e);
-                })?
-                .text()
-                .await?;
+                })?;
+            report_server_commit(&response);
+            let json: String = response.text().await?;
             Ok(json)
         };
         let result = inner_impl().await;
@@ -839,13 +849,13 @@ where
         let path = path.to_string();
         async move {
             let inner_impl = async move || -> AppResult<String> {
-                let json: String = gloo_net::http::Request::get(&path)
+                let response = gloo_net::http::Request::get(&path)
                     // .abort_signal(abort_signal.as_ref())
                     .send()
                     .await
-                    .inspect_err(|e| error!(error = %e, path, "Error making http request"))?
-                    .text()
-                    .await?;
+                    .inspect_err(|e| error!(error = %e, path, "Error making http request"))?;
+                report_server_commit(&response);
+                let json: String = response.text().await?;
                 Ok(json)
             };
             let result = inner_impl().await;
@@ -920,7 +930,7 @@ where
             tracing::info!("{}", &path);
             let body = serde_json::to_string(&json)
                 .map_err(|e| anyhow::anyhow!("failed to serialize json body: {:?}", e))?;
-            let json: String = gloo_net::http::Request::post(&path)
+            let response = gloo_net::http::Request::post(&path)
                 .header("Content-Type", "application/json")
                 .credentials(web_sys::RequestCredentials::Include)
                 .body(body)
@@ -929,10 +939,9 @@ where
                 .await
                 .inspect_err(|e| {
                     log::error!("{e}");
-                })?
-                .text()
-                .await
-                .inspect_err(|e| log::error!("{e}"))?;
+                })?;
+            report_server_commit(&response);
+            let json: String = response.text().await.inspect_err(|e| log::error!("{e}"))?;
             Ok(json)
         };
         let result = inner_impl().await;
@@ -971,7 +980,7 @@ where
         let inner_impl = async move || -> AppResult<String> {
             let body = serde_json::to_string(&json)
                 .map_err(|e| anyhow::anyhow!("failed to serialize json body: {:?}", e))?;
-            let json: String = gloo_net::http::Request::patch(&path)
+            let response = gloo_net::http::Request::patch(&path)
                 .header("Content-Type", "application/json")
                 .credentials(web_sys::RequestCredentials::Include)
                 .body(body)
@@ -980,10 +989,9 @@ where
                 .await
                 .inspect_err(|e| {
                     log::error!("{e}");
-                })?
-                .text()
-                .await
-                .inspect_err(|e| log::error!("{e}"))?;
+                })?;
+            report_server_commit(&response);
+            let json: String = response.text().await.inspect_err(|e| log::error!("{e}"))?;
             Ok(json)
         };
         let result = inner_impl().await;
