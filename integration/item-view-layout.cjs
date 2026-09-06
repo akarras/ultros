@@ -303,7 +303,7 @@ async function verifyMarketSummaries(page, failures) {
 
 async function main() {
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const failures = [];

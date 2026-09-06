@@ -38,13 +38,17 @@ function sanitize(s) {
   return s.replace(/[\\/?%*:|"<>]/g, "_").replace(/__+/g, "_") || "_root";
 }
 
+// Puppeteer 23 dropped the `headless: "new"` spelling: `true` is now the new
+// headless mode and `"shell"` selects the old chrome-headless-shell binary.
+// "new" is still accepted here so existing HEADLESS=new invocations keep working.
 function parseHeadless(value) {
-  if (value === undefined || value === null || value === "") return "new";
+  if (value === undefined || value === null || value === "") return true;
   const v = String(value).toLowerCase();
-  if (v === "new") return "new";
+  if (v === "new") return true;
+  if (v === "shell") return "shell";
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
-  return "new";
+  return true;
 }
 
 /**

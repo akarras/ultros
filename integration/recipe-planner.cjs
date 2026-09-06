@@ -9,7 +9,7 @@ const OUT = path.join(__dirname, 'artifacts', 'recipe-planner');
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   let page;
   try {
     page = await browser.newPage();

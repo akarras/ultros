@@ -15,7 +15,7 @@
  *
  * Env:
  *   BASE_URL    default http://127.0.0.1:8080
- *   HEADLESS    "false" to watch, anything else uses puppeteer's "new" mode
+ *   HEADLESS    "false" to watch, anything else runs headless
  *   TIMEOUT_MS  default 30000
  */
 
@@ -129,7 +129,7 @@ async function main() {
   const puppeteer = require("puppeteer");
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
-  const headless = process.env.HEADLESS === "false" ? false : "new";
+  const headless = process.env.HEADLESS !== "false";
 
   const browser = await puppeteer.launch({
     headless,
@@ -210,7 +210,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 1000));
       await waitFor(ownerPage, "input[placeholder*='search items']", 15000);
       const searchInput = await ownerPage.$("input[placeholder*='search items']");
-      await searchInput.click({ clickCount: 3 });
+      await searchInput.click({ count: 3 });
       await searchInput.type("Maple Log");
       // Wait for the row-level "add" button to render (locale string is lowercase).
       await ownerPage
@@ -262,7 +262,7 @@ async function main() {
         // Pick the input nearest to the modal — last placeholder-bearing input.
         const inputs = await ownerPage.$$("input[placeholder]");
         const modalInput = inputs[inputs.length - 1];
-        await modalInput.click({ clickCount: 3 });
+        await modalInput.click({ count: 3 });
         await modalInput.type("Bronze Ingot");
         // Wait for any modal button whose trimmed text is exactly "Add".
         await ownerPage
@@ -459,8 +459,9 @@ async function main() {
       if (!renameInput) {
         fail(failures, "drawer rename input not found");
       } else {
-        await renameInput.click({ clickCount: 3 });
-        await renameInput.type(newName);
+        // Resource updates may replace the drawer between locating and editing.
+        // A locator reacquires the input instead of retaining a detached node.
+        await ownerPage.locator('[data-testid="drawer-rename-input"]').fill(newName);
         const saveBtn = await ownerPage.$('[data-testid="drawer-save-details"]');
         if (!saveBtn) {
           fail(failures, "drawer save button not found");
@@ -618,10 +619,10 @@ async function main() {
           await ownerPage
             .waitForFunction(() => window.location.pathname === "/list", { timeout: 15000 })
             .catch(() => {});
-          if (ownerPage.url().endsWith("/list")) {
+          if (new URL(ownerPage.url()).pathname === "/list") {
             pass("owner returned to /list after delete");
           } else {
-            fail(failures, `expected url to end with /list, got ${ownerPage.url()}`);
+            fail(failures, `expected path /list, got ${ownerPage.url()}`);
           }
           const checkResp = await api(ownerPage, "GET", "/api/v1/list");
           const stillThere = (checkResp.body || []).find((e) => e.list.id === listId);

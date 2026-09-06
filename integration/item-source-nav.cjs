@@ -25,7 +25,7 @@ async function readLinks(page) {
 
 async function main() {
   fs.mkdirSync(OUTPUT, { recursive: true });
-  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   console.log(`Browser: ${await browser.version()}`);
   const coverage = new Set();
   const results = [];

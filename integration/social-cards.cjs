@@ -217,7 +217,7 @@ function conflictingHeaders(locale) {
 async function checkHydration() {
   const puppeteer = require("puppeteer");
   const browser = await puppeteer.launch({
-    headless: "new",
+    headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });

@@ -11,7 +11,7 @@
  * Env:
  *   BASE_URL   default http://127.0.0.1:8080
  *   WORLD      default Goblin
- *   HEADLESS   "new" | "true" | "false" (default "new")
+ *   HEADLESS   "true" | "shell" | "false" (default "true")
  *   TIMEOUT_MS default 90000
  */
 
@@ -21,13 +21,17 @@ const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
 
+// Puppeteer 23 dropped the `headless: "new"` spelling: `true` is now the new
+// headless mode and `"shell"` selects the old chrome-headless-shell binary.
+// "new" is still accepted here so existing HEADLESS=new invocations keep working.
 function parseHeadless(value) {
-  if (value === undefined || value === null || value === "") return "new";
+  if (value === undefined || value === null || value === "") return true;
   const v = String(value).toLowerCase();
-  if (v === "new") return "new";
+  if (v === "new") return true;
+  if (v === "shell") return "shell";
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
-  return "new";
+  return true;
 }
 
 const DEFAULT_CONSOLE_ALLOW = [
