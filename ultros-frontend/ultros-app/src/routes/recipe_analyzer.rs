@@ -808,6 +808,26 @@ struct MarketHandles {
     rows: RwSignal<Vec<(usize, RecipeRow)>>,
 }
 
+/// Invalidate measured widths when external data or header context changes.
+/// Tracking providers does not clone their stores or walk the candidate rows;
+/// same-key updates still invalidate even when store sizes remain unchanged.
+fn recipe_measure_version(
+    market: MarketHandles,
+    ctx: Signal<CellCtx>,
+    extras: Memo<HeaderExtras>,
+    marks: Memo<Option<MarkLabels>>,
+) -> Memo<u64> {
+    Memo::new(move |previous: Option<&u64>| {
+        market.sparklines.track();
+        market.stats_30.track();
+        market.stats_30_unavailable.track();
+        ctx.with(|_| {});
+        extras.with(|_| {});
+        marks.with(|_| {});
+        previous.map_or(0, |version| version.wrapping_add(1))
+    })
+}
+
 /// The enrichment key: the item and the quality its statistics came from,
 /// so one request serves Trend and Drift and both agree with the 7-day
 /// numbers beside them.
@@ -4076,6 +4096,7 @@ fn RecipeAnalyzerTable(
         stats_30: Some(market.stats_30),
         stats_30_unavailable: Some(market.stats_30_unavailable),
     });
+    let measure_version = recipe_measure_version(market, cell_ctx, header_extras, marks);
 
     // Hoisted out of the `view!` below so both arms of the one child that
     // renders it can move it; its condition and its text are exactly what
@@ -4507,6 +4528,7 @@ fn RecipeAnalyzerTable(
                     sort_mode=sort_mode
                     sort_dir=sort_dir
                     ctx=cell_ctx
+                    measure_version=measure_version
                     custom=custom
                     custom_value=Arc::new(move |data: &RecipeRow, kind| {
                         match kind {
@@ -9384,6 +9406,79 @@ mod test {
         );
         assert_eq!(pill_param(ColumnKind::HopGain), None);
         assert_eq!(pill_param(ColumnKind::CostSlot), None);
+    }
+
+    #[test]
+    fn measurement_version_tracks_external_values_without_rows_or_scrolling() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let market = MarketHandles {
+                sparklines: RwSignal::new(SparkStore::default()),
+                stats_30: RwSignal::new(None),
+                stats_30_unavailable: RwSignal::new(false),
+                visible_range: RwSignal::new((0, 0)),
+                rows: RwSignal::new(Vec::new()),
+            };
+            let capped = RwSignal::new(false);
+            let ctx = Signal::derive(move || {
+                let mut ctx = test_ctx();
+                ctx.capped_cost[0] = capped.get();
+                ctx
+            });
+            let extra_source = RwSignal::new(HeaderExtras::default());
+            let extras = Memo::new(move |_| extra_source.get());
+            let mark_source = RwSignal::new(None::<MarkLabels>);
+            let marks = Memo::new(move |_| mark_source.get());
+            let version = recipe_measure_version(market, ctx, extras, marks);
+            assert_eq!(version.get(), 0);
+            market.visible_range.set((10, 20));
+            assert_eq!(version.get(), 0, "scrolling alone must not rescan widths");
+            let key = (42, false);
+            for (revision, amount) in [(1, 10), (2, 100_000)] {
+                market.sparklines.update(|store| {
+                    store.merge(
+                        &[key],
+                        vec![(
+                            key,
+                            SparkValue {
+                                points: vec![amount],
+                                delta_pct: Some(amount as f32),
+                            },
+                        )],
+                    );
+                });
+                assert_eq!(
+                    version.get(),
+                    revision,
+                    "same-key values invalidate measurement"
+                );
+            }
+            market.stats_30.set(Some(Arc::new(StatsIndex::default())));
+            assert_eq!(version.get(), 3);
+            market.stats_30_unavailable.set(true);
+            assert_eq!(version.get(), 4);
+            capped.set(true);
+            assert_eq!(version.get(), 5);
+            extra_source.update(|headers| {
+                headers.by_kind.insert(
+                    ColumnKind::Tax,
+                    HeaderExtra {
+                        title: "Updated header context".into(),
+                        line2: None,
+                        header_class: None,
+                    },
+                );
+            });
+            assert_eq!(version.get(), 6);
+            mark_source.set(Some(MarkLabels {
+                labels: HashMap::from([(TermRole::Cost, "7d median".into())]),
+            }));
+            assert_eq!(version.get(), 7);
+            assert!(
+                market.rows.with(Vec::is_empty),
+                "no candidate rows were needed"
+            );
+        });
     }
 
     #[test]

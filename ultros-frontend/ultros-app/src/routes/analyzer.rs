@@ -237,19 +237,24 @@ const ALL_OPTIONAL_COLS: &[&str] = &[
 /// user explicitly sets the param (even to ""), we respect that exact
 /// set instead of falling back to defaults.
 ///
-/// Sales/Day is default-on even though the ClickHouse rollup doesn't cover
-/// every row: its cadence badge falls back to the buffer-derived rate, so it
-/// renders something on every row (it replaced the old numeric Velocity
-/// column, which showed the same rate less legibly). The remaining
-/// ClickHouse-only columns (trend, 30d volume) are off because they have no
-/// fallback and would be blank on uncovered rows. ROI is off because it
-/// ranks by ratio, which is the wrong objective when retainer slots are the
-/// scarce resource.
+/// Everything but Tax and 30d Volume. Sales/Day is on even though the
+/// ClickHouse rollup doesn't cover every row: its cadence badge falls back
+/// to the buffer-derived rate, so it renders something on every row. Trend
+/// has no such fallback and is blank on uncovered rows, but with the grid
+/// sizing columns to content that costs little, and a sparkline is the
+/// quickest read on whether a price is holding. ROI stays a secondary
+/// signal (it ranks by ratio, the wrong objective when retainer slots are
+/// the scarce resource) but is worth a glance next to Profit/Day. Tax is
+/// derivable from the sale price and 30d Volume is blank without
+/// enrichment, so those two remain opt-in.
 const DEFAULT_VISIBLE_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
+    COL_ROI,
     COL_DRIFT,
     COL_CONFIDENCE,
     COL_WORLD,
+    COL_DATACENTER,
+    COL_TREND,
     COL_SALES_PER_DAY,
     COL_LAST_SOLD,
 ];
@@ -326,6 +331,16 @@ struct ProfitData {
     /// chronological order; every other consumer wants the sorted one.
     prices: Vec<i32>,
     sale_summary: SaleSummary,
+}
+
+/// Auto-fit includes the localized fallback annotation actually rendered in the cell.
+fn sale_estimate_measure_text(price: i32, fallback: bool, fallback_label: &str) -> String {
+    use thousands::Separable;
+    let mut text = price.separate_with_commas();
+    if fallback {
+        text.push_str(fallback_label);
+    }
+    text
 }
 
 /// Loading a selected statistic cannot reject a candidate using a temporary fallback.
@@ -1533,23 +1548,28 @@ fn AnalyzerTable(
         }
     };
 
+    // Default column order, with the width each column has until the grid
+    // has measured its content (the server render, and the client until
+    // rows arrive). The grid auto-fits every column the user hasn't sized,
+    // so these only need to be close: they're the widths a settled English
+    // Gilgamesh view landed on.
     let grid_columns = Memo::new(move |_| {
         let visible = visible_cols.get();
         [
             ("hq", 70.0),
-            ("item", 330.0),
-            ("profit", 120.0),
-            (COL_PROFIT_PER_DAY, 125.0),
-            (COL_TAX, 110.0),
-            (COL_DRIFT, 100.0),
-            (COL_CONFIDENCE, 115.0),
+            ("item", 381.0),
+            ("profit", 114.0),
+            (COL_PROFIT_PER_DAY, 135.0),
             (COL_ROI, 95.0),
-            ("buy_price", 125.0),
+            (COL_TAX, 110.0),
+            (COL_DRIFT, 107.0),
+            (COL_CONFIDENCE, 123.0),
+            ("buy_price", 131.0),
             ("sale_estimate", 150.0),
-            (COL_WORLD, 150.0),
-            (COL_DATACENTER, 160.0),
+            (COL_WORLD, 114.0),
+            (COL_DATACENTER, 110.0),
             (COL_TREND, 140.0),
-            (COL_SALES_PER_DAY, 130.0),
+            (COL_SALES_PER_DAY, 126.0),
             (COL_VOLUME_30D, 105.0),
             (COL_LAST_SOLD, 120.0),
         ]
@@ -2150,6 +2170,13 @@ fn AnalyzerTable(
         fetch_flip_enrichment,
         FLIP_ENRICHMENT,
     );
+
+    // Native ClickHouse cells can change without changing a row's pricing.
+    // Track the store revision without cloning it or scanning candidate rows.
+    let native_measure_version = Memo::new(move |previous: Option<&u64>| {
+        enrichment.with(|_| ());
+        previous.copied().unwrap_or_default().wrapping_add(1)
+    });
 
     type Row = (usize, CalculatedProfitData);
     let worlds_for_metric = worlds.clone();
@@ -2795,6 +2822,7 @@ fn AnalyzerTable(
                 id="flip-finder-grid"
                 show_saved_views=false
                 label=t_string!(i18n, flip_finder).to_string()
+                measure_version=Signal::derive(move || native_measure_version.get())
                 market
                 on_rows=Callback::new(move |rows| queried_rows.set(rows))
                 metrics=native_metrics
@@ -2962,7 +2990,7 @@ COL_LAST_SOLD => (view! {
                     let text = match column {
                         "item" => items.get(&ItemId(data.inner.sale_summary.item_id)).map(|i|i.name.clone()).unwrap_or_default(),
                         "hq" => if data.inner.sale_summary.hq { t_string!(i18n,analyzer_col_hq).to_string() } else { String::new() },
-                        "sale_estimate" => data.inner.estimated_sale_price.separate_with_commas(),
+                        "sale_estimate" => sale_estimate_measure_text(data.inner.estimated_sale_price, data.price_fallback, t_string!(i18n, market_fallback_badge)),
                         "profit" => data.profit.separate_with_commas(),
                         COL_PROFIT_PER_DAY => data.profit_per_day.separate_with_commas(),
                         COL_TAX => sale_tax(data.inner.estimated_sale_price).separate_with_commas(),
@@ -2981,7 +3009,24 @@ COL_LAST_SOLD => (view! {
                         }).unwrap_or_else(||t_string!(i18n,analyzer_last_sold_never).to_string()),
                         _ => String::new(),
                     };
-                    let padding=match column { "item"=>150.0, COL_TREND=>140.0, COL_SALES_PER_DAY=>200.0, "profit"|"buy_price"|COL_PROFIT_PER_DAY|COL_TAX=>48.0, _=>32.0 };
+                    // Everything in the cell besides the measured text, from the
+                    // rendered markup: `px-3` (24) and the 1px column border
+                    // on every cell; `px-4`, the 40px icon, the clipboard and
+                    // list buttons and their gaps on Item; the 20px gil icon on
+                    // the gil columns; the 80px sparkline on Trend; the whole
+                    // cadence badge on Sales/Day (its text is not measured).
+                    // Badge text is 12px but measured at the grid's 14px, which
+                    // covers the badge's own padding.
+                    let padding=match column {
+                        "item"=>150.0,
+                        COL_TREND=>106.0,
+                        COL_SALES_PER_DAY=>126.0,
+                        "profit"|"buy_price"|"sale_estimate"|COL_PROFIT_PER_DAY|COL_TAX=>48.0,
+                        COL_ROI=>40.0,
+                        COL_DRIFT=>30.0,
+                        COL_WORLD|COL_DATACENTER|COL_LAST_SOLD=>26.0,
+                        _=>32.0,
+                    };
                     (text,padding)
                 }
                 view=move |(index, data): (usize, CalculatedProfitData), column| {
@@ -4610,12 +4655,6 @@ mod tests {
     }
 
     #[test]
-    fn roi_is_optional_and_off_by_default() {
-        assert!(ALL_OPTIONAL_COLS.contains(&COL_ROI));
-        assert!(!DEFAULT_VISIBLE_COLS.contains(&COL_ROI));
-    }
-
-    #[test]
     fn tax_is_optional_and_off_by_default() {
         // Profit is already post-tax by default; the tax column is
         // supplementary detail, so it ships opt-in.
@@ -4624,23 +4663,41 @@ mod tests {
     }
 
     #[test]
-    fn new_columns_are_on_by_default() {
-        for col in [COL_DRIFT, COL_CONFIDENCE, COL_SALES_PER_DAY] {
-            assert!(ALL_OPTIONAL_COLS.contains(&col), "{col} missing from ALL");
-            assert!(DEFAULT_VISIBLE_COLS.contains(&col), "{col} not default-on");
-        }
+    fn sale_estimate_measurement_includes_only_the_rendered_fallback_annotation() {
+        assert_eq!(
+            sale_estimate_measure_text(12_345, false, " (fallback)"),
+            "12,345"
+        );
+        assert_eq!(
+            sale_estimate_measure_text(12_345, true, " (fallback)"),
+            "12,345 (fallback)"
+        );
+        assert_eq!(
+            sale_estimate_measure_text(12_345, true, "（代替価格）"),
+            "12,345（代替価格）"
+        );
     }
 
     #[test]
-    fn ch_only_columns_are_off_by_default() {
-        // Sales/Day is exempt: it falls back to the buffer-derived rate, so
-        // it renders on every row and ships default-on.
-        for col in [COL_TREND, COL_VOLUME_30D, COL_DATACENTER] {
-            assert!(
-                !DEFAULT_VISIBLE_COLS.contains(&col),
-                "{col} should be opt-in (no fallback where ClickHouse lacks coverage)"
-            );
+    fn default_columns_are_everything_but_tax_and_volume() {
+        for col in [
+            COL_PROFIT_PER_DAY,
+            COL_ROI,
+            COL_DRIFT,
+            COL_CONFIDENCE,
+            COL_WORLD,
+            COL_DATACENTER,
+            COL_TREND,
+            COL_SALES_PER_DAY,
+            COL_LAST_SOLD,
+        ] {
+            assert!(ALL_OPTIONAL_COLS.contains(&col), "{col} missing from ALL");
+            assert!(DEFAULT_VISIBLE_COLS.contains(&col), "{col} not default-on");
         }
+        // 30d Volume is blank on rows ClickHouse doesn't cover and has no
+        // fallback, so it stays opt-in.
+        assert!(!DEFAULT_VISIBLE_COLS.contains(&COL_VOLUME_30D));
+        assert_eq!(DEFAULT_VISIBLE_COLS.len(), ALL_OPTIONAL_COLS.len() - 2);
     }
 
     #[test]
