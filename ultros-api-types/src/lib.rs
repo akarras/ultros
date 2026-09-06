@@ -1,4 +1,5 @@
 pub mod alert;
+pub mod app_version;
 pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
