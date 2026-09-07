@@ -9,7 +9,7 @@ use crate::components::crafting_cost::{
     compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
-use crate::components::virtual_grid::saved_views::GridSavedViews;
+use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
@@ -37,6 +37,7 @@ use crate::{
     global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
 };
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::use_params_map;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
@@ -137,6 +138,31 @@ const FILTER_ROI: &str = "roi";
 const FILTER_MIN_SALES: &str = "min-sales";
 const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
 const FILTER_USE_ON_HAND: &str = "on-hand";
+
+/// The page's built-in views, offered above the reader's own saved ones.
+///
+/// Queries only: the labels live in [`fc_crafting_presets`] because `t_string!`
+/// needs a literal key. Every key used here is pinned by a test below.
+const PRESET_QUERIES: [&str; 3] = [
+    "?min-sales=1&roi=30&sort=profit",
+    "?min-sales=0.5&profit=100000&sort=profit",
+    "?min-sales=1&shards-exclude=true&sort=profit",
+];
+
+fn fc_crafting_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, fc_crafting_preset_realistic).to_string(),
+        t_string!(i18n, fc_crafting_preset_big_ticket).to_string(),
+        t_string!(i18n, fc_crafting_preset_no_shards).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
 
 /// Filters the `+ Filter` menu can add, in menu order.
 const ADDABLE_FILTERS: &[&str] = &[
@@ -585,6 +611,11 @@ fn FCCraftingAnalyzerTable(
         set_use_on_hand(None);
     });
 
+    // Built outside `ControlBar`'s `actions` closure: that closure runs
+    // in a render effect and `t_string!` is tracked, so resolving the
+    // labels there would rebuild the whole slot on a language switch.
+    let presets = Signal::derive(move || fc_crafting_presets(i18n));
+
     view! {
             <div class="flex flex-col gap-6">
                 <ActiveListBanner />
@@ -609,7 +640,7 @@ fn FCCraftingAnalyzerTable(
                     actions=move || {
                         view! {
                             <RealtimeStatus status=realtime_status last_update=last_update />
-                            <GridSavedViews id="fc-crafting-analyzer-grid" />
+                            <GridSavedViews id="fc-crafting-analyzer-grid" presets=presets />
                         }
                             .into_any()
                     }
@@ -992,6 +1023,42 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(
+                        std::str::FromStr::from_str(value)
+                            .map(|_: SortMode| ())
+                            .is_ok(),
+                        "{query}"
+                    ),
+                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
 
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.

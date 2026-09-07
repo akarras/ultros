@@ -1962,5 +1962,20 @@
     "recipe_planner_world_hop_cost": "Coût d'un saut de monde (gils)",
     "recipe_planner_dc_hop_cost": "Coût d'un saut de centre de données (gils)",
     "recipe_planner_hop_cost_help": "Un saut de monde correspond à un écran de chargement depuis l'éthérite. Un saut de centre de données passe par le menu principal et plusieurs écrans de chargement. Les trajets sont classés par gils plus ces coûts de déplacement.",
-    "recipe_planner_reset_defaults": "Réinitialiser"
+    "recipe_planner_reset_defaults": "Réinitialiser",
+    "recipe_analyzer_preset_realistic": "Artisanat réaliste",
+    "recipe_analyzer_preset_big_ticket": "Artisanat à forte valeur",
+    "recipe_analyzer_preset_volume": "Artisanat en volume",
+    "fc_crafting_preset_realistic": "Artisanat réaliste",
+    "fc_crafting_preset_big_ticket": "Artisanat à forte valeur",
+    "fc_crafting_preset_no_shards": "Ignorer les éclats et cristaux",
+    "venture_analyzer_preset_best_profit": "Meilleur bénéfice",
+    "venture_analyzer_preset_fast_movers": "Ventes rapides",
+    "venture_analyzer_preset_high_value": "Expéditions à forte valeur",
+    "leve_analyzer_preset_best_profit": "Meilleur bénéfice",
+    "leve_analyzer_preset_steady_sellers": "Ventes régulières",
+    "leve_analyzer_preset_cheapest": "Les moins chères à remplir",
+    "scrip_sources_preset_best_value": "Meilleur rapport par script",
+    "scrip_sources_preset_orange_crafters": "Scripts orange d'artisan",
+    "scrip_sources_preset_orange_gatherers": "Scripts orange de récolteur"
 }

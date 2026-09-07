@@ -1962,5 +1962,20 @@
     "recipe_planner_world_hop_cost": "Kosten pro Weltensprung (Gil)",
     "recipe_planner_dc_hop_cost": "Kosten pro Datenzentrums-Sprung (Gil)",
     "recipe_planner_hop_cost_help": "Ein Weltensprung ist ein Ladebildschirm vom Ätheryten aus. Ein Datenzentrums-Sprung führt über das Hauptmenü und mehrere Ladebildschirme. Routen werden nach Gil plus diesen Reisekosten sortiert.",
-    "recipe_planner_reset_defaults": "Auf Standard zurücksetzen"
+    "recipe_planner_reset_defaults": "Auf Standard zurücksetzen",
+    "recipe_analyzer_preset_realistic": "Realistische Herstellung",
+    "recipe_analyzer_preset_big_ticket": "Hochpreisige Herstellung",
+    "recipe_analyzer_preset_volume": "Herstellung in Menge",
+    "fc_crafting_preset_realistic": "Realistische Herstellung",
+    "fc_crafting_preset_big_ticket": "Hochpreisige Herstellung",
+    "fc_crafting_preset_no_shards": "Splitter und Kristalle überspringen",
+    "venture_analyzer_preset_best_profit": "Bester Gewinn",
+    "venture_analyzer_preset_fast_movers": "Schnelldreher",
+    "venture_analyzer_preset_high_value": "Hochwertige Unternehmungen",
+    "leve_analyzer_preset_best_profit": "Bester Gewinn",
+    "leve_analyzer_preset_steady_sellers": "Stetige Verkäufer",
+    "leve_analyzer_preset_cheapest": "Am günstigsten zu erfüllen",
+    "scrip_sources_preset_best_value": "Bester Wert pro Devise",
+    "scrip_sources_preset_orange_crafters": "Orangene Handwerkerdevisen",
+    "scrip_sources_preset_orange_gatherers": "Orangene Sammlerdevisen"
 }

@@ -1962,5 +1962,20 @@
     "recipe_planner_world_hop_cost": "월드 이동 비용 (길)",
     "recipe_planner_dc_hop_cost": "DC 이동 비용 (길)",
     "recipe_planner_hop_cost_help": "월드 이동은 에테라이트에서 로딩 화면 한 번입니다. DC 이동은 메인 메뉴를 거쳐 여러 번의 로딩 화면을 지납니다. 경로는 길과 이 이동 비용의 합으로 정렬됩니다.",
-    "recipe_planner_reset_defaults": "기본값으로 재설정"
+    "recipe_planner_reset_defaults": "기본값으로 재설정",
+    "recipe_analyzer_preset_realistic": "현실적인 제작",
+    "recipe_analyzer_preset_big_ticket": "고가 제작",
+    "recipe_analyzer_preset_volume": "대량 제작",
+    "fc_crafting_preset_realistic": "현실적인 제작",
+    "fc_crafting_preset_big_ticket": "고가 제작",
+    "fc_crafting_preset_no_shards": "크리스탈류 제외",
+    "venture_analyzer_preset_best_profit": "수익 높은 순",
+    "venture_analyzer_preset_fast_movers": "빠르게 팔리는 품목",
+    "venture_analyzer_preset_high_value": "고가 임무",
+    "leve_analyzer_preset_best_profit": "수익 높은 순",
+    "leve_analyzer_preset_steady_sellers": "꾸준히 팔리는 품목",
+    "leve_analyzer_preset_cheapest": "납품 비용이 저렴한 순",
+    "scrip_sources_preset_best_value": "증표당 가치 높은 순",
+    "scrip_sources_preset_orange_crafters": "주황 제작자의 증표",
+    "scrip_sources_preset_orange_gatherers": "주황 채집자의 증표"
 }

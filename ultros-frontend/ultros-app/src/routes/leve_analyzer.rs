@@ -5,7 +5,7 @@ use crate::analyzer_kit::{
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
-use crate::components::virtual_grid::saved_views::GridSavedViews;
+use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::query_signal;
@@ -31,6 +31,7 @@ use crate::{
     query_defaults::filter_query_signal,
 };
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use thousands::Separable;
@@ -126,6 +127,31 @@ impl SortColumn for SortMode {
 const FILTER_PROFIT: &str = "profit";
 const FILTER_JOB: &str = "job";
 const FILTER_OUTLIERS: &str = "filter-outliers";
+
+/// The page's built-in views, offered above the reader's own saved ones.
+///
+/// Queries only: the labels live in [`leve_analyzer_presets`] because `t_string!`
+/// needs a literal key. Every key used here is pinned by a test below.
+const PRESET_QUERIES: [&str; 3] = [
+    "?filter-outliers=true&sort=profit",
+    "?filter-outliers=true&sort=daily-sales",
+    "?filter-outliers=true&sort=cost",
+];
+
+fn leve_analyzer_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, leve_analyzer_preset_best_profit).to_string(),
+        t_string!(i18n, leve_analyzer_preset_steady_sellers).to_string(),
+        t_string!(i18n, leve_analyzer_preset_cheapest).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
 
 /// Filters the `+ Filter` menu can add, in menu order.
 const ADDABLE_FILTERS: &[&str] = &[FILTER_PROFIT, FILTER_JOB, FILTER_OUTLIERS];
@@ -594,6 +620,11 @@ fn LeveAnalyzerTable(
         set_filter_outliers(None);
     });
 
+    // Built outside `ControlBar`'s `actions` closure: that closure runs
+    // in a render effect and `t_string!` is tracked, so resolving the
+    // labels there would rebuild the whole slot on a language switch.
+    let presets = Signal::derive(move || leve_analyzer_presets(i18n));
+
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap gap-3">
@@ -617,7 +648,7 @@ fn LeveAnalyzerTable(
                     actions=move || {
                         view! {
                             <RealtimeStatus status=realtime_status last_update=last_update />
-                            <GridSavedViews id="leve-analyzer-grid" />
+                            <GridSavedViews id="leve-analyzer-grid" presets=presets />
                         }
                             .into_any()
                     }
@@ -967,6 +998,42 @@ pub fn LeveAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(
+                        std::str::FromStr::from_str(value)
+                            .map(|_: SortMode| ())
+                            .is_ok(),
+                        "{query}"
+                    ),
+                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn sale_price_filters_wait_for_selected_basis_instead_of_rejecting_listing_fallback() {
