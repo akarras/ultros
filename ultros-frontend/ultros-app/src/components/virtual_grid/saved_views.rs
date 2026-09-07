@@ -54,7 +54,7 @@ pub fn GridSavedViews(#[prop(into)] id: String) -> impl IntoView {
         <div class="relative" node_ref=container data-grid-saved-views>
             <button
                 type="button"
-                class="sticky-bar-button"
+                class="sticky-bar-button sticky-bar-button-shrink"
                 aria-label=t_string!(i18n, analyzer_saved_views)
                 aria-expanded=move || open.get().to_string()
                 on:click=move |_| {
@@ -66,7 +66,7 @@ pub fn GridSavedViews(#[prop(into)] id: String) -> impl IntoView {
                 }
             >
                 <Icon icon=icondata::MdiBookmarkMultipleOutline />
-                <span>{t!(i18n, analyzer_saved_views)}</span>
+                <span class="hidden md:inline sticky-bar-button-label">{t!(i18n, analyzer_saved_views)}</span>
             </button>
             <Show when=move || open.get()>
                 <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">

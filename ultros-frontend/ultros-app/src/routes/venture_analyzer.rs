@@ -4,6 +4,7 @@ use crate::analyzer_kit::{
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::use_realtime;
@@ -464,6 +465,43 @@ fn VentureAnalyzerTable(
 
     view! {
             <div class="flex flex-col gap-6">
+                // Job category multi-select: complex tag-cloud widget, kept as panel
+                <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                    <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {move || {
+                            let selected = selected_jobs_set.get();
+                            categories
+                                .get()
+                                .into_iter()
+                                .map(|(_id, name)| {
+                                    let is_selected = selected.contains(&name);
+                                    let name_clone = name.clone();
+                                    let toggle_job = toggle_job.clone();
+                                    view! {
+                                        <button
+                                            class=move || {
+                                                if is_selected {
+                                                    "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
+                                                } else {
+                                                    "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
+                                                }
+                                            }
+                                            on:click=move |_| toggle_job(name_clone.clone())
+                                        >
+                                            {name}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()
+                        }}
+                    </div>
+                </div>
+
+                <MarketPriceControls label=t_string!(i18n, market_returned_value).to_string()
+                    basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
@@ -474,7 +512,10 @@ fn VentureAnalyzerTable(
                         .into_any()
                     }
                     actions=move || {
-                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="venture-analyzer-grid" />
+                        }
                             .into_any()
                     }
                     available_filters=Signal::derive(filter_options)
@@ -523,44 +564,8 @@ fn VentureAnalyzerTable(
                     }}
                 </ControlBar>
 
-                // Job category multi-select: complex tag-cloud widget, kept as panel
-                <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
-                    <div class="flex flex-wrap gap-2">
-                        {move || {
-                            let selected = selected_jobs_set.get();
-                            categories
-                                .get()
-                                .into_iter()
-                                .map(|(_id, name)| {
-                                    let is_selected = selected.contains(&name);
-                                    let name_clone = name.clone();
-                                    let toggle_job = toggle_job.clone();
-                                    view! {
-                                        <button
-                                            class=move || {
-                                                if is_selected {
-                                                    "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
-                                                } else {
-                                                    "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
-                                                }
-                                            }
-                                            on:click=move |_| toggle_job(name_clone.clone())
-                                        >
-                                            {name}
-                                        </button>
-                                    }
-                                })
-                                .collect_view()
-                        }}
-                    </div>
-                </div>
-
-                <MarketPriceControls label=t_string!(i18n, market_returned_value).to_string()
-                    basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
-                    on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
-                <div class="rounded-2xl panel">
-                    <MarketGrid market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
+                <div>
+                    <MarketGrid show_saved_views=false market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
         let mut subject = MarketSubject::new(row.item_id, row.hq, row.cheapest_world_id);
         subject.listing_price = row.listing_price;
         subject.label = t_string!(i18n, market_returned_item).to_string();

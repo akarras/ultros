@@ -9,6 +9,7 @@ use crate::components::crafting_cost::{
     compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
@@ -145,7 +146,7 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_USE_ON_HAND,
 ];
 
-const FC_TABLE_CLASS: &str = "fc-craft-table rounded-2xl panel";
+const FC_TABLE_CLASS: &str = "fc-craft-table";
 
 fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitData) -> Ordering {
     match mode {
@@ -586,6 +587,15 @@ fn FCCraftingAnalyzerTable(
     view! {
             <div class="flex flex-col gap-6">
                 <ActiveListBanner />
+                <div class="flex flex-wrap gap-3">
+                    <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                        basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                        on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                    <MarketPriceControls label=t_string!(i18n, market_completed_price).to_string()
+                        basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
+                        on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+                </div>
+
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
@@ -596,7 +606,10 @@ fn FCCraftingAnalyzerTable(
                         .into_any()
                     }
                     actions=move || {
-                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="fc-crafting-analyzer-grid" />
+                        }
                             .into_any()
                     }
                     available_filters=Signal::derive(filter_options)
@@ -706,16 +719,8 @@ fn FCCraftingAnalyzerTable(
                     }}
                 </ControlBar>
 
-                <div class="flex flex-wrap gap-3">
-                    <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
-                        basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
-                        on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                    <MarketPriceControls label=t_string!(i18n, market_completed_price).to_string()
-                        basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
-                        on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
-                </div>
                 <div class=FC_TABLE_CLASS>
-                     <MarketGrid id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
+                     <MarketGrid show_saved_views=false id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
      market=market
      subject=Arc::new(move |(_, row): &(usize, Arc<FCCraftProfitData>)| {
          let mut subject = MarketSubject::new(row.sequence.result_item, row.market_hq, row.cheapest_world_id);
