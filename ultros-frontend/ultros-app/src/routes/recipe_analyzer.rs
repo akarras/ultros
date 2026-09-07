@@ -30,7 +30,7 @@ use crate::components::crafting_cost::{
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
-use crate::components::related_items::is_shard_item;
+use crate::components::related_items::shard_item_ids;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
 use crate::components::virtual_grid::metrics::{GridValue, active_metric_columns};
@@ -74,6 +74,7 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_i18n::I18nContext;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
+use leptos_use::{UseIntervalReturn, use_interval};
 use percent_encoding::utf8_percent_encode;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::LazyLock;
@@ -2217,6 +2218,12 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
     }
 
     let runs_done = std::cell::Cell::new(0u32);
+    // One game-data read for the whole pass. Calling `is_shard_item` per
+    // ingredient repeats `tracked_data()`'s context lookup and subscription
+    // for every ingredient of every recipe and sub-recipe — a third of the
+    // pricing time in the 2026-09 profile of a filter toggle.
+    let shard_ids = shard_item_ids();
+    let is_shard = |id: ItemId| shard_ids.binary_search(&id.0).is_ok();
     let selected = inp.formula.cost_signal();
     let scope_is_home = inp.formula.buy_scope() == BuyScope::World;
     // A buy-scope view under `signal`: the listing, or the stat over it.
@@ -2338,7 +2345,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
                 on_hand: active.as_ref(),
                 vendor_prices: Some(vendor_price_map()),
             };
-            compute_cost(recipe, view, inp.recipes_by_output, &opts, &is_shard_item)
+            compute_cost(recipe, view, inp.recipes_by_output, &opts, &is_shard)
         };
         let breakdown = cost_run(&ingredient_view);
 
@@ -3765,10 +3772,24 @@ fn RecipeAnalyzerTable(
         }
     });
 
-    let cell_ctx = Signal::derive(move || CellCtx {
-        now_unix: chrono::Utc::now().timestamp(),
-        // `with`, not `get`: this is read once per rendered row and `get`
-        // would clone both sets each time.
+    // A memo, not `Signal::derive`: every cell render and both auto-fit
+    // measurements per cell read this, and a derive re-ran `Utc::now()` (a
+    // JS call) and the `needs` read on each of those tens of thousands of
+    // reads per pass. The minute tick keeps the "last sold … ago" labels
+    // moving now that the value is cached.
+    let UseIntervalReturn {
+        counter: minute_tick,
+        ..
+    } = use_interval(60_000);
+    // Everything about a cell's rendered text *except* the clock. The auto-fit
+    // pass keys off this rather than off `cell_ctx`, because
+    // `recipe_measure_version` tracks whatever it is handed: feeding it the
+    // ticking context would schedule a full re-measure of every row of every
+    // auto-fit column once a minute, forever — the same pass this change set
+    // out to make rarer. A "3h ago" label changing width is not worth one.
+    let fit_ctx: Signal<CellCtx> = Memo::new(move |_| CellCtx {
+        now_unix: 0,
+        // `with`, not `get`: `get` would clone both sets each time.
         capped_cost: needs.with(|n| capped_flags(&n.capped)),
         // Copy handles: reading them costs nothing until a lazy cell
         // actually looks inside, inside the row's own closure. Handed over
@@ -3777,8 +3798,21 @@ fn RecipeAnalyzerTable(
         sparklines: Some(market.sparklines),
         stats_30: Some(market.stats_30),
         stats_30_unavailable: Some(market.stats_30_unavailable),
-    });
-    let measure_version = recipe_measure_version(market, cell_ctx, header_extras, marks);
+    })
+    .into();
+    // A memo, not `Signal::derive`: every cell render and both auto-fit
+    // measurements per cell read this, and a derive re-ran `Utc::now()` (a JS
+    // call) on each of those tens of thousands of reads per pass. The minute
+    // tick keeps the "last sold … ago" labels moving now that it is cached.
+    let cell_ctx: Signal<CellCtx> = Memo::new(move |_| {
+        minute_tick.track();
+        CellCtx {
+            now_unix: chrono::Utc::now().timestamp(),
+            ..fit_ctx.get()
+        }
+    })
+    .into();
+    let measure_version = recipe_measure_version(market, fit_ctx, header_extras, marks);
 
     // Hoisted out of the `view!` below so both arms of the one child that
     // renders it can move it; its condition and its text are exactly what
@@ -8745,6 +8779,67 @@ mod test {
             assert!(
                 market.rows.with(Vec::is_empty),
                 "no candidate rows were needed"
+            );
+        });
+    }
+
+    /// `recipe_measure_version` tracks the whole `CellCtx` it is handed, so a
+    /// ticking `now_unix` in there schedules a full auto-fit pass — every row
+    /// of every auto-fit column — once a minute, forever. That is why
+    /// `RecipeAnalyzerTable` builds a clock-free `fit_ctx` for the version and
+    /// keeps the minute tick on the separate `cell_ctx` the cells read.
+    #[test]
+    fn the_clock_must_stay_out_of_the_measurement_context() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let market = MarketHandles {
+                sparklines: RwSignal::new(SparkStore::default()),
+                stats_30: RwSignal::new(None),
+                stats_30_unavailable: RwSignal::new(false),
+                visible_range: RwSignal::new((0, 0)),
+                rows: RwSignal::new(Vec::new()),
+            };
+            let extras = Memo::new(move |_| HeaderExtras::default());
+            let marks = Memo::new(move |_| None::<MarkLabels>);
+
+            let tick = RwSignal::new(0u64);
+            // The shape the fix avoids: the clock inside the tracked context.
+            let ticking = Signal::derive(move || {
+                let mut ctx = test_ctx();
+                ctx.now_unix = tick.get() as i64 * 60;
+                ctx
+            });
+            let ticking_version = recipe_measure_version(market, ticking, extras, marks);
+            assert_eq!(ticking_version.get(), 0);
+            tick.set(1);
+            assert_eq!(
+                ticking_version.get(),
+                1,
+                "a clock-only change rescans widths — this is the trap"
+            );
+
+            // The shape the table actually uses: no clock, so a minute passing
+            // cannot invalidate the measurement.
+            let capped = RwSignal::new(false);
+            let fit = Signal::derive(move || {
+                let mut ctx = test_ctx();
+                ctx.now_unix = 0;
+                ctx.capped_cost[0] = capped.get();
+                ctx
+            });
+            let fit_version = recipe_measure_version(market, fit, extras, marks);
+            assert_eq!(fit_version.get(), 0);
+            tick.set(2);
+            assert_eq!(
+                fit_version.get(),
+                0,
+                "a minute tick must not schedule an auto-fit pass"
+            );
+            capped.set(true);
+            assert_eq!(
+                fit_version.get(),
+                1,
+                "a real text change still invalidates measurement"
             );
         });
     }

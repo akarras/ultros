@@ -40,6 +40,22 @@ pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
         .unwrap_or(false)
 }
 
+/// Every id `is_shard_item` matches, sorted for `binary_search`. For hot
+/// loops: `is_shard_item` pays `tracked_data()`'s context lookup and
+/// `DataRevision` subscription on every call, which recipe pricing made
+/// once per ingredient of every recipe and sub-recipe. This reads the data
+/// once (still tracked, so a locale swap re-runs the caller).
+pub(crate) fn shard_item_ids() -> Vec<i32> {
+    let mut ids: Vec<i32> = tracked_data()
+        .items
+        .iter()
+        .filter(|(_, item)| item.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+        .map(|(id, _)| id.0)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
 /// Matches against items that start with the same prefix
 /// "Diadochos" -> "Diadochos Helmet" etc
 fn prefix_item_iterator<'a>(

@@ -40,6 +40,15 @@ const HEADING_FILTER_CLEAR: f64 = 20.0;
 /// Chunk of rows measured between yields to the event loop.
 #[cfg(feature = "hydrate")]
 const FIT_CHUNK_ROWS: usize = 512;
+/// Distinct texts per column that get a real `measureText`, taken from the
+/// head of a longest-first estimate. Only the longest few can decide a
+/// column's width; measuring every distinct gil value was a third of the
+/// auto-fit pass in the 2026-09 profile.
+#[cfg(feature = "hydrate")]
+const FIT_MEASURE_CANDIDATES: usize = 64;
+/// Average glyph advance assumed when ranking candidates before measuring.
+#[cfg(feature = "hydrate")]
+const FIT_ESTIMATE_CHAR_PX: f64 = 8.0;
 /// Debounce for the automatic pass: live updates and lazy enrichment can
 /// change `each` several times a second, and one measurement after the burst
 /// is enough.
@@ -441,8 +450,9 @@ where
     };
     // Measures `ids` against their heading labels and every current row with
     // the grid's real fonts, then hands the clamped widths to `apply`. Rows
-    // are processed in chunks with a yield between them, and a bump of
-    // `generation` (a newer request, cleanup) drops the pass on the floor.
+    // are formatted in chunks with a yield between them; only the longest
+    // distinct texts per column are then measured. A bump of `generation`
+    // (a newer request, cleanup) drops the pass on the floor.
     // Values that are not cached yet measure as whatever the row's `measure`
     // returns for them; nothing is fetched to size a column.
     #[cfg(feature = "hydrate")]
@@ -521,24 +531,40 @@ where
                     .collect::<Vec<_>>();
                 ctx.set_font(&cell_font);
                 let data = each.get_untracked();
-                let mut cache = std::collections::HashMap::<String, f64>::new();
+                // Every distinct text per column, with the widest adornment
+                // it was seen with. Formatting each cell is what yields the
+                // text; measuring waits for the few candidates that can
+                // actually decide the width.
+                let mut candidates: Vec<std::collections::HashMap<String, f64>> = defs
+                    .iter()
+                    .map(|_| std::collections::HashMap::new())
+                    .collect();
                 for chunk in data.chunks(FIT_CHUNK_ROWS) {
                     if generation.try_get_untracked() != Some(expected) {
                         return;
                     }
                     for row in chunk {
-                        for (width, def) in widths.iter_mut().zip(&defs) {
+                        for (texts, def) in candidates.iter_mut().zip(&defs) {
                             let (text, adornments) = measure.with_value(|m| m(row, def.id));
-                            let text_width = *cache.entry(text).or_insert_with_key(|text| {
-                                ctx.measure_text(text).map(|m| m.width()).unwrap_or(0.0)
-                            });
-                            *width = width.max(text_width + adornments);
+                            let widest = texts.entry(text).or_insert(0.0);
+                            *widest = widest.max(adornments);
                         }
                     }
                     gloo_timers::future::TimeoutFuture::new(0).await;
                 }
                 if generation.try_get_untracked() != Some(expected) {
                     return;
+                }
+                let estimate = |text: &str, adornments: f64| {
+                    text.chars().count() as f64 * FIT_ESTIMATE_CHAR_PX + adornments
+                };
+                for (width, texts) in widths.iter_mut().zip(candidates) {
+                    let mut texts: Vec<(String, f64)> = texts.into_iter().collect();
+                    texts.sort_by(|a, b| estimate(&b.0, b.1).total_cmp(&estimate(&a.0, a.1)));
+                    for (text, adornments) in texts.into_iter().take(FIT_MEASURE_CANDIDATES) {
+                        let text_width = ctx.measure_text(&text).map(|m| m.width()).unwrap_or(0.0);
+                        *width = width.max(text_width + adornments);
+                    }
                 }
                 apply(
                     defs.iter()
