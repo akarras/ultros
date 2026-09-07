@@ -628,6 +628,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                             <Icon icon=icondata::FaStoreSolid attr:class="text-xs opacity-70" />
                             <span class="truncate">{shop.name.as_str()}</span>
                         </div>
+                        <super::npc_locations::NpcLocations npc_id=resident.key_id.0 />
                     </a>
                 })
             }).collect_view())
@@ -1187,6 +1188,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                     {job_name}
                                 </span>
                              </div>
+                             <super::npc_locations::LeveIssuers leve_id=leve.key_id.0 />
                         </div>
                     }
                 })

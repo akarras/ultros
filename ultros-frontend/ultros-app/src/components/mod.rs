@@ -52,6 +52,7 @@ pub mod market_pulse;
 pub mod meta;
 pub mod mobile_bar;
 pub mod modal;
+pub mod npc_locations;
 pub mod on_hand_input;
 pub mod patreon;
 pub mod price_history_chart;

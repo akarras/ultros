@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "Standort nicht verfügbar",
+    "npc_quest_giver": "Auftraggeber",
+    "npc_quest_giver_unknown": "Auftraggeber unbekannt",
+
     "market_history_unavailable": "Der Verkaufsverlauf konnte nicht geladen werden.",
     "market_trend_world": "Trend-Welt",
     "grid_saved_views_empty": "Noch keine gespeicherten Ansichten.",

@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "위치 정보 없음",
+    "npc_quest_giver": "의뢰 NPC",
+    "npc_quest_giver_unknown": "의뢰 NPC 정보 없음",
+
     "market_history_unavailable": "판매 기록을 불러오지 못했습니다.",
     "market_trend_world": "추세 대상 서버",
     "grid_saved_views_empty": "아직 저장된 보기가 없습니다.",
