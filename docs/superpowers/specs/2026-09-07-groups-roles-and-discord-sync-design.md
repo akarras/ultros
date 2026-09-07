@@ -182,8 +182,10 @@ capped at 10:
 `POST /group/{id}/members/{uid}` (existing `add_group_member`) now takes an optional
 JSON body `{ display_name }` and upserts the `discord_user` row before inserting, so
 the foreign-key failure is gone. Members of a group whose `source = Synced` cannot be
-removed by the owner through this endpoint (400, "managed by Discord"); they are
-removed by leaving the Discord role.
+removed through this endpoint by anyone, the owner or themselves (400, "managed by
+Discord"); reconciliation would re-add them within hours, so the honest answer is
+that they leave by leaving the Discord role. The frontend hides the leave button
+for synced members.
 
 `GET /group/{id}/members` gains `roles: Vec<i32>` and `source` per member.
 
