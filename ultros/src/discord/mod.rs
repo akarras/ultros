@@ -120,8 +120,10 @@ pub(crate) async fn start_discord(
                     db.clone(),
                     item_events,
                     alert_events,
-                    event_receivers.lists.resubscribe(),
-                    event_receivers.history.resubscribe(),
+                    (
+                        event_receivers.lists.resubscribe(),
+                        event_receivers.history.resubscribe(),
+                    ),
                     ctx.clone(),
                     setup_token,
                     world_cache.clone(),
