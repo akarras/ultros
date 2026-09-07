@@ -41,9 +41,13 @@ hold:
 
 1. A `listings/remove` event deleted a row whose `retainer_id` is one of the
    user's owned retainers.
-2. No `listings/add` for the same `(world_id, item_id, listing_id)` arrives
-   within the hold window. (Reprice exclusion.) Rows with a null `listing_id`
-   are still matched; the reprice check simply cannot apply to them.
+2. No `listings/add` from the **same retainer** for the same
+   `(world_id, item_id, hq, quantity)` arrives within the hold window.
+   (Reprice exclusion.) The public `ActiveListing` type carries no Universalis
+   `listingID` and is constructed as a literal in 37 places, so the check is
+   keyed on the retainer instead. A retainer that sells one stack and relists
+   an identical stack inside the window is skipped, which is the accepted
+   failure direction.
 3. A sale inserted by `update_sales` arrives on the history bus with the same
    match key, received within **300 s** either side of the removal.
 4. `sale.sold_date >= removed_row.timestamp - 60 s` (clock-skew slack).
@@ -70,66 +74,68 @@ uniformity but the tracker ignores it.
 - New table `alert_retainer_sale (id, alert_id → alert.id ON DELETE CASCADE)`,
   mirroring `alert_retainer_undercut` minus the margin column. One row per
   alert; one alert per user is the expected shape but not enforced.
-- New `EventSenders`/`EventReceivers` pair `retainer_sale:
-  EventProducer<alert_retainer_sale::Model>` (bus size 40, same as
-  `retainer_undercut`).
+- No new event bus. The listener reloads its rules from the database on
+  every event of the existing `alerts` bus (`alert::Model` add/update/remove),
+  exactly as the price and list-update listeners do.
 - New `alert_event` rows on each fire, with `item_id`, `matched_price` set to
   the sale's `price_per_item`, and `matched_listing_id` left null (the
   `active_listing` row is already deleted). `delivered`/`delivery_error` as
   the undercut listener records them.
 
-### Matcher (`ultros/src/alerts/sold_alert.rs`)
+### Matcher (`ultros/src/alerts/sold_matcher.rs`)
 
-A pure `SoldMatcher` struct with no I/O, unit-testable from an event sequence:
+A pure `SoldMatcher` struct with no I/O, unit-testable from an event sequence.
+There is **one matcher process-wide**, shared by every sold alert, holding the
+union of all alerts' owned retainers. Pending removals from *every* retainer
+are kept (needed for rule 6); at the measured ~15 removals/s and a 300 s
+window that is ~4,500 small entries.
 
 ```
 struct SoldMatcher {
-    owned_retainers: HashSet<i32>,
-    pending_removals: HashMap<SaleKey, VecDeque<PendingRemoval>>, // all retainers
-    pending_sales:    HashMap<SaleKey, VecDeque<PendingSale>>,
-    window: Duration,   // 300 s
-    max_sale_age: Duration, // 24 h
+    owned: HashSet<i32>,                                   // union across alerts
+    pending_removals: HashMap<SaleKey, Vec<PendingRemoval>>, // all retainers
+    pending_sales:    HashMap<SaleKey, Vec<PendingSale>>,
+    window: TimeDelta,        // 300 s
+    max_sale_age: TimeDelta,  // 24 h
+    skew: TimeDelta,          // 60 s
 }
-enum Input { Removed(&ListingEventData, Instant), Added(&ListingEventData, Instant), Sale(&SaleEventData, Instant) }
-fn handle(&mut self, input: Input, now: Instant) -> Vec<SoldEvent>
-fn expire(&mut self, now: Instant)
+fn on_removed(&mut self, listing: RemovedListing, now: DateTime<Utc>) -> Vec<SoldEvent>
+fn on_added(&mut self, added: AddedListing, now: DateTime<Utc>)
+fn on_sale(&mut self, sale: ObservedSale, now: DateTime<Utc>) -> Vec<SoldEvent>
+fn expire(&mut self, now: DateTime<Utc>)
+fn set_owned(&mut self, owned: HashSet<i32>)
 ```
 
-- `Removed`: push every removed row (owned or not) into `pending_removals`
-  under its key, remembering `retainer_id`, `listing_id`, `timestamp`,
-  received time. Only owned rows are ever *reported*, but unowned rows are
-  needed for rule 6. To bound memory, unowned rows are only stored for keys
-  that currently have (or within the window had) an owned pending removal or
-  pending sale; everything else is dropped on arrival.
-- `Added`: if a pending removal with the same `(world, item, listing_id)`
-  exists, delete it (reprice).
-- `Sale`: for each sale, look up pending removals under its key. Apply rules
-  4 and 5, then rule 6 across all remaining candidates. On success pop the
-  earliest owned candidate and emit `SoldEvent { retainer_id, retainer_name,
-  item_id, world_id, hq, quantity, price_per_unit, sold_date, buyer }`. If
-  there is no candidate yet, store the sale in `pending_sales` so a
-  removal arriving after it (2% of pairs) can match; `Removed` therefore
-  also checks `pending_sales` symmetrically.
-- `expire`: drop entries older than the window from both maps.
+- `on_removed`: push the row under its key with its receipt time, then run
+  the match step for that key (a sale may already be waiting).
+- `on_added`: delete every pending removal whose `(world, item, hq, quantity,
+  retainer)` equals the added listing's (reprice).
+- `on_sale`: drop the sale if older than `max_sale_age`; otherwise store it
+  and run the match step. The step takes the oldest pending sale, collects
+  candidate removals under the key received within `window` of the sale and
+  satisfying rule 4, and: no candidates → the sale stays pending; candidates
+  from more than one retainer → the sale is discarded, removals stay; one
+  retainer → the earliest candidate is consumed and, if owned, a `SoldEvent
+  { retainer_id, retainer_name, key, sold_at, buyer_name }` is emitted.
+- `expire`: drop entries older than `window` from both maps.
 
 `SoldEvent` carries no confidence field: after rule 6 every emitted event is
 one the matcher stands behind.
 
-### Listener (`RetainerSaleListener`)
+### Listener (`ultros/src/alerts/sold_alert.rs`, `RetainerSaleListener`)
 
-Same shape as `RetainerAlertListener` in `undercut_alert.rs`: one task per
-`alert_retainer_sale` row, holding a `SoldMatcher` seeded from
-`get_retainer_listings_for_discord_user`, selecting over the listings bus, the
-history bus, and a control channel (`Stop`). A 30 s tick calls `expire`.
-Owned-retainer changes (`EventReceivers::retainers`) refresh
-`owned_retainers`. On a fire it formats the message, calls
-`dispatch_alert_detailed`, then records the `alert_event` exactly as the
-undercut listener does, including the legacy-destination fallback.
+Same shape as `ListUpdateAlertListener`: a single task started by
+`AlertManager`, selecting over the listings bus, the history bus, the
+owned-retainer bus, the `alerts` bus, a stop channel, and a 30 s tick that
+calls `expire`. Rules are `retainer_id → Vec<{alert_id, owner}>`, rebuilt from
+`get_all_active_retainer_sale_alerts` plus each owner's retainer ids on every
+`alerts` or owned-retainer event; the matcher's owned set is the union. On a
+`SoldEvent` it formats the message, calls `dispatch_alert` for every alert
+that owns that retainer, records an `alert_event` (`matched_price` = sale
+price) and updates `last_fired_at`.
 
-`AlertManager` gains `current_sale_alerts: HashMap<i32, RetainerSaleListener>`
-and subscribes to the new `retainer_sale` bus for add/remove, mirroring the
-undercut wiring in `start_manager`, `create_retainer_alert_listener`, and
-`remove_retainer_alert`.
+`AlertManager::start_manager` gains a `history: EventBus<SaleEventData>`
+parameter, passed from `discord/mod.rs`.
 
 Bus lag on either channel is handled with `handle_bus_recv` and simply
 continues; a dropped event is a missed sale, which is the accepted failure
@@ -137,9 +143,10 @@ direction.
 
 ### Message
 
-Title `Retainer sale`, body
+Title `Retainer sale: {item}`, body
 `Your retainer {retainer} sold {quantity}× {item} for {price} gil each` with
-`(HQ)` appended when HQ, click URL `/retainers/listings#retainer-{id}`.
+`(HQ)` appended when HQ, followed by the total and a link; click URL
+`/retainers/listings`.
 Item name resolved through `xiv_gen_db` as the undercut message does. Discord
 delivery is server-side English like the existing alerts.
 
@@ -148,8 +155,8 @@ delivery is server-side English like the existing alerts.
 - `AlertTrigger::RetainerSold {}` (unit-like struct variant, serialized as
   `{"type":"retainer_sold"}`), handled in `create_alert` via a new
   `create_retainer_sold_alert_handler` that requires `endpoint_ids`, calls
-  `db.create_retainer_sold_alert(owner, cooldown, &endpoint_ids)`, and
-  publishes on both `alerts` and `retainer_sale` buses.
+  `db.create_retainer_sale_alert(owner, cooldown, &endpoint_ids)`, and
+  publishes the new alert on the `alerts` bus.
 - `list_alerts` appends rows from `get_user_retainer_sold_alerts`.
 - `delete_alert` and `update_alert` (enabled, endpoint_ids) work through the
   shared `alert` row; deleting cascades to `alert_retainer_sale`, and the
@@ -184,14 +191,15 @@ Unit tests on `SoldMatcher` (no DB, no runtime):
 
 1. Removal then matching sale fires once with the right retainer.
 2. Sale then removal (reverse order) fires once.
-3. Removal followed by add with the same `listing_id` never fires.
+3. Removal followed by an add from the same retainer for the same item,
+   quality and quantity never fires (reprice).
 4. Same key removed for two different retainers, one sale: no fire.
 5. Same key removed three times for one retainer, two sales: fires twice.
 6. Sale older than 24 h at receipt: no fire.
 7. Sale `sold_date` before the removed row's `timestamp` (beyond slack): no
    fire.
 8. Removal older than the window when the sale arrives: no fire.
-9. Unowned removal with no owned activity on that key is not retained.
+9. `expire` drops both removals and sales older than the window.
 
 Replay test: feed the 2026-09-07 capture JSONL (checked in under
 `ultros/test_data/`, trimmed to a few hundred lines around known pairs) through
