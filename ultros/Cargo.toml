@@ -46,7 +46,7 @@ dotenvy = { workspace = true }
 metrics = "0.24.5"
 envy = "0.4.2"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
-tower = "0.5.3"
+tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.6.10", features = ["full"] }
 sha2 = "0.11.0"
 base64 = "0.22.1"
