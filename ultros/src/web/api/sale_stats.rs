@@ -119,6 +119,7 @@ async fn load_sale_stats(
             last_sold_unix: r.last_sold_unix,
             units_sold: r.units_sold,
             vwap: r.vwap,
+            gil_volume: r.gil_volume,
             sales_per_day: r.num_sold as f32 / window_days as f32,
             confidence: confidence
                 .get(&(r.item_id, r.hq != 0))

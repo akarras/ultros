@@ -1011,6 +1011,8 @@ pub struct BulkSaleStatsRow {
     /// Volume-weighted average per-unit price, rounded. Weighted by
     /// quantity so stack trades count per unit, not per transaction.
     pub vwap: i32,
+    /// Total gil traded in the window: `sum(price_per_item * quantity)`.
+    pub gil_volume: u64,
 }
 
 /// Aggregate min / median / mean per-unit sale price for **every**
@@ -1053,7 +1055,8 @@ pub async fn bulk_sale_stats(
             num_sold,
             last_sold_unix,
             units_sold,
-            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap
+            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap,
+            gil_volume_sum AS gil_volume
         FROM
         (
             SELECT

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Sale history for every window, right in the Columns picker",
+  "blurb": "Every analyzer can now show sale minimum, median, average, units, sales, VWAP and total gil traded over the last day, week, month or 90 days. The Flip Finder lists them all in its Columns menu, grouped by window.",
+  "link": "/flip-finder"
+}

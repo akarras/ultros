@@ -12,4 +12,5 @@ pub mod hop;
 pub mod market;
 pub mod needed;
 pub mod signals;
+pub mod stat_columns;
 pub mod strip;
