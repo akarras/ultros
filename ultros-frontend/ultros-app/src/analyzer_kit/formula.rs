@@ -238,7 +238,7 @@ pub struct ProfitFormula {
     /// Where the product's price is read. `Fixed(Scope::World)` — today's
     /// and every pre-Phase-F URL's value — until
     /// [`ProfitFormula::with_sell_scope`] seats it, which only the recipe
-    /// analyzer does and only under the `analyzer-recipe` lab.
+    /// analyzer does for its sale-price market.
     pub sell_scope: Term<Scope>,
     pub cost: Term<CostEstimator>,
     pub buy_scope: Term<BuyScope>,

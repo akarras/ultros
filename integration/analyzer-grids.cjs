@@ -70,6 +70,22 @@ async function main(){
       const world=tool==='flip-finder'?'':`&world=${WORLD}`;
       await goto(page,`${route}?v=1&min-sales=0&l=2~~item.8c${world}`);
       await aligned(page);
+      if(tool==='recipe-analyzer'){
+        assert(!(await page.cookies()).some(c=>c.name==='LABS'),'recipe controls work without a Labs cookie');
+        for(const column of ['profit','cost','price']){
+          const heading=`.virtual-grid-heading[data-column="${column}"]`;
+          await page.$eval(heading,e=>e.scrollIntoView({block:'nearest',inline:'nearest'}));
+          await page.waitForFunction(selector=>{
+            const h=document.querySelector(selector);
+            if(!h||!Number(h.closest('.virtual-grid').dataset.autoFitted))return false;
+            const label=h.querySelector('a .truncate');
+            const subtitle=h.querySelector('.grid-heading-content > div > div:last-child');
+            return label&&subtitle&&label.scrollWidth<=label.clientWidth+1&&subtitle.scrollWidth<=subtitle.clientWidth+1;
+          },{},heading);
+          assert(await page.$(`${heading} .grid-heading-content .sr-only`),'formula role badge is present by default');
+        }
+        await page.screenshot({path:path.join(dir,'recipe-formula-headers-desktop.png'),fullPage:true});
+      }
       assert(Math.abs(await page.$eval('.virtual-grid-heading[data-column="item"]',e=>e.getBoundingClientRect().width)-300)<1);
       const menu=`.virtual-grid-heading[data-column="${column}"] .grid-column-menu`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));

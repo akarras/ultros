@@ -541,7 +541,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: false,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
@@ -599,7 +599,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
@@ -745,7 +745,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
@@ -865,7 +865,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 0,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
@@ -968,7 +968,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
