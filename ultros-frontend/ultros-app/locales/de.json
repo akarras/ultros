@@ -93,7 +93,7 @@
     "grid_filter_clear": "Filter löschen",
     "grid_move_column": "Ziehen, um die Spalte zu verschieben",
     "grid_column_menu": "Spaltenoptionen",
-    "grid_column_menu_filtered": "Spaltenoptionen (gefiltert)",
+    "grid_column_menu_hint": "Rechtsklick oder gedrückt halten für Spaltenoptionen",
     "grid_resize_hint": "Zum Ändern der Breite ziehen; zum Anpassen an verfügbare Ergebnisse doppelklicken",
     "grid_auto_fit": "Breite automatisch anpassen",
     "grid_width": "Breite (px)",

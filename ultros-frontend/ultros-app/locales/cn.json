@@ -93,7 +93,7 @@
     "grid_filter_clear": "清除筛选",
     "grid_move_column": "拖动以移动列",
     "grid_column_menu": "列选项",
-    "grid_column_menu_filtered": "列选项（已筛选）",
+    "grid_column_menu_hint": "右键点击或长按打开列选项",
     "grid_resize_hint": "拖动调整宽度；双击按已有结果自动调整",
     "grid_auto_fit": "自动调整列宽",
     "grid_width": "宽度（像素）",

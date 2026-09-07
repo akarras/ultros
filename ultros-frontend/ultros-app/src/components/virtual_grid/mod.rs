@@ -12,7 +12,8 @@ use layout::column_range;
 pub(crate) use layout::row_range;
 pub use layout::{ColumnFilter, GridColumn, GridLayout};
 use leptos::leptos_dom::helpers::{
-    AnimationFrameRequestHandle, request_animation_frame_with_handle,
+    AnimationFrameRequestHandle, TimeoutHandle, request_animation_frame_with_handle,
+    set_timeout_with_handle,
 };
 use leptos::{portal::Portal, prelude::*};
 use std::hash::Hash;
@@ -21,14 +22,14 @@ use web_sys::wasm_bindgen::JsCast;
 pub const GRID_HEADER_HEIGHT: f64 = 56.0;
 pub const GRID_OVERSCAN: usize = 4;
 
-/// Space a heading needs around its label: the drag grip and menu button
-/// (20px each) and the content wrapper's 4px side padding. That padding
-/// rule (`.grid-heading-content > div`) outranks the `px-3` the analyzers
-/// put on their own heading markup, so it is the whole story. Measured, not
-/// derived: a heading laid out at `max-content` is 48px wider than its
-/// label.
+/// Space a heading needs around its label: the drag grip (20px) and the
+/// content wrapper's 4px side padding. That padding rule
+/// (`.grid-heading-content > div`) outranks the `px-3` the analyzers put on
+/// their own heading markup, so it is the whole story. The column menu has
+/// no button of its own — it opens on right-click, press-and-hold, or the
+/// ContextMenu key — so it costs no width.
 #[cfg(feature = "hydrate")]
-const HEADING_CHROME: f64 = 48.0;
+const HEADING_CHROME: f64 = 28.0;
 /// The sort-direction icon (1em at the 12px heading size) and its 8px gap,
 /// present only on the sorted column.
 #[cfg(feature = "hydrate")]
@@ -200,6 +201,12 @@ where
     ));
     let drag = RwSignal::new(None::<Drag>);
     let menu = RwSignal::new(None::<Menu>);
+    // Press-and-hold on a heading opens the column menu, the touch
+    // equivalent of the right-click a mouse gets. Holds the pending timer
+    // and the press origin, so finger jitter does not cancel the hold but a
+    // scroll does.
+    #[cfg(feature = "hydrate")]
+    let press = StoredValue::new_local(None::<(TimeoutHandle, f64, f64)>);
     // Reduce pointer movement to a boolean transition so automatic sizing
     // pauses once per gesture and resumes only after interaction finishes.
     #[cfg(feature = "hydrate")]
@@ -447,6 +454,59 @@ where
         insert_side.set(None);
         search.set(String::new());
         menu.set(Some(Menu { id, x, y }));
+    };
+    // How long a finger has to rest on a heading before its menu opens, and
+    // how far it may wander first. Below the drag threshold the grid itself
+    // uses, so a hold never doubles as the start of a column move.
+    #[cfg(feature = "hydrate")]
+    const HOLD_MS: u64 = 500;
+    #[cfg(feature = "hydrate")]
+    const HOLD_SLOP: f64 = 10.0;
+    #[cfg(feature = "hydrate")]
+    let cancel_hold = move || {
+        press.update_value(|p| {
+            if let Some((handle, _, _)) = p.take() {
+                handle.clear();
+            }
+        });
+    };
+    // Arms the hold. Mouse users have right-click, and the grip, resize
+    // handle and clear button own their own gestures, so neither arms it.
+    #[cfg(feature = "hydrate")]
+    let begin_hold = move |e: &web_sys::PointerEvent, id: &'static str, ci: usize| {
+        if e.pointer_type() == "mouse" {
+            return;
+        }
+        if e.target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|t| t.closest("button,.grid-resize-handle").ok().flatten())
+            .is_some()
+        {
+            return;
+        }
+        cancel_hold();
+        let (x, y) = (e.client_x(), e.client_y());
+        let handle = set_timeout_with_handle(
+            move || {
+                activate(0, ci);
+                open_menu(id, x, y);
+            },
+            std::time::Duration::from_millis(HOLD_MS),
+        );
+        if let Ok(handle) = handle {
+            press.set_value(Some((handle, x, y)));
+        }
+    };
+    #[cfg(feature = "hydrate")]
+    let hold_moved = move |e: &web_sys::PointerEvent| {
+        let wandered = press.with_value(|p| {
+            p.as_ref().is_some_and(|(_, x, y)| {
+                (e.client_x() - *x).abs() > HOLD_SLOP || (e.client_y() - *y).abs() > HOLD_SLOP
+            })
+        });
+        if wandered {
+            cancel_hold();
+        }
     };
     // Measures `ids` against their heading labels and every current row with
     // the grid's real fonts, then hands the clamped widths to `apply`. Rows
@@ -788,6 +848,7 @@ where
                             let title = c.column.label.clone();
                             view! {
                                 <div class="virtual-grid-heading" role="columnheader" aria-colindex=ci + 1 aria-sort=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|c.column.aria_sort).unwrap_or("none"))
+                                    title=t_string!(i18n, grid_column_menu_hint).to_string()
                                     id=format!("{}-r0-c{ci}",grid_id.get_value()) data-column=id data-grid-row="0" data-grid-col=ci
                                     class:grid-active=move || active.get() == (0,ci)
                                     class:grid-filter-active=move || column_filtered(id)
@@ -796,6 +857,10 @@ where
                                     style=move || placed.with(|p| p.iter().find(|c| c.column.id == id).map(|c| format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
                                     on:contextmenu=move |e| { e.prevent_default(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
                                     on:click=move |_| activate(0,ci)
+                                    on:pointerdown=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] begin_hold(&e, id, ci); }
+                                    on:pointermove=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] hold_moved(&e); }
+                                    on:pointerup=move |_| { #[cfg(feature = "hydrate")] cancel_hold(); }
+                                    on:pointercancel=move |_| { #[cfg(feature = "hydrate")] cancel_hold(); }
                                 >
                                     <button type="button" class="grid-drag-handle" aria-label=t_string!(i18n, grid_move_column).to_string() title=t_string!(i18n, grid_move_column).to_string()
                                         on:pointerdown=move |e: web_sys::PointerEvent| {
@@ -807,10 +872,12 @@ where
                                         }
                                     >"⠿"</button>
                                     <div class="grid-heading-content">{header.with_value(|f| f(id))}</div>
-                                    // A filled dot-stack does not read as "filtered": swap the
-                                    // glyph for a funnel and put a dedicated off switch beside it,
-                                    // the affordance Flip Finder's World/Datacenter columns used to
-                                    // carry on their own. Both cost width only while a filter is on.
+                                    // The only button a heading carries besides the grip: the
+                                    // off switch for the column's filters, the affordance Flip
+                                    // Finder's World/Datacenter columns used to have on their
+                                    // own. It costs width only while a filter is on, and its
+                                    // presence is what makes a filtered column legible at a
+                                    // glance — the tinted cell behind it is the second cue.
                                     {
                                         let filtered_title = title.clone();
                                         view! {
@@ -823,18 +890,6 @@ where
                                             </Show>
                                         }
                                     }
-                                    <button type="button" class="grid-column-menu"
-                                        aria-label=move || format!("{}: {title}", if column_filtered(id) {
-                                            t_string!(i18n, grid_column_menu_filtered)
-                                        } else {
-                                            t_string!(i18n, grid_column_menu)
-                                        })
-                                        on:click=move |e| { e.stop_propagation(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
-                                    >{move || if column_filtered(id) {
-                                        view! { <Icon icon=icondata::MdiFilter /> }.into_any()
-                                    } else {
-                                        view! { "\u{22ee}" }.into_any()
-                                    }}</button>
                                     <div class="grid-resize-handle" title=t_string!(i18n, grid_resize_hint).to_string()
                                         on:dblclick=move |e| { e.prevent_default(); e.stop_propagation(); fit(id); }
                                         on:pointerdown=move |e: web_sys::PointerEvent| {
@@ -872,7 +927,7 @@ where
             </div>
             {move || menu.get().map(move |m| view! {
                 <Portal>
-                    <div class="grid-menu-backdrop" on:click=move |_| close_menu()></div>
+                    <div class="grid-menu-backdrop" on:pointerdown=move |_| close_menu()></div>
                     <div class="grid-menu-panel" node_ref=menu_ref tabindex="-1" role="dialog" aria-modal="true" aria-label=t_string!(i18n, grid_column_menu).to_string()
                         style=format!("left:clamp(8px,{}px,calc(100vw - 280px));top:clamp(8px,{}px,calc(100dvh - 430px));",m.x,m.y)
                         on:keydown=move |e| {

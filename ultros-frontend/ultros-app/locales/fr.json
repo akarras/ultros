@@ -93,7 +93,7 @@
     "grid_filter_clear": "Effacer le filtre",
     "grid_move_column": "Faire glisser pour déplacer la colonne",
     "grid_column_menu": "Options de colonne",
-    "grid_column_menu_filtered": "Options de colonne (filtrée)",
+    "grid_column_menu_hint": "Clic droit ou appui long pour les options de colonne",
     "grid_resize_hint": "Faire glisser pour redimensionner ; double-cliquer pour ajuster aux résultats disponibles",
     "grid_auto_fit": "Ajuster la largeur",
     "grid_width": "Largeur (px)",
