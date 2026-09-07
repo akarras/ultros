@@ -613,6 +613,7 @@ pub fn RetainerListings() -> impl IntoView {
             }
         },
     );
+    let (drawer_visible, set_drawer_visible) = signal(false);
     let listed_pairs = Signal::derive(move || {
         retainers.get().and_then(|result| {
             result.ok().map(|data| {
@@ -659,8 +660,26 @@ pub fn RetainerListings() -> impl IntoView {
                             // has nothing to subscribe to.
                             <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
                                 <span class="content-title">{t!(i18n, retainers_all_listings_title)}</span>
-                                <RealtimeStatus status=live.status last_update=live.last_update />
+                                <div class="flex items-center gap-2">
+                                    <RealtimeStatus status=live.status last_update=live.last_update />
+                                    // Same arm as the pill: a sale alert needs
+                                    // retainers to watch, so it is not offered
+                                    // to a visitor who has none.
+                                    <button
+                                        class="btn"
+                                        on:click=move |_| set_drawer_visible.set(true)
+                                    >
+                                        <Icon icon=i::BsBell />
+                                        <span class="ml-1">{t!(i18n, add_alert_button)}</span>
+                                    </button>
+                                </div>
                             </div>
+                            <Show when=move || drawer_visible.get()>
+                                <AlertDrawer
+                                    initial_kind=AlertKind::Sold
+                                    set_visible=set_drawer_visible.into()
+                                />
+                            </Show>
                             {move || {
                                 match retainers.get() {
                                     None => {
