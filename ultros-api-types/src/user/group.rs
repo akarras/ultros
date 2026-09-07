@@ -164,7 +164,11 @@ mod tests {
 
     #[test]
     fn group_source_round_trips_through_its_database_representation() {
-        for source in [GroupSource::Manual, GroupSource::DiscordGuild, GroupSource::DiscordGuildMirrored] {
+        for source in [
+            GroupSource::Manual,
+            GroupSource::DiscordGuild,
+            GroupSource::DiscordGuildMirrored,
+        ] {
             assert_eq!(GroupSource::from(source as i16), source);
         }
     }
