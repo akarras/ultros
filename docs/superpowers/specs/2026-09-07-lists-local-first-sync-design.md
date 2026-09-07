@@ -88,12 +88,14 @@ root map "rows"
 pub struct RowKey { pub item_id: i32, pub quality: Quality }
 pub enum Quality { Any, Hq, Nq }              // From/Into Option<bool>
 pub struct RowSnapshot { pub key: RowKey, pub need: i64, pub acquired: i64, pub target: Option<i64> }
-pub struct MetaSnapshot { pub name: String, pub scope: AnySelector }
+/// `scope` is `None` only for a document nobody wrote a scope into; consumers
+/// treat that as "leave the list's scope alone".
+pub struct MetaSnapshot { pub name: String, pub scope: Option<AnySelector> }
 
 impl ListDocument {
-    pub fn new(peer: u64) -> Self;                       // LoroDoc::new + set_peer_id
-    pub fn from_snapshot(peer: u64, bytes: &[u8]) -> Result<Self, DocError>;
-    pub fn from_rows(peer: u64, meta: MetaSnapshot, rows: &[RowSnapshot]) -> Self;
+    pub fn new() -> Self;                                // LoroDoc::new, Loro's default random peer id
+    pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError>;
+    pub fn from_rows(meta: MetaSnapshot, rows: &[RowSnapshot]) -> Self;
 
     pub fn meta(&self) -> MetaSnapshot;
     pub fn rows(&self) -> Vec<RowSnapshot>;               // via get_deep_value, sorted by key
@@ -111,9 +113,12 @@ impl ListDocument {
     pub fn commit(&self);
 
     pub fn version(&self) -> Vec<u8>;                     // oplog_vv().encode()
-    pub fn export_snapshot(&self) -> Vec<u8>;             // ExportMode::Snapshot
-    pub fn export_shallow(&self) -> Vec<u8>;              // ExportMode::shallow_snapshot(&state_frontiers())
-    pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError>;  // ExportMode::updates(&vv)
+    pub fn export_snapshot(&self) -> Result<Vec<u8>, DocError>;   // ExportMode::Snapshot
+    pub fn export_shallow(&self) -> Result<Vec<u8>, DocError>;    // ExportMode::shallow_snapshot(&state_frontiers())
+    pub fn export_all(&self) -> Result<Vec<u8>, DocError>;        // ExportMode::all_updates()
+    pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError>;  // ExportMode::updates(&vv); empty = everything
+    pub fn sync_payload(&self, client_version: &[u8]) -> Result<SyncPayload, DocError>;  // Snapshot | Updates | UpToDate
+    pub fn is_ahead_of(&self, version: &[u8]) -> bool;
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError>;     // wraps ImportStatus
     pub fn on_local_update(&self, f: impl Fn(&[u8]) + Send + Sync + 'static) -> Subscription;  // subscribe_local_update
     pub fn on_change(&self, f: impl Fn() + Send + Sync + 'static) -> Subscription;             // subscribe_root
@@ -130,13 +135,13 @@ MakePlace import, wrap them in `UndoManager::group_start` / `group_end`.
 
 ### 2. Peers and identity
 
-- A browser generates a random `u64` peer id once and stores it in
-  `localStorage` under `ultros.listdoc.peer`. Every list document opened in
-  that browser uses it. Loro's undo manager is bound to one peer id, and this
-  keeps a device's undo stack coherent across lists.
-- The server uses one random peer id per process for edits it makes on behalf
-  of legacy writers. Two server processes are not a concern today (one Docker
-  host), and if that changes, distinct random ids per process remain correct.
+- Every document gets Loro's default random peer id when it is created, in
+  the browser and on the server alike. Nothing stores or reuses a peer id:
+  Loro's own guidance is that a peer id shared by two concurrent writers,
+  such as two tabs of one browser, can corrupt a document. The undo stack is
+  per open page anyway, so a fresh id per page load costs nothing.
+- The server creates a fresh document, and therefore a fresh peer id, for
+  every merge it performs on behalf of a legacy writer.
 - Loro records wall-clock timestamps on changes. On wasm it reads `Date.now`
   through wasm-bindgen, which the hydrate build already links.
 
@@ -149,7 +154,8 @@ MakePlace import, wrap them in `UndoManager::group_start` / `group_end`.
 - `store.rs`: persistence. Snapshots live in `localStorage` under
   `ultros.listdoc.v1.{list_id}` as base64, with `ultros.listdoc.index` holding
   last-used timestamps and the last known `ListPermission` per list. At most
-  20 lists are kept; opening a 21st evicts the least recently used. Saves happen on a 500 ms debounce after any change and
+  20 lists are kept; saving a 21st evicts the least recently used. No peer id
+  is stored (section 2). Saves happen on a 500 ms debounce after any change and
   on `visibilitychange` to hidden. A save that fails (quota, private mode) is
   logged and ignored; the document keeps working in memory.
 - `sync.rs`: the socket client (section 5). It exposes a
