@@ -127,6 +127,18 @@ fn purchase_summary(cost: i64, quantity: i64, missing: i64) -> String {
     text
 }
 
+/// Vendor top-up and shortage for one item; either part is omitted when zero.
+fn vendor_summary(vendor_quantity: i64, missing: i64) -> String {
+    let mut parts = Vec::new();
+    if vendor_quantity > 0 {
+        parts.push(format!("Vendor: {vendor_quantity}"));
+    }
+    if missing > 0 {
+        parts.push(format!("Still missing: {missing}"));
+    }
+    parts.join(" · ")
+}
+
 fn plan_summary(worlds: usize, missing: i64) -> String {
     let mut text = format!("{worlds} additional worlds");
     if missing > 0 {
@@ -642,7 +654,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                             view!{<label class="flex items-start gap-2 text-sm"><input type="checkbox" class="mt-1" prop:checked=move ||checklist.with(|s|s.contains(&key)) on:change=move |e|checklist.update(|s|{if event_target_checked(&e){s.insert(key);}else{s.remove(&key);}}) /><span>{label}</span></label>}
                         }).collect_view()}</div>}
                     }).collect_view()}
-                    {plan.purchases.into_iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(id)}</strong><p>{format!("Vendor: {} · Still missing: {}",p.vendor_quantity,p.missing())}</p></div>}).collect_view()}</div>}.into_any()
+                    {plan.purchases.into_iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(id)}</strong><p>{vendor_summary(p.vendor_quantity,p.missing())}</p></div>}).collect_view()}</div>}.into_any()
                 }}
             </section>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
@@ -731,6 +743,13 @@ mod tests {
             purchase_summary(1_500, 3, 2),
             "1,500 gil · buy 3 · 2 missing"
         );
+    }
+
+    #[test]
+    fn vendor_summary_mentions_missing_only_when_short() {
+        assert_eq!(vendor_summary(10, 0), "Vendor: 10");
+        assert_eq!(vendor_summary(10, 2), "Vendor: 10 · Still missing: 2");
+        assert_eq!(vendor_summary(0, 2), "Still missing: 2");
     }
 
     #[test]
