@@ -23,18 +23,18 @@ use crate::analyzer_kit::needed::{
 use crate::analyzer_kit::signals::{
     LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
 };
-use crate::analyzer_kit::strip::{FormulaStrip, StripLayout, StripSelect, StripTerm};
+use crate::analyzer_kit::strip::{FormulaStrip, StripSelect, StripTerm};
 use crate::components::crafting_cost::{
     CostBreakdown, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode, compute_cost,
     vendor_price_map,
 };
-use crate::components::dismissable::use_dismissable;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::is_shard_item;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
 use crate::components::virtual_grid::metrics::{GridValue, active_metric_columns};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::labs::{LAB_ANALYZER_RECIPE, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
@@ -291,7 +291,7 @@ const JOB_CODES: [&str; 8] = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "
 // --- Pricing methodology options -------------------------------------------
 // (token, localized label) pairs for the three pricing selects. Free
 // functions rather than closures inside the page component because both the
-// chip row and [`MarketMenu`] render them.
+// chip row and [`RecipePriceControls`] render them.
 
 fn cost_basis_options(i18n: I18nContext<Locale, I18nKeys>) -> Vec<(&'static str, String)> {
     vec![
@@ -370,7 +370,7 @@ fn short_signal(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
     }
 }
 
-/// One labelled select inside the [`MarketMenu`] popover. Commits on
+/// One labelled select above the results toolbar. Commits on
 /// `change` — unlike [`FilterChip`]'s select, this one stays mounted after a
 /// commit (the popover only closes on dismiss), so committing per keystroke
 /// of keyboard browsing does not tear the control down mid-navigation.
@@ -382,10 +382,10 @@ fn PricingSelect(
     #[prop(into)] on_change: Callback<String>,
 ) -> impl IntoView {
     view! {
-        <label class="flex flex-col gap-1 text-[color:var(--color-text)]">
-            <span class="text-xs text-[color:var(--color-text-muted)]">{label}</span>
+        <label class="filter-chip">
+            <span>{label}</span>
             <select
-                class="input input-sm"
+                class="filter-chip-value"
                 prop:value=move || value.get()
                 on:change=move |ev| on_change.run(event_target_value(&ev))
             >
@@ -404,152 +404,99 @@ fn PricingSelect(
     }
 }
 
-/// Always-visible `Market` button in the control bar's first row, opening a
-/// popover with the buy-scope / cost-basis / revenue-metric selects — or,
-/// while the analyzer-recipe lab is on, the stacked formula strip and the
-/// four price-basis explanations.
-///
-/// These existed as permanent toolbar fields (#1206), then the
-/// Toolbar→ControlBar migration (#1214) filed them under `+ Filter` — where
-/// #1233 reported the whole feature as gone. They are not row filters: they
-/// change how every row is priced, so they get a standing entry point in row
-/// 1 (same shape as the flip finder's `SavedViewsMenu`). Reads and writes the
-/// same query params as the page's signals, so the non-default chips in the
-/// filter row stay in sync automatically.
+/// Price assumptions stay visible above the results toolbar.
 #[component]
-fn MarketMenu(
-    /// The same ledger chips the inline strip renders, built once on the
-    /// page (this component lives inside the table's `ControlBar`).
-    terms: Callback<(), Vec<StripTerm>>,
-    /// The `analyzer-recipe` Labs toggle. Off = exactly the three selects
-    /// below.
-    preview: bool,
-) -> impl IntoView {
+fn RecipePriceControls(terms: Callback<(), Vec<StripTerm>>, preview: bool) -> impl IntoView {
     let i18n = use_i18n();
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
 
-    let open = RwSignal::new(false);
-    let container = NodeRef::<leptos::html::Div>::new();
-    // Mounted inside the control bar's `actions`, so opening this has to be
-    // announced to the bar's popover group — a click on this button is not
-    // an outside click as far as the bar's own menus are concerned.
-    let container_token = use_dismissable(container, move || open.set(false));
-
     view! {
-        <div class="relative flex items-center" node_ref=container>
-            // Icon-only below `md`, same yield rules as every row-1 button —
-            // the bar is height-locked and this row cannot wrap.
-            <button
-                class="sticky-bar-button sticky-bar-button-shrink"
-                aria-label=t_string!(i18n, recipe_analyzer_market_button)
-                aria-expanded=move || open.get().to_string()
-                on:click=move |_| {
-                    let opening = !open.get_untracked();
-                    if opening {
-                        container_token.opening();
+        <div class="flex flex-col gap-2" data-analyzer-price-controls>
+            <Show
+                when=move || preview
+                fallback=move || {
+                    view! {
+                        <div class="flex flex-wrap gap-3">
+                            <PricingSelect
+                                label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
+                                value=Signal::derive(move || {
+                                    buy_scope().unwrap_or_default().to_string()
+                                })
+                                options=buy_scope_options(i18n)
+                                on_change=Callback::new(move |v: String| {
+                                    let parsed = v.parse::<BuyScope>().ok();
+                                    set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
+                                })
+                            />
+                            <PricingSelect
+                                label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
+                                value=Signal::derive(move || {
+                                    cost_basis().unwrap_or_default().to_string()
+                                })
+                                options=cost_basis_options(i18n)
+                                on_change=Callback::new(move |v: String| {
+                                    let parsed = v.parse::<CostBasis>().ok();
+                                    set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
+                                })
+                            />
+                            <PricingSelect
+                                label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
+                                value=Signal::derive(move || {
+                                    revenue_metric().unwrap_or_default().to_string()
+                                })
+                                options=cost_basis_options(i18n)
+                                on_change=Callback::new(move |v: String| {
+                                    let parsed = v.parse::<RevenueMetric>().ok();
+                                    set_revenue_metric(
+                                        parsed.filter(|m| *m != RevenueMetric::default()),
+                                    );
+                                })
+                            />
+                        </div>
                     }
-                    open.set(opening);
                 }
             >
-                <Icon icon=icondata::MdiCashMultiple />
-                <span class="hidden md:inline sticky-bar-button-label">
-                    {t!(i18n, recipe_analyzer_market_button)}
-                </span>
-            </button>
-            <Show when=move || open.get()>
-                <div class=move || {
-                    if preview {
-                        "sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm"
-                    } else {
-                        "sticky-bar-popover p-3 w-[min(92vw,16rem)] flex flex-col gap-2 text-sm"
-                    }
-                }>
-                    <Show
-                        when=move || preview
-                        fallback=move || {
-                            view! {
-                                <PricingSelect
-                                    label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
-                                    value=Signal::derive(move || {
-                                        buy_scope().unwrap_or_default().to_string()
-                                    })
-                                    options=buy_scope_options(i18n)
-                                    on_change=Callback::new(move |v: String| {
-                                        let parsed = v.parse::<BuyScope>().ok();
-                                        set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
-                                    })
-                                />
-                                <PricingSelect
-                                    label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
-                                    value=Signal::derive(move || {
-                                        cost_basis().unwrap_or_default().to_string()
-                                    })
-                                    options=cost_basis_options(i18n)
-                                    on_change=Callback::new(move |v: String| {
-                                        let parsed = v.parse::<CostBasis>().ok();
-                                        set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
-                                    })
-                                />
-                                <PricingSelect
-                                    label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
-                                    value=Signal::derive(move || {
-                                        revenue_metric().unwrap_or_default().to_string()
-                                    })
-                                    options=cost_basis_options(i18n)
-                                    on_change=Callback::new(move |v: String| {
-                                        let parsed = v.parse::<RevenueMetric>().ok();
-                                        set_revenue_metric(
-                                            parsed.filter(|m| *m != RevenueMetric::default()),
-                                        );
-                                    })
-                                />
-                            }
-                        }
-                    >
-                        <FormulaStrip terms=terms.run(()) layout=StripLayout::Stacked />
-                        // What each price basis actually means, so the
-                        // strip's selects are choosable without leaving
-                        // the page. Each line opens with the picker label
-                        // it explains, so a sentence can be matched to the
-                        // option it belongs to.
-                        <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_listing_min)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_listing_min_help)}
-                            </span>
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_sale_median)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_sale_median_help)}
-                            </span>
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_sale_min)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_sale_min_help)}
-                            </span>
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_sale_avg)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_sale_avg_help)}
-                            </span>
-                        </div>
-                    </Show>
+                <FormulaStrip terms=terms.run(()) />
+                // What each price basis actually means, so the
+                // strip's selects are choosable without leaving
+                // the page. Each line opens with the picker label
+                // it explains, so a sentence can be matched to the
+                // option it belongs to.
+                <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
+                    <span>
+                        <span class="font-medium text-[color:var(--color-text)]">
+                            {t!(i18n, price_basis_listing_min)}
+                        </span>
+                        " "
+                        {t!(i18n, price_basis_listing_min_help)}
+                    </span>
+                    <span>
+                        <span class="font-medium text-[color:var(--color-text)]">
+                            {t!(i18n, price_basis_sale_median)}
+                        </span>
+                        " "
+                        {t!(i18n, price_basis_sale_median_help)}
+                    </span>
+                    <span>
+                        <span class="font-medium text-[color:var(--color-text)]">
+                            {t!(i18n, price_basis_sale_min)}
+                        </span>
+                        " "
+                        {t!(i18n, price_basis_sale_min_help)}
+                    </span>
+                    <span>
+                        <span class="font-medium text-[color:var(--color-text)]">
+                            {t!(i18n, price_basis_sale_avg)}
+                        </span>
+                        " "
+                        {t!(i18n, price_basis_sale_avg_help)}
+                    </span>
                 </div>
             </Show>
         </div>
     }
-    .into_any()
 }
 
 // --- Filter registry -------------------------------------------------------
@@ -583,9 +530,8 @@ const FILTER_USE_ON_HAND: &str = "on-hand";
 /// order.
 // The pricing methodology controls (cost basis, revenue metric, scope) are
 // deliberately *not* in this list: they change how every row is priced rather
-// than which rows show, so they live behind the always-visible `Market`
-// button in row 1 (see [`MarketMenu`]) instead of the `+ Filter` menu, where
-// #1233 reported them as impossible to find.
+// than which rows show, so [`RecipePriceControls`] keeps them visible above
+// the results toolbar.
 const ADDABLE_FILTERS: &[&str] = &[
     FILTER_PROFIT,
     FILTER_ROI,
@@ -3085,8 +3031,7 @@ fn RecipeAnalyzerTable(
     /// The buy scope's name, for the Cost mark.
     #[prop(into)]
     buy_place: Signal<String>,
-    /// The ledger chips, built on the page (the popover that renders them
-    /// lives inside this table's `ControlBar`).
+    /// The ledger chips, built on the page and rendered above the control bar.
     strip_terms: Callback<(), Vec<StripTerm>>,
     /// The `analyzer-recipe` Labs toggle: the formula strip and marks, the
     /// clamped ROI, the profit readout, the alternative columns and pills,
@@ -4187,6 +4132,8 @@ fn RecipeAnalyzerTable(
                 }
                 .into_any(),
             }}
+            <RecipePriceControls terms=strip_terms preview=preview />
+
             // Primary filter bar
             <ControlBar sticky=false
                 summary=move || {
@@ -4200,7 +4147,7 @@ fn RecipeAnalyzerTable(
                 actions=move || {
                     view! {
                         <RealtimeStatus status=realtime_status last_update=last_update />
-                        <MarketMenu terms=strip_terms preview=preview />
+                        <GridSavedViews id="recipe-analyzer-grid" />
                     }
                         .into_any()
                 }
@@ -4520,8 +4467,9 @@ fn RecipeAnalyzerTable(
             }}
 
             // Results Table
-             <div class="rounded-2xl panel">
+             <div>
                 <AnalyzerGrid
+                    show_saved_views=false
                     columns=&RECIPE_COLUMNS
                     rows=computed_data
                     visible_cols=visible_cols
@@ -5240,7 +5188,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     // A header pill writes exactly one param through the filter signal
     // (no scroll-to-top, no history spam); the default is stripped like
-    // the Market popover's setters do.
+    // the visible price controls' setters do.
     let on_pill = Callback::new(move |kind: ColumnKind| match pill_param(kind) {
         Some((TermRole::Cost, s)) => {
             set_cost_basis(Some(s).filter(|s| *s != CostBasis::default()));
@@ -5386,21 +5334,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         />
                     </div>
                 </div>
-                // The ledger, directly under the world it sells on. md+ only:
-                // below that the chips would wrap into four full-width rows
-                // and push the table off the first screen — the Market
-                // popover carries the same controls stacked.
                 <Show when=move || preview.get()>
-                    <div class="hidden md:flex flex-wrap items-center gap-2">
-                        <FormulaStrip terms=strip_terms() layout=StripLayout::Inline />
-                    </div>
                     // What picking a wider scope actually does to the page:
                     // every profit number falls and rows drop out of the
                     // count, because a market that contains your world can
                     // only undercut it. The column tooltip that says so is
-                    // off by default, lab-gated and `hidden md:`, and the
-                    // changelog is not on the page at all — so a player who
-                    // sets the scope from the Market popover on a phone has
+                    // off by default and lab-gated, and the changelog is not
+                    // on the page — so a player who sets the scope on a phone has
                     // nowhere to read it, and a correct feature reads as a
                     // broken one. Not `hidden md:`: this is the half of the
                     // strip a phone needs most.
@@ -5725,7 +5665,7 @@ mod test {
                     degraded: Signal::derive(|| false),
                 },
             ];
-            let html = view! { <FormulaStrip terms=terms layout=StripLayout::Stacked /> }.to_html();
+            let html = view! { <FormulaStrip terms=terms /> }.to_html();
             assert_eq!(
                 html.matches("<select").count(),
                 2,
@@ -5961,17 +5901,20 @@ mod test {
             squeezed.contains("recipe_analyzer_sell_scope_note,place=revenue_place.get()"),
             "…and names the market the price was read across, not the sell world"
         );
-        // Inside the lab `Show`, between the inline strip and its close.
-        let strip = squeezed
-            .find("<FormulaStripterms=strip_terms()layout=StripLayout::Inline/>")
-            .expect("the inline strip");
-        let close = squeezed[strip..]
+        // The scope explanation remains inside the lab gate even though
+        // the price controls now live above the results toolbar.
+        let note = squeezed
+            .find("sell_scope_note.get()")
+            .expect("the scope note");
+        let show = squeezed[..note]
+            .rfind("<Showwhen=move||preview.get()>")
+            .expect("the note's lab gate");
+        let close = squeezed[show..]
             .find("</Show>")
-            .expect("the strip's Show closes");
+            .expect("the lab gate closes");
         assert!(
-            squeezed[strip..strip + close].contains("sell_scope_note.get()"),
-            "the note renders under the strip and inside the lab gate, so it \
-             cannot exist at all with the toggle off"
+            note < show + close,
+            "the note cannot render with the toggle off"
         );
     }
 

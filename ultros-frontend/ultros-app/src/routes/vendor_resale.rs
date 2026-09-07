@@ -5,6 +5,7 @@ use crate::analyzer_kit::{
     signals::{StatsIndex, stat_only},
 };
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -737,7 +738,10 @@ fn VendorResaleTable(
                     .into_any()
                 }
                 actions=move || {
-                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                    view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="vendor-resale-grid" />
+                        }
                         .into_any()
                 }
                 available_filters=Signal::derive(filter_options)
@@ -889,8 +893,8 @@ fn VendorResaleTable(
             </ControlBar>
 
             // Results table
-            <div class="rounded-2xl panel">
-                <MarketGrid id="vendor-resale-grid" label=t_string!(i18n, vendor_resale_hq).to_string()
+            <div>
+                <MarketGrid show_saved_views=false id="vendor-resale-grid" label=t_string!(i18n, vendor_resale_hq).to_string()
  row_height=40.0
  columns=Signal::derive(move || vec![GridColumn::new("hq",t_string!(i18n, vendor_resale_hq).to_string(), 60.0, true, true),
 GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), 320.0, false, true),

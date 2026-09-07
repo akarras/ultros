@@ -292,6 +292,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     #[prop(optional)] on_rows: Option<Callback<Vec<(usize, T)>>>,
     #[prop(default = "recipe-analyzer-grid".to_string(), into)] id: String,
     #[prop(optional, into)] label: String,
+    #[prop(default = true)] show_saved_views: bool,
     #[prop(optional)] column_filters: Option<Callback<ColumnKind, Vec<ColumnFilter>>>,
     #[prop(default = 60.0)] row_height: f64,
     /// Per-role header sub-labels. `None` leaves every column unmarked.
@@ -391,7 +392,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
             .collect::<Vec<_>>()
     });
     view! {
-        <QueryGrid id label metrics
+        <QueryGrid id label metrics show_saved_views
             measure_version=measure_version
             on_rows=on_rows.unwrap_or_else(||Callback::new(|_|{}))
             each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))

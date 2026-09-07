@@ -4,6 +4,7 @@ use crate::analyzer_kit::{
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::use_realtime;
@@ -596,6 +597,15 @@ fn LeveAnalyzerTable(
 
     view! {
             <div class="flex flex-col gap-6">
+                <div class="flex flex-wrap gap-3">
+                    <MarketPriceControls label=t_string!(i18n, market_turn_in_cost).to_string()
+                        basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                        on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                    <MarketPriceControls label=t_string!(i18n, market_reward_value).to_string()
+                        basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
+                        on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+                </div>
+
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
@@ -606,7 +616,10 @@ fn LeveAnalyzerTable(
                         .into_any()
                     }
                     actions=move || {
-                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="leve-analyzer-grid" />
+                        }
                             .into_any()
                     }
                     available_filters=Signal::derive(filter_options)
@@ -675,14 +688,8 @@ fn LeveAnalyzerTable(
                     }}
                 </ControlBar>
 
-                <MarketPriceControls label=t_string!(i18n, market_turn_in_cost).to_string()
-                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
-                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                <MarketPriceControls label=t_string!(i18n, market_reward_value).to_string()
-                    basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
-                    on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
-                <div class="rounded-2xl panel">
-                    <MarketGrid market subject=Arc::new(move |(_, row): &(usize, Arc<LeveProfitData>)| {
+                <div>
+                    <MarketGrid show_saved_views=false market subject=Arc::new(move |(_, row): &(usize, Arc<LeveProfitData>)| {
         let mut subject = MarketSubject::new(row.item_id.0, row.hq, row.cheapest_world_id);
         subject.listing_price = row.listing_price;
         subject.label = t_string!(i18n, market_turn_in_item).to_string();

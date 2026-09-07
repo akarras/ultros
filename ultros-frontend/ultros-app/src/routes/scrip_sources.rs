@@ -3,6 +3,7 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
@@ -697,6 +698,13 @@ fn ScripSourceTable(
 
     view! {
             <div class="flex flex-col gap-6">
+                <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                <p class="text-xs text-[color:var(--color-text-muted)]">
+                    {t!(i18n, market_collectable_note)}
+                </p>
+
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
@@ -710,7 +718,10 @@ fn ScripSourceTable(
                         .into_any()
                     }
                     actions=move || {
-                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="scrip-sources-grid" />
+                        }
                             .into_any()
                     }
                     available_filters=Signal::derive(filter_options)
@@ -763,13 +774,6 @@ fn ScripSourceTable(
                     }}
                 </ControlBar>
 
-                <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
-                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
-                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                <p class="text-xs text-[color:var(--color-text-muted)]">
-                    {t!(i18n, market_collectable_note)}
-                </p>
-
                 // Empty states render as *siblings* of the scroller container,
                 // never by unmounting it in a <Show>: the VirtualScroller wires
                 // scroll-sync effects to node refs and remounting breaks them.
@@ -786,8 +790,8 @@ fn ScripSourceTable(
                     />
                 </Show>
 
-                <div class="rounded-2xl panel">
-                    <MarketGrid id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
+                <div>
+                    <MarketGrid show_saved_views=false id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
      market=market
      subject=Arc::new(move |(_, row): &(usize, Arc<ScripSourceData>)| {
          let mut subject = MarketSubject::new(row.market_item_id, row.market_hq, row.cheapest_world_id);
