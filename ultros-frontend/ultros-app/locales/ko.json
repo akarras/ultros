@@ -1931,5 +1931,21 @@
     "top_opportunities_empty_title": "지금 {{world}}에는 되팔 만한 물건이 없습니다",
     "top_opportunities_empty_body": "실제로 팔리는 물건만 표시하므로 시장이 한산하면 비어 있습니다.",
     "top_opportunities_empty_cta": "Flip Finder에서 전체 보기",
-    "top_opportunities_error": "기회를 불러오지 못했습니다."
+    "top_opportunities_error": "기회를 불러오지 못했습니다.",
+    "recipe_planner_route_heading": "어떤 경로가 이동할 가치가 있나요?",
+    "recipe_planner_route_subheading": "찾은 최적 경로, 길 + 이동 비용 순",
+    "recipe_planner_route_stay_home": "홈에 머무르기",
+    "recipe_planner_route_no_new_travel": "추가 이동 없음",
+    "recipe_planner_route_world_hops": "월드 이동 {{count}}회",
+    "recipe_planner_route_dc_and_world_hops": "DC 이동 {{dcs}}회 → 월드 이동 {{worlds}}회",
+    "recipe_planner_route_home_only": "모두 시작 월드에서 구매",
+    "recipe_planner_shared_route": "공유된 경로",
+    "recipe_planner_not_here": "여기 없음",
+    "recipe_planner_reported_unavailable": "재고 없음으로 보고됨:",
+    "recipe_planner_clear_unavailable": "보고 지우기",
+    "recipe_planner_settings": "플래너 설정",
+    "recipe_planner_world_hop_cost": "월드 이동 비용 (길)",
+    "recipe_planner_dc_hop_cost": "DC 이동 비용 (길)",
+    "recipe_planner_hop_cost_help": "월드 이동은 에테라이트에서 로딩 화면 한 번입니다. DC 이동은 메인 메뉴를 거쳐 여러 번의 로딩 화면을 지납니다. 경로는 길과 이 이동 비용의 합으로 정렬됩니다.",
+    "recipe_planner_reset_defaults": "기본값으로 재설정"
 }

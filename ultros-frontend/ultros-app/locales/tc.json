@@ -1931,5 +1931,21 @@
     "top_opportunities_empty_title": "目前{{world}}沒有值得倒賣的物品",
     "top_opportunities_empty_body": "這裡只顯示真正有成交的物品，市場冷清時自然為空。",
     "top_opportunities_empty_cta": "在 Flip Finder 中查看全部",
-    "top_opportunities_error": "無法載入機會。"
+    "top_opportunities_error": "無法載入機會。",
+    "recipe_planner_route_heading": "哪條路線值得跑一趟？",
+    "recipe_planner_route_subheading": "找到的最佳路線，依金幣加旅行成本排序",
+    "recipe_planner_route_stay_home": "留在本服",
+    "recipe_planner_route_no_new_travel": "無需額外旅行",
+    "recipe_planner_route_world_hops": "{{count}} 次伺服器跳轉",
+    "recipe_planner_route_dc_and_world_hops": "{{dcs}} 次資料中心跳轉 → {{worlds}} 次伺服器跳轉",
+    "recipe_planner_route_home_only": "全部在起始伺服器購買",
+    "recipe_planner_shared_route": "分享的路線",
+    "recipe_planner_not_here": "這裡沒有",
+    "recipe_planner_reported_unavailable": "已回報缺貨：",
+    "recipe_planner_clear_unavailable": "清除回報",
+    "recipe_planner_settings": "規劃器設定",
+    "recipe_planner_world_hop_cost": "伺服器跳轉成本（金幣）",
+    "recipe_planner_dc_hop_cost": "資料中心跳轉成本（金幣）",
+    "recipe_planner_hop_cost_help": "伺服器跳轉是從以太之光出發的一次載入。資料中心跳轉需要回到主選單並經過多次載入。路線依金幣加上這些旅行成本排序。",
+    "recipe_planner_reset_defaults": "恢復預設"
 }

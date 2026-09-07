@@ -1931,5 +1931,21 @@
     "top_opportunities_empty_title": "Auf {{world}} lohnt sich derzeit nichts",
     "top_opportunities_empty_body": "Hier erscheinen nur Gegenstände, die sich wirklich verkaufen — ein ruhiger Markt bleibt leer.",
     "top_opportunities_empty_cta": "Alles im Flip Finder ansehen",
-    "top_opportunities_error": "Gelegenheiten konnten nicht geladen werden."
+    "top_opportunities_error": "Gelegenheiten konnten nicht geladen werden.",
+    "recipe_planner_route_heading": "Welche Route lohnt sich?",
+    "recipe_planner_route_subheading": "Beste gefundene Routen, sortiert nach Gil plus Reiseaufwand",
+    "recipe_planner_route_stay_home": "Zu Hause bleiben",
+    "recipe_planner_route_no_new_travel": "Keine zusätzliche Reise",
+    "recipe_planner_route_world_hops": "{{count}} Weltensprünge",
+    "recipe_planner_route_dc_and_world_hops": "{{dcs}} Datenzentrums-Sprünge → {{worlds}} Weltensprünge",
+    "recipe_planner_route_home_only": "Alles von deiner Startwelt",
+    "recipe_planner_shared_route": "Geteilte Route",
+    "recipe_planner_not_here": "Nicht hier",
+    "recipe_planner_reported_unavailable": "Als nicht verfügbar gemeldet:",
+    "recipe_planner_clear_unavailable": "Meldungen löschen",
+    "recipe_planner_settings": "Planer-Einstellungen",
+    "recipe_planner_world_hop_cost": "Kosten pro Weltensprung (Gil)",
+    "recipe_planner_dc_hop_cost": "Kosten pro Datenzentrums-Sprung (Gil)",
+    "recipe_planner_hop_cost_help": "Ein Weltensprung ist ein Ladebildschirm vom Ätheryten aus. Ein Datenzentrums-Sprung führt über das Hauptmenü und mehrere Ladebildschirme. Routen werden nach Gil plus diesen Reisekosten sortiert.",
+    "recipe_planner_reset_defaults": "Auf Standard zurücksetzen"
 }

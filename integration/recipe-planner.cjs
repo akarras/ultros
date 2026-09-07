@@ -101,10 +101,43 @@ async function main() {
     const shareLabel = await page.$eval('header button[aria-label^="Copy https://ultros.app/recipe/"]', e => e.getAttribute('aria-label'));
     const shareUrl = new URL(shareLabel.replace(/^Copy /, '').replace(/ to clipboard$/, ''));
     assert.deepEqual(shareUrl.searchParams.getAll('world'), ['Gilgamesh']);
-    await page.click('section[aria-label="World visit comparison"] button');
-    await page.waitForFunction(() => new URL(location.href).searchParams.get('visits') === '0');
-    assert.equal(await page.$eval('section[aria-label="World visit comparison"] button', e => e.getAttribute('aria-pressed')), 'true');
-    assert.ok(await page.$eval('aside[aria-label="Plan summary"]', e => e.textContent.includes('0 additional worlds')));
+    // Route cards: clicking "Stay home" pins route=home and the summary agrees.
+    const cardSelector = 'section[aria-label="World visit comparison"] button';
+    const stayHome = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.textContent.includes('Stay home')));
+    assert.ok(stayHome >= 0, 'a Stay home card must be offered');
+    await page.$$eval(cardSelector, (buttons, i) => buttons[i].click(), stayHome);
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('route') === 'home');
+    assert.equal(await page.$$eval(cardSelector, (buttons, i) => buttons[i].getAttribute('aria-pressed'), stayHome), 'true');
+    assert.ok(await page.$eval('aside[aria-label="Plan summary"]', e => e.textContent.includes('Stay home')));
+    assert.equal(await page.$$eval(cardSelector, buttons => new Set(buttons.map(b => b.textContent)).size), await page.$$eval(cardSelector, b => b.length), 'route cards are distinct');
+    {
+      // "Not here": tick one line, report another line's world, and the tick
+      // survives the re-plan while the reported pair leaves the itinerary.
+      const routeCard = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.textContent.includes('world hop')));
+      assert.ok(routeCard >= 0, 'fixtures on two worlds must offer a one-hop route');
+      await page.$$eval(cardSelector, (buttons, i) => buttons[i].click(), routeCard);
+      await page.waitForFunction(() => /^\d+(,\d+)*$/.test(new URL(location.href).searchParams.get('route') || ''));
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid^="stop-"]').length >= 2);
+      const stops = await page.$$eval('[data-testid^="stop-"]', rows => rows.map(r => r.dataset.testid));
+      const [ticked, reported] = [stops[0], stops.find(s => s !== stops[0] && s.split('-')[1] !== stops[0].split('-')[1]) || stops[1]];
+      await page.click(`[data-testid="${ticked}"] input[type="checkbox"]`);
+      assert.equal(await page.$eval(`[data-testid="${ticked}"] button`, b => b.disabled), true, 'a ticked line cannot be reported');
+      await page.click(`[data-testid="${reported}"] button`);
+      const [, item, world] = reported.split('-');
+      await page.waitForFunction(pair => (new URL(location.href).searchParams.get('unavailable') || '').split(',').includes(pair), {}, `${item}:${world}`);
+      await page.waitForFunction(id => !document.querySelector(`[data-testid="${id}"]`), {}, reported);
+      assert.ok(await page.$(`[data-testid="${ticked}"]`), 'the ticked line survives the re-plan');
+      assert.equal(await page.$eval(`[data-testid="${ticked}"] input[type="checkbox"]`, e => e.checked), true, 'the tick itself survives');
+      assert.ok(await page.$('[data-testid="unavailable-reports"]'), 'reports are listed');
+      const withReport = await page.evaluate(() => location.href);
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.equal(await page.evaluate(() => location.href), withReport, 'route and reports survive a reload');
+      assert.equal(await page.$$eval(cardSelector, buttons => buttons.filter(b => b.getAttribute('aria-pressed') === 'true').length), 1, 'exactly one route card is selected after reload');
+      await page.$$eval('[data-testid="unavailable-reports"] button', buttons => buttons.at(-1).click());
+      await page.waitForFunction(() => !new URL(location.href).searchParams.has('unavailable'));
+    }
     // The fixtures supply every ingredient in full, so "missing" must not be
     // rendered at all rather than as a meaningless "0 missing".
     assert.equal(await page.$eval('[data-testid="recipe-planner"]', e => e.textContent.includes('missing')), false, 'a fully supplied plan must not mention missing units');

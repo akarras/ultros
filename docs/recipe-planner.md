@@ -7,11 +7,16 @@ calculates the spend for the actual quantity and whole market-board stacks.
 ## URL state
 
 `quantity` is desired output (1–9999). `world` is the starting world;
-`buy-scope=world|datacenter|region` defaults to datacenter. `visits=0|1|2|3|4`
-selects home, up to one/two/three additional worlds, or full scope. The default
-is full scope. Datacenter/region item-page links resolve a starting world within
-that scope. `require-hq` strictly filters HQ-capable ingredient purchases;
-`output-hq` separately controls the finished-item comparison.
+`buy-scope=world|datacenter|region` defaults to datacenter. `route` selects
+the shopping route: `home`, or the non-home world ids to visit, sorted and
+comma-separated (`route=63,79`). Absent means the best-ranked route. A shared
+route that no longer ranks is still computed and shown as a pinned card.
+`visits=0|1|2|3|4` is the retired hop budget from older links; it is read as
+"the first ranked route with at most that many extra worlds" and dropped from
+new share links. `unavailable=item:world,...` records "Not here" reports.
+Datacenter/region item-page links resolve a starting world within that scope.
+`require-hq` strictly filters HQ-capable ingredient purchases; `output-hq`
+separately controls the finished-item comparison.
 
 `craft=itemId:recipeId,...` chooses an explicit recipe for each intermediate;
 absent entries are bought. `owned=itemId:quantity,...` records on-hand materials.
@@ -36,14 +41,31 @@ Purchases use a bounded 0/1 knapsack over complete listings. NPC gil prices can
 fill remaining demand, assuming the player has vendor access. Large cases
 (more than 10,000 required units or 200,000 quantity/listing combinations) use
 the cheaper complete result of unit-price and stack-price greedy candidates and
-are marked approximate. The route search examines every single-world option,
-then retains a beam of four promising routes for two/three-world options. The
-UI therefore labels comparisons **best-found**, not globally optimal. Complete
-supply ranks ahead of partial supply; partial totals remain visibly incomplete.
-Travel time, teleport fees, vendor stops and actual datacenter travel eligibility
-are not modeled as market-world visits. Price age comes from ingest timestamps,
-not retainer listing timestamps. A refresh replaces the market snapshot and
-clears purchase ticks when the selected plan changes.
+are marked approximate.
+
+Routes are ranked by `(missing, effective, cost, worlds)`, where `effective`
+is gil plus a travel cost: a world hop (a non-home world inside a datacenter
+already being visited) and a datacenter hop (the first world in a new
+datacenter) each carry a gil-equivalent weight from the craft-options cookie
+(`world_hop_gil`, default 2,000; `dc_hop_gil`, default 10,000; adjustable in
+Planner settings). Worlds already on the itinerary, including the home world
+and any world with a ticked purchase, are free to revisit. The search evaluates
+every single-world addition exhaustively, then a beam of five promising sets
+for larger routes, plus whole-datacenter and full-scope seeds; plans are
+collapsed by the worlds actually visited and the top five distinct routes are
+shown. The UI therefore labels routes **best-found**, not globally optimal.
+Complete supply ranks ahead of partial supply; partial totals remain visibly
+incomplete. Travel is weighted in gil, not modeled as time or teleport fees,
+and vendor stops are not counted. Price age comes from ingest timestamps, not
+retainer listing timestamps.
+
+Ticking an itinerary line locks that listing as a committed purchase: it stays
+in the plan at the ticked price, counts against the need, and its world is
+free to revisit, while everything else may re-plan around it. A tick is
+client-only (not part of the shared link) and is dropped only when its item
+stops being something to buy. "Not here" excludes that `(item, world)` pair,
+unticks any lock on it, and re-plans; reports can be removed individually or
+cleared.
 
 The deterministic engine is `ultros-app/src/recipe_planner.rs`; it has no UI or
 network dependencies. API requests are client-side, keyed by scope and selected
