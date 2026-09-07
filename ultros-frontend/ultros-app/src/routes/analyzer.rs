@@ -297,6 +297,38 @@ fn serialize_visible_cols_preserving(
 use crate::components::app_link::use_query_map_or_default;
 use crate::query_defaults::query_signal;
 use crate::query_defaults::query_signal_or_default;
+/// `?cols=` with one shared (non-native) id flipped, everything else kept
+/// in place. Absent param = the default view, whose only shared column is
+/// `sale_estimate` (see `serialize_visible_cols_preserving`).
+fn toggle_shared_col(previous: Option<&str>, id: &str) -> String {
+    let mut ids: Vec<&str> = previous
+        .unwrap_or("sale_estimate")
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .collect();
+    if let Some(i) = ids.iter().position(|t| *t == id) {
+        ids.remove(i);
+    } else {
+        ids.push(id);
+    }
+    ids.join(",")
+}
+
+/// The stat-column ids present in `?cols=`, for the picker's checkboxes.
+/// Native ids stay in `parse_visible_cols`; other shared ids (`market-world`)
+/// are not picker entries and are ignored here.
+fn shared_cols_in(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
+    raw.unwrap_or("")
+        .split(',')
+        .filter_map(|tok| {
+            crate::analyzer_kit::stat_columns::STAT_COLUMNS
+                .iter()
+                .find(|c| c.id == tok)
+                .map(|c| c.id)
+        })
+        .collect()
+}
+
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
@@ -1425,6 +1457,13 @@ fn AnalyzerTable(
     let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
     let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
+    // The toolbar picker also lists the shared sale-history columns; their
+    // checked state lives in `?cols=` beside the native ids.
+    let picker_visible = Memo::new(move |_| {
+        let mut set = visible_cols.get();
+        set.extend(shared_cols_in(cols_param().as_deref()));
+        set
+    });
     let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1668,12 +1707,15 @@ fn AnalyzerTable(
         })
         .collect::<Vec<_>>()
     });
-    // Columns the picker offers, in table order.
+    // Columns the picker offers: the native columns in table order, then
+    // every shared sale-history column grouped by window.
     let column_options = Memo::new(move |_| {
-        ALL_OPTIONAL_COLS
+        let mut options = ALL_OPTIONAL_COLS
             .iter()
             .map(|col| ColumnOption::new(col, col_label(col)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        options.extend(crate::analyzer_kit::stat_columns::market_picker_options());
+        options
     });
 
     // Held here because the category picker lives in the `+ Filter` menu and
@@ -1681,15 +1723,19 @@ fn AnalyzerTable(
     let popovers = ControlBarPopovers::new();
 
     let toggle_column = Callback::new(move |col: &'static str| {
+        let previous = cols_param.get_untracked();
         let mut set = visible_cols.get_untracked();
-        if set.contains(col) {
-            set.remove(col);
+        let extras = if ALL_OPTIONAL_COLS.contains(&col) {
+            if !set.remove(col) {
+                set.insert(col);
+            }
+            previous
         } else {
-            set.insert(col);
-        }
+            Some(toggle_shared_col(previous.as_deref(), col))
+        };
         set_cols_param.set(Some(serialize_visible_cols_preserving(
             &set,
-            cols_param.get_untracked().as_deref(),
+            extras.as_deref(),
         )));
     });
 
@@ -2364,7 +2410,7 @@ fn AnalyzerTable(
                     }
                 }
                 columns=column_options
-                visible_columns=visible_cols
+                visible_columns=picker_visible
                 on_toggle_column=toggle_column
                 on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
                 columns_extra=move || {
@@ -3818,6 +3864,35 @@ mod tests {
                 .split(',')
                 .any(|id| id == "sale_estimate")
         );
+    }
+
+    #[test]
+    fn shared_column_toggle_adds_then_removes_the_id() {
+        // No `?cols=` means the default view, whose only shared column is
+        // the sale estimate; ticking a stat column must keep it.
+        let on = toggle_shared_col(None, "market-sale-median-7");
+        assert_eq!(on, "sale_estimate,market-sale-median-7");
+        let off = toggle_shared_col(Some(&on), "market-sale-median-7");
+        assert_eq!(off, "sale_estimate");
+        // A later native toggle keeps the shared id (the preserving path).
+        let visible = parse_visible_cols(Some(&on));
+        let serialized = serialize_visible_cols_preserving(&visible, Some(&on));
+        assert!(
+            serialized.split(',').any(|id| id == "market-sale-median-7"),
+            "{serialized}"
+        );
+    }
+
+    #[test]
+    fn picker_checked_state_reads_stat_ids_out_of_cols() {
+        let set = shared_cols_in(Some(
+            "roi,market-sale-median-7,market-world,market-gil-30,bogus",
+        ));
+        assert_eq!(
+            set,
+            std::collections::HashSet::from(["market-sale-median-7", "market-gil-30"])
+        );
+        assert!(shared_cols_in(None).is_empty());
     }
 
     #[test]
