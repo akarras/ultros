@@ -2729,7 +2729,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 .virtual-grid-heading, .virtual-grid-cell { position: absolute; top: 0; height: 100%; box-sizing: border-box; }
 .virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); }
-.grid-heading-content { flex: 1; min-width: 0; overflow: hidden; }
+.grid-heading-content { flex: 1; min-width: 0; overflow: clip; }
 .grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
 /* A column that feeds Profit (SortableHeaderCell's `emphasized`) reads as a
    gently tinted block. This used to be an inset bottom hairline, which landed
@@ -2753,10 +2753,15 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .grid-drag-handle { cursor: grab; touch-action: none; user-select: none; }
 .grid-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 3; }
 .grid-resize-handle:hover { background: var(--brand-ring); }
-.virtual-grid-row { position: absolute; left: 0; width: 100%; background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+/* `contain: layout paint` keeps a hovered row's restyle and repaint local
+   to that row; overlays (hover cards, menus) render through a Portal, so
+   nothing inside a row needs to paint outside it. */
+.virtual-grid-row { position: absolute; left: 0; width: 100%; contain: layout paint; background: color-mix(in srgb, var(--color-text) 6%, transparent); }
 .virtual-grid-row[data-even="false"] { background: color-mix(in srgb, var(--color-text) 3%, transparent); }
 .virtual-grid-row:hover { background: color-mix(in srgb, var(--brand-ring) 12%, transparent); }
-.virtual-grid-cell { overflow: hidden; border-right: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent); }
+/* `clip`, not `hidden`: `hidden` makes every cell a scroll container (Gecko
+   builds a scroll frame per cell, hundreds per screen); `clip` only clips. */
+.virtual-grid-cell { overflow: clip; border-right: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent); }
 .virtual-grid-cell > div { width: 100%; min-width: 0; height: 100%; }
 .virtual-grid-cell a { min-width: 0; }
 .virtual-grid-cell a, .virtual-grid-cell button { max-width: 100%; }
