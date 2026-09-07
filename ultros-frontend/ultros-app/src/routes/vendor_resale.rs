@@ -6,7 +6,7 @@ use crate::analyzer_kit::{
 };
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
-use crate::components::virtual_grid::saved_views::GridSavedViews;
+use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::query_signal;
 use crate::{
@@ -38,6 +38,7 @@ use chrono::{Duration, Utc};
 use humantime::parse_duration;
 use icondata as i;
 use leptos::{either::Either, prelude::*};
+use leptos_i18n::I18nContext;
 use leptos_router::{
     NavigateOptions,
     hooks::{use_location, use_navigate, use_params_map},
@@ -224,6 +225,33 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_TAX,
     FILTER_SUSPICIOUS,
 ];
+
+/// The page's built-in views, formerly the preset buttons above the table.
+///
+/// Queries only: the labels live in [`vendor_resale_presets`] because
+/// `t_string!` needs a literal key. Keep each one a clean query string with no
+/// trailing separator — `sort=profit` is meaningful here because
+/// `SortMode::fallback()` is ROI, not profit.
+const PRESET_QUERIES: [&str; 3] = [
+    "?next-sale=7d&roi=100&profit=1000&sort=profit",
+    "?next-sale=1M&roi=500&profit=5000",
+    "?profit=50000",
+];
+
+fn vendor_resale_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, vendor_resale_preset_100_roi).to_string(),
+        t_string!(i18n, vendor_resale_preset_500_roi).to_string(),
+        t_string!(i18n, vendor_resale_preset_50k_profit).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
 
 /// Whether a row's market price is implausible relative to what the item
 /// actually sells for.
@@ -725,6 +753,12 @@ fn VendorResaleTable(
         }),
     ];
 
+    // Built here, not inside `ControlBar`'s `actions` closure: that closure
+    // runs in a render effect, and `t_string!` is tracked, so resolving the
+    // labels there would subscribe the whole slot to the locale and rebuild
+    // `RealtimeStatus` and this menu on every language switch.
+    let presets = Signal::derive(move || vendor_resale_presets(i18n));
+
     view! {
         <div class="flex flex-col gap-6">
             <MarketPriceControls basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string()/>
@@ -742,7 +776,7 @@ fn VendorResaleTable(
                 actions=move || {
                     view! {
                             <RealtimeStatus status=realtime_status last_update=last_update />
-                            <GridSavedViews id="vendor-resale-grid" />
+                            <GridSavedViews id="vendor-resale-grid" presets=presets />
                         }
                         .into_any()
                 }
@@ -1050,7 +1084,10 @@ pub fn VendorWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
-            <div class="flex flex-col gap-8">
+            <MetaDescription text=move || {
+                t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
+            } />
+            <div class="flex flex-col gap-4">
                 <ToolHeader
                     title=t_string!(i18n, vendor_resale).to_string()
                     summary=t_string!(i18n, vendor_resale_tool_summary_v2).to_string()
@@ -1067,34 +1104,11 @@ pub fn VendorWorldView() -> impl IntoView {
                         t_string!(i18n, vendor_resale_assumption_hq_excluded).to_string(),
                         t_string!(i18n, vendor_resale_assumption_no_vendor_names).to_string(),
                     ]
-                />
-
-                // Controls Section
-                <div class="panel p-4 sm:p-6 rounded-2xl">
-                    <div class="flex flex-col gap-4">
-                        <MetaDescription text=move || {
-                            t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
-                        } />
-
-                        // World Navigator
-                        <div class="flex flex-col md:flex-row gap-4 items-center">
-                            <VendorWorldNavigator />
-                        </div>
-
-                        // Preset Filters
-                        <div class="flex flex-wrap gap-4">
-                            <PresetFilterButton
-                                href="?next-sale=7d&roi=100&profit=1000&sort=profit&"
-                                label=t_string!(i18n, vendor_resale_preset_100_roi).to_string()
-                            />
-                            <PresetFilterButton
-                                href="?next-sale=1M&roi=500&profit=5000&"
-                                label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
-                            />
-                            <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
-                        </div>
-                    </div>
-                </div>
+                >
+                    // In the header's controls slot, like every other
+                    // analyzer, and outside `Suspense` so it survives loading.
+                    <VendorWorldNavigator />
+                </ToolHeader>
 
                 // Main Content
                 <div class="min-h-screen">
@@ -1130,18 +1144,6 @@ pub fn VendorWorldView() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
-}
-
-#[component]
-fn PresetFilterButton(href: &'static str, label: String) -> impl IntoView {
-    view! {
-        <a
-            href=href
-            class="btn-secondary"
-        >
-            {label}
-        </a>
     }
 }
 
@@ -1278,6 +1280,38 @@ pub fn VendorResale() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(SortMode::from_str(value).is_ok(), "{query}"),
+                    "dir" => assert!(SortDir::from_str(value).is_ok(), "{query}"),
+                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn sale_basis_includes_vendor_history_without_inventing_a_listing() {

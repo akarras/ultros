@@ -1951,5 +1951,20 @@
     "recipe_planner_world_hop_cost": "伺服器跳轉成本（金幣）",
     "recipe_planner_dc_hop_cost": "資料中心跳轉成本（金幣）",
     "recipe_planner_hop_cost_help": "伺服器跳轉是從以太之光出發的一次載入。資料中心跳轉需要回到主選單並經過多次載入。路線依金幣加上這些旅行成本排序。",
-    "recipe_planner_reset_defaults": "恢復預設"
+    "recipe_planner_reset_defaults": "恢復預設",
+    "recipe_analyzer_preset_realistic": "實際的製作",
+    "recipe_analyzer_preset_big_ticket": "高價製作",
+    "recipe_analyzer_preset_volume": "走量製作",
+    "fc_crafting_preset_realistic": "實際的製作",
+    "fc_crafting_preset_big_ticket": "高價製作",
+    "fc_crafting_preset_no_shards": "排除水晶類",
+    "venture_analyzer_preset_best_profit": "利潤最高",
+    "venture_analyzer_preset_fast_movers": "出貨最快",
+    "venture_analyzer_preset_high_value": "高價探險",
+    "leve_analyzer_preset_best_profit": "利潤最高",
+    "leve_analyzer_preset_steady_sellers": "穩定出貨",
+    "leve_analyzer_preset_cheapest": "交付成本最低",
+    "scrip_sources_preset_best_value": "單枚票據最划算",
+    "scrip_sources_preset_orange_crafters": "橙色製作票據",
+    "scrip_sources_preset_orange_gatherers": "橙色採集票據"
 }

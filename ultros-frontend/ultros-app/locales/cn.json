@@ -1951,5 +1951,20 @@
     "recipe_planner_world_hop_cost": "服务器跳转成本（金币）",
     "recipe_planner_dc_hop_cost": "大区跳转成本（金币）",
     "recipe_planner_hop_cost_help": "服务器跳转是从以太之光出发的一次加载。大区跳转需要回到主菜单并经过多次加载。路线按金币加上这些旅行成本排序。",
-    "recipe_planner_reset_defaults": "恢复默认"
+    "recipe_planner_reset_defaults": "恢复默认",
+    "recipe_analyzer_preset_realistic": "现实的制作",
+    "recipe_analyzer_preset_big_ticket": "高价制作",
+    "recipe_analyzer_preset_volume": "走量制作",
+    "fc_crafting_preset_realistic": "现实的制作",
+    "fc_crafting_preset_big_ticket": "高价制作",
+    "fc_crafting_preset_no_shards": "排除水晶类",
+    "venture_analyzer_preset_best_profit": "利润最高",
+    "venture_analyzer_preset_fast_movers": "走货快",
+    "venture_analyzer_preset_high_value": "高价探险",
+    "leve_analyzer_preset_best_profit": "利润最高",
+    "leve_analyzer_preset_steady_sellers": "稳定出货",
+    "leve_analyzer_preset_cheapest": "交付成本最低",
+    "scrip_sources_preset_best_value": "单枚票据最划算",
+    "scrip_sources_preset_orange_crafters": "橙色制作票据",
+    "scrip_sources_preset_orange_gatherers": "橙色采集票据"
 }

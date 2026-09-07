@@ -1951,5 +1951,20 @@
     "recipe_planner_world_hop_cost": "ワールド移動のコスト（ギル）",
     "recipe_planner_dc_hop_cost": "DC移動のコスト（ギル）",
     "recipe_planner_hop_cost_help": "ワールド移動はエーテライトからのロード画面1回分です。DC移動はメインメニューを経由し、複数回のロード画面を挟みます。ルートはギルとこれらの移動コストの合計で並べ替えられます。",
-    "recipe_planner_reset_defaults": "初期設定に戻す"
+    "recipe_planner_reset_defaults": "初期設定に戻す",
+    "recipe_analyzer_preset_realistic": "現実的な製作",
+    "recipe_analyzer_preset_big_ticket": "高額製作",
+    "recipe_analyzer_preset_volume": "回転重視の製作",
+    "fc_crafting_preset_realistic": "現実的な製作",
+    "fc_crafting_preset_big_ticket": "高額製作",
+    "fc_crafting_preset_no_shards": "クリスタル類を除外",
+    "venture_analyzer_preset_best_profit": "利益が高い順",
+    "venture_analyzer_preset_fast_movers": "売れ行きが速い",
+    "venture_analyzer_preset_high_value": "高額なお使い",
+    "leve_analyzer_preset_best_profit": "利益が高い順",
+    "leve_analyzer_preset_steady_sellers": "安定して売れる",
+    "leve_analyzer_preset_cheapest": "納品費が安い順",
+    "scrip_sources_preset_best_value": "スクリップ単価が安い順",
+    "scrip_sources_preset_orange_crafters": "オレンジ・クラフタースクリップ",
+    "scrip_sources_preset_orange_gatherers": "オレンジ・ギャザラースクリップ"
 }

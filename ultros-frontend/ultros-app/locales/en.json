@@ -1951,5 +1951,20 @@
     "recipe_planner_world_hop_cost": "World hop cost (gil)",
     "recipe_planner_dc_hop_cost": "Datacenter hop cost (gil)",
     "recipe_planner_hop_cost_help": "A world hop is one loading screen from the aetheryte. A datacenter hop goes through the main menu and several loading screens. Routes are ranked by gil plus these travel costs.",
-    "recipe_planner_reset_defaults": "Reset to defaults"
+    "recipe_planner_reset_defaults": "Reset to defaults",
+    "recipe_analyzer_preset_realistic": "Realistic crafts",
+    "recipe_analyzer_preset_big_ticket": "Big-ticket crafts",
+    "recipe_analyzer_preset_volume": "Volume crafts",
+    "fc_crafting_preset_realistic": "Realistic crafts",
+    "fc_crafting_preset_big_ticket": "Big-ticket crafts",
+    "fc_crafting_preset_no_shards": "Skip shards and crystals",
+    "venture_analyzer_preset_best_profit": "Best profit",
+    "venture_analyzer_preset_fast_movers": "Fast movers",
+    "venture_analyzer_preset_high_value": "High-value ventures",
+    "leve_analyzer_preset_best_profit": "Best profit",
+    "leve_analyzer_preset_steady_sellers": "Steady sellers",
+    "leve_analyzer_preset_cheapest": "Cheapest to fill",
+    "scrip_sources_preset_best_value": "Best value per scrip",
+    "scrip_sources_preset_orange_crafters": "Orange crafters' scrips",
+    "scrip_sources_preset_orange_gatherers": "Orange gatherers' scrips"
 }
