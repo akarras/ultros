@@ -47,8 +47,8 @@ use ultros_api_types::price_series::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
-    CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild, GroupInvite,
-    UserGroup, UserGroupMember,
+    AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild,
+    GroupInvite, UserGroup, UserGroupMember,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -2100,8 +2100,10 @@ pub(crate) async fn add_group_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path((group_id, member_id)): Path<(i32, i64)>,
+    body: Option<Json<AddGroupMember>>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_member(group_id, user.id as i64, member_id)
+    let display_name = body.and_then(|Json(b)| b.display_name);
+    db.add_group_member(group_id, user.id as i64, member_id, display_name)
         .await?;
     Ok(Json(()))
 }

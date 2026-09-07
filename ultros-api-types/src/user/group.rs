@@ -134,6 +134,14 @@ pub struct CreateGroup {
     pub name: String,
 }
 
+/// Optional body for adding a member by id. `display_name` lets the server
+/// create the user's row when they have never logged in.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct AddGroupMember {
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreateGroupFromGuild {
     pub guild_id: i64,

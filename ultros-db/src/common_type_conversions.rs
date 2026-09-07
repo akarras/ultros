@@ -159,6 +159,7 @@ impl From<UserGroupMemberReturn> for UserGroupMember {
 }
 
 /// A role plus its member count, which is a separate aggregate query.
+#[derive(Debug)]
 pub struct GroupRoleReturn(pub group_role::Model, pub i64);
 
 impl From<GroupRoleReturn> for GroupRole {

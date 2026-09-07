@@ -3,8 +3,9 @@ use crate::{
     common::try_update_value::ActiveValueCmpSet,
     common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
     entity::{
-        active_listing, discord_user, group_invite, list, list_activity, list_invite, list_item,
-        list_shared_group, list_shared_user, retainer, user_group, user_group_member,
+        active_listing, discord_user, group_invite, group_role, group_role_member, list,
+        list_activity, list_invite, list_item, list_shared_group, list_shared_user, retainer,
+        user_group, user_group_member,
     },
     world_data::world_cache::{AnySelector, WorldCache},
 };
@@ -783,7 +784,18 @@ impl UltrosDb {
         Ok(())
     }
 
-    pub async fn add_group_member(&self, group_id: i32, owner_id: i64, user_id: i64) -> Result<()> {
+    /// Owner adds a member by Discord id. When `display_name` is given the
+    /// `discord_user` row is upserted first, so people who have never logged
+    /// into Ultros can be added; without it the foreign key requires that they
+    /// already have a row. Re-adding an existing member marks them `Manual`,
+    /// meaning the owner wants them kept even if Discord sync would drop them.
+    pub async fn add_group_member(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        user_id: i64,
+        display_name: Option<String>,
+    ) -> Result<()> {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
@@ -791,35 +803,64 @@ impl UltrosDb {
         if group.owner_id != owner_id {
             return Err(ListError::Forbidden("Only the owner can add members").into());
         }
-        user_group_member::ActiveModel {
+        if let Some(name) = display_name {
+            self.get_or_create_discord_user(user_id as u64, name)
+                .await?;
+        }
+        user_group_member::Entity::insert(user_group_member::ActiveModel {
             group_id: ActiveValue::Set(group_id),
             user_id: ActiveValue::Set(user_id),
             source: ActiveValue::Set(GroupMemberSource::Manual as i16),
-        }
-        .insert(&self.db)
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                user_group_member::Column::GroupId,
+                user_group_member::Column::UserId,
+            ])
+            .update_column(user_group_member::Column::Source)
+            .to_owned(),
+        )
+        .exec(&self.db)
         .await?;
         Ok(())
     }
 
+    /// Owner removes a member, or a member leaves. Synced members are refused:
+    /// reconciliation would put them straight back, so the honest answer is
+    /// "change their Discord role". Role memberships go in the same
+    /// transaction so the group-membership invariant holds.
     pub async fn remove_group_member(
         &self,
         group_id: i32,
-        owner_id: i64,
+        requester_id: i64,
         user_id: i64,
     ) -> Result<()> {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
             .ok_or(ListError::BadRequest("Group not found"))?;
-        if group.owner_id != owner_id && user_id != owner_id {
+        if group.owner_id != requester_id && user_id != requester_id {
             return Err(ListError::Forbidden(
                 "Only the owner or the user themselves can remove a member",
             )
             .into());
         }
-        user_group_member::Entity::delete_by_id((group_id, user_id))
-            .exec(&self.db)
+        let Some(member) = user_group_member::Entity::find_by_id((group_id, user_id))
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(());
+        };
+        if GroupMemberSource::from(member.source) == GroupMemberSource::Synced {
+            return Err(crate::group_roles::GroupError::ManagedByDiscord.into());
+        }
+        let txn = self.db.begin().await?;
+        self.remove_user_from_all_roles_in_group(&txn, group_id, user_id)
             .await?;
+        user_group_member::Entity::delete_by_id((group_id, user_id))
+            .exec(&txn)
+            .await?;
+        txn.commit().await?;
         Ok(())
     }
 
@@ -1281,13 +1322,40 @@ impl UltrosDb {
             .into());
         }
 
-        Ok(user_group_member::Entity::find()
+        let members = user_group_member::Entity::find()
             .filter(user_group_member::Column::GroupId.eq(group_id))
             .find_also_related(discord_user::Entity)
             .all(&self.db)
-            .await?
+            .await?;
+
+        // One query for every (role, user) pair in the group, then bucket by
+        // user. Avoids a per-member query and keeps ordering by role position
+        // so chips render in the same order everywhere.
+        let role_rows: Vec<(i64, i32)> = group_role_member::Entity::find()
+            .select_only()
+            .column(group_role_member::Column::UserId)
+            .column(group_role_member::Column::RoleId)
+            .join(
+                JoinType::InnerJoin,
+                group_role_member::Relation::GroupRole.def(),
+            )
+            .filter(group_role::Column::GroupId.eq(group_id))
+            .order_by_asc(group_role::Column::Position)
+            .order_by_asc(group_role::Column::Id)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        let mut roles_by_user: HashMap<i64, Vec<i32>> = HashMap::new();
+        for (user_id, role_id) in role_rows {
+            roles_by_user.entry(user_id).or_default().push(role_id);
+        }
+
+        Ok(members
             .into_iter()
-            .filter_map(|(member, user)| user.map(|u| UserGroupMemberReturn(member, u, Vec::new())))
+            .filter_map(|(member, user)| {
+                let roles = roles_by_user.remove(&member.user_id).unwrap_or_default();
+                user.map(|u| UserGroupMemberReturn(member, u, roles))
+            })
             .collect())
     }
 }
@@ -1327,10 +1395,7 @@ mod tests {
 #[cfg(test)]
 mod group_member_tests {
     use super::*;
-
-    async fn test_db() -> UltrosDb {
-        UltrosDb::connect().await.expect("connect to test DB")
-    }
+    use crate::group_roles::tests::{fresh_user, test_db};
 
     /// Checks membership directly against the join table rather than through
     /// `get_group_members`, which joins on `discord_user` and would silently
@@ -1347,24 +1412,24 @@ mod group_member_tests {
     #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
     async fn member_can_remove_themselves() {
         let db = test_db().await;
-        let owner_id = 9001;
-        let member_id = 9002;
+        let owner = fresh_user(&db, "owner").await;
+        let member = fresh_user(&db, "member").await;
         let group = db
-            .create_group("Self-removal test group".to_string(), owner_id)
+            .create_group("Self-removal test group".to_string(), owner.id)
             .await
             .unwrap();
-        db.add_group_member(group.id, owner_id, member_id)
+        db.add_group_member(group.id, owner.id, member.id, None)
             .await
             .unwrap();
 
         // The member removes themselves: `owner_id` param is the requester,
         // and it's the member's own id here, not the group's actual owner.
-        db.remove_group_member(group.id, member_id, member_id)
+        db.remove_group_member(group.id, member.id, member.id)
             .await
             .unwrap();
 
         assert!(
-            !is_member(&db, group.id, member_id).await,
+            !is_member(&db, group.id, member.id).await,
             "member should no longer be in the group after leaving"
         );
     }
@@ -1373,49 +1438,49 @@ mod group_member_tests {
     #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
     async fn owner_can_remove_another_member() {
         let db = test_db().await;
-        let owner_id = 9003;
-        let member_id = 9004;
+        let owner = fresh_user(&db, "owner").await;
+        let member = fresh_user(&db, "member").await;
         let group = db
-            .create_group("Owner-removal test group".to_string(), owner_id)
+            .create_group("Owner-removal test group".to_string(), owner.id)
             .await
             .unwrap();
-        db.add_group_member(group.id, owner_id, member_id)
-            .await
-            .unwrap();
-
-        db.remove_group_member(group.id, owner_id, member_id)
+        db.add_group_member(group.id, owner.id, member.id, None)
             .await
             .unwrap();
 
-        assert!(!is_member(&db, group.id, member_id).await);
+        db.remove_group_member(group.id, owner.id, member.id)
+            .await
+            .unwrap();
+
+        assert!(!is_member(&db, group.id, member.id).await);
     }
 
     #[tokio::test]
     #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
     async fn non_owner_cannot_remove_another_member() {
         let db = test_db().await;
-        let owner_id = 9005;
-        let member_id = 9006;
-        let bystander_id = 9007;
+        let owner = fresh_user(&db, "owner").await;
+        let member = fresh_user(&db, "member").await;
+        let bystander = fresh_user(&db, "bystander").await;
         let group = db
-            .create_group("Forbidden-removal test group".to_string(), owner_id)
+            .create_group("Forbidden-removal test group".to_string(), owner.id)
             .await
             .unwrap();
-        db.add_group_member(group.id, owner_id, member_id)
+        db.add_group_member(group.id, owner.id, member.id, None)
             .await
             .unwrap();
-        db.add_group_member(group.id, owner_id, bystander_id)
+        db.add_group_member(group.id, owner.id, bystander.id, None)
             .await
             .unwrap();
 
         let err = db
-            .remove_group_member(group.id, bystander_id, member_id)
+            .remove_group_member(group.id, bystander.id, member.id)
             .await;
         assert!(
             err.is_err(),
             "a non-owner should not be able to remove someone else"
         );
 
-        assert!(is_member(&db, group.id, member_id).await);
+        assert!(is_member(&db, group.id, member.id).await);
     }
 }
