@@ -7,11 +7,13 @@
 
 use std::str::FromStr;
 
+use leptos::oco::Oco;
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{query_signal_with_options, use_query_map};
+use leptos_router::hooks::query_signal_with_options;
 use leptos_router::location::Url;
 
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::saved_views::default_view_query;
 
 /// Default ceiling on predicted time to next sale: items that sell at least
@@ -35,13 +37,62 @@ fn filter_nav_options() -> NavigateOptions {
     }
 }
 
+/// [`query_signal_with_options`] that degrades to an inert signal instead of
+/// panicking when the router context is missing.
+///
+/// Every `query_signal` opens with `use_query_map()`, which is an `expect` on
+/// router context ("Tried to access reactive URL outside a <Router>
+/// component."). A suspended SSR fragment can rebuild its children under an
+/// owner that never saw `<Router>` — `ScopedFuture` falls back to a *fresh,
+/// empty* `Owner` — and a panic there aborts the whole SSR response, so one
+/// URL-backed filter costs the entire page (GlitchTip #7305, same mechanism as
+/// #7171/#7172 and #7278).
+///
+/// Presence is decided on [`RouterAvailable`](crate::components::app_link),
+/// the `Location` `AppShell` captured *inside* `<Router>`, which is also where
+/// the fallback's empty query map comes from — so the check and the value it
+/// guards are one lookup that cannot disagree with itself.
+///
+/// The degraded signal reads as "param absent" and writes nowhere. That is the
+/// right shape for the case it exists for: a fragment rendering under a dead
+/// owner is server-side markup nobody navigates from, and setters never run on
+/// the server anyway.
+pub fn query_signal_or_default<T>(
+    key: impl Into<Oco<'static, str>>,
+    nav_options: NavigateOptions,
+) -> (Memo<Option<T>>, SignalSetter<Option<T>>)
+where
+    T: FromStr + ToString + PartialEq + Send + Sync + 'static,
+{
+    if use_context::<crate::components::app_link::RouterAvailable>().is_none() {
+        return (Memo::new(|_| None), SignalSetter::map(|_: Option<T>| ()));
+    }
+    query_signal_with_options::<T>(key, nav_options)
+}
+
+/// [`leptos_router::hooks::query_signal`], router-safe per
+/// [`query_signal_or_default`].
+///
+/// Imported in place of the router's own so that no app code reaches the
+/// panicking hook — the same trade `AppLink` made for `<A/>`. Behaviour is
+/// identical wherever `<Router>` is reachable, which is everywhere a user ever
+/// sees.
+pub fn query_signal<T>(
+    key: impl Into<Oco<'static, str>>,
+) -> (Memo<Option<T>>, SignalSetter<Option<T>>)
+where
+    T: FromStr + ToString + PartialEq + Send + Sync + 'static,
+{
+    query_signal_or_default::<T>(key, NavigateOptions::default())
+}
+
 /// A [`query_signal`](leptos_router::hooks::query_signal) for a filter param,
-/// using [`filter_nav_options`].
+/// using [`filter_nav_options`], and router-safe per [`query_signal_or_default`].
 pub fn filter_query_signal<T>(key: &'static str) -> (Memo<Option<T>>, SignalSetter<Option<T>>)
 where
     T: FromStr + ToString + PartialEq + Send + Sync + 'static,
 {
-    query_signal_with_options::<T>(key, filter_nav_options())
+    query_signal_or_default::<T>(key, filter_nav_options())
 }
 
 /// Write `default` into the URL if `key` is absent when this mounts.
@@ -60,7 +111,7 @@ pub fn seed_query_default<T>(key: &'static str, default: T)
 where
     T: FromStr + ToString + PartialEq + Clone + Send + Sync + 'static,
 {
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     if query.with_untracked(|q| q.get(key).is_some() || q.get("v").is_some())
         || crate::last_view::has_restorable_view()
     {
@@ -131,7 +182,7 @@ pub fn seed_flip_finder_default_view() -> bool {
     if crate::last_view::has_restorable_view() {
         return true;
     }
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let was_bare = query.with_untracked(|q| !has_view_query(&q.to_query_string()));
     if was_bare {
         Effect::new(move |_| {
@@ -144,7 +195,7 @@ pub fn seed_flip_finder_default_view() -> bool {
                 if key == "lang" {
                     continue;
                 }
-                let (_, set) = query_signal_with_options::<String>(key, filter_nav_options());
+                let (_, set) = query_signal_or_default::<String>(key, filter_nav_options());
                 set.set(Some(value));
             }
         });
@@ -158,6 +209,123 @@ mod test {
     use crate::components::saved_views::{
         FALLBACK_DEFAULT_VIEW, built_in_views, fallback_default_query,
     };
+
+    /// Reproduces GlitchTip #7305 at its source: every `query_signal` starts
+    /// with `use_query_map()`, which is an `expect` on router context. On the
+    /// server that panic aborts the whole response, so it is not a local
+    /// failure — it is the page.
+    #[test]
+    #[should_panic(expected = "Tried to access reactive URL outside a <Router> component.")]
+    fn the_router_query_signal_panics_when_the_router_context_is_missing() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let _ = query_signal_with_options::<String>("roi", filter_nav_options());
+        });
+    }
+
+    /// The regression guard for #7305: the app's own wrapper must render an
+    /// absent param instead, under an owner that never saw `<Router>`.
+    #[test]
+    fn filter_query_signal_is_inert_without_the_router() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let (value, set) = filter_query_signal::<String>("roi");
+            assert_eq!(value.get(), None);
+            // A write must be a no-op, not a panic: the setter cannot navigate
+            // with no router to navigate.
+            set.set(Some("30".to_string()));
+            assert_eq!(value.get(), None);
+        });
+    }
+
+    /// The invariant the fix rests on: no app code reaches the router's
+    /// panicking URL hooks, so a new filter cannot quietly reintroduce #7305.
+    /// The same trade `AppLink` made for `<A/>` — the wrapper is only worth
+    /// anything while it is the *only* door.
+    ///
+    /// `query_defaults.rs` itself is the one file allowed to name them; the
+    /// virtual-grid fixture is a dev harness mounted under the real shell.
+    #[test]
+    fn no_app_code_calls_the_panicking_router_url_hooks() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+                .expect("the crate's src tree is readable")
+                .map(|e| e.expect("a readable directory entry").path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    walk(&path, out);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&path).expect("a readable source file");
+                let full = path.to_string_lossy().replace('\\', "/");
+                let name = match full.rsplit_once("/src/") {
+                    Some((_, rel)) => rel.to_string(),
+                    None => full,
+                };
+                // Only the production half: a test is allowed — required,
+                // even — to call the panicking hook and prove it panics.
+                let production = match src.split_once(&format!("#[cfg({})]", "test")) {
+                    Some((head, rest))
+                        if rest.trim_start().starts_with(&format!("mod {}", "test")) =>
+                    {
+                        head.to_string()
+                    }
+                    _ => src,
+                };
+                out.push((name, production));
+            }
+        }
+        let mut files = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        assert!(
+            files.len() > 100,
+            "the walk must reach the whole crate, not one directory"
+        );
+
+        const ALLOWED: [&str; 2] = ["query_defaults.rs", "components/virtual_grid/fixture.rs"];
+        let mut offenders = Vec::new();
+        for (name, src) in &files {
+            if ALLOWED.contains(&name.as_str()) {
+                continue;
+            }
+            for hook in ["use_query_map", "query_signal_with_options"] {
+                // Only real uses: a doc comment naming the hook is how the
+                // fallbacks explain themselves.
+                let used = src.lines().any(|line| {
+                    !line.trim_start().starts_with("//")
+                        && line
+                            .match_indices(hook)
+                            .any(|(at, _)| !line[at + hook.len()..].starts_with("_or_default"))
+                });
+                if used {
+                    offenders.push(format!("{name} uses {hook}"));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "route these through query_defaults instead: {offenders:?}"
+        );
+    }
+
+    /// ...and `seed_query_default`, which reads the query map directly, has to
+    /// survive the same owner. It seeds through the inert setter, so nothing
+    /// lands — the point is that the response is not aborted.
+    #[test]
+    fn seeding_a_default_survives_a_missing_router() {
+        let owner = Owner::new();
+        owner.with(|| {
+            seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+        });
+    }
 
     #[test]
     fn language_only_links_still_receive_the_saved_default_view() {

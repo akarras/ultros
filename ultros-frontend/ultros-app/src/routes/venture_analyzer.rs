@@ -2,11 +2,13 @@ use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
 };
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::query_signal;
 use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{SalesStats, analyze_sales},
@@ -32,7 +34,7 @@ use itertools::Itertools;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_query_map},
+    hooks::{use_location, use_navigate},
 };
 use std::{
     cmp::Ordering,
@@ -209,7 +211,7 @@ fn VentureAnalyzerTable(
     // window to the top each time.
     let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
     let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
     let nav = use_navigate();
 
@@ -678,7 +680,7 @@ fn VentureAnalyzerTable(
 #[component]
 pub fn VentureAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 

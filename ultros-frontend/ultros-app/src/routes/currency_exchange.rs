@@ -37,6 +37,8 @@ use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
 
+use crate::components::app_link::use_query_map_or_default;
+use crate::query_defaults::query_signal;
 use leptos_router::params::ParamsMap;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
@@ -390,7 +392,7 @@ pub fn ExchangeItem() -> impl IntoView {
 fn ExchangeItemContent() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     // `filter_query_signal`, not a plain `query_signal`: this box is typed into
     // a digit at a time, and the router default (replace: false, scroll: true)

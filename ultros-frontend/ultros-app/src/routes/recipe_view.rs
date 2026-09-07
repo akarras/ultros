@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use futures::{StreamExt, stream};
 use leptos::prelude::*;
-use leptos_router::hooks::{use_params_map, use_query_map};
+use leptos_router::hooks::use_params_map;
 use ultros_api_types::{CurrentlyShownItem, list::ListItem, world_helper::AnySelector};
 use xiv_gen::{ItemId, RecipeId, RecipeLevelTableId};
 
 use crate::api::{bulk_add_item_to_list, get_listings, get_lists, get_login};
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::{
     clipboard::Clipboard,
     crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter, vendor_price_map},
@@ -457,7 +458,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         .and_then(|p| p.purchases.get(&recipe.item_result))
         .cloned()
     });
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let resolved_query = Memo::new(move |_| {
         resolve_market_query(
             query.get(),

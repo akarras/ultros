@@ -102,6 +102,19 @@ pub fn use_location_or_default() -> Location {
     }
 }
 
+/// [`use_query_map`](leptos_router::hooks::use_query_map) that yields an empty
+/// map instead of panicking when the router context is missing.
+///
+/// `use_query_map()` is `use_url_raw()`, an `expect` on router context
+/// (`hooks.rs:206`, "Tried to access reactive URL outside a <Router>
+/// component."), and GlitchTip #7305 caught it firing on the server. The map it
+/// hands back here is the `query` of the [`Location`] captured inside
+/// `<Router>`, so this is the same single, race-free lookup as
+/// [`use_location_or_default`] — see the module docs.
+pub fn use_query_map_or_default() -> Memo<ParamsMap> {
+    use_location_or_default().query
+}
+
 /// Resolve `.` / `..` segments and strip the query and hash, so an href can be
 /// compared against a pathname.
 ///
@@ -275,6 +288,29 @@ mod tests {
             assert_eq!(location.search.get(), "");
             assert_eq!(location.hash.get(), "");
             assert!(location.query.with(|q| q.to_query_string().is_empty()));
+        });
+    }
+
+    /// The #7305 half of the same story: `use_query_map()` is a second
+    /// `expect` on router context, and the fallback has to answer with an
+    /// empty map rather than take the response down with it.
+    #[test]
+    #[should_panic(expected = "Tried to access reactive URL outside a <Router> component.")]
+    fn use_query_map_panics_when_the_router_context_is_missing() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let _ = leptos_router::hooks::use_query_map();
+        });
+    }
+
+    #[test]
+    fn use_query_map_or_default_yields_an_empty_map_instead() {
+        let owner = Owner::new();
+        owner.with(|| {
+            assert!(
+                use_query_map_or_default().with(|q| q.to_query_string().is_empty()),
+                "a dead owner must read as no query params, not panic"
+            );
         });
     }
 

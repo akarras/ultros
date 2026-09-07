@@ -14,6 +14,7 @@ use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::query_signal;
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
@@ -37,7 +38,7 @@ use crate::{
 };
 use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
-use leptos_router::hooks::{query_signal, use_params_map};
+use leptos_router::hooks::use_params_map;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::{
