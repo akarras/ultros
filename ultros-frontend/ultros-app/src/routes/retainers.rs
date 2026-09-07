@@ -10,12 +10,14 @@ use crate::components::data_table::{
 };
 use crate::components::gil::*;
 use crate::components::icon::Icon;
+use crate::components::realtime_status::RealtimeStatus;
 use crate::components::skeleton::{BoxSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton};
 use crate::components::tool_help::{ActionableEmptyState, ToolHeader};
 use crate::components::{item_icon::*, meta::*, world_name::*};
 use crate::global_state::use_world_display_name;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::routes::retainer_live::{ListedPair, use_retainer_live};
 use components::Outlet;
 use hooks::use_params_map;
 use icondata as i;
@@ -404,6 +406,19 @@ pub fn RetainerUndercuts() -> impl IntoView {
             }
         },
     );
+    let listed_pairs = Signal::derive(move || {
+        retainers.get().and_then(|result| {
+            result.ok().map(|characters| {
+                characters
+                    .iter()
+                    .flat_map(|(_, retainers)| retainers.iter())
+                    .flat_map(|(_, undercuts)| undercuts.iter())
+                    .map(|undercut| (undercut.current.world_id, undercut.current.item_id))
+                    .collect::<Vec<ListedPair>>()
+            })
+        })
+    });
+    let live = use_retainer_live(listed_pairs, move || retainers.refetch());
     let (drawer_visible, set_drawer_visible) = signal(false);
     view! {
         <MetaTitle title=t_string!(i18n, retainers_undercuts_title).to_string() />
@@ -433,10 +448,13 @@ pub fn RetainerUndercuts() -> impl IntoView {
                         view! {
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
-                                <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
-                                    <Icon icon=i::BsBell />
-                                    <span class="ml-1">{t!(i18n, add_alert_button)}</span>
-                                </button>
+                                <div class="flex items-center gap-3">
+                                    <RealtimeStatus status=live.status last_update=live.last_update />
+                                    <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
+                                        <Icon icon=i::BsBell />
+                                        <span class="ml-1">{t!(i18n, add_alert_button)}</span>
+                                    </button>
+                                </div>
                             </div>
                             <Show when=move || drawer_visible.get()>
                                 <AlertDrawer
@@ -444,10 +462,6 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                     set_visible=set_drawer_visible.into()
                                 />
                             </Show>
-                            <br />
-                            <span>
-                                {t!(i18n, retainers_data_notice)}
-                            </span>
                             <br />
                             <span>
                                 {t!(i18n, retainers_undercuts_description)}
@@ -602,11 +616,22 @@ pub fn RetainerListings() -> impl IntoView {
             }
         },
     );
+    let listed_pairs = Signal::derive(move || {
+        retainers.get().and_then(|result| {
+            result.ok().map(|data| {
+                data.retainers
+                    .iter()
+                    .flat_map(|(_, retainers)| retainers.iter())
+                    .flat_map(|(_, listings)| listings.iter())
+                    .map(|listing| (listing.world_id, listing.item_id))
+                    .collect::<Vec<ListedPair>>()
+            })
+        })
+    });
+    let live = use_retainer_live(listed_pairs, move || retainers.refetch());
     view! {
-        <span class="content-title">{t!(i18n, retainers_all_listings_title)}</span>
         <MetaTitle title=t_string!(i18n, retainers_all_listings_title).to_string() />
         <MetaDescription text=t_string!(i18n, retainers_all_listings_desc).to_string() />
-        <br />
         <Suspense fallback=move || {
             view! { <TableSkeleton columns=listing_skeleton_columns() rows=5 /> }
         }>
@@ -631,9 +656,14 @@ pub fn RetainerListings() -> impl IntoView {
                     }
                     Some(Ok(_)) => {
                         view! {
-                            <span>
-                                {t!(i18n, retainers_data_notice)}
-                            </span>
+                            // Title row lives inside the logged-in arm (like
+                            // the undercuts page) so the live pill never
+                            // shows a perpetual "connecting" to a visitor who
+                            // has nothing to subscribe to.
+                            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                                <span class="content-title">{t!(i18n, retainers_all_listings_title)}</span>
+                                <RealtimeStatus status=live.status last_update=live.last_update />
+                            </div>
                             {move || {
                                 match retainers.get() {
                                     None => {

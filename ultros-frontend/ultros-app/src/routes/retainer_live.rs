@@ -6,7 +6,10 @@
 //! resource when a relevant event lands, debounced so a burst on a busy
 //! world becomes one request.
 
-use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient};
+use crate::ws::realtime::{RealtimeSubscription, use_realtime};
+use chrono::{DateTime, Utc};
+use leptos::prelude::*;
+use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world_helper::AnySelector;
 
 /// A `(world_id, item_id)` pair one of the user's retainers currently lists.
@@ -47,6 +50,123 @@ pub(crate) fn is_retainer_update_relevant(message: &ServerClient, pairs: &[Liste
         }
         ServerClient::Stale { .. } => !pairs.is_empty(),
         _ => false,
+    }
+}
+
+/// Trailing debounce for refetches. On wasm this is a `gloo_timers::Timeout`;
+/// under `ssr` the whole hook is inert (the realtime client never fires), so
+/// the timer is a no-op there.
+#[derive(Default)]
+struct RefetchDebounce {
+    #[cfg(not(feature = "ssr"))]
+    pending: Option<gloo_timers::callback::Timeout>,
+}
+
+#[cfg(not(feature = "ssr"))]
+const DEBOUNCE_MS: u32 = 1_500;
+
+impl RefetchDebounce {
+    /// Replace any pending timer with a fresh one that runs `refetch` after
+    /// [`DEBOUNCE_MS`]. Dropping the previous `Timeout` cancels it.
+    fn schedule(&mut self, refetch: impl FnOnce() + 'static) {
+        #[cfg(not(feature = "ssr"))]
+        {
+            self.pending = Some(gloo_timers::callback::Timeout::new(DEBOUNCE_MS, refetch));
+        }
+        #[cfg(feature = "ssr")]
+        {
+            let _ = refetch;
+        }
+    }
+
+    /// Drop any pending timer without running it.
+    fn cancel(&mut self) {
+        #[cfg(not(feature = "ssr"))]
+        {
+            self.pending = None;
+        }
+    }
+}
+
+/// Signals a page hands to `RealtimeStatus`.
+#[derive(Clone, Copy)]
+pub(crate) struct RetainerLive {
+    pub status: Signal<String>,
+    pub last_update: Signal<Option<DateTime<Utc>>>,
+}
+
+/// Subscribe a retainer page to listing events for everything its retainers
+/// currently list, and call `refetch` (debounced) when one lands.
+///
+/// `pairs` is derived from the page's resource: `None` while it is loading or
+/// errored, `Some(vec)` once it resolves. The subscription is rebuilt every
+/// time `pairs` resolves, so a newly listed item that shows up after a
+/// refetch is covered without a page reload (mirrors the list page).
+pub(crate) fn use_retainer_live(
+    pairs: Signal<Option<Vec<ListedPair>>>,
+    refetch: impl Fn() + Clone + 'static,
+) -> RetainerLive {
+    let (status, set_status) = signal("connecting".to_string());
+    let (last_update, set_last_update) = signal(None::<DateTime<Utc>>);
+    let subscription = StoredValue::new_local(None::<RealtimeSubscription>);
+    let debounce = StoredValue::new_local(RefetchDebounce::default());
+    let realtime = use_realtime();
+
+    Effect::new(move |_| {
+        let Some(realtime) = realtime.clone() else {
+            set_status.set("offline".to_string());
+            return;
+        };
+        // `None` covers loading, errored, and (if the resource clears its
+        // value mid-refetch) the window between a refetch and its answer —
+        // keep the existing subscription alive across all of those.
+        let Some(pairs) = pairs.get() else {
+            return;
+        };
+        subscription.update_value(|sub| *sub = None);
+        debounce.update_value(RefetchDebounce::cancel);
+        let Some(filter) = retainer_market_filter(&pairs) else {
+            // Nothing listed, nothing to watch: a perpetual "connecting"
+            // pulse would be a lie, so show the socket as idle instead.
+            set_status.set("offline".to_string());
+            return;
+        };
+        set_status.set("connecting".to_string());
+        let refetch = refetch.clone();
+        let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
+            match message {
+                ServerClient::Subscribed { .. } => {
+                    set_status.set("live".to_string());
+                }
+                ServerClient::Listings(_) => {
+                    if !is_retainer_update_relevant(&message, &pairs) {
+                        return;
+                    }
+                    set_status.set("live".to_string());
+                    set_last_update.set(Some(Utc::now()));
+                    let refetch = refetch.clone();
+                    debounce.update_value(|d| d.schedule(move || refetch()));
+                }
+                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                    set_status.set("reconnecting".to_string());
+                    set_last_update.set(Some(Utc::now()));
+                    debounce.update_value(RefetchDebounce::cancel);
+                    refetch();
+                }
+                _ => {}
+            }
+        });
+        subscription.set_value(Some(sub));
+    });
+
+    on_cleanup(move || {
+        subscription.update_value(|sub| *sub = None);
+        debounce.update_value(RefetchDebounce::cancel);
+    });
+
+    RetainerLive {
+        status: status.into(),
+        last_update: last_update.into(),
     }
 }
 
