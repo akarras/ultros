@@ -1004,7 +1004,7 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
 "market-price" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
                                         <Gil amount=data.inner.market_price />{data.price_fallback.then(|| t_string!(i18n, market_listing_fallback_badge).to_string())}
                                     </div>}.into_any(),
-"sale-time" => view! {<div  class="truncate flex items-center w-full min-w-0">
+"sale-time" => view! {<div  class="truncate text-right flex items-center justify-end w-full min-w-0">
                                         {data.inner
                                             .sale_summary
                                             .as_ref()
