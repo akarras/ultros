@@ -104,6 +104,14 @@ pub struct GroupRole {
     pub member_count: i64,
 }
 
+/// Everything the group page needs in one round trip.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserGroupDetail {
+    pub group: UserGroup,
+    pub roles: Vec<GroupRole>,
+    pub member_count: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreateGroupRole {
     pub name: String,

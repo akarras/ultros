@@ -554,6 +554,40 @@ impl UltrosDb {
         Ok(())
     }
 
+    /// Everything the group page needs in one round trip: the group itself,
+    /// its roles with member counts, and the group's own member count.
+    pub async fn get_group_detail(
+        &self,
+        group_id: i32,
+        user_id: i64,
+    ) -> Result<(user_group::Model, Vec<GroupRoleReturn>, i64)> {
+        let group = self.require_group_member(group_id, user_id).await?;
+        let roles = self.get_group_roles(group_id, user_id).await?;
+        let member_count = self
+            .group_member_counts(&[group_id])
+            .await?
+            .remove(&group_id)
+            .unwrap_or(0);
+        Ok((group, roles, member_count))
+    }
+
+    /// Member counts for a batch of groups, e.g. for the group summary list.
+    pub async fn group_member_counts(&self, group_ids: &[i32]) -> Result<HashMap<i32, i64>> {
+        if group_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(i32, i64)> = user_group_member::Entity::find()
+            .select_only()
+            .column(user_group_member::Column::GroupId)
+            .column_as(user_group_member::Column::UserId.count(), "member_count")
+            .filter(user_group_member::Column::GroupId.is_in(group_ids.iter().copied()))
+            .group_by(user_group_member::Column::GroupId)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// The bot left the guild. Unlink the group, keep every member, turn
     /// synced roles into orphaned manual roles, and record why. Returns the
     /// affected group id, or `None` if no group was linked to that guild.
@@ -1399,5 +1433,31 @@ pub(crate) mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn group_detail_bundles_roles_and_member_count() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let member = fresh_user(&db, "member").await;
+        let role = db
+            .create_group_role(group.id, owner.id, "Officers".to_string())
+            .await
+            .unwrap();
+        db.add_group_role_member(group.id, owner.id, role.id, member.id)
+            .await
+            .unwrap();
+
+        let (detail_group, roles, member_count) =
+            db.get_group_detail(group.id, member.id).await.unwrap();
+        assert_eq!(detail_group.id, group.id);
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].1, 1);
+        assert_eq!(member_count, 2, "owner plus one member");
+
+        let counts = db.group_member_counts(&[group.id]).await.unwrap();
+        assert_eq!(counts.get(&group.id), Some(&2));
+        assert!(db.group_member_counts(&[]).await.unwrap().is_empty());
     }
 }
