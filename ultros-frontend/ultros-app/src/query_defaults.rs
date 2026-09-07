@@ -309,6 +309,34 @@ mod test {
                     offenders.push(format!("{name} uses {hook}"));
                 }
             }
+            // `query_signal` cannot be matched by name — the app's own
+            // wrapper shares it — so catch the router's copy by the path it
+            // has to be reached through. Both a qualified call and a grouped
+            // `use leptos_router::{hooks::{query_signal, ..}}` import are
+            // whitespace-collapsed first, because rustfmt splits either one
+            // across lines. #1316 arrived with exactly that import and nine
+            // filters behind it, past a green version of this test.
+            let flat = src
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace(" ::", "::")
+                .replace(":: ", "::")
+                .replace("{ ", "{")
+                .replace(" }", "}");
+            if flat.contains("leptos_router::hooks::query_signal") {
+                offenders.push(format!("{name} calls the router's query_signal"));
+            }
+            for statement in flat.split("use leptos_router").skip(1) {
+                let statement = statement.split(';').next().unwrap_or_default();
+                if statement.contains("query_signal") || statement.contains("use_query_map") {
+                    offenders.push(format!("{name} imports a router URL hook: {statement}"));
+                }
+            }
         }
         assert!(
             offenders.is_empty(),

@@ -12,6 +12,7 @@ pub mod history;
 pub mod home_page;
 pub mod item_compare;
 pub mod item_explorer;
+pub mod item_explorer_filters;
 pub mod item_explorer_roles;
 pub mod item_explorer_scope;
 pub mod item_explorer_toolbar;

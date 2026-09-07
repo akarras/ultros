@@ -1,10 +1,14 @@
-use crate::components::app_link::AppLink;
+use crate::components::app_link::{AppLink, use_location_or_default};
 use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
+use crate::components::control_bar::{
+    ColumnOption, ControlBar, FilterOption, parse_visible_cols, serialize_visible_cols,
+};
 use crate::components::data_table::{Column, ColumnHeader, DataTableGrid, TrackWidths};
+use crate::components::filter_chip::{FilterChip, committed_value};
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::item_tooltip::ItemTooltip;
@@ -12,13 +16,18 @@ use crate::components::job_set_card::JobSetCard;
 use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
-use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
+use crate::components::related_items::get_vendor_price;
+use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell, cmp_none_last};
 use crate::components::toggle::Toggle;
 use crate::components::world_name::WorldName;
 use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*};
+use crate::global_state::local_world_data::use_world_helper;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::query_signal;
+use crate::routes::item_explorer_filters::{
+    CheapestPrice, ExplorerFilters, column_availability, has_equip_level,
+};
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, use_explorer_price_scope};
 use crate::routes::item_explorer_toolbar::jobset_display_label;
 use icondata as i;
@@ -513,12 +522,54 @@ pub fn DefaultItems() -> impl IntoView {
     .into_any()
 }
 
-#[derive(PartialEq, PartialOrd, Copy, Clone)]
-enum ItemSortOption {
+/// Every column the explorer can order by. One variant per column that
+/// carries data — issue #1296: the table used to render eight columns and
+/// sort by four of them, so "cheapest vendor minion" was a question the page
+/// displayed the answer to but could not be asked.
+///
+/// The token each variant `Display`s is the `?sort=` value and is also the
+/// column id the columns picker persists in `?cols=`, so the two never need a
+/// translation table between them.
+#[derive(PartialEq, Eq, PartialOrd, Copy, Clone, Debug)]
+pub(crate) enum ItemSortOption {
     ItemLevel,
+    EquipLevel,
     Price,
+    HqPrice,
+    Vendor,
+    World,
     Name,
     Key,
+}
+
+/// Sort options in the order the sort menu offers them, which is also the
+/// left-to-right order of the columns they sort.
+const SORT_OPTIONS: [ItemSortOption; 8] = [
+    ItemSortOption::Name,
+    ItemSortOption::ItemLevel,
+    ItemSortOption::EquipLevel,
+    ItemSortOption::Price,
+    ItemSortOption::HqPrice,
+    ItemSortOption::Vendor,
+    ItemSortOption::World,
+    ItemSortOption::Key,
+];
+
+impl ItemSortOption {
+    /// The optional column this sort reads, when it reads one. A sort whose
+    /// column the current item set cannot fill is not offered — sorting
+    /// minions by equip level would silently be a no-op.
+    fn column(self) -> Option<&'static str> {
+        Some(match self {
+            ItemSortOption::ItemLevel => COL_ID_ITEM_LEVEL,
+            ItemSortOption::EquipLevel => COL_ID_EQUIP_LEVEL,
+            ItemSortOption::HqPrice => COL_ID_HQ,
+            ItemSortOption::Vendor => COL_ID_VENDOR,
+            ItemSortOption::World => COL_ID_WORLD,
+            // Name, NQ price and "added" have columns that are always on.
+            _ => return None,
+        })
+    }
 }
 
 impl FromStr for ItemSortOption {
@@ -527,7 +578,11 @@ impl FromStr for ItemSortOption {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "ilvl" => ItemSortOption::ItemLevel,
+            "lv" => ItemSortOption::EquipLevel,
             "price" => ItemSortOption::Price,
+            "hq" => ItemSortOption::HqPrice,
+            "vendor" => ItemSortOption::Vendor,
+            "world" => ItemSortOption::World,
             "name" => ItemSortOption::Name,
             "key" => ItemSortOption::Key,
             _ => return Err(()),
@@ -539,7 +594,11 @@ impl Display for ItemSortOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let val = match self {
             ItemSortOption::ItemLevel => "ilvl",
+            ItemSortOption::EquipLevel => "lv",
             ItemSortOption::Price => "price",
+            ItemSortOption::HqPrice => "hq",
+            ItemSortOption::Vendor => "vendor",
+            ItemSortOption::World => "world",
             ItemSortOption::Name => "name",
             ItemSortOption::Key => "key",
         };
@@ -548,11 +607,20 @@ impl Display for ItemSortOption {
 }
 
 /// The Item Explorer's list is item-level-descending until the visitor says
-/// otherwise; every column here reads best-first descending, so the shared
-/// default direction applies unchanged.
+/// otherwise.
 impl SortColumn for ItemSortOption {
     fn fallback() -> Self {
         ItemSortOption::ItemLevel
+    }
+
+    /// Numbers read best-first descending, which is the shared default. Text
+    /// columns do not: a world list and an item list both want A first, and
+    /// arriving at them reversed buries what the click asked for.
+    fn default_dir(self) -> SortDir {
+        match self {
+            ItemSortOption::Name | ItemSortOption::World => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
     }
 }
 
@@ -611,6 +679,208 @@ const EXPLORER_COLUMNS: [ExplorerColumn; 9] = [
     COL_ACTIONS,
 ];
 
+/// Ids of the columns the visitor can switch off, as persisted in `?cols=`.
+///
+/// Deliberately the same tokens `ItemSortOption` writes to `?sort=`: the two
+/// name the same column, and a second vocabulary for it would be one more
+/// mapping to keep in step.
+pub(crate) const COL_ID_ITEM_LEVEL: &str = "ilvl";
+pub(crate) const COL_ID_EQUIP_LEVEL: &str = "lv";
+pub(crate) const COL_ID_HQ: &str = "hq";
+pub(crate) const COL_ID_VENDOR: &str = "vendor";
+pub(crate) const COL_ID_WORLD: &str = "world";
+
+/// The switchable columns, in DOM order. Icon, name, NQ price and the row
+/// actions are not here: they carry the row's identity and its one
+/// always-meaningful number, so there is nothing to gain from hiding them.
+const OPTIONAL_COLUMNS: &[&str] = &[
+    COL_ID_ITEM_LEVEL,
+    COL_ID_EQUIP_LEVEL,
+    COL_ID_HQ,
+    COL_ID_VENDOR,
+    COL_ID_WORLD,
+];
+
+/// Every optional column is on by default; the ones the current item set
+/// cannot fill are then dropped by [`ColumnAvailability`], so a category picks
+/// its own columns without the visitor touching the picker.
+const DEFAULT_COLUMNS: &[&str] = OPTIONAL_COLUMNS;
+
+/// `?` keys the filter chips own. Listed once so `+ Filter` and `Clear all`
+/// cannot drift from what the chips actually render.
+pub(crate) const FILTER_NAME: &str = "q";
+pub(crate) const FILTER_MIN_ILVL: &str = "min-ilvl";
+pub(crate) const FILTER_MAX_ILVL: &str = "max-ilvl";
+pub(crate) const FILTER_MIN_LV: &str = "min-lv";
+pub(crate) const FILTER_MAX_PRICE: &str = "max-price";
+pub(crate) const FILTER_VENDOR: &str = "vendor-only";
+pub(crate) const FILTER_HQ: &str = "hq-only";
+pub(crate) const FILTER_LISTED: &str = "listed";
+
+/// Filter order in the `+ Filter` menu.
+pub(crate) const ADDABLE_FILTERS: &[&str] = &[
+    FILTER_NAME,
+    FILTER_MIN_ILVL,
+    FILTER_MAX_ILVL,
+    FILTER_MIN_LV,
+    FILTER_MAX_PRICE,
+    FILTER_VENDOR,
+    FILTER_HQ,
+    FILTER_LISTED,
+];
+
+/// Filters that only mean something once a column has values behind it. A
+/// minion category offers neither an equip-level floor nor an HQ-only switch.
+fn filter_requires_column(filter: &str) -> Option<&'static str> {
+    Some(match filter {
+        FILTER_MIN_ILVL | FILTER_MAX_ILVL => COL_ID_ITEM_LEVEL,
+        FILTER_MIN_LV => COL_ID_EQUIP_LEVEL,
+        FILTER_HQ => COL_ID_HQ,
+        FILTER_VENDOR => COL_ID_VENDOR,
+        _ => return None,
+    })
+}
+
+/// Apply a sort direction to an ordering.
+///
+/// The counterpart of [`cmp_none_last`] for columns whose value is always
+/// there — it, not this, handles the ones that can be missing, because
+/// reversing an ordering that already sank the empty rows would float them
+/// back to the top.
+fn ordered(dir: SortDir, ordering: std::cmp::Ordering) -> std::cmp::Ordering {
+    match dir {
+        SortDir::Asc => ordering,
+        SortDir::Desc => ordering.reverse(),
+    }
+}
+
+/// The explorer's filter state: one value to read, one setter to write.
+#[derive(Copy, Clone)]
+struct ExplorerFilterSignals {
+    /// Everything the chips currently filter by, as one parsed value.
+    values: Memo<ExplorerFilters>,
+    /// Set (`Some`) or clear (`None`) one filter param.
+    set_param: Callback<(&'static str, Option<String>)>,
+    /// Rewrite several query params in one navigation. The sort control uses
+    /// it to move `?sort=` and drop `?dir=` without pushing two entries.
+    set_params: Callback<Vec<(&'static str, Option<String>)>>,
+    /// Filter ids drawn as a chip right now, in [`ADDABLE_FILTERS`] order.
+    active: Memo<Vec<&'static str>>,
+    /// A filter just added from `+ Filter` and not yet given a value. It has
+    /// no URL presence, so without this a freshly added chip would render and
+    /// then vanish on the next reactive pass.
+    pending: RwSignal<Option<&'static str>>,
+    /// Drop every filter in one navigation.
+    clear_all: Callback<()>,
+}
+
+/// Wire the filter chips to the URL.
+///
+/// Writes go through [`use_navigate`](leptos_router::hooks::use_navigate)
+/// rather than `query_signal`'s setter for two reasons: a filter change has to
+/// drop `?page=` in the *same* navigation (page 7 of one cut is not page 7 of
+/// another — the same rule [`RESET_ON_SORT`] applies to sorting), and
+/// `Clear all` has to drop eight params without pushing eight history entries.
+fn use_explorer_filters() -> ExplorerFilterSignals {
+    let (name, _) = query_signal::<String>(FILTER_NAME);
+    let (min_ilvl, _) = query_signal::<i32>(FILTER_MIN_ILVL);
+    let (max_ilvl, _) = query_signal::<i32>(FILTER_MAX_ILVL);
+    let (min_lv, _) = query_signal::<i32>(FILTER_MIN_LV);
+    let (max_price, _) = query_signal::<i32>(FILTER_MAX_PRICE);
+    let (vendor_only, _) = query_signal::<bool>(FILTER_VENDOR);
+    let (hq_only, _) = query_signal::<bool>(FILTER_HQ);
+    let (listed_only, _) = query_signal::<bool>(FILTER_LISTED);
+
+    let values = Memo::new(move |_| ExplorerFilters {
+        name: name().and_then(|raw| committed_value(&raw)),
+        min_ilvl: min_ilvl(),
+        max_ilvl: max_ilvl(),
+        min_lv: min_lv(),
+        max_price: max_price(),
+        vendor_only: vendor_only().unwrap_or_default(),
+        hq_only: hq_only().unwrap_or_default(),
+        listed_only: listed_only().unwrap_or_default(),
+    });
+
+    let pending = RwSignal::new(None::<&'static str>);
+    let active = Memo::new(move |_| {
+        let values = values.get();
+        let pending = pending.get();
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| values.is_set(id) || pending == Some(*id))
+            .collect::<Vec<_>>()
+    });
+
+    // Not `use_location()`: that is an `expect`, and this component renders
+    // inside a `<Suspense>` whose owner can be gone by the time the fragment
+    // resolves (see `components::app_link`).
+    let location = use_location_or_default();
+    #[cfg(feature = "hydrate")]
+    let navigate = leptos_router::hooks::use_navigate();
+    // `navigate` only exists client-side, and so does every path that reaches
+    // these callbacks — they run from a chip's `on:change` / `on:click`.
+    // A `Callback` rather than a plain closure: it is `Copy`, and the
+    // `navigate` it captures under `hydrate` is not.
+    #[allow(unused_variables)]
+    let go = Callback::new(move |query: leptos_router::params::ParamsMap| {
+        #[cfg(feature = "hydrate")]
+        navigate(
+            &format!(
+                "{}{}",
+                location.pathname.get_untracked(),
+                query.to_query_string()
+            ),
+            leptos_router::NavigateOptions {
+                replace: true,
+                scroll: false,
+                ..Default::default()
+            },
+        );
+    });
+
+    // Every write drops `?page=`: page 7 of one cut of the list is not page 7
+    // of another, and an out-of-range page is what the `?page=N` deep-links in
+    // GlitchTip used to hydrate-crash on. Same rule as [`RESET_ON_SORT`].
+    let set_params = Callback::new(move |params: Vec<(&'static str, Option<String>)>| {
+        let mut query = location.query.get_untracked();
+        query.remove("page");
+        for (key, value) in params {
+            query.remove(key);
+            if let Some(value) = value {
+                query.insert(key, value);
+            }
+            if pending.get_untracked() == Some(key) {
+                pending.set(None);
+            }
+        }
+        go.run(query);
+    });
+    let set_param = Callback::new(move |(key, value): (&'static str, Option<String>)| {
+        set_params.run(vec![(key, value)]);
+    });
+
+    let clear_all = Callback::new(move |_| {
+        let mut query = location.query.get_untracked();
+        for key in ADDABLE_FILTERS {
+            query.remove(key);
+        }
+        query.remove("page");
+        pending.set(None);
+        go.run(query);
+    });
+
+    ExplorerFilterSignals {
+        values,
+        set_param,
+        set_params,
+        active,
+        pending,
+        clear_all,
+    }
+}
+
 #[component]
 fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
     let i18n = use_i18n();
@@ -624,6 +894,12 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         .expect("ItemList is always rendered inside ItemExplorer, which provides the scope");
     let scope_name = scope.name;
     let is_single_world = scope.is_single_world;
+    // Resolved once, here, rather than per comparison: the World sort needs a
+    // display name for every listing it orders. `use_world_helper` is the
+    // non-panicking read `WorldName` already makes — an absent or failed world
+    // list simply leaves every row's world name `None`, which sorts them all
+    // last instead of taking the page down.
+    let worlds = StoredValue::new(use_world_helper().ok());
 
     // Defer the price-based filter + sort until after hydration.
     //
@@ -653,54 +929,156 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
     // A frame later the effect fires, the memo re-runs with the real
     // price map, and the `<For>` reactively reorders/filters — by which
     // point hydration is finished and tachys is no longer walking.
+    //
+    // The price *filters* (`?max-price=`, `?listed=`) ride the same gate,
+    // through `CheapestPrice::NotLoaded` — see `item_explorer_filters`.
     let hydrated = RwSignal::new(false);
     Effect::new(move |_| {
         hydrated.set(true);
     });
 
-    let sorted_items = Memo::new(move |_| {
-        let item_property = sort().unwrap_or_else(ItemSortOption::fallback);
-        let direction = direction().unwrap_or_else(|| item_property.default_dir());
-        let price_map = if hydrated.get() {
+    let price_map = Memo::new(move |_| {
+        if hydrated.get() {
             listings_resource.get().and_then(|r| r.ok())
         } else {
             None
+        }
+    });
+
+    // Which optional columns this item set can fill (#1296). Computed from
+    // the whole, unfiltered set so paging and filtering never change the
+    // column layout under the reader.
+    let availability = Memo::new(move |_| {
+        items.with(|items| {
+            column_availability(items.iter().map(|(_, item)| *item), get_vendor_price)
+        })
+    });
+
+    // `?cols=` — the visitor's own overrides on top of that. A column shows
+    // when the set has data for it AND the visitor has not switched it off.
+    let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let visible_cols = Memo::new(move |_| {
+        parse_visible_cols(cols_param().as_deref(), OPTIONAL_COLUMNS, DEFAULT_COLUMNS)
+    });
+    let column_on = move |id: &'static str| {
+        availability.get().has(id) && visible_cols.with(|cols| cols.contains(id))
+    };
+    // The world column has no data of its own to be missing — it is the
+    // multi-world scope that gives it a reason to exist.
+    let world_column_on = Signal::derive(move || !is_single_world.get() && column_on(COL_ID_WORLD));
+
+    let ExplorerFilterSignals {
+        values: filter_values,
+        set_param: set_filter_param,
+        set_params: set_query_params,
+        active: filter_active,
+        pending: filter_pending,
+        clear_all: clear_filters,
+    } = use_explorer_filters();
+
+    // `?sort=` can name a column this set does not have — a bookmark carried
+    // from a gear category to a minion one. Fall back rather than ordering by
+    // a value every row shares, which reads as "sorting did nothing".
+    //
+    // Availability, not `?cols=`, is what gates a sort: switching a column off
+    // is about screen space, and a visitor who hides the vendor column has not
+    // said they no longer want the cheapest vendor item first.
+    let active_sort = Memo::new(move |_| {
+        let fallback = if availability.get().item_level {
+            ItemSortOption::fallback()
+        } else {
+            ItemSortOption::Name
+        };
+        match sort() {
+            Some(requested)
+                if requested.column().is_none_or(|column| match column {
+                    COL_ID_WORLD => !is_single_world.get(),
+                    column => availability.get().has(column),
+                }) =>
+            {
+                requested
+            }
+            _ => fallback,
+        }
+    });
+
+    let sorted_items = Memo::new(move |_| {
+        let item_property = active_sort.get();
+        let direction = direction().unwrap_or_else(|| item_property.default_dir());
+        let price_map = price_map.get();
+        let filters = filter_values.get();
+        // One lookup closure per key the sort or the filters need, so a row is
+        // priced once per comparison rather than once per branch.
+        // Borrowed, not moved: all three read the same map, and cloning a
+        // whole listings map per closure would be per-render, per-column.
+        let cheapest = |item_id: i32| match &price_map {
+            None => CheapestPrice::NotLoaded,
+            Some(map) => match map.find_matching_listings(item_id).lowest_gil() {
+                Some(price) => CheapestPrice::Some(price),
+                None => CheapestPrice::Missing,
+            },
+        };
+        let quality_price = |item_id: i32, hq: bool| {
+            price_map.as_ref().and_then(|map| {
+                let summary = map.find_matching_listings(item_id);
+                if hq { summary.hq } else { summary.lq }.map(|listing| listing.price)
+            })
+        };
+        let world_of = |item_id: i32| {
+            let listing = price_map
+                .as_ref()?
+                .find_matching_listings(item_id)
+                .chosen(false)?;
+            worlds.with_value(|worlds| {
+                worlds.as_ref().and_then(|worlds| {
+                    worlds
+                        .lookup_selector(AnySelector::World(listing.world_id))
+                        .map(|world| world.get_name().to_string())
+                })
+            })
         };
         items()
             .into_iter()
-            .filter(|(id, _)| {
-                if ItemSortOption::Price == item_property {
-                    if let Some(map) = &price_map {
-                        map.find_matching_listings(id.0).lowest_gil().is_some()
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            })
-            .sorted_by(|a, b| {
-                let ((_, item_a), (_, item_b)) = match direction {
-                    SortDir::Asc => (a, b),
-                    SortDir::Desc => (b, a),
-                };
+            .filter(|(id, item)| filters.matches(item, get_vendor_price(id.0), cheapest(id.0)))
+            .sorted_by(|(_, item_a), (_, item_b)| {
+                let (a, b) = (item_a.key_id.0, item_b.key_id.0);
+                // `cmp_none_last` for everything that can be absent: a row
+                // with no listing, no vendor and no equip level belongs at the
+                // bottom in *both* directions, not dragged to the top the
+                // moment the reader asks for best-first.
                 match item_property {
-                    ItemSortOption::ItemLevel => item_a.level_item.cmp(&item_b.level_item),
-                    ItemSortOption::Name => item_a.name.cmp(&item_b.name),
-                    ItemSortOption::Price => {
-                        if let Some(price_map) = &price_map {
-                            let price_a = price_map
-                                .find_matching_listings(item_a.key_id.0)
-                                .lowest_gil();
-                            let price_b = price_map
-                                .find_matching_listings(item_b.key_id.0)
-                                .lowest_gil();
-                            price_a.cmp(&price_b)
-                        } else {
-                            item_a.level_item.cmp(&item_b.level_item)
-                        }
+                    ItemSortOption::ItemLevel => {
+                        ordered(direction, item_a.level_item.cmp(&item_b.level_item))
                     }
-                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
+                    ItemSortOption::EquipLevel => cmp_none_last(
+                        has_equip_level(item_a).then_some(item_a.level_equip),
+                        has_equip_level(item_b).then_some(item_b.level_equip),
+                        direction,
+                        i32::cmp,
+                    ),
+                    ItemSortOption::Name => ordered(direction, item_a.name.cmp(&item_b.name)),
+                    ItemSortOption::Price => cmp_none_last(
+                        quality_price(a, false),
+                        quality_price(b, false),
+                        direction,
+                        i32::cmp,
+                    ),
+                    ItemSortOption::HqPrice => cmp_none_last(
+                        quality_price(a, true),
+                        quality_price(b, true),
+                        direction,
+                        i32::cmp,
+                    ),
+                    ItemSortOption::Vendor => cmp_none_last(
+                        get_vendor_price(a),
+                        get_vendor_price(b),
+                        direction,
+                        u32::cmp,
+                    ),
+                    ItemSortOption::World => {
+                        cmp_none_last(world_of(a), world_of(b), direction, String::cmp)
+                    }
+                    ItemSortOption::Key => ordered(direction, a.cmp(&b)),
                 }
             })
             .collect::<Vec<_>>()
@@ -804,17 +1182,23 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                             {item.name.as_str()}
                         </AppLink>
                         // Compact metadata, only below `lg` where the
-                        // dedicated columns are hidden.
+                        // dedicated columns are hidden. Follows the same
+                        // availability as those columns, so a minion row does
+                        // not carry a lone "iLvl 0" on a phone either.
                         <div class="flex lg:hidden items-center gap-2 text-xs text-[color:var(--color-text-muted)]">
-                            <span>{t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}</span>
                             <div>
-                                {if item.level_equip > 1 {
+                                {move || column_on(COL_ID_ITEM_LEVEL).then(|| {
+                                    view! {
+                                        <span>{t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}</span>
+                                    }
+                                })}
+                            </div>
+                            <div>
+                                {move || (column_on(COL_ID_EQUIP_LEVEL) && item.level_equip > 1).then(|| {
                                     view! {
                                         <span>{t!(i18n, item_explorer_lv_prefix)} " "{item.level_equip}</span>
-                                    }.into_any()
-                                } else {
-                                    ().into_any()
-                                }}
+                                    }
+                                })}
                             </div>
                         </div>
                     </div>
@@ -847,12 +1231,23 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                 }
                 .into_any()
             },
-        ),
+        )
+        .visible(Signal::derive(move || column_on(COL_ID_ITEM_LEVEL))),
         // Equip level.
         Column::new(
             COL_EQUIP_LEVEL.0,
-            ColumnHeader::content(move || {
-                view! { {t!(i18n, item_explorer_col_equip_level)} }.into_any()
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::EquipLevel
+                        label=t_string!(i18n, item_explorer_col_equip_level).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
             }),
             move |(_id, item): &ExplorerRow| {
                 let level_equip = item.level_equip;
@@ -867,7 +1262,8 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                 }
                 .into_any()
             },
-        ),
+        )
+        .visible(Signal::derive(move || column_on(COL_ID_EQUIP_LEVEL))),
         // Cheapest NQ price.
         Column::new(
             COL_NQ.0,
@@ -899,7 +1295,19 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         // tachys-hydration reasoning as the old card layout).
         Column::new(
             COL_HQ.0,
-            ColumnHeader::content(move || view! { {t!(i18n, hq)} }.into_any()),
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::HqPrice
+                        label=t_string!(i18n, hq).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
+            }),
             move |(id, item): &ExplorerRow| {
                 let id = **id;
                 let can_be_hq = item.can_be_hq;
@@ -916,11 +1324,24 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                 }
                 .into_any()
             },
-        ),
+        )
+        .visible(Signal::derive(move || column_on(COL_ID_HQ))),
         // Vendor price.
         Column::new(
             COL_VENDOR.0,
-            ColumnHeader::content(move || view! { {t!(i18n, item_explorer_vendor)} }.into_any()),
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::Vendor
+                        label=t_string!(i18n, item_explorer_vendor).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
+            }),
             move |(id, _item): &ExplorerRow| {
                 let item_id = id.0;
                 view! {
@@ -935,24 +1356,37 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                 .into_any()
             },
         )
-        .header_class(COL_VENDOR.1),
+        .header_class(COL_VENDOR.1)
+        .visible(Signal::derive(move || column_on(COL_ID_VENDOR))),
         // World holding the cheapest listing. Only exists when the scope
         // spans more than one world; when it doesn't, the cell stays in the
         // DOM as `hidden` and the column simply drops out of the derived
         // template, exactly as the two class-string variants did.
         Column::new(
             COL_WORLD.0,
-            ColumnHeader::content(move || view! { {t!(i18n, item_explorer_col_world)} }.into_any()),
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::World
+                        label=t_string!(i18n, item_explorer_col_world).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
+            }),
             move |(id, _item): &ExplorerRow| {
                 let item_id = id.0;
                 view! {
                     <div
                         role="cell"
                         class=move || {
-                            if is_single_world.get() {
-                                "hidden"
-                            } else {
+                            if world_column_on.get() {
                                 "hidden xl:block truncate text-sm text-[color:var(--color-text-muted)]"
+                            } else {
+                                "hidden"
                             }
                         }
                     >
@@ -992,7 +1426,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
             },
         )
         .header_class(COL_WORLD.1)
-        .visible(Signal::derive(move || !is_single_world.get())),
+        .visible(world_column_on),
         // Row actions.
         Column::new(
             COL_ACTIONS.0,
@@ -1016,75 +1450,383 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         ),
     ];
 
+    // ---- Control bar wiring -------------------------------------------
+    //
+    // The explorer used to carry a bespoke sticky bar: four `?sort=` buttons
+    // and a direction pair, with no filters at all. It is the analyzer tools'
+    // `ControlBar` now (#1296) — result count and sort control on row 1, one
+    // chip per active filter on row 2, everything unset folded into
+    // `+ Filter` so the bar costs the same height whether one filter is on or
+    // none.
+
+    let sort_label = move |option: ItemSortOption| -> String {
+        match option {
+            ItemSortOption::ItemLevel => t_string!(i18n, item_explorer_ilvl).to_string(),
+            ItemSortOption::EquipLevel => {
+                t_string!(i18n, item_explorer_col_equip_level).to_string()
+            }
+            ItemSortOption::Price => t_string!(i18n, item_explorer_price).to_string(),
+            ItemSortOption::HqPrice => t_string!(i18n, item_explorer_col_hq_price).to_string(),
+            ItemSortOption::Vendor => t_string!(i18n, item_explorer_vendor).to_string(),
+            ItemSortOption::World => t_string!(i18n, item_explorer_col_world).to_string(),
+            ItemSortOption::Name => t_string!(i18n, item_explorer_name).to_string(),
+            ItemSortOption::Key => t_string!(i18n, item_explorer_added).to_string(),
+        }
+    };
+
+    // Only offer to sort by a column this set can fill. The sort menu is the
+    // only sort control below `lg`, where the header row is hidden, so an
+    // entry that silently does nothing costs more here than anywhere.
+    let sort_options = Memo::new(move |_| {
+        SORT_OPTIONS
+            .iter()
+            .copied()
+            .filter(|option| match option.column() {
+                None => true,
+                Some(COL_ID_WORLD) => !is_single_world.get(),
+                Some(column) => availability.get().has(column),
+            })
+            .collect::<Vec<_>>()
+    });
+    let active_dir =
+        Signal::derive(move || direction().unwrap_or_else(|| active_sort.get().default_dir()));
+
+    let column_label = move |id: &str| -> String {
+        match id {
+            COL_ID_ITEM_LEVEL => t_string!(i18n, item_explorer_ilvl).to_string(),
+            COL_ID_EQUIP_LEVEL => t_string!(i18n, item_explorer_col_equip_level).to_string(),
+            COL_ID_HQ => t_string!(i18n, item_explorer_col_hq_price).to_string(),
+            COL_ID_VENDOR => t_string!(i18n, item_explorer_vendor).to_string(),
+            COL_ID_WORLD => t_string!(i18n, item_explorer_col_world).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // A column the set cannot fill stays in the picker, greyed, with the
+    // reason: ticking it back on would produce a column of blanks, and
+    // dropping the entry entirely would leave the reader wondering where the
+    // column they know went.
+    let column_options = Memo::new(move |_| {
+        OPTIONAL_COLUMNS
+            .iter()
+            .copied()
+            .map(|id| {
+                let (disabled, hint) = if id == COL_ID_WORLD && is_single_world.get() {
+                    (
+                        true,
+                        Some(t_string!(i18n, item_explorer_column_single_world).to_string()),
+                    )
+                } else if !availability.get().has(id) {
+                    (
+                        true,
+                        Some(t_string!(i18n, item_explorer_column_unavailable).to_string()),
+                    )
+                } else {
+                    (false, None)
+                };
+                ColumnOption {
+                    id,
+                    label: column_label(id),
+                    group: None,
+                    disabled,
+                    hint,
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let toggle_column = Callback::new(move |id: &'static str| {
+        let mut cols = visible_cols.get_untracked();
+        if !cols.remove(id) {
+            cols.insert(id);
+        }
+        set_cols_param.set(Some(serialize_visible_cols(&cols, OPTIONAL_COLUMNS)));
+    });
+    let reset_columns = Callback::new(move |_| set_cols_param.set(None));
+
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_NAME => t_string!(i18n, item_explorer_filter_name).to_string(),
+            FILTER_MIN_ILVL => t_string!(i18n, item_explorer_filter_min_ilvl).to_string(),
+            FILTER_MAX_ILVL => t_string!(i18n, item_explorer_filter_max_ilvl).to_string(),
+            FILTER_MIN_LV => t_string!(i18n, item_explorer_filter_min_lv).to_string(),
+            FILTER_MAX_PRICE => t_string!(i18n, item_explorer_filter_max_price).to_string(),
+            FILTER_VENDOR => t_string!(i18n, item_explorer_filter_vendor_only).to_string(),
+            FILTER_HQ => t_string!(i18n, item_explorer_filter_hq_only).to_string(),
+            FILTER_LISTED => t_string!(i18n, item_explorer_filter_listed_only).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // `+ Filter` offers what is neither on screen already nor meaningless for
+    // this set — no HQ-only switch in a category with no HQ items.
+    let filter_options = Memo::new(move |_| {
+        let active = filter_active.get();
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active.contains(id))
+            .filter(|id| {
+                filter_requires_column(id).is_none_or(|column| availability.get().has(column))
+            })
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // The three booleans commit straight to `true` — their chip's presence
+    // *is* their value. The rest mount blank and editing, so the chip a click
+    // produces is one the visitor can immediately type into.
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_VENDOR | FILTER_HQ | FILTER_LISTED => {
+            set_filter_param.run((id, Some("true".to_string())))
+        }
+        id => filter_pending.set(Some(id)),
+    });
+
+    // A numeric chip is on screen when its param is set, or while it is the
+    // one `+ Filter` just added and nothing has been typed into it yet.
+    let number_chip_shown = move |key: &'static str, value: Option<i32>| {
+        value.is_some() || filter_pending.get() == Some(key)
+    };
+    let commit_number = move |key: &'static str| {
+        Callback::new(move |raw: Option<String>| {
+            set_filter_param.run((
+                key,
+                raw.and_then(|raw| raw.trim().parse::<i32>().ok())
+                    .map(|value| value.to_string()),
+            ))
+        })
+    };
+
     view! {
         <Suspense fallback=move || view! { <div class="flex justify-center p-10"><Loading /></div> }>
         <div class="flex flex-col gap-6">
-            // Sort and Direction Controls - Floating / Sticky Bar
-            // `top-4` at every width: the old `top-[72px]` below `lg` was an
-            // offset for chrome that is not there — the app shell's top bar
-            // scrolls away with the page — so it pinned the toolbar with a
-            // 72px strip of content scrolling above it.
-            //
-            // Kept alongside the sortable column headers: the header row is
-            // `hidden lg:grid`, so below `lg` this bar is the only sort
-            // control, and "Added" has no column of its own at any width.
-            <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
-                <div class="flex flex-row flex-wrap gap-2 items-center">
-                    <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">{t!(i18n, item_explorer_sort_by)}</span>
-                    <QueryButton
-                        key="sort"
-                        value="ilvl"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
-                        default=true
-                    >
-                        {t!(i18n, item_explorer_ilvl)}
-                    </QueryButton>
-                    <QueryButton
-                        key="sort"
-                        value="price"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
-                    >
-                        {t!(i18n, item_explorer_price)}
-                    </QueryButton>
-                    <QueryButton
-                        key="sort"
-                        value="name"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
-                    >
-                        {t!(i18n, item_explorer_name)}
-                    </QueryButton>
-                    <QueryButton
-                        key="sort"
-                        value="key"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
-                    >
-                        {t!(i18n, item_explorer_added)}
-                    </QueryButton>
-                </div>
-                <div class="flex flex-row gap-2 bg-black/20 p-1 rounded-lg">
-                     <QueryButton
-                        key="dir"
-                        value="asc"
-                        class="p-1.5 rounded text-[color:var(--color-text-muted)] hover:text-brand-200 transition-colors"
-                        active_classes="p-1.5 rounded bg-white/10 !text-brand-300 shadow-sm"
-                    >
-                        <Icon icon=i::BiSortUpRegular width="20" height="20" />
-                    </QueryButton>
-                     <QueryButton
-                        key="dir"
-                        value="desc"
-                        class="p-1.5 rounded text-[color:var(--color-text-muted)] hover:text-brand-200 transition-colors"
-                        active_classes="p-1.5 rounded bg-white/10 !text-brand-300 shadow-sm"
-                        default=true
-                    >
-                        <Icon icon=i::BiSortDownRegular width="20" height="20" />
-                    </QueryButton>
-                </div>
-            </div>
+            // Sort, filters and the columns picker, in the bar every analyzer
+            // tool uses. The sort control lives here rather than only on the
+            // column headers because the header row is `hidden lg:grid`, so
+            // below `lg` this is the only way to sort — and "Added" has no
+            // column of its own at any width.
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, item_explorer_results_count, n = move || items_len.get())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! {
+                        <label class="flex items-center gap-1.5 min-w-0">
+                            <span class="hidden md:inline text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] truncate">
+                                {t!(i18n, item_explorer_sort_by)}
+                            </span>
+                            <select
+                                class="input input-sm min-w-0"
+                                aria-label=t_string!(i18n, item_explorer_sort_by).to_string()
+                                prop:value=move || active_sort.get().to_string()
+                                on:change=move |ev| {
+                                    // Drop `?dir=` with the column so the new
+                                    // one arrives in its own default
+                                    // direction — landing on Name descending
+                                    // buries exactly what the click asked
+                                    // for. Same rule `SortHeader` applies.
+                                    set_query_params
+                                        .run(vec![
+                                            ("sort", Some(event_target_value(&ev))),
+                                            ("dir", None),
+                                        ]);
+                                }
+                            >
+                                {move || {
+                                    sort_options
+                                        .get()
+                                        .into_iter()
+                                        .map(|option| {
+                                            let token = option.to_string();
+                                            view! {
+                                                <option
+                                                    value=token.clone()
+                                                    selected=move || active_sort.get() == option
+                                                >
+                                                    {sort_label(option)}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()
+                                }}
+                            </select>
+                        </label>
+                        <button
+                            class="sticky-bar-button"
+                            aria-label=move || {
+                                if active_dir.get() == SortDir::Asc {
+                                    t_string!(i18n, grid_query_ascending).to_string()
+                                } else {
+                                    t_string!(i18n, grid_query_descending).to_string()
+                                }
+                            }
+                            on:click=move |_| {
+                                // Omitted when it matches the column's own
+                                // default, so the common case stays a clean
+                                // `?sort=` — the same contract
+                                // `SortHeader::sort_href` keeps.
+                                let next = active_dir.get_untracked().flipped();
+                                let value = (next != active_sort.get_untracked().default_dir())
+                                    .then(|| next.to_string());
+                                set_query_params.run(vec![("dir", value)]);
+                            }
+                        >
+                            {move || {
+                                if active_dir.get() == SortDir::Asc {
+                                    view! { <Icon icon=i::BiSortUpRegular width="20" height="20" /> }
+                                } else {
+                                    view! { <Icon icon=i::BiSortDownRegular width="20" height="20" /> }
+                                }
+                            }}
+                        </button>
+                    }
+                    .into_any()
+                }
+                columns=column_options
+                visible_columns=Signal::derive(move || visible_cols.get())
+                on_toggle_column=toggle_column
+                on_reset_columns=reset_columns
+                available_filters=filter_options
+                on_add_filter=add_filter
+                on_clear_all=clear_filters
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, item_explorer_no_active_filters).to_string()
+                })
+                is_empty=Signal::derive(move || filter_active.get().is_empty())
+            >
+                {move || {
+                    let name = filter_values.get().name;
+                    (name.is_some() || filter_pending.get() == Some(FILTER_NAME))
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=filter_label(FILTER_NAME)
+                                    value=Signal::derive(move || filter_values.get().name)
+                                    start_editing=filter_pending.get_untracked() == Some(FILTER_NAME)
+                                    on_commit=Callback::new(move |raw: Option<String>| {
+                                        set_filter_param.run((FILTER_NAME, raw))
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    number_chip_shown(FILTER_MIN_ILVL, filter_values.get().min_ilvl)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=filter_label(FILTER_MIN_ILVL)
+                                    value=Signal::derive(move || {
+                                        filter_values.get().min_ilvl.map(|v| v.to_string())
+                                    })
+                                    numeric=true
+                                    min="0"
+                                    start_editing=filter_pending.get_untracked() == Some(FILTER_MIN_ILVL)
+                                    on_commit=commit_number(FILTER_MIN_ILVL)
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    number_chip_shown(FILTER_MAX_ILVL, filter_values.get().max_ilvl)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=filter_label(FILTER_MAX_ILVL)
+                                    value=Signal::derive(move || {
+                                        filter_values.get().max_ilvl.map(|v| v.to_string())
+                                    })
+                                    numeric=true
+                                    min="0"
+                                    start_editing=filter_pending.get_untracked() == Some(FILTER_MAX_ILVL)
+                                    on_commit=commit_number(FILTER_MAX_ILVL)
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    number_chip_shown(FILTER_MIN_LV, filter_values.get().min_lv)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=filter_label(FILTER_MIN_LV)
+                                    value=Signal::derive(move || {
+                                        filter_values.get().min_lv.map(|v| v.to_string())
+                                    })
+                                    numeric=true
+                                    min="0"
+                                    start_editing=filter_pending.get_untracked() == Some(FILTER_MIN_LV)
+                                    on_commit=commit_number(FILTER_MIN_LV)
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    number_chip_shown(FILTER_MAX_PRICE, filter_values.get().max_price)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=filter_label(FILTER_MAX_PRICE)
+                                    value=Signal::derive(move || {
+                                        filter_values.get().max_price.map(|v| v.to_string())
+                                    })
+                                    numeric=true
+                                    min="0"
+                                    step="100"
+                                    start_editing=filter_pending.get_untracked() == Some(FILTER_MAX_PRICE)
+                                    on_commit=commit_number(FILTER_MAX_PRICE)
+                                />
+                            }
+                        })
+                }}
+                // The three switches: the chip's presence is the value, so
+                // there is nothing to type and `x` is the only edit.
+                {move || {
+                    filter_values.get().vendor_only.then(|| {
+                        view! {
+                            <FilterChip
+                                label=filter_label(FILTER_VENDOR)
+                                readonly=true
+                                value=Signal::derive(|| None::<String>)
+                                on_commit=Callback::new(move |_| set_filter_param.run((FILTER_VENDOR, None)))
+                            />
+                        }
+                    })
+                }}
+                {move || {
+                    filter_values.get().hq_only.then(|| {
+                        view! {
+                            <FilterChip
+                                label=filter_label(FILTER_HQ)
+                                readonly=true
+                                value=Signal::derive(|| None::<String>)
+                                on_commit=Callback::new(move |_| set_filter_param.run((FILTER_HQ, None)))
+                            />
+                        }
+                    })
+                }}
+                {move || {
+                    filter_values.get().listed_only.then(|| {
+                        view! {
+                            <FilterChip
+                                label=filter_label(FILTER_LISTED)
+                                readonly=true
+                                value=Signal::derive(|| None::<String>)
+                                on_commit=Callback::new(move |_| set_filter_param.run((FILTER_LISTED, None)))
+                            />
+                        }
+                    })
+                }}
+            </ControlBar>
 
             // Results list: one row per item so prices line up in a
             // scannable column. One responsive layout in three tiers:
@@ -1244,13 +1986,127 @@ pub fn ItemExplorer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::{
-        EXPLORER_COLUMNS, canonical_job_acronym, collect_job_items_sorted, resolve_category_param,
-        resolve_jobset_param,
+        ADDABLE_FILTERS, DEFAULT_COLUMNS, EXPLORER_COLUMNS, ItemSortOption, OPTIONAL_COLUMNS,
+        SORT_OPTIONS, canonical_job_acronym, collect_job_items_sorted, filter_requires_column,
+        resolve_category_param, resolve_jobset_param,
     };
     use crate::components::data_table::check_header_class;
+    use crate::components::sort_header::{SortColumn, SortDir};
+    use crate::routes::item_explorer_filters::ExplorerFilters;
     use crate::routes::item_explorer_toolbar::{job_chip_slug, job_chips_sorted_in};
     use paginate::Pages;
+    use std::str::FromStr;
     use xiv_gen::Language;
+
+    /// `?sort=` is the only channel between a bookmark and the sort in effect,
+    /// so every variant has to survive the round trip. A variant added to the
+    /// enum but not to `FromStr` would silently fall back to item level.
+    #[test]
+    fn every_sort_option_round_trips_through_the_url() {
+        for option in SORT_OPTIONS {
+            let token = option.to_string();
+            assert_eq!(
+                ItemSortOption::from_str(&token),
+                Ok(option),
+                "?sort={token} does not parse back to the option that wrote it",
+            );
+        }
+    }
+
+    /// The sort menu offers every column the table can order by. Adding a
+    /// variant without listing it here would leave it unreachable below `lg`,
+    /// where the sortable header row is hidden.
+    #[test]
+    fn the_sort_menu_offers_every_sort_option() {
+        for option in [
+            ItemSortOption::ItemLevel,
+            ItemSortOption::EquipLevel,
+            ItemSortOption::Price,
+            ItemSortOption::HqPrice,
+            ItemSortOption::Vendor,
+            ItemSortOption::World,
+            ItemSortOption::Name,
+            ItemSortOption::Key,
+        ] {
+            assert!(SORT_OPTIONS.contains(&option), "{option} is not offered");
+        }
+    }
+
+    /// A sort keyed on an optional column has to name a *real* column id, or
+    /// the availability check silently reads `true` for it (the `_ => true`
+    /// arm of `ColumnAvailability::has`) and the explorer offers a sort that
+    /// orders by nothing.
+    #[test]
+    fn sorts_and_filters_reference_real_columns() {
+        for option in SORT_OPTIONS {
+            if let Some(column) = option.column() {
+                assert!(
+                    OPTIONAL_COLUMNS.contains(&column),
+                    "{option} sorts on unknown column {column:?}",
+                );
+            }
+        }
+        for filter in ADDABLE_FILTERS {
+            if let Some(column) = filter_requires_column(filter) {
+                assert!(
+                    OPTIONAL_COLUMNS.contains(&column),
+                    "filter {filter:?} requires unknown column {column:?}",
+                );
+            }
+        }
+    }
+
+    /// Every filter the `+ Filter` menu can add has to be one the chip row
+    /// then draws, or adding it produces a URL param and no visible chip —
+    /// a filter the visitor cannot see or clear.
+    #[test]
+    fn every_addable_filter_is_recognized() {
+        let all_set = ExplorerFilters {
+            name: Some("x".to_string()),
+            min_ilvl: Some(1),
+            max_ilvl: Some(2),
+            min_lv: Some(3),
+            max_price: Some(4),
+            vendor_only: true,
+            hq_only: true,
+            listed_only: true,
+        };
+        for filter in ADDABLE_FILTERS {
+            assert!(
+                all_set.is_set(filter),
+                "{filter:?} is never drawn as a chip"
+            );
+            assert!(
+                !ExplorerFilters::default().is_set(filter),
+                "{filter:?} reads as active with nothing set",
+            );
+        }
+    }
+
+    /// The columns picker starts from the full set; availability, not the
+    /// default, is what takes a column away.
+    #[test]
+    fn every_optional_column_is_on_by_default() {
+        assert_eq!(DEFAULT_COLUMNS, OPTIONAL_COLUMNS);
+    }
+
+    /// Text columns read A-first; numbers read best-first, which is largest.
+    /// Getting this backwards buries exactly the rows a fresh click asked for.
+    #[test]
+    fn text_columns_default_to_ascending_and_numbers_to_descending() {
+        assert_eq!(ItemSortOption::Name.default_dir(), SortDir::Asc);
+        assert_eq!(ItemSortOption::World.default_dir(), SortDir::Asc);
+        for option in [
+            ItemSortOption::ItemLevel,
+            ItemSortOption::EquipLevel,
+            ItemSortOption::Price,
+            ItemSortOption::HqPrice,
+            ItemSortOption::Vendor,
+            ItemSortOption::Key,
+        ] {
+            assert_eq!(option.default_dir(), SortDir::Desc, "{option}");
+        }
+    }
 
     /// Every header cell must be visible at exactly the breakpoints where its
     /// column owns a grid track.
