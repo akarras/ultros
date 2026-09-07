@@ -19,7 +19,9 @@ use super::{Context, Error};
         "check_listings",
         "check_undercuts",
         "add_undercut_alert",
-        "remove_undercut_alert"
+        "remove_undercut_alert",
+        "add_sale_alert",
+        "remove_sale_alert"
     )
 )]
 pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
@@ -33,7 +35,7 @@ pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
                      1. Verify your character at https://ultros.app\n\
                      2. `/ffxiv retainer add` — claim one of your retainers\n\
                      3. `/ffxiv retainer add_undercut_alert` — get alerts in this channel\n\n\
-                     **See also:** `/ffxiv retainer list`, `check_listings`, `check_undercuts`.",
+                     **See also:** `/ffxiv retainer list`, `check_listings`, `check_undercuts`, `add_sale_alert`.",
                 ),
         ),
     )
@@ -150,6 +152,49 @@ async fn remove_undercut_alert(ctx: Context<'_>) -> Result<(), Error> {
             .retainer_undercut
             .send(EventType::removed(undercut))?;
     }
+    Ok(())
+}
+
+/// Notify this channel when one of your claimed retainers' listings sells
+#[poise::command(slash_command)]
+async fn add_sale_alert(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let alert = ctx
+        .data()
+        .db
+        .add_discord_retainer_sale_alert(
+            ctx.channel_id().get() as i64,
+            ctx.author().id.get() as i64,
+        )
+        .await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::added(alert))?;
+    ctx.say(
+        "Now sending alerts to this channel when one of your retainers' listings sells. \
+         Sales are inferred from market data: a listing that disappears alongside a matching \
+         sale. Same-price listings from other sellers are skipped rather than guessed, so \
+         some sales may go unreported.",
+    )
+    .await?;
+    Ok(())
+}
+
+/// Stop sale notifications in this channel
+#[poise::command(slash_command)]
+async fn remove_sale_alert(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let alert = ctx
+        .data()
+        .db
+        .delete_discord_sale_alert(ctx.channel_id().get() as i64, ctx.author().id.get() as i64)
+        .await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::removed(alert))?;
+    ctx.say("Sale alerts for this channel removed.").await?;
     Ok(())
 }
 
