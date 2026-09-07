@@ -109,6 +109,7 @@ async function main() {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('route') === 'home');
     assert.equal(await page.$$eval(cardSelector, (buttons, i) => buttons[i].getAttribute('aria-pressed'), stayHome), 'true');
     assert.ok(await page.$eval('aside[aria-label="Plan summary"]', e => e.textContent.includes('Stay home')));
+    assert.equal(await page.$eval('[data-testid="plan-total"]', e => e.textContent), await page.$$eval(cardSelector, (buttons, i) => buttons[i].querySelector('strong').textContent, stayHome), 'the plan total follows the selected card');
     assert.equal(await page.$$eval(cardSelector, buttons => new Set(buttons.map(b => b.textContent)).size), await page.$$eval(cardSelector, b => b.length), 'route cards are distinct');
     {
       // "Not here": tick one line, report another line's world, and the tick
