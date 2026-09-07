@@ -219,6 +219,14 @@ const COL_TREND: &str = "trend";
 const COL_SALES_PER_DAY: &str = "sales_per_day";
 const COL_VOLUME_30D: &str = "volume_30d";
 
+/// The item column's width, and the whole story for it: unlike every other
+/// column it opts out of the grid's automatic content fit. Item names run
+/// long and vary wildly between filters, so fitting them shoved the numbers
+/// that matter off screen and moved the table around under the reader every
+/// time the rows changed. Long names truncate instead; the user can still
+/// drag the border or pick "Auto fit" from the column menu.
+const ITEM_COLUMN_WIDTH: f64 = 380.0;
+
 const ALL_OPTIONAL_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
     COL_TAX,
@@ -1552,12 +1560,14 @@ fn AnalyzerTable(
     // has measured its content (the server render, and the client until
     // rows arrive). The grid auto-fits every column the user hasn't sized,
     // so these only need to be close: they're the widths a settled English
-    // Gilgamesh view landed on.
+    // Gilgamesh view landed on. The item column is the exception — it opts
+    // out of auto-fit (see `ITEM_COLUMN_WIDTH`) and keeps its width for
+    // good.
     let grid_columns = Memo::new(move |_| {
         let visible = visible_cols.get();
         [
             ("hq", 70.0),
-            ("item", 381.0),
+            ("item", ITEM_COLUMN_WIDTH),
             ("profit", 114.0),
             (COL_PROFIT_PER_DAY, 135.0),
             (COL_ROI, 95.0),
@@ -1587,6 +1597,9 @@ fn AnalyzerTable(
                 optional,
                 !optional || visible.contains(id) || id == "sale_estimate",
             );
+            if id == "item" {
+                col = col.fixed_width();
+            }
             let filters: &[(&str, bool)] = match id {
                 "item" => &[(FILTER_NAME, false), (FILTER_CATEGORY, true)],
                 "profit" => &[(FILTER_PROFIT, true)],

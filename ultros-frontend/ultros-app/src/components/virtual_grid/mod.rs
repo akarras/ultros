@@ -41,9 +41,12 @@ const FIT_CHUNK_ROWS: usize = 512;
 #[cfg(feature = "hydrate")]
 const AUTO_FIT_DEBOUNCE_MS: u32 = 150;
 
-/// Read the row source, rather than merely subscribing to its memo: memo
-/// dependencies must be evaluated even when the current result is empty.
-/// Otherwise a dirty memo can stop notifying the sizing effect on restore.
+/// The visible columns the automatic pass measures. Read the row source,
+/// rather than merely subscribing to its memo: memo dependencies must be
+/// evaluated even when the current result is empty. Otherwise a dirty memo
+/// can stop notifying the sizing effect on restore. A column that opted out
+/// (`auto_fit == false`) is skipped here and keeps its declared width; the
+/// menu's explicit "Auto fit" still measures it on demand.
 #[cfg(any(feature = "hydrate", test))]
 fn auto_fit_columns<T: Send + Sync + 'static>(
     each: row_source::RowSource<T>,
@@ -52,7 +55,12 @@ fn auto_fit_columns<T: Send + Sync + 'static>(
 ) -> Vec<&'static str> {
     each.with(|_| ());
     measure_version.get();
-    columns.with(|defs| defs.iter().filter(|c| c.visible).map(|c| c.id).collect())
+    columns.with(|defs| {
+        defs.iter()
+            .filter(|c| c.visible && c.auto_fit)
+            .map(|c| c.id)
+            .collect()
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -950,6 +958,38 @@ mod tests {
             drag.set(None);
             assert!(!sizing.get());
             assert_eq!(evaluations.load(Ordering::Relaxed), 3);
+        });
+    }
+
+    #[test]
+    fn columns_that_opt_out_are_left_out_of_the_automatic_pass() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let rows = RwSignal::new(vec!["a name".to_string()]);
+            let result = Memo::new(move |_| {
+                rows.with(|rows| {
+                    let metrics = [metrics::GridMetric::text("item", |row: &String| {
+                        metrics::GridValue::Text(row.clone())
+                    })];
+                    metrics::query_rows(rows, &metrics, &BTreeMap::new(), None, true)
+                })
+            });
+            let source = row_source::RowSource::new(rows.into(), result);
+            let definitions = RwSignal::new(vec![
+                GridColumn::new("item", "Item".into(), 380.0, false, true).fixed_width(),
+                GridColumn::new("profit", "Profit".into(), 120.0, false, true),
+            ]);
+            let revision = RwSignal::new(0u64);
+            let wanted =
+                Memo::new(move |_| auto_fit_columns(source, definitions.into(), revision.into()));
+
+            assert_eq!(wanted.get(), ["profit"], "the opted-out column is skipped");
+            definitions.update(|defs| defs[0].auto_fit = true);
+            assert_eq!(
+                wanted.get(),
+                ["item", "profit"],
+                "opting back in restores the column to the pass"
+            );
         });
     }
 
