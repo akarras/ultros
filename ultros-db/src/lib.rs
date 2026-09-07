@@ -4,6 +4,7 @@ pub mod common_type_conversions;
 mod discord;
 pub mod entity;
 mod ffxiv_character;
+pub mod group_roles;
 pub mod listings;
 pub mod lists;
 pub mod recently_updated;

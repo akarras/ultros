@@ -2,26 +2,24 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "user_group_member")]
+#[sea_orm(table_name = "group_role_member")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    pub group_id: i32,
+    pub role_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: i64,
-    /// See `ultros_api_types::user::group::GroupMemberSource`.
-    pub source: i16,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::user_group::Entity",
-        from = "Column::GroupId",
-        to = "super::user_group::Column::Id",
+        belongs_to = "super::group_role::Entity",
+        from = "Column::RoleId",
+        to = "super::group_role::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    UserGroup,
+    GroupRole,
     #[sea_orm(
         belongs_to = "super::discord_user::Entity",
         from = "Column::UserId",
@@ -32,9 +30,9 @@ pub enum Relation {
     DiscordUser,
 }
 
-impl Related<super::user_group::Entity> for Entity {
+impl Related<super::group_role::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::UserGroup.def()
+        Relation::GroupRole.def()
     }
 }
 
