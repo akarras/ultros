@@ -145,7 +145,7 @@ pub(crate) fn use_retainer_live(
                     set_status.set("live".to_string());
                     set_last_update.set(Some(Utc::now()));
                     let refetch = refetch.clone();
-                    debounce.update_value(|d| d.schedule(move || refetch()));
+                    debounce.update_value(|d| d.schedule(refetch));
                 }
                 ServerClient::Stale { .. } | ServerClient::Error { .. } => {
                     set_status.set("reconnecting".to_string());
