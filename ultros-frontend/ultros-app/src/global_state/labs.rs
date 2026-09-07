@@ -2,8 +2,6 @@
 //! A cookie, not localStorage: the list page renders on the server, so a
 //! client-only flag would hydrate a different page than it served.
 
-#![allow(dead_code)] // Public API used by Settings UI and route switches (later tasks)
-
 use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;

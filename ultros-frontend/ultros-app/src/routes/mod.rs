@@ -21,6 +21,7 @@ pub mod item_view_sections;
 pub mod job_set_detail;
 pub mod leve_analyzer;
 pub mod list_view;
+pub mod list_view_sync;
 pub mod lists;
 pub mod not_found;
 pub mod recipe_analyzer;
