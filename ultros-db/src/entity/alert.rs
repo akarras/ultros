@@ -26,6 +26,8 @@ pub enum Relation {
     AlertListThreshold,
     #[sea_orm(has_many = "super::alert_list_update::Entity")]
     AlertListUpdate,
+    #[sea_orm(has_many = "super::alert_retainer_sale::Entity")]
+    AlertRetainerSale,
     #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
     AlertRetainerUndercut,
     #[sea_orm(
@@ -65,6 +67,12 @@ impl Related<super::alert_list_threshold::Entity> for Entity {
 impl Related<super::alert_list_update::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AlertListUpdate.def()
+    }
+}
+
+impl Related<super::alert_retainer_sale::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AlertRetainerSale.def()
     }
 }
 

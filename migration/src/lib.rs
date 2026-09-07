@@ -39,6 +39,7 @@ mod m20260809_000001_notification_endpoint_health;
 mod m20260811_000001_drop_unused_sale_history_full_index;
 mod m20260828_000001_active_listing_world_index;
 mod m20260905_000001_list_item_acquired_integer;
+mod m20260907_000001_alert_retainer_sale;
 mod m20260907_000001_group_roles;
 
 pub struct Migrator;
@@ -89,6 +90,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260828_000001_active_listing_world_index::Migration),
             Box::new(m20260905_000001_list_item_acquired_integer::Migration),
             Box::new(m20260907_000001_group_roles::Migration),
+            Box::new(m20260907_000001_alert_retainer_sale::Migration),
         ]
     }
 }

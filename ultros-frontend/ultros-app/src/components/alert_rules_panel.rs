@@ -301,6 +301,12 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                             "—".to_string(),
                                             "—".to_string(),
                                         ),
+                                        AlertTrigger::RetainerSold {} => (
+                                            t_string!(i18n, alerts_retainer_sold_rule).to_string(),
+                                            "—".to_string(),
+                                            "—".to_string(),
+                                            "—".to_string(),
+                                        ),
                                         AlertTrigger::ListUpdate { list_id } => (
                                             format!("List #{list_id}"),
                                             t_string!(i18n, alerts_list_update_rule).to_string(),

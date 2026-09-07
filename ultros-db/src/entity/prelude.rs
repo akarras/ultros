@@ -9,6 +9,7 @@ pub use super::alert_list_threshold::Entity as AlertListThreshold;
 pub use super::alert_list_update::Entity as AlertListUpdate;
 pub use super::alert_notification_rule::Entity as AlertNotificationRule;
 pub use super::alert_price::Entity as AlertPrice;
+pub use super::alert_retainer_sale::Entity as AlertRetainerSale;
 pub use super::alert_retainer_undercut::Entity as AlertRetainerUndercut;
 pub use super::datacenter::Entity as Datacenter;
 pub use super::discord_user::Entity as DiscordUser;

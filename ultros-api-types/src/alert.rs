@@ -20,6 +20,9 @@ pub enum AlertTrigger {
     /// Fire when one of the user's retainers is undercut by more than
     /// `margin_percent`.
     RetainerUndercut { margin_percent: i32 },
+    /// Fire when one of the user's retainers' listings is inferred to have
+    /// sold (a removal paired with a matching sale). No parameters.
+    RetainerSold {},
     /// Fire when a list or one of its rows changes.
     ListUpdate { list_id: i32 },
 }
@@ -201,6 +204,15 @@ pub struct DiscordWritableGuild {
 mod endpoint_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn retainer_sold_trigger_round_trips_with_type_tag_only() {
+        let t = AlertTrigger::RetainerSold {};
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v, json!({"type": "retainer_sold"}));
+        let back: AlertTrigger = serde_json::from_value(v).unwrap();
+        assert_eq!(back, t);
+    }
 
     #[test]
     fn endpoint_carries_disabled_reason_when_broken() {
