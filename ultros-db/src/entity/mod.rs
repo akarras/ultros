@@ -11,6 +11,7 @@ pub mod alert_list_threshold;
 pub mod alert_list_update;
 pub mod alert_notification_rule;
 pub mod alert_price;
+pub mod alert_retainer_sale;
 pub mod alert_retainer_undercut;
 pub mod datacenter;
 pub mod discord_user;
