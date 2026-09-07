@@ -18,6 +18,7 @@
     "test:item-source-nav": "node ./item-source-nav.cjs",
     "test:recipe-planner": "node ./recipe-planner.cjs",
     "test:hover-card-navigation": "node ./hover-card-navigation.cjs",
+    "test:hover-card-stability": "node ./hover-card-stability.cjs",
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
     "test:shared-list": "node ./shared-list.cjs",
