@@ -37,67 +37,78 @@ use super::{
     },
     formula::PriceSignal,
     signals::{StatsIndex, stat_only, stats_index},
+    stat_columns::{STAT_COLUMNS, StatKind, Window, stat_column, stat_label, window_wanted},
 };
 
 type ScopedStats = Option<(String, Arc<StatsIndex>, bool)>;
 
-/// A cheap reactive handle; the payloads are cloned only by Arc.
+/// A cheap reactive handle; the payloads are cloned only by Arc. One slot
+/// per server window, indexed by `Window::index()`. The seven-day body is
+/// always fetched; the others only once a column of theirs is wanted.
 #[derive(Clone, Copy)]
 pub struct MarketData {
     pub scope: Signal<String>,
-    stats_7: RwSignal<ScopedStats>,
-    stats_30: RwSignal<ScopedStats>,
-    want_30: RwSignal<bool>,
+    stats: [RwSignal<ScopedStats>; Window::ALL.len()],
+    wanted: [RwSignal<bool>; Window::ALL.len()],
 }
 
 impl MarketData {
+    pub fn stats(self, window: Window) -> Option<Arc<StatsIndex>> {
+        let scope = self.scope.get();
+        self.stats[window.index()].with(|v| {
+            v.as_ref()
+                .filter(|(name, _, _)| name == &scope)
+                .map(|(_, stats, _)| stats.clone())
+        })
+    }
+
+    pub fn stats_failed(self, window: Window) -> bool {
+        let scope = self.scope.get();
+        self.stats[window.index()].with(|v| {
+            v.as_ref()
+                .is_some_and(|(name, _, failed)| name == &scope && *failed)
+        })
+    }
+
     pub fn stats7(self) -> Option<Arc<StatsIndex>> {
-        let scope = self.scope.get();
-        self.stats_7.with(|v| {
-            v.as_ref()
-                .filter(|(name, _, _)| name == &scope)
-                .map(|(_, stats, _)| stats.clone())
-        })
+        self.stats(Window::D7)
     }
 
-    pub fn stats30(self) -> Option<Arc<StatsIndex>> {
-        let scope = self.scope.get();
-        self.stats_30.with(|v| {
-            v.as_ref()
-                .filter(|(name, _, _)| name == &scope)
-                .map(|(_, stats, _)| stats.clone())
-        })
+    /// Ask for a window's body. Idempotent; never un-wants.
+    fn want(self, window: Window) {
+        let flag = self.wanted[window.index()];
+        if !flag.get_untracked() {
+            flag.set(true);
+        }
     }
 
-    pub fn stats7_failed(self) -> bool {
-        let scope = self.scope.get();
-        self.stats_7.with(|v| {
-            v.as_ref()
-                .is_some_and(|(name, _, failed)| name == &scope && *failed)
-        })
-    }
-
-    pub fn stats30_failed(self) -> bool {
-        let scope = self.scope.get();
-        self.stats_30.with(|v| {
-            v.as_ref()
-                .is_some_and(|(name, _, failed)| name == &scope && *failed)
-        })
+    /// Subscribe the caller to every slot without copying a payload.
+    fn track_all(self) {
+        for slot in self.stats {
+            slot.with(|_| ());
+        }
     }
 }
 
 /// Both SSR and the initial hydrated render use listing fallbacks. The
-/// client fills the shared seven-day body after mounting; optional thirty-
-/// day data never delays the first table. Failed requests settle to empty.
+/// client fills the shared seven-day body after mounting; the other windows
+/// never delay the first table. Failed requests settle to empty.
 pub fn use_market_data(scope: Signal<String>) -> MarketData {
+    // `RwSignal` is `Copy`: a `[RwSignal::new(None); 4]` literal would be one
+    // signal four times over.
     let market = MarketData {
         scope,
-        stats_7: RwSignal::new(None),
-        stats_30: RwSignal::new(None),
-        want_30: RwSignal::new(false),
+        stats: std::array::from_fn(|_| RwSignal::new(None)),
+        wanted: std::array::from_fn(|i| RwSignal::new(i == Window::D7.index())),
     };
-    fetch_stats(scope, market.stats_7, Signal::derive(|| true), 7);
-    fetch_stats(scope, market.stats_30, market.want_30.into(), 30);
+    for window in Window::ALL {
+        fetch_stats(
+            scope,
+            market.stats[window.index()],
+            market.wanted[window.index()].into(),
+            window.days(),
+        );
+    }
     market
 }
 
@@ -253,7 +264,7 @@ impl MarketSubject {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MarketMetric {
     Subject,
     Scope,
@@ -261,19 +272,10 @@ enum MarketMetric {
     World,
     Datacenter,
     Listing,
-    Minimum7,
-    Median7,
-    Average7,
-    SalesPerDay7,
-    Cadence7,
-    Units7,
-    Sales7,
-    Vwap7,
+    /// One statistic of one window; ids and labels come from `STAT_COLUMNS`.
+    Stat(StatKind, Window),
     LastSold,
     Confidence,
-    Units30,
-    Sales30,
-    Vwap30,
     TrendWorld,
     Trend7,
     Drift7,
@@ -288,19 +290,9 @@ impl MarketMetric {
             Self::World => "market-world",
             Self::Datacenter => "market-datacenter",
             Self::Listing => "market-listing",
-            Self::Minimum7 => "market-sale-min-7",
-            Self::Median7 => "market-sale-median-7",
-            Self::Average7 => "market-sale-avg-7",
-            Self::SalesPerDay7 => "market-sales-per-day-7",
-            Self::Cadence7 => "market-cadence-7",
-            Self::Units7 => "market-units-7",
-            Self::Sales7 => "market-sales-7",
-            Self::Vwap7 => "market-vwap-7",
+            Self::Stat(kind, window) => stat_column(kind, window).id,
             Self::LastSold => "market-last-sold",
             Self::Confidence => "market-confidence",
-            Self::Units30 => "market-units-30",
-            Self::Sales30 => "market-sales-30",
-            Self::Vwap30 => "market-vwap-30",
             Self::TrendWorld => "market-trend-world",
             Self::Trend7 => "market-trend-7",
             Self::Drift7 => "market-drift-7",
@@ -321,39 +313,54 @@ impl MarketMetric {
         )
     }
 
-    fn thirty_days(self) -> bool {
-        matches!(self, Self::Units30 | Self::Sales30 | Self::Vwap30)
-    }
-
     fn partial(self) -> bool {
         matches!(self, Self::Trend7 | Self::Drift7)
     }
+
+    /// The bulk body this metric reads. Last-sold and confidence are
+    /// seven-day facts, as before.
+    fn window(self) -> Option<Window> {
+        match self {
+            Self::Stat(_, window) => Some(window),
+            Self::LastSold | Self::Confidence => Some(Window::D7),
+            _ => None,
+        }
+    }
 }
 
-const MARKET_METRICS: [MarketMetric; 22] = [
+const LEADING_METRICS: [MarketMetric; 6] = [
     MarketMetric::Subject,
     MarketMetric::Scope,
     MarketMetric::Quality,
     MarketMetric::World,
     MarketMetric::Datacenter,
     MarketMetric::Listing,
-    MarketMetric::Minimum7,
-    MarketMetric::Median7,
-    MarketMetric::Average7,
-    MarketMetric::SalesPerDay7,
-    MarketMetric::Cadence7,
-    MarketMetric::Units7,
-    MarketMetric::Sales7,
-    MarketMetric::Vwap7,
+];
+
+const TRAILING_METRICS: [MarketMetric; 5] = [
     MarketMetric::LastSold,
     MarketMetric::Confidence,
-    MarketMetric::Units30,
-    MarketMetric::Sales30,
-    MarketMetric::Vwap30,
     MarketMetric::TrendWorld,
     MarketMetric::Trend7,
     MarketMetric::Drift7,
 ];
+
+/// Every shared column in default (appended) order: identity, then the
+/// window × statistic table, then the seven-day text and trend columns.
+fn market_metrics() -> impl Iterator<Item = MarketMetric> {
+    LEADING_METRICS
+        .into_iter()
+        .chain(
+            STAT_COLUMNS
+                .iter()
+                .map(|c| MarketMetric::Stat(c.kind, c.window)),
+        )
+        .chain(TRAILING_METRICS)
+}
+
+fn metric_by_id(id: &str) -> Option<MarketMetric> {
+    market_metrics().find(|m| m.id() == id)
+}
 
 fn metric_label(metric: MarketMetric) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
@@ -364,19 +371,9 @@ fn metric_label(metric: MarketMetric) -> String {
         MarketMetric::World => t_string!(i18n, market_world),
         MarketMetric::Datacenter => t_string!(i18n, market_datacenter),
         MarketMetric::Listing => t_string!(i18n, market_listing),
-        MarketMetric::Minimum7 => t_string!(i18n, market_sale_min_7),
-        MarketMetric::Median7 => t_string!(i18n, market_sale_median_7),
-        MarketMetric::Average7 => t_string!(i18n, market_sale_avg_7),
-        MarketMetric::SalesPerDay7 => t_string!(i18n, market_sales_per_day_7),
-        MarketMetric::Cadence7 => t_string!(i18n, market_cadence_7),
-        MarketMetric::Units7 => t_string!(i18n, market_units_7),
-        MarketMetric::Sales7 => t_string!(i18n, market_sales_7),
-        MarketMetric::Vwap7 => t_string!(i18n, market_vwap_7),
+        MarketMetric::Stat(kind, window) => return stat_label(kind, window),
         MarketMetric::LastSold => t_string!(i18n, market_last_sold),
         MarketMetric::Confidence => t_string!(i18n, market_confidence),
-        MarketMetric::Units30 => t_string!(i18n, market_units_30),
-        MarketMetric::Sales30 => t_string!(i18n, market_sales_30),
-        MarketMetric::Vwap30 => t_string!(i18n, market_vwap_30),
         MarketMetric::TrendWorld => t_string!(i18n, market_trend_world),
         MarketMetric::Trend7 => t_string!(i18n, market_trend_7),
         MarketMetric::Drift7 => t_string!(i18n, market_drift_7),
@@ -394,33 +391,31 @@ fn stats_value(metric: MarketMetric, stats: Option<ItemSaleStats>) -> GridValue 
     let Some(s) = stats else {
         return GridValue::Missing;
     };
-    if matches!(metric, MarketMetric::Confidence) {
-        return match s.confidence {
+    let positive = |v: i32| (v > 0).then_some(f64::from(v));
+    match metric {
+        MarketMetric::Confidence => match s.confidence {
             ConfidenceBand::Unknown => GridValue::Missing,
             band => GridValue::Text(format!("{band:?}")),
-        };
-    }
-    if matches!(metric, MarketMetric::LastSold) {
-        return chrono::DateTime::from_timestamp(s.last_sold_unix, 0)
+        },
+        MarketMetric::LastSold => chrono::DateTime::from_timestamp(s.last_sold_unix, 0)
             .filter(|_| s.last_sold_unix > 0)
             .map_or(GridValue::Missing, |time| {
                 GridValue::Text(time.format("%Y-%m-%d %H:%M UTC").to_string())
-            });
+            }),
+        MarketMetric::Stat(kind, _) => number(match kind {
+            StatKind::Min => positive(s.min_price),
+            StatKind::Median => positive(s.median_price),
+            StatKind::Average => positive(s.avg_price),
+            StatKind::SalesPerDay => Some(f64::from(s.sales_per_day)),
+            StatKind::Cadence => (s.sales_per_day > 0.0).then(|| 24.0 / f64::from(s.sales_per_day)),
+            StatKind::Units => Some(s.units_sold as f64),
+            StatKind::Sales => Some(s.num_sold as f64),
+            StatKind::Vwap => positive(s.vwap),
+            // Zero is an old server (serde default), not a free market.
+            StatKind::GilVolume => (s.gil_volume > 0).then_some(s.gil_volume as f64),
+        }),
+        _ => GridValue::Missing,
     }
-    let positive = |v: i32| (v > 0).then_some(f64::from(v));
-    number(match metric {
-        MarketMetric::Minimum7 => positive(s.min_price),
-        MarketMetric::Median7 => positive(s.median_price),
-        MarketMetric::Average7 => positive(s.avg_price),
-        MarketMetric::SalesPerDay7 => Some(f64::from(s.sales_per_day)),
-        MarketMetric::Cadence7 => {
-            (s.sales_per_day > 0.0).then(|| 24.0 / f64::from(s.sales_per_day))
-        }
-        MarketMetric::Units7 | MarketMetric::Units30 => Some(s.units_sold as f64),
-        MarketMetric::Sales7 | MarketMetric::Sales30 => Some(s.num_sold as f64),
-        MarketMetric::Vwap7 | MarketMetric::Vwap30 => positive(s.vwap),
-        _ => None,
-    })
 }
 
 type WorldNames = Arc<HashMap<i32, (String, String)>>;
@@ -517,19 +512,13 @@ fn market_value(
             spark_metric_value(store, &key)
         }),
         _ => {
-            if if metric.thirty_days() {
-                market.stats30_failed()
-            } else {
-                market.stats7_failed()
-            } {
+            let Some(window) = metric.window() else {
+                return GridValue::Missing;
+            };
+            if market.stats_failed(window) {
                 return GridValue::Unavailable;
             }
-            let stats = if metric.thirty_days() {
-                market.stats30()
-            } else {
-                market.stats7()
-            };
-            match stats {
+            match market.stats(window) {
                 None => GridValue::Pending,
                 Some(stats) => {
                     let value =
@@ -553,7 +542,10 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
             format!("{n:+.1}%")
         }
         GridValue::Number(n)
-            if matches!(metric, MarketMetric::SalesPerDay7 | MarketMetric::Cadence7) =>
+            if matches!(
+                metric,
+                MarketMetric::Stat(StatKind::SalesPerDay | StatKind::Cadence, _)
+            ) =>
         {
             format!("{n:.2}")
         }
@@ -635,8 +627,7 @@ where
     let sizing_version = Memo::new(move |previous: Option<&u64>| {
         measure_version.get();
         market.scope.with(|_| ());
-        market.stats_7.with(|_| ());
-        market.stats_30.with(|_| ());
+        market.track_all();
         sparks.with(|_| ());
         previous.copied().unwrap_or_default().wrapping_add(1)
     });
@@ -651,7 +642,7 @@ where
     let query = use_location_or_default().query;
     let all_columns = Memo::new(move |_| {
         let mut result = columns.get();
-        for metric in MARKET_METRICS {
+        for metric in market_metrics() {
             if !result.iter().any(|col| col.id == metric.id()) {
                 result.push(GridColumn::new(
                     metric.id(),
@@ -683,15 +674,13 @@ where
         wanted
     });
     Effect::new(move |_| {
-        if !market.want_30.get_untracked()
-            && needs.with(|n| {
-                MARKET_METRICS
-                    .iter()
-                    .any(|m| m.thirty_days() && n.contains(m.id()))
-            })
-        {
-            market.want_30.set(true);
-        }
+        needs.with(|n| {
+            for window in Window::ALL {
+                if window != Window::D7 && window_wanted(n, window) {
+                    market.want(window);
+                }
+            }
+        });
     });
     let subject_rows = subject.clone();
     let spark_rows = Signal::derive(move || {
@@ -753,7 +742,7 @@ where
         },
     );
     let mut all_metrics = metrics;
-    for metric in MARKET_METRICS {
+    for metric in market_metrics() {
         if all_metrics.iter().any(|m| m.id == metric.id()) {
             continue;
         }
@@ -784,12 +773,12 @@ where
     });
     view! {
         <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
-            header=move |id| match MARKET_METRICS.into_iter().find(|m| m.id() == id) {
+            header=move |id| match metric_by_id(id) {
                 Some(metric) => metric_label(metric).into_any(),
                 None => native_header.with_value(|header| header(id)),
             }
             view=move |row: T, id| {
-                let Some(metric) = MARKET_METRICS.into_iter().find(|m| m.id() == id) else {
+                let Some(metric) = metric_by_id(id) else {
                     return native_view.with_value(|view| view(row, id));
                 };
                 let subject = subject(&row);
@@ -810,7 +799,7 @@ where
                     display_value(metric, market_value(metric, &subject, market, sparks, scope_world, &worlds)).into_any()
                 }}</div> }.into_any()
             }
-            measure=move |row: &T, id| match MARKET_METRICS.into_iter().find(|m| m.id() == id) {
+            measure=move |row: &T, id| match metric_by_id(id) {
                 Some(metric) => {
                     let subject = subject_measure(row);
                     if matches!(metric, MarketMetric::Trend7)
@@ -867,9 +856,39 @@ mod tests {
     }
 
     #[test]
-    fn shared_column_ids_are_unique() {
-        let ids: std::collections::HashSet<_> = MARKET_METRICS.iter().map(|m| m.id()).collect();
-        assert_eq!(ids.len(), MARKET_METRICS.len());
+    fn shared_column_ids_are_unique_and_include_every_window() {
+        let ids: Vec<_> = market_metrics().map(|m| m.id()).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len());
+        for id in [
+            "market-sale-median-7",
+            "market-sale-median-30",
+            "market-gil-1",
+            "market-vwap-90",
+            "market-trend-7",
+        ] {
+            assert!(unique.contains(id), "{id}");
+            assert_eq!(metric_by_id(id).map(|m| m.id()), Some(id));
+        }
+        assert_eq!(metric_by_id("roi"), None);
+    }
+
+    #[test]
+    fn rates_format_with_two_decimals_and_gil_with_commas() {
+        assert_eq!(
+            display_value(
+                MarketMetric::Stat(StatKind::SalesPerDay, Window::D30),
+                GridValue::Number(2.5)
+            ),
+            "2.50"
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::Stat(StatKind::GilVolume, Window::D7),
+                GridValue::Number(1234567.0)
+            ),
+            "1,234,567"
+        );
     }
 
     fn listing() -> CheapestListingsMap {
@@ -930,23 +949,22 @@ mod tests {
             num_sold: 14,
             units_sold: 140,
             sales_per_day: 2.0,
+            gil_volume: 7_000,
             ..Default::default()
         });
+        let stat = |kind| stats_value(MarketMetric::Stat(kind, Window::D7), stats);
+        assert_eq!(stat(StatKind::Units), GridValue::Number(140.0));
+        assert_eq!(stat(StatKind::Sales), GridValue::Number(14.0));
+        assert_eq!(stat(StatKind::Cadence), GridValue::Number(12.0));
+        assert_eq!(stat(StatKind::GilVolume), GridValue::Number(7_000.0));
+        assert_eq!(stat(StatKind::Median), GridValue::Missing);
         assert_eq!(
-            stats_value(MarketMetric::Units7, stats),
-            GridValue::Number(140.0)
-        );
-        assert_eq!(
-            stats_value(MarketMetric::Sales7, stats),
-            GridValue::Number(14.0)
-        );
-        assert_eq!(
-            stats_value(MarketMetric::Cadence7, stats),
-            GridValue::Number(12.0)
-        );
-        assert_eq!(
-            stats_value(MarketMetric::Median7, stats),
-            GridValue::Missing
+            stats_value(
+                MarketMetric::Stat(StatKind::GilVolume, Window::D7),
+                Some(ItemSaleStats::default())
+            ),
+            GridValue::Missing,
+            "an old server's zero is unknown, not free"
         );
     }
 }
