@@ -748,7 +748,6 @@
     "retainers_undercut_by_one": "1ギル下げる",
     "retainers_item_not_found": "アイテムが見つかりません",
     "retainers_undercuts_title": "リテイナーの値下げ状況",
-    "retainers_data_notice": "データは常に最新とは限りません。データを更新するには、Universalisに貢献してからこのページを再読み込みしてください。",
     "retainers_undercuts_description": "このページでは値下げされた出品のみを表示します。更新が必要なアイテムをすばやく確認できます。",
     "retainers_unable_to_get": "リテイナーを取得できません",
     "retainers_base_path_description": "リテイナーはログイン中にアカウントに追加し、追跡できます。まずはログインし、上のタブをクリックしてはじめましょう。",
