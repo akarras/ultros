@@ -111,6 +111,16 @@ impl UltrosDb {
         Ok(Self { db })
     }
 
+    /// Wrap an already-open connection **without** running migrations.
+    ///
+    /// For one-shot tools and integration tests that read a database owned by
+    /// something else — `connect()` refuses a database that has migrations this
+    /// build doesn't know about (a shared dev Postgres that a newer branch has
+    /// migrated), and a tool that only reads must not be blocked by that.
+    pub fn from_connection(db: DatabaseConnection) -> Self {
+        Self { db }
+    }
+
     #[instrument(skip(self))]
     pub async fn insert_default_retainer_cities(&self) -> Result<()> {
         struct RetainerCityData {

@@ -111,12 +111,86 @@ fn delete_unchanged_listings(
     Some(active_listing::Entity::delete_many().filter(matches))
 }
 
-pub type ListingUpdate = (
-    Vec<(ActiveListing, Retainer)>,
-    Vec<(ActiveListing, Retainer)>,
-);
-
 pub type ListingsWithRetainers = Vec<(active_listing::Model, Option<retainer::Model>)>;
+
+/// What a listing write did to one `active_listing` row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingChangeKind {
+    /// A listing Ultros did not hold before.
+    Added,
+    /// A `listing_id` Ultros held whose price or quantity changed
+    /// (the same predicate as [`view_state_matches_model`]).
+    Updated,
+    /// A row deleted from `active_listing`.
+    Removed,
+}
+
+/// One change to the stored board, as observed by a write path. This is the
+/// unit the ClickHouse `listing_events` mirror records; the bus payload
+/// (`ListingEventData`) cannot serve because it carries no `listing_id` and
+/// no previous state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListingChange {
+    pub kind: ListingChangeKind,
+    /// When Ultros observed the change (stamped after the DB round-trip), not
+    /// Universalis' `last_review_time` — that stays on `row.timestamp`.
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    /// Post-state for `Added`/`Updated`; the deleted row for `Removed`.
+    pub row: active_listing::Model,
+    /// Set only for `Updated`.
+    pub prev_price_per_unit: Option<i32>,
+    /// Set only for `Updated`.
+    pub prev_quantity: Option<i32>,
+}
+
+impl ListingChange {
+    pub fn added(row: active_listing::Model, observed_at: chrono::DateTime<chrono::Utc>) -> Self {
+        Self {
+            kind: ListingChangeKind::Added,
+            observed_at,
+            row,
+            prev_price_per_unit: None,
+            prev_quantity: None,
+        }
+    }
+
+    pub fn removed(row: active_listing::Model, observed_at: chrono::DateTime<chrono::Utc>) -> Self {
+        Self {
+            kind: ListingChangeKind::Removed,
+            observed_at,
+            row,
+            prev_price_per_unit: None,
+            prev_quantity: None,
+        }
+    }
+
+    /// `Updated` when the upsert replaced a stored row, `Added` otherwise.
+    pub fn upserted(
+        row: active_listing::Model,
+        previous: Option<&active_listing::Model>,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        match previous {
+            Some(prev) => Self {
+                kind: ListingChangeKind::Updated,
+                observed_at,
+                row,
+                prev_price_per_unit: Some(prev.price_per_unit),
+                prev_quantity: Some(prev.quantity),
+            },
+            None => Self::added(row, observed_at),
+        }
+    }
+}
+
+/// Result of one listing write path. `added`/`removed` are the bus payloads
+/// (unchanged shape); `changes` is the ClickHouse mirror's input.
+#[derive(Debug, Default)]
+pub struct ListingWrite {
+    pub added: Vec<(ActiveListing, Retainer)>,
+    pub removed: Vec<(ActiveListing, Retainer)>,
+    pub changes: Vec<ListingChange>,
+}
 
 struct ListingData(active_listing::Model, retainer::Model);
 
@@ -237,6 +311,13 @@ fn update_diff_key_model<'a>(
 
 struct ListingsDiff {
     added: Vec<ListingView>,
+    removed: Vec<(active_listing::Model, Option<retainer::Model>)>,
+}
+
+/// Like [`ListingsDiff`], but each added view carries the stored row it
+/// replaces when the board re-sent a known `listing_id` with new state.
+struct BoardDiff {
+    added: Vec<(ListingView, Option<active_listing::Model>)>,
     removed: Vec<(active_listing::Model, Option<retainer::Model>)>,
 }
 
@@ -369,7 +450,14 @@ fn split_rows_by_identity(rows: RowsWithRetainers) -> (RowsWithRetainers, RowsWi
 ///   listing we stored before ids existed must not be inserted a second time
 ///   just because the old row can't be matched by id. Genuinely new listings
 ///   fall through the content diff and insert (with their id).
-fn listings_to_upsert(listings: Vec<ListingView>, existing: RowsWithRetainers) -> Vec<ListingView> {
+///
+/// Each entry pairs the view to write with the stored row it replaces —
+/// `Some` for a state change on a known id, `None` for a genuinely new
+/// listing — so the caller can record the previous price.
+fn listings_to_upsert(
+    listings: Vec<ListingView>,
+    existing: RowsWithRetainers,
+) -> Vec<(ListingView, Option<active_listing::Model>)> {
     let (id_rows, legacy_rows) = split_rows_by_identity(existing);
     let by_id: HashMap<&str, &active_listing::Model> = id_rows
         .iter()
@@ -381,11 +469,15 @@ fn listings_to_upsert(listings: Vec<ListingView>, existing: RowsWithRetainers) -
     for view in listings {
         match view.listing_id.as_deref().and_then(|id| by_id.get(id)) {
             Some(model) if view_state_matches_model(&view, model) => {}
-            Some(_) => upserts.push(view),
+            Some(model) => upserts.push((view, Some((*model).clone()))),
             None => fallback.push(view),
         }
     }
-    upserts.extend(listings_to_add(fallback, legacy_rows));
+    upserts.extend(
+        listings_to_add(fallback, legacy_rows)
+            .into_iter()
+            .map(|view| (view, None)),
+    );
     upserts
 }
 
@@ -444,10 +536,7 @@ fn listings_to_remove_with_identity(
 /// while the id side re-inserts the same listings with their identity. That
 /// makes any full-board pass (catch-up, manual refresh, sweep) a one-shot
 /// id-backfill for the item.
-fn diff_board_with_identity(
-    listings: Vec<ListingView>,
-    existing: RowsWithRetainers,
-) -> ListingsDiff {
+fn diff_board_with_identity(listings: Vec<ListingView>, existing: RowsWithRetainers) -> BoardDiff {
     let (id_rows, legacy_rows) = split_rows_by_identity(existing);
     let (id_views, legacy_views): (Vec<_>, Vec<_>) =
         listings.into_iter().partition(|v| v.listing_id.is_some());
@@ -463,17 +552,19 @@ fn diff_board_with_identity(
         match by_id.remove(id) {
             // board re-sends the same state: entry consumed = row kept as-is
             Some((model, _)) if view_state_matches_model(&view, &model) => {}
-            // state changed (or, guard-fallthrough, id row differs): upsert
-            Some(_) | None => added.push(view),
+            // state changed: upsert, remembering what it replaces
+            Some((model, _)) => added.push((view, Some(model))),
+            // unknown id: plain insert
+            None => added.push((view, None)),
         }
     }
     // ids the board no longer carries
     let mut removed: Vec<_> = by_id.into_values().collect();
 
     let legacy = diff_update_listings(legacy_views, legacy_rows);
-    added.extend(legacy.added);
+    added.extend(legacy.added.into_iter().map(|view| (view, None)));
     removed.extend(legacy.removed);
-    ListingsDiff { added, removed }
+    BoardDiff { added, removed }
 }
 
 impl UltrosDb {
@@ -539,7 +630,7 @@ impl UltrosDb {
         listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<Vec<(ActiveListing, Retainer)>> {
+    ) -> Result<ListingWrite> {
         use active_listing::*;
         let instant = Instant::now();
         let retainers = self.resolve_retainers(&listings, world_id).await?;
@@ -555,7 +646,7 @@ impl UltrosDb {
             .await?;
 
         let to_add = listings_to_upsert(listings, existing_items);
-        let added = fan_out_listing_writes(to_add.into_iter().map(|m| {
+        let written = fan_out_listing_writes(to_add.into_iter().map(|(m, previous)| {
             let retainer_id = retainers
                 .get(&m.retainer_name)
                 .expect("Should always have a retainer at this point.")
@@ -565,17 +656,27 @@ impl UltrosDb {
             // higher-ranked lifetime and fail every `tokio::spawn` that reaches
             // this call with "implementation of `Send` is not general enough".
             async move {
-                self.create_listing(&m, item_id, world_id, Some(retainer_id))
-                    .await
+                let row = self
+                    .create_listing(&m, item_id, world_id, Some(retainer_id))
+                    .await?;
+                Ok((row, previous))
             }
         }))
         .await?;
 
+        let observed_at = chrono::Utc::now();
+        let changes: Vec<ListingChange> = written
+            .iter()
+            .map(|(row, previous)| {
+                ListingChange::upserted(row.clone(), previous.as_ref(), observed_at)
+            })
+            .collect();
+
         let retainers_by_id: HashMap<i32, &retainer::Model> =
             retainers.values().map(|r| (r.id, r)).collect();
-        let added: Vec<_> = added
+        let added: Vec<_> = written
             .into_iter()
-            .map(|l| {
+            .map(|(l, _)| {
                 let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
                     .clone()
                     .into();
@@ -593,7 +694,11 @@ impl UltrosDb {
         counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
             .increment(added.len() as u64);
         histogram!("ultros_db_add_listings_duration_seconds").record(instant.elapsed());
-        Ok(added)
+        Ok(ListingWrite {
+            added,
+            removed: vec![],
+            changes,
+        })
     }
 
     pub async fn remove_listings(
@@ -601,7 +706,7 @@ impl UltrosDb {
         remove_listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<Vec<(ActiveListing, Retainer)>> {
+    ) -> Result<ListingWrite> {
         let listings = self
             .get_all_listings_in_worlds_with_retainers(&[world_id.0], item_id)
             .await?;
@@ -612,14 +717,14 @@ impl UltrosDb {
 
         let candidates = listings_to_remove_with_identity(db_listings, remove_listings);
         let Some(delete) = delete_unchanged_listings(&candidates) else {
-            return Ok(vec![]);
+            return Ok(ListingWrite::default());
         };
         // Only publish rows actually deleted. A concurrent reprice can make a
         // candidate fail the predicate; reporting it as removed would still
         // evict the live listing from the analyzer even though the DB kept it.
         let items = delete.exec_with_returning(&self.db).await?;
         if items.is_empty() {
-            return Ok(vec![]);
+            return Ok(ListingWrite::default());
         }
         let retainers = items.iter().map(|i| i.retainer_id).unique();
         let retainers: HashMap<i32, Retainer> = retainer::Entity::find()
@@ -637,10 +742,20 @@ impl UltrosDb {
         if !items.is_empty() {
             self.set_last_updated(world_id, item_id).await?;
         }
-        Ok(items
+        let observed_at = chrono::Utc::now();
+        let changes = items
+            .iter()
+            .map(|row| ListingChange::removed(row.clone(), observed_at))
+            .collect();
+        let removed = items
             .into_iter()
             .flat_map(|i| retainers.get(&i.retainer_id).map(|r| (i.into(), r.clone())))
-            .collect())
+            .collect();
+        Ok(ListingWrite {
+            added: vec![],
+            removed,
+            changes,
+        })
     }
 
     #[instrument(skip(self))]
@@ -797,7 +912,7 @@ impl UltrosDb {
         listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<ListingUpdate> {
+    ) -> Result<ListingWrite> {
         use active_listing::*;
         let instant = Instant::now();
         // Assumes that we are being given a full list of all the listings for the item and world.
@@ -813,20 +928,22 @@ impl UltrosDb {
             .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
-        let ListingsDiff { added, removed } = diff_board_with_identity(listings, existing_items);
+        let BoardDiff { added, removed } = diff_board_with_identity(listings, existing_items);
         let remove_iter = removed.iter();
         // Each future owns its `ListingView` — see the note in `add_listings`.
-        let added = added.into_iter().map(|m| {
+        let added = added.into_iter().map(|(m, previous)| {
             let retainer_id = retainers
                 .get(&m.retainer_name)
                 .expect("Should always have a retainer at this point.")
                 .id;
             async move {
-                self.create_listing(&m, item_id, world_id, Some(retainer_id))
-                    .await
+                let row = self
+                    .create_listing(&m, item_id, world_id, Some(retainer_id))
+                    .await?;
+                Ok((row, previous))
             }
         });
-        let (added, removed_result) =
+        let (written, removed_result) =
             futures::future::join(fan_out_listing_writes(added), async move {
                 let ids_to_remove: Vec<i32> = remove_iter.map(|(l, _)| l.id).collect();
                 if ids_to_remove.is_empty() {
@@ -841,13 +958,25 @@ impl UltrosDb {
             .await;
         // Writes may have partially succeeded, but a failed insert or delete
         // must not report a successful reconciliation or advance its marker.
-        let added = added?;
+        let written = written?;
         removed_result?;
+
+        let observed_at = chrono::Utc::now();
+        // Every deleted row is a change even when its retainer is unknown and
+        // it therefore never reaches the bus payload below.
+        let mut changes: Vec<ListingChange> = removed
+            .iter()
+            .map(|(m, _)| ListingChange::removed(m.clone(), observed_at))
+            .collect();
+        changes.extend(written.iter().map(|(row, previous)| {
+            ListingChange::upserted(row.clone(), previous.as_ref(), observed_at)
+        }));
+
         let retainers_by_id: HashMap<i32, &retainer::Model> =
             retainers.values().map(|r| (r.id, r)).collect();
-        let added: Vec<_> = added
+        let added: Vec<_> = written
             .into_iter()
-            .map(|l| {
+            .map(|(l, _)| {
                 let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
                     .clone()
                     .into();
@@ -864,7 +993,11 @@ impl UltrosDb {
         counter!("ultros_db_removed_items", "world_id" => world_id.0.to_string())
             .increment(removed.len() as u64);
         histogram!("ultros_db_update_listings_duration_seconds").record(instant.elapsed());
-        Ok((added, removed))
+        Ok(ListingWrite {
+            added,
+            removed,
+            changes,
+        })
     }
 
     /// Cheapest price per (item, hq, world) for a specific set of items — the
@@ -922,6 +1055,15 @@ impl UltrosDb {
     /// exactly: one row per group, no global sort, no per-row window state. With
     /// `idx_active_listing_cheapest` on (item_id, hq, world_id, price_per_unit)
     /// it can be served by an index-only scan.
+    /// Every row of `active_listing`, for the one-time ClickHouse
+    /// `listing_events` seed. Streamed, not collected: the table is millions
+    /// of rows.
+    pub async fn stream_active_listings(
+        &self,
+    ) -> Result<impl Stream<Item = Result<active_listing::Model, DbErr>> + '_, anyhow::Error> {
+        Ok(active_listing::Entity::find().stream(&self.db).await?)
+    }
+
     pub async fn cheapest_listings(
         &self,
     ) -> Result<impl Stream<Item = Result<ListingSummary, DbErr>> + '_, DbErr> {
@@ -1686,7 +1828,114 @@ mod diff_tests {
         )];
         let upserts = listings_to_upsert(delta, existing);
         assert_eq!(upserts.len(), 1);
-        assert_eq!(upserts[0].price_per_unit, Some(450));
+        assert_eq!(upserts[0].0.price_per_unit, Some(450));
+    }
+
+    #[test]
+    fn upsert_reports_the_replaced_row_for_a_reprice() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Idmus");
+        let existing = vec![(
+            db_listing_with_id(1, world_id, retainer.id, 500, 3, false, "abc"),
+            Some(retainer.clone()),
+        )];
+        let delta = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            450,
+            3,
+            false,
+            "abc",
+        )];
+
+        let upserts = listings_to_upsert(delta, existing);
+
+        assert_eq!(upserts.len(), 1);
+        let (view, previous) = &upserts[0];
+        assert_eq!(view.price_per_unit, Some(450));
+        let previous = previous
+            .as_ref()
+            .expect("a reprice must carry the row it replaces");
+        assert_eq!(previous.price_per_unit, 500);
+        assert_eq!(previous.quantity, 3);
+    }
+
+    #[test]
+    fn upsert_reports_no_previous_row_for_a_new_listing() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Idmus");
+        let existing = vec![(
+            db_listing_with_id(1, world_id, retainer.id, 500, 1, false, "abc"),
+            Some(retainer.clone()),
+        )];
+        let delta = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            700,
+            1,
+            false,
+            "xyz",
+        )];
+
+        let upserts = listings_to_upsert(delta, existing);
+
+        assert_eq!(upserts.len(), 1);
+        assert!(upserts[0].1.is_none(), "a new id has nothing to replace");
+    }
+
+    #[test]
+    fn board_diff_pairs_a_reprice_with_its_replaced_row_and_a_new_listing_with_none() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Idmus");
+        let existing = vec![
+            (
+                db_listing_with_id(1, world_id, retainer.id, 500, 1, false, "abc"),
+                Some(retainer.clone()),
+            ),
+            (
+                db_listing_with_id(2, world_id, retainer.id, 900, 1, false, "gone"),
+                Some(retainer.clone()),
+            ),
+        ];
+        let board = vec![
+            listing_view_with_id(world_id, &retainer.name, 450, 1, false, "abc"),
+            listing_view_with_id(world_id, &retainer.name, 700, 1, false, "new"),
+        ];
+
+        let BoardDiff { added, removed } = diff_board_with_identity(board, existing);
+
+        assert_eq!(added.len(), 2);
+        let repriced = added
+            .iter()
+            .find(|(v, _)| v.listing_id.as_deref() == Some("abc"))
+            .unwrap();
+        assert_eq!(repriced.1.as_ref().map(|m| m.price_per_unit), Some(500));
+        let fresh = added
+            .iter()
+            .find(|(v, _)| v.listing_id.as_deref() == Some("new"))
+            .unwrap();
+        assert!(fresh.1.is_none());
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].0.listing_id.as_deref(), Some("gone"));
+    }
+
+    #[test]
+    fn listing_change_upserted_is_updated_only_with_a_previous_row() {
+        let now = chrono::Utc::now();
+        let previous = db_listing_with_id(1, 54, 1, 500, 3, false, "abc");
+        let mut current = previous.clone();
+        current.price_per_unit = 450;
+
+        let updated = ListingChange::upserted(current.clone(), Some(&previous), now);
+        assert_eq!(updated.kind, ListingChangeKind::Updated);
+        assert_eq!(updated.prev_price_per_unit, Some(500));
+        assert_eq!(updated.prev_quantity, Some(3));
+        assert_eq!(updated.row.price_per_unit, 450);
+
+        let added = ListingChange::upserted(current, None, now);
+        assert_eq!(added.kind, ListingChangeKind::Added);
+        assert_eq!(added.prev_price_per_unit, None);
+        assert_eq!(added.prev_quantity, None);
     }
 
     /// The pre-migration bridge: a re-sent listing whose row predates the id
@@ -1732,7 +1981,7 @@ mod diff_tests {
         )];
         let upserts = listings_to_upsert(delta, existing);
         assert_eq!(upserts.len(), 1);
-        assert_eq!(upserts[0].listing_id.as_deref(), Some("abc"));
+        assert_eq!(upserts[0].0.listing_id.as_deref(), Some("abc"));
     }
 
     // ---- identity-keyed remove path ----
@@ -1836,7 +2085,7 @@ mod diff_tests {
         let mut added_ids: Vec<_> = diff
             .added
             .iter()
-            .map(|v| v.listing_id.as_deref().unwrap())
+            .map(|v| v.0.listing_id.as_deref().unwrap())
             .collect();
         added_ids.sort();
         assert_eq!(added_ids, ["new", "reprice"]);

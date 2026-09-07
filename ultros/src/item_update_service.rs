@@ -138,6 +138,9 @@ pub(crate) struct UpdateService {
     pub(crate) universalis: UniversalisClient,
     pub(crate) listings: EventProducer<ListingEventData>,
     pub(crate) sales: EventProducer<SaleEventData>,
+    /// ClickHouse `listing_events` mirror for every board this service writes.
+    pub(crate) listing_events:
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     /// Per-world full-sweep slot: `Running` while a sweep is in flight,
     /// `CompletedAt` while the [`FULL_SWEEP_COOLDOWN`] from the last
     /// completed sweep is still active. See [`SweepSlot`].
@@ -730,8 +733,17 @@ impl UpdateService {
                     .map(|(item_id, listings, sales)| async move {
                         let listings_changed;
                         match self.db.update_listings(listings, item_id, world_id).await {
-                            Ok((added, removed)) => {
+                            Ok(ultros_db::listings::ListingWrite {
+                                added,
+                                removed,
+                                changes,
+                            }) => {
                                 listings_changed = !added.is_empty() || !removed.is_empty();
+                                crate::record_listing_changes(
+                                    &self.listing_events,
+                                    &changes,
+                                    ultros_clickhouse::rows::ListingEventSource::Catchup,
+                                );
                                 let _ =
                                     self.listings
                                         .send(EventType::Add(Arc::new(ListingEventData {
