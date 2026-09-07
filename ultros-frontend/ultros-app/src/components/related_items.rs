@@ -30,6 +30,7 @@ use crate::{
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
+use crate::components::app_link::use_query_map_or_default;
 
 pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
     tracked_data()
@@ -281,7 +282,7 @@ fn CraftOptionsToggleRow() -> impl IntoView {
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let i18n = use_i18n();
-    let query = leptos_router::hooks::use_query_map();
+    let query = use_query_map_or_default();
     let params = leptos_router::hooks::use_params_map();
     let (home, _) = crate::global_state::home_world::use_home_world();
     // Share the options signal between the ingredient rows and planner link.

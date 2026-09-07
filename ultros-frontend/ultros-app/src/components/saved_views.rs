@@ -8,11 +8,11 @@
 use codee::string::JsonSerdeCodec;
 use leptos::html::Div;
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 use leptos_router::params::ParamsMap;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use serde::{Deserialize, Serialize};
 
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::i18n::*;
@@ -165,7 +165,7 @@ pub fn default_view_query() -> String {
 #[component]
 pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoView {
     let i18n = use_i18n();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (views, set_views, _) = use_local_storage_with_options::<Vec<SavedView>, JsonSerdeCodec>(
         SAVED_VIEWS_KEY,
         // Private-browsing / storage-disabled must degrade to session-only,

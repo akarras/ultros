@@ -294,13 +294,16 @@ fn serialize_visible_cols_preserving(
     ids.join(",")
 }
 
+use crate::components::app_link::use_query_map_or_default;
+use crate::query_defaults::query_signal;
+use crate::query_defaults::query_signal_or_default;
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    hooks::{use_location, use_navigate, use_params_map},
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -1403,7 +1406,7 @@ fn AnalyzerTable(
     let (max_purchase_price, set_max_purchase_price) = filter_query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = filter_query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
-    let (cols_param, set_cols_param) = leptos_router::hooks::query_signal_with_options::<String>(
+    let (cols_param, set_cols_param) = query_signal_or_default::<String>(
         "cols",
         NavigateOptions {
             scroll: false,
@@ -3366,7 +3369,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = CONNECTED_REGIONS;
-    let query = use_query_map();
+    let query = use_query_map_or_default();
 
     let enabled_regions = move || {
         let map = query();
@@ -3620,7 +3623,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
 
     Effect::new(move |_| {

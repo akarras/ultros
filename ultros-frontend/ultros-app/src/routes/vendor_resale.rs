@@ -4,9 +4,11 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
+use crate::query_defaults::query_signal;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
@@ -38,7 +40,7 @@ use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    hooks::{use_location, use_navigate, use_params_map},
 };
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use thousands::Separable;
@@ -1161,7 +1163,7 @@ fn VendorWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
 
     Effect::new(move |_| {

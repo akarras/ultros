@@ -16,10 +16,12 @@ use crate::query_defaults::filter_query_signal;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    hooks::{use_location, use_navigate, use_params_map},
 };
 use ultros_api_types::{icon_size::IconSize, trends::TrendItem};
 
+use crate::components::app_link::use_query_map_or_default;
+use crate::query_defaults::query_signal;
 use crate::{
     api::get_trends_v2,
     components::{
@@ -413,7 +415,7 @@ fn TrendsWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
 
     Effect::new(move |_| {

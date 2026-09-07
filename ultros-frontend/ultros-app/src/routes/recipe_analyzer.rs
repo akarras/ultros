@@ -73,10 +73,7 @@ use icondata as i;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_i18n::I18nContext;
-use leptos_router::{
-    NavigateOptions,
-    hooks::{query_signal, use_navigate, use_query_map},
-};
+use leptos_router::{NavigateOptions, hooks::use_navigate};
 use percent_encoding::utf8_percent_encode;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::LazyLock;
@@ -91,7 +88,9 @@ use ultros_api_types::{
 };
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
 
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::crafting_cost::SubcraftInfo;
+use crate::query_defaults::query_signal;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 struct StatFailures {
@@ -2878,7 +2877,7 @@ fn RecipeAnalyzerTable(
     // disposed. The panicking accessor aborts the SSR response there
     // (GlitchTip #7304); the default locale does not.
     let i18n = crate::i18n_fallback::use_i18n_or_default();
-    let recipe_query = use_query_map();
+    let recipe_query = use_query_map_or_default();
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -4298,7 +4297,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
     seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 

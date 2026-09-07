@@ -29,16 +29,15 @@ use crate::{
     },
 };
 use leptos::prelude::*;
-use leptos_router::{
-    NavigateOptions,
-    hooks::{query_signal, use_navigate, use_query_map},
-};
+use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::{collections::HashSet, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
+use crate::components::app_link::use_query_map_or_default;
 use crate::i18n::*;
+use crate::query_defaults::query_signal;
 
 #[derive(Clone, Debug, PartialEq)]
 struct ScripSourceData {
@@ -945,7 +944,7 @@ fn ScripSourceTable(
 #[component]
 pub fn ScripSources() -> impl IntoView {
     let i18n = use_i18n();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 

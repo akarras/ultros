@@ -2,11 +2,13 @@ use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
 };
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::query_signal;
 use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{SalesStats, analyze_sales},
@@ -29,10 +31,7 @@ use crate::{
     query_defaults::filter_query_signal,
 };
 use leptos::prelude::*;
-use leptos_router::{
-    NavigateOptions,
-    hooks::{query_signal, use_navigate, use_query_map},
-};
+use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::{
@@ -816,7 +815,7 @@ fn LeveAnalyzerTable(
 #[component]
 pub fn LeveAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
