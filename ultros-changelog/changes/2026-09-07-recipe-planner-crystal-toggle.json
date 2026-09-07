@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Exclude crystals actually excludes crystals",
+  "blurb": "The recipe planner's Exclude crystals checkbox filtered the neighbouring Catalysts category, so shards and clusters stayed in your shopping list and your total no matter what you ticked. It now excludes crystals, and follows your saved craft options when a link omits the setting. Ingredient lines and the plan summary no longer announce \"0 missing\" when nothing is short.",
+  "link": "/recipe/5057"
+}
