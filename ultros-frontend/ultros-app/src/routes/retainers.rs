@@ -406,17 +406,13 @@ pub fn RetainerUndercuts() -> impl IntoView {
             }
         },
     );
+    // Watch everything the retainers list, not just the rows currently
+    // undercut — the whole point is catching the moment a cheapest listing
+    // stops being cheapest.
     let listed_pairs = Signal::derive(move || {
-        retainers.get().and_then(|result| {
-            result.ok().map(|characters| {
-                characters
-                    .iter()
-                    .flat_map(|(_, retainers)| retainers.iter())
-                    .flat_map(|(_, undercuts)| undercuts.iter())
-                    .map(|undercut| (undercut.current.world_id, undercut.current.item_id))
-                    .collect::<Vec<ListedPair>>()
-            })
-        })
+        retainers
+            .get()
+            .and_then(|result| result.ok().map(|report| report.listed))
     });
     let live = use_retainer_live(listed_pairs, move || retainers.refetch());
     let (drawer_visible, set_drawer_visible) = signal(false);
@@ -474,8 +470,9 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                         }
                                             .into_any()
                                     }
-                                    Some(Ok(retainers)) => {
-                                        let retainers: Vec<_> = retainers
+                                    Some(Ok(report)) => {
+                                        let retainers: Vec<_> = report
+                                            .undercuts
                                             .into_iter()
                                             .map(|(character, retainers)| {
                                                 view! {

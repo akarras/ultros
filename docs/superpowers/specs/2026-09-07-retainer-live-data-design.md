@@ -98,8 +98,13 @@ Both `RetainerListings` and `RetainerUndercuts`:
 
 - Derive `pairs: Signal<Option<Vec<ListedPair>>>` from their existing
   `retainers` resource (`Some(Ok(_))` → collect `(listing.world_id,
-  listing.item_id)` over every retainer's listings; for undercuts use
-  `undercut.current`). Pass `move || retainers.refetch()` as `refetch`.
+  listing.item_id)` over every retainer's listings). Pass
+  `move || retainers.refetch()` as `refetch`.
+- The undercuts page must watch **every** listing the user has, not only the
+  rows currently undercut — an item that is cheapest now and gets undercut
+  later would otherwise never trigger a refetch. `get_retainer_undercuts`
+  therefore returns `UndercutReport { undercuts, listed: Vec<(i32, i32)> }`,
+  where `listed` is the full set taken before the cheapest-filter runs.
 - Render `<RealtimeStatus status last_update />` in the title row, right-aligned
   (`flex flex-wrap items-center justify-between gap-3`, the undercuts page
   already has that row; the listings page gets the same wrapper).
