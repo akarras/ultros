@@ -376,8 +376,8 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                     !optional || visible_cols.with(|v| v.contains(col.id)),
                 );
                 if let Some(role) = marked_role(col, marks) {
-                    // TermBadge is 16px wide, separated from the title by 8px.
-                    def.heading_adornments = 24.0;
+                    // TermBadge is 18px wide, separated from the title by 8px.
+                    def.heading_adornments = 26.0;
                     if let Some(label) =
                         with_marks(marks, |m| m.labels.get(&role).cloned()).flatten()
                     {
@@ -921,10 +921,7 @@ mod tests {
             // The marked *cell* class has to reach the row too, or the
             // header and its cells sit on different widths.
             assert!(!html.contains("class=\"w-40\""), "grid geometry must own cell widths: {html}");
-            assert!(
-                html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
-                "{html}"
-            );
+            assert!(html.contains("grid-heading-marked"), "{html}");
         });
     }
 

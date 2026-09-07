@@ -2567,6 +2567,38 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     background-color: var(--color-background-panel);
     border-bottom: 1px solid var(--color-outline);
 }
+/* components/term_badge.rs — the formula operators (`=` `+` `−`).
+   Role is encoded by fill weight, never by hue: the app ships 18 brand
+   palettes across two themes, so a fixed green/red pair would clash with most
+   of them. Solid brand = the result, brand tint = adds, neutral = subtracts.
+   The glyph colour is --color-text (or knocked out of the solid chip) rather
+   than --brand-fg on a tint, and an inset ring rather than a border leaves the
+   full 18px box to the operator. */
+.term-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    flex: none;
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--color-outline);
+}
+.term-badge svg { width: 12px; height: 12px; }
+.term-badge-result {
+    background: var(--brand-ring);
+    color: var(--color-background-panel);
+    box-shadow: none;
+}
+.term-badge-add {
+    background: color-mix(in srgb, var(--brand-ring) 26%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-ring) 55%, transparent);
+}
+.term-badge-sub {
+    background: color-mix(in srgb, var(--color-text) 8%, transparent);
+    box-shadow: inset 0 0 0 1px var(--color-outline-strong);
+}
 .filter-chip {
     display: inline-flex;
     align-items: center;
@@ -2699,7 +2731,25 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); }
 .grid-heading-content { flex: 1; min-width: 0; overflow: hidden; }
 .grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
+/* A column that feeds Profit (SortableHeaderCell's `emphasized`) reads as a
+   gently tinted block. This used to be an inset bottom hairline, which landed
+   on the 10px sub-label's descenders once headings grew a second line. The
+   4px side padding above already insets it from the grip and menu buttons. */
+.grid-heading-marked {
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--brand-ring) 15%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-ring) 30%, transparent);
+}
+[data-theme="light"] .grid-heading-marked {
+    background: color-mix(in srgb, var(--brand-ring) 12%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-ring) 26%, transparent);
+}
 .grid-column-menu, .grid-drag-handle { flex: 0 0 20px; padding: 4px 0; color: var(--color-text-muted); }
+/* Shown only while the column has a live filter, so it costs width only when
+   it has something to do. Same icon the Flip Finder's World/Datacenter columns
+   used to carry on their own. */
+.grid-filter-clear { flex: 0 0 20px; padding: 4px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--brand-fg); }
+.grid-filter-clear:hover, .grid-filter-clear:focus-visible { color: var(--color-text); }
 .grid-drag-handle { cursor: grab; touch-action: none; user-select: none; }
 .grid-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 3; }
 .grid-resize-handle:hover { background: var(--brand-ring); }
@@ -2722,6 +2772,8 @@ dialog.panel { color: var(--color-text); margin: auto; }
 .grid-column-filter { padding-bottom: 8px; border-bottom: 1px solid var(--color-outline); }
 .grid-column-filter label { display: grid; gap: 4px; }
 .grid-column-filter select { width: 100%; padding: 6px; background: var(--color-background); }
+/* A filled dot-stack does not say "filtered"; the button swaps to a funnel
+   (see virtual_grid/mod.rs) and keeps the brand chip behind it. */
 .grid-filter-active .grid-column-menu { color: var(--brand-fg); background: color-mix(in srgb, var(--brand-ring) 22%, transparent); border-radius: 4px; }
 .grid-menu-panel button { padding: 6px 8px; text-align: left; border-radius: 4px; }
 .grid-menu-panel button:hover, .grid-menu-panel button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }

@@ -27,7 +27,6 @@ use crate::{
         control_bar::{ColumnOption, ControlBar, ControlBarPopovers, FilterOption},
         filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
         meta::*,
         query_button::QueryButton,
@@ -2900,52 +2899,18 @@ COL_ROI => (view! {
                                     />
                                 </div> }).into_any(),
 COL_WORLD => (view! {
-                                    <div class="  px-3 py-2 flex flex-row gap-2">
-                                        {t!(i18n, analyzer_col_world)}
-                                        <div>
-                                            {move || {
-                                                world_filter()
-                                                    .map(|_filter| {
-                                                        view! {
-                                                            <button
-                                                                type="button"
-                                                                aria-label=t_string!(i18n, aria_remove_filter)
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                                on:click=move |_| {
-                                                                    set_world_filter(None);
-                                                                }
-                                                            >
-                                                                <Icon icon=icondata::MdiFilterRemove />
-                                                            </button>
-                                                        }
-                                                    })
-                                            }}
-                                        </div>
-                                    </div>
+                                    // Clearing the filter is the grid header's
+                                    // own control now (VirtualGrid renders it
+                                    // for every filterable column), so this
+                                    // heading is just its label.
+                                    <div class="px-3 py-2">{t!(i18n, analyzer_col_world)}</div>
                                 }).into_any(),
 COL_DATACENTER => (view! {
-                                    <div class="  px-3 py-2 flex flex-row gap-2">
-                                        {t!(i18n, analyzer_col_datacenter)}
-                                        <div>
-                                            {move || {
-                                                datacenter_filter()
-                                                    .map(|_filter| {
-                                                        view! {
-                                                            <button
-                                                                type="button"
-                                                                aria-label=t_string!(i18n, aria_remove_filter)
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                                on:click=move |_| {
-                                                                    set_datacenter_filter(None);
-                                                                }
-                                                            >
-                                                                <Icon icon=icondata::MdiFilterRemove />
-                                                            </button>
-                                                        }
-                                                    })
-                                            }}
-                                        </div>
-                                    </div>
+                                    // Clearing the filter is the grid header's
+                                    // own control now (VirtualGrid renders it
+                                    // for every filterable column), so this
+                                    // heading is just its label.
+                                    <div class="px-3 py-2">{t!(i18n, analyzer_col_datacenter)}</div>
                                 }).into_any(),
 COL_TREND => (view! {
                                     <div class="  px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>

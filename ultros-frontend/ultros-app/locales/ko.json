@@ -78,6 +78,7 @@
     "grid_filter_clear": "필터 해제",
     "grid_move_column": "드래그하여 열 이동",
     "grid_column_menu": "열 옵션",
+    "grid_column_menu_filtered": "열 옵션(필터 적용됨)",
     "grid_resize_hint": "드래그하여 너비 조절, 두 번 클릭하여 가져온 결과에 맞춤",
     "grid_auto_fit": "열 너비 자동 맞춤",
     "grid_width": "너비(px)",
