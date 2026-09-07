@@ -32,7 +32,11 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(GroupRole::GroupId).integer().not_null())
                     .col(ColumnDef::new(GroupRole::Name).text().not_null())
-                    .col(ColumnDef::new(GroupRole::DiscordRoleId).big_integer().null())
+                    .col(
+                        ColumnDef::new(GroupRole::DiscordRoleId)
+                            .big_integer()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(GroupRole::Source)
                             .small_integer()
@@ -181,9 +185,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 TableAlterStatement::new()
                     .table(UserGroup::Table)
-                    .add_column_if_not_exists(
-                        ColumnDef::new(UserGroup::FrozenReason).text().null(),
-                    )
+                    .add_column_if_not_exists(ColumnDef::new(UserGroup::FrozenReason).text().null())
                     .to_owned(),
             )
             .await?;
