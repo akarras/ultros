@@ -375,6 +375,31 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                     optional,
                     !optional || visible_cols.with(|v| v.contains(col.id)),
                 );
+                if let Some(role) = marked_role(col, marks) {
+                    // TermBadge is 16px wide, separated from the title by 8px.
+                    def.heading_adornments = 24.0;
+                    if let Some(label) =
+                        with_marks(marks, |m| m.labels.get(&role).cloned()).flatten()
+                    {
+                        def.heading_lines.push((label, 0.0));
+                    }
+                    def.width = 200.0;
+                } else if let Some(line) = extras.and_then(|e| {
+                    e.with(|e| e.by_kind.get(&col.spec.kind).and_then(|e| e.line2.clone()))
+                }) {
+                    let (text, extra) = if line.pill.is_some() {
+                        // Measure the localized button text too; reserve its
+                        // icon, border, padding and the gap before the button.
+                        (
+                            format!("{} {}", line.sub_label, t_string!(i18n, analyzer_use_pill)),
+                            28.0,
+                        )
+                    } else {
+                        (line.sub_label, 0.0)
+                    };
+                    def.heading_lines.push((text, extra));
+                    def.width = 180.0;
+                }
                 if let Sortability::By(mode) = col.sort
                     && sort_mode.get().unwrap_or_else(M::fallback) == mode
                 {
@@ -760,7 +785,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div  class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -800,7 +825,7 @@ mod tests {
                             visible_cols=Signal::derive(HashSet::new)
                             sort_mode=Signal::derive(|| None::<Col>)
                             sort_dir=Signal::derive(|| None::<SortDir>)
-                            ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                            ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                             custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                             row_height=60.0
 
@@ -815,7 +840,7 @@ mod tests {
                             visible_cols=Signal::derive(HashSet::new)
                             sort_mode=Signal::derive(|| None::<Col>)
                             sort_dir=Signal::derive(|| None::<SortDir>)
-                            ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                            ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                             custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                             row_height=60.0
 
@@ -845,7 +870,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div  class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -881,7 +906,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, _: &'static str| {
                         view! { <div ></div> }.into_any()
                     })
@@ -1195,7 +1220,7 @@ mod tests {
                         visible_cols=Signal::derive(move || visible.iter().copied().collect::<HashSet<_>>())
                         sort_mode=Signal::derive(|| None::<Col>)
                         sort_dir=Signal::derive(|| None::<SortDir>)
-                        ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                        ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                         custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                         row_height=10.0
 
@@ -1228,7 +1253,7 @@ mod tests {
                     visible_cols=Signal::derive(|| ["extra"].into_iter().collect::<HashSet<_>>())
                     sort_mode=Signal::derive(|| Some(Col::Profit))
                     sort_dir=Signal::derive(|| Some(SortDir::Desc))
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
                     row_height=10.0
 

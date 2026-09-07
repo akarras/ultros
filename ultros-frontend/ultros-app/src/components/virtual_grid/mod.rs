@@ -431,11 +431,23 @@ where
                         } else {
                             HEADING_SORT_ICON
                         };
-                        ctx.measure_text(&def.label)
+                        let title = ctx
+                            .measure_text(&def.label)
                             .map(|m| m.width())
                             .unwrap_or(0.0)
+                            + def.heading_adornments
+                            + icon;
+                        // Use the heading font as a conservative bound for
+                        // smaller subtitles, so fitting never clips their text.
+                        def.heading_lines
+                            .iter()
+                            .fold(title, |width, (text, extra)| {
+                                width.max(
+                                    ctx.measure_text(text).map(|m| m.width()).unwrap_or(0.0)
+                                        + extra,
+                                )
+                            })
                             + HEADING_CHROME
-                            + icon
                     })
                     .collect::<Vec<_>>();
                 ctx.set_font(&cell_font);

@@ -201,7 +201,6 @@ async function main() {
         'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7'];
       await page.setViewport({ width: 1600, height: 1000 });
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });
-      await page.setCookie({ name: 'LABS', value: '', url: BASE });
       for (const [tool, route] of routes) {
         if (process.env.ANALYZER_TOOLS && !process.env.ANALYZER_TOOLS.split(',').includes(tool)) continue;
         // Recipe preserves its existing saved column IDs and presents cadence
@@ -213,7 +212,6 @@ async function main() {
         const query = new URLSearchParams({ v: '1', lang: 'en', world, 'min-sales': '0',
           profit: '-1000000000', roi: '-1000000000', 'next-sale': '1M', sort: 'grid:item', dir: 'asc',
           cols: ['profit', 'cost', ...required].join(',') });
-        if (tool === 'recipe-analyzer') query.set('labs', 'analyzer-recipe');
         if (tool === 'flip-finder' || tool === 'vendor-resale') query.delete('world');
         const target = `${BASE}${route}?${query}`;
         console.log(`CHECK ${tool}: navigating`);
@@ -289,10 +287,9 @@ async function main() {
         if (fixture) assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: selected pricing basis reload survives`);
         console.log(`PASS ${tool}: shared market columns, median calculation, filter, hide and reload (${rowCount} initial rows)`);
         if (tool === 'recipe-analyzer') {
-          // The shared viewport ships independently of the experimental recipe
-          // model. Saved experimental columns/filters must not enable that model.
+          // Bookmarks carrying the retired experiment flag keep the same columns.
           const legacy = new URL(page.url());
-          legacy.searchParams.delete('labs');
+          legacy.searchParams.set('labs', 'analyzer-recipe');
           legacy.searchParams.set('cols', [...required, 'rev-sale-median'].join(','));
           await page.goto(legacy.href, { waitUntil: 'domcontentloaded', timeout: 90000 });
           await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
@@ -309,10 +306,10 @@ async function main() {
           for (const column of ['item', 'profit', 'daily-sales', 'listing-world', 'listing-dc']) {
             assert(legacyColumns.has(column), `default Recipe retains ${column}`);
           }
-          for (const column of ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'trend']) {
-            assert(!legacyColumns.has(column), `default Recipe keeps ${column} behind Labs`);
+          for (const column of required) {
+            assert(legacyColumns.has(column), `Recipe retains ${column} in an old Labs bookmark`);
           }
-          console.log('PASS recipe-analyzer: shared grid remains available with the experimental model disabled');
+          console.log('PASS recipe-analyzer: promoted columns work by default and in old Labs bookmarks');
         }
       }
       if (fixture) {

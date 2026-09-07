@@ -125,20 +125,10 @@ const ROUTE_ASSERTS = {
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
   "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
-  // One Labs toggle for the whole tool. With it on, the Profit header
-  // carries an "after 5% tax" sub-label at every width; the strip row
-  // itself is md+ only, and the mobile pass reads innerText, which drops
-  // display:none content. The lab columns are md+ only too, so the only
-  // cross-device assertions are the title and that sub-label; the sweep
-  // still checks console errors and horizontal overflow.
-  //
-  // `cols=` names eleven of the twenty-three optional columns — one of each
-  // distinct cell kind Phases C–F added, including all five market
-  // columns — so the desktop pass renders nineteen columns at once and
-  // the mobile pass renders only the six that are not `hidden md:`. Trend,
-  // Drift and the two 30-day columns are *listed* here, but a local run
-  // fires no enrichment at all: this route pins their markup and their
-  // console cleanliness, never their data. Settling is a prod-only check.
+  // Formula inputs and price-signal columns are available by default. The
+  // Profit header carries an "after 5% tax" subtitle at every viewport width;
+  // the inline strip itself is md+ only. Exercise the optional market and
+  // travel columns alongside a wider sale-price scope.
   //
   // `&sell-scope=datacenter` is Phase F's, and it is the point of listing
   // `scope-vs-home` at all: at the default sell scope every cell in that
@@ -153,7 +143,7 @@ const ROUTE_ASSERTS = {
   // sell side is suppressed only against a body that was really fetched.
   // Drop `cost-sale-median` from this URL and the sweep starts issuing a
   // `sale_stats?window=7` for the datacenter.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
+  "/recipe-analyzer?world=Gilgamesh&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],
   },
@@ -203,7 +193,7 @@ function getRoutes() {
     "/retainers",
     "/currency-exchange",
     "/recipe-analyzer?world=Gilgamesh",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home",
+    "/recipe-analyzer?world=Gilgamesh&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home",
     "/history",
     "/settings",
     "/groups",
