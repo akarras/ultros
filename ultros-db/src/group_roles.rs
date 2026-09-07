@@ -8,7 +8,7 @@
 use crate::{
     UltrosDb,
     common_type_conversions::GroupRoleReturn,
-    entity::{group_role, group_role_member, user_group, user_group_member},
+    entity::{discord_user, group_role, group_role_member, user_group, user_group_member},
 };
 use anyhow::Result;
 use sea_orm::{
@@ -35,6 +35,32 @@ pub enum GroupError {
     ManagedByDiscord,
     #[error("That role is managed by Discord; its members come from the Discord role")]
     RoleManagedByDiscord,
+}
+
+/// A Discord-backed role that reconciliation should keep in step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncedRole {
+    pub role_id: i32,
+    pub group_id: i32,
+    pub discord_role_id: i64,
+}
+
+/// The changes reconciliation (or a gateway event) wants applied to one role.
+#[derive(Debug, Clone, Default)]
+pub struct RoleSyncPlan {
+    pub role_id: i32,
+    /// `(discord user id, display name)`.
+    pub adds: Vec<(i64, String)>,
+    pub removes: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SyncSummary {
+    pub added: usize,
+    pub removed: usize,
+    /// Members who left the group entirely because they held no other
+    /// synced role and were themselves sync-added.
+    pub left_group: usize,
 }
 
 fn clean_role_name(name: String) -> Result<String> {
@@ -344,6 +370,227 @@ impl UltrosDb {
             .await?;
         Ok(())
     }
+
+    pub async fn guild_has_synced_roles(&self, guild_id: i64) -> Result<bool> {
+        Ok(!self.synced_roles_for_guild(guild_id).await?.is_empty())
+    }
+
+    pub async fn guilds_with_synced_roles(&self) -> Result<Vec<i64>> {
+        let ids: Vec<i64> = user_group::Entity::find()
+            .select_only()
+            .column(user_group::Column::GuildId)
+            .distinct()
+            .join(
+                sea_orm::JoinType::InnerJoin,
+                user_group::Relation::GroupRole.def(),
+            )
+            .filter(user_group::Column::GuildId.is_not_null())
+            .filter(user_group::Column::FrozenReason.is_null())
+            .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+            .filter(group_role::Column::SyncState.eq(GroupRoleSyncState::Synced as i16))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(ids)
+    }
+
+    pub async fn synced_roles_for_guild(&self, guild_id: i64) -> Result<Vec<SyncedRole>> {
+        let rows: Vec<(i32, i32, i64)> = group_role::Entity::find()
+            .select_only()
+            .column(group_role::Column::Id)
+            .column(group_role::Column::GroupId)
+            .column(group_role::Column::DiscordRoleId)
+            .join(
+                sea_orm::JoinType::InnerJoin,
+                group_role::Relation::UserGroup.def(),
+            )
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .filter(user_group::Column::FrozenReason.is_null())
+            .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+            .filter(group_role::Column::SyncState.eq(GroupRoleSyncState::Synced as i16))
+            .filter(group_role::Column::DiscordRoleId.is_not_null())
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(role_id, group_id, discord_role_id)| SyncedRole {
+                role_id,
+                group_id,
+                discord_role_id,
+            })
+            .collect())
+    }
+
+    pub async fn role_member_ids(&self, role_id: i32) -> Result<HashSet<i64>> {
+        let ids: Vec<i64> = group_role_member::Entity::find()
+            .select_only()
+            .column(group_role_member::Column::UserId)
+            .filter(group_role_member::Column::RoleId.eq(role_id))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(ids.into_iter().collect())
+    }
+
+    /// Apply reconciliation output for one group in a single transaction.
+    ///
+    /// Adds upsert the user's row (refreshing the display name), join the
+    /// role, and join the group as `Synced` if not already a member. Removes
+    /// leave the role; a user who then holds no synced role in the group and
+    /// was sync-added leaves the group too. Manual members are never removed.
+    pub async fn apply_role_sync(
+        &self,
+        group_id: i32,
+        plans: Vec<RoleSyncPlan>,
+    ) -> Result<SyncSummary> {
+        let mut summary = SyncSummary::default();
+        let txn = self.db.begin().await?;
+        let mut touched_roles = Vec::with_capacity(plans.len());
+        let mut removed_users: HashSet<i64> = HashSet::new();
+
+        for plan in plans {
+            touched_roles.push(plan.role_id);
+            for (user_id, display_name) in plan.adds {
+                discord_user::Entity::insert(discord_user::ActiveModel {
+                    id: ActiveValue::Set(user_id),
+                    username: ActiveValue::Set(display_name),
+                })
+                .on_conflict(
+                    OnConflict::column(discord_user::Column::Id)
+                        .update_column(discord_user::Column::Username)
+                        .to_owned(),
+                )
+                .exec(&txn)
+                .await?;
+                ensure_group_member(&txn, group_id, user_id, GroupMemberSource::Synced).await?;
+                insert_role_member(&txn, plan.role_id, user_id).await?;
+                summary.added += 1;
+            }
+            if !plan.removes.is_empty() {
+                let result = group_role_member::Entity::delete_many()
+                    .filter(group_role_member::Column::RoleId.eq(plan.role_id))
+                    .filter(group_role_member::Column::UserId.is_in(plan.removes.clone()))
+                    .exec(&txn)
+                    .await?;
+                summary.removed += result.rows_affected as usize;
+                removed_users.extend(plan.removes);
+            }
+        }
+
+        if !removed_users.is_empty() {
+            // Users still holding any synced role in this group stay.
+            let still_held: Vec<i64> = group_role_member::Entity::find()
+                .select_only()
+                .column(group_role_member::Column::UserId)
+                .distinct()
+                .join(
+                    sea_orm::JoinType::InnerJoin,
+                    group_role_member::Relation::GroupRole.def(),
+                )
+                .filter(group_role::Column::GroupId.eq(group_id))
+                .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+                .filter(group_role_member::Column::UserId.is_in(removed_users.iter().copied()))
+                .into_tuple()
+                .all(&txn)
+                .await?;
+            let still_held: HashSet<i64> = still_held.into_iter().collect();
+            let candidates: Vec<i64> = removed_users
+                .into_iter()
+                .filter(|id| !still_held.contains(id))
+                .collect();
+            if !candidates.is_empty() {
+                let result = user_group_member::Entity::delete_many()
+                    .filter(user_group_member::Column::GroupId.eq(group_id))
+                    .filter(user_group_member::Column::UserId.is_in(candidates))
+                    .filter(user_group_member::Column::Source.eq(GroupMemberSource::Synced as i16))
+                    .exec(&txn)
+                    .await?;
+                summary.left_group = result.rows_affected as usize;
+            }
+        }
+
+        if !touched_roles.is_empty() {
+            group_role::Entity::update_many()
+                .col_expr(
+                    group_role::Column::LastSyncedAt,
+                    sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+                )
+                .filter(group_role::Column::Id.is_in(touched_roles))
+                .exec(&txn)
+                .await?;
+        }
+
+        txn.commit().await?;
+        Ok(summary)
+    }
+
+    /// The Discord role behind a synced role was deleted. Members are kept;
+    /// the role just stops updating.
+    pub async fn mark_role_orphaned(&self, guild_id: i64, discord_role_id: i64) -> Result<()> {
+        let role_ids: Vec<i32> = group_role::Entity::find()
+            .select_only()
+            .column(group_role::Column::Id)
+            .join(
+                sea_orm::JoinType::InnerJoin,
+                group_role::Relation::UserGroup.def(),
+            )
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .filter(group_role::Column::DiscordRoleId.eq(discord_role_id))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        if role_ids.is_empty() {
+            return Ok(());
+        }
+        group_role::Entity::update_many()
+            .col_expr(
+                group_role::Column::SyncState,
+                sea_orm::sea_query::Expr::value(GroupRoleSyncState::Orphaned as i16),
+            )
+            .filter(group_role::Column::Id.is_in(role_ids))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// The bot left the guild. Unlink the group, keep every member, turn
+    /// synced roles into orphaned manual roles, and record why. Returns the
+    /// affected group id, or `None` if no group was linked to that guild.
+    pub async fn freeze_group_for_guild(
+        &self,
+        guild_id: i64,
+        reason: String,
+    ) -> Result<Option<i32>> {
+        let Some(group) = user_group::Entity::find()
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let txn = self.db.begin().await?;
+        group_role::Entity::update_many()
+            .col_expr(
+                group_role::Column::Source,
+                sea_orm::sea_query::Expr::value(GroupRoleSource::Manual as i16),
+            )
+            .col_expr(
+                group_role::Column::SyncState,
+                sea_orm::sea_query::Expr::value(GroupRoleSyncState::Orphaned as i16),
+            )
+            .filter(group_role::Column::GroupId.eq(group.id))
+            .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+            .exec(&txn)
+            .await?;
+        let mut active: user_group::ActiveModel = group.clone().into();
+        active.guild_id = ActiveValue::Set(None);
+        active.source = ActiveValue::Set(GroupSource::Manual as i16);
+        active.frozen_reason = ActiveValue::Set(Some(reason));
+        active.update(&txn).await?;
+        txn.commit().await?;
+        Ok(Some(group.id))
+    }
 }
 
 /// Insert the group membership if missing. An existing row is left alone so
@@ -406,7 +653,6 @@ pub(crate) async fn insert_role_member(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::entity::discord_user;
     use std::sync::atomic::{AtomicI64, Ordering};
 
     pub(crate) async fn test_db() -> UltrosDb {
@@ -845,5 +1091,313 @@ pub(crate) mod tests {
             .rename_group_role(group.id, owner.id, role.id, "".to_string())
             .await;
         assert!(blank.is_err());
+    }
+
+    async fn guild_group_with_synced_role(
+        db: &UltrosDb,
+    ) -> (
+        user_group::Model,
+        discord_user::Model,
+        group_role::Model,
+        i64,
+    ) {
+        let owner = fresh_user(db, "owner").await;
+        let guild_id = next_id();
+        let group = db
+            .create_group_from_guild("Sync group".to_string(), owner.id, guild_id, None)
+            .await
+            .unwrap();
+        let role = db
+            .import_discord_role(group.id, owner.id, next_id(), "Raiders".to_string(), 1)
+            .await
+            .unwrap();
+        (group, owner, role, guild_id)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn apply_role_sync_adds_unknown_users_as_synced_members() {
+        let db = test_db().await;
+        let (group, _owner, role, _guild) = guild_group_with_synced_role(&db).await;
+        let newcomer = next_id();
+
+        let summary = db
+            .apply_role_sync(
+                group.id,
+                vec![RoleSyncPlan {
+                    role_id: role.id,
+                    adds: vec![(newcomer, "Raider One".to_string())],
+                    removes: vec![],
+                }],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.added, 1);
+        assert!(is_role_member(&db, role.id, newcomer).await);
+        assert_eq!(
+            member_source(&db, group.id, newcomer).await,
+            Some(GroupMemberSource::Synced as i16)
+        );
+        let user = discord_user::Entity::find_by_id(newcomer)
+            .one(&db.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.username, "Raider One");
+        let stamped = group_role::Entity::find_by_id(role.id)
+            .one(&db.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(stamped.last_synced_at.is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn apply_role_sync_refreshes_display_names() {
+        let db = test_db().await;
+        let (group, _owner, role, _guild) = guild_group_with_synced_role(&db).await;
+        let user = fresh_user(&db, "stale").await;
+
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![(user.id, "Fresh Name".to_string())],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+
+        let reloaded = discord_user::Entity::find_by_id(user.id)
+            .one(&db.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.username, "Fresh Name");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn sync_removal_drops_synced_members_but_keeps_manual_ones() {
+        let db = test_db().await;
+        let (group, owner, role, _guild) = guild_group_with_synced_role(&db).await;
+        let synced = next_id();
+        let manual = fresh_user(&db, "manual").await;
+        db.add_group_member(group.id, owner.id, manual.id, None)
+            .await
+            .unwrap();
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![
+                    (synced, "Synced".to_string()),
+                    (manual.id, "Manual".to_string()),
+                ],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+        assert!(is_role_member(&db, role.id, manual.id).await);
+        assert_eq!(
+            member_source(&db, group.id, manual.id).await,
+            Some(GroupMemberSource::Manual as i16),
+            "sync never downgrades a manual member"
+        );
+
+        let summary = db
+            .apply_role_sync(
+                group.id,
+                vec![RoleSyncPlan {
+                    role_id: role.id,
+                    adds: vec![],
+                    removes: vec![synced, manual.id],
+                }],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.removed, 2);
+        assert_eq!(summary.left_group, 1);
+        assert!(!is_role_member(&db, role.id, synced).await);
+        assert!(!is_group_member(&db, group.id, synced).await);
+        assert!(!is_role_member(&db, role.id, manual.id).await);
+        assert!(is_group_member(&db, group.id, manual.id).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn a_synced_member_in_two_roles_stays_until_the_last_role_goes() {
+        let db = test_db().await;
+        let (group, owner, role_a, _guild) = guild_group_with_synced_role(&db).await;
+        let role_b = db
+            .import_discord_role(group.id, owner.id, next_id(), "Healers".to_string(), 2)
+            .await
+            .unwrap();
+        let user = next_id();
+        db.apply_role_sync(
+            group.id,
+            vec![
+                RoleSyncPlan {
+                    role_id: role_a.id,
+                    adds: vec![(user, "U".to_string())],
+                    removes: vec![],
+                },
+                RoleSyncPlan {
+                    role_id: role_b.id,
+                    adds: vec![(user, "U".to_string())],
+                    removes: vec![],
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role_a.id,
+                adds: vec![],
+                removes: vec![user],
+            }],
+        )
+        .await
+        .unwrap();
+        assert!(
+            is_group_member(&db, group.id, user).await,
+            "still holds role_b"
+        );
+
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role_b.id,
+                adds: vec![],
+                removes: vec![user],
+            }],
+        )
+        .await
+        .unwrap();
+        assert!(!is_group_member(&db, group.id, user).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn guild_lookups_see_only_synced_roles() {
+        let db = test_db().await;
+        let (group, owner, role, guild_id) = guild_group_with_synced_role(&db).await;
+        db.create_group_role(group.id, owner.id, "Manual".to_string())
+            .await
+            .unwrap();
+
+        assert!(db.guild_has_synced_roles(guild_id).await.unwrap());
+        assert!(!db.guild_has_synced_roles(next_id()).await.unwrap());
+        let synced = db.synced_roles_for_guild(guild_id).await.unwrap();
+        assert_eq!(synced.len(), 1);
+        assert_eq!(synced[0].role_id, role.id);
+        assert_eq!(synced[0].discord_role_id, role.discord_role_id.unwrap());
+        assert!(
+            db.guilds_with_synced_roles()
+                .await
+                .unwrap()
+                .contains(&guild_id)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn orphaning_a_role_keeps_its_members() {
+        let db = test_db().await;
+        let (group, _owner, role, guild_id) = guild_group_with_synced_role(&db).await;
+        let user = next_id();
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![(user, "U".to_string())],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+
+        db.mark_role_orphaned(guild_id, role.discord_role_id.unwrap())
+            .await
+            .unwrap();
+
+        let reloaded = group_role::Entity::find_by_id(role.id)
+            .one(&db.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.sync_state, GroupRoleSyncState::Orphaned as i16);
+        assert!(is_role_member(&db, role.id, user).await);
+        assert!(
+            db.synced_roles_for_guild(guild_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "orphaned roles are not reconciled again"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn freezing_unlinks_the_guild_and_keeps_everyone() {
+        let db = test_db().await;
+        let (group, owner, role, guild_id) = guild_group_with_synced_role(&db).await;
+        let user = next_id();
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![(user, "U".to_string())],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+
+        let frozen = db
+            .freeze_group_for_guild(
+                guild_id,
+                "The Ultros bot was removed from the server".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(frozen, Some(group.id));
+
+        let reloaded = user_group::Entity::find_by_id(group.id)
+            .one(&db.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.guild_id, None);
+        assert_eq!(reloaded.source, GroupSource::Manual as i16);
+        assert!(reloaded.frozen_reason.is_some());
+        assert!(is_group_member(&db, group.id, user).await);
+        assert!(is_group_member(&db, group.id, owner.id).await);
+        let role = group_role::Entity::find_by_id(role.id)
+            .one(&db.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(role.source, GroupRoleSource::Manual as i16);
+        assert_eq!(role.sync_state, GroupRoleSyncState::Orphaned as i16);
+
+        // The guild slot is free again: a new group can be linked to it.
+        db.create_group_from_guild("Relinked".to_string(), owner.id, guild_id, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.freeze_group_for_guild(next_id(), "x".to_string())
+                .await
+                .unwrap(),
+            None
+        );
     }
 }
