@@ -227,18 +227,18 @@ where
                                     width: overlay_width.get(),
                                     height: overlay_height.get(),
                                 };
-                                let viewport = OverlaySize {
-                                    width: window()
-                                        .inner_width()
-                                        .ok()
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or_default(),
-                                    height: window()
-                                        .inner_height()
-                                        .ok()
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or_default(),
-                                };
+                                // The layout viewport (`clientWidth`, not
+                                // `innerWidth`) is the fixed-position
+                                // containing block: `innerWidth` includes a
+                                // classic scrollbar, so clamping against it
+                                // lets the overlay slide under the bar.
+                                let viewport = document()
+                                    .document_element()
+                                    .map(|root| OverlaySize {
+                                        width: f64::from(root.client_width()),
+                                        height: f64::from(root.client_height()),
+                                    })
+                                    .unwrap_or_default();
                                 let (top, left) =
                                     overlay_position(anchor_rect.get(), overlay, viewport);
                                 // Keep hidden until measured so the first
@@ -251,12 +251,22 @@ where
                                     };
                                 format!("top: {top}px; left: {left}px; {visibility}")
                             };
+                            // `w-max`: the overlay's width must not depend on
+                            // its `left`. A `position: fixed` box with
+                            // `width: auto` shrink-to-fits the room to its
+                            // right, `left` is computed from the measured
+                            // width, and the measurement is a ResizeObserver
+                            // cycle behind — so the card slid (and reflowed)
+                            // for dozens of frames until that loop converged.
+                            // `max-w` (a percentage of the containing block,
+                            // i.e. the layout viewport) keeps long text
+                            // wrapping inside the edge margins.
                             view! {
                                 <Portal mount=document().body().unwrap()>
                                     <div
                                         node_ref=node_ref
                                         role="tooltip"
-                                        class="fixed z-50 transition-opacity duration-150 animate-fade-in"
+                                        class="fixed z-50 w-max max-w-[calc(100%_-_1rem)] transition-opacity duration-150 animate-fade-in"
                                         style=style
                                     >
                                         {content.run()}
