@@ -1,8 +1,9 @@
 use crate::{
     entity::{
         self, datacenter, discord_user, final_fantasy_character, group_invite, group_role, list,
-        list_activity, list_invite, list_item, list_shared_group, list_shared_user,
-        owned_retainers, region, unknown_final_fantasy_character, user_group, user_group_member,
+        list_activity, list_invite, list_item, list_shared_group, list_shared_role,
+        list_shared_user, owned_retainers, region, unknown_final_fantasy_character, user_group,
+        user_group_member,
     },
     world_data::world_cache::WorldCache,
 };
@@ -10,7 +11,8 @@ use thiserror::Error;
 use ultros_api_types::{
     ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
     list::{
-        List, ListActivity, ListActivityKind, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
+        List, ListActivity, ListActivityKind, ListInvite, ListItem, ListSharedGroup,
+        ListSharedRole, ListSharedUser,
     },
     retainer::Retainer,
     user::OwnedRetainer,
@@ -109,6 +111,25 @@ impl From<ListSharedGroupReturn> for ListSharedGroup {
         Self {
             list_id: shared.list_id,
             group_id: shared.group_id,
+            group_name: group.name,
+            permission: shared.permission.into(),
+        }
+    }
+}
+
+pub struct ListSharedRoleReturn(
+    pub list_shared_role::Model,
+    pub group_role::Model,
+    pub user_group::Model,
+);
+
+impl From<ListSharedRoleReturn> for ListSharedRole {
+    fn from(ListSharedRoleReturn(shared, role, group): ListSharedRoleReturn) -> Self {
+        Self {
+            list_id: shared.list_id,
+            role_id: shared.role_id,
+            role_name: role.name,
+            group_id: group.id,
             group_name: group.name,
             permission: shared.permission.into(),
         }

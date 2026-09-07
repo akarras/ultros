@@ -119,6 +119,22 @@ pub struct ShareListGroup {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListSharedRole {
+    pub list_id: i32,
+    pub role_id: i32,
+    pub role_name: String,
+    pub group_id: i32,
+    pub group_name: String,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShareListRole {
+    pub role_id: i32,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreateInvite {
     pub permission: ListPermission,
     pub max_uses: Option<i32>,
