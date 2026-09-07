@@ -18,8 +18,7 @@ use super::columns::CellCtx;
 use super::enrichment::SparkValue;
 use super::hop::HopGain;
 
-/// The three states a resource-backed cell can be in: the fetch has not
-/// answered for this key yet, it answered with nothing, or it answered.
+/// A resource-backed cell distinguishes pending, empty, failed, and ready.
 /// `Missing` and `Ready` are settled — only `Loading` shimmers, and it is
 /// what the server and the first client paint always render (the stores are
 /// empty on both sides), which is what keeps hydration honest.
@@ -27,6 +26,8 @@ use super::hop::HopGain;
 pub enum Enrich<V> {
     Loading,
     Missing,
+    /// A completed request failed; this cannot establish missing history.
+    Unavailable,
     Ready(V),
 }
 
@@ -37,6 +38,7 @@ impl<V> Enrich<V> {
         match self {
             Enrich::Loading => Enrich::Loading,
             Enrich::Missing => Enrich::Missing,
+            Enrich::Unavailable => Enrich::Unavailable,
             Enrich::Ready(v) => Enrich::Ready(f(v)),
         }
     }
@@ -214,26 +216,26 @@ pub fn render_cell(
 ) -> Option<AnyView> {
     Some(match value {
         CellValue::Gil(amount) => view! {
-            <div role="cell" class=class><Gil amount=amount /></div>
+            <div  class=class><Gil amount=amount /></div>
         }
         .into_any(),
         CellValue::RoiBadge(roi) => view! {
-            <div role="cell" class=class>
+            <div  class=class>
                 <span class=roi_badge_class(roi)>{format!("{roi}%")}</span>
             </div>
         }
         .into_any(),
         CellValue::Count(n) => view! {
-            <div role="cell" class=class>{n.to_string()}</div>
+            <div  class=class>{n.to_string()}</div>
         }
         .into_any(),
         CellValue::Confidence(band) => view! {
-            <div role="cell" class=class><ConfidenceBadge band=band /></div>
+            <div  class=class><ConfidenceBadge band=band /></div>
         }
         .into_any(),
         CellValue::LastSoldUnix(unix) => {
             let label = last_sold_label(i18n, unix, ctx.now_unix);
-            view! { <div role="cell" class=class>{label}</div> }.into_any()
+            view! { <div  class=class>{label}</div> }.into_any()
         }
         CellValue::GilWithPct { amount, pct } => {
             let sub = pct
@@ -241,7 +243,7 @@ pub fn render_cell(
                 .map(|p| format!("{p:+.0}%"))
                 .unwrap_or_default();
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <GilOrDash amount=(amount > 0).then_some(amount) />
                     <div class="text-xs text-[color:var(--color-text-muted)]">{sub}</div>
                 </div>
@@ -267,7 +269,7 @@ pub fn render_cell(
                 t_string!(i18n, analyzer_alt_cost_delta_title).to_string()
             };
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class="text-[color:var(--color-text-muted)]">
                         <GilOrDash amount=amount />
                     </div>
@@ -320,7 +322,7 @@ pub fn render_cell(
                 ),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <Gil amount=amount />
                     <div class=note_class>{text}</div>
                 </div>
@@ -329,12 +331,14 @@ pub fn render_cell(
         }
         CellValue::Sparkline(state) => {
             let loading = state.is_loading();
+            let title = matches!(&state, Enrich::Unavailable)
+                .then(|| t_string!(i18n, market_history_unavailable).to_string());
             let (points, pct) = match state {
                 Enrich::Ready(v) => (v.points, v.delta_pct.unwrap_or(0.0)),
                 _ => (Vec::new(), 0.0),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class title=title>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <span class=if loading { "hidden" } else { "" }>
                         <Sparkline points=points pct_change=pct />
@@ -345,6 +349,7 @@ pub fn render_cell(
         }
         CellValue::LazyPct(state) => {
             let loading = state.is_loading();
+            let unavailable = matches!(&state, Enrich::Unavailable);
             let pct = match state {
                 Enrich::Ready(p) => p,
                 _ => None,
@@ -354,12 +359,16 @@ pub fn render_cell(
                 (false, Some(p)) => (format!("{p:+.0}%"), None),
                 (false, None) => (
                     "—".to_string(),
-                    Some(t_string!(i18n, analyzer_drift_unavailable).to_string()),
+                    Some(if unavailable {
+                        t_string!(i18n, market_history_unavailable).to_string()
+                    } else {
+                        t_string!(i18n, analyzer_drift_unavailable).to_string()
+                    }),
                 ),
             };
             let colour = signed_delta_class(pct, DELTA_DEAD_BAND_PCT);
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <span class=if loading { "hidden" } else { colour }>{text}</span>
                 </div>
@@ -368,13 +377,15 @@ pub fn render_cell(
         }
         CellValue::LateCount(state) => {
             let loading = state.is_loading();
+            let title = matches!(&state, Enrich::Unavailable)
+                .then(|| t_string!(i18n, market_history_unavailable).to_string());
             let text = match state {
                 Enrich::Ready(n) => n.to_string(),
-                Enrich::Missing => "—".to_string(),
+                Enrich::Missing | Enrich::Unavailable => "—".to_string(),
                 Enrich::Loading => String::new(),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class title=title>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <span class=if loading { "hidden" } else { "" }>{text}</span>
                 </div>
@@ -383,6 +394,8 @@ pub fn render_cell(
         }
         CellValue::LateGilWithPct(state) => {
             let loading = state.is_loading();
+            let title = matches!(&state, Enrich::Unavailable)
+                .then(|| t_string!(i18n, market_history_unavailable).to_string());
             let (amount, sub) = match state {
                 Enrich::Ready((amount, pct)) => (
                     (amount > 0).then_some(amount),
@@ -393,7 +406,7 @@ pub fn render_cell(
                 _ => (None, String::new()),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class title=title>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <div class=if loading { "hidden" } else { "" }>
                         <GilOrDash amount=amount />
@@ -428,7 +441,7 @@ pub fn render_cell(
             // One shape (the `GilOrDash` rule): the icon hides and the value
             // mutes by class; the arms never swap elements.
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class="flex flex-row items-center">
                         <span class=if has_amount { "inline-flex" } else { "hidden" }><GilIcon /></span>
                         <div class=if has_amount { "" } else { "text-[color:var(--color-text-muted)]" }>{text}</div>
@@ -490,7 +503,7 @@ pub fn render_cell(
             // One shape (the `GilOrDash` rule): the icon hides and the value
             // mutes by class; the arms never swap elements.
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class="flex flex-row items-center justify-end">
                         <span class=if has { "inline-flex" } else { "hidden" }><GilIcon /></span>
                         <div class=value_class>{text}</div>
@@ -528,10 +541,11 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: false,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
+                stats_30_unavailable: None,
             };
             let a = render_cell(
                 "w-32",
@@ -555,7 +569,11 @@ mod tests {
             )
             .unwrap()
             .to_html();
-            assert_eq!(count(&a, "role=\"cell\""), 1);
+            assert_eq!(
+                count(&a, "role=\"cell\""),
+                0,
+                "the grid owns cell semantics"
+            );
             assert_eq!(count(&a, "<div"), count(&b, "<div"), "{a}\n{b}");
             assert!(a.contains("+4%"), "{a}");
             assert!(b.contains("—"), "{b}");
@@ -581,10 +599,11 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
+                stats_30_unavailable: None,
             };
             let render = |v: CellValue| render_cell("w-40", v, i18n, &ctx).unwrap().to_html();
             let a = render(CellValue::MutedGil {
@@ -697,9 +716,14 @@ mod tests {
     fn enrich_maps_the_payload_and_keeps_the_state() {
         assert_eq!(Enrich::Ready(2u8).map(|v| v * 2), Enrich::Ready(4u8));
         assert_eq!(Enrich::<u8>::Missing.map(|v| v * 2), Enrich::Missing);
+        assert_eq!(
+            Enrich::<u8>::Unavailable.map(|v| v * 2),
+            Enrich::Unavailable
+        );
         assert_eq!(Enrich::<u8>::Loading.map(|v| v * 2), Enrich::Loading);
         assert!(Enrich::<u8>::Loading.is_loading());
         assert!(!Enrich::<u8>::Missing.is_loading());
+        assert!(!Enrich::<u8>::Unavailable.is_loading());
         assert!(!Enrich::Ready(1u8).is_loading());
     }
 
@@ -721,10 +745,11 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
+                stats_30_unavailable: None,
             };
             let render = |v: CellValue| render_cell("w-28", v, i18n, &ctx).unwrap().to_html();
 
@@ -737,8 +762,8 @@ mod tests {
             }));
             assert_eq!(count(&loading, "<div"), count(&missing, "<div"));
             assert_eq!(count(&loading, "<span"), count(&missing, "<span"));
-            assert_eq!(count(&loading, "role=\"cell\""), 1);
-            assert_eq!(count(&ready, "role=\"cell\""), 1);
+            assert_eq!(count(&loading, "role=\"cell\""), 0);
+            assert_eq!(count(&ready, "role=\"cell\""), 0);
             assert!(loading.contains("skeleton-shimmer"), "{loading}");
             assert!(!missing.contains("skeleton-shimmer"), "{missing}");
             assert!(ready.contains("<svg"), "{ready}");
@@ -751,7 +776,8 @@ mod tests {
             let p_down = pct(Enrich::Ready(Some(-4.0)));
             let p_flat = pct(Enrich::Ready(Some(0.4)));
             let p_none = pct(Enrich::Ready(None));
-            for h in [&p_missing, &p_up, &p_down, &p_flat, &p_none] {
+            let p_unavailable = pct(Enrich::Unavailable);
+            for h in [&p_missing, &p_up, &p_down, &p_flat, &p_none, &p_unavailable] {
                 assert_eq!(
                     count(&p_loading, "<div"),
                     count(h, "<div"),
@@ -777,6 +803,8 @@ mod tests {
                 "{p_none}"
             );
             assert!(p_missing.contains("—"), "{p_missing}");
+            assert!(p_unavailable.contains("Sale history could not be loaded."));
+            assert!(!p_unavailable.contains("Not enough sales"));
             // Shape parity alone would pass if Loading rendered a value or a
             // dash, so pin the shimmer itself: it is the only thing that
             // separates "still fetching" from "fetched, nothing there".
@@ -837,10 +865,11 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 0,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
+                stats_30_unavailable: None,
             };
             let render = |note| {
                 render_cell(
@@ -939,10 +968,11 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                preview: true,
+
                 capped_cost: [false; 4],
                 sparklines: None,
                 stats_30: None,
+                stats_30_unavailable: None,
             };
             let render = |v: CellValue| render_cell("w-28", v, i18n, &ctx).unwrap().to_html();
             let down = render(CellValue::SignedGil {

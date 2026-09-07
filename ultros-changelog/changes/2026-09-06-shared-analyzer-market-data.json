@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "high",
+  "title": "More market data in every analyzer",
+  "blurb": "Compare seven-day median and minimum sale prices, choose how market prices affect your calculations, and filter your analyzer columns. Explore every matching result without a top-100 cutoff. Enable Recipe Labs to try its experimental pricing model.",
+  "link": "/analyzer"
+}

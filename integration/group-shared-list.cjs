@@ -191,7 +191,7 @@ async function runGroupSharedList(browser, BASE_URL, TIMEOUT_MS = 30000) {
 async function main() {
   const puppeteer = require("puppeteer");
   const browser = await puppeteer.launch({
-    headless: process.env.HEADLESS === "false" ? false : "new",
+    headless: process.env.HEADLESS !== "false",
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   await runGroupSharedList(

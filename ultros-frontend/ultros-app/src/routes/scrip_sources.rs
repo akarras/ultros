@@ -1,4 +1,9 @@
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::virtual_grid::saved_views::GridSavedViews;
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
@@ -13,7 +18,10 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
-        virtual_scroller::*,
+        virtual_grid::{
+            ColumnFilter, GridColumn,
+            metrics::{GridMetric, GridValue},
+        },
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -47,6 +55,12 @@ struct ScripSourceData {
     /// Ingredients the recipe actually uses.
     total_ingredients: u32,
     cheapest_world_id: i32,
+    market_item_id: i32,
+    market_item_name: String,
+    market_hq: bool,
+    listing_price: Option<i32>,
+    pricing_fallback: bool,
+    pricing_pending: bool,
     recipe: Option<&'static Recipe>,
 }
 
@@ -297,9 +311,6 @@ impl SortColumn for SortMode {
     }
 }
 
-/// Maximum rows rendered by the table.
-const ROW_LIMIT: usize = 100;
-
 // --- Filter registry -------------------------------------------------------
 // Each id is the `filter_query_signal` key it drives, so the list doubles as
 // the URL contract (mirrors the analyzer/currency-exchange convention).
@@ -310,15 +321,14 @@ const FILTER_JOB: &str = "job";
 /// order.
 const ADDABLE_FILTERS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
 
-/// Rank the collected rows, collapse repeated items, and cap the list.
+/// Rank the collected rows and collapse repeated items without a result cap.
 ///
 /// The ranking has to be a *total* order. Rows are collected by iterating
 /// `collectables_shop_items`, a `std::collections::HashMap`, so they arrive
 /// here in an order that `RandomState` randomizes per process. The SSR server
 /// and the hydrating wasm client each build their own copy of the game data,
 /// so ranking that leaves ties unresolved puts different rows in different
-/// places — and, at the `limit` boundary, drops a different *set* of rows
-/// entirely — on the two sides. That is the hydration-mismatch class fixed for
+/// places on the two sides. That is the hydration-mismatch class fixed for
 /// the item page in #960. Tie-breaking on the stable item id pins one order.
 ///
 /// The composite key, in order:
@@ -335,7 +345,6 @@ fn rank_scrip_sources(
     mut results: Vec<ScripSourceData>,
     sort_mode: SortMode,
     dir: SortDir,
-    limit: usize,
 ) -> Vec<ScripSourceData> {
     results.sort_unstable_by(|a, b| {
         // `total_cmp` rather than `partial_cmp().unwrap()`: the unwrap was a
@@ -362,7 +371,6 @@ fn rank_scrip_sources(
     let mut seen = HashSet::with_capacity(results.len());
     results.retain(|r| seen.insert(r.item_id));
 
-    results.truncate(limit);
     results
 }
 
@@ -373,15 +381,25 @@ fn ScripSourceTable(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let market = use_market_data(world);
+    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
     let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
 
     // Create a lookup for recipes by result item
     let recipes_by_output = Memo::new(move |_| {
-        let mut map = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<i32, &'static Recipe> =
+            std::collections::HashMap::new();
         for recipe in recipes.values() {
-            map.insert(recipe.item_result, recipe);
+            // Choose consistently across the SSR and hydration data maps.
+            map.entry(recipe.item_result)
+                .and_modify(|current| {
+                    if recipe.key_id.0 < current.key_id.0 {
+                        *current = recipe;
+                    }
+                })
+                .or_insert(recipe);
         }
         map
     });
@@ -415,6 +433,9 @@ fn ScripSourceTable(
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
 
     let ranked_rows = Memo::new(move |_| {
+        let stats = market.stats7();
+        let basis = cost_basis.get().unwrap_or_default();
+        let pricing_pending = stats.is_none() && basis.sale_stat().is_some();
         let mut results = Vec::new();
         let recipes_lookup = recipes_by_output();
 
@@ -474,6 +495,10 @@ fn ScripSourceTable(
             let mut cost = 0;
             let mut priced_ingredients = 0u32;
             let mut total_ingredients = 0u32;
+            let mut pricing_fallback = false;
+            // The collectable cannot be sold. Market context belongs to its
+            // largest-cost ingredient, named explicitly alongside the metrics.
+            let mut market_ingredient = None;
 
             if let Some(r) = recipe {
                 // Sum ingredients
@@ -484,10 +509,18 @@ fn ScripSourceTable(
                         continue;
                     }
                     total_ingredients += 1;
-                    let price_summary = prices.find_matching_listings(ing_id);
-                    if let Some(price) = price_summary.lowest_gil() {
+                    if let Some(price) =
+                        resolve_price(&prices, stats.as_deref(), ing_id, None, basis)
+                    {
                         priced_ingredients += 1;
-                        cost += price * amount;
+                        pricing_fallback |= price.fallback;
+                        let line_cost = price.price.saturating_mul(amount);
+                        cost = i32::saturating_add(cost, line_cost);
+                        if market_ingredient.as_ref().is_none_or(|(largest, id, _)| {
+                            line_cost > *largest || (line_cost == *largest && ing_id < *id)
+                        }) {
+                            market_ingredient = Some((line_cost, ing_id, price));
+                        }
                     }
                 }
             } else {
@@ -500,6 +533,14 @@ fn ScripSourceTable(
             } // Nothing priceable, or free items: no cost to compare
 
             let cost_per_scrip = cost as f32 / scrip_amount as f32;
+            let (_, market_item_id, market_price) =
+                market_ingredient.expect("priced ingredients establish market context");
+            let listings = prices.find_matching_listings(market_item_id);
+            let listing = if market_price.hq {
+                listings.hq
+            } else {
+                listings.lq
+            };
 
             results.push(ScripSourceData {
                 item_id: ItemId(item_id),
@@ -512,16 +553,24 @@ fn ScripSourceTable(
                 cost_per_scrip,
                 priced_ingredients,
                 total_ingredients,
-                cheapest_world_id: 0, // Not tracked per ingredient
+                cheapest_world_id: listing.map(|entry| entry.world_id).unwrap_or(0),
+                market_item_id,
+                market_item_name: items
+                    .get(&ItemId(market_item_id))
+                    .map(|item| item.name.to_string())
+                    .unwrap_or_else(|| market_item_id.to_string()),
+                market_hq: market_price.hq,
+                listing_price: listing.map(|entry| entry.price),
+                pricing_fallback,
+                pricing_pending,
                 recipe,
             });
         }
 
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        // Rank the *full* set so the result count below is exact; the render
-        // memo applies `ROW_LIMIT`.
-        rank_scrip_sources(results, mode, dir, usize::MAX)
+        // Keep every eligible row; only the rendered cells are virtualized.
+        rank_scrip_sources(results, mode, dir)
     });
 
     let total_count = Memo::new(move |_| ranked_rows.with(|r| r.len()));
@@ -529,7 +578,6 @@ fn ScripSourceTable(
     let computed_data = Memo::new(move |_| {
         ranked_rows.with(|rows| {
             rows.iter()
-                .take(ROW_LIMIT)
                 .cloned()
                 .map(Arc::new)
                 .enumerate()
@@ -548,6 +596,15 @@ fn ScripSourceTable(
             .is_some_and(|s| s.is_gatherer())
     });
 
+    let scrip_label = move |scrip_type| match scrip_type {
+        ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+        ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+        ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+        ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+        ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+        ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+        ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+    };
     let scrip_options = move || {
         vec![
             (
@@ -640,226 +697,249 @@ fn ScripSourceTable(
     });
 
     view! {
-        <div class="flex flex-col gap-6">
-            <ControlBar
-                summary=move || {
-                    view! {
-                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                            {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
-                        </span>
-                        <Show when=move || { total_count() > ROW_LIMIT }>
-                            <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
-                                {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
-                            </span>
-                        </Show>
-                        <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
-                            {move || t!(i18n, scrip_sources_region_pricing, region = world())}
-                        </span>
-                    }
-                    .into_any()
-                }
-                actions=move || {
-                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
-                        .into_any()
-                }
-                available_filters=Signal::derive(filter_options)
-                on_add_filter=add_filter
-                on_clear_all=clear_all
-                empty_label=Signal::derive(move || {
-                    t_string!(i18n, scrip_sources_no_filters_hint).to_string()
-                })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-            >
-                {move || {
-                    (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, scrip_sources_scrip_type).to_string()
-                                    value=Signal::derive(scrip_filter)
-                                    options=scrip_options()
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_scrip_filter(v);
-                                        if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, scrip_sources_job_filter).to_string()
-                                    value=Signal::derive(job_filter)
-                                    options=job_options()
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_job_filter(v);
-                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-            </ControlBar>
+            <div class="flex flex-col gap-6">
+                <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                <p class="text-xs text-[color:var(--color-text-muted)]">
+                    {t!(i18n, market_collectable_note)}
+                </p>
 
-            // Empty states render as *siblings* of the scroller container,
-            // never by unmounting it in a <Show>: the VirtualScroller wires
-            // scroll-sync effects to node refs and remounting breaks them.
-            <Show when=move || gatherer_filter_selected() && total_count() == 0>
-                <ActionableEmptyState
-                    title=t_string!(i18n, scrip_sources_gatherers_unsupported_title).to_string()
-                    body=t_string!(i18n, scrip_sources_gatherers_unsupported_body).to_string()
-                />
-            </Show>
-            <Show when=move || !gatherer_filter_selected() && total_count() == 0>
-                <ActionableEmptyState
-                    title=t_string!(i18n, scrip_sources_no_results_title).to_string()
-                    body=t_string!(i18n, scrip_sources_no_results_body).to_string()
-                />
-            </Show>
-
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                <VirtualScroller
-                    viewport_height=720.0
-                    row_height=60.0
-                    overscan=8
-                    header_height=64.0
-                    variable_height=false
-                    header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">{t!(i18n, scrip_sources_item)}</div>
-                             <div role="columnheader" class="w-40 p-4">
-                                <SortHeader
-                                    mode=SortMode::CostPerScrip
-                                    label=t_string!(i18n, scrip_sources_cost_per_scrip).to_string()
-                                    sort_mode
-                                    sort_dir
-                                />
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <SortHeader
-                                    mode=SortMode::ScripAmount
-                                    label=t_string!(i18n, scrip_sources_scrips).to_string()
-                                    sort_mode
-                                    sort_dir
-                                />
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <SortHeader
-                                    mode=SortMode::Cost
-                                    label=t_string!(i18n, scrip_sources_cost).to_string()
-                                    sort_mode
-                                    sort_dir
-                                />
-                             </div>
-                             <div role="columnheader" class="w-40 p-4 hidden md:block">{t!(i18n, scrip_sources_scrip_type_header)}</div>
-                        </div>
-                    }.into_any()
-                    each=computed_data.into()
-                    key=move |(index, data): &(usize, Arc<ScripSourceData>)| (*index, data.item_id)
-                    view=move |(index, data): (usize, Arc<ScripSourceData>)| {
-                        let item_id = data.item_id;
-                        let classes = if (index % 2) == 0 {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                        } else {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                        };
-
+                <ControlBar sticky=false
+                    summary=move || {
                         view! {
-                            <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
-                                     <a
-                                        class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id.0)
-                                    >
-                                        <div class="shrink-0">
-                                            <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                        </div>
-                                        <div class="flex flex-col truncate">
-                                            <span class="font-semibold">{data.item_name.clone()}</span>
-                                            <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {match data.craft_type {
-                                                    None => view! { {t!(i18n, gathering)} }.into_any(),
-                                                    Some(0) => view! { {t!(i18n, carpenter)} }.into_any(),
-                                                    Some(1) => view! { {t!(i18n, blacksmith)} }.into_any(),
-                                                    Some(2) => view! { {t!(i18n, armorer)} }.into_any(),
-                                                    Some(3) => view! { {t!(i18n, goldsmith)} }.into_any(),
-                                                    Some(4) => view! { {t!(i18n, leatherworker)} }.into_any(),
-                                                    Some(5) => view! { {t!(i18n, weaver)} }.into_any(),
-                                                    Some(6) => view! { {t!(i18n, alchemist)} }.into_any(),
-                                                    Some(7) => view! { {t!(i18n, culinarian)} }.into_any(),
-                                                    _ => view! { {t!(i18n, unknown)} }.into_any(),
-                                                }}
-                                            </span>
-                                        </div>
-                                    </a>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-40 text-right font-bold text-brand-300">
-                                    // One decimal below 10 gil/scrip: whole-gil
-                                    // truncation collapsed the interesting end
-                                    // of the efficiency scale (2.4 and 2.9
-                                    // both showed as 2).
-                                    <div class="flex flex-row items-center">
-                                        <GilIcon />
-                                        <div>
-                                            {if data.cost_per_scrip < 10.0 {
-                                                format!("{:.1}", data.cost_per_scrip)
-                                            } else {
-                                                (data.cost_per_scrip as i32).separate_with_commas()
-                                            }}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    {data.scrip_amount}
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.cost />
-                                    {(data.coverage_tier() != 0)
-                                        .then(|| {
-                                            view! {
-                                                <span
-                                                    class="block text-[10px] leading-tight text-amber-400"
-                                                    title=t_string!(i18n, scrip_sources_coverage_hint).to_string()
-                                                >
-                                                    {t!(
-                                                        i18n, scrip_sources_coverage_badge, priced =
-                                                        data.priced_ingredients, total = data.total_ingredients
-                                                    )}
-                                                </span>
-                                            }
-                                        })}
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
-                                    <span class={format!("text-xs {}", data.scrip_type.color_class())}>
-                                        {match data.scrip_type {
-                                            ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
-                                            ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
-                                            ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
-                                            ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
-                                            ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
-                                            ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
-                                            ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
-                                        }}
-                                    </span>
-                                </div>
-                            </div>
-                        }.into_any()
+                            <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                                {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
+                            </span>
+                            <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                                {move || t!(i18n, scrip_sources_region_pricing, region = world())}
+                            </span>
+                        }
+                        .into_any()
                     }
-                />
-             </div>
-        </div>
-    }
+                    actions=move || {
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="scrip-sources-grid" />
+                        }
+                            .into_any()
+                    }
+                    available_filters=Signal::derive(filter_options)
+                    on_add_filter=add_filter
+                    on_clear_all=clear_all
+                    empty_label=Signal::derive(move || {
+                        t_string!(i18n, scrip_sources_no_filters_hint).to_string()
+                    })
+                    is_empty=Signal::derive(move || active_filters().is_empty())
+                >
+                    {move || {
+                        (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
+                            .then(|| {
+                                let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
+                                view! {
+                                    <FilterChip
+                                        label=t_string!(i18n, scrip_sources_scrip_type).to_string()
+                                        value=Signal::derive(scrip_filter)
+                                        options=scrip_options()
+                                        start_editing=start_editing
+                                        on_commit=Callback::new(move |v: Option<String>| {
+                                            set_scrip_filter(v);
+                                            if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
+                                                pending_filter.set(None);
+                                            }
+                                        })
+                                    />
+                                }
+                            })
+                    }}
+                    {move || {
+                        (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                            .then(|| {
+                                let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
+                                view! {
+                                    <FilterChip
+                                        label=t_string!(i18n, scrip_sources_job_filter).to_string()
+                                        value=Signal::derive(job_filter)
+                                        options=job_options()
+                                        start_editing=start_editing
+                                        on_commit=Callback::new(move |v: Option<String>| {
+                                            set_job_filter(v);
+                                            if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                                pending_filter.set(None);
+                                            }
+                                        })
+                                    />
+                                }
+                            })
+                    }}
+                </ControlBar>
+
+                // Empty states render as *siblings* of the scroller container,
+                // never by unmounting it in a <Show>: the VirtualScroller wires
+                // scroll-sync effects to node refs and remounting breaks them.
+                <Show when=move || gatherer_filter_selected() && total_count() == 0>
+                    <ActionableEmptyState
+                        title=t_string!(i18n, scrip_sources_gatherers_unsupported_title).to_string()
+                        body=t_string!(i18n, scrip_sources_gatherers_unsupported_body).to_string()
+                    />
+                </Show>
+                <Show when=move || !gatherer_filter_selected() && total_count() == 0>
+                    <ActionableEmptyState
+                        title=t_string!(i18n, scrip_sources_no_results_title).to_string()
+                        body=t_string!(i18n, scrip_sources_no_results_body).to_string()
+                    />
+                </Show>
+
+                <div>
+                    <MarketGrid show_saved_views=false id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
+     market=market
+     subject=Arc::new(move |(_, row): &(usize, Arc<ScripSourceData>)| {
+         let mut subject = MarketSubject::new(row.market_item_id, row.market_hq, row.cheapest_world_id);
+         subject.label = t_string!(i18n, market_ingredient_label, item = row.market_item_name.clone()).to_string();
+         subject.listing_price = row.listing_price;
+         subject
+     })
+     metrics=vec![
+         GridMetric::text("item", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(row.item_name.clone())).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::text("market-ingredient", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(row.market_item_name.clone())).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::number("cost-per-scrip", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost_per_scrip as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::number("scrip-amount", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Number(row.scrip_amount as f64)).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::number("cost", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::text("scrip-type", move |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(scrip_label(row.scrip_type))).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+     ]
+     row_height=60.0
+     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true),
+    GridColumn::new("market-ingredient", t_string!(i18n, market_ingredient).to_string(), 240.0, false, true),
+    GridColumn::new("cost-per-scrip",t_string!(i18n, scrip_sources_cost_per_scrip).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::CostPerScrip, sort_dir.get().unwrap_or_else(||SortMode::CostPerScrip.default_dir()) == SortDir::Asc),
+    GridColumn::new("scrip-amount",t_string!(i18n, scrip_sources_scrips).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::ScripAmount, sort_dir.get().unwrap_or_else(||SortMode::ScripAmount.default_dir()) == SortDir::Asc),
+    GridColumn::new("cost",t_string!(i18n, scrip_sources_cost).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
+    { let mut col = GridColumn::new("scrip-type",t_string!(i18n, scrip_sources_scrip_type_header).to_string(), 130.0, true, true); let mut filter = ColumnFilter::new("scrip", filter_label("scrip"), false); filter.options = scrip_options(); col.filters.push(filter); col }])
+     header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_item)}</div>}.into_any(),
+    "market-ingredient" => view! { <span title=t_string!(i18n, market_ingredient_stats_title).to_string()>{t!(i18n, market_ingredient)}</span> }.into_any(),
+    "cost-per-scrip" => view! {<div  class="w-full min-w-0">
+                                    <SortHeader
+                                        mode=SortMode::CostPerScrip
+                                        label=t_string!(i18n, scrip_sources_cost_per_scrip).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
+                                 </div>}.into_any(),
+    "scrip-amount" => view! {<div  class="w-full min-w-0">
+                                    <SortHeader
+                                        mode=SortMode::ScripAmount
+                                        label=t_string!(i18n, scrip_sources_scrips).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
+                                 </div>}.into_any(),
+    "cost" => view! {<div  class="w-full min-w-0">
+                                    <SortHeader
+                                        mode=SortMode::Cost
+                                        label=t_string!(i18n, scrip_sources_cost).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
+                                 </div>}.into_any(),
+    "scrip-type" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_scrip_type_header)}</div>}.into_any(), _ => ().into_any()}}
+     each=computed_data
+                        key=move |(_, data): &(usize, Arc<ScripSourceData>)| data.item_id
+
+     measure=move |(_, data): &(usize, Arc<ScripSourceData>), id| {match id {"item" => (data.item_name.clone(), 110.0),
+    "market-ingredient" => (data.market_item_name.clone(), 30.0),
+    "cost-per-scrip" => (format!("{:.1}",data.cost_per_scrip), 42.0),
+    "scrip-amount" => (data.scrip_amount.to_string(), 42.0),
+    "cost" => (data.cost.separate_with_commas(), 42.0),
+    "scrip-type" => (scrip_label(data.scrip_type), 42.0), _ => (String::new(), 0.0)}}
+     view=move |(index, data): (usize, Arc<ScripSourceData>), id| {
+                            let item_id = data.item_id;
+
+
+
+     let _ = index;
+     match id {
+    "market-ingredient" => view! { <a class="truncate hover:text-brand-300" href=format!("/item/{}/{}", world(), data.market_item_id) title=t_string!(i18n, market_ingredient_cost_title).to_string()>{data.market_item_name.clone()}</a> }.into_any(),
+    "item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
+                                         <a
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            href=format!("/item/{}/{}", world(), item_id.0)
+                                        >
+                                            <div class="shrink-0">
+                                                <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
+                                            </div>
+                                            <div class="flex flex-col truncate">
+                                                <span class="font-semibold">{data.item_name.clone()}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] truncate">
+                                                    {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {match data.craft_type {
+                                                        None => view! { {t!(i18n, gathering)} }.into_any(),
+                                                        Some(0) => view! { {t!(i18n, carpenter)} }.into_any(),
+                                                        Some(1) => view! { {t!(i18n, blacksmith)} }.into_any(),
+                                                        Some(2) => view! { {t!(i18n, armorer)} }.into_any(),
+                                                        Some(3) => view! { {t!(i18n, goldsmith)} }.into_any(),
+                                                        Some(4) => view! { {t!(i18n, leatherworker)} }.into_any(),
+                                                        Some(5) => view! { {t!(i18n, weaver)} }.into_any(),
+                                                        Some(6) => view! { {t!(i18n, alchemist)} }.into_any(),
+                                                        Some(7) => view! { {t!(i18n, culinarian)} }.into_any(),
+                                                        _ => view! { {t!(i18n, unknown)} }.into_any(),
+                                                    }}
+                                                </span>
+                                            </div>
+                                        </a>
+                                    </div>}.into_any(),
+    "cost-per-scrip" => view! {<div  class="text-right font-bold text-brand-300 w-full min-w-0">
+                                        // One decimal below 10 gil/scrip: whole-gil
+                                        // truncation collapsed the interesting end
+                                        // of the efficiency scale (2.4 and 2.9
+                                        // both showed as 2).
+                                        <div class="flex flex-row items-center">
+                                            <GilIcon />
+                                            <div>
+                                                {if data.cost_per_scrip < 10.0 {
+                                                    format!("{:.1}", data.cost_per_scrip)
+                                                } else {
+                                                    (data.cost_per_scrip as i32).separate_with_commas()
+                                                }}
+                                            </div>
+                                        </div>
+                                    </div>}.into_any(),
+    "scrip-amount" => view! {<div  class="text-right w-full min-w-0">
+                                        {data.scrip_amount}
+                                    </div>}.into_any(),
+    "cost" => view! {<div  class="text-right w-full min-w-0">
+                                        <Gil amount=data.cost />
+                                        {data.pricing_pending.then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_loading_prices)}</span> })}
+                                        {(!data.pricing_pending && data.pricing_fallback).then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_listing_fallback)}</span> })}
+                                        {(data.coverage_tier() != 0)
+                                            .then(|| {
+                                                view! {
+                                                    <span
+                                                        class="block text-[10px] leading-tight text-amber-400"
+                                                        title=t_string!(i18n, scrip_sources_coverage_hint).to_string()
+                                                    >
+                                                        {t!(
+                                                            i18n, scrip_sources_coverage_badge, priced =
+                                                            data.priced_ingredients, total = data.total_ingredients
+                                                        )}
+                                                    </span>
+                                                }
+                                            })}
+                                    </div>}.into_any(),
+    "scrip-type" => view! {<div  class="text-right w-full min-w-0">
+                                        <span class={format!("text-xs {}", data.scrip_type.color_class())}>
+                                            {match data.scrip_type {
+                                                ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+                                                ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+                                                ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+                                                ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+                                                ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+                                                ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+                                                ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+                                            }}
+                                        </span>
+                                    </div>}.into_any(), _ => ().into_any()}}
+     />
+                 </div>
+            </div>
+        }
 }
 
 #[component]
@@ -1007,6 +1087,12 @@ mod tests {
             priced_ingredients: 3,
             total_ingredients: 3,
             cheapest_world_id: 0,
+            market_item_id: 0,
+            market_item_name: String::new(),
+            market_hq: false,
+            listing_price: None,
+            pricing_fallback: false,
+            pricing_pending: false,
             recipe: None,
         }
     }
@@ -1058,34 +1144,34 @@ mod tests {
                 let reversed: Vec<_> = forward.iter().rev().cloned().collect();
 
                 assert_eq!(
-                    ids(&rank_scrip_sources(forward, mode, dir, ROW_LIMIT)),
-                    ids(&rank_scrip_sources(reversed, mode, dir, ROW_LIMIT)),
+                    ids(&rank_scrip_sources(forward, mode, dir)),
+                    ids(&rank_scrip_sources(reversed, mode, dir)),
                     "{mode:?}/{dir:?} ranking changed with input order"
                 );
             }
         }
     }
 
-    /// The truncation boundary is the sharp edge of the same bug: with ties
-    /// spanning the cap, an unstable ranking changes *which* rows survive, so
-    /// the two sides render genuinely different items.
+    /// All rows beyond the former 100-row cap remain available in stable order.
     #[test]
-    fn truncation_keeps_the_same_rows_regardless_of_input_order() {
-        let forward: Vec<_> = (1..=10).map(|i| row(i, 20, 1000)).collect();
+    fn all_results_survive_regardless_of_input_order() {
+        let forward: Vec<_> = (1..=150).map(|i| row(i, 20, 1000)).collect();
         let reversed: Vec<_> = forward.iter().rev().cloned().collect();
+        assert_eq!(
+            rank_scrip_sources(forward.clone(), SortMode::Cost, SortDir::Asc).len(),
+            150
+        );
 
         assert_eq!(
             ids(&rank_scrip_sources(
                 forward,
                 SortMode::ScripAmount,
-                SortDir::Desc,
-                5
+                SortDir::Desc
             )),
             ids(&rank_scrip_sources(
                 reversed,
                 SortMode::ScripAmount,
-                SortDir::Desc,
-                5
+                SortDir::Desc
             )),
         );
     }
@@ -1098,7 +1184,7 @@ mod tests {
         // Item 1 at two reward tiers, with item 2 ranking between them.
         let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
 
-        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc, ROW_LIMIT);
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc);
 
         assert_eq!(ids(&ranked), vec![1, 2], "item 1 rendered twice");
     }
@@ -1108,7 +1194,7 @@ mod tests {
     fn dedup_keeps_the_best_ranked_row_for_an_item() {
         let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
 
-        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc, ROW_LIMIT);
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc);
 
         assert_eq!(ranked[0].scrip_amount, 40);
     }
@@ -1122,8 +1208,7 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows.clone(),
                 SortMode::ScripAmount,
-                SortMode::ScripAmount.default_dir(),
-                ROW_LIMIT
+                SortMode::ScripAmount.default_dir()
             )),
             vec![2, 3, 1]
         );
@@ -1132,8 +1217,7 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows.clone(),
                 SortMode::Cost,
-                SortMode::Cost.default_dir(),
-                ROW_LIMIT
+                SortMode::Cost.default_dir()
             )),
             vec![2, 3, 1]
         );
@@ -1142,8 +1226,7 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows,
                 SortMode::CostPerScrip,
-                SortMode::CostPerScrip.default_dir(),
-                ROW_LIMIT
+                SortMode::CostPerScrip.default_dir()
             )),
             vec![2, 3, 1]
         );
@@ -1160,22 +1243,12 @@ mod tests {
             (SortMode::CostPerScrip, vec![2, 3, 1], vec![1, 3, 2]),
         ] {
             assert_eq!(
-                ids(&rank_scrip_sources(
-                    rows.clone(),
-                    mode,
-                    SortDir::Asc,
-                    ROW_LIMIT
-                )),
+                ids(&rank_scrip_sources(rows.clone(), mode, SortDir::Asc)),
                 asc,
                 "{mode:?} ascending"
             );
             assert_eq!(
-                ids(&rank_scrip_sources(
-                    rows.clone(),
-                    mode,
-                    SortDir::Desc,
-                    ROW_LIMIT
-                )),
+                ids(&rank_scrip_sources(rows.clone(), mode, SortDir::Desc)),
                 desc,
                 "{mode:?} descending"
             );
@@ -1191,12 +1264,7 @@ mod tests {
 
         for dir in [SortDir::Asc, SortDir::Desc] {
             assert_eq!(
-                ids(&rank_scrip_sources(
-                    rows.clone(),
-                    SortMode::Cost,
-                    dir,
-                    ROW_LIMIT
-                )),
+                ids(&rank_scrip_sources(rows.clone(), SortMode::Cost, dir)),
                 vec![1, 2, 3],
                 "{dir:?} tie order"
             );
@@ -1223,7 +1291,7 @@ mod tests {
                     row(3, 20, 2000),
                 ];
 
-                let ranked = rank_scrip_sources(rows, mode, dir, ROW_LIMIT);
+                let ranked = rank_scrip_sources(rows, mode, dir);
 
                 assert_eq!(
                     ranked.last().map(|r| r.item_id.0),
@@ -1244,29 +1312,23 @@ mod tests {
         ];
 
         assert_eq!(
-            ids(&rank_scrip_sources(
-                rows,
-                SortMode::Cost,
-                SortDir::Asc,
-                ROW_LIMIT
-            )),
+            ids(&rank_scrip_sources(rows, SortMode::Cost, SortDir::Asc)),
             vec![2, 3, 1]
         );
     }
 
-    /// The tier boundary is also a truncation boundary: with the cap inside
-    /// the fully-priced tier, no partial row may sneak into the rendered set.
+    /// Partial coverage still sorts last while every candidate remains available.
     #[test]
-    fn truncation_prefers_fully_priced_rows() {
+    fn ranking_keeps_partial_rows_after_fully_priced_rows() {
         let rows = vec![
             partial_row(1, 100, 1, 1, 4),
             row(2, 10, 3000),
             row(3, 20, 2000),
         ];
 
-        let ranked = rank_scrip_sources(rows, SortMode::CostPerScrip, SortDir::Asc, 2);
+        let ranked = rank_scrip_sources(rows, SortMode::CostPerScrip, SortDir::Asc);
 
-        assert_eq!(ids(&ranked), vec![3, 2]);
+        assert_eq!(ids(&ranked), vec![3, 2, 1]);
     }
 
     /// Every `Currency` value that actually occurs in `CollectablesShopRewardScrip`

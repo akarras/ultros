@@ -3,6 +3,7 @@ use super::relative_time::*;
 use crate::components::app_link::AppLink;
 use crate::components::{datacenter_name::*, world_name::*};
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 use leptos::prelude::*;
 use std::sync::Arc;
 use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelector};
@@ -30,7 +31,12 @@ pub(crate) fn has_more_listings(total: usize, show_more: bool) -> bool {
 pub fn ListingsTable(
     #[prop(into)] listings: Signal<Vec<(ActiveListing, Arc<Retainer>)>>,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    // Not `use_i18n()`: `ListingsPanel` builds this table inside a
+    // `<Transition>`, so on the server it can be constructed under the fresh,
+    // empty owner `ScopedFuture` substitutes when the request's owner was
+    // already disposed. The panicking accessor aborts the SSR response there
+    // (GlitchTip #7289); the default locale does not.
+    let i18n = use_i18n_or_default();
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     // Optimization: Split sorting from slicing.
@@ -128,6 +134,41 @@ pub fn ListingsTable(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ultros_api_types::retainer::Retainer;
+
+    /// Reproduces GlitchTip #7289. `ListingsPanel` builds this table inside a
+    /// `<Transition>`, so on the server it is constructed when the resource
+    /// resolves — and if that request's owner was already disposed,
+    /// `ScopedFuture` hands the fragment a fresh, empty owner that never saw
+    /// `<I18nContextProvider>`. The panicking `use_i18n()` then aborts the
+    /// whole SSR response. Rendering under a bare owner is that situation.
+    #[test]
+    fn renders_without_an_i18n_context() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let rows = vec![(
+                ActiveListing {
+                    id: 1,
+                    world_id: 100,
+                    item_id: 1,
+                    retainer_id: 1,
+                    price_per_unit: 250,
+                    quantity: 2,
+                    hq: false,
+                    timestamp: chrono::Utc::now().naive_utc(),
+                },
+                Arc::new(Retainer {
+                    id: 1,
+                    world_id: 100,
+                    name: "Retainer 1".to_string(),
+                    retainer_city_id: 1,
+                }),
+            )];
+            let html = view! { <ListingsTable listings=Signal::stored(rows) /> }.to_html();
+            assert!(html.contains("250"), "{html}");
+        });
+    }
 
     #[test]
     fn collapsed_shows_at_most_the_preview_count() {

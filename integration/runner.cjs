@@ -11,7 +11,9 @@
  *              the 1280px desktop pass could never see.
  *  - ROUTES:   comma-separated list of routes to visit (default built-in list)
  *  - TIMEOUT_MS: navigation timeout in ms (default 60000)
- *  - HEADLESS: "new" | "true" | "false" (default "new")
+ *  - HEADLESS: "true" | "shell" | "false" (default "true", the new headless
+ *    mode; "shell" runs the old chrome-headless-shell, "new" is still accepted
+ *    as an alias for "true")
  *  - PUPPETEER_EXECUTABLE_PATH: path to Chrome/Chromium binary (optional)
  *  - CONCURRENCY: number of parallel pages to run (default 16)
  *  - STRICT_CONSOLE: "1" to fail on console errors / page errors (default "1")
@@ -24,14 +26,19 @@
 
 const fs = require("fs");
 const path = require("path");
+const { capture } = require("./capture.cjs");
 
+// Puppeteer 23 dropped the `headless: "new"` spelling: `true` is now the new
+// headless mode and `"shell"` selects the old chrome-headless-shell binary.
+// "new" is still accepted here so existing HEADLESS=new invocations keep working.
 function parseHeadless(value) {
-  if (value === undefined || value === null || value === "") return "new";
+  if (value === undefined || value === null || value === "") return true;
   const v = String(value).toLowerCase();
-  if (v === "new") return "new";
+  if (v === "new") return true;
+  if (v === "shell") return "shell";
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
-  return "new";
+  return true;
 }
 
 function envFlag(name, def) {
@@ -118,20 +125,10 @@ const ROUTE_ASSERTS = {
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
   "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
-  // One Labs toggle for the whole tool. With it on, the Profit header
-  // carries an "after 5% tax" sub-label at every width; the strip row
-  // itself is md+ only, and the mobile pass reads innerText, which drops
-  // display:none content. The lab columns are md+ only too, so the only
-  // cross-device assertions are the title and that sub-label; the sweep
-  // still checks console errors and horizontal overflow.
-  //
-  // `cols=` names eleven of the twenty-three optional columns — one of each
-  // distinct cell kind Phases C–F added, including all five market
-  // columns — so the desktop pass renders nineteen columns at once and
-  // the mobile pass renders only the six that are not `hidden md:`. Trend,
-  // Drift and the two 30-day columns are *listed* here, but a local run
-  // fires no enrichment at all: this route pins their markup and their
-  // console cleanliness, never their data. Settling is a prod-only check.
+  // Formula inputs and price-signal columns are available by default. The
+  // Profit header carries an "after 5% tax" subtitle at every viewport width;
+  // the inline strip itself is md+ only. Exercise the optional market and
+  // travel columns alongside a wider sale-price scope.
   //
   // `&sell-scope=datacenter` is Phase F's, and it is the point of listing
   // `scope-vs-home` at all: at the default sell scope every cell in that
@@ -146,7 +143,7 @@ const ROUTE_ASSERTS = {
   // sell side is suppressed only against a body that was really fetched.
   // Drop `cost-sale-median` from this URL and the sweep starts issuing a
   // `sale_stats?window=7` for the datacenter.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
+  "/recipe-analyzer?world=Gilgamesh&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],
   },
@@ -196,7 +193,7 @@ function getRoutes() {
     "/retainers",
     "/currency-exchange",
     "/recipe-analyzer?world=Gilgamesh",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home",
+    "/recipe-analyzer?world=Gilgamesh&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home",
     "/history",
     "/settings",
     "/groups",
@@ -493,14 +490,14 @@ async function main() {
         // Promise.all — i.e. every remaining route's assertions — down with it.
         // A screenshot is a diagnostic; it must not decide whether the suite runs.
         try {
-          await page.screenshot({ path: file, fullPage: true });
+          await capture(page, { path: file, fullPage: true });
           console.log(`[ok] ${url} -> ${file}`);
         } catch (e) {
           console.warn(
             `[warn] ${r}: full-page screenshot failed (${e && e.message}); capturing viewport only`,
           );
           try {
-            await page.screenshot({ path: file });
+            await capture(page, { path: file });
             console.log(`[ok] ${url} -> ${file} (viewport only)`);
           } catch (e2) {
             console.warn(`[warn] ${r}: viewport screenshot also failed (${e2 && e2.message})`);

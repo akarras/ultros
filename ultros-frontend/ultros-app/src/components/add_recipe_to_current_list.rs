@@ -67,8 +67,10 @@ pub fn AddRecipeToCurrentListModal(
                 .filter_map(|(id, amount)| {
                     let item = items.get(&id)?;
                     // Check for crystals if ignore_crystals is true
-                    // Crystal category is 59
-                    if ignore_crystals && item.item_search_category == 59 {
+                    if ignore_crystals
+                        && item.item_search_category
+                            == crate::components::crafting_cost::CRYSTAL_SEARCH_CATEGORY
+                    {
                         return None;
                     }
 

@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Item popups close when you move to another page",
+  "blurb": "Hovering an item shows a details card. Following a link while that card was open used to leave it stuck on the next page, floating over the content with no way to dismiss it. Navigating now always closes it.",
+  "link": "/items"
+}

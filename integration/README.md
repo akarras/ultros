@@ -14,7 +14,7 @@ This folder contains a lightweight Puppeteer harness for screenshot-driven E2E c
 ## Prerequisites
 
 - Rust toolchain and cargo-leptos installed
-- Node.js 18+ and npm installed
+- Node.js 22.12+ and npm installed (Puppeteer 25 requires it)
 - Internet access (Puppeteer will download a compatible Chromium on first install)
 
 ## First-time setup
@@ -129,6 +129,14 @@ Set `SKIP_OVERFLOW=1` to disable the check.
 
 **What it does not cover:** headless Chrome uses overlay scrollbars, so `100vw === clientWidth` here. A page laid out against `100vw` while a real browser reserves a classic scrollbar gutter (the second half of PR #1082, which clipped ~15px off every desktop page) is invisible to this check. It guards content overflow, not viewport-unit mistakes.
 
+## Screenshots go through `capture.cjs`
+
+Any script that can have more than one page open at a time must screenshot via `capture(page, options)` from `./capture.cjs`, never `page.screenshot()` directly.
+
+Under puppeteer 25 a `Page.captureScreenshot` on a page that is not the browser's foreground tab never returns — it hangs with no timeout of its own — and puppeteer serializes `screenshot()` behind a *browser-wide* mutex, so that one wedged capture blocks every other page's screenshot and the run stalls until something kills it. The runner hit this immediately on the bump from puppeteer 22: its workers each hold their own page, and whichever page is not in front when it reaches its screenshot takes the whole suite down.
+
+`capture()` brings the page to the front and screenshots it under a single process-wide lock, so nothing can foreground another tab in between — `bringToFront()` on its own is not enough, because two workers racing it still end up capturing a backgrounded page. It also bounds each capture with `SCREENSHOT_TIMEOUT_MS` (default 30000) so a capture that hangs anyway degrades to a warning instead of wedging the run. Single-page scripts are unaffected either way, and `capture.test.cjs` covers the ordering and timeout behaviour.
+
 ## Changing viewport/device
 
 - Desktop: 1280×800
@@ -158,6 +166,7 @@ Remove-Item -Recurse -Force ultros/integration/artifacts
 - First run is slow: Puppeteer downloads Chromium; this is expected.
 - Port mismatch: Set `BASE_URL` to match your running server.
 - Antivirus/Corp device: Chromium download or launch can be blocked; use your system Chrome by setting `PUPPETEER_EXECUTABLE_PATH` and adjusting `puppeteer.launch()` accordingly.
+- `HEADLESS`: `false` to watch a run in a real window; otherwise headless. Puppeteer 23 dropped the `headless: 'new'` spelling — `true` *is* the new headless mode now and `'shell'` selects the old `chrome-headless-shell` binary — so `HEADLESS=shell` is the way to get the old behaviour. `HEADLESS=new` is still accepted as an alias for `true`.
 - Flaky waits: The runner uses `waitUntil: 'networkidle0'` and then a short `waitForTimeout(1000)`. If pages hydrate slower locally, bump the timeout.
 
 ## CI notes

@@ -13,6 +13,8 @@ leptos_meta = { workspace = true }
 leptos_router = { workspace = true }
 leptos_axum = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tower = { version = "0.5.3", features = ["util"], optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen.workspace = true
@@ -26,6 +28,9 @@ web-sys = { version = "0.3", optional = true, features = [
     "Location",
     "Navigator",
     "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "TextMetrics",
+    "NodeList",
     "HtmlDivElement",
     "HtmlElement",
     "HtmlDocument",
@@ -33,8 +38,6 @@ web-sys = { version = "0.3", optional = true, features = [
     "Document",
     "DomRect",
     "Element",
-    # VirtualScroller window-scroll mode reads Element::get_bounding_client_rect.
-    "DomRect",
     # FilterChip tells "the user cleared this" from "the number input holds
     # something it cannot parse" — both report an empty value.
     "HtmlInputElement",
@@ -96,24 +99,6 @@ leptos_i18n.workspace = true
 [build-dependencies]
 leptos_i18n_build.workspace = true
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-    "brotli",
-    "gzip",
-    "deflate",
-    "zstd"
-]}
-
-# The transient-transport classifier is tested against real `reqwest` failures
-# (a socket that never answers, a closed port), which need a runtime.
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-tokio = { workspace = true }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
-
 [features]
 default = [
     "ssr",
@@ -129,6 +114,8 @@ hydrate = [
     "leptos_i18n/hydrate",
 ]
 ssr = [
+    "dep:tokio",
+    "dep:tower",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
@@ -143,6 +130,7 @@ ssr = [
 ]
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 # Standing up a global executor is a prerequisite for building any reactive
 # effect outside of a running app — see `i18n_fallback`'s tests.
 any_spawner = { version = "0.3", features = ["futures-executor"] }

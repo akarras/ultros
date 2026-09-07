@@ -71,6 +71,7 @@ Knobs:
 | `E2E_PORT=N` | Pin to a specific port instead of a random one. |
 | `LEPTOS_FEATURES="test-auth"` | Build with the `test-auth` cargo feature; enables `/test/login` and triggers the login-flow test. |
 | `SKIP_BUILD=1` | Skip `cargo leptos build` (assumes a previous build is fresh). |
+| `E2E_RELEASE=1` | Build and serve the release profile; use this for changes to routes gated by `debug_assertions`. |
 | `STRICT_CONSOLE=0` | Suppress the console.error / pageerror failure mode. |
 | `SKIP_ASSERTS=1` | Skip per-route content assertions (screenshot smoke only). |
 | `CONSOLE_ALLOW="foo,bar"` | Extra substrings to allow-list in console errors. |
@@ -108,6 +109,23 @@ BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:jobset-card-hyd
 ### Optional: Glitchtip / Sentry error reporting
 
 Set `GLITCHTIP_DSN` to a Glitchtip (or Sentry) DSN to ship panics + `error!` tracing events with backtraces. Unset → no-op, no network calls. The DSN itself contains the project key so no other env vars are needed. Set `RUST_BACKTRACE=1` in the container so spawned-task panics include a stack trace.
+
+### Optional: disable the Universalis websocket ingest
+
+Set `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=true` to start the server without subscribing to the Universalis market feed. Intended for QA/staging deploys that share one database and aren't exercising live market data: the websocket spawns a database write per inbound event, so turning it off drops the write churn several replicas otherwise pile onto that one Postgres.
+
+**It is not a fix for connection-pool exhaustion.** The pool is sized by `POSTGRES_MAX_CONNECTIONS` / `POSTGRES_MIN_CONNECTIONS` (`ultros-db/src/lib.rs`), and a replica with the ingest off still opens connections up to that ceiling serving ordinary page traffic. This flag only makes instances quieter, it does not cap them.
+
+### Running several instances against one Postgres
+
+Budget the ceiling as `(server max_connections − headroom) / instances you run at once` — a stock Postgres allows 200, and `superuser_reserved_connections` holds a few of those back. Both knobs matter:
+
+- `POSTGRES_MAX_CONNECTIONS` (default 50) is the ceiling.
+- `POSTGRES_MIN_CONNECTIONS` (default 10, clamped to the ceiling) is the floor the pool claims eagerly at startup and holds whether or not it's used. `Migrator::up` needs headroom on top of it, so a ceiling of 15 against the default floor of 10 will not boot even with connections free on the box. Lower the floor when you're squeezing in extra instances.
+
+Accepts `1`/`true`/`yes`/`on` (case-insensitive) to disable; unset, empty, `0`/`false`/`no`/`off` keep the ingest running, which is what production does. Any other value is treated as "disable" and logs a warning.
+
+With it set, the app still fetches worlds/datacenters from Universalis at startup (nothing renders without them) and still serves whatever listings and sales are already in the database — they simply stop updating, so `ultros_world_ingest_staleness_seconds` will climb. On-demand refreshes (the periodic catch-up sweep in `item_update_service`, and manual sweeps) are unaffected.
 
 E2E is currently run locally only — not wired into GitHub Actions. Run `./scripts/run_e2e.sh` before merging anything that touches routing, hydration, or the analyzer service.
 

@@ -32,7 +32,9 @@ explains *why* it went up.
   quiet at once does not.
 - **Every world went silent** — the same expression firing across most series at
   once points at the websocket or the process, not the market. Correlate with
-  `ultros_websocket_liveness_timeouts_total`.
+  `ultros_websocket_liveness_timeouts_total`. On a QA/staging deploy, check
+  `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET` first — that flag turns the ingest off
+  on purpose, and the startup log says so.
 - **Silent data loss** — `increase(ultros_analyzer_bus_lagged_total[1h]) > 0` or
   `increase(ultros_analyzer_skipped_events_total[1h]) > 0`. Neither should ever
   be nonzero in steady state. Sustained `bus_lagged` means the ring sizes in

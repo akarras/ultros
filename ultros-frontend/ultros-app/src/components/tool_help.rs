@@ -294,18 +294,35 @@ pub fn ActionableEmptyState(
 #[allow(dead_code)]
 pub fn ResultBreakdownDisclosure<T>(
     #[prop(into)] title: Oco<'static, str>,
-    children: TypedChildren<T>,
+    children: TypedChildrenFn<T>,
 ) -> impl IntoView
 where
-    T: IntoView,
+    T: IntoView + 'static,
 {
+    let i18n = use_i18n();
+    let dialog = NodeRef::<leptos::html::Dialog>::new();
+    let label = title.to_string();
+    let children = children.into_inner();
     view! {
-        <details class="text-xs text-[color:var(--color-text-muted)]">
-            <summary class="cursor-pointer text-brand-300 hover:text-[color:var(--brand-fg)]">
-                {title}
-            </summary>
-            <div class="mt-2">{children.into_inner()().into_view()}</div>
-        </details>
+        <button type="button" class="text-xs text-brand-300 text-left hover:text-[color:var(--brand-fg)]"
+            aria-haspopup="dialog" on:click=move |_| {
+                if let Some(dialog) = dialog.get_untracked() { let _ = dialog.show_modal(); }
+            }>
+                {title.clone()}
+        </button>
+        <leptos::portal::Portal>
+            <dialog node_ref=dialog role="dialog" aria-label=label.clone()
+                class="panel rounded-2xl p-6 w-[calc(100vw-2rem)] max-w-xl max-h-[calc(100dvh-2rem)] overflow-auto backdrop:bg-black/60">
+                <div class="flex justify-between items-center gap-4 mb-3">
+                    <h3 class="font-semibold">{title.clone()}</h3>
+                    <button type="button" autofocus aria-label=t_string!(i18n, modal_aria_close)
+                        on:click=move |_| { if let Some(dialog) = dialog.get_untracked() { dialog.close(); } }>
+                        {t!(i18n, modal_aria_close)}
+                    </button>
+                </div>
+                {children().into_view()}
+            </dialog>
+        </leptos::portal::Portal>
     }
 }
 

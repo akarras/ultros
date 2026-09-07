@@ -38,6 +38,7 @@ mod m20260808_000001_active_listing_identity_columns;
 mod m20260809_000001_notification_endpoint_health;
 mod m20260811_000001_drop_unused_sale_history_full_index;
 mod m20260828_000001_active_listing_world_index;
+mod m20260905_000001_list_item_acquired_integer;
 
 pub struct Migrator;
 
@@ -85,6 +86,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260809_000001_notification_endpoint_health::Migration),
             Box::new(m20260811_000001_drop_unused_sale_history_full_index::Migration),
             Box::new(m20260828_000001_active_listing_world_index::Migration),
+            Box::new(m20260905_000001_list_item_acquired_integer::Migration),
         ]
     }
 }

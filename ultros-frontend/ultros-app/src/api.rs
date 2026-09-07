@@ -771,7 +771,7 @@ where
 ///   level — the noise behind GlitchTip issue 2218. We map the status
 ///   explicitly instead, mirroring the server side (`ultros/src/web/error.rs`).
 #[cfg(feature = "ssr")]
-fn parse_internal_api_response<T>(status: reqwest::StatusCode, body: &str) -> AppResult<T>
+fn parse_internal_api_response<T>(status: axum::http::StatusCode, body: &str) -> AppResult<T>
 where
     T: DeserializeOwned,
 {
@@ -821,234 +821,9 @@ where
     deserialize(&json)
 }
 
-/// Headers that must not be copied from the inbound browser request onto the
-/// outbound internal API request.
-///
-/// The SSR path re-issues each API call against [`internal_api_origin`], which
-/// is no longer the public origin — but it still must not carry the inbound
-/// `host`, and the reason it originally mattered is worth keeping: when the
-/// outbound call did travel back out through the CDN,
-/// copying the inbound `host` header onto a request aimed at a different URL
-/// makes the CDN reject it: a `Host` that does not match the edge certificate
-/// answers `403 Forbidden`, and on a pooled TLS connection (the client below
-/// sets a 60s keepalive, so connections are reused) a `Host` that disagrees
-/// with the connection's SNI answers `421 Misdirected Request`. Both statuses
-/// were live in production against `/api/v1/cheapest/North-America` — the
-/// failure is silent to the visitor, because a failed resource still renders,
-/// just with no data in it, so it only ever showed up as GlitchTip issue 2209
-/// ("Error doing leptos fetch") and as breadcrumbs on unrelated events.
-///
-/// The rest fall into three groups:
-/// - hop-by-hop headers, which are per-connection and must never be forwarded
-///   (RFC 9110 §7.6.1);
-/// - body-framing headers, which would describe a body we are not resending;
-/// - CDN/proxy trust headers, which the edge re-derives for the new request and
-///   must not receive secondhand from a client.
-///
-/// This is deliberately a denylist: the inbound `cookie` carries the visitor's
-/// session and `accept-language` carries their locale, and an allowlist would
-/// silently break auth or i18n the first time a new header started mattering.
 #[cfg(feature = "ssr")]
-const NON_FORWARDABLE_HEADERS: &[&str] = &[
-    // Routing: the whole reason this function exists.
-    "host",
-    // Hop-by-hop (RFC 9110 §7.6.1).
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-    // Body framing — these requests carry no body.
-    "content-length",
-    "content-type",
-    // reqwest negotiates (and decodes) its own encodings; forwarding the
-    // browser's list can hand back a body reqwest will not decode.
-    "accept-encoding",
-    // Re-derived by the edge for the outbound request.
-    "cf-connecting-ip",
-    "cf-ipcountry",
-    "cf-ray",
-    "cf-visitor",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-real-ip",
-];
-
-/// Turn the address the server is bound to into an origin it can call itself
-/// on, or `None` if it does not look like an `addr:port` pair.
-///
-/// `0.0.0.0` and `[::]` are the *unspecified* address — "listen on every
-/// interface". They are a valid bind target and not a valid destination, so
-/// they map to the matching loopback address. Anything else is already a
-/// concrete address the process answers on and is used verbatim.
-#[cfg(feature = "ssr")]
-fn loopback_origin_from_site_addr(site_addr: &str) -> Option<String> {
-    let (host, port) = site_addr.trim().rsplit_once(':')?;
-    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    // IPv6 literals arrive bracketed (`[::]:8080`) and stay bracketed in a URL.
-    let host = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-        Some("::" | "::0" | "0:0:0:0:0:0:0:0") => "[::1]",
-        Some(_) => host,
-        None if host.is_empty() || host == "0.0.0.0" => "127.0.0.1",
-        None => host,
-    };
-    Some(format!("http://{host}:{port}"))
-}
-
-/// Pick the origin the SSR renderer issues its own API calls against.
-///
-/// Precedence: an explicit override, then the address the server is bound to,
-/// then the public `HOSTNAME`, then a development default.
-///
-/// This used to be `HOSTNAME` alone, and `HOSTNAME` is the app's *public* URL
-/// (`https://ultros.app` in production) — it has to stay that way, OAuth
-/// redirects are built from it. Using it here too meant every server-rendered
-/// page re-fetched its own API by leaving the box: DNS to Cloudflare, a fresh
-/// TLS handshake, back in through the edge, into the very same process.
-///
-/// Measured on the production host: `/api/v1/cheapest/Europe` answers in 8-20ms
-/// over loopback versus ~60ms through the edge when the edge is healthy — and
-/// the edge is not always healthy. A single 4h26m container log window
-/// (2026-08-10 08:53→13:19) held **429** `source: TimedOut` failures against
-/// this module's 10s client budget, concentrated in two minutes (10:53-10:54)
-/// where the edge stalled: 88 for `cheapest/Europe`, 53 for
-/// `cheapest/North-America`, 52 for `retainer/listings/{id}`, and a long tail of
-/// `listings/{world}/{id}` — CN and JP worlds especially. Those are GlitchTip
-/// issues 2209 ("Error doing leptos fetch") and 2210 ("Error getting value").
-///
-/// A failed SSR fetch does not error the page; the resource still renders, just
-/// empty. So the visible symptom is a page that silently loses a section, which
-/// is why this survived so long. Going over loopback removes the entire class:
-/// no DNS, no TLS handshake, no CDN, no WAF, no edge rate limit between the
-/// process and its own API.
-///
-/// It is *not* a fix for the SSR panic flood (GlitchTip 6876/6886/6888/6895) —
-/// those run at a steady ~120/min across the whole window and do not correlate
-/// with the timeout bursts.
-///
-/// `HOSTNAME` is kept as a fallback so an unusual deployment still works, and
-/// its trailing slash is trimmed — `fly.toml` sets `https://ultros.app/`, which
-/// concatenated with a leading-slash path produced a double-slash URL.
-#[cfg(feature = "ssr")]
-fn resolve_internal_api_origin(
-    explicit: Option<&str>,
-    site_addr: Option<&str>,
-    hostname: Option<&str>,
-) -> String {
-    fn set(value: Option<&str>) -> Option<&str> {
-        value.map(str::trim).filter(|value| !value.is_empty())
-    }
-
-    if let Some(explicit) = set(explicit) {
-        return explicit.trim_end_matches('/').to_owned();
-    }
-    if let Some(origin) = set(site_addr).and_then(loopback_origin_from_site_addr) {
-        return origin;
-    }
-    if let Some(hostname) = set(hostname) {
-        return hostname.trim_end_matches('/').to_owned();
-    }
-    "http://localhost:8080".to_owned()
-}
-
-/// The origin every SSR-side API call is issued against, resolved once.
-///
-/// See [`resolve_internal_api_origin`] for why this is not simply `HOSTNAME`.
-#[cfg(feature = "ssr")]
-fn internal_api_origin() -> &'static str {
-    static ORIGIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ORIGIN.get_or_init(|| {
-        let explicit = std::env::var("ULTROS_INTERNAL_API_ORIGIN").ok();
-        let site_addr = std::env::var("LEPTOS_SITE_ADDR").ok();
-        let hostname = std::env::var("HOSTNAME").ok();
-        let origin = resolve_internal_api_origin(
-            explicit.as_deref(),
-            site_addr.as_deref(),
-            hostname.as_deref(),
-        );
-        tracing::info!(%origin, "resolved SSR internal API origin");
-        origin
-    })
-}
-
-/// Copy the inbound request's headers into a header map suitable for the
-/// outbound internal API call, dropping everything in [`NON_FORWARDABLE_HEADERS`].
-///
-/// `HeaderMap`'s iterator yields `None` for the name of a repeated header's
-/// second and subsequent values, so the name is carried forward and the value
-/// appended — otherwise every multi-valued header would be truncated to its
-/// first value.
-#[cfg(feature = "ssr")]
-fn forwardable_headers(headers: axum::http::HeaderMap) -> reqwest::header::HeaderMap {
-    let mut new_map = reqwest::header::HeaderMap::new();
-    let mut current: Option<reqwest::header::HeaderName> = None;
-    for (name, value) in headers.into_iter() {
-        if let Some(name) = name {
-            current = reqwest::header::HeaderName::from_lowercase(name.as_str().as_bytes())
-                .ok()
-                .filter(|name| !NON_FORWARDABLE_HEADERS.contains(&name.as_str()));
-        }
-        let Some(name) = current.clone() else {
-            continue;
-        };
-        if let Ok(value) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
-            new_map.append(name, value);
-        }
-    }
-    new_map
-}
-
-#[cfg(feature = "ssr")]
-#[instrument(skip())]
-pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
-where
-    T: DeserializeOwned,
-{
-    use axum::http::request::Parts;
-    use leptos::prelude::use_context;
-    // use the original headers of the scope
-    // add the hostname when using the ssr path.
-    use tracing::Instrument;
-
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    let client = CLIENT.get_or_init(|| {
-        reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(10))
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .build()
-            .unwrap()
-    });
-    let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
-    let headers = req_parts.headers;
-    let path = format!("{}{path}", internal_api_origin());
-    let request = client
-        .delete(&path)
-        .headers(forwardable_headers(headers))
-        .build()?;
-    let response = client
-        .execute(request)
-        .await
-        .instrument(tracing::trace_span!("HTTP FETCH"))
-        .into_inner()
-        .map_err(|e| {
-            // Same classification as `fetch_api`: a timeout or a refused
-            // connection is transient, everything else is a real failure.
-            if crate::error::is_transient_reqwest(&e) {
-                tracing::warn!(error = ?e, path, "Internal API unreachable");
-            } else {
-                error!(error = ?e, path, "Error doing leptos delete");
-            }
-            e
-        })?;
-    let status = response.status();
-    let json = response.text().await?;
-    parse_internal_api_response(status, &json)
+pub(crate) async fn delete_api<T: DeserializeOwned>(path: &str) -> AppResult<T> {
+    request_api(axum::http::Method::DELETE, path, None).await
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -1087,59 +862,40 @@ where
 }
 
 #[cfg(feature = "ssr")]
-#[instrument(skip())]
-pub(crate) async fn fetch_api<T>(path: &str) -> AppResult<T>
-where
-    T: serde::de::DeserializeOwned,
-{
-    // use the original headers of the scope
-    // add the hostname when using the ssr path.
-    use axum::http::request::Parts;
-    use leptos::prelude::use_context;
-    use tracing::Instrument;
+pub(crate) async fn fetch_api<T: DeserializeOwned>(path: &str) -> AppResult<T> {
+    request_api(axum::http::Method::GET, path, None).await
+}
 
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    let client = CLIENT.get_or_init(|| {
-        reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(10))
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .build()
-            .unwrap()
-    });
-    let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
-    let headers = req_parts.headers;
-    let path = format!("{}{path}", internal_api_origin());
-    let request = client
-        .get(&path)
-        .headers(forwardable_headers(headers))
-        .build()?;
-    let response = client
-        .execute(request)
+/// The endpoint facade is shared by SSR and hydration. Only this transport
+/// boundary differs: SSR invokes the injected API router directly.
+#[cfg(feature = "ssr")]
+async fn request_api<T: DeserializeOwned>(
+    method: axum::http::Method,
+    path: &str,
+    json: Option<String>,
+) -> AppResult<T> {
+    use axum::http::{StatusCode, request::Parts};
+    use leptos::prelude::use_context;
+
+    let api = use_context::<crate::ssr_api::SsrApi>().ok_or(AppError::ParamMissing)?;
+    let headers = use_context::<Parts>()
+        .ok_or(AppError::ParamMissing)?
+        .headers;
+    let (status, body) = api
+        .request(method, path, headers, json)
         .await
-        .instrument(tracing::trace_span!("HTTP FETCH"))
-        .into_inner()
         .inspect_err(|e| {
-            // A loopback timeout or a refused connection is the API being busy
-            // or restarting, not this layer breaking — see
-            // `AppError::is_transient_transport`. GlitchTip issue 2209 is
-            // ~11k of exactly these.
-            if crate::error::is_transient_reqwest(e) {
-                tracing::warn!(error = ?e, path, "Internal API unreachable");
+            if e.is_transient_transport() {
+                tracing::warn!(error = ?e, path, "Internal API timed out");
             } else {
-                error!(error = ?e, path, "Error doing leptos fetch");
+                error!(error = ?e, path, "Error invoking internal API");
             }
         })?;
-    let status = response.status();
-    let json = response.text().await?;
-    parse_internal_api_response(status, &json).inspect_err(|e| {
-        // Only a *successful* response that fails to parse is a real bug worth
-        // error-level reporting (GlitchTip). A non-success status is an
-        // expected error response — notably the analyzer's transient 503
-        // warm-up right after a deploy (issue 2218) — so log those quietly to
-        // match the server side (`ultros/src/web/error.rs`).
+    let body = std::str::from_utf8(&body).map_err(|e| AppError::Json(e.to_string()))?;
+    parse_internal_api_response(status, body).inspect_err(|e| {
         if status.is_success() {
-            error!(error = ?e, path, json, "Error deserializing text");
-        } else if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            error!(error = ?e, path, "Error deserializing internal API response");
+        } else if status == StatusCode::SERVICE_UNAVAILABLE {
             tracing::debug!(error = ?e, %status, path, "Internal API warming up");
         } else {
             tracing::warn!(error = ?e, %status, path, "Internal API error response");
@@ -1192,14 +948,12 @@ where
 }
 
 #[cfg(feature = "ssr")]
-#[instrument(skip(_json))]
-pub(crate) async fn post_api<Y, T>(_path: &str, _json: Y) -> AppResult<T>
-where
-    Y: Serialize,
-    T: Serialize,
-{
-    // This really only will be called by clients- I think.
-    unreachable!("post_api should only be called on clients? I think...")
+pub(crate) async fn post_api<Y: Serialize, T: DeserializeOwned>(
+    path: &str,
+    json: Y,
+) -> AppResult<T> {
+    let json = serde_json::to_string(&json).map_err(|e| AppError::Json(e.to_string()))?;
+    request_api(axum::http::Method::POST, path, Some(json)).await
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -1243,22 +997,75 @@ where
 }
 
 #[cfg(feature = "ssr")]
-#[instrument(skip(_json))]
-pub(crate) async fn patch_api<Y, T>(_path: &str, _json: Y) -> AppResult<T>
-where
-    Y: Serialize,
-    T: Serialize,
-{
-    // This really only will be called by clients- I think.
-    unreachable!("patch_api should only be called on clients? I think...")
+pub(crate) async fn patch_api<Y: Serialize, T: DeserializeOwned>(
+    path: &str,
+    json: Y,
+) -> AppResult<T> {
+    let json = serde_json::to_string(&json).map_err(|e| AppError::Json(e.to_string()))?;
+    request_api(axum::http::Method::PATCH, path, Some(json)).await
 }
 
 #[cfg(all(test, feature = "ssr"))]
 mod ssr_response_tests {
     use super::parse_internal_api_response;
     use crate::error::AppError;
-    use reqwest::StatusCode;
+    use axum::http::StatusCode;
     use ultros_api_types::result::{ApiError, JsonErrorWrapper};
+
+    #[test]
+    fn all_transport_helpers_use_the_request_context_and_shared_router() {
+        use crate::ssr_api::SsrApi;
+        use axum::{
+            Json, Router,
+            body::Body,
+            http::{HeaderMap, Request},
+            routing::get,
+        };
+        use leptos::prelude::{Owner, provide_context};
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let router = Router::new().route(
+            "/api/v1/value",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers["cookie"], "session=alice");
+                Json(42)
+            })
+            .post(|Json(value): Json<u32>| async move { Json(value + 1) })
+            .patch(|Json(value): Json<u32>| async move { Json(value + 2) })
+            .delete(|| async { Json(()) }),
+        );
+        let (parts, _) = Request::builder()
+            .uri("/page/old-path")
+            .header("cookie", "session=alice")
+            .body(Body::empty())
+            .unwrap()
+            .into_parts();
+        Owner::new().with(|| {
+            provide_context(SsrApi::new(router));
+            provide_context(parts);
+            runtime.block_on(async {
+                assert_eq!(super::fetch_api::<u32>("/api/v1/value").await.unwrap(), 42);
+                assert_eq!(
+                    super::post_api::<_, u32>("/api/v1/value", 42)
+                        .await
+                        .unwrap(),
+                    43
+                );
+                assert_eq!(
+                    super::patch_api::<_, u32>("/api/v1/value", 42)
+                        .await
+                        .unwrap(),
+                    44
+                );
+                super::delete_api::<()>("/api/v1/value").await.unwrap();
+                let error = super::fetch_api::<u32>("/missing").await.unwrap_err();
+                assert!(error.is_api_response());
+            });
+        });
+    }
 
     /// Regression for GlitchTip issue 2218. The analyzer answers
     /// `503 + "Still warming up with data, unable to serve requests."` (plain
@@ -1380,254 +1187,6 @@ mod ssr_response_tests {
         assert!(
             !err.is_api_response(),
             "a malformed 200 body is our own failure, got {err:?}"
-        );
-    }
-}
-
-#[cfg(all(test, feature = "ssr"))]
-mod ssr_origin_tests {
-    use super::{loopback_origin_from_site_addr, resolve_internal_api_origin};
-
-    /// The production configuration, and the whole point of the change.
-    ///
-    /// The container runs with `HOSTNAME=https://ultros.app` and
-    /// `LEPTOS_SITE_ADDR=0.0.0.0:8080`. Before this, every SSR fetch went to the
-    /// public origin: out to Cloudflare and back into the same process, 10s
-    /// budget, hundreds of `TimedOut` errors per log window. It must stay on the
-    /// box.
-    #[test]
-    fn production_env_resolves_to_loopback_not_the_public_origin() {
-        let origin =
-            resolve_internal_api_origin(None, Some("0.0.0.0:8080"), Some("https://ultros.app"));
-        assert_eq!(origin, "http://127.0.0.1:8080");
-        assert!(
-            !origin.contains("ultros.app"),
-            "the SSR loopback must not leave the machine: {origin}"
-        );
-    }
-
-    /// `LEPTOS_SITE_ADDR` is what the server actually binds, so it wins over the
-    /// public `HOSTNAME` — but an operator can still pin the origin by hand.
-    #[test]
-    fn explicit_override_wins_over_everything() {
-        assert_eq!(
-            resolve_internal_api_origin(
-                Some("http://api.internal:9000"),
-                Some("0.0.0.0:8080"),
-                Some("https://ultros.app"),
-            ),
-            "http://api.internal:9000"
-        );
-    }
-
-    /// Unset in development (`cargo leptos serve` may not export it), in which
-    /// case behaviour is exactly what it was before: `HOSTNAME`, then the
-    /// localhost default. Blank strings count as unset — an env var set to the
-    /// empty string would otherwise resolve to an origin-less URL.
-    #[test]
-    fn falls_back_through_hostname_then_the_dev_default() {
-        assert_eq!(
-            resolve_internal_api_origin(None, None, Some("http://localhost:3000")),
-            "http://localhost:3000"
-        );
-        assert_eq!(
-            resolve_internal_api_origin(Some(""), Some("  "), Some("")),
-            "http://localhost:8080"
-        );
-        assert_eq!(
-            resolve_internal_api_origin(None, None, None),
-            "http://localhost:8080"
-        );
-    }
-
-    /// `fly.toml` sets `HOSTNAME = "https://ultros.app/"`. Concatenated with a
-    /// leading-slash path that produced `https://ultros.app//api/v1/...`.
-    #[test]
-    fn a_trailing_slash_on_the_origin_is_trimmed() {
-        assert_eq!(
-            resolve_internal_api_origin(None, None, Some("https://ultros.app/")),
-            "https://ultros.app"
-        );
-        assert_eq!(
-            format!("{}{}", "https://ultros.app", "/api/v1/cheapest/Europe"),
-            "https://ultros.app/api/v1/cheapest/Europe"
-        );
-    }
-
-    /// The unspecified address is a valid thing to *bind* and not a valid thing
-    /// to *connect to*, so it has to become the matching loopback address. A
-    /// concrete bind address is already reachable and is used as-is.
-    #[test]
-    fn the_unspecified_address_becomes_loopback() {
-        for (addr, expected) in [
-            ("0.0.0.0:8080", "http://127.0.0.1:8080"),
-            ("[::]:8080", "http://[::1]:8080"),
-            ("[::0]:3000", "http://[::1]:3000"),
-            (":8080", "http://127.0.0.1:8080"),
-            ("127.0.0.1:8080", "http://127.0.0.1:8080"),
-            ("localhost:3000", "http://localhost:3000"),
-            ("[::1]:3000", "http://[::1]:3000"),
-            ("192.168.1.5:8080", "http://192.168.1.5:8080"),
-            (" 0.0.0.0:8080 ", "http://127.0.0.1:8080"),
-        ] {
-            assert_eq!(
-                loopback_origin_from_site_addr(addr).as_deref(),
-                Some(expected),
-                "{addr}"
-            );
-        }
-    }
-
-    /// Anything that is not an `addr:port` pair must fall through to the next
-    /// source rather than produce a URL that cannot be connected to.
-    #[test]
-    fn a_malformed_site_addr_falls_through() {
-        for addr in ["0.0.0.0", "", "http://0.0.0.0:8080/", "0.0.0.0:", "8080"] {
-            assert_eq!(loopback_origin_from_site_addr(addr), None, "{addr}");
-        }
-        assert_eq!(
-            resolve_internal_api_origin(None, Some("0.0.0.0"), Some("https://ultros.app")),
-            "https://ultros.app"
-        );
-    }
-}
-
-#[cfg(all(test, feature = "ssr"))]
-mod ssr_header_tests {
-    use super::forwardable_headers;
-    use axum::http::HeaderMap;
-    use axum::http::header::{HeaderName, HeaderValue};
-
-    fn inbound(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut map = HeaderMap::new();
-        for (name, value) in pairs {
-            map.append(
-                HeaderName::from_lowercase(name.as_bytes()).unwrap(),
-                HeaderValue::from_str(value).unwrap(),
-            );
-        }
-        map
-    }
-
-    /// The bug this module exists for. The SSR path re-issues every API call
-    /// against `HOSTNAME` (the public origin in production), so copying the
-    /// inbound `host` verbatim aims a request at one URL while telling the CDN
-    /// it is for another. Reproduced against production: a request to
-    /// `https://ultros.app/api/v1/cheapest/North-America` carrying
-    /// `Host: boxbox` answers `403 Forbidden` from the edge, byte-for-byte the
-    /// body seen in the GlitchTip breadcrumbs; on a reused TLS connection the
-    /// same mismatch answers `421 Misdirected Request`.
-    #[test]
-    fn host_is_never_forwarded() {
-        let out = forwardable_headers(inbound(&[("host", "boxbox"), ("cookie", "session=abc123")]));
-        assert!(
-            !out.contains_key("host"),
-            "the inbound host would misroute the outbound call: {out:?}"
-        );
-    }
-
-    /// The session cookie is the entire reason the inbound headers are
-    /// forwarded at all — dropping it would log every SSR render out.
-    #[test]
-    fn auth_and_locale_headers_survive() {
-        let out = forwardable_headers(inbound(&[
-            ("host", "boxbox"),
-            ("cookie", "session=abc123"),
-            ("accept-language", "de-DE,de;q=0.9"),
-            ("user-agent", "Mozilla/5.0"),
-        ]));
-        assert_eq!(out.get("cookie").unwrap(), "session=abc123");
-        assert_eq!(out.get("accept-language").unwrap(), "de-DE,de;q=0.9");
-        assert_eq!(out.get("user-agent").unwrap(), "Mozilla/5.0");
-    }
-
-    /// Hop-by-hop headers are per-connection (RFC 9110 §7.6.1) and describe the
-    /// browser's connection to the edge, not ours to the API. `accept-encoding`
-    /// is dropped so reqwest negotiates an encoding it can actually decode —
-    /// there was a commented-out `headers.remove("Accept-Encoding")` sitting in
-    /// this file, which is the same problem noticed and never finished.
-    #[test]
-    fn hop_by_hop_and_framing_headers_are_dropped() {
-        let out = forwardable_headers(inbound(&[
-            ("connection", "keep-alive"),
-            ("keep-alive", "timeout=5"),
-            ("transfer-encoding", "chunked"),
-            ("upgrade", "websocket"),
-            ("te", "trailers"),
-            ("content-length", "42"),
-            ("accept-encoding", "gzip, br, zstd"),
-            ("cookie", "session=abc123"),
-        ]));
-        for dropped in [
-            "connection",
-            "keep-alive",
-            "transfer-encoding",
-            "upgrade",
-            "te",
-            "content-length",
-            "accept-encoding",
-        ] {
-            assert!(
-                !out.contains_key(dropped),
-                "{dropped} must not be forwarded"
-            );
-        }
-        assert_eq!(out.get("cookie").unwrap(), "session=abc123");
-    }
-
-    /// A client must not be able to hand the edge its own provenance headers on
-    /// a request the edge is meant to attribute to us.
-    #[test]
-    fn proxy_trust_headers_are_dropped() {
-        let out = forwardable_headers(inbound(&[
-            ("cf-connecting-ip", "1.2.3.4"),
-            ("x-forwarded-for", "1.2.3.4"),
-            ("x-forwarded-host", "evil.example"),
-            ("x-real-ip", "1.2.3.4"),
-            ("accept", "application/json"),
-        ]));
-        for dropped in [
-            "cf-connecting-ip",
-            "x-forwarded-for",
-            "x-forwarded-host",
-            "x-real-ip",
-        ] {
-            assert!(
-                !out.contains_key(dropped),
-                "{dropped} must not be forwarded"
-            );
-        }
-        assert_eq!(out.get("accept").unwrap(), "application/json");
-    }
-
-    /// `HeaderMap`'s iterator reports `None` for the name of a repeated header's
-    /// second and later values. The previous loop used `name?` inside a
-    /// `filter_map`, so it silently discarded them and kept only the first.
-    #[test]
-    fn repeated_header_values_are_all_forwarded() {
-        let out = forwardable_headers(inbound(&[
-            ("accept-language", "de-DE"),
-            ("accept-language", "en-US"),
-        ]));
-        let values: Vec<_> = out.get_all("accept-language").iter().collect();
-        assert_eq!(values, vec!["de-DE", "en-US"]);
-    }
-
-    /// The continuation values of a *dropped* repeated header must be dropped
-    /// too, rather than latching onto whichever name was forwarded last.
-    #[test]
-    fn continuation_values_of_a_dropped_header_are_also_dropped() {
-        let out = forwardable_headers(inbound(&[
-            ("cookie", "session=abc123"),
-            ("x-forwarded-for", "1.2.3.4"),
-            ("x-forwarded-for", "5.6.7.8"),
-        ]));
-        assert!(!out.contains_key("x-forwarded-for"));
-        let cookies: Vec<_> = out.get_all("cookie").iter().collect();
-        assert_eq!(
-            cookies,
-            vec!["session=abc123"],
-            "leaked into cookie: {out:?}"
         );
     }
 }

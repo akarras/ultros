@@ -72,7 +72,7 @@ async function trial(browser, hostname, locale, i) {
 
 (async () => {
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const { hostname } = new URL(BASE_URL);

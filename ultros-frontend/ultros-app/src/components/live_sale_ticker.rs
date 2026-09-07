@@ -202,7 +202,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     </div>
                 </div>
 
-                <div class="relative max-h-[480px] overflow-y-auto overflow-x-hidden scrollbar-thin pl-4">
+                <div class="relative max-h-[480px] overflow-y-auto overflow-x-hidden pl-4">
                     // Vertical accent rail running the height of the timeline.
                     <div class="absolute left-1 top-1 bottom-1 w-px bg-[color:color-mix(in_srgb,var(--accent)_45%,transparent)]" aria-hidden="true" />
                     <Show

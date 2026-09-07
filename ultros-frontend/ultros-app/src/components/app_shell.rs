@@ -19,6 +19,7 @@ pub fn AppShell(children: Children) -> impl IntoView {
     // `use_location_or_default` degrade instead of panicking under a disposed
     // owner. See `components::app_link`.
     provide_router_available();
+    crate::last_view::track_last_view();
     let nav = provide_side_nav_settings();
     provide_search_overlay_state();
     let location = use_location();
