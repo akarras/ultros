@@ -39,6 +39,11 @@ pub struct GridColumn {
     pub heading_lines: Vec<(String, f64)>,
     pub min_width: f64,
     pub max_width: f64,
+    /// Whether the automatic pass may size this column from its content.
+    /// Off, the column keeps `width` until the user drags it or asks for
+    /// "Auto fit" from its menu — for columns whose content is long and
+    /// varies enough that fitting it would push everything else off screen.
+    pub auto_fit: bool,
     pub optional: bool,
     pub visible: bool,
     pub aria_sort: &'static str,
@@ -56,12 +61,20 @@ impl GridColumn {
             heading_lines: Vec::new(),
             min_width: 60.0,
             max_width: 800.0,
+            auto_fit: true,
             optional,
             visible,
             aria_sort: "none",
             filters: Vec::new(),
             query_sort: false,
         }
+    }
+
+    /// Opts the column out of the automatic content pass, keeping the
+    /// declared width as its default.
+    pub fn fixed_width(mut self) -> Self {
+        self.auto_fit = false;
+        self
     }
 
     pub fn clamp(&self, width: f64) -> f64 {
