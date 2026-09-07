@@ -124,10 +124,12 @@ once:
   `prev_* = 0`, in chunks of 10k via a direct `client.insert`, not the bounded
   writer. Writes the marker only after the last chunk succeeds.
 - A failed seed logs at `warn!`, increments
-  `ultros_listing_events_seed_failures_total`, and retries on the leader's next
-  scheduler tick. A partial seed followed by a retry can duplicate rows; the
-  marker is written only on full success so a retry restarts cleanly, and
-  the plan truncates `source = 'snapshot'` rows before re-seeding.
+  `ultros_listing_events_seed_failures_total`, and retries ten minutes later
+  for as long as the leader holds the lease. Losing the lease aborts an
+  in-flight stream, so two leaders can never seed at once. The marker is
+  written only on full success; every attempt first deletes any
+  `source = 'snapshot'` rows a torn run left behind, so a retry restarts
+  cleanly.
 
 ## Table 2: `floor_changes` (lowest price as it moves)
 
