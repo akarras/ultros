@@ -26,7 +26,7 @@ pub const STATS_30_WINDOW_DAYS: u16 = 30;
 /// the window it asks for.
 const SERVER_SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
 
-const fn is_supported_window(days: u16) -> bool {
+pub(crate) const fn is_supported_window(days: u16) -> bool {
     let mut i = 0;
     while i < SERVER_SUPPORTED_WINDOWS.len() {
         if SERVER_SUPPORTED_WINDOWS[i] == days {
