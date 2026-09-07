@@ -105,6 +105,27 @@ async function main() {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('visits') === '0');
     assert.equal(await page.$eval('section[aria-label="World visit comparison"] button', e => e.getAttribute('aria-pressed')), 'true');
     assert.ok(await page.$eval('aside[aria-label="Plan summary"]', e => e.textContent.includes('0 additional worlds')));
+    // The fixtures supply every ingredient in full, so "missing" must not be
+    // rendered at all rather than as a meaningless "0 missing".
+    assert.equal(await page.$eval('[data-testid="recipe-planner"]', e => e.textContent.includes('missing')), false, 'a fully supplied plan must not mention missing units');
+    {
+      // Crystals are items 2..19 (ItemSearchCategory 58). Every real recipe
+      // uses at least one, so an excluded plan must render none of them.
+      const crystalRows = () => page.$$eval('[data-testid^="material-"]', rows => rows.map(r => Number(r.dataset.testid.slice('material-'.length))).filter(id => id >= 2 && id <= 19));
+      const included = new URL(page.url());
+      included.searchParams.set('shards-exclude', 'true');
+      await page.goto(included.href, { waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.deepEqual(await crystalRows(), [], 'shards-exclude=true must remove every crystal from Build your recipe');
+      assert.ok((await page.$$('[data-testid^="material-"]')).length > 0, 'non-crystal materials must still render');
+      assert.equal(await page.$$eval('label', labels => labels.find(l => l.textContent.includes('Exclude crystals')).querySelector('input').checked), true, 'the Exclude crystals checkbox reflects the URL');
+      included.searchParams.set('shards-exclude', 'false');
+      await page.goto(included.href, { waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.ok((await crystalRows()).length > 0, 'shards-exclude=false keeps crystals in the plan');
+    }
     for (const width of [1440, 390]) {
       await page.setViewport({ width, height: width === 390 ? 844 : 1000 });
       await page.reload({ waitUntil: 'networkidle2' });
