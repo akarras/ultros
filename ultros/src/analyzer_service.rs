@@ -265,16 +265,29 @@ pub(crate) struct CheapestListings {
 }
 
 impl CheapestListings {
-    fn add_listing<'a, T>(&mut self, listing: &'a T)
+    /// Folds `listing` into the map. Returns the new stored value when the
+    /// call changed the map — the key was absent, or the listing is strictly
+    /// cheaper than what was stored — so callers can record floor moves.
+    /// Ties keep the existing entry (and its world).
+    fn add_listing<'a, T>(&mut self, listing: &'a T) -> Option<CheapestListingValue>
     where
         &'a T: Into<CheapestListingValue> + Into<ItemKey>,
     {
-        let cheapest_listing = listing.into();
-        let entry = self
-            .item_map
-            .entry(listing.into())
-            .or_insert(cheapest_listing);
-        *entry = cheapest_listing.min(*entry);
+        let candidate: CheapestListingValue = listing.into();
+        match self.item_map.entry(listing.into()) {
+            Entry::Vacant(vacant) => {
+                vacant.insert(candidate);
+                Some(candidate)
+            }
+            Entry::Occupied(mut occupied) => {
+                if candidate.price < occupied.get().price {
+                    *occupied.get_mut() = candidate;
+                    Some(candidate)
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     /// Drops `listing` if it is at or below the stored cheapest price, returning
@@ -305,6 +318,46 @@ impl CheapestListings {
 struct AnalyzerState {
     recent_sale_history: BTreeMap<i32, SaleHistory>,
     cheapest_items: BTreeMap<AnySelector, CheapestListings>,
+}
+
+/// Every key whose world-level floor differs between `old` and `new`, as
+/// `resync` rows: present→absent is price 0, absent→present and price changes
+/// carry the new price. Unchanged keys emit nothing, so a warm boot (map
+/// restored from a fresh snapshot) is a handful of rows and a cold boot is
+/// one row per key — the series' anchor.
+fn floor_diff(
+    old: &BTreeMap<ItemKey, CheapestListingValue>,
+    new: &BTreeMap<ItemKey, CheapestListingValue>,
+    world_id: i32,
+    at: chrono::DateTime<Utc>,
+) -> Vec<ultros_clickhouse::rows::FloorChangeRow> {
+    use ultros_clickhouse::rows::{FloorChangeReason, FloorChangeRow};
+    let mut rows = Vec::new();
+    for (key, value) in new {
+        if old.get(key).map(|v| v.price) != Some(value.price) {
+            rows.push(FloorChangeRow::new(
+                at,
+                key.item_id,
+                key.hq,
+                world_id,
+                value.price,
+                FloorChangeReason::Resync,
+            ));
+        }
+    }
+    for key in old.keys() {
+        if !new.contains_key(key) {
+            rows.push(FloorChangeRow::new(
+                at,
+                key.item_id,
+                key.hq,
+                world_id,
+                0,
+                FloorChangeReason::Resync,
+            ));
+        }
+    }
+    rows
 }
 
 /// Estimate what an item will actually **sell** for on the target world.
@@ -434,7 +487,11 @@ pub(crate) struct AnalyzerService {
     /// Dual-writes every observed sale into the ClickHouse `sales` table.
     /// Non-blocking, fire-and-forget — Postgres remains the source of truth so
     /// dropped rows are recoverable via the backfill binary.
-    ch_writer: ultros_clickhouse::writer::Writer,
+    ch_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
+    /// Records every move of a world-level lowest price into the ClickHouse
+    /// `floor_changes` table. Same fire-and-forget contract as `ch_writer`;
+    /// the periodic Postgres resync is what heals a dropped row.
+    floor_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::FloorChangeRow>,
     /// Read-side ClickHouse client for the deep-scan pass. The hot path
     /// (CheapestListings + RecentSales BTreeMaps) doesn't touch this — only
     /// the deep_scan_batch enrichment on get_best_resale / get_trends does.
@@ -448,6 +505,7 @@ impl std::fmt::Debug for AnalyzerService {
             .field("cheapest_items", &self.cheapest_items)
             .field("initiated", &self.initiated)
             .field("ch_writer", &"<Writer>")
+            .field("floor_writer", &"<Writer>")
             .field("ch_client", &"<ClickHouseClient>")
             .finish()
     }
@@ -460,7 +518,8 @@ impl AnalyzerService {
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
-        ch_writer: ultros_clickhouse::writer::Writer,
+        ch_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
+        floor_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::FloorChangeRow>,
         ch_client: ultros_clickhouse::ClickHouseClient,
         token: CancellationToken,
     ) -> (Self, tokio::task::JoinHandle<()>) {
@@ -496,6 +555,7 @@ impl AnalyzerService {
             initiated: Arc::default(),
             cheapest_resync_in_flight: Arc::default(),
             ch_writer,
+            floor_writer,
             ch_client,
         };
 
@@ -797,12 +857,63 @@ impl AnalyzerService {
             }
         }
 
+        let at = Utc::now();
+        let mut resync_rows = Vec::new();
         for (selector, listings) in fresh {
             if let Some(lock) = self.cheapest_items.get(&selector) {
-                *lock.write().await = listings;
+                let mut current = lock.write().await;
+                if let AnySelector::World(world_id) = selector {
+                    resync_rows.extend(floor_diff(
+                        &current.item_map,
+                        &listings.item_map,
+                        world_id,
+                        at,
+                    ));
+                }
+                *current = listings;
             }
         }
+        self.spawn_floor_resync_insert(resync_rows);
         Ok(())
+    }
+
+    /// Bulk-insert a resync diff off the boot path. A cold boot's diff is one
+    /// row per key — millions — which would swamp the bounded writer queue, so
+    /// it goes straight to ClickHouse in chunks. Never awaited by the caller:
+    /// the analyzer must go live whether or not ClickHouse is up. Not retried:
+    /// the next resync re-derives the same state.
+    fn spawn_floor_resync_insert(&self, rows: Vec<ultros_clickhouse::rows::FloorChangeRow>) {
+        if rows.is_empty() {
+            return;
+        }
+        let client = self.ch_client.clone();
+        let writer = self.floor_writer.clone();
+        tokio::spawn(async move {
+            let ready =
+                tokio::time::timeout(std::time::Duration::from_secs(600), writer.wait_ready())
+                    .await;
+            if !matches!(ready, Ok(true)) {
+                metrics::counter!("ultros_floor_changes_bulk_failures_total", "reason" => "writer_not_ready")
+                    .increment(rows.len() as u64);
+                warn!(
+                    rows = rows.len(),
+                    "floor resync dropped: ClickHouse schema never became ready"
+                );
+                return;
+            }
+            match ultros_clickhouse::writer::insert_all(&client, &rows, 10_000).await {
+                Ok(written) => info!(rows = written, "recorded floor resync"),
+                Err(error) => {
+                    metrics::counter!("ultros_floor_changes_bulk_failures_total", "reason" => "insert_failed")
+                        .increment(rows.len() as u64);
+                    warn!(
+                        ?error,
+                        rows = rows.len(),
+                        "floor resync bulk insert failed; the next resync re-derives it"
+                    );
+                }
+            }
+        });
     }
 
     /// Kicks off a background [`Self::rebuild_cheapest_from_db`] after the bus
@@ -1652,7 +1763,7 @@ impl AnalyzerService {
         // process all listings from one world at a time
         let listings = listings
             .iter()
-            .into_grouping_map_by(|l| l.0.world_id)
+            .into_grouping_map_by(|l| (l.0.world_id, l.0.hq))
             .min_by_key(|_key, val| val.0.price_per_unit);
         let listings = listings.into_iter().flat_map(|(_, (l, _))| {
             let result = world_cache
@@ -1693,7 +1804,17 @@ impl AnalyzerService {
                     entry.write().await.add_listing(listing);
                 }
             }
-            world_entry.write().await.add_listing(listing);
+            if let Some(floor) = world_entry.write().await.add_listing(listing) {
+                self.floor_writer
+                    .send(ultros_clickhouse::rows::FloorChangeRow::new(
+                        Utc::now(),
+                        listing.item_id,
+                        listing.hq,
+                        listing.world_id,
+                        floor.price,
+                        ultros_clickhouse::rows::FloorChangeReason::Listing,
+                    ));
+            }
         }
     }
 
@@ -1781,18 +1902,23 @@ impl AnalyzerService {
             return;
         };
 
-        // Phase 1: in-memory only. The lock is held for microseconds.
-        let stale: BTreeSet<i32> = {
+        // Phase 1: in-memory only. The lock is held for microseconds. Remember
+        // the price each dropped key held so phase 3 can tell a real floor
+        // move from a refill that landed on the same price.
+        let dropped: BTreeMap<ItemKey, i32> = {
             let mut map = lock.write().await;
             listings
                 .iter()
-                .filter_map(|listing| map.remove_if_cheapest(listing))
-                .map(|key| key.item_id)
+                .filter_map(|listing| {
+                    let old = map.item_map.get(&ItemKey::from(*listing))?.price;
+                    map.remove_if_cheapest(listing).map(|key| (key, old))
+                })
                 .collect()
         };
-        if stale.is_empty() {
+        if dropped.is_empty() {
             return;
         }
+        let stale: BTreeSet<i32> = dropped.keys().map(|key| key.item_id).collect();
 
         // Phase 2: the refill, with no lock held.
         let Some(worlds) = world_cache
@@ -1821,10 +1947,41 @@ impl AnalyzerService {
         };
 
         // Phase 3: apply. `add_listing` keys on (item, hq), so both qualities from
-        // the one query land on the right entries.
+        // the one query land on the right entries. Only world floors are
+        // recorded; a refill that restores the same price is not a move.
+        let now = Utc::now();
         let mut map = lock.write().await;
         for summary in &refill {
-            map.add_listing(summary);
+            let key = ItemKey::from(summary);
+            if let (Some(floor), AnySelector::World(world_id)) =
+                (map.add_listing(summary), selector)
+                && dropped.get(&key) != Some(&floor.price)
+            {
+                self.floor_writer
+                    .send(ultros_clickhouse::rows::FloorChangeRow::new(
+                        now,
+                        key.item_id,
+                        key.hq,
+                        world_id,
+                        floor.price,
+                        ultros_clickhouse::rows::FloorChangeReason::Refill,
+                    ));
+            }
+        }
+        if let AnySelector::World(world_id) = selector {
+            for key in dropped.keys() {
+                if !map.item_map.contains_key(key) {
+                    self.floor_writer
+                        .send(ultros_clickhouse::rows::FloorChangeRow::new(
+                            now,
+                            key.item_id,
+                            key.hq,
+                            world_id,
+                            0,
+                            ultros_clickhouse::rows::FloorChangeReason::Refill,
+                        ));
+                }
+            }
         }
     }
 
@@ -2104,9 +2261,11 @@ mod test {
     use crate::analyzer_service::{
         CheapestListingValue, CheapestListings, ItemKey, SALE_HISTORY_SIZE,
     };
+    use std::collections::BTreeMap;
 
     use super::{
         SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
+        floor_diff,
     };
     use ultros_api_types::ActiveListing;
     use ultros_db::listings::ListingSummary;
@@ -2586,6 +2745,105 @@ mod test {
     }
 
     #[test]
+    fn add_listing_reports_a_change_only_when_the_floor_moves_down_or_appears() {
+        let mut cheapest = CheapestListings::default();
+        let make = |price| ultros_db::listings::ListingSummary {
+            item_id: 7,
+            world_id: 1,
+            price_per_unit: price,
+            hq: false,
+        };
+        assert_eq!(
+            cheapest.add_listing(&make(500)).map(|v| v.price),
+            Some(500),
+            "first listing creates the floor"
+        );
+        assert_eq!(
+            cheapest.add_listing(&make(700)).map(|v| v.price),
+            None,
+            "a dearer listing changes nothing"
+        );
+        assert_eq!(
+            cheapest.add_listing(&make(500)).map(|v| v.price),
+            None,
+            "an equal price is not a change"
+        );
+        assert_eq!(
+            cheapest.add_listing(&make(450)).map(|v| v.price),
+            Some(450),
+            "a cheaper listing lowers the floor"
+        );
+    }
+
+    #[test]
+    fn floor_diff_reports_appearances_disappearances_and_price_changes_only() {
+        let key = |item_id, hq| ItemKey { item_id, hq };
+        let val = |price| CheapestListingValue {
+            price,
+            world_id: 40,
+        };
+        let old: BTreeMap<ItemKey, CheapestListingValue> = [
+            (key(1, false), val(100)), // unchanged
+            (key(2, false), val(200)), // price moves
+            (key(3, true), val(300)),  // disappears
+        ]
+        .into_iter()
+        .collect();
+        let new: BTreeMap<ItemKey, CheapestListingValue> = [
+            (key(1, false), val(100)),
+            (key(2, false), val(250)),
+            (key(4, false), val(400)), // appears
+        ]
+        .into_iter()
+        .collect();
+        let at = Utc::now();
+
+        let mut rows = floor_diff(&old, &new, 40, at);
+        rows.sort_by_key(|r| r.item_id);
+
+        let summary: Vec<(i32, u8, u32)> = rows
+            .iter()
+            .map(|r| (r.item_id, r.hq, r.price_per_unit))
+            .collect();
+        assert_eq!(summary, vec![(2, 0, 250), (3, 1, 0), (4, 0, 400)]);
+        assert!(
+            rows.iter()
+                .all(|r| r.reason == ultros_clickhouse::rows::FloorChangeReason::Resync)
+        );
+        assert!(rows.iter().all(|r| r.world_id == 40 && r.event_time == at));
+    }
+
+    #[test]
+    fn floor_diff_from_an_empty_map_emits_every_key() {
+        let new: BTreeMap<ItemKey, CheapestListingValue> = [
+            (
+                ItemKey {
+                    item_id: 1,
+                    hq: false,
+                },
+                CheapestListingValue {
+                    price: 10,
+                    world_id: 40,
+                },
+            ),
+            (
+                ItemKey {
+                    item_id: 1,
+                    hq: true,
+                },
+                CheapestListingValue {
+                    price: 20,
+                    world_id: 40,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let rows = floor_diff(&BTreeMap::new(), &new, 40, Utc::now());
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
     fn cheapest_listings_keeps_separate_entries_per_quality() {
         let mut cheapest = CheapestListings::default();
         let make = |hq, price| ultros_db::listings::ListingSummary {
@@ -2753,6 +3011,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
 
@@ -2800,6 +3059,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(new_analyzer_service.try_restore_from_snapshot().await);
@@ -2832,6 +3092,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         // Serialize
@@ -2849,6 +3110,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(
@@ -2901,6 +3163,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(

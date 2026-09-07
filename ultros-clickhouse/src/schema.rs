@@ -20,6 +20,97 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_sales_hourly(client).await?;
     apply_sale_stats_window(client).await?;
     apply_item_category_map(client).await?;
+    apply_listing_events_table(client).await?;
+    apply_floor_changes_table(client).await?;
+    apply_listing_events_seed_marker(client).await?;
+    Ok(())
+}
+
+/// Name of the one-row marker table that records the `listing_events` seed.
+pub const LISTING_EVENTS_SEED_MARKER_TABLE: &str = "_listing_events_seed";
+
+/// Append-only log of every change Ultros observes to `active_listing`.
+///
+/// Plain `MergeTree`: a re-sent listing whose state already matches is
+/// filtered by the Postgres diff before any write, so duplicates never reach
+/// this table and no dedup engine is needed. `ORDER BY (item, hq, world,
+/// time)` serves the "what happened to this item on this world" reads that
+/// every planned consumer starts from; monthly partitions plus the TTL keep
+/// retention a one-line change while volume is still unmeasured.
+async fn apply_listing_events_table(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS listing_events (
+                event_time      DateTime,
+                kind            Enum8('added' = 1, 'updated' = 2, 'removed' = 3),
+                source          Enum8('websocket' = 1, 'catchup' = 2, 'manual' = 3, 'snapshot' = 4),
+                item_id         Int32,
+                hq              UInt8,
+                world_id        Int32,
+                listing_id      String,
+                pg_listing_id   Int32,
+                retainer_id     Int32,
+                price_per_unit  UInt32,
+                quantity        UInt16,
+                prev_price      UInt32,
+                prev_quantity   UInt16,
+                reviewed_at     DateTime
+            )
+            ENGINE = MergeTree
+            PARTITION BY toYYYYMM(event_time)
+            ORDER BY (item_id, hq, world_id, event_time)
+            TTL event_time + INTERVAL 365 DAY
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// One row per transition of the analyzer's world-level lowest listing price
+/// for an `(item, hq)`. `price_per_unit = 0` means the board emptied.
+/// Tiny (one row per floor move) and the long-term series, so no TTL.
+async fn apply_floor_changes_table(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS floor_changes (
+                event_time      DateTime,
+                item_id         Int32,
+                hq              UInt8,
+                world_id        Int32,
+                price_per_unit  UInt32,
+                reason          Enum8('listing' = 1, 'refill' = 2, 'resync' = 3)
+            )
+            ENGINE = MergeTree
+            PARTITION BY toYYYYMM(event_time)
+            ORDER BY (item_id, hq, world_id, event_time)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Marker written once the `listing_events` seed has streamed every current
+/// `active_listing` row. Modelled on `_backfill_state`.
+async fn apply_listing_events_seed_marker(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {LISTING_EVENTS_SEED_MARKER_TABLE} (
+                seeded_at     DateTime,
+                rows_streamed UInt64
+            )
+            ENGINE = ReplacingMergeTree(seeded_at)
+            ORDER BY tuple()
+            "#
+        ))
+        .execute()
+        .await?;
     Ok(())
 }
 

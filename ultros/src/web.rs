@@ -1243,6 +1243,9 @@ async fn refresh_world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
     State(universalis): State<UniversalisClient>,
+    State(listing_events): State<
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    >,
 ) -> Result<Redirect, WebError> {
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
@@ -1286,9 +1289,18 @@ async fn refresh_world_item_listings(
             });
         debug!("manually refreshed worlds: {listings_by_world:?}");
         for (world_id, listings) in listings_by_world {
-            let (added, removed) = db
+            let ultros_db::listings::ListingWrite {
+                added,
+                removed,
+                changes,
+            } = db
                 .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
                 .await?;
+            crate::record_listing_changes(
+                &listing_events,
+                &changes,
+                ultros_clickhouse::rows::ListingEventSource::Manual,
+            );
             senders
                 .listings
                 .send(EventType::Add(Arc::new(ListingEventData {

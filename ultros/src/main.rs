@@ -85,7 +85,7 @@ fn spawn_rollup_scheduler(
     ch: ultros_clickhouse::ClickHouseClient,
     db: UltrosDb,
     token: CancellationToken,
-    writer: ultros_clickhouse::writer::Writer,
+    writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
 ) {
     tokio::spawn(async move {
         // The writer owns migration retries. Rollups must wait for schema
@@ -125,6 +125,13 @@ fn spawn_rollup_scheduler(
                     info!("acquired ClickHouse rollup scheduler lease");
                     metrics::gauge!("ultros_rollup_scheduler_leader").set(1.0);
                     let scheduler_token = token.child_token();
+                    // One-time listing_events seed, under the same lease so
+                    // only one replica ever streams the board.
+                    tokio::spawn(ultros_clickhouse::listing_seed::run_until_seeded(
+                        ch.clone(),
+                        db.clone(),
+                        scheduler_token.clone(),
+                    ));
                     let scheduler = ultros_clickhouse::rollups::run_scheduler(
                         ch.clone(),
                         scheduler_token.clone(),
@@ -200,10 +207,25 @@ fn spawn_rollup_scheduler(
     });
 }
 
+/// Mirror a write path's change list into ClickHouse. Non-blocking: overflow
+/// is counted by the writer, never felt by ingest.
+pub(crate) fn record_listing_changes(
+    writer: &ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    changes: &[ultros_db::listings::ListingChange],
+    source: ultros_clickhouse::rows::ListingEventSource,
+) {
+    for change in changes {
+        writer.send(ultros_clickhouse::rows::ListingEventRow::from_change(
+            change, source,
+        ));
+    }
+}
+
 async fn run_socket_listener(
     db: UltrosDb,
     listings_tx: EventProducer<ListingEventData>,
     sales_tx: EventProducer<SaleEventData>,
+    listing_events: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     token: CancellationToken,
 ) {
     let mut socket = WebsocketClient::connect(UNIVERSALIS_USER_AGENT).await;
@@ -230,6 +252,7 @@ async fn run_socket_listener(
             // hopefully this is cheap to clone
             let listings_tx = listings_tx.clone();
             let sales_tx = sales_tx.clone();
+            let listing_events = listing_events.clone();
             if let SocketRx::Event(Ok(e)) = &msg {
                 let world_id = WorldId::from(e);
                 metrics::counter!("ultros_websocket_rx", "WorldId" => world_id.0.to_string())
@@ -249,11 +272,16 @@ async fn run_socket_listener(
                     // world's board down to the delta on every event. Removals
                     // arrive on `listings/remove` below.
                     })) => match db.add_listings(listings.clone(), item, world).await {
-                        Ok(added) => {
+                        Ok(write) => {
+                            record_listing_changes(
+                                &listing_events,
+                                &write.changes,
+                                ultros_clickhouse::rows::ListingEventSource::Websocket,
+                            );
                             let added = Arc::new(ListingEventData {
                                 item_id: item.0,
                                 world_id: world.0,
-                                listings: added,
+                                listings: write.added,
                             });
                             match listings_tx.send(EventType::Add(added)) {
                                 Ok(o) => info!(remaining_slack = o, "added listings"),
@@ -267,12 +295,17 @@ async fn run_socket_listener(
                         world,
                         listings,
                     })) => match db.remove_listings(listings.clone(), item, world).await {
-                        Ok(listings) => {
-                            info!(?listings, ?item, ?world, "Removed listings");
+                        Ok(write) => {
+                            record_listing_changes(
+                                &listing_events,
+                                &write.changes,
+                                ultros_clickhouse::rows::ListingEventSource::Websocket,
+                            );
+                            info!(listings = ?write.removed, ?item, ?world, "Removed listings");
                             if let Err(e) = listings_tx.send(EventType::removed(ListingEventData {
                                 item_id: item.0,
                                 world_id: world.0,
-                                listings,
+                                listings: write.removed,
                             })) {
                                 error!(error = ?e, "Error sending remove listings");
                             }
@@ -604,6 +637,24 @@ async fn main() -> Result<()> {
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
+    // Migration retries in the writers so an outage at startup does not disable
+    // analytics for the lifetime of this process. Keep their cancellation
+    // separate so producers can finish sending before the final flush. Three
+    // writers, one per table: sales (analyzer), listing changes (every ingest
+    // path), and floor moves (analyzer). The migrate each runs is idempotent.
+    let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
+    let ch_writer =
+        ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::SaleRow>::spawn_recovering(
+            ch_client.clone(),
+            CancellationToken::new(),
+        );
+    let listing_events_writer = ultros_clickhouse::writer::Writer::<
+        ultros_clickhouse::rows::ListingEventRow,
+    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let floor_writer = ultros_clickhouse::writer::Writer::<
+        ultros_clickhouse::rows::FloorChangeRow,
+    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let socket_listing_events = listing_events_writer.clone();
     let socket_token = token.clone();
     let websocket_disabled = universalis_websocket_disabled();
     tokio::spawn(async move {
@@ -623,20 +674,19 @@ async fn main() -> Result<()> {
             return;
         }
         info!("starting websocket");
-        run_socket_listener(init, listings_sender, history_sender, socket_token).await;
+        run_socket_listener(
+            init,
+            listings_sender,
+            history_sender,
+            socket_listing_events,
+            socket_token,
+        )
+        .await;
     });
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
-    // Migration retries in the writer so an outage at startup does not disable
-    // analytics for the lifetime of this process. Keep its cancellation separate
-    // so the analyzer can finish sending before the writer's final flush.
-    let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
-    let ch_writer = ultros_clickhouse::writer::Writer::spawn_recovering(
-        ch_client.clone(),
-        CancellationToken::new(),
-    );
     // A Postgres advisory lock elects one web replica to refresh rollups.
     spawn_rollup_scheduler(
         ch_client.clone(),
@@ -650,6 +700,7 @@ async fn main() -> Result<()> {
         receivers.clone(),
         world_cache.clone(),
         ch_writer.clone(),
+        floor_writer.clone(),
         ch_client.clone(),
         token.clone(),
     )
@@ -660,6 +711,7 @@ async fn main() -> Result<()> {
         universalis: universalis_client.clone(),
         listings: senders.listings.clone(),
         sales: senders.history.clone(),
+        listing_events: listing_events_writer.clone(),
         full_sweep_cooldowns: Default::default(),
         uncovered_worlds: Default::default(),
         sweep_lock: Default::default(),
@@ -756,6 +808,7 @@ async fn main() -> Result<()> {
         search_service,
         token: token.clone(),
         ch_client,
+        listing_events: listing_events_writer.clone(),
         universalis: universalis_client,
         price_series_cache: Default::default(),
         sale_stats_cache: Default::default(),
@@ -780,6 +833,7 @@ async fn main() -> Result<()> {
                 error!("Analyzer shutdown failed: {e:?}");
             }
             ch_writer.shutdown().await;
+            floor_writer.shutdown().await;
         };
         let drain_web = async {
             if !web_finished && let Err(e) = web_task.await {
@@ -787,6 +841,9 @@ async fn main() -> Result<()> {
             }
         };
         tokio::join!(drain_analytics, drain_web);
+        // Every listing_events producer (socket task, update service, web) has
+        // been cancelled or drained by now.
+        listing_events_writer.shutdown().await;
     };
     if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
         .await
