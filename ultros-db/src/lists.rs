@@ -23,7 +23,7 @@ use std::{
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
-use ultros_api_types::user::group::GroupSource;
+use ultros_api_types::user::group::{GroupMemberSource, GroupSource};
 use universalis::ItemId;
 
 #[derive(Debug, Error)]
@@ -740,12 +740,14 @@ impl UltrosDb {
             guild_id: ActiveValue::Set(guild_id),
             guild_icon_url: ActiveValue::Set(guild_icon_url),
             source: ActiveValue::Set(source as i16),
+            frozen_reason: ActiveValue::Set(None),
         }
         .insert(&txn)
         .await?;
         user_group_member::ActiveModel {
             group_id: ActiveValue::Set(group.id),
             user_id: ActiveValue::Set(owner_id),
+            source: ActiveValue::Set(GroupMemberSource::Manual as i16),
         }
         .insert(&txn)
         .await?;
@@ -792,6 +794,7 @@ impl UltrosDb {
         user_group_member::ActiveModel {
             group_id: ActiveValue::Set(group_id),
             user_id: ActiveValue::Set(user_id),
+            source: ActiveValue::Set(GroupMemberSource::Manual as i16),
         }
         .insert(&self.db)
         .await?;
@@ -923,6 +926,7 @@ impl UltrosDb {
         user_group_member::Entity::insert(user_group_member::ActiveModel {
             group_id: ActiveValue::Set(invite.group_id),
             user_id: ActiveValue::Set(user_id),
+            source: ActiveValue::Set(GroupMemberSource::Manual as i16),
         })
         .on_conflict(
             sea_orm::sea_query::OnConflict::columns([
@@ -1283,7 +1287,7 @@ impl UltrosDb {
             .all(&self.db)
             .await?
             .into_iter()
-            .filter_map(|(member, user)| user.map(|u| UserGroupMemberReturn(member, u)))
+            .filter_map(|(member, user)| user.map(|u| UserGroupMemberReturn(member, u, Vec::new())))
             .collect())
     }
 }
