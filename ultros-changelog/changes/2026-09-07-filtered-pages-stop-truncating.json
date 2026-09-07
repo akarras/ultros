@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "Filtered analyzer pages no longer cut off halfway",
+  "blurb": "A page opened on a link that carried a filter in its URL could stop rendering partway down, leaving a truncated table or a blank stretch below the controls. The filter was reading the URL from a place the server could not always reach, which ended the response mid-page. Shared links with filters, sorts or column choices in them now load completely.",
+  "link": "/flip-finder"
+}
