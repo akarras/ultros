@@ -78,6 +78,7 @@
     "grid_filter_clear": "フィルターを解除",
     "grid_move_column": "ドラッグして列を移動",
     "grid_column_menu": "列の設定",
+    "grid_column_menu_filtered": "列の設定（フィルター中）",
     "grid_resize_hint": "ドラッグで幅を変更、ダブルクリックで取得済みの結果に合わせる",
     "grid_auto_fit": "列幅を自動調整",
     "grid_width": "幅（px）",

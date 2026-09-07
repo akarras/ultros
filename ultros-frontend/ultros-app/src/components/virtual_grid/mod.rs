@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod query_grid;
 pub mod row_source;
 pub mod saved_views;
+use crate::components::icon::Icon;
 use crate::i18n::*;
 use layout::column_range;
 pub(crate) use layout::row_range;
@@ -32,6 +33,10 @@ const HEADING_CHROME: f64 = 48.0;
 /// present only on the sorted column.
 #[cfg(feature = "hydrate")]
 const HEADING_SORT_ICON: f64 = 20.0;
+/// The clear-filter button, present only while the column has a live filter.
+/// Same 20px slot as the menu button it sits beside.
+#[cfg(feature = "hydrate")]
+const HEADING_FILTER_CLEAR: f64 = 20.0;
 /// Chunk of rows measured between yields to the event loop.
 #[cfg(feature = "hydrate")]
 const FIT_CHUNK_ROWS: usize = 512;
@@ -124,7 +129,55 @@ where
     M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
 {
     let i18n = use_i18n();
-    let filter_query = crate::components::app_link::use_location_or_default().query;
+    let location = crate::components::app_link::use_location_or_default();
+    let filter_query = location.query;
+    // Whether a column has anything to clear. Metric filters live in the
+    // packed `gf` map; a plain filter is live only when its key carries a
+    // value, because the "unlimited" landing defaults clear to an empty one.
+    let column_filtered = move |id: &'static str| {
+        columns.with(|defs| {
+            defs.iter().find(|c| c.id == id).is_some_and(|c| {
+                c.filters.iter().any(|f| {
+                    filter_query.with(|q| {
+                        if f.metric.is_some() {
+                            metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
+                        } else {
+                            q.get(f.key).is_some_and(|v| !v.is_empty())
+                        }
+                    })
+                })
+            })
+        })
+    };
+    #[cfg(feature = "hydrate")]
+    let navigate = leptos_router::hooks::use_navigate();
+    // One click takes a column's whole filter set off, however many separate
+    // filters it carries — the popover only offers them one at a time.
+    let clear_column = Callback::new(move |id: &'static str| {
+        let filters = columns.with_untracked(|defs| {
+            defs.iter()
+                .find(|c| c.id == id)
+                .map(|c| c.filters.clone())
+                .unwrap_or_default()
+        });
+        let next = filter::cleared_query(&filter_query.get_untracked(), &filters);
+        #[cfg(feature = "hydrate")]
+        navigate(
+            &format!(
+                "{}{}",
+                location.pathname.get_untracked(),
+                next.to_query_string()
+            ),
+            leptos_router::NavigateOptions {
+                replace: true,
+                scroll: false,
+                ..Default::default()
+            },
+        );
+        // SSR renders the button but never navigates.
+        #[cfg(not(feature = "hydrate"))]
+        let _ = next;
+    });
     let grid_id = StoredValue::new(id);
     let key = StoredValue::new(key);
     let header = StoredValue::new(header);
@@ -438,6 +491,14 @@ where
                             0.0
                         } else {
                             HEADING_SORT_ICON
+                        }
+                        // The clear-filter button only exists while the column
+                        // is filtered, so a fit that ignored it would clip the
+                        // title of exactly the columns a user is working in.
+                        + if column_filtered(def.id) {
+                            HEADING_FILTER_CLEAR
+                        } else {
+                            0.0
                         };
                         let title = ctx
                             .measure_text(&def.label)
@@ -703,10 +764,7 @@ where
                                 <div class="virtual-grid-heading" role="columnheader" aria-colindex=ci + 1 aria-sort=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|c.column.aria_sort).unwrap_or("none"))
                                     id=format!("{}-r0-c{ci}",grid_id.get_value()) data-column=id data-grid-row="0" data-grid-col=ci
                                     class:grid-active=move || active.get() == (0,ci)
-                                    class:grid-filter-active=move || columns.with(|defs| defs.iter().find(|c|c.id==id).is_some_and(|c|
-                                        c.filters.iter().any(|f|filter_query.with(|q| if f.metric.is_some() {
-                                            metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
-                                        } else {q.get(f.key).is_some_and(|v|!v.is_empty())}))))
+                                    class:grid-filter-active=move || column_filtered(id)
                                     class:grid-insert-before=move || drag.get().is_some_and(|d| d.target == Some((id,false)))
                                     class:grid-insert-after=move || drag.get().is_some_and(|d| d.target == Some((id,true)))
                                     style=move || placed.with(|p| p.iter().find(|c| c.column.id == id).map(|c| format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
@@ -723,9 +781,34 @@ where
                                         }
                                     >"⠿"</button>
                                     <div class="grid-heading-content">{header.with_value(|f| f(id))}</div>
-                                    <button type="button" class="grid-column-menu" aria-label=format!("{}: {title}",t_string!(i18n, grid_column_menu))
+                                    // A filled dot-stack does not read as "filtered": swap the
+                                    // glyph for a funnel and put a dedicated off switch beside it,
+                                    // the affordance Flip Finder's World/Datacenter columns used to
+                                    // carry on their own. Both cost width only while a filter is on.
+                                    {
+                                        let filtered_title = title.clone();
+                                        view! {
+                                            <Show when=move || column_filtered(id)>
+                                                <button type="button" class="grid-filter-clear"
+                                                    aria-label=format!("{}: {filtered_title}",t_string!(i18n, aria_remove_filter))
+                                                    title=t_string!(i18n, grid_filter_clear).to_string()
+                                                    on:click=move |e| { e.stop_propagation(); activate(0,ci); clear_column.run(id); }
+                                                ><Icon icon=icondata::MdiFilterRemove /></button>
+                                            </Show>
+                                        }
+                                    }
+                                    <button type="button" class="grid-column-menu"
+                                        aria-label=move || format!("{}: {title}", if column_filtered(id) {
+                                            t_string!(i18n, grid_column_menu_filtered)
+                                        } else {
+                                            t_string!(i18n, grid_column_menu)
+                                        })
                                         on:click=move |e| { e.stop_propagation(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
-                                    >"⋮"</button>
+                                    >{move || if column_filtered(id) {
+                                        view! { <Icon icon=icondata::MdiFilter /> }.into_any()
+                                    } else {
+                                        view! { "\u{22ee}" }.into_any()
+                                    }}</button>
                                     <div class="grid-resize-handle" title=t_string!(i18n, grid_resize_hint).to_string()
                                         on:dblclick=move |e| { e.prevent_default(); e.stop_propagation(); fit(id); }
                                         on:pointerdown=move |e: web_sys::PointerEvent| {
