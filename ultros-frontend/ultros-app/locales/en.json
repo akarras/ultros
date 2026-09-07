@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "Location unavailable",
+    "npc_quest_giver": "Quest giver",
+    "npc_quest_giver_unknown": "Quest giver unavailable",
+
     "social_card_eyebrow": "FFXIV MARKET BOARD",
     "social_card_home_title": "Your next market board advantage.",
     "social_card_home_subtitle": "Compare prices. Plan your purchases.",

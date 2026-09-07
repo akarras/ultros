@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "場所不明",
+    "npc_quest_giver": "依頼NPC",
+    "npc_quest_giver_unknown": "依頼NPC不明",
+
     "social_card_eyebrow": "FFXIV マーケットボード",
     "social_card_home_title": "マーケットをもっと有利に。",
     "social_card_home_subtitle": "価格を比べて、買い物を計画。",

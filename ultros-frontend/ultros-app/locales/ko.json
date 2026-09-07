@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "위치 정보 없음",
+    "npc_quest_giver": "의뢰 NPC",
+    "npc_quest_giver_unknown": "의뢰 NPC 정보 없음",
+
     "social_card_eyebrow": "FFXIV 장터 게시판",
     "social_card_home_title": "장터에서 한발 앞서가세요.",
     "social_card_home_subtitle": "가격을 비교하고 구매를 계획하세요.",

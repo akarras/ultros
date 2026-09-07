@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "Emplacement indisponible",
+    "npc_quest_giver": "Donneur de quête",
+    "npc_quest_giver_unknown": "Donneur de quête inconnu",
+
     "social_card_eyebrow": "FFXIV MARCHÉ",
     "social_card_home_title": "Une longueur d’avance sur le marché.",
     "social_card_home_subtitle": "Comparez les prix. Préparez vos achats.",

@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "Standort nicht verfügbar",
+    "npc_quest_giver": "Auftraggeber",
+    "npc_quest_giver_unknown": "Auftraggeber unbekannt",
+
     "social_card_eyebrow": "FFXIV MARKTBRETT",
     "social_card_home_title": "Dein nächster Vorteil am Marktbrett.",
     "social_card_home_subtitle": "Preise vergleichen. Einkäufe planen.",

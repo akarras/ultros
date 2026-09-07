@@ -1,4 +1,8 @@
 {
+    "npc_location_unknown": "位置未知",
+    "npc_quest_giver": "任务发布人",
+    "npc_quest_giver_unknown": "任务发布人未知",
+
     "social_card_eyebrow": "FFXIV 市场布告板",
     "social_card_home_title": "让你的市场交易更胜一筹。",
     "social_card_home_subtitle": "比较价格，规划购买。",

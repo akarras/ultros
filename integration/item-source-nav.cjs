@@ -23,6 +23,15 @@ async function readLinks(page) {
   })));
 }
 
+async function readNpcDetails(page) {
+  return page.$$eval('[data-npc-locations], [data-leve-issuers]', nodes =>
+    nodes.map(node => ({
+      npc: node.getAttribute('data-npc-locations'),
+      leve: node.getAttribute('data-leve-issuers'),
+      text: node.textContent.trim(),
+    })));
+}
+
 async function main() {
   fs.mkdirSync(OUTPUT, { recursive: true });
   const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
@@ -53,12 +62,16 @@ async function main() {
       await page.setJavaScriptEnabled(false);
       await page.goto(`${BASE_URL}${route}`, { waitUntil: 'networkidle2' });
       const ssr = await readLinks(page);
+      const ssrNpcs = await readNpcDetails(page);
       assert.ok(ssr.length >= 5, `${route}: SSR navigation missing`);
       await page.setJavaScriptEnabled(true);
       await page.reload({ waitUntil: 'networkidle2' });
       await page.waitForFunction(() => window.__sourceNavHydrated === true);
       await sleep(500);
       assert.deepEqual(await readLinks(page), ssr, `${route}: source links changed during hydration`);
+      assert.deepEqual(await readNpcDetails(page), ssrNpcs,
+        `${route}: NPC locations or quest givers changed during hydration`);
+      assert.ok(ssrNpcs.every(row => row.text.length > 0), `${route}: empty NPC details`);
       const sources = ssr.filter(link => SOURCE_ANCHORS.includes(link.href));
       sources.forEach(link => coverage.add(link.href));
       const accents = await page.$$eval(`${NAV} a`, links => ({
