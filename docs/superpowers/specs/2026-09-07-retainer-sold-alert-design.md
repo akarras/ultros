@@ -96,28 +96,35 @@ struct SoldMatcher {
     pending_removals: HashMap<SaleKey, Vec<PendingRemoval>>, // all retainers
     pending_sales:    HashMap<SaleKey, Vec<PendingSale>>,
     window: TimeDelta,        // 300 s
+    settle: TimeDelta,        // 10 s
     max_sale_age: TimeDelta,  // 24 h
     skew: TimeDelta,          // 60 s
 }
-fn on_removed(&mut self, listing: RemovedListing, now: DateTime<Utc>) -> Vec<SoldEvent>
-fn on_added(&mut self, added: AddedListing, now: DateTime<Utc>)
-fn on_sale(&mut self, sale: ObservedSale, now: DateTime<Utc>) -> Vec<SoldEvent>
-fn expire(&mut self, now: DateTime<Utc>)
+fn on_removed(&mut self, listing: RemovedListing, now: DateTime<Utc>)
+fn on_added(&mut self, added: AddedListing)
+fn on_sale(&mut self, sale: ObservedSale, now: DateTime<Utc>)
+fn settle(&mut self, now: DateTime<Utc>) -> Vec<SoldEvent>
 fn set_owned(&mut self, owned: HashSet<i32>)
 ```
 
-- `on_removed`: push the row under its key with its receipt time, then run
-  the match step for that key (a sale may already be waiting).
+Events only queue. **Matching is deferred**: a viewer's upload publishes
+the sale and the removals as separate websocket messages milliseconds
+apart, and the removals can span several messages, so matching on arrival
+would let the first removal claim a sale that a second retainer's removal,
+still in flight, makes ambiguous. `settle` runs from a 5 s tick and only
+resolves sales that have been pending at least 10 s.
+
+- `on_removed`: push the row under its key with its receipt time.
 - `on_added`: delete every pending removal whose `(world, item, hq, quantity,
   retainer)` equals the added listing's (reprice).
-- `on_sale`: drop the sale if older than `max_sale_age`; otherwise store it
-  and run the match step. The step takes the oldest pending sale, collects
-  candidate removals under the key received within `window` of the sale and
-  satisfying rule 4, and: no candidates → the sale stays pending; candidates
-  from more than one retainer → the sale is discarded, removals stay; one
-  retainer → the earliest candidate is consumed and, if owned, a `SoldEvent
-  { retainer_id, retainer_name, key, sold_at, buyer_name }` is emitted.
-- `expire`: drop entries older than `window` from both maps.
+- `on_sale`: drop the sale if older than `max_sale_age`; otherwise store it.
+- `settle`: drop entries older than `window` from both maps, then for every
+  pending sale older than `settle`, collect candidate removals under the key
+  received within `window` of the sale and satisfying rule 4, and: no
+  candidates → the sale stays pending; candidates from more than one
+  retainer → the sale is discarded, removals stay; one retainer → the
+  earliest candidate is consumed and, if owned, a `SoldEvent { retainer_id,
+  retainer_name, key, sold_at, buyer_name }` is emitted.
 
 `SoldEvent` carries no confidence field: after rule 6 every emitted event is
 one the matcher stands behind.
@@ -126,8 +133,8 @@ one the matcher stands behind.
 
 Same shape as `ListUpdateAlertListener`: a single task started by
 `AlertManager`, selecting over the listings bus, the history bus, the
-owned-retainer bus, the `alerts` bus, a stop channel, and a 30 s tick that
-calls `expire`. Rules are `retainer_id → Vec<{alert_id, owner}>`, rebuilt from
+owned-retainer bus, the `alerts` bus, a stop channel, and a 5 s tick that
+calls `settle` and dispatches what it returns. Rules are `retainer_id → Vec<{alert_id, owner}>`, rebuilt from
 `get_all_active_retainer_sale_alerts` plus each owner's retainer ids on every
 `alerts` or owned-retainer event; the matcher's owned set is the union. On a
 `SoldEvent` it formats the message, calls `dispatch_alert` for every alert
