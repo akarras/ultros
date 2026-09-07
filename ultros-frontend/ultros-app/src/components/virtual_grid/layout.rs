@@ -33,6 +33,10 @@ pub struct GridColumn {
     pub id: &'static str,
     pub label: String,
     pub width: f64,
+    /// Space beside the title for badges, in addition to the grid controls.
+    pub heading_adornments: f64,
+    /// Additional header lines and their non-text width (e.g. a use button).
+    pub heading_lines: Vec<(String, f64)>,
     pub min_width: f64,
     pub max_width: f64,
     pub optional: bool,
@@ -48,6 +52,8 @@ impl GridColumn {
             id,
             label,
             width,
+            heading_adornments: 0.0,
+            heading_lines: Vec::new(),
             min_width: 60.0,
             max_width: 800.0,
             optional,

@@ -216,7 +216,7 @@ where
             c.push_str(" flex flex-col justify-center gap-0.5");
         }
         if emphasized.is_some_and(|e| e.get()) {
-            c.push_str(" bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] shadow-[inset_0_-2px_0_var(--brand-ring)]");
+            c.push_str(" shadow-[inset_0_-2px_0_var(--brand-ring)]");
         }
         c
     };
@@ -234,30 +234,30 @@ where
             // unset) never emitted before this component grew these props.
             {match (badge, sub_label) {
                 (None, None) => {
-                    view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }.into_any()
+                    view! { <SortHeader mode label sort_mode sort_dir reset_keys compact=embedded /> }.into_any()
                 }
                 (badge, sub_label) => view! {
                     {match badge {
                         Some(role) => view! {
-                            <div class="flex items-center gap-2 min-w-0">
+                            <div class="flex items-center gap-2 min-w-0 [&>a]:min-w-0 [&>a]:flex-1 [&>a]:overflow-hidden">
                                 <TermBadge role=role />
-                                <SortHeader mode label sort_mode sort_dir reset_keys />
+                                <SortHeader mode label sort_mode sort_dir reset_keys compact=embedded />
                             </div>
                         }
                         .into_any(),
                         None => {
-                            view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }
+                            view! { <SortHeader mode label sort_mode sort_dir reset_keys compact=embedded /> }
                                 .into_any()
                         }
                     }}
                     {sub_label.map(|s| match trailing {
                         None => view! {
-                            <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
+                            <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full" title=move || s.get()>{move || s.get()}</div>
                         }
                         .into_any(),
                         Some(trailing) => view! {
                             <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] flex items-center gap-1 max-w-full">
-                                <span class="truncate">{move || s.get()}</span>
+                                <span class="truncate" title=move || s.get()>{move || s.get()}</span>
                                 {trailing.run()}
                             </div>
                         }
@@ -292,6 +292,9 @@ pub fn SortHeader<M>(
     /// page 7 of a completely different ordering.
     #[prop(optional)]
     reset_keys: &'static [&'static str],
+    /// Truncate the title within a resizable grid while retaining the sort icon.
+    #[prop(optional)]
+    compact: bool,
 ) -> impl IntoView
 where
     M: SortColumn,
@@ -321,8 +324,12 @@ where
                 sort_href(&pathname(), query(), mode, is_active(), dir(), reset_keys)
             }
         >
-            <div class="flex items-center gap-2">
-                {label}
+            <div class=if compact { "flex items-center gap-2 min-w-0 [&>svg]:shrink-0" } else { "flex items-center gap-2" }>
+                {if compact {
+                    view! { <span class="truncate min-w-0">{label}</span> }.into_any()
+                } else {
+                    label.into_any()
+                }}
                 {move || {
                     is_active()
                         .then(|| match dir() {

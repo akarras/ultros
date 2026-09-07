@@ -1,8 +1,8 @@
 use crate::analyzer_kit::cells::{CellNote, CellValue, Enrich};
 use crate::analyzer_kit::columns::{
     CellCtx, ColumnKind, ColumnSpec, Layer, LazyFeed, PickerContext, PickerGroup, Sortability,
-    ToolColumnMeta, default_dir_for, grouped_picker_options, picker_options, sort_from_token,
-    sort_token, sortability_for,
+    ToolColumnMeta, default_dir_for, grouped_picker_options, sort_from_token, sort_token,
+    sortability_for,
 };
 use crate::analyzer_kit::enrichment::{
     DEBOUNCE_MS, EnrichmentConfig, PREFETCH_MARGIN, SparkKey, SparkStore, SparkValue, Verdict,
@@ -36,7 +36,6 @@ use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
 use crate::components::virtual_grid::metrics::{GridValue, active_metric_columns};
 use crate::global_state::craft_options::{self, CraftOptions};
-use crate::global_state::labs::{LAB_ANALYZER_RECIPE, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -168,17 +167,7 @@ struct RecipeProfitData {
     /// the selected revenue signal, or `Unavailable` when either place has
     /// none. The column renders `place − home`.
     scope_vs_home: ScopeVsHome,
-    /// `market_price` was read on the sell world itself, i.e. the sell
-    /// scope is `Scope::World` — which is every URL that does not carry
-    /// `?sell-scope=`, and every URL at all with the lab off.
-    ///
-    /// The 7-day figures that must not be compared against a scoped price
-    /// are suppressed in the pass (`sell_median`, `vwap_pct`), but the
-    /// 30-day body is client-only and lands after the rows are priced, so
-    /// its cell has to make the same judgement itself. Carried on the row
-    /// rather than on `CellCtx` for the reason `scope_vs_home` is: that
-    /// struct is shared with the flip finder and has twenty exhaustive
-    /// literals, and this one has two.
+    /// Whether median and VWAP comparisons use the same market as the price.
     price_is_sell_world: bool,
 }
 
@@ -370,66 +359,14 @@ fn short_signal(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
     }
 }
 
-/// One labelled select inside the [`MarketMenu`] popover. Commits on
-/// `change` — unlike [`FilterChip`]'s select, this one stays mounted after a
-/// commit (the popover only closes on dismiss), so committing per keystroke
-/// of keyboard browsing does not tear the control down mid-navigation.
-#[component]
-fn PricingSelect(
-    #[prop(into)] label: String,
-    #[prop(into)] value: Signal<String>,
-    options: Vec<(&'static str, String)>,
-    #[prop(into)] on_change: Callback<String>,
-) -> impl IntoView {
-    view! {
-        <label class="flex flex-col gap-1 text-[color:var(--color-text)]">
-            <span class="text-xs text-[color:var(--color-text-muted)]">{label}</span>
-            <select
-                class="input input-sm"
-                prop:value=move || value.get()
-                on:change=move |ev| on_change.run(event_target_value(&ev))
-            >
-                {options
-                    .into_iter()
-                    .map(|(val, lab)| {
-                        view! {
-                            <option value=val selected=move || value.get() == val>
-                                {lab}
-                            </option>
-                        }
-                    })
-                    .collect_view()}
-            </select>
-        </label>
-    }
-}
-
-/// Always-visible `Market` button in the control bar's first row, opening a
-/// popover with the buy-scope / cost-basis / revenue-metric selects — or,
-/// while the analyzer-recipe lab is on, the stacked formula strip and the
-/// four price-basis explanations.
-///
-/// These existed as permanent toolbar fields (#1206), then the
-/// Toolbar→ControlBar migration (#1214) filed them under `+ Filter` — where
-/// #1233 reported the whole feature as gone. They are not row filters: they
-/// change how every row is priced, so they get a standing entry point in row
-/// 1 (same shape as the flip finder's `SavedViewsMenu`). Reads and writes the
-/// same query params as the page's signals, so the non-default chips in the
-/// filter row stay in sync automatically.
+/// Always-visible price-input controls, shared with the inline formula strip.
 #[component]
 fn MarketMenu(
     /// The same ledger chips the inline strip renders, built once on the
     /// page (this component lives inside the table's `ControlBar`).
     terms: Callback<(), Vec<StripTerm>>,
-    /// The `analyzer-recipe` Labs toggle. Off = exactly the three selects
-    /// below.
-    preview: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
-    let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
-    let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
-
     let open = RwSignal::new(false);
     let container = NodeRef::<leptos::html::Div>::new();
     // Mounted inside the control bar's `actions`, so opening this has to be
@@ -459,92 +396,43 @@ fn MarketMenu(
                 </span>
             </button>
             <Show when=move || open.get()>
-                <div class=move || {
-                    if preview {
-                        "sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm"
-                    } else {
-                        "sticky-bar-popover p-3 w-[min(92vw,16rem)] flex flex-col gap-2 text-sm"
-                    }
-                }>
-                    <Show
-                        when=move || preview
-                        fallback=move || {
-                            view! {
-                                <PricingSelect
-                                    label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
-                                    value=Signal::derive(move || {
-                                        buy_scope().unwrap_or_default().to_string()
-                                    })
-                                    options=buy_scope_options(i18n)
-                                    on_change=Callback::new(move |v: String| {
-                                        let parsed = v.parse::<BuyScope>().ok();
-                                        set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
-                                    })
-                                />
-                                <PricingSelect
-                                    label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
-                                    value=Signal::derive(move || {
-                                        cost_basis().unwrap_or_default().to_string()
-                                    })
-                                    options=cost_basis_options(i18n)
-                                    on_change=Callback::new(move |v: String| {
-                                        let parsed = v.parse::<CostBasis>().ok();
-                                        set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
-                                    })
-                                />
-                                <PricingSelect
-                                    label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
-                                    value=Signal::derive(move || {
-                                        revenue_metric().unwrap_or_default().to_string()
-                                    })
-                                    options=cost_basis_options(i18n)
-                                    on_change=Callback::new(move |v: String| {
-                                        let parsed = v.parse::<RevenueMetric>().ok();
-                                        set_revenue_metric(
-                                            parsed.filter(|m| *m != RevenueMetric::default()),
-                                        );
-                                    })
-                                />
-                            }
-                        }
-                    >
-                        <FormulaStrip terms=terms.run(()) layout=StripLayout::Stacked />
-                        // What each price basis actually means, so the
-                        // strip's selects are choosable without leaving
-                        // the page. Each line opens with the picker label
-                        // it explains, so a sentence can be matched to the
-                        // option it belongs to.
-                        <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_listing_min)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_listing_min_help)}
+                <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
+                    <FormulaStrip terms=terms.run(()) layout=StripLayout::Stacked />
+                    // What each price basis actually means, so the
+                    // strip's selects are choosable without leaving
+                    // the page. Each line opens with the picker label
+                    // it explains, so a sentence can be matched to the
+                    // option it belongs to.
+                    <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
+                        <span>
+                            <span class="font-medium text-[color:var(--color-text)]">
+                                {t!(i18n, price_basis_listing_min)}
                             </span>
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_sale_median)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_sale_median_help)}
+                            " "
+                            {t!(i18n, price_basis_listing_min_help)}
+                        </span>
+                        <span>
+                            <span class="font-medium text-[color:var(--color-text)]">
+                                {t!(i18n, price_basis_sale_median)}
                             </span>
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_sale_min)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_sale_min_help)}
+                            " "
+                            {t!(i18n, price_basis_sale_median_help)}
+                        </span>
+                        <span>
+                            <span class="font-medium text-[color:var(--color-text)]">
+                                {t!(i18n, price_basis_sale_min)}
                             </span>
-                            <span>
-                                <span class="font-medium text-[color:var(--color-text)]">
-                                    {t!(i18n, price_basis_sale_avg)}
-                                </span>
-                                " "
-                                {t!(i18n, price_basis_sale_avg_help)}
+                            " "
+                            {t!(i18n, price_basis_sale_min_help)}
+                        </span>
+                        <span>
+                            <span class="font-medium text-[color:var(--color-text)]">
+                                {t!(i18n, price_basis_sale_avg)}
                             </span>
-                        </div>
-                    </Show>
+                            " "
+                            {t!(i18n, price_basis_sale_avg_help)}
+                        </span>
+                    </div>
                 </div>
             </Show>
         </div>
@@ -562,9 +450,6 @@ const FILTER_JOB: &str = "job";
 const FILTER_COST_BASIS: &str = "cost-basis";
 const FILTER_REVENUE: &str = "revenue";
 const FILTER_BUY_SCOPE: &str = "buy-scope";
-/// Phase F: which market the sale price is read from. Default `world`,
-/// stripped from the URL at the default, read only under the
-/// `analyzer-recipe` lab.
 const FILTER_SELL_SCOPE: &str = "sell-scope";
 // Set by clicking a world/DC name in the cheapest-listing columns (same
 // `QueryButton` flow as the flip finder), not from the `+ Filter` menu —
@@ -598,26 +483,9 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_USE_ON_HAND,
 ];
 
-/// The sell scope the page acts on: `None` — i.e. `Term::Fixed(World)`,
-/// today's ledger exactly — whenever the `analyzer-recipe` lab is off, so a
-/// bookmarked `?sell-scope=region` is inert on the flag-off page down to
-/// the "no active filters" hint.
-fn sell_scope_for(preview: bool, param: Option<SellScope>) -> Option<SellScope> {
-    preview.then_some(param).flatten()
-}
-
-/// Seat the sell scope on a formula, through the lab gate.
-///
-/// **The only caller of [`ProfitFormula::with_sell_scope`] in the crate**,
-/// and deliberately so. The page builds a `formula_page` for its fetch
-/// keys and the table builds its own `formula` for the pricing pass; only
-/// the second one reaches `price_rows`, so a scope seated on the first
-/// alone yields a column of dashes that every unit test passes — which is
-/// how Phase E2's median tell shipped broken. One function, three callers
-/// (the page memo, the table memo, the pricing harness), and a source-read
-/// test in Task 8 that counts them.
-fn seat_sell_scope(f: ProfitFormula, preview: bool, param: Option<SellScope>) -> ProfitFormula {
-    match sell_scope_for(preview, param) {
+/// Keep fetch planning and the pricing pass on the same sale-price market.
+fn seat_sell_scope(f: ProfitFormula, param: Option<SellScope>) -> ProfitFormula {
+    match param {
         Some(s) => f.with_sell_scope(s),
         None => f,
     }
@@ -630,16 +498,12 @@ fn seat_sell_scope(f: ProfitFormula, preview: bool, param: Option<SellScope>) ->
 /// gain's home run all read the sell world's own data at every sell scope
 /// (spec §4), so naming the scope there would be a lie.
 fn revenue_place_for(
-    preview: bool,
     param: Option<SellScope>,
     sell_world: &str,
     datacenter: Option<&str>,
     region: &str,
 ) -> String {
-    match sell_scope_for(preview, param)
-        .map(SellScope::scope)
-        .unwrap_or(Scope::World)
-    {
+    match param.map(SellScope::scope).unwrap_or(Scope::World) {
         Scope::World => sell_world.to_string(),
         // No datacenter resolved yet: the region is the honest wider name,
         // and it is what the fetch key uses too — `sell_scope_key` is handed
@@ -686,7 +550,7 @@ const COL_VWAP: &str = "vwap";
 const COL_TAX: &str = "tax";
 const COL_LISTING_WORLD: &str = "listing-world";
 const COL_LISTING_DC: &str = "listing-dc";
-// Phase D, behind `analyzer-recipe`: appended after the seven
+// Price comparisons are appended after the seven
 // above so every serialized old URL stays byte-identical.
 const COL_REV_LISTING_MIN: &str = "rev-listing-min";
 const COL_REV_SALE_MIN: &str = "rev-sale-min";
@@ -723,17 +587,6 @@ static OPTIONAL_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         .map(|c| c.id)
         .collect()
 });
-/// The `?cols=` contract while the signal-columns lab is off: every token
-/// not gated by a lab. `parse_visible_cols` over this slice drops the
-/// Phase D tokens, so a shared `?cols=hop-gain` renders as before the
-/// phase for a player without the lab.
-static BASE_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    RECIPE_COLUMNS
-        .iter()
-        .filter(|c| !c.id.is_empty() && c.lab.is_none())
-        .map(|c| c.id)
-        .collect()
-});
 /// Default-visible optional columns, derived from `default_on`. Sales/day
 /// is already an always-on column; the confidence chip joins it by default
 /// so stale or manipulated sell-world markets don't silently top the
@@ -760,14 +613,10 @@ fn recipe_query_columns(
     mut visible: HashSet<&'static str>,
     active: &HashSet<String>,
     sort: Option<&str>,
-    preview: bool,
 ) -> HashSet<&'static str> {
     let sort = sort.and_then(|token| token.strip_prefix("grid:"));
     for column in &RECIPE_COLUMNS {
-        if !column.id.is_empty()
-            && (column.lab.is_none() || preview)
-            && (active.contains(column.id) || sort == Some(column.id))
-        {
+        if !column.id.is_empty() && (active.contains(column.id) || sort == Some(column.id)) {
             visible.insert(column.id);
         }
     }
@@ -803,8 +652,7 @@ struct MarketHandles {
     stats_30_unavailable: RwSignal<bool>,
     /// Written by the scroller through the grid's `visible_range` prop.
     visible_range: RwSignal<(usize, usize)>,
-    /// The table's sorted rows, mirrored for the hook. Empty unless Trend
-    /// or Drift is visible, so the toggle-off page never fetches.
+    /// Sorted rows for the visible-window Trend and Drift requests.
     rows: RwSignal<Vec<(usize, RecipeRow)>>,
 }
 
@@ -1138,17 +986,8 @@ fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
 fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::RoiBadge(r.return_on_investment)
 }
-/// The Price slot. Under the toggle it carries an always-present note
-/// sub-line: the listing tell when the price fell back to a listing, and
-/// the signed percent the price sits above or below the sell world's
-/// 7-day sale median — the revenue-side answer to "is this listing-min
-/// price real?" (#1202). The median is on the row already (`sell_median`,
-/// filled from the body the page always fetches), so the tell costs no
-/// request.
-fn cell_price(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
-    if !ctx.preview {
-        return CellValue::Gil(r.market_price);
-    }
+/// Compare the expected price with the same-quality sell-world median.
+fn cell_price(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::GilWithNote {
         amount: r.market_price,
         note: price_note(r.market_price, r.sell_median, r.revenue_fell_back),
@@ -1426,14 +1265,6 @@ const FORMULA_CELL: &str = "px-3 py-2 w-40 shrink-0 text-right";
 const HEAD_40_MD: &str = "w-40 shrink-0 px-3 py-2 leading-tight hidden md:flex";
 const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
 
-/// Daily sales and Confidence become two-line headers *only* while their
-/// header extra is in effect ([`HeaderExtra::header_class`]): baking these
-/// into the column table would move the toggle-off DOM, which has to stay
-/// byte-identical. `md:flex`, not `md:block` — `SortableHeaderCell` appends
-/// `flex flex-col justify-center` for a two-line header and a later
-/// `md:block` would override it at md+. The widths are `HEAD_MD`'s and
-/// `HEAD_28_MD`'s unchanged; only the padding tightens to make room for
-/// line 2, exactly as `FORMULA_HEAD` does for the marked columns.
 const HEAD_MD_2: &str = "w-32 shrink-0 px-4 py-2 leading-tight hidden md:flex";
 const HEAD_28_MD_2: &str = "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex";
 
@@ -1626,7 +1457,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_listing_min,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1638,7 +1468,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_sale_min,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1653,7 +1482,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_sale_median,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1665,7 +1493,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_sale_avg,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1681,7 +1508,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_listing_min,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1697,7 +1523,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_sale_min,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1713,7 +1538,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_sale_median,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1729,7 +1553,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_sale_avg,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1741,7 +1564,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_28_MD,
         default_on: false,
         cell: cell_hop_gain,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1754,7 +1576,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         // Custom: the tooltip needs the page's world names.
         cell_class: CELL_28_MD,
         default_on: false,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1766,7 +1587,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_R_MD,
         default_on: false,
         cell: cell_profit_per_day,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1779,7 +1599,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_28_MID_MD,
         default_on: false,
         cell: cell_trend,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1792,7 +1611,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_28_NUM_MD,
         default_on: false,
         cell: cell_drift,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1806,7 +1624,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_28_NUM_MD,
         default_on: false,
         cell: cell_volume_30,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1818,7 +1635,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_R_MD,
         default_on: false,
         cell: cell_vwap_30,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1830,7 +1646,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
         cell_class: CELL_28_MD,
         default_on: false,
         cell: cell_scope_vs_home,
-        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1899,10 +1714,6 @@ fn signal_wants(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> Sign
         sort_cost,
         hop: visible.contains(COL_HOP_GAIN) || sort == Some(SortMode::HopGain),
         worlds: visible.contains(COL_HOP_WORLDS) || sort == Some(SortMode::HopWorlds),
-        // Flag-off these three are still the placeholders they replaced:
-        // every `rev-*` token and `scope-vs-home` is outside
-        // `BASE_COLUMN_ORDER`, and both sort modes are `lab_only`, so
-        // `visible` cannot hold one and `sort` cannot be one.
         visible_rev,
         sort_rev,
         scope_vs_home: visible.contains(COL_SCOPE_VS_HOME) || sort == Some(SortMode::ScopeVsHome),
@@ -2185,24 +1996,6 @@ enum SortMode {
     Vwap30,
     /// The sell-scope revenue signal minus the sell world's own.
     ScopeVsHome,
-}
-
-impl SortMode {
-    /// Sorts that exist only under the signal-columns lab. With the lab
-    /// off the page treats them as unset, as it did before they existed.
-    fn lab_only(self) -> bool {
-        matches!(
-            self,
-            SortMode::RevSignal(_)
-                | SortMode::CostSignal(_)
-                | SortMode::HopGain
-                | SortMode::HopWorlds
-                | SortMode::ProfitPerDay
-                | SortMode::Volume30
-                | SortMode::Vwap30
-                | SortMode::ScopeVsHome
-        )
-    }
 }
 
 impl FromStr for SortMode {
@@ -2783,9 +2576,6 @@ struct Thresholds {
     listing_dc: Option<String>,
 }
 
-/// Apply the thresholds and sort. Pure, so a header click never re-prices
-/// by itself (a lab sort whose signal the pass has not run changes
-/// `needs`, which does).
 fn filter_and_sort(
     rows: &[Arc<RecipeProfitData>],
     t: &Thresholds,
@@ -2980,12 +2770,6 @@ enum ScopeFallback {
     ScopeStats,
 }
 
-/// `None` when there is no payload at all — which is every flag-off page
-/// and every URL at the default sell scope — or when both halves arrived.
-///
-/// `revenue_is_sale_stat` is what decides the listings-failed case, because
-/// a listing revenue signal never reads the statistics and so cannot be
-/// rescued by them.
 fn scope_fallback(
     bodies: &Option<SellScopeBodies>,
     revenue_is_sale_stat: bool,
@@ -3075,12 +2859,6 @@ fn RecipeAnalyzerTable(
     /// figures came from reads `sell_place`.
     #[prop(into)]
     revenue_place: Signal<String>,
-    /// The sell scope the page resolved through `sell_scope_for` — `None`
-    /// with the lab off and at the default scope. A plain value, not a
-    /// signal: the page reads it inside the Suspense closure, so a scope
-    /// change rebuilds the table, which is what makes the pricing path
-    /// re-resolve (Task 8). Never `#[prop(optional)]` — that strips the
-    /// `Option` from the builder setter (Global Constraint 3).
     sell_scope: Option<SellScope>,
     /// The buy scope's name, for the Cost mark.
     #[prop(into)]
@@ -3088,23 +2866,12 @@ fn RecipeAnalyzerTable(
     /// The ledger chips, built on the page (the popover that renders them
     /// lives inside this table's `ControlBar`).
     strip_terms: Callback<(), Vec<StripTerm>>,
-    /// The `analyzer-recipe` Labs toggle: the formula strip and marks, the
-    /// clamped ROI, the profit readout, the alternative columns and pills,
-    /// the grouped picker, the Price tell, the "n unpriced" note and the
-    /// market columns all hang off this one flag. A plain bool: the page
-    /// reads the lab inside its Suspense join, so a flip remounts this
-    /// table (the grid's header is built once per mount).
-    preview: bool,
     /// The cost signals to run per recipe and the hop flags (page-level,
     /// because the fetch gate reads the same value).
     needs: Memo<NeededSignals>,
     /// The buy scope IS the sell world: reuse its stats index as the
     /// buy-scope index instead of a second identical body.
     buy_stats_aliased: bool,
-    /// Phase F's payload: the sell scope's cheapest map and, under a sale
-    /// revenue signal, its statistics. `None` at the default sell scope —
-    /// which is every flag-off page. Read here for the failure banner; the
-    /// pricing side is Task 8's.
     sell_scope_bodies: Option<SellScopeBodies>,
     /// The sell scope resolved to the buy scope's place, so the buy-side
     /// bodies stand in for it (Task 8's resolution reads this).
@@ -3181,9 +2948,6 @@ fn RecipeAnalyzerTable(
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
-    // Only the setter: `Clear all` writes it, and everything that READS the
-    // scope inside this component reads the `sell_scope` prop, which the
-    // page already put through the lab gate.
     let (_, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (listing_world_filter, set_listing_world_filter) =
         filter_query_signal::<String>(FILTER_LISTING_WORLD);
@@ -3251,10 +3015,6 @@ fn RecipeAnalyzerTable(
     // untracked read anywhere), because it is otherwise an accidental
     // invariant.
     let sell_scope_value = sell_scope.map(SellScope::scope).unwrap_or(Scope::World);
-    // The live sentence's gate, on the prop the page already put through
-    // `sell_scope_for`: `false` on every flag-off page and at the default
-    // scope. Read by the header extras below, so the one column whose
-    // number blends two markets can say which.
     let scope_is_wider = sell_scope_value != Scope::World;
     let scope_prices = sell_scope_bodies
         .as_ref()
@@ -3332,27 +3092,21 @@ fn RecipeAnalyzerTable(
         // dashes that no unit test can see (Phase E2's median tell).
         let mut f = seat_sell_scope(
             ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope()),
-            preview,
             sell_scope,
         )
         .effective(buy_stats_loaded, revenue_stats_loaded);
-        // The phase's one number change, and it only happens under the
-        // lab: a 363,884% ROI off a single fake listing reads as noise, so
-        // the clamped policy caps it at the display ceiling.
-        if preview {
-            f.roi = RoiMath::ClampedF64;
-        }
+        f.roi = RoiMath::ClampedF64;
         f
     });
 
     // Header marks come from the *effective* formula above, never from the
     // raw selection: a header must not name a signal the numbers fell back
-    // from. `None` leaves every column exactly as it renders today.
+    // from.
     // A `Memo`, not a derived signal: the grid reads this once per formula
     // cell per row, and a derived signal would rebuild the label map (and
     // re-render every row on any unrelated query change) each time.
     let marks = Memo::new(move |_| {
-        preview.then(|| {
+        Some({
             let f = formula.get();
             let m = f.marks(revenue_place.get(), buy_place.get());
             mark_labels(
@@ -3364,26 +3118,11 @@ fn RecipeAnalyzerTable(
         })
     });
 
-    // Line 2 and titles for the alternative-signal and hop headers. The
-    // "(= …)" mark follows the *effective* formula (what the numbers use);
-    // the pill's pressed state follows the *selected* one (what pressing
-    // it writes). Empty with the lab off: every header renders as before.
     let header_extras = Memo::new(move |_| {
         let mut by_kind = HashMap::new();
-        if !preview {
-            return HeaderExtras { by_kind };
-        }
         let f = formula.get();
         let selected_cost = cost_basis().unwrap_or_default();
         let selected_revenue = revenue_metric().unwrap_or_default();
-        // Read once: the market arm below runs for every column in the
-        // table, and `sell_place.get()` clones a `String` each time.
-        //
-        // Two names, one character apart, and the split is the point:
-        // `sell_now` is the sell WORLD — the market columns' 7-day figures
-        // come from its own data at every sell scope — while `revenue_now`
-        // is the sell PLACE the revenue signal was actually read across.
-        // They are the same string unless a lab-on URL widened the scope.
         let sell_now = sell_place.get();
         let revenue_now = revenue_place.get();
         // `Some` only when a wider scope really moved the revenue side, on
@@ -3565,12 +3304,6 @@ fn RecipeAnalyzerTable(
         };
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        // Reactive on the 30-day body: `None` until it lands, and forever
-        // when no 30-day column asked for it. `RwSignal::set` notifies
-        // whatever it is handed, so the world-change reset below only
-        // writes when there is something to clear — otherwise every
-        // sell-world change would re-sort the whole table to absorb a
-        // `None` -> `None`, on the flag-off page too.
         let stats_30 = market.stats_30.get();
         filter_and_sort(
             &priced(),
@@ -3643,9 +3376,6 @@ fn RecipeAnalyzerTable(
         if buy_scope().is_some() {
             active.push(FILTER_BUY_SCOPE);
         }
-        // Lab-gated at the source, unlike the three above: those are
-        // pre-lab params, and a bookmarked `?sell-scope=` must not change
-        // the flag-off page's "no active filters" hint.
         if sell_scope.is_some() {
             active.push(FILTER_SELL_SCOPE);
         }
@@ -3718,28 +3448,24 @@ fn RecipeAnalyzerTable(
     // (recognition, not recall — same rationale as the filter menu), read
     // straight off the column table.
     let column_options = Signal::derive(move || {
-        if preview {
-            let f = formula.get();
-            grouped_picker_options(
-                &RECIPE_COLUMNS,
-                i18n,
-                &PickerContext {
-                    // The Revenue group's heading names where the revenue
-                    // signals are read, so it follows the sell scope.
-                    sell_place: revenue_place.get(),
-                    buy_place: buy_place.get(),
-                    revenue: f.revenue_signal(),
-                    cost: f.cost_signal(),
-                    capped: needs.get().capped,
-                    // Hints Scope vs home before it is ticked: at the
-                    // default scope the column is dashes end to end.
-                    sell_scope_is_world: sell_scope.map(SellScope::scope).unwrap_or(Scope::World)
-                        == Scope::World,
-                },
-            )
-        } else {
-            picker_options(&RECIPE_COLUMNS, i18n)
-        }
+        let f = formula.get();
+        grouped_picker_options(
+            &RECIPE_COLUMNS,
+            i18n,
+            &PickerContext {
+                // The Revenue group's heading names where the revenue
+                // signals are read, so it follows the sell scope.
+                sell_place: revenue_place.get(),
+                buy_place: buy_place.get(),
+                revenue: f.revenue_signal(),
+                cost: f.cost_signal(),
+                capped: needs.get().capped,
+                // Hints Scope vs home before it is ticked: at the
+                // default scope the column is dashes end to end.
+                sell_scope_is_world: sell_scope.map(SellScope::scope).unwrap_or(Scope::World)
+                    == Scope::World,
+            },
+        )
     });
     let toggle_column = Callback::new(move |col: &'static str| {
         let mut set = visible_cols.get_untracked();
@@ -3795,9 +3521,6 @@ fn RecipeAnalyzerTable(
         set_cost_basis(None);
         set_revenue_metric(None);
         set_buy_scope(None);
-        // Deliberately not lab-gated: clearing an absent param is a no-op,
-        // and a user who turns the lab off after setting a scope must
-        // still be able to clear it.
         set_sell_scope(None);
         set_listing_world_filter(None);
         set_listing_dc_filter(None);
@@ -3854,7 +3577,7 @@ fn RecipeAnalyzerTable(
                 let readout = {
                     let data = data.clone();
                     move || {
-                        preview.then(|| {
+                        Some({
                             t_string!(
                                 i18n,
                                 recipe_analyzer_profit_readout,
@@ -3868,8 +3591,6 @@ fn RecipeAnalyzerTable(
                     }
                 };
                 view! {
-                    // `title` is an `Option`: with the lab off the cell
-                    // carries no attribute at all.
                     <div  class=class title=readout>
                         <Gil amount=data.profit />
                     </div>
@@ -3921,7 +3642,7 @@ fn RecipeAnalyzerTable(
                         </Show>
                     }
                 };
-                if preview && data.unpriced > 0 {
+                if data.unpriced > 0 {
                     let n = data.unpriced;
                     view! {
                         <div  class=class>
@@ -4084,7 +3805,6 @@ fn RecipeAnalyzerTable(
 
     let cell_ctx = Signal::derive(move || CellCtx {
         now_unix: chrono::Utc::now().timestamp(),
-        preview,
         // `with`, not `get`: this is read once per rendered row and `get`
         // would clone both sets each time.
         capped_cost: needs.with(|n| capped_flags(&n.capped)),
@@ -4112,22 +3832,6 @@ fn RecipeAnalyzerTable(
     view! {
         <div class="flex flex-col gap-6">
             <ActiveListBanner />
-            // ONE child, not two. An `Option` child that resolves to `None`
-            // still writes a `<!>` hydration marker (tachys; the same rule
-            // `sort_header.rs` and Global Constraint 2 turn on), so an
-            // unconditional second `.then(..)` beside the line above would
-            // add a marker to EVERY page — including every flag-off one,
-            // where `sell_scope_bodies` is always `None`. Routing both lines
-            // through one `match` keeps the no-payload render byte-identical
-            // to today's, which is what
-            // `a_failed_sell_scope_body_says_so_instead_of_silently_repricing`
-            // renders both shapes to prove.
-            // `get_untracked`, deliberately: this banner describes the
-            // payload the table was BUILT with, and `sell_scope_bodies` is a
-            // plain prop captured at that same moment. Reading the signal
-            // reactively here would let the sentence describe one revenue
-            // signal while the bodies beside it belong to another. A change
-            // that matters re-keys `sell_scope_source` and rebuilds anyway.
             {match scope_fallback(
                 &sell_scope_bodies,
                 formula.get_untracked().revenue_signal().sale_stat().is_some(),
@@ -4200,7 +3904,7 @@ fn RecipeAnalyzerTable(
                 actions=move || {
                     view! {
                         <RealtimeStatus status=realtime_status last_update=last_update />
-                        <MarketMenu terms=strip_terms preview=preview />
+                        <MarketMenu terms=strip_terms />
                     }
                         .into_any()
                 }
@@ -4337,13 +4041,6 @@ fn RecipeAnalyzerTable(
                             }
                         })
                 }}
-                // ONE child, not two — Global Constraint 2 and the same rule
-                // the amber banner above follows. An `Option` child that
-                // resolves to `None` still writes a `<!>` hydration marker,
-                // so a second `{move || …}` beside this one would add a
-                // marker to every flag-off page, where `sell_scope` is
-                // always `None`. The `None` arm here is the buy chip alone,
-                // exactly the child that shipped before.
                 {move || {
                     let buy = buy_scope()
                         .map(|current| {
@@ -4359,12 +4056,6 @@ fn RecipeAnalyzerTable(
                                 />
                             }
                         });
-                    // Counted in `active_filters` like the three Market
-                    // params above it, so it must be removable like them:
-                    // without a chip it suppresses the "no filters" hint
-                    // while offering nothing to clear, and `Clear all`
-                    // drops it with no trace of what it dropped. A plain
-                    // value, already through the page's lab gate.
                     match sell_scope {
                         None => buy.into_any(),
                         Some(current) => view! {
@@ -4615,7 +4306,6 @@ fn RecipeAnalyzerTable(
                     marks=marks
                     extras=header_extras
                     on_pill=on_pill
-                    lab_columns=preview
                     visible_range=market.visible_range
                 />
              </div>
@@ -4651,19 +4341,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
     let datacenter = use_datacenter_for_world(move || query.with(|p| p.get("world").clone()));
 
-    // The three pricing params are read here for the resources; under the
-    // lab their setters also drive the formula strip's selects.
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
-    // Phase F's fourth pricing param. Read only through `sell_scope_for`,
-    // never raw; the setter strips the default (Task 6).
+    // The sale-price market; the setter strips the default world scope.
     let (sell_scope, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
-    // Shared grid interactions are always available. The experimental recipe
-    // market model remains opt-in until its production validation is complete.
-    let preview = use_lab(LAB_ANALYZER_RECIPE);
     // Sub-crafts drive the cost-column cap; read here so the fetch gate
     // (page level) and the pass (table) agree.
     let (use_subcrafts_page, _) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
@@ -4676,13 +4360,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // the table marks its headers from its own copy, and the info panel's
     // sentence and the strip's dots apply it below over `stats_loaded`.
     let formula_page = Memo::new(move |_| {
-        // The lab gate, never the raw param: with the toggle off this
-        // leaves `Term::Fixed(Scope::World)`, which is what every
-        // pre-Phase-F URL has always produced, so `needed_bodies` skips its
-        // Phase F block and no new request is issued.
         seat_sell_scope(
             ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope()),
-            preview.get(),
             sell_scope(),
         )
     });
@@ -4690,21 +4369,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // `?cols=` lives here rather than in the table because the table
     // remounts whenever its resources change.
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
-    // `?sort=` / `?dir=` are hoisted for the same reason. A lab-only sort
-    // reads as unset while the lab is off, exactly as its token did before
-    // the variant existed.
-    let (sort_param, _) = query_signal::<SortMode>("sort");
-    let sort_mode = Memo::new(move |_| sort_param.get().filter(|m| preview.get() || !m.lab_only()));
+    let (sort_mode, _) = query_signal::<SortMode>("sort");
     let (sort_dir, _) = query_signal::<SortDir>("dir");
-    // The lab widens the `?cols=` contract; off, the Phase D tokens drop
-    // like any unknown token.
     let visible_cols = Memo::new(move |_| {
-        let all: &'static [&'static str] = if preview.get() {
-            &OPTIONAL_COLUMN_ORDER
-        } else {
-            &BASE_COLUMN_ORDER
-        };
-        parse_visible_cols(cols_param().as_deref(), all, &DEFAULT_COLS)
+        parse_visible_cols(
+            cols_param().as_deref(),
+            &OPTIONAL_COLUMN_ORDER,
+            &DEFAULT_COLS,
+        )
     });
     let query_cols = Memo::new(move |_| {
         query.with(|q| {
@@ -4712,25 +4384,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 visible_cols.get(),
                 &active_metric_columns(q.get("gf").as_deref()),
                 q.get("sort").as_deref(),
-                preview.get(),
             )
         })
     });
 
-    // Which cost signals the pass runs per recipe. Computed here because
-    // the buy-scope fetch key must see the sort target and the visible
-    // columns. Off the lab this is exactly {selected}: today's fetches.
+    // Hidden filter and sort targets also need their price providers.
     let needs_page: Memo<NeededSignals> = Memo::new(move |_| {
         let f = formula_page.get();
-        if preview.get() {
-            needed_signals(
-                &f,
-                &signal_wants(&query_cols.get(), sort_mode.get()),
-                use_subcrafts_page().unwrap_or(false),
-            )
-        } else {
-            needed_signals(&f, &SignalWants::default(), false)
-        }
+        needed_signals(
+            &f,
+            &signal_wants(&query_cols.get(), sort_mode.get()),
+            use_subcrafts_page().unwrap_or(false),
+        )
     });
 
     // Rewrite pre-market-model query params once on mount, before the
@@ -4809,13 +4474,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             .map(|w| w.name)
             .unwrap_or_else(|| UNRESOLVED_PLACE.to_string())
     });
-    // The second name, and the whole of Task 5: everything that says where
-    // *revenue* came from reads this, everything that says where the 7-day
-    // figures came from reads `sell_place`. Equal at every scope with the
-    // lab off, and equal at the default scope with it on.
+    // Revenue follows its selected market; sales velocity stays on the sell world.
     let revenue_place = Memo::new(move |_| {
         revenue_place_for(
-            preview.get(),
             sell_scope(),
             &sell_place.get(),
             datacenter().as_deref(),
@@ -4824,22 +4485,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     });
     let buy_place = Memo::new(move |_| buy_scope_name.get());
 
-    // The on-page half of the sell scope's honesty. `None` — nothing
-    // rendered — with the lab off and at the default scope, on the same
-    // gate the live sentence uses, so it cannot say anything about a page
-    // that did not widen its scope.
-    //
-    // Also `None` under a sale revenue signal. The sentence says the
-    // cheapest listing across a wider market "can only lower" the price,
-    // which is true of the listing signal and false of a sale statistic,
-    // where the delta goes either way — the column tooltip this line
-    // borrows from says both halves, and the first cut of this note took
-    // only the first. Gated on the CHOSEN signal, not the effective one: if
-    // the chosen sale signal degrades to a listing because its body
-    // failed, the amber banner already explains that, and a second line
-    // asserting the listing rule would be describing a fallback as a choice.
     let sell_scope_note = Signal::derive(move || {
-        sell_scope_for(preview.get(), sell_scope())
+        sell_scope()
             .filter(|s| s.scope() != Scope::World)
             .filter(|_| formula_page.get().revenue_signal().sale_stat().is_none())
             .map(|_| {
@@ -4880,16 +4527,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }),
                     aria: t_string!(i18n, formula_change_revenue_aria).to_string(),
                 }),
-                // The spec's "fourth Market select". Reads through the lab
-                // gate like every other consumer of the param, so a
-                // flag-off page that somehow rendered this chip would show
-                // `world` rather than a bookmarked `?sell-scope=region`.
                 place_select: Some(StripSelect {
-                    value: Signal::derive(move || {
-                        sell_scope_for(preview.get(), sell_scope())
-                            .unwrap_or_default()
-                            .to_string()
-                    }),
+                    value: Signal::derive(move || sell_scope().unwrap_or_default().to_string()),
                     options: sell_scope_options(i18n),
                     on_change: Callback::new(move |v: String| {
                         let parsed = v.parse::<SellScope>().ok();
@@ -4948,23 +4587,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             get_cheapest_listings(&scope_name).await
         });
 
-    // Buy from = This world only means the sell world itself: the
-    // sell-world stats body doubles as the buy-scope body (one body, not
-    // two identical ones). Lab-gated so the flag-off page fetches as before.
     let buy_scope_is_sell_world = Memo::new(move |_| {
-        preview.get()
-            && buy_scope().unwrap_or_default() == BuyScope::World
-            && selected_world.get().is_some()
+        buy_scope().unwrap_or_default() == BuyScope::World && selected_world.get().is_some()
     });
-    // Sale statistics back the sale-median/min/avg cost bases, over the buy
-    // scope. Fetched lazily — `None` (no fetch) while the cost basis sits
-    // on the listing basis and no sale-cost column is visible or sorted
-    // (the lab), so the default page load is unchanged. Basis toggles
-    // between sale stats recompute client-side; only a scope change
-    // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
-    // fetched separately below.) This key answers the BUY-SCOPE body only,
-    // so it pins `stats_30: false`: the 30-day sell-world body the opt-in
-    // Volume/VWAP columns want is a different role with its own key.
     let buy_sale_stats_scope = Memo::new(move |_| {
         let formula = ProfitFormula::recipe_from_query(cost_basis(), None, buy_scope());
         let needs = RecipeNeeds {
@@ -5043,11 +4668,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         visible_range: RwSignal::new((0, 0)),
         rows: RwSignal::new(Vec::new()),
     };
-    // Trend and Drift: the flip finder's visible-window fetch, scoped to the
-    // sell world (the sparklines endpoint takes a world, never a datacenter).
-    // The hook's own effect resets the store when that world changes. Its
-    // rows come from the table's mirror, which stays empty unless one of
-    // those two columns is on, so the toggle-off page asks for nothing.
     use_visible_enrichment(
         market.sparklines,
         market.rows.into(),
@@ -5150,10 +4770,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             && revenue_place.get() == buy_scope_name.get()
     });
 
-    // Phase F's bodies. A formula body, so it joins the Suspense gate: the
-    // table cannot price a row without the map revenue comes from. `None` —
-    // no fetch — at the default sell scope, which is every flag-off page and
-    // every URL that has not asked for a wider one.
     let sell_scope_source = Memo::new(move |_| {
         let formula = formula_page.get();
         let signals = needs_page.get();
@@ -5220,12 +4836,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         },
     );
 
-    // Constructed LAST of the page's resources, deliberately. Every
-    // `ArcResource` takes a hydration id at construction and serialises one
-    // entry into the SSR payload whether or not it ever resolves, so a new
-    // one is an unavoidable flag-off byte delta — but built here it APPENDS
-    // an id instead of renumbering the three resources that would otherwise
-    // follow it. One extra entry rather than one extra plus three shifted.
     let sell_scope_bodies = ArcResource::new(
         sell_scope_source,
         move |key: Option<(String, bool, bool)>| async move {
@@ -5269,61 +4879,55 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     calculation=ToolCalculation::new(
                         t_string!(i18n, recipe_analyzer_calc_title).to_string(),
                         Signal::derive(move || {
-                            if preview.get() {
-                                // The EFFECTIVE formula: a failed stats body
-                                // downgrades the signal, and the sentence must
-                                // never name a signal the numbers ignore.
-                                let loaded = stats_loaded.get();
-                                let f = formula_page.get().effective(loaded.0, loaded.1);
-                                let label_of = |s: PriceSignal| {
-                                    cost_basis_options(i18n)
-                                        .into_iter()
-                                        .find(|(t, _)| *t == s.to_string())
-                                        .map(|(_, l)| l)
-                                        .unwrap_or_default()
-                                };
-                                let scoped = sell_scope_for(preview.get(), sell_scope())
-                                    .is_some_and(|s| s.scope() != Scope::World);
-                                // The connectives are translated: this is a
-                                // template, never a `format!` in Rust.
-                                //
-                                // Two keys, not one edited key: "on {{sell}}"
-                                // is right for a world and wrong for a
-                                // datacenter, and rewording the shared string
-                                // would move the default page's sentence.
-                                if scoped {
-                                    t_string!(
-                                        i18n,
-                                        recipe_analyzer_calc_formula_live_scoped,
-                                        revenue = label_of(f.revenue_signal()),
-                                        sell = revenue_place.get(),
-                                        tax = t_string!(i18n, formula_term_tax).to_string(),
-                                        cost = label_of(f.cost_signal()),
-                                        buy = buy_place.get()
-                                    )
-                                    .to_string()
-                                } else {
-                                    t_string!(
-                                        i18n,
-                                        recipe_analyzer_calc_formula_live,
-                                        revenue = label_of(f.revenue_signal()),
-                                        sell = revenue_place.get(),
-                                        tax = t_string!(i18n, formula_term_tax).to_string(),
-                                        cost = label_of(f.cost_signal()),
-                                        buy = buy_place.get()
-                                    )
-                                    .to_string()
-                                }
+                            // The EFFECTIVE formula: a failed stats body
+                            // downgrades the signal, and the sentence must
+                            // never name a signal the numbers ignore.
+                            let loaded = stats_loaded.get();
+                            let f = formula_page.get().effective(loaded.0, loaded.1);
+                            let label_of = |s: PriceSignal| {
+                                cost_basis_options(i18n)
+                                    .into_iter()
+                                    .find(|(t, _)| *t == s.to_string())
+                                    .map(|(_, l)| l)
+                                    .unwrap_or_default()
+                            };
+                            let scoped = sell_scope()
+                                .is_some_and(|s| s.scope() != Scope::World);
+                            // The connectives are translated: this is a
+                            // template, never a `format!` in Rust.
+                            //
+                            // Two keys, not one edited key: "on {{sell}}"
+                            // is right for a world and wrong for a
+                            // datacenter, and rewording the shared string
+                            // would move the default page's sentence.
+                            if scoped {
+                                t_string!(
+                                    i18n,
+                                    recipe_analyzer_calc_formula_live_scoped,
+                                    revenue = label_of(f.revenue_signal()),
+                                    sell = revenue_place.get(),
+                                    tax = t_string!(i18n, formula_term_tax).to_string(),
+                                    cost = label_of(f.cost_signal()),
+                                    buy = buy_place.get()
+                                )
+                                .to_string()
                             } else {
-                                t_string!(i18n, recipe_analyzer_calc_formula).to_string()
+                                t_string!(
+                                    i18n,
+                                    recipe_analyzer_calc_formula_live,
+                                    revenue = label_of(f.revenue_signal()),
+                                    sell = revenue_place.get(),
+                                    tax = t_string!(i18n, formula_term_tax).to_string(),
+                                    cost = label_of(f.cost_signal()),
+                                    buy = buy_place.get()
+                                )
+                                .to_string()
                             }
                         }),
                         Signal::derive(move || {
                             let mut details = t_string!(i18n, recipe_analyzer_calc_details).to_string();
-                            if preview.get() {
-                                details.push(' ');
-                                details.push_str(t_string!(i18n, recipe_analyzer_calc_signal_semantics));
-                            }
+                            details.push(' ');
+                            details.push_str(t_string!(i18n, recipe_analyzer_calc_signal_semantics));
                             details
                         }),
                     )
@@ -5390,36 +4994,20 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 // below that the chips would wrap into four full-width rows
                 // and push the table off the first screen — the Market
                 // popover carries the same controls stacked.
-                <Show when=move || preview.get()>
-                    <div class="hidden md:flex flex-wrap items-center gap-2">
-                        <FormulaStrip terms=strip_terms() layout=StripLayout::Inline />
-                    </div>
-                    // What picking a wider scope actually does to the page:
-                    // every profit number falls and rows drop out of the
-                    // count, because a market that contains your world can
-                    // only undercut it. The column tooltip that says so is
-                    // off by default, lab-gated and `hidden md:`, and the
-                    // changelog is not on the page at all — so a player who
-                    // sets the scope from the Market popover on a phone has
-                    // nowhere to read it, and a correct feature reads as a
-                    // broken one. Not `hidden md:`: this is the half of the
-                    // strip a phone needs most.
-                    //
-                    // Inside the `Show`, so it is not merely `None` with the
-                    // lab off — the children closure never runs and no `<!>`
-                    // marker exists to move (Global Constraint 2).
-                    {move || {
-                        sell_scope_note
-                            .get()
-                            .map(|note| {
-                                view! {
-                                    <p class="text-xs text-[color:var(--color-text-muted)] max-w-prose">
-                                        {note}
-                                    </p>
-                                }
-                            })
-                    }}
-                </Show>
+                <div class="hidden md:flex flex-wrap items-center gap-2">
+                    <FormulaStrip terms=strip_terms() layout=StripLayout::Inline />
+                </div>
+                {move || {
+                    sell_scope_note
+                        .get()
+                        .map(|note| {
+                            view! {
+                                <p class="text-xs text-[color:var(--color-text-muted)] max-w-prose">
+                                    {note}
+                                </p>
+                            }
+                        })
+                }}
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -5478,10 +5066,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         stats_loaded=stats_loaded
                                         sell_place=sell_place
                                         revenue_place=revenue_place
-                                        sell_scope=sell_scope_for(preview.get(), sell_scope())
+                                        sell_scope=sell_scope()
                                         buy_place=buy_place
                                         strip_terms=Callback::new(move |()| strip_terms())
-                                        preview=preview.get()
                                         needs=needs_page
                                         buy_stats_aliased=buy_scope_is_sell_world.get()
                                         sell_scope_bodies=bodies
@@ -5528,7 +5115,6 @@ mod test {
     // into a failure.
     use crate::analysis::{DELTA_DEAD_BAND_PCT, signed_delta_class};
     use crate::analyzer_kit::enrichment::{chunk_keys, visible_keys};
-    use crate::analyzer_kit::formula::Term;
     use crate::components::virtual_grid::{GRID_OVERSCAN, row_range};
     use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
@@ -5627,65 +5213,16 @@ mod test {
         assert_eq!(FILTER_LISTING_DC, "listing-dc");
     }
 
-    /// Both Phase F gates, together, because they are two halves of one
-    /// rule: with the lab off the param is dropped, and a formula that
-    /// never reaches `with_sell_scope` is `Term::Fixed(World)` — the exact
-    /// value `recipe_from_query` has produced since Phase A, so the
-    /// flag-off ledger is `PartialEq`-identical to today's.
     #[test]
-    fn the_sell_scope_gate_and_its_seating_are_inert_with_the_toggle_off() {
+    fn sell_scope_applies_without_an_experiment() {
         let base = ProfitFormula::recipe_from_query(None, None, None);
-        for param in [
-            None,
-            Some(SellScope(Scope::Region)),
-            Some(SellScope(Scope::Datacenter)),
-            Some(SellScope::default()),
-        ] {
-            assert_eq!(sell_scope_for(false, param), None, "{param:?}");
-            let off = seat_sell_scope(base, false, param);
-            assert_eq!(off.sell_scope, Term::Fixed(Scope::World), "{param:?}");
-            assert_eq!(off, base, "the flag-off ledger must be the same value");
+        assert_eq!(seat_sell_scope(base, None), base);
+        for scope in [Scope::World, Scope::Datacenter, Scope::Region] {
+            assert_eq!(
+                seat_sell_scope(base, Some(SellScope(scope))).sell_scope(),
+                scope
+            );
         }
-        // Lab on: the param passes through, and `None` still seats nothing.
-        assert_eq!(sell_scope_for(true, None), None);
-        assert_eq!(seat_sell_scope(base, true, None), base);
-        assert_eq!(
-            sell_scope_for(true, Some(SellScope(Scope::Datacenter))),
-            Some(SellScope(Scope::Datacenter))
-        );
-        assert_eq!(
-            seat_sell_scope(base, true, Some(SellScope(Scope::Region))).sell_scope(),
-            Scope::Region
-        );
-        // The one combination the loop above cannot reach: a hand-typed
-        // `?sell-scope=world` with the lab ON. The gate passes it through,
-        // so `with_sell_scope` runs and the slot becomes
-        // `Term::Select(World)` — which is NOT `PartialEq`-equal to the
-        // untouched `Term::Fixed(World)`, so the whole `ProfitFormula`
-        // compares unequal and a `Memo<ProfitFormula>` would notify.
-        //
-        // It prices identically: `sell_scope()` collapses both terms to
-        // `Scope::World`, so every lookup reads the same market and Global
-        // Constraint 8 is untouched. Inert only while nothing renders on
-        // the discriminant; asserted here, in the task that owns the
-        // setter, so the day something does render on it this is where it
-        // is noticed rather than in a screenshot.
-        assert_eq!(
-            sell_scope_for(true, Some(SellScope::default())),
-            Some(SellScope::default())
-        );
-        let on_world = seat_sell_scope(base, true, Some(SellScope::default()));
-        assert_eq!(on_world.sell_scope, Term::Select(Scope::World));
-        assert_ne!(
-            on_world, base,
-            "lab-on `?sell-scope=world` moves the term's discriminant"
-        );
-        assert_eq!(
-            on_world.sell_scope(),
-            base.sell_scope(),
-            "…and prices identically to the untouched ledger"
-        );
-        assert_eq!(on_world.sell_scope(), Scope::World);
     }
 
     /// One strip term can carry BOTH selects — the signal and the place —
@@ -5838,16 +5375,12 @@ mod test {
         });
     }
 
-    /// The sell scope is counted like the three pricing params it sits
-    /// beside, and Clear all resets it — but the count is driven by the
-    /// prop the page already gated, so a bookmarked `?sell-scope=` cannot
-    /// change the flag-off page's "no active filters" hint.
     #[test]
     fn the_sell_scope_is_counted_and_cleared_like_the_other_market_params() {
         let production = production_source();
         assert!(
             production.contains(&format!("if {}.is_some() {{", "sell_scope")),
-            "active_filters counts the lab-gated prop, not a raw query read"
+            "active_filters counts the resolved scope prop"
         );
         assert!(
             production.contains(&format!("{}(FILTER_SELL_SCOPE)", "active.push")),
@@ -5876,7 +5409,7 @@ mod test {
         // third, `revenue_place`, goes through `revenue_place_for`, which
         // holds the gate itself.)
         assert!(
-            production_squeezed().contains("sell_scope=sell_scope_for(preview.get(),sell_scope())"),
+            production_squeezed().contains("sell_scope=sell_scope()"),
             "the page must resolve the scope INSIDE the Suspense closure and \
              pass it as a prop; nothing else rebuilds the table when it moves"
         );
@@ -5894,21 +5427,6 @@ mod test {
                 .contains("set_sell_scope(parsed.filter(|s|*s!=SellScope::default()));"),
             "the sell-scope setter strips the sell side's default, not the buy side's"
         );
-        // Counted in `active_filters` means "drawn as a chip": that memo's
-        // own comment says so, `is_empty` drives the "no filters" hint off
-        // it, and `Clear all` resets it. Without a chip the sell scope was
-        // the one entry that suppressed the hint while offering nothing to
-        // remove, and `Clear all` dropped it with no trace of what it had
-        // dropped.
-        //
-        // One needle, from the `match` down to the label key, because it
-        // has three separate jobs. It pins that the chip EXISTS; that it
-        // shares the buy chip's child rather than adding a second one (a
-        // sibling `{move || …}` resolving to `None` still writes a `<!>`
-        // hydration marker, on every flag-off page — Global Constraint 2,
-        // and the same rule the amber banner follows); and that the two
-        // chips did not swap labels, which two whole-file existence checks
-        // would have missed exactly as they did for the two arias.
         assert!(
             production_squeezed().contains(
                 "matchsell_scope{None=>buy.into_any(),Some(current)=>view!{{buy}\
@@ -5920,13 +5438,13 @@ mod test {
             production_squeezed().contains("options=sell_scope_options(i18n)"),
             "…offering the same three tokens the strip's select does"
         );
-        // The buy chip keeps its own label: the popover fallback and the
-        // chip. A swap would satisfy both needles above.
+        // The buy chip keeps its own label. The formula strip has its own
+        // accessible labels for the inline controls.
         assert_eq!(
             production_source()
                 .matches("recipe_analyzer_buy_from_label")
                 .count(),
-            2
+            1
         );
         assert_eq!(
             production_source()
@@ -5936,43 +5454,24 @@ mod test {
         );
     }
 
-    /// Picking a wider scope lowers every profit number and drops rows out
-    /// of the count — correct (a market that contains your world can only
-    /// undercut it), and explained nowhere a player looks: the column
-    /// tooltip that says it is off by default, lab-gated and `hidden md:`,
-    /// and the changelog is not on the page. So the page says it itself.
-    ///
-    /// Flag-off inertness is STRUCTURAL, not a `None`: the line lives
-    /// inside `<Show when=preview>`, whose children closure never runs with
-    /// the lab off, so there is no `<!>` marker to move. The slice below is
-    /// what pins that — an existence check would pass with the line
-    /// rendered anywhere on the page.
     #[test]
     fn the_wider_scope_says_what_it_does_to_the_numbers() {
         let squeezed = production_squeezed();
         assert!(
             squeezed.contains(
-                "letsell_scope_note=Signal::derive(move||{sell_scope_for(preview.get(),\
-                 sell_scope()).filter(|s|s.scope()!=Scope::World)"
+                "letsell_scope_note=Signal::derive(move||{sell_scope().filter(|s|s.scope()!=Scope::World)"
             ),
-            "the note is gated on the lab AND on the scope really being wider"
+            "the note only appears for a wider sale-price market"
         );
         assert!(
             squeezed.contains("recipe_analyzer_sell_scope_note,place=revenue_place.get()"),
             "…and names the market the price was read across, not the sell world"
         );
-        // Inside the lab `Show`, between the inline strip and its close.
         let strip = squeezed
             .find("<FormulaStripterms=strip_terms()layout=StripLayout::Inline/>")
-            .expect("the inline strip");
-        let close = squeezed[strip..]
-            .find("</Show>")
-            .expect("the strip's Show closes");
-        assert!(
-            squeezed[strip..strip + close].contains("sell_scope_note.get()"),
-            "the note renders under the strip and inside the lab gate, so it \
-             cannot exist at all with the toggle off"
-        );
+            .unwrap();
+        let table = squeezed[strip..].find("<Suspense").unwrap();
+        assert!(squeezed[strip..strip + table].contains("sell_scope_note.get()"));
     }
 
     #[test]
@@ -6128,20 +5627,6 @@ mod test {
                 "scope-vs-home",
             ]
         );
-        // The contract the page uses while the lab is off: the seven of Phase B.
-        assert_eq!(
-            BASE_COLUMN_ORDER.as_slice(),
-            &[
-                "confidence",
-                "last-sold",
-                "volume",
-                "vwap",
-                "tax",
-                "listing-world",
-                "listing-dc"
-            ]
-        );
-        assert_eq!(DEFAULT_COLS.as_slice(), &["confidence"]);
     }
 
     /// Phase F's complete URL surface, in one assertion, so a reviewer can
@@ -6157,24 +5642,19 @@ mod test {
         // default the setter strips.
         assert_eq!(SellScope::default().to_string(), "world");
 
-        // One column token, appended, lab-gated.
         assert_eq!(OPTIONAL_COLUMN_ORDER.len(), 23);
         assert_eq!(*OPTIONAL_COLUMN_ORDER.last().unwrap(), COL_SCOPE_VS_HOME);
-        assert_eq!(BASE_COLUMN_ORDER.len(), 7);
-        assert!(!BASE_COLUMN_ORDER.contains(&COL_SCOPE_VS_HOME));
         assert_eq!(DEFAULT_COLS.as_slice(), &["confidence"]);
         assert_eq!(RECIPE_COLUMNS.len(), 31);
         let col = RECIPE_COLUMNS
             .iter()
             .find(|c| c.id == COL_SCOPE_VS_HOME)
             .expect("catalogued");
-        assert_eq!(col.lab, Some(LAB_ANALYZER_RECIPE));
+        assert_eq!(col.lab, None);
         assert!(!col.default_on);
 
-        // One sort token, lab-only.
         assert_eq!(ALL_SORT_MODES.len(), 25);
         assert_eq!(SortMode::ScopeVsHome.to_string(), COL_SCOPE_VS_HOME);
-        assert!(SortMode::ScopeVsHome.lab_only());
 
         // And nothing was migrated, renamed or removed.
         assert_eq!(
@@ -6685,11 +6165,10 @@ mod test {
         let revenue_at = revenue_source(o.sell_scope.unwrap_or(Scope::World), false, use_scope);
         // Seated through the SAME function production uses. Two
         // constructions of one ledger is exactly how Phase E2's median tell
-        // shipped past a green suite; `seat_sell_scope(f, true, None)`
+        // shipped past a green suite; `seat_sell_scope(f, None)`
         // returns `f`, so every existing run is byte-identical.
         let formula = seat_sell_scope(
             ProfitFormula::recipe_from_query(Some(cost), Some(revenue), o.scope),
-            true,
             o.sell_scope.map(SellScope),
         );
         let inp = PriceInputs {
@@ -7738,19 +7217,7 @@ mod test {
             "the eleven sorts at HEAD, the ten signal and hop columns, E2's three \
              and F's Scope vs home; listing world/dc, trend and drift do not sort"
         );
-        for c in RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()) {
-            assert!(!c.default_on, "{} must start hidden", c.id);
-            assert_eq!(c.lab, Some(LAB_ANALYZER_RECIPE));
-            assert!(
-                c.header_class.contains("hidden md:"),
-                "{}: desktop-only (kit decision 7)",
-                c.id
-            );
-        }
-        assert_eq!(
-            RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()).count(),
-            16
-        );
+        assert!(RECIPE_COLUMNS.iter().all(|c| c.lab.is_none()));
     }
 
     /// `scope_row` returns a `RecipeRow`, i.e. `Arc<RecipeProfitData>`, the
@@ -8012,26 +7479,10 @@ mod test {
         Arc::new(r)
     }
 
-    /// The Price note gains the signed percent the price sits above or
-    /// below the sell world's 7-day median, keeps the listing tell in front
-    /// of it when both apply, and is exactly the pre-Phase-C cell with the
-    /// toggle off.
-    ///
-    /// The orientation is the point of this test. `delta_pct(alt, input)` is
-    /// `(alt - input) / input`, and the two arguments are trivially
-    /// swappable, so both concrete cases are pinned here: a price ABOVE the
-    /// median reads positive (and `signed_delta_class` paints it emerald), a
-    /// price BELOW it reads negative (red). The inverted orientation —
-    /// `delta_pct(Some(median), price)` — would flip both, painting a
-    /// suspiciously cheap listing as good news.
     #[test]
-    fn the_price_note_carries_the_median_tell_under_the_toggle() {
+    fn the_price_note_always_carries_the_median_tell() {
         let key = fixture_recipes()[0].key_id.0;
         let ctx = test_ctx();
-        let off = CellCtx {
-            preview: false,
-            ..test_ctx()
-        };
         // A price of 138 against a median of 100 is 38% ABOVE it: positive,
         // and green. (The other orientation — the median measured against
         // the price — would paint a fake-low listing green.)
@@ -8093,11 +7544,6 @@ mod test {
                 amount: 100,
                 note: CellNote::None
             }
-        );
-        // Toggle off: no note line at all.
-        assert_eq!(
-            cell_price(&price_row(key, 138, Some(100), false), &off),
-            CellValue::Gil(138)
         );
     }
 
@@ -8185,80 +7631,12 @@ mod test {
                 note: CellNote::Troll { listing: true }
             }
         );
-        // And with the toggle off the troll row is the bare gil cell, the
-        // same value a row with no median at all produces.
-        let off = CellCtx {
-            preview: false,
-            ..test_ctx()
-        };
-        assert_eq!(
-            cell_price(&price_row(key, 40_000_000, Some(10_000), true), &off),
-            CellValue::Gil(40_000_000)
-        );
-        assert_eq!(
-            cell_price(&price_row(key, 40_000_000, None, false), &off),
-            CellValue::Gil(40_000_000)
-        );
-    }
-
-    /// With the Labs toggle off the Price cell is the markup it has always
-    /// been: `CellValue::Gil`, identical whatever the row carries, and
-    /// identical to what every other gil column renders. Asserted on the
-    /// HTML rather than on the enum, because an enum equality cannot see a
-    /// change to the `Gil` render arm. There is no width in it — the class
-    /// is a static prop and the arm has no responsive branch — so one
-    /// comparison covers every viewport.
-    #[test]
-    fn the_flag_off_price_cell_is_the_plain_gil_markup() {
-        let _ = any_spawner::Executor::init_futures_executor();
-        let owner = Owner::new();
-        owner.with(|| {
-            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
-            let i18n = use_i18n();
-            let key = fixture_recipes()[0].key_id.0;
-            let off = CellCtx {
-                preview: false,
-                ..test_ctx()
-            };
-            let html = |v| {
-                crate::analyzer_kit::cells::render_cell("w-32", v, i18n, &off)
-                    .unwrap()
-                    .to_html()
-            };
-            let baseline = html(CellValue::Gil(40_000_000));
-            for (median, fell_back) in [
-                // The prod row: 40,000,000 against a ~44k median. Troll.
-                (Some(43_995), false),
-                (Some(43_995), true),
-                // Just under the troll multiple, so a clamped percentage.
-                (Some(1_000_000), false),
-                // No sale history at all, and the degenerate equal case.
-                (None, false),
-                (None, true),
-                (Some(40_000_000), false),
-            ] {
-                assert_eq!(
-                    html(cell_price(
-                        &price_row(key, 40_000_000, median, fell_back),
-                        &off
-                    )),
-                    baseline,
-                    "median {median:?}, fell_back {fell_back}"
-                );
-            }
-            assert!(
-                !baseline.contains("vs median")
-                    && !baseline.contains("troll")
-                    && !baseline.contains("listing"),
-                "{baseline}"
-            );
-        });
     }
 
     fn test_ctx() -> CellCtx {
         CellCtx {
             now_unix: 1_700_000_000,
-            preview: true,
+
             capped_cost: [false; 4],
             sparklines: None,
             stats_30: None,
@@ -8636,66 +8014,23 @@ mod test {
             production.contains(&format!("{} = {}.get(),", "sell", "revenue_place")),
             "the live formula sentence names the sell PLACE"
         );
-        // …and the place memo itself goes through the pure resolver, whose
-        // own body holds the lab gate — or a flag-off page with
-        // `?sell-scope=region` would rename every revenue label it shows.
-        //
-        // Aimed at `revenue_place_for`, NOT at a bare
-        // `sell_scope_for(preview.get(), sell_scope())`: that string is
-        // also written by the live-sentence branch added in this same
-        // task, and by Task 6's strip select and table prop, so it would
-        // pass without `revenue_place` consulting anything. The gate's own
-        // behaviour is what `the_two_places_agree_until_the_scope_moves`
-        // proves; this pins that the memo actually calls the function that
-        // has it.
         assert!(
-            squeezed.contains(&format!(
-                "{}(preview.get(),{}(),",
-                "revenue_place_for", "sell_scope"
-            )),
+            squeezed.contains(&format!("{}({}(),", "revenue_place_for", "sell_scope")),
             "`revenue_place` must resolve through `revenue_place_for`, which \
-             is where the lab gate lives"
+             resolves the sale-price market"
         );
     }
 
-    /// The two names are the same string until a lab-on URL asks for a
-    /// wider scope. This is the flag-off byte-identity proof for every
-    /// label this task moved: with the toggle off, or at the default scope,
-    /// `revenue_place` and `sell_place` are indistinguishable, so the marks,
-    /// the picker heading, the alternative revenue sub-labels and the live
-    /// sentence render exactly what they render today.
     #[test]
     fn the_two_places_agree_until_the_scope_moves() {
-        for preview in [false, true] {
-            for param in [None, Some(SellScope::default())] {
-                assert_eq!(
-                    revenue_place_for(preview, param, "Gilgamesh", Some("Aether"), "North-America"),
-                    "Gilgamesh",
-                    "preview={preview} param={param:?}"
-                );
-            }
-        }
-        // Lab off, EVERY param the URL can carry: still the sell world, so
-        // no label this task moved can differ from today's on a flag-off
-        // page, whatever `?sell-scope=` a bookmark holds.
-        for scope in [Scope::World, Scope::Datacenter, Scope::Region] {
+        for param in [None, Some(SellScope::default())] {
             assert_eq!(
-                revenue_place_for(
-                    false,
-                    Some(SellScope(scope)),
-                    "Gilgamesh",
-                    Some("Aether"),
-                    "North-America"
-                ),
-                "Gilgamesh",
-                "flag-off ?sell-scope={scope:?}"
+                revenue_place_for(param, "Gilgamesh", Some("Aether"), "North-America"),
+                "Gilgamesh"
             );
         }
-        // Lab on, wider param: the wider name, and the region when no
-        // datacenter has resolved yet.
         assert_eq!(
             revenue_place_for(
-                true,
                 Some(SellScope(Scope::Datacenter)),
                 "Gilgamesh",
                 Some("Aether"),
@@ -8705,7 +8040,6 @@ mod test {
         );
         assert_eq!(
             revenue_place_for(
-                true,
                 Some(SellScope(Scope::Datacenter)),
                 "Gilgamesh",
                 None,
@@ -8715,7 +8049,6 @@ mod test {
         );
         assert_eq!(
             revenue_place_for(
-                true,
                 Some(SellScope(Scope::Region)),
                 "Gilgamesh",
                 Some("Aether"),
@@ -8756,14 +8089,6 @@ mod test {
         });
     }
 
-    /// `recipe_analyzer_calc_formula_live` reads "‹revenue› **on** {{sell}}"
-    /// against "‹cost› **across** {{buy}}" deliberately: `on` is a world,
-    /// `across` is a scope. Feeding a datacenter into the `on` slot would
-    /// read "Sale median on Aether" two rows under "Sell on: Gilgamesh" and
-    /// assert the one thing retainers cannot do. A scoped variant is
-    /// selected when the sell scope is wider, and the default sentence is
-    /// untouched — which is also what keeps the flag-off and default-scope
-    /// rendering byte-identical.
     #[test]
     fn the_live_formula_sentence_scopes_the_sell_slot() {
         let _ = any_spawner::Executor::init_futures_executor();
@@ -8804,16 +8129,9 @@ mod test {
             production.contains("recipe_analyzer_calc_formula_live_scoped"),
             "the scoped variant must actually be selected somewhere"
         );
-        // And selected on the LAB-GATED scope, widened past the sell
-        // world. `sell_scope().is_some()` would compile, read the same at
-        // a glance, and hand a flag-off `?sell-scope=world` page the
-        // scoped sentence — the one rendered string on this page that a
-        // bookmarked URL could move with the toggle off.
         assert!(
-            production_squeezed().contains(
-                "sell_scope_for(preview.get(),sell_scope()).is_some_and(|s|s.scope()!=Scope::World)"
-            ),
-            "the sentence must switch on the lab gate and on a scope wider \
+            production_squeezed().contains("sell_scope().is_some_and(|s|s.scope()!=Scope::World)"),
+            "the sentence must switch on a scope wider \
              than the sell world"
         );
     }
@@ -8959,7 +8277,6 @@ mod test {
         };
         let formula = seat_sell_scope(
             ProfitFormula::recipe_from_query(None, Some(revenue), None),
-            true,
             wider.as_ref().map(|s| SellScope(s.scope)),
         )
         .effective(false, revenue_stats.is_some());
@@ -9174,11 +8491,11 @@ mod test {
     }
 
     #[test]
-    fn lab_only_sort_modes_are_exactly_the_fourteen() {
-        assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 14);
-        assert!(!SortMode::CostPerUnit.lab_only() && !SortMode::Price.lab_only());
-        assert!(SortMode::ProfitPerDay.lab_only() && SortMode::Vwap30.lab_only());
-        assert!(SortMode::ScopeVsHome.lab_only());
+    fn all_recipe_columns_and_sorts_are_available_without_labs() {
+        assert!(RECIPE_COLUMNS.iter().all(|column| column.lab.is_none()));
+        for mode in ALL_SORT_MODES.iter() {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(*mode));
+        }
     }
 
     /// Every picker entry is a `?cols=` token (both derive from the table).
@@ -9203,11 +8520,6 @@ mod test {
                 .collect();
             assert_eq!(ids.len(), 23);
             assert!(ids.iter().all(|id| OPTIONAL_COLUMN_ORDER.contains(id)));
-            let flat: Vec<&str> = picker_options(&RECIPE_COLUMNS, i18n)
-                .iter()
-                .map(|o| o.id)
-                .collect();
-            assert_eq!(flat, BASE_COLUMN_ORDER.as_slice());
         });
     }
 
@@ -9590,7 +8902,6 @@ mod test {
             visible.clone(),
             &active,
             Some(&format!("grid:{COL_VOLUME_30D}")),
-            true,
         );
         assert_eq!(visible, HashSet::from([COL_LISTING_WORLD]));
         assert!(!queried.contains("unknown-column"));
@@ -9600,21 +8911,9 @@ mod test {
         assert!(spark_rows_wanted(&queried));
         assert!(stats_30_wanted(&queried, None));
         assert_eq!(
-            recipe_query_columns(visible.clone(), &HashSet::new(), Some("profit"), true),
+            recipe_query_columns(visible.clone(), &HashSet::new(), Some("profit")),
             visible,
         );
-        let flag_off = recipe_query_columns(
-            visible.clone(),
-            &active,
-            Some(&format!("grid:{COL_VOLUME_30D}")),
-            false,
-        );
-        assert_eq!(
-            flag_off, visible,
-            "hidden queries cannot enable an experimental provider"
-        );
-        assert!(!spark_rows_wanted(&flag_off));
-        assert!(!stats_30_wanted(&flag_off, None));
     }
 
     #[test]
@@ -9664,26 +8963,6 @@ mod test {
         assert_eq!(
             signal_wants(&HashSet::new(), Some(SortMode::Profit)),
             SignalWants::default()
-        );
-        // Flag-off, all three new derivations are the placeholders they
-        // replaced, and that is checked rather than argued: with the lab
-        // off the `?cols=` contract is `BASE_COLUMN_ORDER`, which holds no
-        // lab token, and the page filters a `lab_only` sort to `None`
-        // before `signal_wants` is ever called (`:4054`).
-        let off = parse_visible_cols(
-            Some("scope-vs-home,rev-sale-min,hop-gain"),
-            &BASE_COLUMN_ORDER,
-            &DEFAULT_COLS,
-        );
-        assert_eq!(
-            signal_wants(&off, None),
-            SignalWants::default(),
-            "no lab token survives parsing flag-off, so the pass is asked \
-             for exactly what it was asked for before Phase F"
-        );
-        assert!(
-            SortMode::ScopeVsHome.lab_only()
-                && SortMode::RevSignal(PriceSignal::SaleMin).lab_only()
         );
     }
 
@@ -9746,7 +9025,7 @@ mod test {
         // Datacenter, listing revenue: the cheapest map only.
         // (`ProfitFormula` is `Copy`; a `.clone()` here is a
         // `clippy::clone_on_copy` failure under Task 9's `-D warnings`.)
-        let dc = seat_sell_scope(world, true, Some(SellScope(Scope::Datacenter)));
+        let dc = seat_sell_scope(world, Some(SellScope(Scope::Datacenter)));
         assert_eq!(
             sell_scope_key(&dc, &needs, "Aether"),
             Some(("Aether".to_string(), true, false))
@@ -9762,7 +9041,6 @@ mod test {
         // Datacenter, sale revenue: both halves.
         let dc_stats = seat_sell_scope(
             ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None),
-            true,
             Some(SellScope(Scope::Datacenter)),
         );
         assert_eq!(
@@ -9788,7 +9066,6 @@ mod test {
                 Some(PriceSignal::SaleMedian),
                 Some(BuyScope::Datacenter),
             ),
-            true,
             Some(SellScope(Scope::Datacenter)),
         );
         assert_eq!(sell_scope_key(&both, &deduped, "Aether"), None);
@@ -9819,18 +9096,12 @@ mod test {
                 Some(PriceSignal::SaleMedian),
                 Some(BuyScope::World),
             ),
-            true,
             Some(SellScope(Scope::Datacenter)),
         );
         assert_eq!(
             sell_scope_key(&world_buy, &aliased, "Aether"),
             Some(("Aether".to_string(), false, true))
         );
-
-        // Flag-off, `seat_sell_scope` hands the formula straight back, so a
-        // bookmarked `?sell-scope=region` asks for nothing at all.
-        let off = seat_sell_scope(world, false, Some(SellScope(Scope::Region)));
-        assert_eq!(sell_scope_key(&off, &needs, "Aether"), None);
     }
 
     /// The page consults the gate rather than a constant, fills the needs
@@ -9863,19 +9134,12 @@ mod test {
             "the sell-scope needs must read the page's real alias gate too, \
              not `RecipeNeeds::default()`'s `false`"
         );
-        // …and the formula that key is built from must come through the lab
-        // gate. Reverting `formula_page` to a bare `recipe_from_query`
-        // leaves `needed_bodies` looking at `Scope::World` on a lab-ON
-        // `?sell-scope=` URL, so nothing is ever fetched — silently, because
-        // the labels Tasks 5 and 6 wired read the param, not this formula.
-        // (Task 8 pins the seating function's caller COUNT; this pins the
-        // one caller this task's fetch depends on.)
         assert!(
             squeezed.contains(&format!(
-                "{}(ProfitFormula::recipe_from_query(cost_basis(),revenue_metric(),buy_scope()),preview.get(),sell_scope(),)",
+                "{}(ProfitFormula::recipe_from_query(cost_basis(),revenue_metric(),buy_scope()),sell_scope(),)",
                 "seat_sell_scope"
             )),
-            "`formula_page` must seat the sell scope through the lab gate"
+            "`formula_page` must seat the selected sell scope"
         );
         // `NeededSignals::rev`'s first production reader. It was written by
         // `needed_signals` and read by nothing that ships until this line,
@@ -10041,17 +9305,6 @@ mod test {
              cannot be distinguished from the both-failed one"
         );
 
-        // The second line must cost the no-payload page NOTHING, and the
-        // no-payload page is every flag-off one (`sell_scope_bodies` is
-        // `None` there by construction — `sell_scope_key` returns `None`).
-        // An `Option` child that resolves to `None` still writes a `<!>`
-        // hydration marker, so a bare second `.then(..)` beside the
-        // existing amber line — which is what this task's brief called
-        // for — would add a marker to every page and break flag-off
-        // byte-identity. Both shapes are rendered here because the property
-        // is the CONSTRUCTION's, not this page's; the source read below is
-        // what ties production to the construction, and this half is worth
-        // exactly that much.
         let _ = any_spawner::Executor::init_futures_executor();
         let owner = Owner::new();
         owner.with(|| {
@@ -10106,7 +9359,7 @@ mod test {
         assert!(
             squeezed_page.contains("){None=>stats_line.into_any(),"),
             "production must route both amber lines through ONE child, or \
-             the flag-off DOM grows a hydration marker"
+             the no-payload DOM grows a hydration marker"
         );
     }
 
@@ -10245,30 +9498,18 @@ mod test {
              `formula` memo — if this reads 2, the table is unwired and the \
              column ships as dashes"
         );
-        // The two call SHAPES, which is what makes the count above bite.
-        // They are distinguishable on purpose: the page seats from signals
-        // (`preview.get()`, `sell_scope()`), the table from its two props
-        // (`preview`, `sell_scope`), so neither needle can stand in for the
-        // other and a wrapper that keeps the count at three fails here.
-        //
-        // Both needles are anchored on `seat_sell_scope(` itself, which the
-        // brief's text was not: without the name, a three-argument
-        // `table_formula(ProfitFormula::recipe_from_query(..), preview,
-        // sell_scope)` wrapper matches the needle character for character,
-        // so the "a wrapper fails here" claim in the doc above would have
-        // been false. Verified by mutation both ways.
         let squeezed = production_squeezed();
         assert!(
             squeezed.contains(
                 "seat_sell_scope(ProfitFormula::recipe_from_query(cost_basis(),\
-                 revenue_metric(),buy_scope()),preview,sell_scope,)"
+                 revenue_metric(),buy_scope()),sell_scope,)"
             ),
             "the TABLE's formula memo must seat the scope from its own props"
         );
         assert!(
             squeezed.contains(
                 "seat_sell_scope(ProfitFormula::recipe_from_query(cost_basis(),\
-                 revenue_metric(),buy_scope()),preview.get(),sell_scope(),)"
+                 revenue_metric(),buy_scope()),sell_scope(),)"
             ),
             "…and the page's `formula_page` from its own signals"
         );
@@ -10295,13 +9536,6 @@ mod test {
                 .any(|r| matches!(r.scope_vs_home, ScopeVsHome::Pair { .. })),
             "a pass seated through `seat_sell_scope` must fill the column"
         );
-        // …and the flag-off arm of the same function leaves it empty.
-        let off = seat_sell_scope(
-            ProfitFormula::recipe_from_query(None, None, None),
-            false,
-            Some(SellScope(Scope::Region)),
-        );
-        assert_eq!(off.sell_scope(), Scope::World);
     }
 
     /// Which body the table prices revenue from. The middle case — the
@@ -10600,11 +9834,6 @@ mod test {
         assert!(visible_keys(&rows, range, PREFETCH_MARGIN, &seen, recipe_spark_key).is_empty());
     }
 
-    /// The 30-day body is fetched only when a 30-day column asks for it,
-    /// and cannot be asked for at all with the toggle off. Nothing in
-    /// `needed.rs` can catch a gate that is never computed: with `stats_30`
-    /// left false those two columns shimmer forever and every test there
-    /// still passes.
     #[test]
     fn the_thirty_day_body_is_only_requested_when_a_30d_column_is() {
         let f = ProfitFormula::recipe_from_query(None, None, None);
@@ -10626,15 +9855,9 @@ mod test {
         for token in [COL_VOLUME_30D, COL_VWAP_30D] {
             let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
             assert!(stats_30_wanted(&on, None), "{token} visible");
-            // Toggle off: the token is not in the contract, so it never
-            // survives parsing and the body is unreachable.
-            let off = parse_visible_cols(Some(token), &BASE_COLUMN_ORDER, &DEFAULT_COLS);
-            assert!(!stats_30_wanted(&off, None), "{token} with the toggle off");
         }
         for mode in [SortMode::Volume30, SortMode::Vwap30] {
             assert!(stats_30_wanted(&HashSet::new(), Some(mode)), "{mode}");
-            // ... and off, where a lab-only sort token reads as unset.
-            assert!(mode.lab_only(), "{mode}");
         }
         // The off direction: neither a plain page nor another sort target
         // reaches the 438 KB body.
@@ -10664,17 +9887,11 @@ mod test {
         assert_eq!(from(&default_page, None), None);
     }
 
-    /// The sparkline half of the same guarantee: the page mirrors its sorted
-    /// rows for the hook only while a lazy column is on, and an empty mirror
-    /// is no request at all. With the toggle off neither token survives
-    /// `parse_visible_cols`, so the flag-off page issues no sparklines POST.
     #[test]
-    fn the_sparkline_fetch_is_unreachable_with_the_toggle_off() {
+    fn the_sparkline_fetch_only_runs_for_requested_columns() {
         for token in [COL_TREND, COL_DRIFT] {
             let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
             assert!(spark_rows_wanted(&on), "{token} visible");
-            let off = parse_visible_cols(Some(token), &BASE_COLUMN_ORDER, &DEFAULT_COLS);
-            assert!(!spark_rows_wanted(&off), "{token} with the toggle off");
         }
         // The default page wants neither, toggle or no toggle.
         assert!(!spark_rows_wanted(&parse_visible_cols(
@@ -10703,7 +9920,7 @@ mod test {
     fn explicit_market_columns_fetch_without_viewport_or_query_overrides() {
         for token in [COL_VOLUME_30D, COL_VWAP_30D, COL_TREND, COL_DRIFT] {
             let visible = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
-            let queried = recipe_query_columns(visible.clone(), &HashSet::new(), None, true);
+            let queried = recipe_query_columns(visible.clone(), &HashSet::new(), None);
             assert_eq!(queried, visible);
             assert_eq!(
                 stats_30_wanted(&queried, None),
