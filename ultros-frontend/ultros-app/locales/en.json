@@ -1936,5 +1936,21 @@
     "top_opportunities_empty_title": "Nothing worth flipping on {{world}} right now",
     "top_opportunities_empty_body": "Only items that actually sell show up here, so a quiet market means an empty card.",
     "top_opportunities_empty_cta": "Browse everything in Flip Finder",
-    "top_opportunities_error": "Couldn't load opportunities."
+    "top_opportunities_error": "Couldn't load opportunities.",
+    "recipe_planner_route_heading": "Which route is worth the trip?",
+    "recipe_planner_route_subheading": "Best-found routes, ranked by gil plus travel",
+    "recipe_planner_route_stay_home": "Stay home",
+    "recipe_planner_route_no_new_travel": "No new travel",
+    "recipe_planner_route_world_hops": "{{count}}× world hop",
+    "recipe_planner_route_dc_and_world_hops": "{{dcs}}× DC hop → {{worlds}}× world hop",
+    "recipe_planner_route_home_only": "Everything from your starting world",
+    "recipe_planner_shared_route": "Shared route",
+    "recipe_planner_not_here": "Not here",
+    "recipe_planner_reported_unavailable": "Reported unavailable:",
+    "recipe_planner_clear_unavailable": "Clear reports",
+    "recipe_planner_settings": "Planner settings",
+    "recipe_planner_world_hop_cost": "World hop cost (gil)",
+    "recipe_planner_dc_hop_cost": "Datacenter hop cost (gil)",
+    "recipe_planner_hop_cost_help": "A world hop is one loading screen from the aetheryte. A datacenter hop goes through the main menu and several loading screens. Routes are ranked by gil plus these travel costs.",
+    "recipe_planner_reset_defaults": "Reset to defaults"
 }
