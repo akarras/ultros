@@ -93,7 +93,7 @@
     "grid_filter_clear": "Clear filter",
     "grid_move_column": "Drag to move column",
     "grid_column_menu": "Column options",
-    "grid_column_menu_filtered": "Column options (filtered)",
+    "grid_column_menu_hint": "Right-click or press and hold for column options",
     "grid_resize_hint": "Drag to resize; double-click to fit available results",
     "grid_auto_fit": "Auto-fit column",
     "grid_width": "Width (px)",

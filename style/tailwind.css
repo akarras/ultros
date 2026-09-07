@@ -2728,28 +2728,40 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     border-bottom: 1px solid var(--color-outline);
 }
 .virtual-grid-heading, .virtual-grid-cell { position: absolute; top: 0; height: 100%; box-sizing: border-box; }
-.virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); }
+.virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); border-right: 1px solid var(--color-outline-strong); }
 .grid-heading-content { flex: 1; min-width: 0; overflow: clip; }
 .grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
-/* A column that feeds Profit (SortableHeaderCell's `emphasized`) reads as a
-   gently tinted block. This used to be an inset bottom hairline, which landed
-   on the 10px sub-label's descenders once headings grew a second line. The
-   4px side padding above already insets it from the grip and menu buttons. */
-.grid-heading-marked {
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--brand-ring) 15%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-ring) 30%, transparent);
+/* A column that feeds Profit (SortableHeaderCell's `emphasized`) tints its
+   whole heading cell. This was an inset bottom hairline, which landed on the
+   10px sub-label's descenders once headings grew a second line; a rounded
+   well inside the cell fixed that but read as a floating chip. Filling the
+   cell edge to edge keeps the header a grid of cells, which is what everyone
+   already knows from a spreadsheet. `.grid-heading-marked` stays a marker
+   class on the inner heading and draws nothing itself. */
+.grid-heading-marked { background: none; }
+.virtual-grid-heading:has(.grid-heading-marked) {
+    background: color-mix(in srgb, var(--brand-ring) 20%, var(--color-background-panel));
 }
-[data-theme="light"] .grid-heading-marked {
-    background: color-mix(in srgb, var(--brand-ring) 12%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-ring) 26%, transparent);
+[data-theme="light"] .virtual-grid-heading:has(.grid-heading-marked) {
+    background: color-mix(in srgb, var(--brand-ring) 15%, var(--color-background-panel));
 }
-.grid-column-menu, .grid-drag-handle { flex: 0 0 20px; padding: 4px 0; color: var(--color-text-muted); }
+/* A filtered column is tinted a step further, so which columns are narrowing
+   the results reads from the header band alone, before the clear button.
+   Both themes are spelled out, and after the marked rules: a filtered column
+   that is also marked has to land on this tint, and the `[data-theme]` prefix
+   above would otherwise outrank a bare class here. */
+.virtual-grid-heading.grid-filter-active {
+    background: color-mix(in srgb, var(--brand-ring) 34%, var(--color-background-panel));
+}
+[data-theme="light"] .virtual-grid-heading.grid-filter-active {
+    background: color-mix(in srgb, var(--brand-ring) 28%, var(--color-background-panel));
+}
+.grid-drag-handle { flex: 0 0 20px; padding: 4px 0; color: var(--color-text); }
 /* Shown only while the column has a live filter, so it costs width only when
    it has something to do. Same icon the Flip Finder's World/Datacenter columns
-   used to carry on their own. */
-.grid-filter-clear { flex: 0 0 20px; padding: 4px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--brand-fg); }
-.grid-filter-clear:hover, .grid-filter-clear:focus-visible { color: var(--color-text); }
+   used to carry on their own, and now the heading's only button. */
+.grid-filter-clear { flex: 0 0 20px; padding: 4px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--color-text); }
+.grid-filter-clear:hover, .grid-filter-clear:focus-visible { color: var(--brand-fg); }
 .grid-drag-handle { cursor: grab; touch-action: none; user-select: none; }
 .grid-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 3; }
 .grid-resize-handle:hover { background: var(--brand-ring); }
@@ -2777,9 +2789,6 @@ dialog.panel { color: var(--color-text); margin: auto; }
 .grid-column-filter { padding-bottom: 8px; border-bottom: 1px solid var(--color-outline); }
 .grid-column-filter label { display: grid; gap: 4px; }
 .grid-column-filter select { width: 100%; padding: 6px; background: var(--color-background); }
-/* A filled dot-stack does not say "filtered"; the button swaps to a funnel
-   (see virtual_grid/mod.rs) and keeps the brand chip behind it. */
-.grid-filter-active .grid-column-menu { color: var(--brand-fg); background: color-mix(in srgb, var(--brand-ring) 22%, transparent); border-radius: 4px; }
 .grid-menu-panel button { padding: 6px 8px; text-align: left; border-radius: 4px; }
 .grid-menu-panel button:hover, .grid-menu-panel button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
 .grid-menu-panel input { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--color-outline); border-radius: 4px; background: var(--color-background); }

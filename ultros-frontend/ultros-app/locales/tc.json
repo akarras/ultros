@@ -93,7 +93,7 @@
     "grid_filter_clear": "清除篩選",
     "grid_move_column": "拖曳以移動欄位",
     "grid_column_menu": "欄位選項",
-    "grid_column_menu_filtered": "欄位選項（已篩選）",
+    "grid_column_menu_hint": "右鍵點擊或長按開啟欄位選項",
     "grid_resize_hint": "拖曳調整寬度；按兩下依現有結果自動調整",
     "grid_auto_fit": "自動調整欄寬",
     "grid_width": "寬度（像素）",
