@@ -753,7 +753,6 @@
     "retainers_undercut_by_one": "降价 1 金币",
     "retainers_item_not_found": "未找到物品",
     "retainers_undercuts_title": "雇员压价情况",
-    "retainers_data_notice": "请注意数据并非始终保持最新。要更新数据，请先为 Universalis 做出贡献，然后刷新此页面。",
     "retainers_undercuts_description": "此页面仅显示已被压价的在售物品，便于你快速查看需要刷新的物品",
     "retainers_unable_to_get": "无法获取雇员",
     "retainers_base_path_description": "登录后可将雇员添加到你的账户并进行跟踪。请先登录，然后点击上方标签页开始使用。",

@@ -756,7 +756,6 @@
     "retainers_undercut_by_one": "Undercut by one",
     "retainers_item_not_found": "Item not found",
     "retainers_undercuts_title": "Retainer Undercuts",
-    "retainers_data_notice": "Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page.",
     "retainers_undercuts_description": "This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed",
     "retainers_unable_to_get": "Unable to get retainers",
     "retainers_base_path_description": "Retainers can be added to your account while logged in and tracked. To get started get logged in and click the tabs above.",
