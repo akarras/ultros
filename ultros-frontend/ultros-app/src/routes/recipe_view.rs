@@ -11,11 +11,17 @@ use xiv_gen::{ItemId, RecipeId, RecipeLevelTableId};
 use crate::api::{bulk_add_item_to_list, get_listings, get_lists, get_login};
 use crate::components::{
     clipboard::Clipboard,
-    crafting_cost::{IngredientsIter, vendor_price_map},
+    crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter, vendor_price_map},
     item_icon::{IconSize, ItemIcon},
     meta::{MetaDescription, MetaTitle},
 };
-use crate::global_state::{home_world::use_home_world, use_world_helper, xiv_data::tracked_data};
+use crate::global_state::{
+    cookies::Cookies,
+    craft_options::{self, CraftOptions},
+    home_world::use_home_world,
+    use_world_helper,
+    xiv_data::tracked_data,
+};
 use crate::query_defaults::filter_query_signal;
 use crate::recipe_planner::{self as planner, Material, Offer, Recipe};
 
@@ -101,6 +107,34 @@ fn gil(amount: i64) -> String {
     format!("{} gil", amount.separate_with_commas())
 }
 
+/// Item ids in the "Crystals" search category, from `(item id, search
+/// category)` pairs. Kept data-agnostic so the category can be pinned in a
+/// test: 59 ("Catalysts") is the neighbouring category that silently turned
+/// this toggle into a no-op once already.
+fn crystal_item_ids(items: impl Iterator<Item = (i32, i32)>) -> BTreeSet<i32> {
+    items
+        .filter(|(_, category)| *category == CRYSTAL_SEARCH_CATEGORY)
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// "Missing" is a shortage, so it only appears when there is one.
+fn purchase_summary(cost: i64, quantity: i64, missing: i64) -> String {
+    let mut text = format!("{} · buy {quantity}", gil(cost));
+    if missing > 0 {
+        text.push_str(&format!(" · {missing} missing"));
+    }
+    text
+}
+
+fn plan_summary(worlds: usize, missing: i64) -> String {
+    let mut text = format!("{worlds} additional worlds");
+    if missing > 0 {
+        text.push_str(&format!(" · {missing} units missing"));
+    }
+    text
+}
+
 fn job(recipe: &xiv_gen::Recipe) -> String {
     let jobs = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
     let level = tracked_data()
@@ -150,6 +184,21 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     let (visits, set_visits) = filter_query_signal::<usize>("visits");
     let (subcrafts, _) = filter_query_signal::<bool>("subcrafts");
     let quantity = Memo::new(move |_| qty.get().unwrap_or(1).clamp(1, 9999));
+    // An explicit URL value wins; otherwise follow the shared craft-options
+    // cookie (default: exclude), the same fallback the analyzer uses, so a
+    // link that omits the key does not flip the meaning of the toggle.
+    let craft_options = use_context::<Cookies>().map(|cookies| {
+        cookies
+            .use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME)
+            .0
+    });
+    let exclude_crystals = Memo::new(move |_| {
+        shards.get().unwrap_or_else(|| {
+            craft_options
+                .map(|options| options.get().unwrap_or_default().exclude_shards)
+                .unwrap_or(true)
+        })
+    });
     let (home, _) = use_home_world();
     let helper = StoredValue::new(use_world_helper().ok());
     let worlds = helper.with_value(|h| {
@@ -249,13 +298,13 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             .into_iter()
             .filter_map(|(k, v)| i32::try_from(v).ok().map(|v| (k, v)))
             .collect();
-        let excluded = if shards.get().unwrap_or(false) {
-            tracked_data()
-                .items
-                .values()
-                .filter(|i| i.item_search_category == 59)
-                .map(|i| i.key_id.0)
-                .collect()
+        let excluded = if exclude_crystals.get() {
+            crystal_item_ids(
+                tracked_data()
+                    .items
+                    .values()
+                    .map(|i| (i.key_id.0, i.item_search_category)),
+            )
         } else {
             BTreeSet::new()
         };
@@ -498,7 +547,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">"Starting world"</span><select aria-label="Starting world" class="input" prop:value=move ||selected_world.get() on:change=move |e|set_world.set(Some(event_target_value(&e)))>{worlds.into_iter().map(|w| { let name=w.name; let selected_name=name.clone(); view!{<option value=name.clone() selected=move ||selected_world.get()==selected_name>{name.clone()}</option>} }).collect_view()}</select></label>
                 <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">"Buy from"</span><select aria-label="Buy from" class="input" prop:value=move ||scope_kind.get() on:change=move |e|set_buy_scope.set(Some(event_target_value(&e)))><option value="world" selected=move ||scope_kind.get()=="world">"Home world"</option><option value="datacenter" selected=move ||scope_kind.get()=="datacenter">"Datacenter"</option><option value="region" selected=move ||scope_kind.get()=="region">"Region"</option></select></label>
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||hq.get().unwrap_or(false) prop:checked=move ||hq.get().unwrap_or(false) on:change=move |e|set_hq.set(Some(event_target_checked(&e))) />"HQ ingredients only"</label>
-                <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||shards.get().unwrap_or(false) prop:checked=move ||shards.get().unwrap_or(false) on:change=move |e|set_shards.set(Some(event_target_checked(&e))) />"Exclude crystals"</label>
+                <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||exclude_crystals.get() prop:checked=move ||exclude_crystals.get() on:change=move |e|set_shards.set(Some(event_target_checked(&e))) />"Exclude crystals"</label>
                 <button class="btn-secondary text-sm" on:click=move |_|refresh.update(|n|*n=n.wrapping_add(1))>"Refresh prices"</button>
             </section>
             <div class="flex flex-wrap items-center gap-3 text-sm text-[color:var(--color-text-muted)]">
@@ -549,7 +598,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                                         <label class="flex gap-2 items-center text-sm text-[color:var(--color-text-muted)]">"Already have"<input class="input w-24" aria-label=format!("Already have {}",item_name(id)) type="number" min="0" max="1000000000" value=move ||pairs(owned.get()).get(&id).copied().unwrap_or(0) prop:value=move ||pairs(owned.get()).get(&id).copied().unwrap_or(0) on:change=move |e|set_owned.set(write_pair(owned.get_untracked(),id,event_target_value(&e).parse::<i64>().unwrap_or(0).clamp(0,1_000_000_000))) /></label>
                                         <span class="text-sm tabular-nums text-brand-300">{move || {
                                             let m=current.get();
-                                            if m.recipe.is_some(){format!("{} crafts · {} left over",m.crafts,m.surplus)}else{selected.get().and_then(|p|p.purchases.get(&id).cloned()).map(|p|format!("{} · buy {} · {} missing",gil(p.cost),p.quantity,p.missing())).unwrap_or_else(||if m.remaining()==0{"Owned".into()}else{"Loading…".into()})}
+                                            if m.recipe.is_some(){format!("{} crafts · {} left over",m.crafts,m.surplus)}else{selected.get().and_then(|p|p.purchases.get(&id).cloned()).map(|p|purchase_summary(p.cost,p.quantity,p.missing())).unwrap_or_else(||if m.remaining()==0{"Owned".into()}else{"Loading…".into()})}
                                         }}</span>
                                     </div>
                                     {move ||current.get().recipe.and_then(|rid| catalog.with_value(|c|c.get(&rid).cloned())).map(|r|view!{
@@ -565,7 +614,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                     <div><span class="text-sm text-[color:var(--color-text-muted)]">"Planned purchase spend"</span><p class="text-3xl font-bold tabular-nums" data-testid="plan-total">{move ||selected.get().map(|p|gil(p.cost)).unwrap_or_else(||"Loading…".into())}</p></div>
                     <p class="text-sm text-[color:var(--color-text-muted)]">{move ||selected.get().filter(|p|p.missing==0).map(|p|format!("{} per requested item, rounded up",gil((p.cost+quantity.get()-1)/quantity.get())) )}</p>
                     <p class="text-sm">{move ||materials.get().ok().map(|m|format!("{} crafting operations · {} finished items · {} extra output",m.iter().map(|m|m.crafts).sum::<i64>(),quantity.get(),m.first().map(|m|m.surplus).unwrap_or(0)))}</p>
-                    <p class="text-sm">{move ||selected.get().map(|p|format!("{} additional worlds · {} units missing",p.worlds.len(),p.missing))}</p>
+                    <p class="text-sm">{move ||selected.get().map(|p|plan_summary(p.worlds.len(),p.missing))}</p>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"Whole stacks included. Owned materials reduce cash spend; leftovers have no assumed resale value. Vendor prices assume access. Travel time and teleport fees are excluded."</p>
                     <Show when=move ||selected.get().is_some_and(|p|p.approximate)><p class="text-xs text-amber-300">"Large batch: stack selection is a best-found estimate."</p></Show>
                     <div class="border-t border-[color:var(--color-outline)] pt-3 space-y-2"><label class="flex items-center gap-2 text-sm"><input type="checkbox" checked=move ||output_hq.get().unwrap_or(false) prop:checked=move ||output_hq.get().unwrap_or(false) on:change=move |e|set_output_hq.set(Some(event_target_checked(&e))) />"Compare with HQ finished items"</label><p class="text-sm">{move ||finished.get().map(|p|if p.missing()>0{format!("Buy finished: {} units unavailable",p.missing())}else{format!("Buy finished in {}: {}",scope.get(),gil(p.cost))})}</p></div>
@@ -665,6 +714,29 @@ mod tests {
         assert_eq!(pairs(raw.clone()), BTreeMap::from([(42, 7)]));
         assert_eq!(write_pair(raw, 42, 0), None);
         assert!(pairs(Some("1:-1,2:1000000001,garbage".into())).is_empty());
+    }
+
+    #[test]
+    fn exclude_crystals_targets_the_crystal_search_category() {
+        // 58 is "Crystals"; 59 is "Catalysts" (dark matter, glamour prisms).
+        // The page once filtered on 59, which left every shard in the plan.
+        let ids = crystal_item_ids([(2, 58), (5594, 59), (5, 58), (100, 1)].into_iter());
+        assert_eq!(ids, BTreeSet::from([2, 5]));
+    }
+
+    #[test]
+    fn purchase_summary_mentions_missing_only_when_short() {
+        assert_eq!(purchase_summary(1_500, 3, 0), "1,500 gil · buy 3");
+        assert_eq!(
+            purchase_summary(1_500, 3, 2),
+            "1,500 gil · buy 3 · 2 missing"
+        );
+    }
+
+    #[test]
+    fn plan_summary_mentions_missing_only_when_short() {
+        assert_eq!(plan_summary(2, 0), "2 additional worlds");
+        assert_eq!(plan_summary(0, 4), "0 additional worlds · 4 units missing");
     }
 
     #[test]

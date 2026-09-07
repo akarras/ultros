@@ -15,8 +15,11 @@ that scope. `require-hq` strictly filters HQ-capable ingredient purchases;
 
 `craft=itemId:recipeId,...` chooses an explicit recipe for each intermediate;
 absent entries are bought. `owned=itemId:quantity,...` records on-hand materials.
-`shards-exclude=true` excludes crystals throughout the graph. Sharing the URL
-shares these manually entered owned quantities as well as the craft choices.
+`shards-exclude=true` excludes crystals (ItemSearchCategory 58, via
+`CRYSTAL_SEARCH_CATEGORY`) throughout the graph; when the key is absent the
+page follows the shared craft-options cookie, which excludes them by default.
+Sharing the URL shares these manually entered owned quantities as well as the
+craft choices.
 All planning works without authentication. Saving adds only outstanding leaf
 material quantities to an existing list, retaining ingredient quality choices.
 
