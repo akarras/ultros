@@ -35,6 +35,12 @@ async function login(page, baseUrl, user) {
   if (!resp || resp.status() >= 400) {
     throw new Error(`test login failed for ${user.username}: ${resp ? resp.status() : -1}`);
   }
+  // Opt this session into a Labs experiment. The cookie is server-visible,
+  // so SSR and hydration agree; the page reloads below to pick it up.
+  if (process.env.LABS_COOKIE) {
+    await page.setCookie({ name: "LABS", value: process.env.LABS_COOKIE, url: baseUrl, path: "/" });
+    await page.goto(new URL("/list", baseUrl).toString(), { waitUntil: "domcontentloaded" });
+  }
 }
 
 async function api(page, method, path, body) {
