@@ -859,7 +859,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                                 <button class="btn-secondary text-xs shrink-0" disabled=move ||locks.with(|s|s.contains_key(&key)) on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.insert((id,world)); set_unavailable.set(write_pair_set(&set)); locks.update(|s|s.retain(|(item,_),o|!(*item==id && o.world==world))); }>{t!(i18n, recipe_planner_not_here)}</button></div>}
                         }).collect_view()}</div>}
                     }).collect_view()}
-                    {plan.purchases.into_iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(id)}</strong><p>{format!("Vendor: {} · Still missing: {}",p.vendor_quantity,p.missing())}</p></div>}).collect_view()}</div>}.into_any()
+                    {plan.purchases.into_iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(id)}</strong><p>{vendor_summary(p.vendor_quantity,p.missing())}</p></div>}).collect_view()}</div>}.into_any()
                 }}
             </section>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
