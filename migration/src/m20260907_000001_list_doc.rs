@@ -127,6 +127,10 @@ mod tests {
 
     /// Session-local `list` and `list_item` shadow the real tables, so the
     /// dedupe and the index run against known rows and vanish on commit.
+    /// `Migration.up` also creates the real (non-temporary) `list_doc` table,
+    /// whose FK to the temp `list` is dropped at commit but which itself
+    /// persists in the target database — this test must run against a
+    /// disposable database.
     #[tokio::test]
     #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
     async fn duplicates_fold_into_the_lowest_id_and_the_index_exists() {
@@ -185,7 +189,9 @@ mod tests {
         let indexes = tx
             .query_all_raw(Statement::from_string(
                 DbBackend::Postgres,
-                "SELECT indexname FROM pg_indexes WHERE indexname = 'idx_list_item_natural_key'",
+                "SELECT indexname FROM pg_indexes \
+                 WHERE indexname = 'idx_list_item_natural_key' \
+                   AND schemaname = (SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema())",
             ))
             .await
             .unwrap();

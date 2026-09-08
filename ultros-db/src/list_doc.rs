@@ -393,7 +393,20 @@ mod tests {
 
     /// A list owned by OWNER with EDITOR granted write, torn down by the caller
     /// through `delete_list`, which cascades to `list_doc`.
+    ///
+    /// `create_list` and `set_scope` reference `region`/`datacenter`/`world`
+    /// rows that the running app seeds from the world cache at startup; a bare
+    /// scratch database has none, so this fixture seeds fixed-id rows itself
+    /// (idempotent via `ON CONFLICT`, never torn down) before creating the list.
     async fn scratch_list(db: &UltrosDb) -> i32 {
+        db.get_connection()
+            .execute_unprepared(
+                "INSERT INTO region (id, name) VALUES (1, 'ScratchRegion') ON CONFLICT (id) DO NOTHING;
+                 INSERT INTO datacenter (id, name, region_id) VALUES (5, 'ScratchDC', 1) ON CONFLICT (id) DO NOTHING;
+                 INSERT INTO world (id, name, datacenter_id) VALUES (79, 'ScratchWorld', 5) ON CONFLICT (id) DO NOTHING;",
+            )
+            .await
+            .unwrap();
         let owner = db
             .get_or_create_discord_user(OWNER as u64, "ListDocOwner".into())
             .await
