@@ -7,3 +7,9 @@ pub mod analysis;
 pub mod formula;
 pub mod math;
 pub mod recipe_planner;
+
+pub mod needed;
+pub mod pricing;
+
+#[cfg(test)]
+mod price_basis;
