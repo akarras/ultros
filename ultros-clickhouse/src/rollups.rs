@@ -467,6 +467,9 @@ fn build_sale_stats_refresh_sql(window_days: u16) -> String {
 /// cutoff is the snapshot's own time — a removal observed mid-stream must not
 /// be dropped, or its listing stays alive forever. A database that has never
 /// been seeded replays everything it has.
+/// Previously nonzero rollup keys also participate as non-alive inputs, so
+/// advancing the seed cutoff or expiring every event for a key writes a zero
+/// row instead of leaving the prior snapshot alive indefinitely.
 ///
 /// One `INSERT ... SELECT`. Every alias differs from the columns it reads:
 /// ClickHouse resolves a same-scope alias in preference to the column, so
@@ -545,6 +548,19 @@ fn build_listing_alive_refresh_sql() -> String {
                 )
                 GROUP BY world_id, item_id, hq, listing_key
             )
+            UNION ALL
+            SELECT
+                world_id,
+                item_id,
+                hq,
+                false AS is_alive,
+                toUInt16(0) AS last_quantity,
+                toInt32(0) AS last_retainer_id,
+                toDateTime(0) AS last_reviewed_at,
+                toUInt32(0) AS age_secs,
+                toUInt32(0) AS last_price
+            FROM listing_alive FINAL
+            WHERE alive_count > 0
         )
         GROUP BY world_id, item_id, hq
         "#

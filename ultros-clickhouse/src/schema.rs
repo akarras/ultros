@@ -133,8 +133,8 @@ async fn apply_listing_events_seed_marker(client: &Client) -> Result<(), ClickHo
 /// keys whose board has emptied (`alive_count = 0`, aggregates at their
 /// defaults): under `ReplacingMergeTree` a key that simply stopped being
 /// emitted would keep serving its last non-zero snapshot forever. Readers
-/// skip the zero rows. The one residual stale case is a key whose every event
-/// has aged past the `listing_events` TTL — a listing untouched for a year.
+/// skip the zero rows. Previously nonzero keys also get zero rows when every
+/// replayable event disappears after a seed cutoff change or event expiry.
 async fn apply_listing_alive(client: &Client) -> Result<(), ClickHouseError> {
     client
         .query(

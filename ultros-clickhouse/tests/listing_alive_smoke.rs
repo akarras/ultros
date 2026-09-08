@@ -173,6 +173,35 @@ async fn seed_cutoff(ch: &ClickHouseClient, now: DateTime<Utc>) -> (DateTime<Utc
     // removal, and this gap is what lets the fixture catch that.
     let snapshot_at = now - TimeDelta::seconds(450);
     let marker_at = now - TimeDelta::seconds(300);
+    // The scheduler can refresh before the concurrent seed has started.
+    // Materialize an old event now, then establish a newer seed cutoff below.
+    // Its old nonzero rollup must be replaced even though no post-seed event
+    // for this key will participate in the replay.
+    let pre_seed = added(
+        ITEM_PRE_SEED,
+        "p1",
+        4001,
+        RETAINER_A,
+        10,
+        1,
+        snapshot_at - TimeDelta::seconds(3600),
+    );
+    insert_all(ch, &[pre_seed], 100)
+        .await
+        .expect("insert event before seed");
+    rollups::refresh_listing_alive(ch)
+        .await
+        .expect("refresh before seed");
+    assert_eq!(stored_alive_count(ch, ITEM_PRE_SEED).await, Some(1));
+    // The normal fixture below includes this same event; remove the warmup
+    // copy without touching its materialized rollup.
+    ch.client()
+        .query(&format!(
+            "ALTER TABLE listing_events DELETE WHERE item_id = {ITEM_PRE_SEED} SETTINGS mutations_sync = 1"
+        ))
+        .execute()
+        .await
+        .expect("remove warmup event copy");
     ch.client()
         .query(&format!(
             "INSERT INTO {LISTING_EVENTS_SEED_MARKER_TABLE} (seeded_at, rows_streamed) \
@@ -356,6 +385,12 @@ async fn alive_set_matches_the_scripted_fixture() {
         clear_marker(&ch).await;
     }
     refreshed.expect("refresh listing_alive");
+    // A second refresh includes synthetic non-alive inputs alongside every
+    // live key. All field assertions below must remain unchanged, including
+    // minima and the median; back-to-back snapshots may share a timestamp.
+    rollups::refresh_listing_alive(&ch)
+        .await
+        .expect("refresh already materialized keys");
 
     let by_key = |rows: &[queries::BulkListingAliveRow], item: i32, hq: u8| {
         rows.iter()
@@ -426,9 +461,13 @@ async fn alive_set_matches_the_scripted_fixture() {
     assert!(by_key(&world, ITEM_SAME_ROW_TIE, 0).is_none());
     assert_eq!(stored_alive_count(&ch, ITEM_SAME_ROW_TIE).await, Some(0));
 
-    // Pre-seed: never replayed, so not even a zero row.
+    // Pre-seed: never replayed. If the scheduler ran before the seed, its
+    // earlier nonzero snapshot must now be replaced by a zero row.
     assert!(by_key(&world, ITEM_PRE_SEED, 0).is_none());
-    assert_eq!(stored_alive_count(&ch, ITEM_PRE_SEED).await, None);
+    assert_eq!(
+        stored_alive_count(&ch, ITEM_PRE_SEED).await,
+        marker_is_ours.then_some(0)
+    );
 
     // Mid-stream removal is honoured; the other snapshot row is alive.
     let g = by_key(&world, ITEM_SEED_STREAM, 0).expect("seed-stream row");
@@ -478,4 +517,24 @@ async fn alive_set_matches_the_scripted_fixture() {
         .filter(|r| ALL_ITEMS.contains(&r.item_id) && r.item_id != ITEM_MERGE)
         .collect();
     assert!(leaked.is_empty(), "{leaked:?}");
+
+    // Simulate event TTL removing every replayable row. Prior nonzero
+    // snapshots must become zero, even though there is no event left from
+    // which the refresher could otherwise discover their keys.
+    ch.client()
+        .query(&format!(
+            "ALTER TABLE listing_events DELETE WHERE item_id IN ({}) SETTINGS mutations_sync = 1",
+            in_list()
+        ))
+        .execute()
+        .await
+        .expect("expire fixture events");
+    rollups::refresh_listing_alive(&ch)
+        .await
+        .expect("refresh after event expiry");
+    let expired = queries::bulk_listing_alive(&ch, &[WORLD, OTHER_WORLD])
+        .await
+        .expect("read after event expiry");
+    assert!(expired.iter().all(|r| !ALL_ITEMS.contains(&r.item_id)));
+    assert_eq!(stored_alive_count(&ch, ITEM_REPRICE).await, Some(0));
 }
