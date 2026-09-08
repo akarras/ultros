@@ -416,9 +416,19 @@ use crate::global_state::labs::{LAB_LISTS_SYNC, use_lab};
 use crate::routes::list_view::ListView;
 
 /// The Labs page. Identical to `ListView` until Phase 4.
+///
+/// The wrapping div carries `data-testid="list-view-sync"` so tests (and
+/// anyone checking a live page) can observe which branch of `ListRoute`
+/// rendered — otherwise the two halves are indistinguishable. `display:
+/// contents` keeps it invisible to layout; an inline style because Tailwind
+/// only ships utility classes it sees used, and this marker has no class.
 #[component]
 pub fn ListViewSync() -> impl IntoView {
-    view! { <ListView /> }
+    view! {
+        <div style="display:contents" data-testid="list-view-sync">
+            <ListView />
+        </div>
+    }
 }
 
 /// Picks the page for `/list/:id`. The `LABS` cookie is server-visible, so
@@ -520,7 +530,7 @@ cd integration && BASE_URL=http://127.0.0.1:8080 npm run test:list-flow
 cd integration && BASE_URL=http://127.0.0.1:8080 LABS_COOKIE=lists-sync npm run test:list-flow
 ```
 
-Expected: both pass. With the cookie, the Settings page shows the Labs box (verify by hand once: `data-testid="labs-settings"` present at `/settings`).
+Expected: both pass. With the cookie, the Settings page shows the Labs box (verify by hand once: `data-testid="labs-settings"` present at `/settings`). Right after the owner's first `waitForHydration` on the list page, the flow also asserts the `[data-testid="list-view-sync"]` marker is present when `LABS_COOKIE` is set and absent when it is not, so a passing run proves the route split actually switched pages rather than rendering the same output both ways.
 
 - [ ] **Step 3: Run CI checks and commit**
 

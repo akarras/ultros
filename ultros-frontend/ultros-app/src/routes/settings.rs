@@ -359,20 +359,16 @@ fn LabsSettings() -> impl IntoView {
                     view! {
                         <div class="grid md:grid-cols-3 gap-4 items-center" data-testid=format!("lab-{token}")>
                             <div class="col-span-2">
-                                <div class="font-semibold text-[color:var(--color-text)]">{lab_title(i18n, token)}</div>
-                                <div class="text-sm text-[color:var(--color-text-muted)]">{lab_desc(i18n, token)}</div>
+                                <div class="font-semibold text-[color:var(--color-text)]">{move || lab_title(i18n, token)}</div>
+                                <div class="text-sm text-[color:var(--color-text-muted)]">{move || lab_desc(i18n, token)}</div>
                             </div>
                             <Toggle
                                 checked=Signal::derive(move || labs().unwrap_or_default().has(token))
                                 set_checked=(move |checked: bool| {
                                     let mut current = labs.get_untracked().unwrap_or_default();
                                     if checked { current.enabled.insert(token.to_string()); } else { current.enabled.remove(token); }
-                                    // Always write the set, even when it is empty: the shared cookie
-                                    // helper's removal path does not carry the path/SameSite/Secure
-                                    // attributes the write used, so a delete is silently ignored by the
-                                    // browser and the lab could never be switched off. An empty set
-                                    // serializes to `LABS=` and parses back to "nothing enabled".
-                                    set_labs(Some(current));
+                                    // An empty set removes the cookie; the helper's removal carries the write's attributes (#1258).
+                                    set_labs((!current.enabled.is_empty()).then_some(current));
                                 }).into_signal_setter()
                                 checked_label=t_string!(i18n, labs_on)
                                 unchecked_label=t_string!(i18n, labs_off)

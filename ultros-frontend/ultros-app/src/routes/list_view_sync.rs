@@ -10,9 +10,19 @@ use crate::global_state::labs::{LAB_LISTS_SYNC, use_lab};
 use crate::routes::list_view::ListView;
 
 /// The Labs page. Identical to `ListView` until Phase 4.
+///
+/// The wrapping div carries `data-testid="list-view-sync"` so tests (and
+/// anyone checking a live page) can observe which branch of `ListRoute`
+/// rendered — otherwise the two halves are indistinguishable. `display:
+/// contents` keeps it invisible to layout; an inline style because Tailwind
+/// only ships utility classes it sees used, and this marker has no class.
 #[component]
 pub fn ListViewSync() -> impl IntoView {
-    view! { <ListView /> }
+    view! {
+        <div style="display:contents" data-testid="list-view-sync">
+            <ListView />
+        </div>
+    }
 }
 
 /// Picks the page for `/list/:id`. The `LABS` cookie is server-visible, so
