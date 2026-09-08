@@ -149,6 +149,13 @@ define_error_enum!(ApiError {
     Forbidden(&'static str),
     #[error("{0}")]
     BadRequest(&'static str),
+    /// A dependency we don't control is down — in practice the Discord
+    /// gateway. Distinct from the `anyhow` catch-all because that one is
+    /// reported as a 500 *and* has its message replaced by "Internal server
+    /// error", which is exactly what makes an offline bot undiagnosable from
+    /// the UI.
+    #[error("{0}")]
+    ServiceUnavailable(&'static str),
 });
 
 impl ApiError {
@@ -168,6 +175,7 @@ impl ApiError {
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             // A character id that the Lodestone doesn't know is a bad request
             // parameter, not a server fault - answering 500 both lied to the
             // caller and reported the typo to GlitchTip.
@@ -194,6 +202,12 @@ impl ApiError {
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
             ApiError::BadRequest(message) => {
                 ultros_api_types::result::ApiError::BadRequest((*message).into())
+            }
+            // Explicit arm: 503 is a server error, so the fallback below would
+            // swap this message for "Internal server error" and defeat the
+            // point of the variant.
+            ApiError::ServiceUnavailable(message) => {
+                ultros_api_types::result::ApiError::Message((*message).to_string())
             }
             ApiError::CharacterClaimError(ClaimError::Lodestone(
                 ProfileError::CharacterNotFound(_),
@@ -322,7 +336,11 @@ impl IntoResponse for ApiError {
                 .into_response();
         }
         let status = self.as_status_code();
-        if status.is_server_error() {
+        // A disconnected Discord bot is a transient state, not a bug in this
+        // process, so it stays out of `error!` and therefore out of GlitchTip
+        // — the same carve-out `WebError` makes for analyzer warm-up.
+        let is_expected_transient = matches!(self, ApiError::ServiceUnavailable(_));
+        if status.is_server_error() && !is_expected_transient {
             // Same grouping rule as `WebError` — see `report_title`. The API
             // routes are where the ClickHouse-backed endpoints live
             // (item_stats, movers, resale_quality, market_heat), so collapsing
@@ -435,6 +453,71 @@ mod tests {
             ultros_api_types::result::ApiError::BadRequest("unsupported push provider".into())
         );
         assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// The group endpoints do their authorization in `ultros-db` and let the
+    /// typed error travel up through `anyhow`. That only produces a usable API
+    /// response if the downcast here still finds it, so this pins the statuses
+    /// the role endpoints depend on: a non-owner gets 403, a missing role 404,
+    /// and a change to a Discord-managed role or member gets a 400 that says
+    /// why rather than a bare "bad request".
+    #[test]
+    fn group_errors_keep_their_status_and_message_through_anyhow() {
+        let cases = [
+            (
+                GroupError::Forbidden("Only the group owner can manage roles"),
+                StatusCode::FORBIDDEN,
+            ),
+            (GroupError::NotFound, StatusCode::NOT_FOUND),
+            (GroupError::RoleNotFound, StatusCode::NOT_FOUND),
+            (
+                GroupError::BadRequest("That Discord role is already imported"),
+                StatusCode::BAD_REQUEST,
+            ),
+            (GroupError::ManagedByDiscord, StatusCode::BAD_REQUEST),
+            (GroupError::RoleManagedByDiscord, StatusCode::BAD_REQUEST),
+        ];
+        for (error, expected) in cases {
+            let described = error.to_string();
+            let api = ApiError::from(anyhow::Error::from(error));
+            assert_eq!(api.as_status_code(), expected, "{described}");
+        }
+    }
+
+    /// Both "managed by Discord" refusals have to reach the client as text a
+    /// person can act on — the whole reason the endpoints refuse instead of
+    /// making a change reconciliation would undo.
+    #[test]
+    fn discord_managed_refusals_explain_themselves() {
+        for error in [
+            GroupError::ManagedByDiscord,
+            GroupError::RoleManagedByDiscord,
+        ] {
+            let api = ApiError::from(anyhow::Error::from(error));
+            let ultros_api_types::result::ApiError::BadRequest(message) = api.as_api_error() else {
+                panic!("expected a BadRequest body");
+            };
+            assert!(
+                message.contains("managed by Discord"),
+                "unexpected message: {message}"
+            );
+        }
+    }
+
+    /// An offline Discord bot is not a bug in this process. It answers 503 and
+    /// keeps its message: the `anyhow` catch-all would have made it a 500 with
+    /// the text replaced by "Internal server error", which is exactly what
+    /// makes a disconnected bot undiagnosable from the UI.
+    #[test]
+    fn service_unavailable_keeps_its_message() {
+        let error = ApiError::ServiceUnavailable("The Ultros Discord bot is not connected");
+        assert_eq!(error.as_status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            error.as_api_error(),
+            ultros_api_types::result::ApiError::Message(
+                "The Ultros Discord bot is not connected".to_string()
+            )
+        );
     }
 
     /// An unauthenticated request must answer `401`, not `200`.

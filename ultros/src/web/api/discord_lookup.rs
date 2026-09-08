@@ -11,7 +11,8 @@
 
 use axum_extra::extract::PrivateCookieJar;
 use poise::serenity_prelude::{
-    self as serenity, ChannelId, ChannelType, GuildId, GuildPagination, Http, Permissions, UserId,
+    self as serenity, ChannelId, ChannelType, GuildId, GuildPagination, Http, Member, Permissions,
+    Role, UserId,
 };
 use std::collections::HashSet;
 use ultros_api_types::alert::{DiscordWritableChannel, DiscordWritableGuild};
@@ -139,6 +140,97 @@ pub(crate) async fn require_manageable_guild(
         Err(ApiError::from(anyhow::anyhow!(
             "you must have Administrator or Manage Server permission in that Discord server"
         )))
+    }
+}
+
+/// Whether a guild role is one a group may import.
+///
+/// Managed roles belong to a bot, an integration, or Nitro boosting: Discord
+/// itself decides who holds them and refuses to let anyone else be given one,
+/// so importing them would produce a group nobody can be added to. `@everyone`
+/// deliberately survives this filter — importing it is how the spec expresses
+/// "sync the whole server".
+fn is_importable_role(role: &Role) -> bool {
+    !role.managed && role.tags.bot_id.is_none() && role.tags.integration_id.is_none()
+}
+
+/// Discord leaves an uncoloured role at `0`, which is not black — it means
+/// "inherit", so the picker must render its own default rather than a swatch.
+fn role_colour(role: &Role) -> Option<String> {
+    (role.colour.0 != 0).then(|| format!("#{:06x}", role.colour.0))
+}
+
+/// The guild's importable roles, highest first, the order they appear in
+/// Discord's own role list.
+pub(crate) async fn importable_guild_roles(
+    ctx: &serenity::Context,
+    guild_id: i64,
+) -> Result<Vec<(i64, String, i32, Option<String>)>, ApiError> {
+    let guild_id =
+        u64::try_from(guild_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid guild_id")))?;
+    let roles = GuildId::new(guild_id).roles(&ctx.http).await.map_err(|e| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord could not load the roles for that server: {e}. \
+                 The bot must still be a member of it."
+        ))
+    })?;
+    let mut roles: Vec<_> = roles
+        .into_values()
+        .filter(is_importable_role)
+        .map(|role| {
+            let colour = role_colour(&role);
+            (
+                role.id.get() as i64,
+                role.name,
+                i32::from(role.position),
+                colour,
+            )
+        })
+        .collect();
+    // Discord numbers positions upwards, so descending here is the order the
+    // server settings screen shows. Name breaks ties: `@everyone` and a fresh
+    // role both sit at position 0.
+    roles.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1)));
+    Ok(roles)
+}
+
+/// Prefix-search the guild's members through Discord's own search endpoint,
+/// which matches username and nickname and needs no privileged intent.
+///
+/// A 403 still names the Server Members intent: that is what a deploy which
+/// forgot to enable it looks like from here, and the message has to be
+/// diagnosable from the UI rather than showing up as an opaque failure.
+pub(crate) async fn search_guild_members(
+    ctx: &serenity::Context,
+    guild_id: i64,
+    query: &str,
+    limit: u64,
+) -> Result<Vec<Member>, ApiError> {
+    let guild_id =
+        u64::try_from(guild_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid guild_id")))?;
+    ctx.http
+        .search_guild_members(GuildId::new(guild_id), query, Some(limit))
+        .await
+        .map_err(|e| ApiError::from(anyhow::anyhow!("{}", member_search_error(&e))))
+}
+
+fn member_search_error(error: &serenity::Error) -> String {
+    let status = match error {
+        serenity::Error::Http(http) => http.status_code().map(|status| status.as_u16()),
+        _ => None,
+    };
+    member_search_message(status, error)
+}
+
+/// Split out from [`member_search_error`] so the wording is testable:
+/// serenity's `ErrorResponse` is `#[non_exhaustive]`, so a 403 cannot be
+/// constructed from outside that crate.
+fn member_search_message(status: Option<u16>, error: impl std::fmt::Display) -> String {
+    match status {
+        Some(403) => "Discord refused the member search (403). The Ultros bot needs the \
+                      Server Members intent enabled in the Discord developer portal."
+            .to_string(),
+        _ => format!("Discord member search failed: {error}"),
     }
 }
 
@@ -449,6 +541,82 @@ mod tests {
             result.unwrap().unwrap(),
             HashSet::from([GuildId::new(2), GuildId::new(201)])
         );
+    }
+
+    fn role(value: serde_json::Value) -> Role {
+        let mut base = serde_json::json!({
+            "id": "1", "guild_id": "1", "color": 0, "colors": {"primary_color": 0},
+            "hoist": false, "managed": false, "mentionable": false,
+            "name": "A role", "permissions": "0", "position": 1, "tags": {}
+        });
+        let serde_json::Value::Object(overrides) = value else {
+            panic!("role overrides must be an object");
+        };
+        for (key, value) in overrides {
+            base[key] = value;
+        }
+        serde_json::from_value(base).unwrap()
+    }
+
+    /// A managed role — a bot's own role, an integration's, or the Nitro
+    /// booster role — cannot be handed to anyone by us, so importing it would
+    /// build a group nobody can join.
+    #[test]
+    fn managed_and_bot_roles_are_not_importable() {
+        assert!(is_importable_role(&role(serde_json::json!({}))));
+        assert!(!is_importable_role(&role(
+            serde_json::json!({"managed": true})
+        )));
+        assert!(!is_importable_role(&role(
+            serde_json::json!({"tags": {"bot_id": "42"}})
+        )));
+        assert!(!is_importable_role(&role(
+            serde_json::json!({"tags": {"integration_id": "42"}})
+        )));
+    }
+
+    /// `@everyone` carries the guild's own id and is an ordinary unmanaged
+    /// role. It has to stay importable: the spec makes importing it the way to
+    /// sync a whole server, so filtering it out would remove that feature.
+    #[test]
+    fn the_everyone_role_stays_importable() {
+        assert!(is_importable_role(&role(
+            serde_json::json!({"id": "1", "name": "@everyone", "position": 0})
+        )));
+    }
+
+    /// Discord uses `0` for "no colour", which is inherit, not black.
+    #[test]
+    fn only_a_coloured_role_reports_a_colour() {
+        assert_eq!(role_colour(&role(serde_json::json!({"color": 0}))), None);
+        assert_eq!(
+            role_colour(&role(serde_json::json!({"color": 0x5865f2}))),
+            Some("#5865f2".to_string())
+        );
+        // Leading zeroes have to survive, or the hex is a different colour.
+        assert_eq!(
+            role_colour(&role(serde_json::json!({"color": 0x00ff00}))),
+            Some("#00ff00".to_string())
+        );
+    }
+
+    /// A misconfigured deploy has to be diagnosable from the UI, so the one
+    /// status that means "the intent is off" says so by name.
+    #[test]
+    fn a_forbidden_member_search_names_the_server_members_intent() {
+        let message = member_search_message(Some(403), "Missing Access");
+        assert!(
+            message.contains("Server Members intent"),
+            "unexpected message: {message}"
+        );
+
+        // Every other failure keeps Discord's own words rather than sending an
+        // operator to check a setting that is fine.
+        for status in [None, Some(429), Some(500)] {
+            let message = member_search_message(status, "connection reset");
+            assert!(!message.contains("Server Members intent"), "{status:?}");
+            assert!(message.contains("connection reset"), "{status:?}");
+        }
     }
 
     fn guild(id: u64, owner: bool, permissions: Permissions) -> serenity::GuildInfo {
