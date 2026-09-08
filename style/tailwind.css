@@ -143,6 +143,9 @@
          */
         --accent: var(--color-brand-400);
         --accent-soft: var(--color-brand-500);
+        /* Safe decorative fallbacks before a named palette is applied. */
+        --accent-decor: var(--accent);
+        --accent-decor-glow: var(--accent-glow);
         --accent-glow: color-mix(
             in srgb,
             var(--color-brand-400) 35%,
@@ -318,6 +321,8 @@
     --color-outline: rgba(0, 0, 0, 0.12);
     --color-outline-strong: rgba(0, 0, 0, 0.2);
     --chart-grid: rgba(0, 0, 0, 0.06);
+    --chart-line: var(--color-brand-600);
+    --chart-fill: color-mix(in srgb, var(--chart-line) 20%, transparent);
 
     /* Flip brand semantics for light */
     --brand-bg: var(--color-brand-200);
@@ -353,18 +358,6 @@
        the dark page, so light mode leans on the alpha band harder. */
     --scrollbar-thumb: color-mix(in srgb, var(--scrollbar-ink) 62%, transparent);
 
-    /* Flip brand scale (violet) for better contrast on light backgrounds) */
-    --color-brand-50: #2e1065;
-    --color-brand-100: #4c1d95;
-    --color-brand-200: #5b21b6;
-    --color-brand-300: #6d28d9;
-    --color-brand-400: #7c3aed;
-    --color-brand-500: #8b5cf6;
-    --color-brand-600: #a78bfa;
-    --color-brand-700: #c4b5fd;
-    --color-brand-800: #ddd6fe;
-    --color-brand-900: #ede9fe;
-    --color-brand-950: #f5f3ff;
 }
 
 /* Contrast guards: ensure readable field/dropdown surfaces in light mode */
@@ -397,9 +390,11 @@
 }
 
 
-/* Runtime-swappable brand palettes */
-:root[data-palette="violet"],
-[data-theme="light"][data-palette="violet"] {
+/* Named palettes share their tokens with the picker previews. Legacy names
+ * remain CSS aliases for cached documents and saved preferences. Primary colors
+ * signal interaction; the secondary hue is decorative, never profit/loss ink. */
+[data-palette="ultros"],
+[data-palette="violet"] {
     --color-brand-50: #f5f3ff;
     --color-brand-100: #ede9fe;
     --color-brand-200: #ddd6fe;
@@ -411,130 +406,198 @@
     --color-brand-800: #5b21b6;
     --color-brand-900: #4c1d95;
     --color-brand-950: #2e1065;
-}
-:root[data-palette="teal"],
-[data-theme="light"][data-palette="teal"] {
-    --color-brand-50: #f0fdfa;
-    --color-brand-100: #ccfbf1;
-    --color-brand-200: #99f6e4;
-    --color-brand-300: #5eead4;
-    --color-brand-400: #2dd4bf;
-    --color-brand-500: #14b8a6;
-    --color-brand-600: #0d9488;
-    --color-brand-700: #0f766e;
-    --color-brand-800: #115e59;
-    --color-brand-900: #134e4a;
-    --color-brand-950: #042f2e;
-}
-:root[data-palette="emerald"],
-[data-theme="light"][data-palette="emerald"] {
-    --color-brand-50: #ecfdf5;
-    --color-brand-100: #d1fae5;
-    --color-brand-200: #a7f3d0;
-    --color-brand-300: #6ee7b7;
-    --color-brand-400: #34d399;
-    --color-brand-500: #10b981;
-    --color-brand-600: #059669;
-    --color-brand-700: #047857;
-    --color-brand-800: #065f46;
-    --color-brand-900: #064e3b;
-    --color-brand-950: #022c22;
-}
-:root[data-palette="amber"],
-[data-theme="light"][data-palette="amber"] {
-    --color-brand-50: #fffbeb;
-    --color-brand-100: #fef3c7;
-    --color-brand-200: #fde68a;
-    --color-brand-300: #fcd34d;
-    --color-brand-400: #fbbf24;
-    --color-brand-500: #f59e0b;
-    --color-brand-600: #d97706;
-    --color-brand-700: #b45309;
-    --color-brand-800: #92400e;
-    --color-brand-900: #78350f;
-    --color-brand-950: #451a03;
-}
-:root[data-palette="rose"],
-[data-theme="light"][data-palette="rose"] {
-    --color-brand-50: #fff1f2;
-    --color-brand-100: #ffe4e6;
-    --color-brand-200: #fecdd3;
-    --color-brand-300: #fda4af;
-    --color-brand-400: #fb7185;
-    --color-brand-500: #f43f5e;
-    --color-brand-600: #e11d48;
-    --color-brand-700: #be123c;
-    --color-brand-800: #9f1239;
-    --color-brand-900: #881337;
-    --color-brand-950: #4c0519;
-}
-:root[data-palette="sky"],
-[data-theme="light"][data-palette="sky"] {
-    --color-brand-50: #f0f9ff;
-    --color-brand-100: #e0f2fe;
-    --color-brand-200: #bae6fd;
-    --color-brand-300: #7dd3fc;
-    --color-brand-400: #38bdf8;
-    --color-brand-500: #0ea5e9;
-    --color-brand-600: #0284c7;
-    --color-brand-700: #0369a1;
-    --color-brand-800: #075985;
-    --color-brand-900: #0c4a6e;
-    --color-brand-950: #082f49;
+    --palette-secondary-dark: #e3a0ca;
+    --palette-secondary-light: #963f79;
+    --palette-page-dark: #100c19;
+    --palette-page-light: #f7f5fb;
 }
 
-/* FFXIV-themed palettes */
-:root[data-palette="immortal-flames"],
-[data-theme="light"][data-palette="immortal-flames"] {
-    /* copper and ember (distinct from tuliyollal's orange) */
+[data-palette="maelstrom"] {
+    --color-brand-50: #fff2f2;
+    --color-brand-100: #ffe1e1;
+    --color-brand-200: #ffc8cb;
+    --color-brand-300: #f3a1a7;
+    --color-brand-400: #e87883;
+    --color-brand-500: #d34758;
+    --color-brand-600: #b7273e;
+    --color-brand-700: #991e34;
+    --color-brand-800: #7d1d30;
+    --color-brand-900: #651c2b;
+    --color-brand-950: #360d16;
+    --palette-secondary-dark: #c7aa70;
+    --palette-secondary-light: #806124;
+    --palette-page-dark: #10151c;
+    --palette-page-light: #f5f6f8;
+}
+
+[data-palette="twin-adder"],
+[data-palette="emerald"] {
+    --color-brand-50: #f0f8f0;
+    --color-brand-100: #dcf0de;
+    --color-brand-200: #bbe0c0;
+    --color-brand-300: #8ecb9c;
+    --color-brand-400: #65b47c;
+    --color-brand-500: #3f945b;
+    --color-brand-600: #277345;
+    --color-brand-700: #205c39;
+    --color-brand-800: #1e4a30;
+    --color-brand-900: #193e29;
+    --color-brand-950: #0b2317;
+    --palette-secondary-dark: #d6be76;
+    --palette-secondary-light: #79601e;
+    --palette-page-dark: #0d1813;
+    --palette-page-light: #f8f7ee;
+}
+
+[data-palette="ascian"],
+[data-palette="rose"] {
+    --color-brand-50: #fcf1f5;
+    --color-brand-100: #f8e0e9;
+    --color-brand-200: #efc3d4;
+    --color-brand-300: #e69eb9;
+    --color-brand-400: #d77d9c;
+    --color-brand-500: #b74b73;
+    --color-brand-600: #972e58;
+    --color-brand-700: #7c2247;
+    --color-brand-800: #671f3d;
+    --color-brand-900: #571d35;
+    --color-brand-950: #310e1d;
+    --palette-secondary-dark: #d6cdb9;
+    --palette-secondary-light: #71654c;
+    --palette-page-dark: #130d13;
+    --palette-page-light: #f8f4f4;
+}
+
+[data-palette="ishgard"],
+[data-palette="sky"] {
+    --color-brand-50: #f2f7fb;
+    --color-brand-100: #e1edf5;
+    --color-brand-200: #c4ddec;
+    --color-brand-300: #a0c5dc;
+    --color-brand-400: #80adc9;
+    --color-brand-500: #588eaf;
+    --color-brand-600: #3b6b8e;
+    --color-brand-700: #315674;
+    --color-brand-800: #2b475f;
+    --color-brand-900: #273d50;
+    --color-brand-950: #152430;
+    --palette-secondary-dark: #cad5e2;
+    --palette-secondary-light: #586a7d;
+    --palette-page-dark: #0d151f;
+    --palette-page-light: #f4f7fa;
+}
+
+[data-palette="crystarium"] {
+    --color-brand-50: #faf3ff;
+    --color-brand-100: #f1e4fc;
+    --color-brand-200: #e1caf3;
+    --color-brand-300: #cea8e8;
+    --color-brand-400: #bb89dd;
+    --color-brand-500: #9c5dc3;
+    --color-brand-600: #8141a6;
+    --color-brand-700: #6b348a;
+    --color-brand-800: #592d71;
+    --color-brand-900: #48275b;
+    --color-brand-950: #2a1437;
+    --palette-secondary-dark: #87cee3;
+    --palette-secondary-light: #28718a;
+    --palette-page-dark: #131024;
+    --palette-page-light: #f7f4fb;
+}
+
+[data-palette="sharlayan"] {
+    --color-brand-50: #f1f5fc;
+    --color-brand-100: #e0e8f7;
+    --color-brand-200: #c3d3ee;
+    --color-brand-300: #9bb6df;
+    --color-brand-400: #7b9dce;
+    --color-brand-500: #517db8;
+    --color-brand-600: #375e98;
+    --color-brand-700: #2d4b7d;
+    --color-brand-800: #293f66;
+    --color-brand-900: #253653;
+    --color-brand-950: #142037;
+    --palette-secondary-dark: #d0ba82;
+    --palette-secondary-light: #7c632d;
+    --palette-page-dark: #0e1522;
+    --palette-page-light: #faf8f0;
+}
+
+[data-palette="tuliyollal"] {
+    --color-brand-50: #fff4ed;
+    --color-brand-100: #fde4d4;
+    --color-brand-200: #f8c7ab;
+    --color-brand-300: #eea07e;
+    --color-brand-400: #e48260;
+    --color-brand-500: #ce5e3e;
+    --color-brand-600: #ac432b;
+    --color-brand-700: #8c3525;
+    --color-brand-800: #712e23;
+    --color-brand-900: #5e2920;
+    --color-brand-950: #34130e;
+    --palette-secondary-dark: #78c4ab;
+    --palette-secondary-light: #276e59;
+    --palette-page-dark: #1c1311;
+    --palette-page-light: #fbf4e9;
+}
+
+[data-palette="immortal-flames"] {
     --color-brand-50: #fff3e6;
     --color-brand-100: #ffe0c2;
     --color-brand-200: #ffc896;
     --color-brand-300: #ffab63;
     --color-brand-400: #f68a2f;
     --color-brand-500: #d96a16;
-    --color-brand-600: #b74f12;
+    --color-brand-600: #ad4910;
     --color-brand-700: #8f3d12;
     --color-brand-800: #6d3012;
     --color-brand-900: #4c230f;
     --color-brand-950: #251108;
+    --palette-secondary-dark: #bd9e79;
+    --palette-secondary-light: #7c5e3e;
+    --palette-page-dark: #171411;
+    --palette-page-light: #f7f3ed;
 }
 
-:root[data-palette="uldah"],
-[data-theme="light"][data-palette="uldah"] {
-    /* opulent gold and desert sand */
-    --color-brand-50: #fefce8;
-    --color-brand-100: #fef9c3;
-    --color-brand-200: #fef08a;
-    --color-brand-300: #fde047;
-    --color-brand-400: #facc15;
-    --color-brand-500: #eab308;
-    --color-brand-600: #ca8a04;
-    --color-brand-700: #a16207;
-    --color-brand-800: #854d0e;
-    --color-brand-900: #713f12;
-    --color-brand-950: #422006;
+[data-palette="uldah"],
+[data-palette="amber"] {
+    --color-brand-50: #fcf8eb;
+    --color-brand-100: #f5edcb;
+    --color-brand-200: #eada9f;
+    --color-brand-300: #dac477;
+    --color-brand-400: #c9ac57;
+    --color-brand-500: #ae8b34;
+    --color-brand-600: #80601d;
+    --color-brand-700: #70531c;
+    --color-brand-800: #5b431c;
+    --color-brand-900: #4c381b;
+    --color-brand-950: #2b1e0c;
+    --palette-secondary-dark: #bf93c5;
+    --palette-secondary-light: #794582;
+    --palette-page-dark: #1b151b;
+    --palette-page-light: #faf5eb;
 }
 
-:root[data-palette="limsa"],
-[data-theme="light"][data-palette="limsa"] {
-    /* nautical indigo */
-    --color-brand-50: #eef2ff;
-    --color-brand-100: #e0e7ff;
-    --color-brand-200: #c7d2fe;
-    --color-brand-300: #a5b4fc;
-    --color-brand-400: #818cf8;
-    --color-brand-500: #6366f1;
-    --color-brand-600: #4f46e5;
-    --color-brand-700: #4338ca;
-    --color-brand-800: #3730a3;
-    --color-brand-900: #312e81;
-    --color-brand-950: #1e1b4b;
+[data-palette="limsa"],
+[data-palette="teal"] {
+    --color-brand-50: #eef8fd;
+    --color-brand-100: #d7eef8;
+    --color-brand-200: #b1dcef;
+    --color-brand-300: #83c4e3;
+    --color-brand-400: #58aed1;
+    --color-brand-500: #338eb6;
+    --color-brand-600: #1f6d94;
+    --color-brand-700: #205777;
+    --color-brand-800: #204861;
+    --color-brand-900: #1f3c50;
+    --color-brand-950: #102431;
+    --palette-secondary-dark: #81d1bd;
+    --palette-secondary-light: #287260;
+    --palette-page-dark: #0c1921;
+    --palette-page-light: #f3f9fa;
 }
 
-:root[data-palette="garlemald"],
-[data-theme="light"][data-palette="garlemald"] {
-    /* industrial slate */
+[data-palette="garlemald"] {
     --color-brand-50: #f8fafc;
     --color-brand-100: #f1f5f9;
     --color-brand-200: #e2e8f0;
@@ -546,133 +609,75 @@
     --color-brand-800: #1f2937;
     --color-brand-900: #0f172a;
     --color-brand-950: #020617;
-}
-:root[data-palette="ultros"],
-[data-theme="light"][data-palette="ultros"] {
-    /* signature voidsent purple */
-    --color-brand-50: #f5f3ff;
-    --color-brand-100: #ede9fe;
-    --color-brand-200: #ddd6fe;
-    --color-brand-300: #c4b5fd;
-    --color-brand-400: #a78bfa;
-    --color-brand-500: #8b5cf6;
-    --color-brand-600: #7c3aed;
-    --color-brand-700: #6d28d9;
-    --color-brand-800: #5b21b6;
-    --color-brand-900: #4c1d95;
-    --color-brand-950: #2e1065;
+    --palette-secondary-dark: #d8898d;
+    --palette-secondary-light: #a03d46;
+    --palette-page-dark: #14171b;
+    --palette-page-light: #f3f4f5;
 }
 
-:root[data-palette="maelstrom"],
-[data-theme="light"][data-palette="maelstrom"] {
-    /* naval crimson + brass */
-    --color-brand-50: #fef2f2;
-    --color-brand-100: #fee2e2;
-    --color-brand-200: #fecaca;
-    --color-brand-300: #fca5a5;
-    --color-brand-400: #f87171;
-    --color-brand-500: #ef4444;
-    --color-brand-600: #dc2626;
-    --color-brand-700: #b91c1c;
-    --color-brand-800: #991b1b;
-    --color-brand-900: #7f1d1d;
-    --color-brand-950: #450a0a;
+/* Resolve surface and decorative tokens on the root in each mode. */
+:root[data-palette] {
+    --color-background: var(--palette-page-dark);
+    --color-background-muted: color-mix(in srgb, var(--palette-page-dark) 94%, white);
+    --color-background-elevated: color-mix(in srgb, var(--palette-page-dark) 91%, white);
+    --color-background-panel: color-mix(in srgb, var(--palette-page-dark) 96%, white);
+    --accent-decor: var(--palette-secondary-dark);
+    --accent-decor-glow: color-mix(in srgb, var(--accent-decor) 24%, transparent);
+}
+:root[data-theme="light"][data-palette] {
+    --color-background: var(--palette-page-light);
+    --color-background-muted: color-mix(in srgb, var(--palette-page-light) 96%, black);
+    --color-background-elevated: color-mix(in srgb, var(--palette-page-light) 25%, white);
+    --color-background-panel: color-mix(in srgb, var(--palette-page-light) 50%, white);
+    --accent-decor: var(--palette-secondary-light);
 }
 
-:root[data-palette="twin-adder"],
-[data-theme="light"][data-palette="twin-adder"] {
-    /* woodland emerald with serpent amber accents */
-    --color-brand-50: #ecfdf5;
-    --color-brand-100: #d1fae5;
-    --color-brand-200: #a7f3d0;
-    --color-brand-300: #6ee7b7;
-    --color-brand-400: #34d399;
-    --color-brand-500: #10b981;
-    --color-brand-600: #059669;
-    --color-brand-700: #047857;
-    --color-brand-800: #065f46;
-    --color-brand-900: #064e3b;
-    --color-brand-950: #022c22;
+.palette-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+    gap: 0.625rem;
 }
-
-:root[data-palette="ascian"],
-[data-theme="light"][data-palette="ascian"] {
-    /* void black + amaranth */
-    --color-brand-50: #fff1f2;
-    --color-brand-100: #ffe4e6;
-    --color-brand-200: #fecdd3;
-    --color-brand-300: #fda4af;
-    --color-brand-400: #fb7185;
-    --color-brand-500: #f43f5e;
-    --color-brand-600: #e11d48;
-    --color-brand-700: #be123c;
-    --color-brand-800: #9f1239;
-    --color-brand-900: #881337;
-    --color-brand-950: #4c0519;
+.palette-option { position: relative; cursor: pointer; min-width: 0; }
+.palette-option input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
 }
-
-:root[data-palette="ishgard"],
-[data-theme="light"][data-palette="ishgard"] {
-    /* frost + silver (sky blues) */
-    --color-brand-50: #f0f9ff;
-    --color-brand-100: #e0f2fe;
-    --color-brand-200: #bae6fd;
-    --color-brand-300: #7dd3fc;
-    --color-brand-400: #38bdf8;
-    --color-brand-500: #0ea5e9;
-    --color-brand-600: #0284c7;
-    --color-brand-700: #0369a1;
-    --color-brand-800: #075985;
-    --color-brand-900: #0c4a6e;
-    --color-brand-950: #082f49;
+.palette-card {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 3rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--color-outline-strong);
+    border-radius: 0.625rem;
+    background: var(--color-background-panel);
+    color: var(--color-text);
+    font-size: 0.875rem;
 }
-
-:root[data-palette="crystarium"],
-[data-theme="light"][data-palette="crystarium"] {
-    /* aurora violet with crystalline glow (fuchsia) */
-    --color-brand-50: #fdf4ff;
-    --color-brand-100: #fae8ff;
-    --color-brand-200: #f5d0fe;
-    --color-brand-300: #f0abfc;
-    --color-brand-400: #e879f9;
-    --color-brand-500: #d946ef;
-    --color-brand-600: #c026d3;
-    --color-brand-700: #a21caf;
-    --color-brand-800: #86198f;
-    --color-brand-900: #701a75;
-    --color-brand-950: #4a044e;
+.palette-option:hover .palette-card { background: var(--color-background-elevated); }
+.palette-option input:checked + .palette-card { border-color: var(--accent); }
+.palette-option input:focus-visible + .palette-card {
+    outline: 2px solid var(--brand-ring);
+    outline-offset: 3px;
 }
-
-:root[data-palette="sharlayan"],
-[data-theme="light"][data-palette="sharlayan"] {
-    /* deep academy blue + parchment */
-    --color-brand-50: #eff6ff;
-    --color-brand-100: #dbeafe;
-    --color-brand-200: #bfdbfe;
-    --color-brand-300: #93c5fd;
-    --color-brand-400: #60a5fa;
-    --color-brand-500: #3b82f6;
-    --color-brand-600: #2563eb;
-    --color-brand-700: #1d4ed8;
-    --color-brand-800: #1e40af;
-    --color-brand-900: #1e3a8a;
-    --color-brand-950: #172554;
+.palette-check { margin-left: auto; color: var(--accent); visibility: hidden; }
+.palette-option input:checked + .palette-card .palette-check { visibility: visible; }
+.palette-swatch {
+    flex: 0 0 1.625rem;
+    width: 1.625rem;
+    height: 1.625rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-brand-400) 50%, var(--palette-secondary-dark) 50%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
-
-:root[data-palette="tuliyollal"],
-[data-theme="light"][data-palette="tuliyollal"] {
-    /* terracotta heat + jungle warmth (orange) */
-    --color-brand-50: #fff7ed;
-    --color-brand-100: #ffedd5;
-    --color-brand-200: #fed7aa;
-    --color-brand-300: #fdba74;
-    --color-brand-400: #fb923c;
-    --color-brand-500: #f97316;
-    --color-brand-600: #ea580c;
-    --color-brand-700: #c2410c;
-    --color-brand-800: #9a3412;
-    --color-brand-900: #7c2d12;
-    --color-brand-950: #431407;
+[data-theme="light"] .palette-swatch {
+    background: linear-gradient(135deg, var(--color-brand-600) 50%, var(--palette-secondary-light) 50%);
+}
+@media (forced-colors: active) {
+    .palette-option input:checked + .palette-card { border-color: Highlight; }
+    .palette-option input:focus-visible + .palette-card { outline-color: Highlight; }
 }
 
 @layer components {
@@ -1738,8 +1743,8 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     width: 6px;
     height: 6px;
     border-radius: 9999px;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: var(--accent-decor);
+    box-shadow: 0 0 8px var(--accent-decor-glow);
 }
 
 /* Inline divider between metric columns. Thin vertical line, fades at
@@ -1756,7 +1761,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     );
 }
 
-/* Command-center greeting block: heading text plus a soft purple glow
+/* Command-center greeting block: heading text plus a soft secondary glow
  * behind the right-hand decorative icon. */
 @utility command-greeting {
     position: relative;
@@ -1773,7 +1778,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     border-radius: 9999px;
     background: radial-gradient(
         circle at center,
-        var(--accent-glow) 0%,
+        var(--accent-decor-glow) 0%,
         transparent 60%
     );
     pointer-events: none;

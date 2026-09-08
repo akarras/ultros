@@ -36,7 +36,7 @@ pub fn Welcome() -> impl IntoView {
                     <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                         <div class="flex-1 space-y-3 z-10">
                             <h1 class="text-5xl sm:text-6xl font-extrabold leading-none tracking-tighter">
-                                <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-300 via-purple-400 to-pink-500">
+                                <span class="bg-clip-text text-transparent" style="background-image:linear-gradient(135deg,var(--accent),var(--accent-decor))">
                                     {t!(i18n, welcome_heading)}
                                 </span>
                             </h1>
@@ -49,7 +49,7 @@ pub fn Welcome() -> impl IntoView {
                                 icon=i::FaMapLocationDotSolid
                                 width="4em"
                                 height="4em"
-                                attr:class="text-brand-300"
+                                attr:class="text-[color:var(--accent-decor)]"
                             />
                         </div>
                     </div>

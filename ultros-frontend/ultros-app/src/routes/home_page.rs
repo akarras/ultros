@@ -205,7 +205,7 @@ pub fn HomePage() -> impl IntoView {
                                         </p>
                                     </div>
                                     <div class="hidden md:flex md:w-32 lg:w-40 aspect-square items-center justify-center opacity-30 shrink-0">
-                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" attr:class="text-[color:var(--accent)]" />
+                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" attr:class="text-[color:var(--accent-decor)]" />
                                     </div>
                                 </div>
                             </section>

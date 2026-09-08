@@ -204,7 +204,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
 
                 <div class="relative max-h-[480px] overflow-y-auto overflow-x-hidden pl-4">
                     // Vertical accent rail running the height of the timeline.
-                    <div class="absolute left-1 top-1 bottom-1 w-px bg-[color:color-mix(in_srgb,var(--accent)_45%,transparent)]" aria-hidden="true" />
+                    <div class="absolute left-1 top-1 bottom-1 w-px bg-[color:color-mix(in_srgb,var(--accent-decor)_45%,transparent)]" aria-hidden="true" />
                     <Show
                         when=done_loading
                         fallback=move || {
@@ -227,7 +227,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     // Glowing timeline dot
                                     <span
                                         aria-hidden="true"
-                                        class="absolute -left-[3px] top-[1.05rem] w-2 h-2 rounded-full bg-[color:var(--accent)] shadow-[0_0_8px_var(--accent-glow)] group-hover:scale-125 transition-transform"
+                                        class="absolute -left-[3px] top-[1.05rem] w-2 h-2 rounded-full bg-[color:var(--accent-decor)] shadow-[0_0_8px_var(--accent-decor-glow)] group-hover:scale-125 transition-transform"
                                     />
                                     <div class="flex items-center gap-3 w-full">
                                         <ItemIcon item_id=sale.item_id icon_size=IconSize::Small />
