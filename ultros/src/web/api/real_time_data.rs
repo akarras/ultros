@@ -417,6 +417,18 @@ async fn handle_socket(
                                         }
                                     }
                                 }
+                                ClientMessage::SubscribeListDoc { .. }
+                                | ClientMessage::ListDocUpdate { .. } => {
+                                    sender
+                                        .send(Message::Text(
+                                            serde_json::to_string(&ServerClient::Error {
+                                                message: "list documents are not enabled yet"
+                                                    .to_string(),
+                                            })?
+                                            .into(),
+                                        ))
+                                        .await?;
+                                }
                             }
                             Message::Binary(_) => {
                                 info!("binary data received");

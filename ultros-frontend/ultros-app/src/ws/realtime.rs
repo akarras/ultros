@@ -252,7 +252,10 @@ mod client {
             return;
         };
         match &message {
-            ServerClient::Sales(_) | ServerClient::Listings(_) | ServerClient::ListUpdate(_) => {
+            ServerClient::Sales(_)
+            | ServerClient::Listings(_)
+            | ServerClient::ListUpdate(_)
+            | ServerClient::ListDocUpdate { .. } => {
                 inner.set_last_update.set(Some(Utc::now()));
             }
             _ => {}
@@ -282,6 +285,20 @@ mod client {
                 }
             }
             ServerClient::Error { .. } => {
+                for handler in inner.handlers.borrow().values() {
+                    handler(message.clone());
+                }
+            }
+            ServerClient::ListDocSubscribed {
+                subscription_id, ..
+            } => {
+                if let Some(handler) = inner.handlers.borrow().get(&subscription_id) {
+                    handler(message.clone());
+                }
+            }
+            ServerClient::ListDocUpdate { .. } => {
+                // Relayed updates normally arrive wrapped in SubscriptionEvent;
+                // an unwrapped one goes to every handler like ListUpdate does.
                 for handler in inner.handlers.borrow().values() {
                     handler(message.clone());
                 }
