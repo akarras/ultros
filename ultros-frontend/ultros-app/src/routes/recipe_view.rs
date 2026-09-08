@@ -127,13 +127,15 @@ fn write_route(worlds: &BTreeSet<i32>) -> String {
     }
 }
 
-/// Old links carried `visits=0..4`, an "up to N extra worlds" budget. Read it
-/// as a filter over the ranked routes: the first route within budget.
+/// Legacy `visits=N` links: the best-ranked card visiting at most `visits`
+/// extra worlds. `4` was "full scope" and means the best-ranked card overall.
 fn legacy_visits(plans: &[planner::ShoppingPlan], visits: usize) -> Option<usize> {
-    if visits >= 4 {
-        return (!plans.is_empty()).then_some(0);
-    }
-    plans.iter().position(|p| p.worlds.len() <= visits)
+    plans
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| visits >= 4 || p.worlds.len() <= visits)
+        .min_by_key(|(_, p)| planner::rank(p))
+        .map(|(i, _)| i)
 }
 
 fn pairs(raw: Option<String>) -> BTreeMap<i32, i64> {
@@ -218,6 +220,37 @@ fn plan_summary(route: &str, missing: i64) -> String {
     text
 }
 
+/// The card's comparison line against the no-new-travel baseline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SavingLine {
+    /// The baseline card itself; `alone` when no travel route beats it.
+    Baseline { alone: bool },
+    /// Complete on both sides and this card is cheaper by this much gil.
+    Saved(i64),
+    /// The baseline is short and this card completes the recipe.
+    Completes,
+    /// This card is still short by this many units.
+    Partial(i64),
+}
+
+fn saving_line(
+    baseline: &planner::ShoppingPlan,
+    plan: &planner::ShoppingPlan,
+    is_baseline: bool,
+    cards: usize,
+) -> Option<SavingLine> {
+    if is_baseline {
+        return Some(SavingLine::Baseline { alone: cards == 1 });
+    }
+    if plan.missing > 0 {
+        return Some(SavingLine::Partial(plan.missing));
+    }
+    if baseline.missing > 0 {
+        return Some(SavingLine::Completes);
+    }
+    (baseline.cost > plan.cost).then(|| SavingLine::Saved(baseline.cost - plan.cost))
+}
+
 fn job(recipe: &xiv_gen::Recipe) -> String {
     let jobs = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
     let level = tracked_data()
@@ -238,6 +271,20 @@ struct MarketData {
     ids: Vec<i32>,
     items: BTreeMap<i32, CurrentlyShownItem>,
     failed: BTreeSet<i32>,
+}
+
+/// What the card row renders: frontier cards, plus a pinned shared route
+/// inserted by travel distance, and the badge positions after insertion.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Cards {
+    plans: Vec<planner::ShoppingPlan>,
+    pinned: Option<usize>,
+    best_value: Option<usize>,
+    cheapest: Option<usize>,
+    /// The no-new-travel card every other card's saving line compares
+    /// against; `RouteComparison::baseline` before a pinned card can shift it
+    /// off `plans[0]`.
+    baseline: planner::ShoppingPlan,
 }
 
 #[component]
@@ -378,15 +425,28 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     };
     // "Aether · Gilgamesh, Adamantoise / Primal · Leviathan"
     let route_stops = move |worlds: &BTreeSet<i32>| {
+        const SHOWN: usize = 6;
         let mut by_dc: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for w in worlds {
+        for w in worlds.iter().take(SHOWN) {
             by_dc.entry(dc_name(*w)).or_default().push(world_name(*w));
         }
-        by_dc
+        let mut text = by_dc
             .into_iter()
             .map(|(dc, worlds)| format!("{dc} · {}", worlds.join(", ")))
             .collect::<Vec<_>>()
-            .join(" / ")
+            .join(" / ");
+        if worlds.len() > SHOWN {
+            text.push_str(" · ");
+            text.push_str(
+                &t_string!(
+                    i18n,
+                    recipe_planner_route_more_worlds,
+                    count = worlds.len() - SHOWN
+                )
+                .to_string(),
+            );
+        }
+        text
     };
     let route_label = move |travel: Travel, worlds_empty: bool| -> String {
         match (travel.dc_hops, travel.world_hops) {
@@ -581,57 +641,77 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             unavailable: pair_set(unavailable.get()),
         }
     });
-    let plans = Memo::new(move |_| {
+    let comparison = Memo::new(move |_| {
         if loaded.get().is_none() || home_id.get() == 0 {
-            return Vec::new();
+            return planner::RouteComparison::default();
         }
         materials
             .get()
             .map(|m| planner::compare_routes(&m, &offers.get(), &vendors.get(), &context.get()))
             .unwrap_or_default()
     });
-    // Route cards: the ranked routes plus, when a shared link names a route
-    // that no longer ranks, that route on its own so the link still shows
-    // what it shared. The second value is that pinned card's index.
+    // Frontier cards plus, when a shared link names a route that is not on
+    // the frontier, that route as a pinned card inserted by travel distance.
+    // Badges follow the frontier's best-value and cheapest cards by identity.
     let cards = Memo::new(move |_| {
-        let mut cards = plans.get();
+        let comparison = comparison.get();
+        let best_worlds = comparison
+            .best_value()
+            .map(|i| comparison.cards[i].worlds.clone());
+        let cheapest_worlds = comparison.cheapest().map(|p| p.worlds.clone());
+        let baseline = comparison.baseline().cloned().unwrap_or_default();
+        let mut plans = comparison.cards;
         let mut pinned = None;
         let unranked = route_set(route.get().as_deref())
-            .filter(|set| !cards.is_empty() && !cards.iter().any(|p| p.worlds == *set));
+            .filter(|set| !plans.is_empty() && !plans.iter().any(|p| p.worlds == *set));
         if let (Some(mut allowed), Ok(m)) = (unranked, materials.get()) {
             allowed.insert(home_id.get());
-            cards.push(planner::shop(
-                &m,
-                &offers.get(),
-                &vendors.get(),
-                &allowed,
-                &context.get(),
-            ));
-            pinned = Some(cards.len() - 1);
+            let ctx = context.get();
+            let plan = planner::shop(&m, &offers.get(), &vendors.get(), &allowed, &ctx);
+            let key = (ctx.weights.distance(plan.travel), plan.travel);
+            let at = plans.partition_point(|p| (ctx.weights.distance(p.travel), p.travel) <= key);
+            plans.insert(at, plan);
+            pinned = Some(at);
         }
-        (cards, pinned)
+        let find = |worlds: Option<BTreeSet<i32>>| {
+            worlds.and_then(|w| plans.iter().position(|p| p.worlds == w))
+        };
+        let badges = if plans.len() > 1 {
+            (find(best_worlds), find(cheapest_worlds))
+        } else {
+            (None, None)
+        };
+        Cards {
+            plans,
+            pinned,
+            best_value: badges.0,
+            cheapest: badges.1,
+            baseline,
+        }
     });
     let selected_index = Memo::new(move |_| {
-        let (cards, pinned) = cards.get();
-        if cards.is_empty() {
+        let cards = cards.get();
+        if cards.plans.is_empty() {
             return None;
         }
+        let default = cards.best_value.or(Some(0));
         if let Some(set) = route_set(route.get().as_deref()) {
             return cards
+                .plans
                 .iter()
                 .position(|p| p.worlds == set)
-                .or(pinned)
-                .or(Some(0));
+                .or(cards.pinned)
+                .or(default);
         }
         visits
             .get()
-            .and_then(|v| legacy_visits(&cards, v))
-            .or(Some(0))
+            .and_then(|v| legacy_visits(&cards.plans, v))
+            .or(default)
     });
     let selected = Memo::new(move |_| {
         selected_index
             .get()
-            .and_then(|i| cards.get().0.get(i).cloned())
+            .and_then(|i| cards.get().plans.get(i).cloned())
     });
     let finished = Memo::new(move |_| {
         let data = loaded.get()?;
@@ -773,19 +853,33 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <div class="grid grid-cols-2 xl:grid-cols-5 gap-3">
                 <Suspense fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
                     {move || {
-                        let (cards,pinned)=cards.get();
-                        // Savings compare against staying put, not against the top card.
-                        let home_cost=cards.iter().find(|p|p.travel==Travel::default() && p.missing==0).map(|p|p.cost);
-                        cards.into_iter().enumerate().map(|(index,p)| {
+                        let Cards{plans,pinned,best_value,cheapest,baseline}=cards.get();
+                        let total=plans.len();
+                        plans.into_iter().enumerate().map(|(index,p)| {
                             let mut label=route_label(p.travel,p.worlds.is_empty());
                             if pinned==Some(index) { label=format!("{} · {label}",t_string!(i18n, recipe_planner_shared_route)); }
-                            let saving=home_cost.filter(|_|p.missing==0).map(|h|h-p.cost).filter(|s|*s>0);
+                            let line=saving_line(&baseline,&p,index==0,total);
                             let stops=if p.worlds.is_empty() { t_string!(i18n, recipe_planner_route_home_only).to_string() } else { route_stops(&p.worlds) };
+                            let badge=match (best_value==Some(index),cheapest==Some(index)) {
+                                (true,true)=>Some((format!("{} · {}",t_string!(i18n, recipe_planner_route_best_value),t_string!(i18n, recipe_planner_route_cheapest)),true)),
+                                (true,false)=>Some((t_string!(i18n, recipe_planner_route_best_value).to_string(),true)),
+                                (false,true)=>Some((t_string!(i18n, recipe_planner_route_cheapest).to_string(),false)),
+                                (false,false)=>None,
+                            };
                             let worlds=p.worlds.clone();
                             view!{<button class="panel rounded-xl p-4 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
-                                <span class="block text-sm text-[color:var(--color-text-muted)]">{label}</span><strong class="block text-xl tabular-nums">{gil(p.cost)}</strong>
-                                <span class="block text-xs">{if p.missing>0 {format!("{} units unavailable · partial cost",p.missing)} else {stops}}</span>
-                                {saving.map(|s|view!{<span class="block text-xs text-emerald-400">{format!("{} saved vs home",gil(s))}</span>})}
+                                <span class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm text-[color:var(--color-text-muted)]">{label}</span>{badge.map(|(text,brand)|{
+                                    let badge_class=if brand { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-brand-500/20 text-brand-300" } else { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[color:var(--color-outline)] text-[color:var(--color-text-muted)]" };
+                                    view!{<span class=badge_class data-testid="route-badge">{text}</span>}
+                                })}</span>
+                                <strong class="block text-xl tabular-nums">{gil(p.cost)}</strong>
+                                <span class="block text-xs">{match line { Some(SavingLine::Partial(n))=>format!("{n} units unavailable · partial cost"), _=>stops }}</span>
+                                {match line {
+                                    Some(SavingLine::Saved(s))=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_saved_vs_home, gil = gil(s)).to_string()}</span>}),
+                                    Some(SavingLine::Completes)=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_completes).to_string()}</span>}),
+                                    Some(SavingLine::Baseline{alone:true})=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_just_stay_home).to_string()}</span>}),
+                                    _=>None,
+                                }}
                             </button>}
                         }).collect_view()
                     }}
@@ -864,7 +958,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 }}
             </section>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
-            <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Routes are ranked by gil plus a travel cost per world hop and per datacenter hop (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
+            <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left, each card cheaper than the one before it, and the cheapest plan found always last. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
                 let mut lines=Vec::new();
                 for (id,item) in &d.items {let oldest=item.last_updated.iter().map(|u|u.updated_at).min();lines.push(format!("{}: {}",item_name(*id),oldest.map(|t|format!("oldest world update {t} UTC")).unwrap_or_else(||"freshness unknown".into())));}
                 for id in &d.failed {lines.push(format!("{}: market request failed — refresh to retry",item_name(*id)));}
@@ -1000,19 +1094,53 @@ mod tests {
         let plan = |worlds: &[i32], effective: i64| planner::ShoppingPlan {
             worlds: worlds.iter().copied().collect(),
             effective,
+            cost: effective,
             ..Default::default()
         };
+        // Frontier order: home first, then by distance.
         let plans = vec![
-            plan(&[63, 79], 100),
-            plan(&[63], 200),
             plan(&[], 300),
+            plan(&[63], 200),
+            plan(&[63, 79], 100),
             plan(&[63, 79, 80], 400),
         ];
-        assert_eq!(legacy_visits(&plans, 0), Some(2));
+        assert_eq!(legacy_visits(&plans, 0), Some(0));
         assert_eq!(legacy_visits(&plans, 1), Some(1));
-        assert_eq!(legacy_visits(&plans, 2), Some(0));
-        assert_eq!(legacy_visits(&plans, 4), Some(0));
+        assert_eq!(legacy_visits(&plans, 2), Some(2));
+        assert_eq!(legacy_visits(&plans, 4), Some(2));
         assert_eq!(legacy_visits(&[], 0), None);
+    }
+
+    #[test]
+    fn saving_line_frames_each_card_against_the_baseline() {
+        let plan = |cost: i64, missing: i64| planner::ShoppingPlan {
+            cost,
+            missing,
+            ..Default::default()
+        };
+        let home = plan(1_000, 0);
+        assert_eq!(
+            saving_line(&home, &home, true, 1),
+            Some(SavingLine::Baseline { alone: true })
+        );
+        assert_eq!(
+            saving_line(&home, &home, true, 3),
+            Some(SavingLine::Baseline { alone: false })
+        );
+        assert_eq!(
+            saving_line(&home, &plan(800, 0), false, 2),
+            Some(SavingLine::Saved(200))
+        );
+        assert_eq!(
+            saving_line(&home, &plan(800, 2), false, 2),
+            Some(SavingLine::Partial(2))
+        );
+        assert_eq!(
+            saving_line(&plan(10, 4), &plan(900, 0), false, 2),
+            Some(SavingLine::Completes)
+        );
+        // A pinned shared route can be dearer than home: no claim is made.
+        assert_eq!(saving_line(&home, &plan(1_200, 0), false, 3), None);
     }
 
     #[test]
