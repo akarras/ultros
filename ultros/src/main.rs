@@ -812,6 +812,7 @@ async fn main() -> Result<()> {
         universalis: universalis_client,
         price_series_cache: Default::default(),
         sale_stats_cache: Default::default(),
+        listing_stats_cache: Default::default(),
     };
     let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
     let web_finished = tokio::select! {

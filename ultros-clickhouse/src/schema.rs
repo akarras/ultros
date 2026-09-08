@@ -6,6 +6,8 @@
 //! - `sale_stats_window` — mergeable whole-market statistics by world/window
 //! - `item_quality_score` (Task 1.1) — trustworthiness per item
 //! - `_backfill_state` (Task 0.6) — resumable backfill cursor
+//! - `listing_alive` — the alive listing set per world/item/hq, replayed
+//!   from `listing_events`
 
 use clickhouse::Client;
 
@@ -23,6 +25,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_listing_events_table(client).await?;
     apply_floor_changes_table(client).await?;
     apply_listing_events_seed_marker(client).await?;
+    apply_listing_alive(client).await?;
     Ok(())
 }
 
@@ -109,6 +112,50 @@ async fn apply_listing_events_seed_marker(client: &Client) -> Result<(), ClickHo
             ORDER BY tuple()
             "#
         ))
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// The alive listing set per `(world, item, hq)`, replayed from
+/// `listing_events` by [`crate::rollups::refresh_listing_alive`] every 15
+/// minutes.
+///
+/// The bulk listing-stats endpoint reads a whole world, datacenter or region
+/// at once, so — like `sale_stats_window` — the sorting key starts with
+/// `world_id`, the inverse of the raw `listing_events` item-first key; that is
+/// what keeps a whole-market read bounded. `age_quantile` stores a t-digest
+/// state of listing ages (seconds since the retainer last touched the listing,
+/// measured at `computed_at`), so a datacenter or region median is an exact
+/// merge of its worlds rather than a re-scan of the event log.
+///
+/// Every key with any post-seed event gets a row on each refresh, including
+/// keys whose board has emptied (`alive_count = 0`, aggregates at their
+/// defaults): under `ReplacingMergeTree` a key that simply stopped being
+/// emitted would keep serving its last non-zero snapshot forever. Readers
+/// skip the zero rows. The one residual stale case is a key whose every event
+/// has aged past the `listing_events` TTL — a listing untouched for a year.
+async fn apply_listing_alive(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS listing_alive (
+                world_id           Int32,
+                item_id            Int32,
+                hq                 UInt8,
+                computed_at        DateTime,
+                alive_count        UInt32,
+                alive_units        UInt64,
+                distinct_retainers UInt32,
+                oldest_reviewed_at DateTime,
+                age_quantile       AggregateFunction(quantileTDigest(0.5), UInt32),
+                floor_alive        UInt32
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            ORDER BY (world_id, item_id, hq)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
         .execute()
         .await?;
     Ok(())

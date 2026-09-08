@@ -1,4 +1,5 @@
-//! Bounded stale-while-revalidate cache for bulk sale-stat responses.
+//! Bounded stale-while-revalidate cache for bulk market-stat responses —
+//! sale stats and listing stats, one instance each.
 //!
 //! Each value is serialized JSON because serialization is material for a
 //! whole-market payload. Per-key slots coalesce cold misses, while stale
@@ -9,6 +10,7 @@
 use std::{
     collections::HashMap,
     future::Future,
+    marker::PhantomData,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -16,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::body::Bytes;
+use axum::{body::Bytes, response::IntoResponse};
 use tokio::sync::{Mutex as AsyncMutex, Notify, Semaphore};
 use ultros_db::world_data::world_cache::AnySelector;
 
@@ -35,9 +37,44 @@ pub(crate) enum CacheDisposition {
     Stale,
 }
 
+impl CacheDisposition {
+    /// The `x-ultros-cache` header value and the metric label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CacheDisposition::Fresh => "fresh",
+            CacheDisposition::Loaded => "loaded",
+            CacheDisposition::Stale => "stale",
+        }
+    }
+}
+
 pub(crate) struct CacheValue {
     pub body: Bytes,
     pub disposition: CacheDisposition,
+}
+
+/// The response every cached bulk-stat endpoint returns: JSON, shared-cacheable
+/// for as long as a value is fresh here, `stale-while-revalidate` matching the
+/// stale window, and the disposition exposed for debugging.
+pub(crate) fn cached_response(body: Bytes, disposition: &'static str) -> axum::response::Response {
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json".to_string(),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=300, s-maxage=300, stale-while-revalidate=1800".to_string(),
+            ),
+            (
+                axum::http::header::HeaderName::from_static("x-ultros-cache"),
+                disposition.to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 #[derive(Default)]
@@ -70,12 +107,53 @@ struct Inner {
     query_limit: Arc<Semaphore>,
 }
 
-#[derive(Clone)]
-pub(crate) struct SaleStatsCache {
-    inner: Arc<Inner>,
+/// What a cache instance holds — only for the labels that tell two instances'
+/// failures apart. The cache itself is body-agnostic.
+pub(crate) trait CacheKind: 'static {
+    /// The `ultros_clickhouse::queries` function the loader runs, so a
+    /// timeout groups with that query's own failures in error reporting.
+    const QUERY: &'static str;
+    /// Short label for log lines.
+    const LABEL: &'static str;
 }
 
-impl SaleStatsCache {
+/// `/api/v1/sale_stats` bodies.
+pub(crate) struct SaleStatsKind;
+
+impl CacheKind for SaleStatsKind {
+    const QUERY: &'static str = "bulk_sale_stats";
+    const LABEL: &'static str = "sale-stats";
+}
+
+/// `/api/v1/listing_stats` bodies.
+pub(crate) struct ListingStatsKind;
+
+impl CacheKind for ListingStatsKind {
+    const QUERY: &'static str = "bulk_listing_alive";
+    const LABEL: &'static str = "listing-stats";
+}
+
+/// One cache per [`CacheKind`]: distinct types, so each is its own axum
+/// `State` and a listing snapshot never competes with a sale snapshot for
+/// slots or bytes.
+pub(crate) struct StatsCache<K: CacheKind> {
+    inner: Arc<Inner>,
+    kind: PhantomData<fn() -> K>,
+}
+
+pub(crate) type SaleStatsCache = StatsCache<SaleStatsKind>;
+pub(crate) type ListingStatsCache = StatsCache<ListingStatsKind>;
+
+impl<K: CacheKind> Clone for StatsCache<K> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<K: CacheKind> StatsCache<K> {
     pub fn new(capacity: usize, max_concurrent_queries: usize) -> Self {
         Self::with_config(
             capacity,
@@ -107,6 +185,7 @@ impl SaleStatsCache {
                 query_timeout,
                 query_limit: Arc::new(Semaphore::new(max_concurrent_queries.max(1))),
             }),
+            kind: PhantomData,
         }
     }
 
@@ -259,7 +338,8 @@ impl SaleStatsCache {
             if let Err(error) = &result {
                 tracing::warn!(
                     ?error,
-                    "sale-stats background refresh failed; serving stale"
+                    cache = K::LABEL,
+                    "stats background refresh failed; serving stale"
                 );
             }
             cache.finish_refresh(&slot, result.as_ref().ok()).await;
@@ -277,13 +357,13 @@ impl SaleStatsCache {
                 .query_limit
                 .acquire()
                 .await
-                .map_err(|_| anyhow::anyhow!("sale-stats query limiter closed"))?;
+                .map_err(|_| anyhow::anyhow!("{} query limiter closed", K::LABEL))?;
             loader().await
         };
         match tokio::time::timeout(self.inner.query_timeout, guarded).await {
             Ok(result) => result,
             Err(_) => Err(ClickHouseQueryError::new(
-                "bulk_sale_stats",
+                K::QUERY,
                 ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
             )
             .into()),
@@ -319,7 +399,7 @@ impl SaleStatsCache {
     }
 }
 
-impl Default for SaleStatsCache {
+impl<K: CacheKind> Default for StatsCache<K> {
     fn default() -> Self {
         Self::new(512, 2)
     }
