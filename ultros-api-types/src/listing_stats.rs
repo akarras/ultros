@@ -37,6 +37,17 @@ pub struct ItemListingStats {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BulkListingStats {
+    /// Unix seconds when the `listing_alive` rollup last wrote a row for this
+    /// scope; `0` if it never has. Also sent as
+    /// `x-ultros-listing-stats-computed-at`.
+    ///
+    /// An empty `stats` is a legitimate answer here — nothing is listed — and
+    /// it is also what a rollup that has been failing all day produces. This
+    /// is how a client tells the two apart. Declared **first** so the header
+    /// can be read off the front of a whole-market body without parsing it;
+    /// `ultros::web::api::listing_stats` has the guard test for that.
+    #[serde(default)]
+    pub computed_at_unix: i64,
     pub stats: Vec<ItemListingStats>,
 }
 
@@ -62,8 +73,34 @@ mod tests {
     }
 
     #[test]
+    fn bulk_without_a_computed_at_still_deserializes() {
+        // A server from before the rollup's freshness was exposed.
+        let old = r#"{"stats":[]}"#;
+        let bulk: BulkListingStats = serde_json::from_str(old).unwrap();
+        assert_eq!(bulk.computed_at_unix, 0);
+        assert!(bulk.stats.is_empty());
+    }
+
+    /// The endpoint reads `computed_at_unix` back off the front of a serialized
+    /// body instead of parsing a whole-market payload to find one integer, so
+    /// its position in the struct is load-bearing.
+    #[test]
+    fn computed_at_serializes_first() {
+        let json = serde_json::to_string(&BulkListingStats {
+            computed_at_unix: 1_757_000_000,
+            stats: Vec::new(),
+        })
+        .unwrap();
+        assert!(
+            json.starts_with(r#"{"computed_at_unix":1757000000"#),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn bulk_payload_round_trips() {
         let bulk = BulkListingStats {
+            computed_at_unix: 1_757_000_000,
             stats: vec![ItemListingStats {
                 item_id: 7,
                 hq: false,

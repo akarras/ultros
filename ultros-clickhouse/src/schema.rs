@@ -6,8 +6,10 @@
 //! - `sale_stats_window` — mergeable whole-market statistics by world/window
 //! - `item_quality_score` (Task 1.1) — trustworthiness per item
 //! - `_backfill_state` (Task 0.6) — resumable backfill cursor
-//! - `listing_alive` — the alive listing set per world/item/hq, replayed
-//!   from `listing_events`
+//! - `listing_last_event` — the last event per listing, fed incrementally
+//! - `_listing_alive_state` — how far `listing_last_event` has consumed
+//! - `listing_alive` — the alive listing set per world/item/hq, aggregated
+//!   from `listing_last_event`
 
 use clickhouse::Client;
 
@@ -25,12 +27,21 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_listing_events_table(client).await?;
     apply_floor_changes_table(client).await?;
     apply_listing_events_seed_marker(client).await?;
+    apply_listing_last_event(client).await?;
+    apply_listing_alive_state(client).await?;
     apply_listing_alive(client).await?;
     Ok(())
 }
 
 /// Name of the one-row marker table that records the `listing_events` seed.
 pub const LISTING_EVENTS_SEED_MARKER_TABLE: &str = "_listing_events_seed";
+
+/// Name of the one-row cursor table that records how far
+/// [`crate::rollups::refresh_listing_alive`] has consumed `listing_events`.
+pub const LISTING_ALIVE_STATE_TABLE: &str = "_listing_alive_state";
+
+/// Name of the per-listing state table the alive set aggregates from.
+pub const LISTING_LAST_EVENT_TABLE: &str = "listing_last_event";
 
 /// Append-only log of every change Ultros observes to `active_listing`.
 ///
@@ -117,8 +128,87 @@ async fn apply_listing_events_seed_marker(client: &Client) -> Result<(), ClickHo
     Ok(())
 }
 
-/// The alive listing set per `(world, item, hq)`, replayed from
-/// `listing_events` by [`crate::rollups::refresh_listing_alive`] every 15
+/// The last observed event per listing — the incremental state the alive set
+/// is aggregated from.
+///
+/// Exists so the refresh is not a replay of the whole `listing_events` log.
+/// Each refresh folds only the events since the `_listing_alive_state` cursor
+/// into this table (minutes of events, not months), and the alive rollup then
+/// reads it with `FINAL`, which is a streaming merge over a sorted table
+/// rather than a hash aggregate whose memory grows with the event log.
+///
+/// `ReplacingMergeTree(refreshed_at)` keeps the row written by the most recent
+/// refresh. That is correct rather than merely convenient: a listing only
+/// appears in a refresh's output when it has an event inside that refresh's
+/// window, and the winning event is by definition the listing's newest, so the
+/// newest computation is always the one with the most information. A listing
+/// with no event in the window emits no row and its stored one survives
+/// untouched.
+///
+/// `kind_rank` is the `listing_events` enum flattened to `1 = added`,
+/// `2 = updated`, `3 = removed`, so "is this listing alive" is `kind_rank != 3`
+/// and the tie-break the refresh sorts on is an explicit number rather than an
+/// enum ordinal.
+///
+/// Tombstones (`kind_rank = 3`) are retained: a removed listing must stay
+/// visible here or its `(world, item, hq)` key would stop being rewritten and
+/// `listing_alive` would serve that key's last non-zero snapshot forever. That
+/// makes this table grow with listings ever seen rather than listings alive
+/// — bounded by the `listing_events` 365-day TTL only indirectly. Disk, not
+/// memory, is the axis it grows on; pruning it is a follow-up once a real
+/// per-day row count has been measured.
+async fn apply_listing_last_event(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS listing_last_event (
+                world_id       Int32,
+                item_id        Int32,
+                hq             UInt8,
+                listing_key    String,
+                refreshed_at   DateTime,
+                event_time     DateTime,
+                pg_listing_id  Int32,
+                kind_rank      UInt8,
+                quantity       UInt16,
+                retainer_id    Int32,
+                price_per_unit UInt32,
+                reviewed_at    DateTime
+            )
+            ENGINE = ReplacingMergeTree(refreshed_at)
+            ORDER BY (world_id, item_id, hq, listing_key)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// How far [`crate::rollups::refresh_listing_alive`] has consumed
+/// `listing_events` into `listing_last_event`. Modelled on `_backfill_state`.
+///
+/// An empty table means "never consumed": the next refresh folds everything
+/// from the seed, which is the one expensive run per deployment.
+async fn apply_listing_alive_state(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {LISTING_ALIVE_STATE_TABLE} (
+                consumed_through DateTime,
+                updated_at       DateTime
+            )
+            ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY tuple()
+            "#
+        ))
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// The alive listing set per `(world, item, hq)`, aggregated from
+/// `listing_last_event` by [`crate::rollups::refresh_listing_alive`] every 15
 /// minutes.
 ///
 /// The bulk listing-stats endpoint reads a whole world, datacenter or region
@@ -129,12 +219,14 @@ async fn apply_listing_events_seed_marker(client: &Client) -> Result<(), ClickHo
 /// measured at `computed_at`), so a datacenter or region median is an exact
 /// merge of its worlds rather than a re-scan of the event log.
 ///
-/// Every key with any post-seed event gets a row on each refresh, including
-/// keys whose board has emptied (`alive_count = 0`, aggregates at their
-/// defaults): under `ReplacingMergeTree` a key that simply stopped being
-/// emitted would keep serving its last non-zero snapshot forever. Readers
-/// skip the zero rows. The one residual stale case is a key whose every event
-/// has aged past the `listing_events` TTL — a listing untouched for a year.
+/// Every key present in `listing_last_event` gets a row on each refresh,
+/// including keys whose board has emptied (`alive_count = 0`, aggregates at
+/// their defaults): under `ReplacingMergeTree` a key that simply stopped being
+/// emitted would keep serving its last non-zero snapshot forever. Readers skip
+/// the zero rows. Because `listing_last_event` keeps a listing's state after
+/// the underlying events age out of the `listing_events` 365-day TTL, a
+/// listing untouched for a year is no longer the stale case it was when this
+/// table was replayed straight from the log.
 async fn apply_listing_alive(client: &Client) -> Result<(), ClickHouseError> {
     client
         .query(

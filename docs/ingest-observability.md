@@ -21,6 +21,9 @@ the Prometheus endpoint at `:9091/metrics` (see `ultros/src/web_metrics.rs`).
 | `ultros_listing_events_seed_failures_total` | counter | — | The one-time `listing_events` seed failed and will retry in 10 minutes. Runs on the rollup leader. |
 | `ultros_floor_changes_bulk_failures_total` | counter | `reason` | A floor resync diff could not be bulk-inserted (`writer_not_ready`, `insert_failed`). Rows are dropped; the next resync re-derives them. |
 | `ultros_listing_stats_cache_total` | counter | `disposition` | `/api/v1/listing_stats/{scope}` cache behaviour (`fresh`, `loaded`, `stale`), the same contract as `ultros_sale_stats_cache_total`. `loaded` tracking request rate means the cache is not holding; `stale` with no `loaded` means ClickHouse stopped answering. |
+| `ultros_listing_alive_refresh_failures_total` | counter | — | The `listing_alive` refresh failed or hit its wall-clock timeout. **The one to watch on this family**: the endpoint answers an empty market with a cacheable `200`, so a permanently failing rollup is otherwise indistinguishable from "nothing is listed anywhere". Runs on the rollup leader. |
+| `ultros_listing_alive_last_refresh_unix` | gauge | — | Unix seconds of the last successful `listing_alive` refresh. `time() - <this>` is the rollup's staleness and should not exceed the 15-minute cadence by much. No sample at all until the first success after a restart. |
+| `ultros_listing_alive_floor_compared`, `ultros_listing_alive_floor_disagreements` | gauge | — | The `floor_changes` cross-check, per refresh: keys with stock whose floor moved in the last day, and how many of those disagree with the alive set's `floor_alive`. Never zero in practice — the two are written by different paths at different instants — so watch the *ratio*, not the absolute number. |
 
 Pre-existing and still useful alongside these:
 `ultros_websocket_rx{WorldId}`, `ultros_catchup_items_recovered{world}`,
@@ -29,15 +32,40 @@ Pre-existing and still useful alongside these:
 ## Listing history rollups
 
 `listing_alive` (ClickHouse, refreshed every 15 minutes by the rollup leader)
-replays `listing_events` from the seed onwards into the alive listing set per
-`(world, item, hq)` — count, units, distinct retainers, oldest and median age,
-floor — and is what `GET /api/v1/listing_stats/{scope}` serves. A key whose
-board empties is rewritten as a zero row rather than left stale, so
+holds the alive listing set per `(world, item, hq)` — count, units, distinct
+retainers, oldest and median age, floor — and is what
+`GET /api/v1/listing_stats/{scope}` serves. A key whose board empties is
+rewritten as a zero row rather than left stale, so
 `SELECT count() FROM listing_alive FINAL WHERE alive_count > 0` is the "boards
 with stock" figure, and that number no longer moving between refreshes is the
-failure to look for. The read side is `ultros_listing_stats_cache_total`
-(above); the refresh itself has no metric yet, only the leader's
-`listing_alive refresh done` / `listing_alive refresh failed` log lines.
+failure to look for.
+
+The refresh is **incremental**, in two steps, because the whole-log replay it
+replaces was a hash aggregate whose group count was every listing ever observed
+(11.45M at the seed, plus ~1.9M a day):
+
+1. Fold every `listing_events` row since the `_listing_alive_state` cursor —
+   minutes of events in steady state — into `listing_last_event`, one
+   `ReplacingMergeTree` row per listing.
+2. Aggregate `listing_last_event FINAL` into `listing_alive`. `FINAL` is a
+   streaming merge over a sorted table, so this step's memory is bounded by the
+   `(world, item, hq)` group count, not by the event log.
+
+Both statements carry `max_execution_time`, `max_memory_usage` and
+`max_bytes_before_external_group_by`, so the one expensive run — the first fold
+after a deployment, which starts at the seed — spills to disk rather than
+tripping the container's memory cap with `MEMORY_LIMIT_EXCEEDED` (Code 241).
+Truncating `_listing_alive_state` forces that full fold again; it is idempotent
+and is the recovery for "the alive set looks wrong".
+
+Three signals cover it: `ultros_listing_alive_refresh_failures_total` and
+`ultros_listing_alive_last_refresh_unix` (above) from the process, and — for a
+monitor outside it — the `x-ultros-listing-stats-computed-at` response header
+and the `computed_at_unix` field on the body, which carry the rollup's own
+timestamp for the requested scope. `0` there means the rollup has never written
+a row for that scope. Alongside them the leader logs
+`listing_alive refresh done` / `failed` / `timed out` and
+`listing_alive floor cross-check done`.
 
 ## Suggested alerts
 

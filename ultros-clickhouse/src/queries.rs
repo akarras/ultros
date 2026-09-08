@@ -1215,6 +1215,44 @@ pub async fn bulk_listing_alive(
         .await?)
 }
 
+/// When the `listing_alive` rollup last wrote a row for any world in
+/// `world_ids`, as unix seconds; `0` if it never has.
+///
+/// Served as `x-ultros-listing-stats-computed-at` and on the wire, because the
+/// listing-stats endpoint answers an empty market with a cacheable `200` — the
+/// same response a rollup that has been failing all day produces. This is what
+/// tells the two apart from outside the process.
+///
+/// Deliberately no `FINAL`: duplicate rows awaiting a merge cannot change a
+/// maximum, so this reads one column off a sorted table instead of merging it.
+pub async fn listing_alive_computed_at(
+    ch: &ClickHouseClient,
+    world_ids: &[i32],
+) -> Result<i64, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(0);
+    }
+    #[derive(Row, Deserialize)]
+    struct ComputedAt {
+        computed_at_unix: i64,
+    }
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let row: ComputedAt = ch
+        .client()
+        .query(&format!(
+            "SELECT toInt64(toUnixTimestamp(max(computed_at))) AS computed_at_unix
+             FROM listing_alive
+             WHERE world_id IN ({worlds})"
+        ))
+        .fetch_one()
+        .await?;
+    Ok(row.computed_at_unix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

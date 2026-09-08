@@ -14,6 +14,12 @@
 //! here the rollup writes zero rows for emptied boards and there is no
 //! failover, so "nothing alive" is a real answer worth caching.
 //!
+//! That difference is why every response carries the rollup's own timestamp,
+//! as `x-ultros-listing-stats-computed-at` and as `computed_at_unix` on the
+//! body: an empty market and a rollup that has been failing all day are
+//! otherwise the same `200 {"stats":[]}`, which this cache would then serve for
+//! five minutes at a time with `stale-while-revalidate` behind it.
+//!
 //! `?window=` is accepted and ignored — no `Query` extractor, so axum drops
 //! it unread — which lets I2 add the windowed metrics without changing the
 //! URL shape.
@@ -36,6 +42,10 @@ use crate::web::{
 
 /// I1 has no window; every scope shares one key until I2 keys on the real one.
 const NO_WINDOW: u16 = 0;
+
+/// When the rollup behind this response last ran, for a monitor that cannot
+/// see the process's metrics.
+const COMPUTED_AT_HEADER: &str = "x-ultros-listing-stats-computed-at";
 
 pub(crate) async fn get_listing_stats(
     State(ch): State<ClickHouseClient>,
@@ -64,18 +74,59 @@ pub(crate) async fn get_listing_stats(
         "disposition" => disposition
     )
     .increment(1);
-    Ok(cached_response(cached.body, disposition))
+    let computed_at = computed_at_from_body(&cached.body);
+    let mut response = cached_response(cached.body, disposition);
+    response.headers_mut().insert(
+        axum::http::header::HeaderName::from_static(COMPUTED_AT_HEADER),
+        axum::http::HeaderValue::from(computed_at),
+    );
+    Ok(response)
 }
 
 async fn load_listing_stats(ch: &ClickHouseClient, world_ids: Vec<i32>) -> Result<Bytes, WebError> {
+    let computed_at_unix = ultros_clickhouse::queries::listing_alive_computed_at(ch, &world_ids)
+        .await
+        .map_err(|e| ClickHouseQueryError::new("listing_alive_computed_at", e))?;
     let rows = ultros_clickhouse::queries::bulk_listing_alive(ch, &world_ids)
         .await
         .map_err(|e| ClickHouseQueryError::new("bulk_listing_alive", e))?;
     let stats = rows.into_iter().map(to_wire).collect();
-    serde_json::to_vec(&BulkListingStats { stats })
-        .map(Bytes::from)
-        .map_err(anyhow::Error::from)
-        .map_err(Into::into)
+    serde_json::to_vec(&BulkListingStats {
+        computed_at_unix,
+        stats,
+    })
+    .map(Bytes::from)
+    .map_err(anyhow::Error::from)
+    .map_err(Into::into)
+}
+
+/// Read `computed_at_unix` back off a serialized body.
+///
+/// The cache stores bodies, not the values they were built from, so the header
+/// has to come from the bytes on a hit as well as on a load. `BulkListingStats`
+/// declares the field first (with a test in `ultros-api-types` pinning that),
+/// which makes this a fixed-size prefix scan rather than a serde parse of a
+/// multi-megabyte whole-market payload on every cache hit. A body that does not
+/// start with it reports `0` — the same "never computed" value the query
+/// itself returns — rather than lying about freshness.
+fn computed_at_from_body(body: &[u8]) -> i64 {
+    const NEEDLE: &[u8] = br#""computed_at_unix":"#;
+    let head = &body[..body.len().min(64)];
+    let Some(start) = head
+        .windows(NEEDLE.len())
+        .position(|window| window == NEEDLE)
+    else {
+        return 0;
+    };
+    let digits = &body[start + NEEDLE.len()..];
+    let end = digits
+        .iter()
+        .position(|b| !b.is_ascii_digit() && *b != b'-')
+        .unwrap_or(digits.len());
+    std::str::from_utf8(&digits[..end])
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 /// ClickHouse row to wire row. Counts and ages already have the wire's
@@ -139,5 +190,34 @@ mod tests {
     fn floor_saturates_at_i32_max() {
         assert_eq!(to_wire(row(0, i32::MAX as u32)).floor_alive, i32::MAX);
         assert_eq!(to_wire(row(0, u32::MAX)).floor_alive, i32::MAX);
+    }
+
+    #[test]
+    fn computed_at_is_read_off_a_real_body() {
+        let body = serde_json::to_vec(&BulkListingStats {
+            computed_at_unix: 1_757_000_000,
+            stats: vec![to_wire(row(0, 950))],
+        })
+        .unwrap();
+        assert_eq!(computed_at_from_body(&body), 1_757_000_000);
+    }
+
+    #[test]
+    fn computed_at_reads_zero_from_an_empty_rollup() {
+        let body = serde_json::to_vec(&BulkListingStats::default()).unwrap();
+        assert_eq!(computed_at_from_body(&body), 0);
+    }
+
+    /// Never guess a freshness the body does not carry — a short, truncated or
+    /// unrecognised body reports "never computed" rather than a stale number.
+    #[test]
+    fn computed_at_of_an_unrecognised_body_is_zero() {
+        assert_eq!(computed_at_from_body(b""), 0);
+        assert_eq!(computed_at_from_body(b"{}"), 0);
+        assert_eq!(computed_at_from_body(br#"{"stats":[]}"#), 0);
+        assert_eq!(computed_at_from_body(br#"{"computed_at_unix":"#), 0);
+        // Far enough in that the prefix scan will not reach it.
+        let buried = format!(r#"{{"padding":"{}","computed_at_unix":5}}"#, "x".repeat(80));
+        assert_eq!(computed_at_from_body(buried.as_bytes()), 0);
     }
 }
