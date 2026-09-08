@@ -2549,7 +2549,13 @@ pub(crate) async fn search_group_member_candidates(
                 let user_id = member.user.id.get() as i64;
                 GroupMemberSearchResult {
                     user_id,
-                    display_name: member.display_name().to_string(),
+                    // Discord matched on nickname *and* username, but the name
+                    // shown here is the one the picker posts back to
+                    // `add_group_member`, which upserts it into the global
+                    // `discord_user` row. A nickname must never get that far:
+                    // it would rename the person everywhere on Ultros. See
+                    // `group_sync::global_display_name`.
+                    display_name: crate::group_sync::global_display_name(&member.user),
                     avatar_url: Some(member.face()),
                     on_ultros: on_ultros.contains(&user_id),
                 }

@@ -231,7 +231,7 @@ async fn fetch_guild_members(
             highest = highest.max(id);
             members.push(GuildMember {
                 user_id: id as i64,
-                display_name: member.display_name().to_string(),
+                display_name: super::global_display_name(&member.user),
                 role_ids: member.roles.iter().map(|role| role.get() as i64).collect(),
             });
         }

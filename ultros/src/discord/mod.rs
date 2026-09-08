@@ -75,15 +75,6 @@ async fn register(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// A member's name as Discord would show it in the guild: nickname, then the
-/// global display name, then the username. Mirrors `serenity::Member`'s own
-/// `display_name`, which the raw update event has no equivalent of.
-fn display_name(nick: Option<&str>, user: &serenity::User) -> String {
-    nick.or(user.global_name.as_deref())
-        .unwrap_or(user.name.as_str())
-        .to_string()
-}
-
 /// Gateway events that feed group membership sync.
 ///
 /// Every branch that touches the database opens with one indexed early-out, so
@@ -104,7 +95,9 @@ async fn handle_event(event: &serenity::FullEvent, data: &Data) {
             db,
             new_member.guild_id.get() as i64,
             new_member.user.id.get() as i64,
-            new_member.display_name(),
+            // The global name, never the guild nickname: see
+            // `group_sync::global_display_name`.
+            &crate::group_sync::global_display_name(&new_member.user),
             &new_member
                 .roles
                 .iter()
@@ -120,7 +113,9 @@ async fn handle_event(event: &serenity::FullEvent, data: &Data) {
             db,
             update.guild_id.get() as i64,
             update.user.id.get() as i64,
-            &display_name(update.nick.as_deref(), &update.user),
+            // The global name, never the guild nickname: `discord_user` is
+            // one row shared site-wide.
+            &crate::group_sync::global_display_name(&update.user),
             &update
                 .roles
                 .iter()
@@ -281,21 +276,21 @@ mod tests {
         serde_json::from_value(base).unwrap()
     }
 
-    /// The name a synced member is stored under, and therefore the one the
-    /// group page shows. `GuildMemberUpdate` carries the raw payload rather
-    /// than a `Member`, so this precedence has to be reproduced by hand and is
-    /// easy to get subtly wrong.
+    /// The name a synced member is stored under, and therefore the one every
+    /// group and list share on the site shows them by.
+    ///
+    /// It is the *global* name, never the guild nickname. `discord_user` holds
+    /// one row per person for the whole site, so taking the nickname would let
+    /// any one server rename that person everywhere on Ultros — which is what
+    /// this used to do, preferring `nick` the way `Member::display_name` does.
     #[test]
-    fn a_members_name_prefers_nickname_then_global_name_then_username() {
+    fn a_members_stored_name_ignores_their_guild_nickname() {
+        use crate::group_sync::global_display_name;
+
         let plain = user(serde_json::json!({}));
         let with_global = user(serde_json::json!({"global_name": "Global Name"}));
 
-        assert_eq!(
-            display_name(Some("Server Nick"), &with_global),
-            "Server Nick"
-        );
-        assert_eq!(display_name(None, &with_global), "Global Name");
-        assert_eq!(display_name(None, &plain), "raw_username");
-        assert_eq!(display_name(Some("Server Nick"), &plain), "Server Nick");
+        assert_eq!(global_display_name(&with_global), "Global Name");
+        assert_eq!(global_display_name(&plain), "raw_username");
     }
 }

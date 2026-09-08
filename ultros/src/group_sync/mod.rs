@@ -19,8 +19,25 @@
 //! added, and a stale reconcile that re-adds someone an event just removed is
 //! corrected on the next pass.
 
+use poise::serenity_prelude as serenity;
+
 pub(crate) mod diff;
 pub(crate) mod events;
 pub(crate) mod reconcile;
 
 pub(crate) use reconcile::{spawn_reconcile, spawn_reconcile_scheduler, sync_rate_limiter};
+
+/// The name to store for a Discord user, per the spec: their global display
+/// name, falling back to their username.
+///
+/// Deliberately *not* the per-guild nickname, which is what serenity's
+/// `Member::display_name` prefers. `discord_user` is one global row shared by
+/// every group and every list share, so writing a nickname into it renames
+/// that person everywhere on Ultros on the strength of what one server calls
+/// them.
+pub(crate) fn global_display_name(user: &serenity::User) -> String {
+    user.global_name
+        .as_deref()
+        .unwrap_or(user.name.as_str())
+        .to_string()
+}
