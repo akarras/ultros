@@ -49,9 +49,9 @@ async function main() {
     {}, expected);
   }
   async function menu(column) {
-    const selector = `.virtual-grid-heading[data-column="${column}"] .grid-column-menu`;
+    const selector = `.virtual-grid-heading[data-column="${column}"]`;
     await page.$eval(selector, element => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
-    await page.click(selector);
+    await page.click(selector, {button:'right'});
     await page.waitForSelector('.grid-menu-panel');
   }
   async function filter(column, operator, value = '') {
