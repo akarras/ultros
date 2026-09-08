@@ -10330,6 +10330,7 @@ dependencies = [
  "tower",
  "tracing",
  "ultros-api-types",
+ "ultros-calc",
  "ultros-changelog",
  "ultros-charts",
  "ultros-db",
@@ -10340,6 +10341,14 @@ dependencies = [
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-calc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ultros-api-types",
 ]
 
 [[package]]
