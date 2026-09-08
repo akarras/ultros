@@ -3416,7 +3416,7 @@ fn RecipeAnalyzerTable(
             }
             FILTER_OUTLIERS => t_string!(i18n, filter_outliers).to_string(),
             FILTER_EXCLUDE_SHARDS => {
-                t_string!(i18n, recipe_analyzer_filter_exclude_shards_label).to_string()
+                t_string!(i18n, recipe_analyzer_filter_exclude_crystals_label).to_string()
             }
             FILTER_USE_ON_HAND => {
                 t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string()
@@ -4176,7 +4176,7 @@ fn RecipeAnalyzerTable(
                         .map(|current| {
                             view! {
                                 <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_filter_exclude_shards_label).to_string()
+                                    label=t_string!(i18n, recipe_analyzer_filter_exclude_crystals_label).to_string()
                                     value=Signal::derive(move || Some(current.to_string()))
                                     options=on_off_options()
                                     on_commit=Callback::new(move |v: Option<String>| {
