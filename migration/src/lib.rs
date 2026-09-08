@@ -41,6 +41,7 @@ mod m20260828_000001_active_listing_world_index;
 mod m20260905_000001_list_item_acquired_integer;
 mod m20260907_000001_alert_retainer_sale;
 mod m20260907_000001_group_roles;
+mod m20260907_000001_list_doc;
 mod m20260908_000001_group_role_member_added_at;
 mod m20260908_000002_group_sync_revision;
 
@@ -95,6 +96,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260907_000001_alert_retainer_sale::Migration),
             Box::new(m20260908_000001_group_role_member_added_at::Migration),
             Box::new(m20260908_000002_group_sync_revision::Migration),
+            Box::new(m20260907_000001_list_doc::Migration),
         ]
     }
 }
