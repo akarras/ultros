@@ -56,10 +56,17 @@ pub(crate) fn is_retainer_update_relevant(message: &ServerClient, pairs: &[Liste
 /// Trailing debounce for refetches. On wasm this is a `gloo_timers::Timeout`;
 /// under `ssr` the whole hook is inert (the realtime client never fires), so
 /// the timer is a no-op there.
+///
+/// The timer is parked in a `SendWrapper` (as `RealtimeClient` does with its
+/// `Rc` innards) purely so this type stays `Send + Sync` and can live in a
+/// plain `StoredValue`. A `StoredValue::new_local` here would be read from
+/// whichever tokio worker thread disposes the SSR owner and panic — see
+/// `cleanup_on_another_thread_does_not_panic`. On wasm there is only one
+/// thread, so the wrapper never trips.
 #[derive(Default)]
 struct RefetchDebounce {
     #[cfg(not(feature = "ssr"))]
-    pending: Option<gloo_timers::callback::Timeout>,
+    pending: Option<send_wrapper::SendWrapper<gloo_timers::callback::Timeout>>,
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -71,7 +78,9 @@ impl RefetchDebounce {
     fn schedule(&mut self, refetch: impl FnOnce() + 'static) {
         #[cfg(not(feature = "ssr"))]
         {
-            self.pending = Some(gloo_timers::callback::Timeout::new(DEBOUNCE_MS, refetch));
+            self.pending = Some(send_wrapper::SendWrapper::new(
+                gloo_timers::callback::Timeout::new(DEBOUNCE_MS, refetch),
+            ));
         }
         #[cfg(feature = "ssr")]
         {
@@ -108,8 +117,12 @@ pub(crate) fn use_retainer_live(
 ) -> RetainerLive {
     let (status, set_status) = signal("connecting".to_string());
     let (last_update, set_last_update) = signal(None::<DateTime<Utc>>);
-    let subscription = StoredValue::new_local(None::<RealtimeSubscription>);
-    let debounce = StoredValue::new_local(RefetchDebounce::default());
+    // Plain (Send) storage, not `new_local`: `on_cleanup` below runs when the
+    // owner is disposed, which under SSR happens on whatever tokio worker
+    // thread finishes the response — a `LocalStorage` value read from there
+    // panics inside `SendWrapper`.
+    let subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let debounce = StoredValue::new(RefetchDebounce::default());
     let realtime = use_realtime();
 
     Effect::new(move |_| {
@@ -250,6 +263,26 @@ mod tests {
         let stale = ServerClient::Stale { subscription_id: 1 };
         assert!(is_retainer_update_relevant(&stale, &[(34, 5)]));
         assert!(!is_retainer_update_relevant(&stale, &[]));
+    }
+
+    /// The hook's `on_cleanup` reads both stored values, and under SSR the
+    /// owner is disposed on whichever tokio worker thread finishes the
+    /// response — not necessarily the one that rendered the page. With
+    /// `StoredValue::new_local` that read went through `SendWrapper` and
+    /// panicked ("Dereferenced SendWrapper<T> variable from a thread
+    /// different to the one it has been created with"), taking down the
+    /// retainer pages in production. The stored values must use plain,
+    /// `Send`-able storage.
+    #[test]
+    fn cleanup_on_another_thread_does_not_panic() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        let live =
+            owner.with(|| use_retainer_live(Signal::derive(|| None::<Vec<ListedPair>>), || {}));
+        assert_eq!(live.status.get_untracked(), "connecting");
+        std::thread::spawn(move || owner.cleanup())
+            .join()
+            .expect("owner cleanup on another thread must not panic");
     }
 
     #[test]
