@@ -41,8 +41,8 @@ use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, warn};
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListActivity, ListActivityKind, ListInvite, ListItem,
-    ListSharedGroup, ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup,
-    ShareListRole, ShareListUser,
+    ListPermission, ListSharedGroup, ListSharedRole, ListSharedUser, ListWithPermission,
+    ShareListGroup, ShareListRole, ShareListUser,
 };
 use ultros_api_types::price_series::{
     HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup,
@@ -77,7 +77,7 @@ use ultros_list_doc::{Quality, RowKey};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use crate::character_claim::CharacterClaimService;
-use crate::lists::{Actor, ListSync, Origin};
+use crate::lists::{Actor, ListSync, Origin, apply_list_item_edit};
 
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
@@ -1710,21 +1710,10 @@ pub(crate) async fn edit_list_item(
 ) -> Result<Json<()>, ApiError> {
     let before = db.get_list_item(item.id, user.id as i64).await?;
     let actor = Actor::from_user(&user, Origin::Rest);
-    let key = RowKey::new(before.item_id, before.hq);
-    let quality = Quality::from(item.hq);
-    let need = item.quantity.unwrap_or(1) as i64;
-    let acquired = item.acquired.unwrap_or(0) as i64;
-    let target = item.target_price;
+    let list_id = before.list_id;
     list_sync
-        .edit_as_server(before.list_id, &actor, move |doc| {
-            let key = if quality != key.quality {
-                doc.set_quality(&key, quality)?
-            } else {
-                key
-            };
-            doc.set_need(&key, need)?;
-            doc.set_acquired(&key, acquired)?;
-            doc.set_target(&key, target)
+        .edit_as_server(list_id, &actor, move |doc| {
+            apply_list_item_edit(doc, &before, &item)
         })
         .await?;
     Ok(Json(()))
@@ -1751,6 +1740,70 @@ pub(crate) struct BulkHqUpdate {
     pub(crate) hq: Option<bool>,
 }
 
+/// True for the `ListError` variants that mean "this id doesn't resolve to a
+/// list item any more" (deleted since the client last saw it), as opposed to
+/// a real permission problem.
+fn is_stale_list_item(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<ultros_db::lists::ListError>(),
+        Some(ultros_db::lists::ListError::NotFound | ultros_db::lists::ListError::BadRequest(_))
+    )
+}
+
+/// Resolves a batch of list-item ids to their `RowKey`s, grouped by list.
+///
+/// ultros-db has no reader that resolves many item ids at once (and this
+/// fixwave is scoped to not add one), so this still costs one
+/// `get_list_item` call per id — that call is also the only way to learn
+/// which list an id belongs to, which the per-list permission check right
+/// after this needs. What it removes is the *redundant* per-id permission
+/// check `get_list_item` would otherwise leave as the only gate: permission
+/// is now checked once per distinct list (see `require_write_permission`)
+/// instead of once per id.
+///
+/// When `tolerate_stale` is set, an id that no longer resolves to a list item
+/// is silently skipped (mirrors the legacy `set_list_items_hq`, which is what
+/// `bulk_edit_list_items_hq` restores here); otherwise the first unresolvable
+/// id fails the whole request, matching `delete_multiple_list_items`'s
+/// existing (and intentionally unchanged) behavior.
+async fn resolve_bulk_row_keys(
+    db: &UltrosDb,
+    user_id: i64,
+    ids: &[i32],
+    tolerate_stale: bool,
+) -> Result<HashMap<i32, Vec<RowKey>>, ApiError> {
+    let mut by_list: HashMap<i32, Vec<RowKey>> = HashMap::new();
+    for &id in ids {
+        match db.get_list_item(id, user_id).await {
+            Ok(item) => by_list
+                .entry(item.list_id)
+                .or_default()
+                .push(RowKey::new(item.item_id, item.hq)),
+            Err(e) if tolerate_stale && is_stale_list_item(&e) => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(by_list)
+}
+
+/// Checks Write permission on every list before any edit lands, so a bulk
+/// request spanning several lists either applies to all of them or none.
+async fn require_write_permission_on_all(
+    db: &UltrosDb,
+    user_id: i64,
+    list_ids: impl Iterator<Item = i32>,
+) -> Result<(), ApiError> {
+    for list_id in list_ids {
+        let permission = db.get_permission(list_id, user_id).await?;
+        if permission < ListPermission::Write {
+            return Err(ApiError::Forbidden(
+                "Insufficient permissions to update list items",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn bulk_edit_list_items_hq(
     State(db): State<UltrosDb>,
     State(list_sync): State<ListSync>,
@@ -1759,14 +1812,8 @@ pub(crate) async fn bulk_edit_list_items_hq(
 ) -> Result<Json<()>, ApiError> {
     let actor = Actor::from_user(&user, Origin::Rest);
     let quality = Quality::from(data.hq);
-    let mut by_list: HashMap<i32, Vec<RowKey>> = HashMap::new();
-    for id in data.ids {
-        let item = db.get_list_item(id, user.id as i64).await?;
-        by_list
-            .entry(item.list_id)
-            .or_default()
-            .push(RowKey::new(item.item_id, item.hq));
-    }
+    let by_list = resolve_bulk_row_keys(&db, user.id as i64, &data.ids, true).await?;
+    require_write_permission_on_all(&db, user.id as i64, by_list.keys().copied()).await?;
     for (list_id, keys) in by_list {
         list_sync
             .edit_as_server(list_id, &actor, move |doc| {
@@ -1789,14 +1836,8 @@ pub(crate) async fn delete_multiple_list_items(
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<()>, ApiError> {
     let actor = Actor::from_user(&user, Origin::Rest);
-    let mut by_list: HashMap<i32, Vec<RowKey>> = HashMap::new();
-    for id in ids {
-        let item = db.get_list_item(id, user.id as i64).await?;
-        by_list
-            .entry(item.list_id)
-            .or_default()
-            .push(RowKey::new(item.item_id, item.hq));
-    }
+    let by_list = resolve_bulk_row_keys(&db, user.id as i64, &ids, false).await?;
+    require_write_permission_on_all(&db, user.id as i64, by_list.keys().copied()).await?;
     for (list_id, keys) in by_list {
         list_sync
             .edit_as_server(list_id, &actor, move |doc| {

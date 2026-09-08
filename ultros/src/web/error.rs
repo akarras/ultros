@@ -246,6 +246,7 @@ define_error_enum!(ApiError {
 impl From<ultros_db::list_doc::ListDocError> for ApiError {
     fn from(error: ultros_db::list_doc::ListDocError) -> Self {
         use ultros_db::list_doc::ListDocError;
+        use ultros_list_doc::DocError;
         match error {
             ListDocError::List(inner) => ApiError::from(anyhow::Error::from(inner)),
             ListDocError::MetaForbidden => ApiError::from(anyhow::Error::from(
@@ -258,6 +259,12 @@ impl From<ultros_db::list_doc::ListDocError> for ApiError {
                 ApiError::from(anyhow::Error::from(ListError::BadRequest(
                     "update depends on history this server does not have; resync from a snapshot",
                 )))
+            }
+            // A row that isn't in the document (already removed, or a stale
+            // client-side id) is a 404, not the 500 the `other` catch-all
+            // below would otherwise give it.
+            ListDocError::Doc(DocError::MissingRow(_)) => {
+                ApiError::from(anyhow::Error::from(ListError::NotFound))
             }
             // Keep the typed `DbErr` on the `DbError` variant instead of
             // stringifying it through `anyhow`, so the `#[source]` chain and

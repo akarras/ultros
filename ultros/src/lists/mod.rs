@@ -7,6 +7,8 @@
 //! their own narrow `#[allow(dead_code)]` below instead of a file-level one.
 
 pub(crate) mod activity;
+pub(crate) mod edits;
 pub(crate) mod sync;
 
+pub(crate) use edits::apply_list_item_edit;
 pub(crate) use sync::{Actor, ListSync, Origin};
