@@ -92,7 +92,7 @@ def coverage(locale: str) -> set[int]:
         if not decompressed or decoder.unconsumed_tail or decoder.unused_data:
             raise RuntimeError(f"{archive}: unexpected compressed game-data format")
         codepoints.update(map(ord, decompressed.decode("utf-8", errors="ignore")))
-    for path in sorted((ROOT / "ultros-frontend" / "ultros-app" / "locales").glob("*.json")):
+    for path in sorted((ROOT / "ultros-frontend" / "ultros-i18n" / "locales").glob("*.json")):
         # Decode JSON so escaped Unicode is covered too.
         catalog = json.loads(path.read_text(encoding="utf-8"))
         codepoints.update(map(ord, json.dumps(catalog, ensure_ascii=False)))

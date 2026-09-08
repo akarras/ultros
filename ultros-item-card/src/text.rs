@@ -384,8 +384,9 @@ mod tests {
         ];
         let mut missing = std::collections::BTreeSet::new();
         for code in ["en", "ja", "de", "fr", "ko", "cn", "tc"] {
-            let catalog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(format!("../ultros-frontend/ultros-app/locales/{code}.json"));
+            let catalog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+                "../ultros-frontend/ultros-i18n/locales/{code}.json"
+            ));
             let catalog: serde_json::Map<String, serde_json::Value> =
                 serde_json::from_str(&std::fs::read_to_string(catalog_path).unwrap()).unwrap();
             let fonts = fonts::for_locale(CardLocale::from_code(code).unwrap()).unwrap();

@@ -1,32 +1,10 @@
-use leptos_i18n_build::{Config, ParseOptions, TranslationsInfos};
-use std::error::Error;
-use std::path::PathBuf;
 use std::process::Command;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     emit_git_hash();
-
-    let i18n_mod_directory = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("i18n");
-
-    let cfg = Config::new("en")?
-        .add_locale("fr")?
-        .add_locale("de")?
-        .add_locale("ja")?
-        .add_locale("cn")?
-        .add_locale("tc")?
-        .add_locale("ko")?
-        .parse_options(ParseOptions::new().interpolate_display(true));
-
-    let translations_infos = TranslationsInfos::parse(cfg)?;
-
-    translations_infos.emit_diagnostics();
-    translations_infos.rerun_if_locales_changed();
-    translations_infos.generate_i18n_module(i18n_mod_directory)?;
-
-    Ok(())
 }
 
 // Emit GIT_HASH for use via `env!("GIT_HASH")`. Falls back to "dirty" when git
