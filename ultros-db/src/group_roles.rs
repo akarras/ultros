@@ -13,7 +13,8 @@ use crate::{
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait, sea_query::OnConflict,
+    QueryFilter, QueryOrder, QuerySelect, RelationTrait, SqlErr, TransactionTrait,
+    sea_query::OnConflict,
 };
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -67,6 +68,20 @@ pub struct SyncSummary {
     pub handed_over: usize,
 }
 
+/// Both member-search paths cap at ten rows; the spec fixes the number so the
+/// picker looks the same whether it is backed by Discord or by our own table.
+pub const MEMBER_SEARCH_LIMIT: u64 = 10;
+
+/// Neutralise the wildcards a user can type so `%` in a search box matches a
+/// literal `%` instead of every row. Postgres `LIKE`/`ILIKE` take `\` as the
+/// default escape character, so the backslash itself has to be doubled first.
+fn escape_like(query: &str) -> String {
+    query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 fn clean_role_name(name: String) -> Result<String> {
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -114,6 +129,53 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or_else(|| GroupError::RoleNotFound.into())
+    }
+
+    /// The group, but only for its owner. The HTTP layer needs the row itself
+    /// (`guild_id`, `frozen_reason`) before it can decide whether a request
+    /// goes to Discord or stays local, and it must not leak a group's
+    /// existence to a non-owner, so the check and the fetch belong together.
+    pub async fn get_owned_group(&self, group_id: i32, owner_id: i64) -> Result<user_group::Model> {
+        self.load_owned_group(group_id, owner_id).await
+    }
+
+    /// Owner-only candidate search for a group with no Discord link: a
+    /// case-insensitive prefix match over people who have logged into Ultros.
+    /// Capped at [`MEMBER_SEARCH_LIMIT`] to match Discord's own search.
+    pub async fn search_group_member_candidates(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        query: &str,
+    ) -> Result<Vec<discord_user::Model>> {
+        self.load_owned_group(group_id, owner_id).await?;
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(discord_user::Entity::find()
+            .filter(discord_user::Column::Username.ilike(format!("{}%", escape_like(query))))
+            .order_by_asc(discord_user::Column::Username)
+            .limit(MEMBER_SEARCH_LIMIT)
+            .all(&self.db)
+            .await?)
+    }
+
+    /// Which of these Discord ids already have an Ultros account. Drives the
+    /// "not on Ultros yet" hint on Discord-backed member search; adding them
+    /// still works, so this is a hint and not a filter.
+    pub async fn discord_users_present(&self, user_ids: &[i64]) -> Result<HashSet<i64>> {
+        if user_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let ids: Vec<i64> = discord_user::Entity::find()
+            .select_only()
+            .column(discord_user::Column::Id)
+            .filter(discord_user::Column::Id.is_in(user_ids.iter().copied()))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(ids.into_iter().collect())
     }
 
     pub async fn create_group_role(
@@ -188,7 +250,17 @@ impl UltrosDb {
             position: ActiveValue::Set(position),
         }
         .insert(&txn)
-        .await?;
+        .await
+        // Two owners importing the same Discord role at the same time both
+        // pass the `already` check above, then race into the unique index on
+        // `(group_id, discord_role_id)`. The loser gets the same 400 the
+        // pre-check would have produced, not a 500.
+        .map_err(|error| match error.sql_err() {
+            Some(SqlErr::UniqueConstraintViolation(_)) => anyhow::Error::from(
+                GroupError::BadRequest("That Discord role is already imported"),
+            ),
+            _ => anyhow::Error::from(error),
+        })?;
         user_group::Entity::update_many()
             .col_expr(
                 user_group::Column::Source,
@@ -1668,5 +1740,112 @@ pub(crate) mod tests {
         let counts = db.group_member_counts(&[group.id]).await.unwrap();
         assert_eq!(counts.get(&group.id), Some(&2));
         assert!(db.group_member_counts(&[]).await.unwrap().is_empty());
+    }
+
+    /// A `%` typed into the member-search box has to match a literal `%`. Left
+    /// unescaped it is a wildcard, so a single character would return the
+    /// whole `discord_user` table to whoever owns any group.
+    #[test]
+    fn like_wildcards_typed_by_a_user_are_escaped() {
+        assert_eq!(escape_like("bob"), "bob");
+        assert_eq!(escape_like("50%"), "50\\%");
+        assert_eq!(escape_like("a_b"), "a\\_b");
+        // The backslash is escaped first, or escaping the wildcards would
+        // themselves be undone by a backslash the user typed.
+        assert_eq!(escape_like("a\\%"), "a\\\\\\%");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn member_search_is_owner_only_and_matches_a_case_insensitive_prefix() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let stranger = fresh_user(&db, "stranger").await;
+        let id = next_id();
+        let target = db
+            .get_or_create_discord_user(id as u64, format!("Zaraband-{id}"))
+            .await
+            .unwrap();
+
+        let hits = db
+            .search_group_member_candidates(group.id, owner.id, "zara")
+            .await
+            .unwrap();
+        assert!(
+            hits.iter().any(|u| u.id == target.id),
+            "a lowercase prefix must match a capitalised username"
+        );
+
+        assert!(
+            db.search_group_member_candidates(group.id, owner.id, "   ")
+                .await
+                .unwrap()
+                .is_empty(),
+            "a blank query is an empty result, not every user"
+        );
+
+        assert!(
+            db.search_group_member_candidates(group.id, stranger.id, "zara")
+                .await
+                .is_err(),
+            "only the group owner may search for candidates"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn member_search_never_returns_more_than_the_cap() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let prefix = format!("capped{}", next_id());
+        for index in 0..(MEMBER_SEARCH_LIMIT + 5) {
+            let id = next_id();
+            db.get_or_create_discord_user(id as u64, format!("{prefix}-{index}"))
+                .await
+                .unwrap();
+        }
+
+        let hits = db
+            .search_group_member_candidates(group.id, owner.id, &prefix)
+            .await
+            .unwrap();
+        assert_eq!(hits.len() as u64, MEMBER_SEARCH_LIMIT);
+    }
+
+    /// Drives the "not on Ultros yet" hint on Discord-backed search, so a
+    /// missing id has to come back missing rather than defaulting to present.
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn discord_users_present_reports_only_ids_with_a_row() {
+        let db = test_db().await;
+        let known = fresh_user(&db, "known").await;
+        let unknown = next_id();
+
+        let present = db
+            .discord_users_present(&[known.id, unknown])
+            .await
+            .unwrap();
+        assert!(present.contains(&known.id));
+        assert!(!present.contains(&unknown));
+        assert!(db.discord_users_present(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn get_owned_group_refuses_a_non_owner() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let member = fresh_user(&db, "member").await;
+        db.add_group_member(group.id, owner.id, member.id, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.get_owned_group(group.id, owner.id).await.unwrap().id,
+            group.id
+        );
+        // Membership is not ownership: the Discord-facing endpoints hang off
+        // this check, and a member must not be able to reach the guild.
+        assert!(db.get_owned_group(group.id, member.id).await.is_err());
     }
 }
