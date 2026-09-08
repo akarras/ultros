@@ -1,8 +1,13 @@
 //! The server's copy of each list's Loro document and the single merge path
 //! that keeps the relational rows a projection of it (spec section 4).
 //!
-//! Nothing else writes `list_item` or the `list` name and scope columns. The
-//! old writers in `lists.rs` are gone, so this module is the only door.
+//! The legacy writers in `lists.rs` (`add_item_to_list`, `update_list_item`,
+//! `add_items_to_list`, `update_list`, and the bulk `update_many`) still write
+//! `list_item` and the `list` name/scope columns directly, until Task 5 of
+//! the Phase 3 plan removes them. Until then, this module is the door only
+//! for the Labs path: callers routed through the document sync flow. See
+//! `project_rows`'s `Added` arm for how the two writers are kept from
+//! violating `idx_list_item_natural_key` on each other during the overlap.
 
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
@@ -27,6 +32,8 @@ pub const COMPACT_AFTER_BYTES: usize = 256 * 1024;
 pub enum ListDocError {
     #[error("update bytes are not a valid document update")]
     InvalidUpdate,
+    #[error("update depends on history this server does not have; resync from a snapshot")]
+    MissingHistory,
     #[error("only the list owner can change its name or scope")]
     MetaForbidden,
     #[error("{0}")]
@@ -107,6 +114,16 @@ fn clamp_i32(value: i64) -> i32 {
     value.clamp(0, i32::MAX as i64) as i32
 }
 
+/// `get_permission`'s `anyhow::Result` carries a downcastable `ListError` for
+/// the not-found/forbidden cases; unwrap it so callers see `ListDocError::List`
+/// instead of the catch-all `Other`.
+fn permission_error(e: anyhow::Error) -> ListDocError {
+    match e.downcast::<ListError>() {
+        Ok(list_error) => ListDocError::List(list_error),
+        Err(e) => ListDocError::Other(e),
+    }
+}
+
 async fn lock_row(txn: &DatabaseTransaction, list_id: i32) -> Result<(), ListDocError> {
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -179,23 +196,44 @@ async fn project_rows(
     for change in changes {
         match &change {
             RowChange::Added(row) => {
-                let model = list_item::ActiveModel {
-                    id: sea_orm::ActiveValue::NotSet,
-                    item_id: Set(row.key.item_id),
-                    list_id: Set(list_id),
-                    hq: Set(row.key.hq()),
-                    quantity: Set(Some(clamp_i32(row.need))),
-                    acquired: Set(Some(clamp_i32(row.acquired))),
-                    target_price: Set(row.target),
+                // A legacy writer (`lists.rs`, still live until Task 5) can
+                // insert a row with this same natural key between this
+                // document's last store and this import. Update it in place
+                // rather than inserting a duplicate, which would violate
+                // `idx_list_item_natural_key` and abort the transaction.
+                if let Some(model) = natural_key_filter(list_id, &row.key).one(txn).await? {
+                    let mut active = model.into_active_model();
+                    active.quantity = Set(Some(clamp_i32(row.need)));
+                    active.acquired = Set(Some(clamp_i32(row.acquired)));
+                    active.target_price = Set(row.target);
+                    let model = active.update(txn).await?;
+                    projected.push(ProjectedChange { change, row: model });
+                } else {
+                    let model = list_item::ActiveModel {
+                        id: sea_orm::ActiveValue::NotSet,
+                        item_id: Set(row.key.item_id),
+                        list_id: Set(list_id),
+                        hq: Set(row.key.hq()),
+                        quantity: Set(Some(clamp_i32(row.need))),
+                        acquired: Set(Some(clamp_i32(row.acquired))),
+                        target_price: Set(row.target),
+                    }
+                    .insert(txn)
+                    .await?;
+                    projected.push(ProjectedChange { change, row: model });
                 }
-                .insert(txn)
-                .await?;
-                projected.push(ProjectedChange { change, row: model });
             }
             RowChange::Removed(row) => {
                 if let Some(model) = natural_key_filter(list_id, &row.key).one(txn).await? {
                     list_item::Entity::delete_by_id(model.id).exec(txn).await?;
                     projected.push(ProjectedChange { change, row: model });
+                } else {
+                    tracing::warn!(
+                        list_id,
+                        item_id = row.key.item_id,
+                        hq = ?row.key.hq(),
+                        "document change has no matching list_item row"
+                    );
                 }
             }
             RowChange::Updated { after, .. } => {
@@ -206,6 +244,13 @@ async fn project_rows(
                     active.target_price = Set(after.target);
                     let model = active.update(txn).await?;
                     projected.push(ProjectedChange { change, row: model });
+                } else {
+                    tracing::warn!(
+                        list_id,
+                        item_id = after.key.item_id,
+                        hq = ?after.key.hq(),
+                        "document change has no matching list_item row"
+                    );
                 }
             }
         }
@@ -263,19 +308,35 @@ async fn store(
     Ok(())
 }
 
-/// Spec section 4.2, steps 1 to 6. Runs inside the caller's transaction.
-async fn merge(
+/// Spec section 4.2, steps 1 to 6, given the already-loaded `list_doc` row.
+/// Runs inside the caller's transaction. Split out from `merge` so a caller
+/// that already holds `stored` (`edit_list_doc`, which needs it to build the
+/// document for its own edit) does not pay for a second `load_or_create` —
+/// a row lock plus a `SELECT` — under the same transaction. The document
+/// itself is still parsed fresh from `stored.snapshot` here: `edit_list_doc`'s
+/// own `ListDocument` already has its local edit applied directly, so it
+/// cannot double as the pre-import baseline this function diffs against.
+async fn merge_loaded(
     txn: &DatabaseTransaction,
     list_id: i32,
     permission: ListPermission,
+    stored: &list_doc::Model,
     update: &[u8],
 ) -> Result<MergeOutcome, ListDocError> {
-    let stored = load_or_create(txn, list_id).await?;
     let doc = ListDocument::from_snapshot(&stored.snapshot)?;
     let rows_before = doc.rows();
     let meta_before = doc.meta();
-    doc.import(update)
-        .map_err(|_| ListDocError::InvalidUpdate)?;
+    let report = doc.import(update).map_err(|error| match error {
+        DocError::OutdatedDependency => ListDocError::MissingHistory,
+        _ => ListDocError::InvalidUpdate,
+    })?;
+    // Loro parked ops whose dependencies this document lacks: the stored
+    // snapshot would omit them even though `import` returned `Ok`. Bail out
+    // before any write so the transaction rolls back and the caller resyncs
+    // from a fresh snapshot instead of the update silently going missing.
+    if report.pending {
+        return Err(ListDocError::MissingHistory);
+    }
     let rows_after = doc.rows();
     let meta_after = doc.meta();
     if meta_after != meta_before && permission < ListPermission::Owner {
@@ -283,7 +344,7 @@ async fn merge(
     }
     let list = project_meta(txn, list_id, &meta_before, &meta_after).await?;
     let changes = project_rows(txn, list_id, diff_rows(&rows_before, &rows_after)).await?;
-    store(txn, &stored, &doc).await?;
+    store(txn, stored, &doc).await?;
     Ok(MergeOutcome {
         list,
         relay: update.to_vec(),
@@ -293,6 +354,17 @@ async fn merge(
     })
 }
 
+/// Spec section 4.2, steps 1 to 6. Runs inside the caller's transaction.
+async fn merge(
+    txn: &DatabaseTransaction,
+    list_id: i32,
+    permission: ListPermission,
+    update: &[u8],
+) -> Result<MergeOutcome, ListDocError> {
+    let stored = load_or_create(txn, list_id).await?;
+    merge_loaded(txn, list_id, permission, &stored, update).await
+}
+
 impl UltrosDb {
     /// The stored document for a reader, created from the rows on first touch.
     pub async fn list_doc_snapshot(
@@ -300,7 +372,10 @@ impl UltrosDb {
         list_id: i32,
         user_id: i64,
     ) -> Result<StoredDoc, ListDocError> {
-        let permission = self.get_permission(list_id, user_id).await?;
+        let permission = self
+            .get_permission(list_id, user_id)
+            .await
+            .map_err(permission_error)?;
         if permission < ListPermission::Read {
             return Err(ListError::Forbidden("Insufficient permissions to read list").into());
         }
@@ -321,7 +396,10 @@ impl UltrosDb {
         user_id: i64,
         update: &[u8],
     ) -> Result<MergeOutcome, ListDocError> {
-        let permission = self.get_permission(list_id, user_id).await?;
+        let permission = self
+            .get_permission(list_id, user_id)
+            .await
+            .map_err(permission_error)?;
         if permission < ListPermission::Write {
             return Err(ListError::Forbidden("Insufficient permissions to edit list").into());
         }
@@ -346,7 +424,10 @@ impl UltrosDb {
         user_id: i64,
         edit: impl FnOnce(&ListDocument) -> Result<R, DocError>,
     ) -> Result<(R, MergeOutcome), ListDocError> {
-        let permission = self.get_permission(list_id, user_id).await?;
+        let permission = self
+            .get_permission(list_id, user_id)
+            .await
+            .map_err(permission_error)?;
         if permission < ListPermission::Write {
             return Err(ListError::Forbidden("Insufficient permissions to edit list").into());
         }
@@ -357,7 +438,7 @@ impl UltrosDb {
             let before = doc.version();
             let value = edit(&doc)?;
             let update = doc.export_since(&before)?;
-            let outcome = merge(&txn, list_id, permission, &update).await?;
+            let outcome = merge_loaded(&txn, list_id, permission, &stored, &update).await?;
             Ok::<_, ListDocError>((value, outcome))
         }
         .await;
@@ -490,6 +571,47 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome.changes[0].change, RowChange::Removed(_)));
         assert!(db.get_list_items(list_id, OWNER).await.unwrap().is_empty());
+        db.delete_list(list_id, OWNER).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn an_update_missing_its_dependencies_is_rejected_not_merged() {
+        let db = db().await;
+        let list_id = scratch_list(&db).await;
+        let peer = peer(&db, list_id, EDITOR).await;
+        let server_version_before = peer.version();
+
+        // Edit A, then edit B on top of it.
+        let key_a = RowKey::new(11, None);
+        peer.add_row(key_a, 1, None).unwrap();
+        let v1 = peer.version();
+        let key_b = RowKey::new(12, None);
+        peer.add_row(key_b, 1, None).unwrap();
+
+        // Exporting only what happened since v1 gets B's ops without A's;
+        // the server, still at its pre-A version, cannot apply B until it
+        // has seen A first.
+        let update_b = peer.export_since(&v1).unwrap();
+        let err = db
+            .apply_list_update(list_id, EDITOR, &update_b)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ListDocError::MissingHistory), "{err}");
+        assert!(db.get_list_items(list_id, OWNER).await.unwrap().is_empty());
+
+        // The full update, A and B together, applies cleanly.
+        let update_full = peer.export_since(&server_version_before).unwrap();
+        let outcome = db
+            .apply_list_update(list_id, EDITOR, &update_full)
+            .await
+            .unwrap();
+        assert_eq!(outcome.changes.len(), 2);
+        let rows = db.get_list_items(list_id, OWNER).await.unwrap();
+        let mut item_ids: Vec<i32> = rows.iter().map(|r| r.item_id).collect();
+        item_ids.sort();
+        assert_eq!(item_ids, vec![11, 12]);
+
         db.delete_list(list_id, OWNER).await.unwrap();
     }
 
