@@ -1,7 +1,10 @@
 use std::{
     collections::HashSet,
     error::Error,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use axum::{
@@ -27,14 +30,28 @@ use ultros_api_types::websocket::{
 };
 use ultros_api_types::{websocket::EventType as WEvent, world_helper::WorldHelper};
 
-use crate::event::{EventReceivers, EventType};
+use crate::event::{EventReceivers, EventType, ListDocEvent};
+use crate::lists::{Actor, ListSync, Origin};
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 use crate::web::shutdown::until_shutdown;
 use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
+use ultros_db::list_doc::ListDocError;
 
 const MAX_SUBSCRIPTIONS_PER_SOCKET: usize = 64;
+
+/// Distinguishes sockets so a relay never echoes an update to its sender.
+static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Which relay-stream subscribers should forward this document update: every
+/// subscriber of the same list except the socket that sent it (spec section 5).
+fn relay_for(event: &ListDocEvent, list_id: i32, socket_id: u64) -> Option<Vec<u8>> {
+    if event.list_id != list_id || event.origin_socket == Some(socket_id) {
+        return None;
+    }
+    Some(event.update.clone())
+}
 
 pub(crate) async fn real_time_data(
     ws: WebSocketUpgrade,
@@ -43,12 +60,13 @@ pub(crate) async fn real_time_data(
     State(worlds): State<Arc<WorldHelper>>,
     State(db): State<UltrosDb>,
     State(token): State<CancellationToken>,
+    State(list_sync): State<ListSync>,
 ) -> Response {
     let user = user.ok();
     info!("Handling websocket");
     ws.on_upgrade(move |websocket| async move {
         info!("Upgrading websocket");
-        if let Err(e) = handle_socket(websocket, events, worlds, db, user, token).await {
+        if let Err(e) = handle_socket(websocket, events, worlds, db, user, token, list_sync).await {
             error!("{e:?}");
         }
     })
@@ -130,6 +148,7 @@ async fn handle_socket(
     db: UltrosDb,
     user: Option<AuthDiscordUser>,
     token: CancellationToken,
+    list_sync: ListSync,
 ) -> Result<(), Box<dyn Error>> {
     let EventReceivers {
         retainers: _,
@@ -140,11 +159,17 @@ async fn handle_socket(
         lists,
         list_docs,
     } = events;
-    let _ = &list_docs;
+    let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
     let active_subscriptions = Arc::new(Mutex::new(HashSet::new()));
     let mut next_subscription_id = 1u64;
+    // Tracks which subscription_id this socket used to subscribe to each
+    // list document, so an unsolicited resync (ListDocError::MissingHistory)
+    // can be routed back to the client's handler for that list — the
+    // frontend dispatches `ListDocSubscribed` strictly by subscription_id.
+    let mut list_doc_subscriptions: std::collections::HashMap<i32, u64> =
+        std::collections::HashMap::new();
     subscriptions.push(Box::pin(futures::stream::pending()));
     sender
         .send(Message::Text(
@@ -419,17 +444,201 @@ async fn handle_socket(
                                         }
                                     }
                                 }
-                                ClientMessage::SubscribeListDoc { .. }
-                                | ClientMessage::ListDocUpdate { .. } => {
-                                    sender
-                                        .send(Message::Text(
-                                            serde_json::to_string(&ServerClient::Error {
-                                                message: "list documents are not enabled yet"
-                                                    .to_string(),
-                                            })?
-                                            .into(),
-                                        ))
-                                        .await?;
+                                ClientMessage::SubscribeListDoc {
+                                    subscription_id,
+                                    list_id,
+                                    version,
+                                } => {
+                                    let subscription_id = subscription_id.unwrap_or_else(|| {
+                                        let id = next_subscription_id;
+                                        next_subscription_id += 1;
+                                        id
+                                    });
+                                    if !activate_subscription(
+                                        &active_subscriptions,
+                                        subscription_id,
+                                    ) {
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Error {
+                                                    message: format!(
+                                                        "too many active subscriptions, max is {MAX_SUBSCRIPTIONS_PER_SOCKET}"
+                                                    ),
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                        continue;
+                                    }
+                                    let user_id = user.as_ref().map(|u| u.id as i64).unwrap_or(0);
+                                    match list_sync
+                                        .subscribe_payload(list_id, user_id, &version)
+                                        .await
+                                    {
+                                        Ok((server_version, payload)) => {
+                                            list_doc_subscriptions.insert(list_id, subscription_id);
+                                            let active = active_subscriptions.clone();
+                                            let stream =
+                                                BroadcastStream::new(list_docs.resubscribe())
+                                                    .filter_map(move |event| {
+                                                        let active = active.clone();
+                                                        async move {
+                                                            if !is_subscription_active(
+                                                                &active,
+                                                                subscription_id,
+                                                            ) {
+                                                                return None;
+                                                            }
+                                                            let event = match event {
+                                                                Ok(event) => event,
+                                                                Err(_) => {
+                                                                    return Some(
+                                                                        ServerClient::Stale {
+                                                                            subscription_id,
+                                                                        },
+                                                                    );
+                                                                }
+                                                            };
+                                                            let update = relay_for(
+                                                                event.as_ref(),
+                                                                list_id,
+                                                                socket_id,
+                                                            )?;
+                                                            wrap_subscription_event(
+                                                                subscription_id,
+                                                                Some(ServerClient::ListDocUpdate {
+                                                                    list_id,
+                                                                    update,
+                                                                }),
+                                                            )
+                                                        }
+                                                    });
+                                            subscriptions.push(Box::pin(stream));
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(
+                                                        &ServerClient::ListDocSubscribed {
+                                                            subscription_id,
+                                                            list_id,
+                                                            version: server_version,
+                                                            payload,
+                                                        },
+                                                    )?
+                                                    .into(),
+                                                ))
+                                                .await?;
+                                        }
+                                        Err(e) => {
+                                            deactivate_subscription(
+                                                &active_subscriptions,
+                                                subscription_id,
+                                            );
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&ServerClient::Error {
+                                                        message: format!("list {list_id}: {e}"),
+                                                    })?
+                                                    .into(),
+                                                ))
+                                                .await?;
+                                        }
+                                    }
+                                }
+                                ClientMessage::ListDocUpdate { list_id, update } => {
+                                    let Some(user) = user.as_ref() else {
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Error {
+                                                    message: "sign in to edit lists".to_string(),
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                        continue;
+                                    };
+                                    let actor = Actor::from_user(user, Origin::Socket(socket_id));
+                                    if let Err(e) =
+                                        list_sync.apply_update(list_id, &actor, &update).await
+                                    {
+                                        match e {
+                                            ListDocError::MissingHistory => {
+                                                let user_id = user.id as i64;
+                                                let resync_subscription_id =
+                                                    list_doc_subscriptions.get(&list_id).copied();
+                                                match (
+                                                    resync_subscription_id,
+                                                    list_sync
+                                                        .subscribe_payload(list_id, user_id, &[])
+                                                        .await,
+                                                ) {
+                                                    (
+                                                        Some(subscription_id),
+                                                        Ok((server_version, payload)),
+                                                    ) => {
+                                                        sender
+                                                            .send(Message::Text(
+                                                                serde_json::to_string(
+                                                                    &ServerClient::ListDocSubscribed {
+                                                                        subscription_id,
+                                                                        list_id,
+                                                                        version: server_version,
+                                                                        payload,
+                                                                    },
+                                                                )?
+                                                                .into(),
+                                                            ))
+                                                            .await?;
+                                                    }
+                                                    (_, Err(e)) => {
+                                                        sender
+                                                            .send(Message::Text(
+                                                                serde_json::to_string(
+                                                                    &ServerClient::Error {
+                                                                        message: format!(
+                                                                            "list {list_id}: {e}"
+                                                                        ),
+                                                                    },
+                                                                )?
+                                                                .into(),
+                                                            ))
+                                                            .await?;
+                                                    }
+                                                    (None, Ok(_)) => {
+                                                        // No active SubscribeListDoc for this
+                                                        // list on this socket to route the
+                                                        // resync to; report the merge failure.
+                                                        sender
+                                                            .send(Message::Text(
+                                                                serde_json::to_string(
+                                                                    &ServerClient::Error {
+                                                                        message: format!(
+                                                                            "list {list_id}: {}",
+                                                                            ListDocError::MissingHistory
+                                                                        ),
+                                                                    },
+                                                                )?
+                                                                .into(),
+                                                            ))
+                                                            .await?;
+                                                    }
+                                                }
+                                            }
+                                            e => {
+                                                sender
+                                                    .send(Message::Text(
+                                                        serde_json::to_string(
+                                                            &ServerClient::Error {
+                                                                message: format!(
+                                                                    "list {list_id}: {e}"
+                                                                ),
+                                                            },
+                                                        )?
+                                                        .into(),
+                                                    ))
+                                                    .await?;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             Message::Binary(_) => {
@@ -510,4 +719,28 @@ fn wrap_subscription_event(
         subscription_id,
         event: Box::new(event),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::ListDocEvent;
+
+    #[test]
+    fn relay_skips_other_lists_and_the_sending_socket() {
+        let event = ListDocEvent {
+            list_id: 9,
+            update: vec![1, 2, 3],
+            origin_socket: Some(7),
+        };
+        assert_eq!(relay_for(&event, 9, 8), Some(vec![1, 2, 3]));
+        assert_eq!(relay_for(&event, 9, 7), None, "the sender already has it");
+        assert_eq!(relay_for(&event, 10, 8), None, "another list");
+        let server_side = ListDocEvent {
+            list_id: 9,
+            update: vec![4],
+            origin_socket: None,
+        };
+        assert_eq!(relay_for(&server_side, 9, 7), Some(vec![4]));
+    }
 }

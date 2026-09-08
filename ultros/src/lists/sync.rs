@@ -17,9 +17,6 @@ use crate::web::oauth::AuthDiscordUser;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Origin {
-    // Constructed by the websocket handler landing in Task 6; matched
-    // against below already, but not yet built anywhere.
-    #[allow(dead_code)]
     Socket(u64),
     Rest,
     Bot,
@@ -42,9 +39,10 @@ impl Actor {
     }
 }
 
-// The document-relay handler landing in Task 6 reads these fields off
-// `edit_as_server`'s and `apply_update`'s return value; Task 5's callers
-// discard the whole `Applied`.
+// Every caller of `edit_as_server`/`apply_update` (the REST, bot and
+// websocket writers) discards the whole `Applied` value — the relay to
+// other subscribers happens inside `publish` via the `list_docs` bus, not
+// through this return value — so these fields stay unread for now.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct Applied {
@@ -64,8 +62,7 @@ impl ListSync {
         Self { db, senders }
     }
 
-    /// Bytes from a peer. No caller until the websocket handler in Task 6.
-    #[allow(dead_code)]
+    /// Bytes from a peer.
     pub(crate) async fn apply_update(
         &self,
         list_id: i32,
@@ -91,8 +88,7 @@ impl ListSync {
     }
 
     /// The subscribe handshake: the server's version and what the client
-    /// lacks. No caller until the websocket handler in Task 6.
-    #[allow(dead_code)]
+    /// lacks.
     pub(crate) async fn subscribe_payload(
         &self,
         list_id: i32,
