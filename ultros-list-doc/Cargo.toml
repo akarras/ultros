@@ -1,0 +1,12 @@
+[package]
+name = "ultros-list-doc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "The local-first list document: one Loro CRDT per list, shared by the server peer and the browser."
+
+[dependencies]
+# Pinned exactly: the convergence tests are the gate for any bump.
+loro = "=1.16.0"
+thiserror = { workspace = true }
+ultros-api-types = { path = "../ultros-api-types" }

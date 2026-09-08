@@ -5,6 +5,7 @@ members = [
     "ultros-item-card",
     "ultros-db",
     "ultros-api-types",
+    "ultros-list-doc",
     "ultros-clickhouse",
     "migration",
     "universalis",
