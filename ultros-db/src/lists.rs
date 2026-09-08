@@ -1156,13 +1156,17 @@ impl UltrosDb {
     /// `share_list_with_group`: only the list owner may share, and only into
     /// a group they also own, so a member cannot fan a list out to a group
     /// they merely belong to.
+    ///
+    /// Returns the role's name, because the caller writes an activity-feed
+    /// line a person reads and "shared this list with role 12" is not one. The
+    /// row is already loaded here for the ownership check, so it costs nothing.
     pub async fn share_list_with_role(
         &self,
         list_id: i32,
         owner_id: i64,
         role_id: i32,
         permission: ListPermission,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner {
             return Err(ListError::Forbidden("Only the owner can share the list").into());
@@ -1195,23 +1199,35 @@ impl UltrosDb {
         )
         .exec(&self.db)
         .await?;
-        Ok(())
+        Ok(role.name)
     }
 
+    /// Stop sharing a list with a role, and hand back the role's name for the
+    /// activity feed.
+    ///
+    /// `None` means the role row is gone — the group owner deleted the role
+    /// and left a dangling share. That is not an error worth refusing the
+    /// unshare over, so the caller falls back to the id.
     pub async fn unshare_list_from_role(
         &self,
         list_id: i32,
         owner_id: i64,
         role_id: i32,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner {
             return Err(ListError::Forbidden("Only the owner can unshare the list").into());
         }
+        // Read the name before the delete: afterwards the share row is gone,
+        // and the role row may be too.
+        let name = group_role::Entity::find_by_id(role_id)
+            .one(&self.db)
+            .await?
+            .map(|role| role.name);
         list_shared_role::Entity::delete_by_id((list_id, role_id))
             .exec(&self.db)
             .await?;
-        Ok(())
+        Ok(name)
     }
 
     // --- Invite Management ---

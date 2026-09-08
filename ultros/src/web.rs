@@ -2799,6 +2799,24 @@ mod group_role_route_tests {
         assert_eq!(body, "unshare:3:12");
     }
 
+    /// The activity feed is prose a person reads, so a role appears by name.
+    /// It used to render as "Bob shared this list with role 12", which names
+    /// a database id at someone who has never seen one.
+    #[test]
+    fn the_activity_feed_names_a_role_rather_than_numbering_it() {
+        assert_eq!(super::role_label(Some("Officers"), 12), "Officers");
+        assert_eq!(
+            format!(
+                "Bob removed role {} from this list",
+                super::role_label(Some("Officers"), 12)
+            ),
+            "Bob removed role Officers from this list"
+        );
+        // A role deleted out from under a dangling share has no name left to
+        // print; the id is the fallback, not the default.
+        assert_eq!(super::role_label(None, 12), "#12");
+    }
+
     /// The real table, not the stub: `Router::route` panics on a conflicting
     /// path or a duplicated method, so simply building it is the assertion.
     #[test]
@@ -2948,11 +2966,25 @@ pub(crate) async fn share_list_with_group(
     Ok(Json(()))
 }
 
+/// How a role is named in an activity-feed line.
+///
+/// The feed is read by people, so it uses the role's name. The id is still the
+/// identifier in the structured payload; it only appears in the prose when the
+/// role row is gone (deleted role, dangling share), where the alternative is
+/// naming nothing at all.
+fn role_label(name: Option<&str>, role_id: i32) -> String {
+    match name {
+        Some(name) => name.to_string(),
+        None => format!("#{role_id}"),
+    }
+}
+
 /// Share a list with one role of a group the caller owns.
 ///
 /// The activity feed records this as `SharedGroup`: the feed's kinds are a
 /// frozen wire enum and a role share is the same event to a narrower audience,
-/// so the role id rides in the structured payload and the message names it.
+/// so the role id rides in the structured payload while the human-readable
+/// message names the role.
 pub(crate) async fn share_list_with_role(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
@@ -2960,7 +2992,8 @@ pub(crate) async fn share_list_with_role(
     Path(id): Path<i32>,
     Json(share): Json<ShareListRole>,
 ) -> Result<Json<()>, ApiError> {
-    db.share_list_with_role(id, user.id as i64, share.role_id, share.permission)
+    let role_name = db
+        .share_list_with_role(id, user.id as i64, share.role_id, share.permission)
         .await?;
     record_list_activity(
         &db,
@@ -2974,7 +3007,7 @@ pub(crate) async fn share_list_with_role(
             "role_id": share.role_id,
             "permission": share.permission as i16,
         }),
-        format!("{} shared this list with role {}", user.name, share.role_id),
+        format!("{} shared this list with role {}", user.name, role_name),
     )
     .await?;
     broadcast_list_update(&db, &senders, id, user.id as i64).await?;
@@ -2987,7 +3020,8 @@ pub(crate) async fn unshare_list_from_role(
     user: AuthDiscordUser,
     Path((id, role_id)): Path<(i32, i32)>,
 ) -> Result<Json<()>, ApiError> {
-    db.unshare_list_from_role(id, user.id as i64, role_id)
+    let role_name = db
+        .unshare_list_from_role(id, user.id as i64, role_id)
         .await?;
     record_list_activity(
         &db,
@@ -2998,7 +3032,11 @@ pub(crate) async fn unshare_list_from_role(
         None,
         None,
         serde_json::json!({ "role_id": role_id }),
-        format!("{} removed role {} from this list", user.name, role_id),
+        format!(
+            "{} removed role {} from this list",
+            user.name,
+            role_label(role_name.as_deref(), role_id)
+        ),
     )
     .await?;
     broadcast_list_update(&db, &senders, id, user.id as i64).await?;
