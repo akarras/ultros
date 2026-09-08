@@ -78,6 +78,36 @@ fn auto_fit_columns<T: Send + Sync + 'static>(
     })
 }
 
+/// Column geometry as custom properties on the canvas, one pair per
+/// position: `--gc{i}l` (left) and `--gc{i}w` (width). Headings and cells
+/// reference their position's pair statically (`column_style`), so a drag
+/// or an auto-fit pass updates one attribute on the canvas instead of
+/// running a reactive style closure — each a linear search of `placed` —
+/// for every cell on screen.
+fn column_vars(placed: &[layout::PlacedColumn]) -> String {
+    use std::fmt::Write;
+    let mut vars = String::with_capacity(placed.len() * 40);
+    for (i, c) in placed.iter().enumerate() {
+        let _ = write!(vars, "--gc{i}l:{}px;--gc{i}w:{}px;", c.left, c.width);
+    }
+    vars
+}
+
+/// The static style of a heading or cell at `position`; see `column_vars`.
+fn column_style(position: usize) -> String {
+    format!("left:var(--gc{position}l);width:var(--gc{position}w);")
+}
+
+/// The body cell a click landed in, for the one delegated listener on the
+/// canvas that replaces a listener per cell.
+fn clicked_cell(e: &web_sys::MouseEvent) -> Option<(usize, usize)> {
+    let target = e.target()?.dyn_into::<web_sys::Element>().ok()?;
+    let cell = target.closest(".virtual-grid-cell").ok()??;
+    let r = cell.get_attribute("data-grid-row")?.parse().ok()?;
+    let c = cell.get_attribute("data-grid-col")?.parse().ok()?;
+    Some((r, c))
+}
+
 #[derive(Clone, Debug)]
 pub struct GridChange {
     pub layout: Option<String>,
@@ -712,12 +742,17 @@ where
         })
     });
     // Tab enters the grid once; Enter/F2 opts into controls in the active cell.
+    // The same pass paints the active body cell: cells carry no reactive
+    // class of their own (see the cell markup), so after every render and
+    // every move the outline is re-applied here, once, by position.
     Effect::new(move |_| {
         let _ = render_rows.get();
         let _ = render_cols.get();
-        if let Some(el) = port.get()
-            && let Ok(nodes) = el.query_selector_all("a,button,input,select,[tabindex]")
-        {
+        let (r, c) = active.get();
+        let Some(el) = port.get() else {
+            return;
+        };
+        if let Ok(nodes) = el.query_selector_all("a,button,input,select,[tabindex]") {
             for i in 0..nodes.length() {
                 if let Some(node) = nodes
                     .item(i)
@@ -726,6 +761,22 @@ where
                     let _ = node.set_attribute("tabindex", "-1");
                 }
             }
+        }
+        if let Ok(nodes) = el.query_selector_all(".virtual-grid-cell.grid-active") {
+            for i in 0..nodes.length() {
+                if let Some(node) = nodes
+                    .item(i)
+                    .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+                {
+                    let _ = node.class_list().remove_1("grid-active");
+                }
+            }
+        }
+        if r > 0
+            && let Ok(Some(cell)) =
+                el.query_selector(&format!("[data-grid-row='{r}'][data-grid-col='{c}']"))
+        {
+            let _ = cell.class_list().add_1("grid-active");
         }
     });
     let on_key = move |e: web_sys::KeyboardEvent| {
@@ -841,7 +892,10 @@ where
                 on:pointercancel=move |_| { if let Some(d) = drag.get_untracked() { state.set(d.original); drag.set(None); } }
                 style=move || format!("--grid-content-height: {}px;", GRID_HEADER_HEIGHT + count.get() as f64 * row_height + 18.0)
             >
-                <div class="virtual-grid-canvas" style=move || format!("width:{}px;min-width:100%;height:{}px;", total_width.get(), GRID_HEADER_HEIGHT + count.get() as f64 * row_height)>
+                <div class="virtual-grid-canvas"
+                    style=move || format!("width:{}px;min-width:100%;height:{}px;{}", total_width.get(), GRID_HEADER_HEIGHT + count.get() as f64 * row_height, placed.with(|p| column_vars(p)))
+                    on:click=move |e: web_sys::MouseEvent| { if let Some((r, c)) = clicked_cell(&e) { activate(r, c); } }
+                >
                     <div class="virtual-grid-header" role="row" aria-rowindex="1" style=format!("height:{GRID_HEADER_HEIGHT}px;")>
                         <For each=move || render_cols.get() key=|(i,c)| (*i,c.column.id) children=move |(ci,c)| {
                             let id = c.column.id;
@@ -854,7 +908,7 @@ where
                                     class:grid-filter-active=move || column_filtered(id)
                                     class:grid-insert-before=move || drag.get().is_some_and(|d| d.target == Some((id,false)))
                                     class:grid-insert-after=move || drag.get().is_some_and(|d| d.target == Some((id,true)))
-                                    style=move || placed.with(|p| p.iter().find(|c| c.column.id == id).map(|c| format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
+                                    style=column_style(ci)
                                     on:contextmenu=move |e| { e.prevent_default(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
                                     on:click=move |_| activate(0,ci)
                                     on:pointerdown=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] begin_hold(&e, id, ci); }
@@ -910,13 +964,16 @@ where
                         let row=Memo::new(move |_| each.with(|data| data.get(ri).cloned()));
                         view! {
                             <div role="row" class="virtual-grid-row" data-even=ri % 2 == 0 aria-rowindex=ri + 2 style=format!("top:{}px;height:{row_height}px;",GRID_HEADER_HEIGHT + ri as f64*row_height)>
+                                // Deliberately inert per cell: geometry comes from the canvas's
+                                // custom properties, the active outline from one effect on the
+                                // grid, and clicks from one delegated listener on the canvas.
+                                // Anything reactive or listening here is multiplied by every
+                                // cell on screen, and rows are built while the user scrolls.
                                 <For each=move || render_cols.get() key=|(i,c)|(*i,c.column.id) children=move |(ci,c)| {
                                     let id=c.column.id;
                                     view! {
                                         <div class="virtual-grid-cell" role="gridcell" aria-colindex=ci + 1 id=format!("{}-r{}-c{ci}",grid_id.get_value(),ri+1) data-column=id data-grid-row=ri + 1 data-grid-col=ci
-                                            class:grid-active=move || active.get()==(ri+1,ci)
-                                            on:click=move |_| activate(ri+1,ci)
-                                            style=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
+                                            style=column_style(ci)
                                         >{move || view.with_value(|v| row.with(|row|row.as_ref().map(|row|v(row.clone(),id)).into_any()))}</div>
                                     }
                                 }/>
@@ -1082,6 +1139,27 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
         },
     };
+
+    #[test]
+    fn cells_take_their_geometry_from_the_canvas_custom_properties() {
+        let layout = GridLayout::parse(None, &[]);
+        let columns = vec![
+            GridColumn::new("a", "A".into(), 100.0, false, true),
+            GridColumn::new("b", "B".into(), 80.0, false, true),
+        ];
+        let layout = GridLayout {
+            order: columns.iter().map(|c| c.id.to_string()).collect(),
+            ..layout
+        };
+        let placed = layout.columns_with(&columns, &BTreeMap::new());
+        assert_eq!(
+            column_vars(&placed),
+            "--gc0l:0px;--gc0w:100px;--gc1l:100px;--gc1w:80px;"
+        );
+        // A heading and a cell at the same position reference the same pair,
+        // which is what keeps them aligned after a resize or an auto-fit.
+        assert_eq!(column_style(1), "left:var(--gc1l);width:var(--gc1w);");
+    }
 
     #[test]
     fn automatic_sizing_pauses_until_menu_and_drag_both_finish_without_pointer_churn() {

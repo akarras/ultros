@@ -31,7 +31,7 @@ async function main() {
   const dir = path.join(__dirname, 'artifacts', 'virtual-grid');
   fs.mkdirSync(dir, {recursive: true});
   async function menu(id) {
-    await page.click(`.virtual-grid-heading[data-column="${id}"] .grid-column-menu`);
+    await page.click(`.virtual-grid-heading[data-column="${id}"]`, {button:'right'});
     await page.waitForSelector('.grid-menu-panel');
   }
   async function action(label, touch=false) {
@@ -225,6 +225,24 @@ async function main() {
     await page.keyboard.down('Shift');await page.keyboard.press('F10');await page.keyboard.up('Shift');
     await page.waitForSelector('.grid-menu-panel');await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(()=>document.activeElement.className),'virtual-grid');
+    await page.waitForFunction(() => {
+      const grid = document.querySelector('.virtual-grid');
+      const active = document.getElementById(grid.getAttribute('aria-activedescendant'));
+      return active?.classList.contains('grid-active') && grid.querySelectorAll('.virtual-grid-cell.grid-active').length === 1;
+    });
+    // A nested element's click bubbles to the canvas and selects its cell.
+    const clickedId = await page.$eval('.virtual-grid-cell', cell => {
+      const child = document.createElement('span');
+      cell.append(child);
+      child.click();
+      return cell.id;
+    });
+    await page.waitForFunction(id => {
+      const grid = document.querySelector('.virtual-grid');
+      return grid.getAttribute('aria-activedescendant') === id &&
+        document.getElementById(id)?.classList.contains('grid-active') &&
+        grid.querySelectorAll('.virtual-grid-cell.grid-active').length === 1;
+    }, {}, clickedId);
     for (const viewport of [{width:620,height:800},{width:393,height:844}]) {
       await page.setViewport(viewport);await scroll(5000,200000);await verifyAlignment();
       await page.screenshot({path:path.join(dir,`grid-${viewport.width}.png`),fullPage:true});
@@ -251,7 +269,27 @@ async function main() {
     }
     const tapAction=label=>action(label,true);
     async function tapMenu(id) {
-      await page.tap(`.virtual-grid-heading[data-column="${id}"] .grid-column-menu`);
+      await page.$eval(`.virtual-grid-heading[data-column="${id}"]`,
+        e=>{
+          e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+          // Keep focus-induced fractional-pixel scrolling at the origin out
+          // of the gesture: that pre-existing scroll dismisses an open menu.
+          const grid=e.closest('.virtual-grid');
+          grid.scrollLeft=Math.max(1,grid.scrollLeft);
+          grid.scrollTop=Math.max(1,grid.scrollTop);
+        });
+      await sleep(180);
+      const point = await page.$eval(`.virtual-grid-heading[data-column="${id}"]`, e => {
+        const r=e.getBoundingClientRect();
+        // Hold the heading's blank lower edge, away from its sort button.
+        return {x:(Math.max(0,r.left)+Math.min(innerWidth,r.right))/2,y:r.bottom-6};
+      });
+      await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+      // Let the application's hold timer fire before lifting the finger,
+      // even when a busy browser delays the timer beyond its nominal 500ms.
+      await page.waitForSelector('.grid-menu-panel');
+      await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      await sleep(180);
       await page.waitForSelector('.grid-menu-panel');
       assert(await page.$eval('.grid-menu-panel',e=>{
         const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;
