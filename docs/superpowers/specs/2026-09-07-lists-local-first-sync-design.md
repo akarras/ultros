@@ -229,9 +229,9 @@ The non-Labs page is byte-for-byte unchanged.
   carries the rules and is unit tested.
 - Undo of a key that another peer overwrote after your edit: Loro's manager
   transforms stack items against remote diffs. Phase 1 pins the observed
-  behaviour with a test (`undo_after_remote_overwrite`) and this spec adopts
-  whatever it is, documented in the crate. The plan does not add a guard
-  layer on top.
+  behaviour with a test (`undo_after_remote_overwrite`): Loro restores the
+  local prior value even over a later remote write, documented in the crate.
+  The plan does not add a guard layer on top.
 - No toast on undo in this spec. Toast actions belong to the redesign.
 
 ### 4. Server as a peer
