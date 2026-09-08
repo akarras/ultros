@@ -503,7 +503,10 @@ async function login(page, baseUrl, user) {
   // so SSR and hydration agree; the page reloads below to pick it up.
   if (process.env.LABS_COOKIE) {
     await page.setCookie({ name: "LABS", value: process.env.LABS_COOKIE, url: baseUrl, path: "/" });
-    await page.goto(new URL("/list", baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    const labsResp = await page.goto(new URL("/list", baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    if (!labsResp || labsResp.status() >= 400) {
+      throw new Error(`reload under LABS=${process.env.LABS_COOKIE} failed for ${user.username}: ${labsResp ? labsResp.status() : -1}`);
+    }
   }
 }
 ```
