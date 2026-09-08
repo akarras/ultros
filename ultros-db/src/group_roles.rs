@@ -72,6 +72,12 @@ pub struct SyncSummary {
 /// picker looks the same whether it is backed by Discord or by our own table.
 pub const MEMBER_SEARCH_LIMIT: u64 = 10;
 
+/// How many rows one `refresh_member_display_names` statement carries. Sized
+/// to keep the parameter count well inside Postgres' 65535 limit (two bound
+/// parameters per row) while still making a whole-server refresh a handful of
+/// round trips rather than thousands.
+const DISPLAY_NAME_REFRESH_CHUNK: usize = 500;
+
 /// Neutralise the wildcards a user can type so `%` in a search box matches a
 /// literal `%` instead of every row. Postgres `LIKE`/`ILIKE` take `\` as the
 /// default escape character, so the backslash itself has to be doubled first.
@@ -663,6 +669,39 @@ impl UltrosDb {
 
         txn.commit().await?;
         Ok(summary)
+    }
+
+    /// Refresh the stored display name of users we already have a row for.
+    ///
+    /// Reconciliation is the only place that sees a member's current Discord
+    /// name outside of login, so without this a member who renames themselves
+    /// keeps a stale name everywhere they appear until they next log in.
+    /// [`apply_role_sync`](Self::apply_role_sync) already refreshes the names
+    /// it adds; this covers the members it did not have to touch, which in a
+    /// steady-state guild is nearly all of them.
+    ///
+    /// Callers must pass ids that already exist in `discord_user`: the
+    /// statement is an upsert, so an unknown id would mint a row for someone
+    /// who has no reason to be in our database yet.
+    pub async fn refresh_member_display_names(&self, users: &[(i64, String)]) -> Result<()> {
+        // One statement per chunk rather than per user: a whole-server role on
+        // a large guild is thousands of rows, and this runs on every cycle.
+        for chunk in users.chunks(DISPLAY_NAME_REFRESH_CHUNK) {
+            discord_user::Entity::insert_many(chunk.iter().map(|(id, username)| {
+                discord_user::ActiveModel {
+                    id: ActiveValue::Set(*id),
+                    username: ActiveValue::Set(username.clone()),
+                }
+            }))
+            .on_conflict(
+                OnConflict::column(discord_user::Column::Id)
+                    .update_column(discord_user::Column::Username)
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await?;
+        }
+        Ok(())
     }
 
     /// The Discord role behind a synced role was deleted. Members are kept;
@@ -1362,6 +1401,66 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(reloaded.username, "Fresh Name");
+    }
+
+    /// The members a sync pass does *not* have to touch still need their names
+    /// kept current, which is the only thing that fixes a stale username for
+    /// someone who has not logged in since they renamed themselves.
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn bulk_refresh_updates_names_without_touching_membership() {
+        let db = test_db().await;
+        let (group, _owner, role, _guild) = guild_group_with_synced_role(&db).await;
+        let first = fresh_user(&db, "stale-one").await;
+        let second = fresh_user(&db, "stale-two").await;
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![
+                    (first.id, first.username.clone()),
+                    (second.id, second.username.clone()),
+                ],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+
+        db.refresh_member_display_names(&[
+            (first.id, "Renamed One".to_string()),
+            (second.id, "Renamed Two".to_string()),
+        ])
+        .await
+        .unwrap();
+
+        for (id, expected) in [(first.id, "Renamed One"), (second.id, "Renamed Two")] {
+            let reloaded = discord_user::Entity::find_by_id(id)
+                .one(&db.db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(reloaded.username, expected);
+        }
+        // Names are all it changes: nobody joins or leaves.
+        assert_eq!(db.role_member_ids(role.id).await.unwrap().len(), 2);
+        assert_eq!(
+            db.group_member_counts(&[group.id])
+                .await
+                .unwrap()
+                .remove(&group.id),
+            Some(3),
+            "the owner plus the two synced members"
+        );
+    }
+
+    /// An empty refresh must not issue a statement at all — `insert_many` with
+    /// no rows is not a valid query.
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn refreshing_nothing_is_a_no_op() {
+        let db = test_db().await;
+        db.refresh_member_display_names(&[]).await.unwrap();
     }
 
     #[tokio::test]
