@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Faster restarts after an update",
+  "blurb": "Live market and undercut pages now close their connection cleanly when the site restarts, so updates finish in seconds instead of stalling for half a minute.",
+  "link": null
+}
