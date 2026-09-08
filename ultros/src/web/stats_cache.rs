@@ -115,6 +115,9 @@ pub(crate) trait CacheKind: 'static {
     const QUERY: &'static str;
     /// Short label for log lines.
     const LABEL: &'static str;
+    /// Hard budget for retained response bodies, sized from this kind's own
+    /// payload — the two families are an order of magnitude apart.
+    const MAX_BYTES: usize;
 }
 
 /// `/api/v1/sale_stats` bodies.
@@ -123,6 +126,10 @@ pub(crate) struct SaleStatsKind;
 impl CacheKind for SaleStatsKind {
     const QUERY: &'static str = "bulk_sale_stats";
     const LABEL: &'static str = "sale-stats";
+    /// Measured in the roadmap's §1.4: 249 KB for a world, 481 KB for a
+    /// datacenter, 578 KB for a region. 64 MiB holds every scope Ultros has
+    /// several times over.
+    const MAX_BYTES: usize = 64 * 1024 * 1024;
 }
 
 /// `/api/v1/listing_stats` bodies.
@@ -131,6 +138,24 @@ pub(crate) struct ListingStatsKind;
 impl CacheKind for ListingStatsKind {
     const QUERY: &'static str = "bulk_listing_alive";
     const LABEL: &'static str = "listing-stats";
+    /// Sized from the alive set, not copied from sale stats — this family is
+    /// much heavier. Prod carries ≈11.4M alive listings over ~90 worlds
+    /// (≈127k per world), aggregated to one row per `(item, hq)` with stock:
+    /// on the order of 9k rows for a world, the same magnitude as
+    /// `sale_stats_window`'s per-world row count. An `ItemListingStats` is
+    /// eight numeric fields and serializes to ≈190 bytes, so a world body is
+    /// ≈1.7 MB, a datacenter (the union over ~8 worlds, ≈25k rows) ≈4.8 MB,
+    /// and a region ≈7 MB — roughly 7× a sale-stats body of the same scope.
+    ///
+    /// At sale stats' 64 MiB that is only ~39 world bodies, fewer than Ultros
+    /// has worlds, so the budget would be evicting hot scopes continuously.
+    /// 192 MiB holds every datacenter and region body plus ~50 world bodies.
+    /// The other thing `max_bytes` gates is `finish_refresh` refusing to cache
+    /// a single body larger than it — which would put that scope on a 2-second
+    /// failure backoff, re-running the query on a 2-second floor forever. A
+    /// region body is ~27× under this ceiling, so that path stays unreachable
+    /// even if the market grows several-fold.
+    const MAX_BYTES: usize = 192 * 1024 * 1024;
 }
 
 /// One cache per [`CacheKind`]: distinct types, so each is its own axum
@@ -161,7 +186,7 @@ impl<K: CacheKind> StatsCache<K> {
             Duration::from_secs(5 * 60),
             Duration::from_secs(30 * 60),
             Duration::from_secs(12),
-            64 * 1024 * 1024,
+            K::MAX_BYTES,
         )
     }
 
