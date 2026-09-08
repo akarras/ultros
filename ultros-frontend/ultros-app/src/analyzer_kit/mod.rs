@@ -10,7 +10,7 @@ pub use ultros_calc::formula;
 pub mod grid;
 pub mod hop;
 pub mod market;
-pub mod needed;
+pub use ultros_calc::needed;
 pub mod signals;
 pub mod stat_columns;
 pub mod strip;

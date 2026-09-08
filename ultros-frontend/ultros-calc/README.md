@@ -1,7 +1,8 @@
 # Ultros calculations
 
 This crate owns sales statistics and price estimates, outlier filtering,
-profit formulas, and recipe batch and shopping-route planning. It depends only
+profit formulas, lazy price lookups, analyzer data requirements, and recipe
+batch and shopping-route planning. It depends only
 on `chrono` and the API data types, with no Leptos or rendering-mode features.
 
 Application view edits can reuse these compiled calculations. Calculation edits
@@ -10,8 +11,9 @@ compiling the app. The existing tests move with their implementations.
 
 The app keeps its current module paths through re-exports. Duration formatting,
 badge classes, and percentage colours remain in the app, alongside their tests.
-Reactive price views, fetching, game-data access, and analyzer pages also remain
-in the app; they can be considered independently in later extractions.
+Reactive sale-statistics state, fetching, game-data access, and analyzer pages
+also remain in the app. The calculation crate describes which data an analyzer
+needs and how to combine its price sources; the app owns fetching and signals.
 
 Validation:
 
