@@ -6,11 +6,11 @@ pub(crate) mod item_card;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
-pub(crate) mod sale_stats_cache;
 pub(crate) mod sitemap;
 pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
+pub(crate) mod stats_cache;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
@@ -88,8 +88,9 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
-    get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines, recent_sales,
+    cheapest_per_world, get_best_deals, get_item_stats, get_listing_stats, get_market_heat,
+    get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
+    recent_sales,
 };
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
@@ -2613,6 +2614,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/market_heat/{world}", get(get_market_heat))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route("/api/v1/sale_stats/{world}", get(get_sale_stats))
+        .route("/api/v1/listing_stats/{world}", get(get_listing_stats))
         .route("/api/v1/alerts/events", get(list_alert_events))
         .route(
             "/api/v1/alerts/events/{id}/resend",

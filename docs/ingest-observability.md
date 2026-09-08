@@ -20,10 +20,24 @@ the Prometheus endpoint at `:9091/metrics` (see `ultros/src/web_metrics.rs`).
 | `ultros_clickhouse_writer_*` | (existing) | `table` | Every writer metric now carries `table` = `sales`, `listing_events` or `floor_changes`; one bounded writer per table. |
 | `ultros_listing_events_seed_failures_total` | counter | — | The one-time `listing_events` seed failed and will retry in 10 minutes. Runs on the rollup leader. |
 | `ultros_floor_changes_bulk_failures_total` | counter | `reason` | A floor resync diff could not be bulk-inserted (`writer_not_ready`, `insert_failed`). Rows are dropped; the next resync re-derives them. |
+| `ultros_listing_stats_cache_total` | counter | `disposition` | `/api/v1/listing_stats/{scope}` cache behaviour (`fresh`, `loaded`, `stale`), the same contract as `ultros_sale_stats_cache_total`. `loaded` tracking request rate means the cache is not holding; `stale` with no `loaded` means ClickHouse stopped answering. |
 
 Pre-existing and still useful alongside these:
 `ultros_websocket_rx{WorldId}`, `ultros_catchup_items_recovered{world}`,
 `ultros_catchup_window_saturated{world}`.
+
+## Listing history rollups
+
+`listing_alive` (ClickHouse, refreshed every 15 minutes by the rollup leader)
+replays `listing_events` from the seed onwards into the alive listing set per
+`(world, item, hq)` — count, units, distinct retainers, oldest and median age,
+floor — and is what `GET /api/v1/listing_stats/{scope}` serves. A key whose
+board empties is rewritten as a zero row rather than left stale, so
+`SELECT count() FROM listing_alive FINAL WHERE alive_count > 0` is the "boards
+with stock" figure, and that number no longer moving between refreshes is the
+failure to look for. The read side is `ultros_listing_stats_cache_total`
+(above); the refresh itself has no metric yet, only the leader's
+`listing_alive refresh done` / `listing_alive refresh failed` log lines.
 
 ## Suggested alerts
 
