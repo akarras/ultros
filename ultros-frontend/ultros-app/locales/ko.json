@@ -2003,5 +2003,8 @@
     "leve_analyzer_preset_cheapest": "납품 비용이 저렴한 순",
     "scrip_sources_preset_best_value": "증표당 가치 높은 순",
     "scrip_sources_preset_orange_crafters": "주황 제작자의 증표",
-    "scrip_sources_preset_orange_gatherers": "주황 채집자의 증표"
+    "scrip_sources_preset_orange_gatherers": "주황 채집자의 증표",
+    "update_banner_message": "Ultros가 업데이트되었습니다.",
+    "update_banner_reload": "새로고침",
+    "update_banner_dismiss": "닫기"
 }

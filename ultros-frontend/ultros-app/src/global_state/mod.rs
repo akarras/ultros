@@ -1,3 +1,4 @@
+pub mod app_update;
 pub mod changelog;
 pub(crate) mod cheapest_prices;
 pub mod clipboard_text;

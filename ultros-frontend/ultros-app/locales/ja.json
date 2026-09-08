@@ -2003,5 +2003,8 @@
     "leve_analyzer_preset_cheapest": "納品費が安い順",
     "scrip_sources_preset_best_value": "スクリップ単価が安い順",
     "scrip_sources_preset_orange_crafters": "オレンジ・クラフタースクリップ",
-    "scrip_sources_preset_orange_gatherers": "オレンジ・ギャザラースクリップ"
+    "scrip_sources_preset_orange_gatherers": "オレンジ・ギャザラースクリップ",
+    "update_banner_message": "Ultrosが更新されました。",
+    "update_banner_reload": "再読み込み",
+    "update_banner_dismiss": "閉じる"
 }

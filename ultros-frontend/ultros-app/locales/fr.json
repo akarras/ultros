@@ -2003,5 +2003,8 @@
     "leve_analyzer_preset_cheapest": "Les moins chères à remplir",
     "scrip_sources_preset_best_value": "Meilleur rapport par script",
     "scrip_sources_preset_orange_crafters": "Scripts orange d'artisan",
-    "scrip_sources_preset_orange_gatherers": "Scripts orange de récolteur"
+    "scrip_sources_preset_orange_gatherers": "Scripts orange de récolteur",
+    "update_banner_message": "Ultros a été mis à jour.",
+    "update_banner_reload": "Recharger",
+    "update_banner_dismiss": "Fermer"
 }

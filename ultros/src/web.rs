@@ -2741,6 +2741,17 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/current_user", delete(delete_user))
 }
 
+/// Stamps every response with the commit this binary was built from so a
+/// stale wasm bundle can notice the server moved on. Outermost layer, so it
+/// covers SSR HTML, the JSON API, static files, `/pkg/`, and error responses.
+/// The client side lives in `ultros_app::global_state::app_update`.
+fn app_commit_header_layer() -> SetResponseHeaderLayer<HeaderValue> {
+    SetResponseHeaderLayer::overriding(
+        axum::http::HeaderName::from_static(ultros_api_types::app_version::APP_COMMIT_HEADER),
+        HeaderValue::from_static(env!("GIT_HASH")),
+    )
+}
+
 pub(crate) async fn start_web(
     state: WebState,
     prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
@@ -2874,7 +2885,8 @@ pub(crate) async fn start_web(
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
-        ));
+        ))
+        .layer(app_commit_header_layer());
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
@@ -2899,4 +2911,49 @@ pub(crate) async fn start_web(
         start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
+}
+
+#[cfg(test)]
+mod app_commit_header_tests {
+    use super::app_commit_header_layer;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use ultros_api_types::app_version::APP_COMMIT_HEADER;
+
+    fn router() -> Router {
+        Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(app_commit_header_layer())
+    }
+
+    async fn header_for(uri: &str) -> (StatusCode, Option<String>) {
+        let response = router()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let header = response
+            .headers()
+            .get(APP_COMMIT_HEADER)
+            .map(|v| v.to_str().unwrap().to_string());
+        (response.status(), header)
+    }
+
+    #[tokio::test]
+    async fn stamps_success_responses() {
+        let (status, header) = header_for("/ok").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+
+    #[tokio::test]
+    async fn stamps_not_found_responses() {
+        let (status, header) = header_for("/missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
 }
