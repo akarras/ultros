@@ -1,6 +1,7 @@
 use crate::api::{
-    create_list_invite, delete_list_invite, get_groups, get_list_invites, get_list_shares,
-    share_list_with_group, share_list_with_user, unshare_list_from_group, unshare_list_from_user,
+    create_list_invite, delete_list_invite, get_group_detail, get_groups, get_list_invites,
+    get_list_shares, share_list_with_group, share_list_with_role, share_list_with_user,
+    unshare_list_from_group, unshare_list_from_role, unshare_list_from_user,
 };
 use crate::components::icon::Icon;
 use crate::components::invite_link;
@@ -12,8 +13,8 @@ use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 use ultros_api_types::list::{
-    CreateInvite, List, ListInvite, ListPermission, ListSharedGroup, ListSharedUser,
-    ShareListGroup, ShareListUser,
+    CreateInvite, List, ListInvite, ListPermission, ListSharedGroup, ListSharedRole,
+    ListSharedUser, ShareListGroup, ShareListRole, ShareListUser,
 };
 
 pub(crate) fn permission_label(permission: ListPermission) -> &'static str {
@@ -99,6 +100,9 @@ pub(crate) fn ShareListSection(
     let i18n = use_i18n();
     let list_id = list.id;
     let (selected_group_id, set_selected_group_id) = signal(String::new());
+    // Empty means "the whole group"; sharing to a role is the narrower case
+    // and has to be picked deliberately.
+    let (selected_role_id, set_selected_role_id) = signal(String::new());
     let (group_permission, set_group_permission) = signal(ListPermission::Read);
     let (manual_user_id, set_manual_user_id) = signal(String::new());
     let (manual_user_permission, set_manual_user_permission) = signal(ListPermission::Read);
@@ -132,6 +136,17 @@ pub(crate) fn ShareListSection(
     });
     let unshare_group =
         Action::new(move |group_id: &i32| unshare_list_from_group(list_id, *group_id));
+    let share_role = Action::new(move |data: &(i32, ListPermission)| {
+        let (role_id, permission) = *data;
+        share_list_with_role(
+            list_id,
+            ShareListRole {
+                role_id,
+                permission,
+            },
+        )
+    });
+    let unshare_role = Action::new(move |role_id: &i32| unshare_list_from_role(list_id, *role_id));
     let create_invite =
         Action::new(move |invite: &CreateInvite| create_list_invite(list_id, invite.clone()));
     let delete_invite =
@@ -144,18 +159,31 @@ pub(crate) fn ShareListSection(
                 unshare_user.version().get(),
                 share_group.version().get(),
                 unshare_group.version().get(),
+                share_role.version().get(),
+                unshare_role.version().get(),
                 create_invite.version().get(),
                 delete_invite.version().get(),
                 refresh_signal.map(|s| s.get()).unwrap_or(0),
             )
         },
         move |_| async move {
-            // Role shares are fetched but not yet rendered — the role section
-            // of this modal lands with the groups frontend stage.
-            let (users, groups, _roles) = get_list_shares(list_id).await?;
+            let (users, groups, roles) = get_list_shares(list_id).await?;
             let invites = get_list_invites(list_id).await?;
             let owned_groups = get_groups().await?;
-            Ok::<_, crate::error::AppError>((users, groups, invites, owned_groups))
+            Ok::<_, crate::error::AppError>((users, groups, roles, invites, owned_groups))
+        },
+    );
+
+    // The roles of whichever group is selected. Resolving it costs one
+    // request, so it is keyed on the selection rather than fetched for every
+    // group the viewer belongs to.
+    let group_roles = Resource::new(
+        move || selected_group_id.get(),
+        move |group_id| async move {
+            let Ok(group_id) = group_id.parse::<i32>() else {
+                return Ok(Vec::new());
+            };
+            get_group_detail(group_id).await.map(|detail| detail.roles)
         },
     );
 
@@ -189,7 +217,7 @@ pub(crate) fn ShareListSection(
     view! {
         <Suspense fallback=move || view! { <Loading /> }>
             {move || share_data.get().map(|data| match data {
-                Ok((users, shared_groups, invites, owned_groups)) => {
+                Ok((users, shared_groups, shared_roles, invites, owned_groups)) => {
                     let has_owned_groups = !owned_groups.is_empty();
                     let invites_for_copy = invites.clone();
                     let latest_invite_url = invites
@@ -200,11 +228,17 @@ pub(crate) fn ShareListSection(
                         <div class="space-y-6">
                             <section class="space-y-3">
                                 <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_group_heading)}</h3>
-                                <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_9rem]">
+                                <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_9rem]">
                                     <select
                                         class="input w-full text-base"
                                         prop:value=selected_group_id
-                                        on:change=move |ev| set_selected_group_id(event_target_value(&ev))
+                                        on:change=move |ev| {
+                                            set_selected_group_id(event_target_value(&ev));
+                                            // A role belongs to one group, so a
+                                            // stale pick would share the wrong
+                                            // group's role.
+                                            set_selected_role_id(String::new());
+                                        }
                                     >
                                         <option value="">
                                             {if has_owned_groups {
@@ -223,6 +257,54 @@ pub(crate) fn ShareListSection(
                                             }
                                         />
                                     </select>
+                                    // The Suspense wraps the whole select, not
+                                    // its options: `<select>` only admits
+                                    // option/optgroup children, and a
+                                    // suspense boundary inside one would put
+                                    // its streaming markers there. It is also
+                                    // nested rather than shared with the
+                                    // section's own boundary, so changing the
+                                    // group re-suspends this control alone
+                                    // instead of blanking the whole modal.
+                                    <Suspense fallback=move || {
+                                        view! {
+                                            <select class="input w-full text-base" disabled>
+                                                <option value="">{t!(i18n, lists_share_role_everyone)}</option>
+                                            </select>
+                                        }
+                                    }>
+                                        {move || {
+                                            let roles = group_roles
+                                                .get()
+                                                .and_then(|roles| roles.ok())
+                                                .unwrap_or_default();
+                                            view! {
+                                                <select
+                                                    class="input w-full text-base"
+                                                    aria-label=move || {
+                                                        t_string!(i18n, lists_share_role_label).to_string()
+                                                    }
+                                                    prop:value=selected_role_id
+                                                    prop:disabled=move || selected_group_id().is_empty()
+                                                    on:change=move |ev| set_selected_role_id(
+                                                        event_target_value(&ev),
+                                                    )
+                                                >
+                                                    <option value="">
+                                                        {t!(i18n, lists_share_role_everyone)}
+                                                    </option>
+                                                    {roles
+                                                        .into_iter()
+                                                        .map(|role| {
+                                                            view! {
+                                                                <option value=role.id.to_string()>{role.name}</option>
+                                                            }
+                                                        })
+                                                        .collect_view()}
+                                                </select>
+                                            }
+                                        }}
+                                    </Suspense>
                                     <select
                                         class="input w-full"
                                         on:change=move |ev| set_group_permission(editable_permission(&event_target_value(&ev)))
@@ -233,12 +315,25 @@ pub(crate) fn ShareListSection(
                                     <button
                                         type="button"
                                         class="btn-primary"
-                                        prop:disabled=move || selected_group_id().is_empty() || share_group.pending().get()
+                                        prop:disabled=move || {
+                                            selected_group_id().is_empty()
+                                                || share_group.pending().get()
+                                                || share_role.pending().get()
+                                        }
                                         on:click=move |_| {
-                                            if let Ok(group_id) = selected_group_id().parse::<i32>() {
+                                            // A role share is the narrower
+                                            // grant, so picking one replaces
+                                            // the whole-group share rather
+                                            // than adding to it.
+                                            if let Ok(role_id) = selected_role_id().parse::<i32>() {
+                                                share_role.dispatch((role_id, group_permission()));
+                                            } else if let Ok(group_id) = selected_group_id().parse::<i32>() {
                                                 share_group.dispatch((group_id, group_permission()));
-                                                set_selected_group_id(String::new());
+                                            } else {
+                                                return;
                                             }
+                                            set_selected_group_id(String::new());
+                                            set_selected_role_id(String::new());
                                         }
                                     >
                                         {t!(i18n, lists_share_group_button)}
@@ -340,9 +435,11 @@ pub(crate) fn ShareListSection(
                                 <AccessList
                                     users=users
                                     groups=shared_groups
+                                    roles=shared_roles
                                     invites=invites
                                     unshare_user
                                     unshare_group
+                                    unshare_role
                                     delete_invite
                                 />
                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] p-3 text-sm text-[color:var(--color-text-muted)]">
@@ -383,12 +480,15 @@ pub(crate) fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl
 pub(crate) fn AccessList(
     users: Vec<ListSharedUser>,
     groups: Vec<ListSharedGroup>,
+    roles: Vec<ListSharedRole>,
     invites: Vec<ListInvite>,
     unshare_user: Action<i64, Result<(), crate::error::AppError>>,
     unshare_group: Action<i32, Result<(), crate::error::AppError>>,
+    unshare_role: Action<i32, Result<(), crate::error::AppError>>,
     delete_invite: Action<String, Result<(), crate::error::AppError>>,
 ) -> impl IntoView {
-    let is_empty = users.is_empty() && groups.is_empty() && invites.is_empty();
+    let i18n = use_i18n();
+    let is_empty = users.is_empty() && groups.is_empty() && roles.is_empty() && invites.is_empty();
     view! {
         <div class="space-y-1">
             <Show when=move || is_empty>
@@ -429,6 +529,27 @@ pub(crate) fn AccessList(
                             trailing=permission_label(share.permission).to_string()
                             on_delete=Callback::new(move |_| {
                                 unshare_group.dispatch(group_id);
+                            })
+                        />
+                    }
+                }
+            />
+
+            <For
+                each=move || roles.clone()
+                key=|share| share.role_id
+                children=move |share| {
+                    let role_id = share.role_id;
+                    view! {
+                        <AccessRow
+                            icon=i::BiGroupSolid
+                            // "Group / Role", so a role share is legible
+                            // without opening the group it came from.
+                            label=format!("{} / {}", share.group_name, share.role_name)
+                            detail=t_string!(i18n, lists_share_role_detail).to_string()
+                            trailing=permission_label(share.permission).to_string()
+                            on_delete=Callback::new(move |_| {
+                                unshare_role.dispatch(role_id);
                             })
                         />
                     }
