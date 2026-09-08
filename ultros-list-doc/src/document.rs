@@ -8,7 +8,12 @@
 //!                                            target: i64 (absent = none), acquired: Counter } }
 //! ```
 
-use loro::{Container, LoroCounter, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use std::sync::Arc;
+
+use loro::{
+    Container, ExportMode, LoroCounter, LoroDoc, LoroMap, LoroValue, Subscription,
+    ValueOrContainer, VersionVector,
+};
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::key::{Quality, RowKey};
@@ -325,6 +330,59 @@ impl ListDocument {
         let current = self.row(key).ok_or(DocError::MissingRow(*key))?.acquired;
         self.add_acquired(key, value - current)
     }
+
+    /// The encoded version vector: what this document has seen.
+    pub fn version(&self) -> Vec<u8> {
+        self.doc.oplog_vv().encode()
+    }
+
+    pub fn export_snapshot(&self) -> Result<Vec<u8>, DocError> {
+        Ok(self.doc.export(ExportMode::Snapshot)?)
+    }
+
+    /// A snapshot that drops history before the current state. Cheaper to
+    /// store; a fresh peer loads it and syncs both ways from there.
+    pub fn export_shallow(&self) -> Result<Vec<u8>, DocError> {
+        let frontiers = self.doc.state_frontiers();
+        Ok(self.doc.export(ExportMode::shallow_snapshot(&frontiers))?)
+    }
+
+    pub fn export_all(&self) -> Result<Vec<u8>, DocError> {
+        Ok(self.doc.export(ExportMode::all_updates())?)
+    }
+
+    /// Updates the holder of `version` has not seen. An empty `version` means
+    /// everything.
+    pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
+        let vv = if version.is_empty() {
+            VersionVector::default()
+        } else {
+            VersionVector::decode(version).map_err(|_| DocError::Version)?
+        };
+        Ok(self.doc.export(ExportMode::updates(&vv))?)
+    }
+
+    pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        let status = self.doc.import(bytes)?;
+        Ok(ImportReport {
+            pending: status.pending.is_some(),
+        })
+    }
+
+    /// Bytes for every local commit, ready to send to other peers. Remote
+    /// imports do not fire this.
+    pub fn on_local_update(&self, f: impl Fn(&[u8]) + Send + Sync + 'static) -> Subscription {
+        self.doc
+            .subscribe_local_update(Box::new(move |bytes: &Vec<u8>| {
+                f(bytes.as_slice());
+                true
+            }))
+    }
+
+    /// Any change to the document, local or imported.
+    pub fn on_change(&self, f: impl Fn() + Send + Sync + 'static) -> Subscription {
+        self.doc.subscribe_root(Arc::new(move |_event| f()))
+    }
 }
 
 #[cfg(test)]
@@ -520,5 +578,81 @@ mod tests {
                 scope: Some(AnySelector::World(79))
             }
         );
+    }
+
+    #[test]
+    fn export_since_carries_only_what_the_other_side_lacks() {
+        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        let b = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+        let synced_at = b.version();
+        assert!(a.export_since(&synced_at).unwrap().len() < a.export_all().unwrap().len());
+        a.set_need(&RowKey::new(1, None), 9).unwrap();
+        let delta = a.export_since(&synced_at).unwrap();
+        let report = b.import(&delta).unwrap();
+        assert_eq!(report, ImportReport { pending: false });
+        assert_eq!(b.row(&RowKey::new(1, None)).unwrap().need, 9);
+        assert_eq!(b.version(), a.version());
+        assert!(a.export_since(b"garbage").is_err());
+        assert_eq!(
+            a.export_since(&[]).unwrap().len(),
+            a.export_all().unwrap().len()
+        );
+    }
+
+    #[test]
+    fn a_shallow_snapshot_loads_into_a_fresh_document() {
+        let key = RowKey::new(1, None);
+        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        for need in 2..40 {
+            a.set_need(&key, need).unwrap();
+        }
+        let shallow = a.export_shallow().unwrap();
+        assert!(shallow.len() < a.export_snapshot().unwrap().len());
+        let fresh = ListDocument::from_snapshot(&shallow).unwrap();
+        assert_eq!(fresh.rows(), a.rows());
+        // A peer that starts from the shallow snapshot still syncs both ways.
+        fresh.set_need(&key, 100).unwrap();
+        a.import(&fresh.export_since(&a.version()).unwrap())
+            .unwrap();
+        assert_eq!(a.row(&key).unwrap().need, 100);
+    }
+
+    #[test]
+    fn local_updates_fire_for_local_commits_only() {
+        use std::sync::{Arc, Mutex};
+        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        let b = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+        let seen: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let _sub = a.on_local_update(move |bytes| sink.lock().unwrap().push(bytes.to_vec()));
+        a.set_need(&RowKey::new(1, None), 2).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 1, "one commit, one update");
+        b.set_need(&RowKey::new(1, None), 3).unwrap();
+        a.import(&b.export_since(&a.version()).unwrap()).unwrap();
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "imports are not local updates"
+        );
+        // The captured bytes are a valid update for another peer.
+        let c = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+        c.import(&seen.lock().unwrap()[0]).unwrap();
+    }
+
+    #[test]
+    fn on_change_fires_for_local_and_remote_changes() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        let b = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let sink = count.clone();
+        let _sub = a.on_change(move || {
+            sink.fetch_add(1, Ordering::SeqCst);
+        });
+        a.set_need(&RowKey::new(1, None), 2).unwrap();
+        b.rename("remote").unwrap();
+        a.import(&b.export_since(&a.version()).unwrap()).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 2);
     }
 }
