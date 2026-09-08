@@ -14,12 +14,7 @@ pub(crate) type EventProducer<T> = tokio::sync::broadcast::Sender<EventType<Arc<
 /// One merged list-document update, relayed to every other subscriber of
 /// that list. `origin_socket` is the socket that sent it, so the relay skips
 /// the sender; server-side writers carry `None`.
-///
-/// Nothing reads these fields yet: `crate::lists::ListSync` sends them, but
-/// the websocket relay that reads `EventReceivers::list_docs` lands in a
-/// later task of this plan (see `crate::lists`'s module doc).
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) struct ListDocEvent {
     pub(crate) list_id: i32,
     pub(crate) update: Vec<u8>,
@@ -140,9 +135,7 @@ pub(crate) struct EventSenders {
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
     pub(crate) history: EventProducer<SaleEventData>,
     pub(crate) lists: EventProducer<ListEventData>,
-    /// Sent by `crate::lists::ListSync::publish`, which has no callers until
-    /// a later task in this plan wires up the merge path.
-    #[allow(dead_code)]
+    /// Sent by `crate::lists::ListSync::publish`.
     pub(crate) list_docs: EventProducer<ListDocEvent>,
 }
 
