@@ -2,20 +2,28 @@
 //! rollup and checks every field the listing-stats endpoint serves.
 //!
 //! Run against a throwaway ClickHouse — a container, or a scratch database on
-//! a dev server (the refresher rolls up the whole `listing_events` table):
+//! a dev server (the fixture resets the refresher's cursor, so the run folds
+//! that database's whole `listing_events` table from the seed):
 //!   docker run --rm -d -p 8123:8123 -e CLICKHOUSE_DB=ultros \
 //!     -e CLICKHOUSE_USER=ultros -e CLICKHOUSE_PASSWORD= \
 //!     --name ch-test clickhouse/clickhouse-server
 //!   ULTROS_CH_INTEGRATION=1 cargo test -p ultros-clickhouse --test listing_alive_smoke
 //!
-//! Fixture ids are distinct from every sibling smoke test's: cargo runs the
-//! test files concurrently against one server.
+//! Fixture ids — two dedicated world ids and nine dedicated item ids — are
+//! distinct from every sibling smoke test's, and [`cleanup`] deletes by them at
+//! both ends of the run. Nothing may be left behind: cargo shares one server
+//! across the test files, and `listing_events_smoke`'s
+//! `seed_streams_the_whole_board_once` asserts an *exact* count of
+//! `source = 'snapshot'` rows, which a leftover fixture row would break with a
+//! failure that has nothing to do with either test's subject.
 
 use chrono::{DateTime, TimeDelta, Utc};
 use ultros_clickhouse::{
     ClickHouseClient, queries, rollups,
     rows::{ListingEventKind, ListingEventRow, ListingEventSource},
-    schema::LISTING_EVENTS_SEED_MARKER_TABLE,
+    schema::{
+        LISTING_ALIVE_STATE_TABLE, LISTING_EVENTS_SEED_MARKER_TABLE, LISTING_LAST_EVENT_TABLE,
+    },
     writer::insert_all,
 };
 
@@ -80,8 +88,18 @@ fn in_list() -> String {
         .join(",")
 }
 
+/// Delete every trace of the fixture. Called before the run *and* after it:
+/// the `source = 'snapshot'` rows this fixture needs (see [`fixture`]) are
+/// otherwise indistinguishable from a real seed's to a sibling test that counts
+/// them.
+///
+/// The `_listing_alive_state` cursor goes too. Before the run it forces the
+/// refresher to fold from the seed cutoff rather than from wherever this
+/// database left off, which is what lets the pre-seed and mid-stream cases mean
+/// anything; after it, a truncated cursor only ever costs the next real refresh
+/// one extra full fold, which is idempotent.
 async fn cleanup(ch: &ClickHouseClient) {
-    for table in ["listing_events", "listing_alive"] {
+    for table in ["listing_events", "listing_alive", LISTING_LAST_EVENT_TABLE] {
         ch.client()
             .query(&format!(
                 "ALTER TABLE {table} DELETE WHERE item_id IN ({}) SETTINGS mutations_sync = 1",
@@ -91,6 +109,11 @@ async fn cleanup(ch: &ClickHouseClient) {
             .await
             .expect("cleanup");
     }
+    ch.client()
+        .query(&format!("TRUNCATE TABLE {LISTING_ALIVE_STATE_TABLE}"))
+        .execute()
+        .await
+        .expect("truncate alive cursor");
 }
 
 /// A websocket `added` at `at`, reviewed at `at`, on `WORLD`, NQ. Callers
@@ -122,10 +145,14 @@ fn added(
     }
 }
 
+/// A removal of `row` at `at`. Always `websocket`-sourced, whatever the row it
+/// copies: only the one-time seed ever writes `snapshot`, and a removal tagged
+/// that way would inflate the snapshot row count a sibling test asserts on.
 fn removed(row: &ListingEventRow, at: DateTime<Utc>) -> ListingEventRow {
     ListingEventRow {
         event_time: at,
         kind: ListingEventKind::Removed,
+        source: ListingEventSource::Websocket,
         ..row.clone()
     }
 }
@@ -371,10 +398,29 @@ async fn alive_set_matches_the_scripted_fixture() {
         let actual = i64::from(actual);
         (actual - expected - drift).abs() <= 5
     };
+    let dc = queries::bulk_listing_alive(&ch, &[WORLD, OTHER_WORLD])
+        .await
+        .expect("bulk_listing_alive across worlds");
+    let elsewhere = queries::bulk_listing_alive(&ch, &[OTHER_WORLD])
+        .await
+        .expect("bulk_listing_alive, other world");
+    let computed_at = queries::listing_alive_computed_at(&ch, &[WORLD])
+        .await
+        .expect("listing_alive_computed_at");
+    let stored_add_remove = stored_alive_count(&ch, ITEM_ADD_REMOVE).await;
+    let stored_same_row_tie = stored_alive_count(&ch, ITEM_SAME_ROW_TIE).await;
+    let stored_pre_seed = stored_alive_count(&ch, ITEM_PRE_SEED).await;
+
+    // Every read is done; take the fixture back out before asserting, so a
+    // failure here cannot leave rows behind for a sibling test to trip over.
+    cleanup(&ch).await;
+
+    // The rollup timestamp the endpoint serves as its freshness header.
+    assert!(computed_at >= now.timestamp(), "{computed_at}");
 
     // (a) not alive: absent from the read, present as a zero row.
     assert!(by_key(&world, ITEM_ADD_REMOVE, 0).is_none());
-    assert_eq!(stored_alive_count(&ch, ITEM_ADD_REMOVE).await, Some(0));
+    assert_eq!(stored_add_remove, Some(0));
 
     // (b) the reprice counts once, at the new price.
     let b = by_key(&world, ITEM_REPRICE, 0).expect("reprice row");
@@ -424,11 +470,11 @@ async fn alive_set_matches_the_scripted_fixture() {
 
     // Same row, same second: the removal is the row's final state.
     assert!(by_key(&world, ITEM_SAME_ROW_TIE, 0).is_none());
-    assert_eq!(stored_alive_count(&ch, ITEM_SAME_ROW_TIE).await, Some(0));
+    assert_eq!(stored_same_row_tie, Some(0));
 
     // Pre-seed: never replayed, so not even a zero row.
     assert!(by_key(&world, ITEM_PRE_SEED, 0).is_none());
-    assert_eq!(stored_alive_count(&ch, ITEM_PRE_SEED).await, None);
+    assert_eq!(stored_pre_seed, None);
 
     // Mid-stream removal is honoured; the other snapshot row is alive.
     let g = by_key(&world, ITEM_SEED_STREAM, 0).expect("seed-stream row");
@@ -451,9 +497,6 @@ async fn alive_set_matches_the_scripted_fixture() {
         "{}",
         f_world.median_age_secs
     );
-    let dc = queries::bulk_listing_alive(&ch, &[WORLD, OTHER_WORLD])
-        .await
-        .expect("bulk_listing_alive across worlds");
     let f_dc = by_key(&dc, ITEM_MERGE, 0).expect("merge row, two worlds");
     assert_eq!(f_dc.alive_count, 5);
     assert_eq!(f_dc.alive_units, 9);
@@ -470,9 +513,6 @@ async fn alive_set_matches_the_scripted_fixture() {
     );
 
     // Nothing from the fixture leaks into an unrelated world.
-    let elsewhere = queries::bulk_listing_alive(&ch, &[OTHER_WORLD])
-        .await
-        .expect("bulk_listing_alive, other world");
     let leaked: Vec<_> = elsewhere
         .iter()
         .filter(|r| ALL_ITEMS.contains(&r.item_id) && r.item_id != ITEM_MERGE)
