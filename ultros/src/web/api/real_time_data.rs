@@ -19,6 +19,7 @@ use futures::{
 };
 
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use ultros_api_types::websocket::{
     ClientMessage, FilterPredicate, ListEventData, ListingEventData, SaleEventData, ServerClient,
@@ -29,6 +30,7 @@ use ultros_api_types::{websocket::EventType as WEvent, world_helper::WorldHelper
 use crate::event::{EventReceivers, EventType};
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
+use crate::web::shutdown::until_shutdown;
 use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
 
@@ -40,12 +42,13 @@ pub(crate) async fn real_time_data(
     State(events): State<EventReceivers>,
     State(worlds): State<Arc<WorldHelper>>,
     State(db): State<UltrosDb>,
+    State(token): State<CancellationToken>,
 ) -> Response {
     let user = user.ok();
     info!("Handling websocket");
     ws.on_upgrade(move |websocket| async move {
         info!("Upgrading websocket");
-        if let Err(e) = handle_socket(websocket, events, worlds, db, user).await {
+        if let Err(e) = handle_socket(websocket, events, worlds, db, user, token).await {
             error!("{e:?}");
         }
     })
@@ -126,6 +129,7 @@ async fn handle_socket(
     world_cache: Arc<WorldHelper>,
     db: UltrosDb,
     user: Option<AuthDiscordUser>,
+    token: CancellationToken,
 ) -> Result<(), Box<dyn Error>> {
     let EventReceivers {
         retainers: _,
@@ -148,30 +152,41 @@ async fn handle_socket(
     // sender.send(Message::Ping(vec![1, 2, 3, 4])).await?;
 
     info!("socket upgraded, starting.");
+    // Set when the loop exits for shutdown rather than client disconnect; the
+    // close frame goes out after the loop, once the select's borrows are gone.
+    let mut shutting_down = false;
     loop {
-        match select(receiver.next(), subscriptions.next()).await {
-            Either::Left((Some(msg), _b)) => {
-                info!("Received message {msg:?}");
-                if let Ok(msg) = msg {
-                    match msg {
-                        Message::Text(text) => {
-                            let msg: ClientMessage = serde_json::from_str(&text)?;
-                            match msg {
-                                ClientMessage::AddSubscribe {
-                                    subscription_id,
-                                    filter,
-                                    msg_type,
-                                } => {
-                                    let subscription_id = subscription_id.unwrap_or_else(|| {
-                                        let id = next_subscription_id;
-                                        next_subscription_id += 1;
-                                        id
-                                    });
-                                    if !activate_subscription(
-                                        &active_subscriptions,
+        // Subscriptions can idle indefinitely, so without the shutdown token
+        // this await keeps axum's graceful shutdown pending forever.
+        match until_shutdown(&token, select(receiver.next(), subscriptions.next())).await {
+            None => {
+                shutting_down = true;
+                break;
+            }
+            Some(selected) => match selected {
+                Either::Left((Some(msg), _b)) => {
+                    info!("Received message {msg:?}");
+                    if let Ok(msg) = msg {
+                        match msg {
+                            Message::Text(text) => {
+                                let msg: ClientMessage = serde_json::from_str(&text)?;
+                                match msg {
+                                    ClientMessage::AddSubscribe {
                                         subscription_id,
-                                    ) {
-                                        sender
+                                        filter,
+                                        msg_type,
+                                    } => {
+                                        let subscription_id =
+                                            subscription_id.unwrap_or_else(|| {
+                                                let id = next_subscription_id;
+                                                next_subscription_id += 1;
+                                                id
+                                            });
+                                        if !activate_subscription(
+                                            &active_subscriptions,
+                                            subscription_id,
+                                        ) {
+                                            sender
                                             .send(Message::Text(
                                                 serde_json::to_string(&ServerClient::Error {
                                                     message: format!(
@@ -181,115 +196,123 @@ async fn handle_socket(
                                                 .into(),
                                             ))
                                             .await?;
-                                        continue;
-                                    }
-                                    match msg_type {
-                                        SocketMessageType::Listings => {
-                                            let l_worlds = world_cache.clone();
-                                            let active = active_subscriptions.clone();
-                                            let stream =
-                                                BroadcastStream::new(listings.resubscribe())
-                                                    .map(move |map| {
-                                                        if !is_subscription_active(
-                                                            &active,
-                                                            subscription_id,
-                                                        ) {
-                                                            return None;
-                                                        }
-                                                        match map {
-                                                            Ok(map) => {
-                                                                let filter = &filter;
-                                                                let worlds = &l_worlds;
-                                                                wrap_subscription_event(
-                                                                    subscription_id,
-                                                                    process_listings(
-                                                                        Some(map),
-                                                                        filter,
-                                                                        worlds,
-                                                                    ),
-                                                                )
-                                                            }
-                                                            Err(_) => Some(ServerClient::Stale {
-                                                                subscription_id,
-                                                            }),
-                                                        }
-                                                    })
-                                                    .filter_map(move |f| async move { f });
-
-                                            subscriptions.push(Box::pin(stream));
+                                            continue;
                                         }
-                                        SocketMessageType::Sales => {
-                                            let s_worlds = world_cache.clone();
-                                            let active = active_subscriptions.clone();
-                                            info!(
-                                                "Adding sales subscription with filter {filter:?}"
-                                            );
-                                            let stream =
-                                                BroadcastStream::new(history.resubscribe())
-                                                    .map(move |map| {
-                                                        if !is_subscription_active(
-                                                            &active,
-                                                            subscription_id,
-                                                        ) {
-                                                            return None;
-                                                        }
-                                                        match map {
-                                                            Ok(map) => {
-                                                                let filter = &filter;
-                                                                let worlds = &s_worlds;
-                                                                wrap_subscription_event(
-                                                                    subscription_id,
-                                                                    process_sales(
-                                                                        Some(map),
-                                                                        filter,
-                                                                        worlds,
-                                                                    ),
-                                                                )
-                                                            }
-                                                            Err(_) => Some(ServerClient::Stale {
+                                        match msg_type {
+                                            SocketMessageType::Listings => {
+                                                let l_worlds = world_cache.clone();
+                                                let active = active_subscriptions.clone();
+                                                let stream =
+                                                    BroadcastStream::new(listings.resubscribe())
+                                                        .map(move |map| {
+                                                            if !is_subscription_active(
+                                                                &active,
                                                                 subscription_id,
-                                                            }),
-                                                        }
-                                                    })
-                                                    .filter_map(move |l| async move { l });
+                                                            ) {
+                                                                return None;
+                                                            }
+                                                            match map {
+                                                                Ok(map) => {
+                                                                    let filter = &filter;
+                                                                    let worlds = &l_worlds;
+                                                                    wrap_subscription_event(
+                                                                        subscription_id,
+                                                                        process_listings(
+                                                                            Some(map),
+                                                                            filter,
+                                                                            worlds,
+                                                                        ),
+                                                                    )
+                                                                }
+                                                                Err(_) => {
+                                                                    Some(ServerClient::Stale {
+                                                                        subscription_id,
+                                                                    })
+                                                                }
+                                                            }
+                                                        })
+                                                        .filter_map(move |f| async move { f });
 
-                                            subscriptions.push(Box::pin(stream));
+                                                subscriptions.push(Box::pin(stream));
+                                            }
+                                            SocketMessageType::Sales => {
+                                                let s_worlds = world_cache.clone();
+                                                let active = active_subscriptions.clone();
+                                                info!(
+                                                    "Adding sales subscription with filter {filter:?}"
+                                                );
+                                                let stream =
+                                                    BroadcastStream::new(history.resubscribe())
+                                                        .map(move |map| {
+                                                            if !is_subscription_active(
+                                                                &active,
+                                                                subscription_id,
+                                                            ) {
+                                                                return None;
+                                                            }
+                                                            match map {
+                                                                Ok(map) => {
+                                                                    let filter = &filter;
+                                                                    let worlds = &s_worlds;
+                                                                    wrap_subscription_event(
+                                                                        subscription_id,
+                                                                        process_sales(
+                                                                            Some(map),
+                                                                            filter,
+                                                                            worlds,
+                                                                        ),
+                                                                    )
+                                                                }
+                                                                Err(_) => {
+                                                                    Some(ServerClient::Stale {
+                                                                        subscription_id,
+                                                                    })
+                                                                }
+                                                            }
+                                                        })
+                                                        .filter_map(move |l| async move { l });
+
+                                                subscriptions.push(Box::pin(stream));
+                                            }
                                         }
-                                    }
-                                    sender
-                                        .send(Message::Text(
-                                            serde_json::to_string(&ServerClient::Subscribed {
-                                                subscription_id,
-                                            })?
-                                            .into(),
-                                        ))
-                                        .await?;
-                                }
-                                ClientMessage::Unsubscribe { subscription_id } => {
-                                    deactivate_subscription(&active_subscriptions, subscription_id);
-                                    sender
-                                        .send(Message::Text(
-                                            serde_json::to_string(&ServerClient::Unsubscribed {
-                                                subscription_id,
-                                            })?
-                                            .into(),
-                                        ))
-                                        .await?;
-                                }
-                                ClientMessage::SubscribeList {
-                                    subscription_id,
-                                    list_id,
-                                } => {
-                                    let subscription_id = subscription_id.unwrap_or_else(|| {
-                                        let id = next_subscription_id;
-                                        next_subscription_id += 1;
-                                        id
-                                    });
-                                    if !activate_subscription(
-                                        &active_subscriptions,
-                                        subscription_id,
-                                    ) {
                                         sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Subscribed {
+                                                    subscription_id,
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                    }
+                                    ClientMessage::Unsubscribe { subscription_id } => {
+                                        deactivate_subscription(
+                                            &active_subscriptions,
+                                            subscription_id,
+                                        );
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(
+                                                    &ServerClient::Unsubscribed { subscription_id },
+                                                )?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                    }
+                                    ClientMessage::SubscribeList {
+                                        subscription_id,
+                                        list_id,
+                                    } => {
+                                        let subscription_id =
+                                            subscription_id.unwrap_or_else(|| {
+                                                let id = next_subscription_id;
+                                                next_subscription_id += 1;
+                                                id
+                                            });
+                                        if !activate_subscription(
+                                            &active_subscriptions,
+                                            subscription_id,
+                                        ) {
+                                            sender
                                             .send(Message::Text(
                                                 serde_json::to_string(&ServerClient::Error {
                                                     message: format!(
@@ -299,15 +322,16 @@ async fn handle_socket(
                                                 .into(),
                                             ))
                                             .await?;
-                                        continue;
-                                    }
-                                    let user_id = user.as_ref().map(|u| u.id as i64).unwrap_or(0);
-                                    let permission = db.get_permission(list_id, user_id).await?;
-                                    if permission >= ListPermission::Read {
-                                        let active = active_subscriptions.clone();
-                                        let stream =
-                                            BroadcastStream::new(lists.resubscribe()).filter_map(
-                                                move |l| {
+                                            continue;
+                                        }
+                                        let user_id =
+                                            user.as_ref().map(|u| u.id as i64).unwrap_or(0);
+                                        let permission =
+                                            db.get_permission(list_id, user_id).await?;
+                                        if permission >= ListPermission::Read {
+                                            let active = active_subscriptions.clone();
+                                            let stream = BroadcastStream::new(lists.resubscribe())
+                                                .filter_map(move |l| {
                                                     let active = active.clone();
                                                     async move {
                                                         if !is_subscription_active(
@@ -363,70 +387,78 @@ async fn handle_socket(
                                                             None
                                                         }
                                                     }
-                                                },
+                                                });
+                                            subscriptions.push(Box::pin(stream));
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(
+                                                        &ServerClient::Subscribed {
+                                                            subscription_id,
+                                                        },
+                                                    )?
+                                                    .into(),
+                                                ))
+                                                .await?;
+                                        } else {
+                                            deactivate_subscription(
+                                                &active_subscriptions,
+                                                subscription_id,
                                             );
-                                        subscriptions.push(Box::pin(stream));
-                                        sender
-                                            .send(Message::Text(
-                                                serde_json::to_string(&ServerClient::Subscribed {
-                                                    subscription_id,
-                                                })?
-                                                .into(),
-                                            ))
-                                            .await?;
-                                    } else {
-                                        deactivate_subscription(
-                                            &active_subscriptions,
-                                            subscription_id,
-                                        );
-                                        sender
-                                            .send(Message::Text(
-                                                serde_json::to_string(&ServerClient::Error {
-                                                    message: "not authorized to subscribe to list"
-                                                        .to_string(),
-                                                })?
-                                                .into(),
-                                            ))
-                                            .await?;
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&ServerClient::Error {
+                                                        message:
+                                                            "not authorized to subscribe to list"
+                                                                .to_string(),
+                                                    })?
+                                                    .into(),
+                                                ))
+                                                .await?;
+                                        }
                                     }
                                 }
                             }
+                            Message::Binary(_) => {
+                                info!("binary data received");
+                            }
+                            Message::Ping(ping) => {
+                                info!("{ping:?}");
+                                sender.send(Message::Pong(ping)).await?;
+                            }
+                            Message::Pong(pong) => {
+                                info!("{pong:?}");
+                            }
+                            Message::Close(_close) => {
+                                info!("real time socket closed")
+                            }
                         }
-                        Message::Binary(_) => {
-                            info!("binary data received");
-                        }
-                        Message::Ping(ping) => {
-                            info!("{ping:?}");
-                            sender.send(Message::Pong(ping)).await?;
-                        }
-                        Message::Pong(pong) => {
-                            info!("{pong:?}");
-                        }
-                        Message::Close(_close) => {
-                            info!("real time socket closed")
-                        }
-                    }
-                } else {
-                    // client disconnected
-                    info!("websocket disconnect");
-                    return Ok(());
-                };
-            }
-            Either::Right((Some(right), _l)) => {
-                info!("Sending websocket message {right:?}");
-                sender
-                    .send(Message::Text(serde_json::to_string(&right)?.into()))
-                    .await?;
-            }
-            Either::Left((left, _l)) => {
-                info!("Received none: {left:?}");
-                break;
-            }
-            Either::Right((right, _r)) => {
-                info!("Right {right:?}");
-                break;
-            }
+                    } else {
+                        // client disconnected
+                        info!("websocket disconnect");
+                        return Ok(());
+                    };
+                }
+                Either::Right((Some(right), _l)) => {
+                    info!("Sending websocket message {right:?}");
+                    sender
+                        .send(Message::Text(serde_json::to_string(&right)?.into()))
+                        .await?;
+                }
+                Either::Left((left, _l)) => {
+                    info!("Received none: {left:?}");
+                    break;
+                }
+                Either::Right((right, _r)) => {
+                    info!("Right {right:?}");
+                    break;
+                }
+            },
         };
+    }
+
+    if shutting_down {
+        info!("server shutting down, closing real time socket");
+        let _ = sender.send(Message::Close(None)).await;
     }
 
     Ok(())

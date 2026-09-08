@@ -6,6 +6,7 @@ pub(crate) mod item_card;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
+pub(crate) mod shutdown;
 pub(crate) mod sitemap;
 pub(crate) mod social_card;
 pub(crate) mod state;

@@ -164,3 +164,12 @@ impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
         input.listing_stats_cache.clone()
     }
 }
+
+/// Long-lived handlers (the websockets) need the same token the serve loop
+/// watches, so they can close themselves instead of holding graceful shutdown
+/// open. See [`crate::web::shutdown`].
+impl FromRef<WebState> for CancellationToken {
+    fn from_ref(input: &WebState) -> Self {
+        input.token.clone()
+    }
+}
