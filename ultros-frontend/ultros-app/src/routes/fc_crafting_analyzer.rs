@@ -153,7 +153,7 @@ fn fc_crafting_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetVie
     [
         t_string!(i18n, fc_crafting_preset_realistic).to_string(),
         t_string!(i18n, fc_crafting_preset_big_ticket).to_string(),
-        t_string!(i18n, fc_crafting_preset_no_shards).to_string(),
+        t_string!(i18n, fc_crafting_preset_no_crystals).to_string(),
     ]
     .into_iter()
     .zip(PRESET_QUERIES)
@@ -563,7 +563,7 @@ fn FCCraftingAnalyzerTable(
                 t_string!(i18n, fc_crafting_filter_daily_sales_min_label).to_string()
             }
             FILTER_EXCLUDE_SHARDS => {
-                t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()
+                t_string!(i18n, fc_crafting_filter_exclude_crystals_label).to_string()
             }
             FILTER_USE_ON_HAND => t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string(),
             _ => String::new(),
@@ -724,7 +724,7 @@ fn FCCraftingAnalyzerTable(
                             .map(|current| {
                                 view! {
                                     <FilterChip
-                                        label=t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()
+                                        label=t_string!(i18n, fc_crafting_filter_exclude_crystals_label).to_string()
                                         value=Signal::derive(move || Some(current.to_string()))
                                         options=on_off_options()
                                         on_commit=Callback::new(move |v: Option<String>| {

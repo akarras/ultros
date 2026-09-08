@@ -236,7 +236,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                             <Gil amount=lq.cost />
                             {(lq.shard_cost > 0 && opts_value.exclude_shards).then(|| view! {
                                 <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] text-[10px] text-[color:var(--color-text-muted)]">
-                                    {t!(i18n, related_recipe_shards_excluded)} " " <Gil amount=lq.shard_cost />
+                                    {t!(i18n, related_recipe_crystals_excluded)} " " <Gil amount=lq.shard_cost />
                                 </span>
                             })}
                             {(lq.on_hand_savings > 0).then(|| view! {
@@ -280,7 +280,7 @@ fn CraftOptionsToggleRow() -> impl IntoView {
                     prop:checked=move || opts().exclude_shards
                     on:change=move |_| toggle(Box::new(|o| o.exclude_shards = !o.exclude_shards))
                 />
-                {t!(i18n, recipe_analyzer_filter_exclude_shards_label)}
+                {t!(i18n, recipe_analyzer_filter_exclude_crystals_label)}
             </label>
             <label class="flex flex-row items-center gap-1">
                 <input
