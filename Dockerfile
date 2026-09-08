@@ -52,27 +52,40 @@ COPY --from=planner /app/recipe.json recipe.json
 #  - bin-package = "ultros"        → server-release profile, native
 #  - lib-package = "ultros-client" → release profile, wasm32-unknown-unknown
 # Edits to source code below this line won't invalidate these layers.
-RUN cargo chef cook --profile server-release -p ultros --recipe-path recipe.json
-RUN cargo chef cook --release --target wasm32-unknown-unknown -p ultros-client --recipe-path recipe.json
+#
+# Both cook invocations must match the cargo command cargo-leptos will later
+# run, flag for flag, or cargo fingerprints the dependencies differently and
+# rebuilds every one of them from scratch. cargo-leptos 0.3 runs:
+#   cargo build --package=ultros --bin=ultros --no-default-features \
+#       --features=jemalloc --profile=server-release
+#   cargo build --package=ultros-client --lib --target-dir=/app/target/front \
+#       --target=wasm32-unknown-unknown --no-default-features --release
+# Note the WASM one's `--target-dir`: cargo-leptos keeps the client build in
+# `target/front`, so a cook into the default `target/` warms a directory
+# nothing ever reads. Cooking straight into `target/front` is what makes the
+# client's ~400 registry dependencies actually cache between builds.
+RUN cargo chef cook --profile server-release -p ultros \
+        --no-default-features --features jemalloc --recipe-path recipe.json
+RUN cargo chef cook --release --target wasm32-unknown-unknown -p ultros-client \
+        --no-default-features --target-dir /app/target/front --recipe-path recipe.json
 # Now the actual source.
 COPY . .
 ENV WASM_BINDGEN_WEAKREF=1
 # Limit peak memory usage to prevent OOM errors on resource-constrained CI runners.
-#  - CARGO_BUILD_JOBS=1: Compile one crate at a time.
+#  - CARGO_BUILD_JOBS=1: one rustc per cargo invocation. cargo-leptos runs the
+#    native server and the WASM client build concurrently, so the ceiling is
+#    two rustc processes at a time.
 #  - CARGO_INCREMENTAL=0: Avoid overhead of maintaining incremental build state.
 ENV CARGO_BUILD_JOBS=1 \
     CARGO_INCREMENTAL=0
 
-# cargo-leptos 0.3 builds the server and client in parallel. Even with
-# CARGO_BUILD_JOBS=1, the two distinct rustc processes (one for native, one
-# for WASM) can overlap and exceed the 7GB runner limit.
-#
-# We force sequential build by compiling the server binary first.
-#  - Cargo will cache the server-release artifacts.
-#  - The subsequent cargo-leptos call will see the server is already built
-#    and spend its memory budget on the WASM client.
-RUN cargo build --profile server-release -p ultros --features jemalloc
-
+# One build, not two. There used to be a `cargo build --profile server-release
+# -p ultros --features jemalloc` here, meant to compile the server first so
+# cargo-leptos would only have the WASM client left to do. It never worked:
+# cargo-leptos spawns its server and client cargo processes concurrently
+# regardless, and the pre-build's artifacts didn't satisfy cargo-leptos's own
+# server invocation, so the server was compiled twice — ~26 minutes of the
+# ~55-minute CI build spent producing something the next step threw away.
 RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
