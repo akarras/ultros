@@ -8,6 +8,7 @@
 //!                                            target: i64 (absent = none), acquired: Counter } }
 //! ```
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use loro::{
@@ -40,6 +41,8 @@ pub enum DocError {
     Encode(#[from] loro::LoroEncodeError),
     #[error("version vector bytes are invalid")]
     Version,
+    #[error("the update depends on history this document has compacted away")]
+    OutdatedDependency,
     #[error("row `{0}` is not in the document")]
     MissingRow(RowKey),
 }
@@ -49,6 +52,14 @@ pub enum DocError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportReport {
     pub pending: bool,
+}
+
+/// The server's answer to a subscribe handshake (spec section 5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SyncPayload {
+    Snapshot(Vec<u8>),
+    Updates(Vec<u8>),
+    UpToDate,
 }
 
 /// Cheap to clone: clones share the same underlying document.
@@ -71,6 +82,15 @@ fn value_i64(value: Option<ValueOrContainer>) -> Option<i64> {
     }
 }
 
+/// `None` for empty or undecodable bytes; both mean "this peer has nothing
+/// we can diff against".
+fn decode_version(bytes: &[u8]) -> Option<VersionVector> {
+    if bytes.is_empty() {
+        return None;
+    }
+    VersionVector::decode(bytes).ok()
+}
+
 fn value_string(value: Option<ValueOrContainer>) -> Option<String> {
     match value {
         Some(ValueOrContainer::Value(LoroValue::String(s))) => Some(s.to_string()),
@@ -79,22 +99,43 @@ fn value_string(value: Option<ValueOrContainer>) -> Option<String> {
 }
 
 impl ListDocument {
-    /// An empty document with Loro's default random peer id. Two tabs are two
-    /// peers: a peer id is never stored or shared between concurrent writers.
+    /// A document with Loro's default random peer id, carrying nothing but
+    /// `meta.schema`. Two tabs are two peers: a peer id is never stored or
+    /// shared between concurrent writers.
+    ///
+    /// The schema write is one local commit, so a "fresh" document already has
+    /// history; `from_snapshot` deliberately does not go through here, or every
+    /// loaded copy would invent a redundant local operation of its own.
     pub fn new() -> Self {
+        let document = Self::blank();
+        document
+            .meta_map()
+            .insert(SCHEMA, SCHEMA_VERSION)
+            .expect("fresh map insert");
+        document.doc.commit();
+        document
+    }
+
+    /// No schema, no commits: the base for `from_snapshot`.
+    fn blank() -> Self {
         Self {
             doc: LoroDoc::new(),
         }
     }
 
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
-        let document = Self::new();
+        let document = Self::blank();
         document.doc.import(bytes)?;
         Ok(document)
     }
 
     /// Build a document from relational rows: the server's first-touch path.
     pub fn from_rows(meta: MetaSnapshot, rows: &[RowSnapshot]) -> Self {
+        debug_assert_eq!(
+            rows.iter().map(|r| r.key).collect::<BTreeSet<_>>().len(),
+            rows.len(),
+            "from_rows was given duplicate row keys; the later row would silently overwrite the earlier one"
+        );
         let document = Self::new();
         let meta_map = document.meta_map();
         // Inserting plain values into a fresh attached map cannot fail.
@@ -106,9 +147,7 @@ impl ListDocument {
                 .insert(SCOPE, encode_scope(scope).as_str())
                 .expect("fresh map insert");
         }
-        meta_map
-            .insert(SCHEMA, SCHEMA_VERSION)
-            .expect("fresh map insert");
+        // `new()` already wrote `meta.schema`.
         for row in rows {
             document
                 .insert_row(row.key, row.need, row.target, row.acquired)
@@ -169,6 +208,8 @@ impl ListDocument {
         let row = self
             .rows_map()
             .insert_container(&key.to_string(), LoroMap::new())?;
+        // `item` and `quality` are written for external readers of the raw
+        // document; this crate derives both from the map key.
         row.insert(ITEM, key.item_id as i64)?;
         row.insert(QUALITY, key.quality.as_str())?;
         row.insert(NEED, need)?;
@@ -180,6 +221,12 @@ impl ListDocument {
             counter.increment(acquired as f64)?;
         }
         Ok(())
+    }
+
+    /// The schema version the document was written with, or `None` for a
+    /// document from before `meta.schema` existed.
+    pub fn schema(&self) -> Option<i64> {
+        value_i64(self.meta_map().get(SCHEMA))
     }
 
     pub fn meta(&self) -> MetaSnapshot {
@@ -242,11 +289,15 @@ impl ListDocument {
 
     /// Add a row, or add `need` to the row already under that key, which is
     /// what the legacy add path has always done.
+    ///
+    /// Under concurrency the merged `need` is last-writer-wins, not additive:
+    /// two devices each adding 3 to a row of 2 converge to 5, not 8.
+    /// `acquired` is the only additive field.
     pub fn add_row(&self, key: RowKey, need: i64, target: Option<i64>) -> Result<(), DocError> {
         match self.row_container(&key) {
             Some(row) => {
                 let current = value_i64(row.get(NEED)).unwrap_or(0);
-                row.insert(NEED, current + need)?;
+                row.insert(NEED, (current + need).max(0))?;
                 if let Some(target) = target {
                     row.insert(TARGET, target)?;
                 }
@@ -316,6 +367,7 @@ impl ListDocument {
         Ok(new_key)
     }
 
+    /// Values are exact up to 2^53; the counter is an f64 underneath.
     pub fn add_acquired(&self, key: &RowKey, delta: i64) -> Result<(), DocError> {
         let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
         if delta != 0 {
@@ -326,6 +378,11 @@ impl ListDocument {
     }
 
     /// Set an absolute value by incrementing the counter by the difference.
+    ///
+    /// Two peers each setting the same absolute value concurrently from the
+    /// same base double it: `set_acquired(5)` on both sides of a 0 converges
+    /// to 10. Consumers that display `acquired` should clamp to `need` for
+    /// display, never in the document.
     pub fn set_acquired(&self, key: &RowKey, value: i64) -> Result<(), DocError> {
         let current = self.row(key).ok_or(DocError::MissingRow(*key))?.acquired;
         self.add_acquired(key, value - current)
@@ -343,6 +400,8 @@ impl ListDocument {
     /// A snapshot that drops history before the current state. Cheaper to
     /// store; a fresh peer loads it and syncs both ways from there.
     pub fn export_shallow(&self) -> Result<Vec<u8>, DocError> {
+        // `state_frontiers()` equals `oplog_frontiers()` here: this crate
+        // never detaches or checks out.
         let frontiers = self.doc.state_frontiers();
         Ok(self.doc.export(ExportMode::shallow_snapshot(&frontiers))?)
     }
@@ -353,6 +412,10 @@ impl ListDocument {
 
     /// Updates the holder of `version` has not seen. An empty `version` means
     /// everything.
+    ///
+    /// On a document loaded from a shallow snapshot, a `version` older than the
+    /// shallow root yields a truncated update with no error; call
+    /// `can_export_since` first, or use `sync_payload`, which does.
     pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
         let vv = if version.is_empty() {
             VersionVector::default()
@@ -363,10 +426,61 @@ impl ListDocument {
     }
 
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
-        let status = self.doc.import(bytes)?;
+        let status = self.doc.import(bytes).map_err(|error| match error {
+            // The bytes are well formed but hang off history a shallow
+            // snapshot dropped. The caller answers with a fresh snapshot.
+            loro::LoroError::ImportUpdatesThatDependsOnOutdatedVersion => {
+                DocError::OutdatedDependency
+            }
+            other => DocError::Loro(other),
+        })?;
         Ok(ImportReport {
             pending: status.pending.is_some(),
         })
+    }
+
+    /// True when `version` decodes and is at or after this document's shallow
+    /// root, so `export_since(version)` would be complete rather than silently
+    /// truncated. A document loaded from a full snapshot has an empty shallow
+    /// root, for which every decodable version qualifies.
+    pub fn can_export_since(&self, version: &[u8]) -> bool {
+        let Some(client) = decode_version(version) else {
+            return false;
+        };
+        self.doc
+            .shallow_since_vv()
+            .iter()
+            .all(|(peer, counter)| *counter <= client.get(peer).copied().unwrap_or(0))
+    }
+
+    /// What to send a peer that reports `client_version`: a snapshot when it
+    /// has nothing usable or sits behind our shallow root, nothing when it is
+    /// level, otherwise the updates it lacks. A peer that is ahead still gets
+    /// `Updates`, possibly carrying nothing new; it then sends its own diff.
+    pub fn sync_payload(&self, client_version: &[u8]) -> Result<SyncPayload, DocError> {
+        let Some(client) = decode_version(client_version) else {
+            return Ok(SyncPayload::Snapshot(self.export_snapshot()?));
+        };
+        if !self.can_export_since(client_version) {
+            return Ok(SyncPayload::Snapshot(self.export_snapshot()?));
+        }
+        if client == self.doc.oplog_vv() {
+            return Ok(SyncPayload::UpToDate);
+        }
+        Ok(SyncPayload::Updates(self.export_since(client_version)?))
+    }
+
+    /// True when this document holds operations the holder of `version` has
+    /// not seen: there is something to send it. An undecodable or empty
+    /// `version` gets everything.
+    pub fn is_ahead_of(&self, version: &[u8]) -> bool {
+        let Some(theirs) = decode_version(version) else {
+            return true;
+        };
+        self.doc
+            .oplog_vv()
+            .iter()
+            .any(|(peer, counter)| *counter > theirs.get(peer).copied().unwrap_or(0))
     }
 
     /// Bytes for every local commit, ready to send to other peers. Remote
@@ -654,5 +768,113 @@ mod tests {
         b.rename("remote").unwrap();
         a.import(&b.export_since(&a.version()).unwrap()).unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_new_document_carries_the_schema_version() {
+        assert_eq!(ListDocument::new().schema(), Some(SCHEMA_VERSION));
+        assert_eq!(
+            ListDocument::from_rows(meta(), &[]).schema(),
+            Some(SCHEMA_VERSION)
+        );
+        let loaded =
+            ListDocument::from_snapshot(&ListDocument::new().export_snapshot().unwrap()).unwrap();
+        assert_eq!(loaded.schema(), Some(SCHEMA_VERSION));
+        // A document from before `meta.schema` existed reads as `None`.
+        let raw = loro::LoroDoc::new();
+        raw.get_map(META).insert(NAME, "old").unwrap();
+        raw.commit();
+        let legacy =
+            ListDocument::from_snapshot(&raw.export(loro::ExportMode::Snapshot).unwrap()).unwrap();
+        assert_eq!(legacy.schema(), None);
+        assert_eq!(legacy.meta().name, "old");
+    }
+
+    /// A shallow snapshot drops history, so an update that hangs off a version
+    /// older than the shallow root has nothing to attach to.
+    #[test]
+    fn importing_an_update_that_predates_the_shallow_root_is_outdated() {
+        let key = RowKey::new(1, None);
+        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        let old = a.version();
+        // A third peer that only ever knew the old history.
+        let stale = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+        for need in 2..42 {
+            a.set_need(&key, need).unwrap();
+        }
+        let b = ListDocument::from_snapshot(&a.export_shallow().unwrap()).unwrap();
+        stale.set_need(&key, 500).unwrap();
+        let update = stale.export_since(&old).unwrap();
+        match b.import(&update) {
+            Err(DocError::OutdatedDependency) => {}
+            other => panic!("expected OutdatedDependency, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sync_payload_picks_snapshot_updates_or_up_to_date() {
+        let key = RowKey::new(1, None);
+        let server = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        assert!(matches!(
+            server.sync_payload(&[]).unwrap(),
+            SyncPayload::Snapshot(_)
+        ));
+        assert!(matches!(
+            server.sync_payload(b"junk").unwrap(),
+            SyncPayload::Snapshot(_)
+        ));
+        let client = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+        assert_eq!(
+            server.sync_payload(&client.version()).unwrap(),
+            SyncPayload::UpToDate
+        );
+        server.set_need(&key, 3).unwrap();
+        let SyncPayload::Updates(bytes) = server.sync_payload(&client.version()).unwrap() else {
+            panic!("expected updates");
+        };
+        client.import(&bytes).unwrap();
+        assert_eq!(client.row(&key).unwrap().need, 3);
+        // A client that is ahead gets nothing to import; it sends its own diff.
+        client.set_need(&key, 4).unwrap();
+        assert!(matches!(
+            server.sync_payload(&client.version()).unwrap(),
+            SyncPayload::Updates(_)
+        ));
+    }
+
+    #[test]
+    fn sync_payload_sends_a_snapshot_to_a_client_behind_the_shallow_root() {
+        let key = RowKey::new(1, None);
+        let full = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        let old = full.version();
+        for need in 2..42 {
+            full.set_need(&key, need).unwrap();
+        }
+        let server = ListDocument::from_snapshot(&full.export_shallow().unwrap()).unwrap();
+        assert!(!server.can_export_since(&old));
+        assert!(server.can_export_since(&server.version()));
+        assert!(matches!(
+            server.sync_payload(&old).unwrap(),
+            SyncPayload::Snapshot(_)
+        ));
+        // A full-history document has an empty shallow root: the same old
+        // version is diffable there.
+        assert!(full.can_export_since(&old));
+    }
+
+    #[test]
+    fn is_ahead_of_reports_unsent_local_work() {
+        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
+        let b = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+        assert!(!a.is_ahead_of(&b.version()));
+        a.set_need(&RowKey::new(1, None), 2).unwrap();
+        assert!(a.is_ahead_of(&b.version()));
+        b.import(&a.export_since(&b.version()).unwrap()).unwrap();
+        assert!(!a.is_ahead_of(&b.version()));
+        assert!(
+            a.is_ahead_of(b"junk"),
+            "an unreadable version gets everything"
+        );
+        assert!(a.is_ahead_of(&[]));
     }
 }

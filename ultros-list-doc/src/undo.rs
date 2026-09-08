@@ -44,11 +44,21 @@ impl ListUndo {
     }
 
     /// Run several document edits as one undo step (bulk HQ, imports).
+    ///
+    /// The group is closed even if `f` panics: an open group would swallow
+    /// every later edit into one step for the rest of the session.
     pub fn group<R>(&mut self, f: impl FnOnce() -> Result<R, DocError>) -> Result<R, DocError> {
+        struct CloseGroup<'a>(&'a mut UndoManager);
+
+        impl Drop for CloseGroup<'_> {
+            fn drop(&mut self) {
+                self.0.group_end();
+            }
+        }
+
         self.inner.group_start()?;
-        let result = f();
-        self.inner.group_end();
-        result
+        let _guard = CloseGroup(&mut self.inner);
+        f()
     }
 }
 

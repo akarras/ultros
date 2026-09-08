@@ -6,7 +6,11 @@ pub mod key;
 pub mod snapshot;
 pub mod undo;
 
-pub use document::{DocError, ImportReport, ListDocument, SCHEMA_VERSION};
+pub use document::{DocError, ImportReport, ListDocument, SCHEMA_VERSION, SyncPayload};
 pub use key::{KeyError, Quality, RowKey};
 pub use snapshot::{MetaSnapshot, RowChange, RowSnapshot, diff_rows, encode_scope, parse_scope};
 pub use undo::ListUndo;
+
+/// Re-exported so consumers can hold subscriptions without depending on
+/// `loro` themselves.
+pub use loro::Subscription;
