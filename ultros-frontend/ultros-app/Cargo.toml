@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 ultros-calc = { path = "../ultros-calc" }
+ultros-grid-core = { path = "../ultros-grid-core" }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-changelog = { path = "../../ultros-changelog" }
 leptos = { workspace = true, features = ["nightly"] }

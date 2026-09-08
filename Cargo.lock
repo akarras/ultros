@@ -10801,6 +10801,7 @@ dependencies = [
  "ultros-changelog",
  "ultros-charts",
  "ultros-db",
+ "ultros-grid-core",
  "ultros-i18n",
  "uuid",
  "wasm-bindgen",
@@ -10912,6 +10913,14 @@ dependencies = [
  "ultros-api-types",
  "universalis",
  "yoke",
+]
+
+[[package]]
+name = "ultros-grid-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
