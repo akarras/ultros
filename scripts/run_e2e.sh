@@ -204,6 +204,7 @@ if [ "${E2E_RELEASE:-0}" != "1" ] && [ "${RUN_SHARED_ANALYZER_DATA:-1}" != "0" ]
     log "running deterministic shared analyzer data E2E"
     shared_analyzer_data_exit=0
     ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-analyzer-data ) || shared_analyzer_data_exit=$?
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:market-window ) || shared_analyzer_data_exit=$?
     if [ "$shared_analyzer_data_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$shared_analyzer_data_exit"
     fi

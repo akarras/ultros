@@ -7,6 +7,7 @@ use crate::analysis::{
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
 };
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
@@ -301,32 +302,14 @@ use crate::query_defaults::query_signal_or_default;
 /// in place. Absent param = the default view, whose only shared column is
 /// `sale_estimate` (see `serialize_visible_cols_preserving`).
 fn toggle_shared_col(previous: Option<&str>, id: &str) -> String {
-    let mut ids: Vec<&str> = previous
-        .unwrap_or("sale_estimate")
-        .split(',')
-        .filter(|t| !t.is_empty())
-        .collect();
-    if let Some(i) = ids.iter().position(|t| *t == id) {
-        ids.remove(i);
-    } else {
-        ids.push(id);
-    }
-    ids.join(",")
+    crate::analyzer_kit::stat_columns::toggle_shared_col(previous, "sale_estimate", id)
 }
 
 /// The stat-column ids present in `?cols=`, for the picker's checkboxes.
 /// Native ids stay in `parse_visible_cols`; other shared ids (`market-world`)
 /// are not picker entries and are ignored here.
 fn shared_cols_in(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    raw.unwrap_or("")
-        .split(',')
-        .filter_map(|tok| {
-            crate::analyzer_kit::stat_columns::STAT_COLUMNS
-                .iter()
-                .find(|c| c.id == tok)
-                .map(|c| c.id)
-        })
-        .collect()
+    crate::analyzer_kit::stat_columns::shared_cols_in(raw)
 }
 
 use chrono::{Duration, Utc};
@@ -1380,9 +1363,12 @@ fn AnalyzerTable(
     let i18n = use_i18n();
     let market = use_market_data(world);
     let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    market.require_price_basis(Signal::derive(move || {
+        revenue_basis.get().unwrap_or_default()
+    }));
     let selected_revenue = Signal::derive(move || revenue_basis().unwrap_or_default());
     let revenue_pending = Signal::derive(move || {
-        selected_revenue.get().sale_stat().is_some() && market.stats7().is_none()
+        selected_revenue.get().sale_stat().is_some() && market.selected_stats().is_none()
     });
     let rate_pending = Signal::derive(move || market.stats7().is_none());
     // Keeps the name chip mounted (in edit state) between "picked from the
@@ -1714,7 +1700,9 @@ fn AnalyzerTable(
             .iter()
             .map(|col| ColumnOption::new(col, col_label(col)))
             .collect::<Vec<_>>();
-        options.extend(crate::analyzer_kit::stat_columns::market_picker_options());
+        options.extend(crate::analyzer_kit::stat_columns::market_picker_options(
+            market.window.selected.get(),
+        ));
         options
     });
 
@@ -1914,8 +1902,11 @@ fn AnalyzerTable(
             .rows()
             .iter()
             .map(|data| {
-                let (data, price_fallback) =
-                    with_revenue_basis(data, selected_revenue.get(), market.stats7().as_deref());
+                let (data, price_fallback) = with_revenue_basis(
+                    data,
+                    selected_revenue.get(),
+                    market.selected_stats().as_deref(),
+                );
                 let profit =
                     flip_profit(data.estimated_sale_price, data.cheapest_price, include_tax);
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
@@ -1943,7 +1934,7 @@ fn AnalyzerTable(
                 passes_financial_floor(
                     data.profit_per_day,
                     minimum_profit_per_day(),
-                    rate_pending.get(),
+                    rate_pending.get() || revenue_pending.get(),
                 )
             })
             .filter(move |data| {
@@ -2123,7 +2114,10 @@ fn AnalyzerTable(
         // are ordered by exactly what the header highlights and arrows.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let sort_pending = (revenue_pending.get()
-            && matches!(mode, SortMode::Profit | SortMode::Roi | SortMode::Tax))
+            && matches!(
+                mode,
+                SortMode::Profit | SortMode::Roi | SortMode::Tax | SortMode::ProfitPerDay
+            ))
             || (rate_pending.get() && mode == SortMode::ProfitPerDay);
         if !sort_pending {
             sort_rows(
@@ -2262,7 +2256,7 @@ fn AnalyzerTable(
             }
         }),
         GridMetric::number(COL_PROFIT_PER_DAY, move |(_, d): &Row| {
-            if market.stats7().is_none() {
+            if market.stats7().is_none() || revenue_pending.get() {
                 GridValue::Pending
             } else {
                 GridValue::Number(d.profit_per_day as f64)
@@ -2366,7 +2360,10 @@ fn AnalyzerTable(
     let worlds_for_measure = worlds.clone();
     view! {
         <div class="flex flex-col gap-4" data-testid="flip-finder-table">
-            <MarketPriceControls basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string() listing_label=t_string!(i18n, market_conservative_estimate).to_string() show_fallback_note=false/>
+            <div class="flex flex-wrap items-start gap-3">
+                <MarketWindowControl window=market.window />
+                <MarketPriceControls window=market.window basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string() listing_label=t_string!(i18n, market_conservative_estimate).to_string() show_fallback_note=false/>
+            </div>
             {move || (revenue_pending.get() || rate_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
             <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_conservative_note)}</p>
             <ControlBar sticky=false

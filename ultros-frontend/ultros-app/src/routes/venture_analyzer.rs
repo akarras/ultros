@@ -1,3 +1,4 @@
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
@@ -223,6 +224,9 @@ fn VentureAnalyzerTable(
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let market = use_market_data(world);
     let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    market.require_price_basis(Signal::derive(move || {
+        revenue_basis.get().unwrap_or_default()
+    }));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -311,7 +315,7 @@ fn VentureAnalyzerTable(
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
-        let stats = market.stats7();
+        let stats = market.selected_stats();
         let pricing_pending = stats.is_none()
             && revenue_basis
                 .get()
@@ -531,9 +535,12 @@ fn VentureAnalyzerTable(
                     </div>
                 </div>
 
-                <MarketPriceControls label=t_string!(i18n, market_returned_value).to_string()
+                <div class="flex flex-wrap items-start gap-3">
+                    <MarketWindowControl window=market.window />
+                    <MarketPriceControls window=market.window label=t_string!(i18n, market_returned_value).to_string()
                     basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
                     on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+                </div>
 
                 <ControlBar sticky=false
                     summary=move || {

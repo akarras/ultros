@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Choose one market window across your analyzer",
+  "blurb": "Switch between 1, 7, 30, and 90 days to compare sale history and calculate sale-based prices together. Keep fixed-window columns beside them for comparisons, and save your selected window with your view.",
+  "link": "/analyzer"
+}

@@ -1018,9 +1018,17 @@ where
                         <button type="button" on:click=move |_| insert_side.set(Some(true))>{t!(i18n,grid_insert_after)}</button>
                         {move || insert_side.get().map(move |after| view! {
                             <input type="search" aria-label=t_string!(i18n,grid_search_columns).to_string() placeholder=t_string!(i18n,grid_search_columns).to_string() on:input=move |e|search.set(event_target_value(&e))/>
-                            <div class="grid-insert-options">{move || columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).map(|c|view! {
-                                <button type="button" on:click=move |_| {state.update(|s|s.move_to(c.id,m.id,after));commit(Some((c.id,true)));close_menu();}>{c.label}</button>
-                            }).collect_view()}</div>
+                            <div class="grid-insert-options">{move || {
+                                let mut previous_group = None;
+                                columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).map(|c| {
+                                    let group = if previous_group != c.picker_group { c.picker_group.clone() } else { None };
+                                    previous_group = c.picker_group;
+                                    view! {
+                                        {group.map(|label| view! { <span class="block px-2 pt-3 text-xs font-semibold text-[color:var(--color-text-muted)]" data-column-picker-group>{label}</span> })}
+                                        <button type="button" on:click=move |_| {state.update(|s|s.move_to(c.id,m.id,after));commit(Some((c.id,true)));close_menu();}>{c.label}</button>
+                                    }
+                                }).collect_view()
+                            }}</div>
                         })}
                         {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.optional)).then(||view! {
                             <button type="button" on:click=move |_| {commit(Some((m.id,false)));close_menu();}>{t!(i18n,grid_hide_column)}</button>

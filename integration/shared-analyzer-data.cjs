@@ -198,7 +198,7 @@ async function main() {
         ['scrip-sources', '/scrip-sources'],
       ];
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',
-        'market-sale-median-30', 'market-gil-7',
+        'market-sale-median-30', 'market-sale-median', 'market-gil-7',
         'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7'];
       await page.setViewport({ width: 1600, height: 1000 });
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });
@@ -273,6 +273,14 @@ async function main() {
             const cell = document.querySelector(selector);
             return cell && cell.textContent !== before;
           }, { timeout: 90000 }, calculated, before);
+          if (tool !== 'recipe-analyzer') {
+            const sevenDayPrice = await page.$eval(calculated, cell => cell.textContent);
+            await page.select('[data-market-window]', '30');
+            await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
+              {}, calculated, sevenDayPrice);
+            assert.equal(new URL(page.url()).searchParams.get('window'), '30');
+            assert.match(await basis.evaluate(el => el.querySelector('option[value="sale-median"]').textContent), /30d/);
+          }
           await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
           await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
         }
@@ -286,6 +294,12 @@ async function main() {
         await page.waitForSelector('[data-grid-query-summary]');
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: filter reload survives`);
         if (fixture) assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: selected pricing basis reload survives`);
+        if (fixture && tool !== 'recipe-analyzer') {
+          await page.click('[aria-label="Clear all filters"]');
+          await page.waitForFunction(() => !new URL(location.href).searchParams.has('gf'));
+          assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
+          assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: Clear all preserves price basis`);
+        }
         console.log(`PASS ${tool}: shared market columns, median calculation, filter, hide and reload (${rowCount} initial rows)`);
         if (tool === 'recipe-analyzer') {
           // Bookmarks carrying the retired experiment flag keep the same columns.

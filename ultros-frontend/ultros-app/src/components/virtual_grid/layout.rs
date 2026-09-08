@@ -32,6 +32,8 @@ impl ColumnFilter {
 pub struct GridColumn {
     pub id: &'static str,
     pub label: String,
+    /// Optional heading in the insert-column picker; does not change column identity or geometry.
+    pub picker_group: Option<String>,
     pub width: f64,
     /// Space beside the title for badges, in addition to the grid controls.
     pub heading_adornments: f64,
@@ -56,6 +58,7 @@ impl GridColumn {
         Self {
             id,
             label,
+            picker_group: None,
             width,
             heading_adornments: 0.0,
             heading_lines: Vec::new(),
