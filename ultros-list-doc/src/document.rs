@@ -9,8 +9,9 @@
 //! ```
 
 use loro::{Container, LoroCounter, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use ultros_api_types::world_helper::AnySelector;
 
-use crate::key::RowKey;
+use crate::key::{Quality, RowKey};
 use crate::snapshot::{MetaSnapshot, RowSnapshot, encode_scope, parse_scope};
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -208,6 +209,122 @@ impl ListDocument {
         self.row_container(key)
             .map(|row| Self::read_row(*key, &row))
     }
+
+    fn counter(row: &LoroMap) -> Result<LoroCounter, DocError> {
+        match row.get(ACQUIRED) {
+            Some(ValueOrContainer::Container(Container::Counter(counter))) => Ok(counter),
+            // A row written by an older schema without a counter heals itself.
+            _ => Ok(row.insert_container(ACQUIRED, LoroCounter::new())?),
+        }
+    }
+
+    pub fn commit(&self) {
+        self.doc.commit();
+    }
+
+    pub fn rename(&self, name: &str) -> Result<(), DocError> {
+        self.meta_map().insert(NAME, name)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_scope(&self, scope: AnySelector) -> Result<(), DocError> {
+        self.meta_map()
+            .insert(SCOPE, encode_scope(scope).as_str())?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Add a row, or add `need` to the row already under that key, which is
+    /// what the legacy add path has always done.
+    pub fn add_row(&self, key: RowKey, need: i64, target: Option<i64>) -> Result<(), DocError> {
+        match self.row_container(&key) {
+            Some(row) => {
+                let current = value_i64(row.get(NEED)).unwrap_or(0);
+                row.insert(NEED, current + need)?;
+                if let Some(target) = target {
+                    row.insert(TARGET, target)?;
+                }
+            }
+            None => self.insert_row(key, need, target, 0)?,
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn remove_row(&self, key: &RowKey) -> Result<(), DocError> {
+        if self.row_container(key).is_none() {
+            return Err(DocError::MissingRow(*key));
+        }
+        self.rows_map().delete(&key.to_string())?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_need(&self, key: &RowKey, need: i64) -> Result<(), DocError> {
+        let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
+        row.insert(NEED, need.max(0))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_target(&self, key: &RowKey, target: Option<i64>) -> Result<(), DocError> {
+        let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
+        match target {
+            Some(target) => row.insert(TARGET, target)?,
+            None => {
+                if row.get(TARGET).is_some() {
+                    row.delete(TARGET)?;
+                }
+            }
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Move the row to another quality, carrying every field. Merges into a
+    /// row that already has the target quality. Returns the new key.
+    pub fn set_quality(&self, key: &RowKey, quality: Quality) -> Result<RowKey, DocError> {
+        let snapshot = self.row(key).ok_or(DocError::MissingRow(*key))?;
+        let new_key = RowKey {
+            item_id: key.item_id,
+            quality,
+        };
+        if new_key == *key {
+            return Ok(new_key);
+        }
+        self.rows_map().delete(&key.to_string())?;
+        match self.row_container(&new_key) {
+            Some(existing) => {
+                let current = value_i64(existing.get(NEED)).unwrap_or(0);
+                existing.insert(NEED, current + snapshot.need)?;
+                if let Some(target) = snapshot.target {
+                    existing.insert(TARGET, target)?;
+                }
+                if snapshot.acquired != 0 {
+                    Self::counter(&existing)?.increment(snapshot.acquired as f64)?;
+                }
+            }
+            None => self.insert_row(new_key, snapshot.need, snapshot.target, snapshot.acquired)?,
+        }
+        self.doc.commit();
+        Ok(new_key)
+    }
+
+    pub fn add_acquired(&self, key: &RowKey, delta: i64) -> Result<(), DocError> {
+        let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
+        if delta != 0 {
+            Self::counter(&row)?.increment(delta as f64)?;
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Set an absolute value by incrementing the counter by the difference.
+    pub fn set_acquired(&self, key: &RowKey, value: i64) -> Result<(), DocError> {
+        let current = self.row(key).ok_or(DocError::MissingRow(*key))?.acquired;
+        self.add_acquired(key, value - current)
+    }
 }
 
 #[cfg(test)]
@@ -283,5 +400,125 @@ mod tests {
         assert_eq!(copy.rows(), doc.rows());
         assert_eq!(copy.meta(), doc.meta());
         assert!(ListDocument::from_snapshot(b"not a snapshot").is_err());
+    }
+
+    #[test]
+    fn add_row_creates_then_merges_need_into_the_same_key() {
+        let doc = ListDocument::from_rows(meta(), &[]);
+        let key = RowKey::new(10, None);
+        doc.add_row(key, 2, None).unwrap();
+        doc.add_row(key, 3, Some(90)).unwrap();
+        assert_eq!(
+            doc.rows(),
+            vec![RowSnapshot {
+                key,
+                need: 5,
+                acquired: 0,
+                target: Some(90)
+            }]
+        );
+    }
+
+    #[test]
+    fn remove_row_deletes_and_reports_a_missing_key() {
+        let key = RowKey::new(10, None);
+        let doc = ListDocument::from_rows(meta(), &[row(10, Quality::Any, 1, 0)]);
+        doc.remove_row(&key).unwrap();
+        assert!(doc.rows().is_empty());
+        assert!(matches!(doc.remove_row(&key), Err(DocError::MissingRow(k)) if k == key));
+    }
+
+    #[test]
+    fn need_target_and_acquired_edits_land_on_the_row() {
+        let key = RowKey::new(10, None);
+        let doc = ListDocument::from_rows(meta(), &[row(10, Quality::Any, 1, 0)]);
+        doc.set_need(&key, 7).unwrap();
+        doc.set_target(&key, Some(120)).unwrap();
+        doc.add_acquired(&key, 2).unwrap();
+        doc.add_acquired(&key, 3).unwrap();
+        assert_eq!(
+            doc.row(&key).unwrap(),
+            RowSnapshot {
+                key,
+                need: 7,
+                acquired: 5,
+                target: Some(120)
+            }
+        );
+        doc.set_acquired(&key, 1).unwrap();
+        doc.set_target(&key, None).unwrap();
+        doc.set_need(&key, -4).unwrap();
+        assert_eq!(
+            doc.row(&key).unwrap(),
+            RowSnapshot {
+                key,
+                need: 0,
+                acquired: 1,
+                target: None
+            }
+        );
+    }
+
+    #[test]
+    fn set_quality_moves_the_row_with_every_field() {
+        let key = RowKey::new(10, None);
+        let doc = ListDocument::from_rows(
+            meta(),
+            &[RowSnapshot {
+                target: Some(50),
+                ..row(10, Quality::Any, 4, 2)
+            }],
+        );
+        let moved = doc.set_quality(&key, Quality::Hq).unwrap();
+        assert_eq!(moved, RowKey::new(10, Some(true)));
+        assert_eq!(doc.row(&key), None);
+        assert_eq!(
+            doc.row(&moved).unwrap(),
+            RowSnapshot {
+                key: moved,
+                need: 4,
+                acquired: 2,
+                target: Some(50)
+            }
+        );
+        assert_eq!(
+            doc.set_quality(&moved, Quality::Hq).unwrap(),
+            moved,
+            "no-op move keeps the key"
+        );
+    }
+
+    #[test]
+    fn set_quality_merges_into_an_existing_row_of_that_quality() {
+        let doc = ListDocument::from_rows(
+            meta(),
+            &[row(10, Quality::Any, 2, 1), row(10, Quality::Hq, 3, 0)],
+        );
+        let moved = doc
+            .set_quality(&RowKey::new(10, None), Quality::Hq)
+            .unwrap();
+        assert_eq!(
+            doc.rows(),
+            vec![RowSnapshot {
+                key: moved,
+                need: 5,
+                acquired: 1,
+                target: None
+            }]
+        );
+    }
+
+    #[test]
+    fn rename_and_scope_write_meta() {
+        let doc = ListDocument::from_rows(meta(), &[]);
+        doc.rename("Glamour").unwrap();
+        doc.set_scope(AnySelector::World(79)).unwrap();
+        assert_eq!(
+            doc.meta(),
+            MetaSnapshot {
+                name: "Glamour".into(),
+                scope: Some(AnySelector::World(79))
+            }
+        );
     }
 }
