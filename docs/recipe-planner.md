@@ -50,16 +50,20 @@ and a distance, the gil-equivalent travel cost from the craft-options cookie
 Planner settings). The engine keeps the best plan per shape, sorts shapes by
 distance, and keeps only cards that strictly improve on the card to their
 left (fewer missing units, or equal missing and less gil). "Stay home" (the
-no-new-travel plan) is therefore always the first card, and because the full
-scope is always evaluated and more worlds never cost more gil, the cheapest
-plan found is always the last card, however many hops it takes. At most five
-cards are shown; longer frontiers keep the first and last cards and the steps
-with the largest marginal saving. The card `rank` `(missing, effective, cost,
-worlds)` prefers is badged **Best value** and is the default selection; the
-last card is badged **Cheapest**. The search evaluates every single-world
-addition exhaustively, then a beam of five promising sets for larger routes,
-plus whole-datacenter and full-scope seeds, so the UI labels routes
-**best-found**, not globally optimal.
+no-new-travel plan) is therefore always the first card: each card to the
+right completes more of the recipe or, when equally complete, costs less
+gil. Because the full scope is always evaluated, the last card is the most
+complete plan found and, among equally complete plans, the cheapest, however
+many hops it takes — but a more complete plan can still cost more gil than an
+earlier, incomplete one. At most five cards are shown; longer frontiers keep
+the first and last cards, the card the `rank` weighting prefers, and the
+steps with the largest marginal saving. The card `rank` `(missing, effective,
+cost, worlds)` prefers is badged **Best value** and is the default
+selection; the last card is badged **Cheapest** only when its gil cost is
+actually the lowest among the shown cards. The search evaluates every
+single-world addition exhaustively, then a beam of five promising sets for
+larger routes, plus whole-datacenter and full-scope seeds, so the UI labels
+routes **best-found**, not globally optimal.
 Complete supply ranks ahead of partial supply; partial totals remain visibly
 incomplete. Travel is weighted in gil, not modeled as time or teleport fees,
 and vendor stops are not counted. Price age comes from ingest timestamps, not

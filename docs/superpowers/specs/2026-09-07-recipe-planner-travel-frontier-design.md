@@ -36,10 +36,12 @@ from the shortest travel to the longest.
   raises gil, so the cheapest plan is always found and is by construction the
   last frontier point, however many hops it takes.
 - **Cap of five cards.** When the frontier is longer, keep the baseline and
-  the cheapest unconditionally, then fill the remaining slots with the
-  frontier points whose marginal saving over the card kept to their left is
-  largest, preserving distance order. Recompute marginal savings against the
-  kept set once, not iteratively; this is a display trim, not a ranking.
+  the cheapest unconditionally, and also keep the card `rank` prefers (so
+  `best_value`, computed after trimming, never names a card the trim
+  discarded) even when its own marginal saving is small. Fill the remaining
+  slots with the frontier points whose marginal saving over the *frontier*
+  card immediately to their left (before trimming) is largest, preserving
+  distance order. This is a display trim, not a ranking.
 - **Shared route** links that name a world set not on the frontier are still
   computed and shown as a pinned card, as today. It is inserted into the
   card row by travel distance, labelled "Shared route · ...", and never

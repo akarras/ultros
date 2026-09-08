@@ -282,9 +282,27 @@ struct Cards {
     best_value: Option<usize>,
     cheapest: Option<usize>,
     /// The no-new-travel card every other card's saving line compares
-    /// against; `RouteComparison::baseline` before a pinned card can shift it
-    /// off `plans[0]`.
+    /// against. Always `plans[0]`: the frontier sorts the no-travel shape
+    /// first by construction, and inserting a pinned card by travel distance
+    /// (`partition_point` with `<=`) can only land it after cards sharing
+    /// that shape's zero distance, never before index 0.
     baseline: planner::ShoppingPlan,
+}
+
+/// The frontier's rightmost card is the most complete plan found, but because
+/// the frontier improves lexicographically on `(missing, cost)`, completing
+/// the recipe can cost more gil than an earlier, incomplete card. Badge it
+/// "Cheapest" only when its gil cost is actually the lowest among the
+/// displayed cards; otherwise the "Completes the recipe" subtext already
+/// tells the story, and a false "Cheapest" claim would mislead.
+fn cheapest_badge(plans: &[planner::ShoppingPlan], candidate: Option<usize>) -> Option<usize> {
+    let i = candidate?;
+    let cost = plans.get(i)?.cost;
+    plans
+        .iter()
+        .enumerate()
+        .all(|(j, p)| j == i || cost <= p.cost)
+        .then_some(i)
 }
 
 #[component]
@@ -677,7 +695,10 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             worlds.and_then(|w| plans.iter().position(|p| p.worlds == w))
         };
         let badges = if plans.len() > 1 {
-            (find(best_worlds), find(cheapest_worlds))
+            (
+                find(best_worlds),
+                cheapest_badge(&plans, find(cheapest_worlds)),
+            )
         } else {
             (None, None)
         };
@@ -958,7 +979,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 }}
             </section>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
-            <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left, each card cheaper than the one before it, and the cheapest plan found always last. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
+            <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left. Each card to the right completes more of the recipe or, when equally complete, costs less gil; the last card is the most complete plan found and, among equally complete plans, the cheapest. The full scope is always evaluated, so the frontier keeps the best plan found. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
                 let mut lines=Vec::new();
                 for (id,item) in &d.items {let oldest=item.last_updated.iter().map(|u|u.updated_at).min();lines.push(format!("{}: {}",item_name(*id),oldest.map(|t|format!("oldest world update {t} UTC")).unwrap_or_else(||"freshness unknown".into())));}
                 for id in &d.failed {lines.push(format!("{}: market request failed — refresh to retry",item_name(*id)));}
@@ -1141,6 +1162,23 @@ mod tests {
         );
         // A pinned shared route can be dearer than home: no claim is made.
         assert_eq!(saving_line(&home, &plan(1_200, 0), false, 3), None);
+    }
+
+    #[test]
+    fn cheapest_badge_is_none_when_the_frontiers_last_card_costs_more() {
+        let plan = |cost: i64| planner::ShoppingPlan {
+            cost,
+            ..Default::default()
+        };
+        // An incomplete baseline at 10,000 gil, and a complete one-hop plan
+        // at 40,000 gil: both are kept by the frontier in that order, but the
+        // pricier complete plan must not be badged "Cheapest".
+        let plans = vec![plan(10_000), plan(40_000)];
+        assert_eq!(cheapest_badge(&plans, Some(1)), None);
+        // When the rightmost card really is the cheapest, the badge holds.
+        let cheaper = vec![plan(10_000), plan(4_000)];
+        assert_eq!(cheapest_badge(&cheaper, Some(1)), Some(1));
+        assert_eq!(cheapest_badge(&plans, None), None);
     }
 
     #[test]

@@ -468,9 +468,11 @@ const BEAM_ROUNDS: usize = 4;
 /// Single-world additions are exhaustive; larger routes come from a bounded
 /// beam plus whole-datacenter and full-scope seeds, so the UI calls these
 /// best-found, not optimal. The no-travel plan is always evaluated and is
-/// always the first card; the full-scope plan is always evaluated, and since
-/// allowing more worlds never raises gil, the cheapest plan is always found
-/// and is the last card.
+/// always the first card; the full-scope plan is always evaluated, so the
+/// last card is always the most complete plan found and, among equally
+/// complete plans, the cheapest — but a more complete plan can still cost
+/// more gil than an earlier, incomplete one (see
+/// `full_scope_can_reuse_a_better_home_plan_for_large_stacks`).
 pub fn compare_routes(
     materials: &[Material],
     market: &BTreeMap<i32, Vec<Offer>>,
@@ -541,7 +543,9 @@ pub fn compare_routes(
 
 /// The route cards: a Pareto frontier over (travel distance, gil), shortest
 /// trip first. `cards[0]` is the no-new-travel baseline and the last card is
-/// the cheapest plan found.
+/// the most complete plan found and, among equally complete plans, the
+/// cheapest — it is not necessarily cheaper in gil than an earlier,
+/// incomplete card.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RouteComparison {
     pub cards: Vec<ShoppingPlan>,
@@ -569,8 +573,9 @@ impl RouteComparison {
 /// improve on the card to their left (fewer missing, or equal missing and
 /// less gil). The baseline shape (no new travel) has distance zero and sorts
 /// first, so it is always kept. Longer frontiers are trimmed to `limit`
-/// (at least two) keeping the first and last cards and then the steps with
-/// the largest marginal improvement over their left neighbour.
+/// (at least two) keeping the first and last cards, the min-`rank` card (so
+/// `best_value` never points at a card the trim discarded), and then the
+/// steps with the largest marginal improvement over their left neighbour.
 pub fn frontier(
     plans: impl IntoIterator<Item = ShoppingPlan>,
     weights: &TravelWeights,
@@ -601,6 +606,11 @@ pub fn frontier(
         return kept;
     }
     let last = kept.len() - 1;
+    // The min-rank card is the default selection ("Best value"); it must
+    // survive the trim even when its marginal saving over its left neighbour
+    // is small, or `best_value()` (computed after trimming) could name a
+    // card the engine already discarded as worse.
+    let best = (0..kept.len()).min_by_key(|i| rank(&kept[*i])).unwrap_or(0);
     // Marginal improvement over the left neighbour: completing more of the
     // recipe outranks saving gil. Ties keep the shorter trip.
     let mut middle: Vec<(usize, (i64, i64))> = (1..last)
@@ -615,9 +625,13 @@ pub fn frontier(
         })
         .collect();
     middle.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let mut keep: BTreeSet<usize> = middle.into_iter().take(limit - 2).map(|(i, _)| i).collect();
-    keep.insert(0);
-    keep.insert(last);
+    let mut keep: BTreeSet<usize> = BTreeSet::from([0, last, best]);
+    for (i, _) in middle {
+        if keep.len() >= limit {
+            break;
+        }
+        keep.insert(i);
+    }
     kept.into_iter()
         .enumerate()
         .filter(|(i, _)| keep.contains(i))
@@ -745,6 +759,39 @@ mod tests {
         );
         let costs: Vec<i64> = cards.iter().map(|p| p.cost).collect();
         assert_eq!(costs, vec![1000, 949, 907, 904, 874]);
+    }
+
+    #[test]
+    fn frontier_trim_keeps_the_best_value_card() {
+        let w = TravelWeights::default();
+        // Same seven strictly-improving shapes as the trim test above, but
+        // the third middle card (a small marginal saving the old rule would
+        // drop) is given a distinctly low `effective` so `rank` prefers it.
+        let mut best = plan((0, 3), 947, 0, &[2, 3, 4]);
+        best.effective = 1;
+        let cards = frontier(
+            [
+                plan((0, 0), 1000, 0, &[]),
+                plan((0, 1), 999, 0, &[2]),
+                plan((0, 2), 949, 0, &[2, 3]),
+                best,
+                plan((0, 4), 907, 0, &[2, 3, 4, 5]),
+                plan((1, 0), 904, 0, &[9]),
+                plan((1, 1), 874, 0, &[9, 10]),
+            ],
+            &w,
+            5,
+        );
+        assert_eq!(cards.len(), 5);
+        let costs: Vec<i64> = cards.iter().map(|p| p.cost).collect();
+        assert_eq!(costs, vec![1000, 949, 947, 907, 874]);
+        assert_eq!(cards.first().map(|p| p.cost), Some(1000));
+        assert_eq!(cards.last().map(|p| p.cost), Some(874));
+        let comparison = RouteComparison { cards };
+        assert_eq!(
+            comparison.best_value().map(|i| comparison.cards[i].cost),
+            Some(947)
+        );
     }
 
     #[test]
