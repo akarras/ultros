@@ -49,6 +49,7 @@ use crate::{
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        group_detail::GroupDetail,
         groups::*,
         help::*,
         history::*,
@@ -540,6 +541,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         </ParentRoute>
                         <Route path=path!("alerts") view=Alerts />
                         <Route path=path!("groups") view=Groups />
+                        <Route path=path!("groups/:id") view=GroupDetail />
                         <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />

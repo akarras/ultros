@@ -15,7 +15,8 @@ use ultros_api_types::{
     item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
-        ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
+        ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup, ShareListRole,
+        ShareListUser,
     },
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
@@ -32,8 +33,10 @@ use ultros_api_types::{
     user::{
         AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
         group::{
-            CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild,
-            GroupInvite, UserGroup, UserGroupMember,
+            AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
+            DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult,
+            GroupRole, GroupSyncResponse, ImportDiscordRole, RenameGroupRole, UserGroup,
+            UserGroupDetail, UserGroupMember,
         },
     },
 };
@@ -593,12 +596,119 @@ pub(crate) async fn get_group_members(id: i32) -> AppResult<Vec<UserGroupMember>
     fetch_api(&format!("/api/v1/group/{id}/members")).await
 }
 
-pub(crate) async fn add_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
+/// Group, roles with member counts, and the member count, in one round trip.
+pub(crate) async fn get_group_detail(id: i32) -> AppResult<UserGroupDetail> {
+    fetch_api(&format!("/api/v1/group/{id}")).await
+}
+
+/// `display_name` is what lets the server create a `discord_user` row for
+/// somebody who has never logged into Ultros — without it, adding a member
+/// picked out of Discord fails on the foreign key.
+pub(crate) async fn add_group_member(
+    group_id: i32,
+    user_id: u64,
+    display_name: Option<String>,
+) -> AppResult<()> {
     post_api(
         &format!("/api/v1/group/{group_id}/member/add/{user_id}"),
+        AddGroupMember { display_name },
+    )
+    .await
+}
+
+/// Owner-only search-as-you-type candidates. Hits Discord for a guild-linked
+/// group, so only call this behind a debounce.
+pub(crate) async fn search_group_member_candidates(
+    group_id: i32,
+    query: &str,
+) -> AppResult<Vec<GroupMemberSearchResult>> {
+    let encoded = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
+    fetch_api(&format!(
+        "/api/v1/group/{group_id}/member-search?q={encoded}"
+    ))
+    .await
+}
+
+/// The linked guild's importable roles. Live Discord call server-side, so this
+/// belongs behind the import picker being open, never on page load.
+pub(crate) async fn get_group_discord_roles(group_id: i32) -> AppResult<Vec<DiscordGuildRole>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/discord-roles")).await
+}
+
+pub(crate) async fn create_group_role(group_id: i32, name: String) -> AppResult<GroupRole> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/roles"),
+        CreateGroupRole { name },
+    )
+    .await
+}
+
+/// Returns as soon as the role row exists; membership arrives from the
+/// reconcile the server kicks off, which the page watches by polling
+/// `last_synced_at`.
+pub(crate) async fn import_group_discord_role(
+    group_id: i32,
+    discord_role_id: i64,
+) -> AppResult<GroupRole> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/roles/import"),
+        ImportDiscordRole { discord_role_id },
+    )
+    .await
+}
+
+pub(crate) async fn rename_group_role(
+    group_id: i32,
+    role_id: i32,
+    name: String,
+) -> AppResult<GroupRole> {
+    patch_api(
+        &format!("/api/v1/group/{group_id}/roles/{role_id}"),
+        RenameGroupRole { name },
+    )
+    .await
+}
+
+pub(crate) async fn delete_group_role(group_id: i32, role_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{group_id}/roles/{role_id}")).await
+}
+
+pub(crate) async fn get_group_role_members(
+    group_id: i32,
+    role_id: i32,
+) -> AppResult<Vec<UserGroupMember>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/roles/{role_id}/members")).await
+}
+
+/// Manual roles only — a synced role's membership belongs to Discord and the
+/// server answers 400.
+pub(crate) async fn add_group_role_member(
+    group_id: i32,
+    role_id: i32,
+    user_id: i64,
+) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/roles/{role_id}/members/{user_id}"),
         (),
     )
     .await
+}
+
+pub(crate) async fn remove_group_role_member(
+    group_id: i32,
+    role_id: i32,
+    user_id: i64,
+) -> AppResult<()> {
+    delete_api(&format!(
+        "/api/v1/group/{group_id}/roles/{role_id}/members/{user_id}"
+    ))
+    .await
+}
+
+/// Reconcile now. `Ran` only means "started" — the walk happens off the
+/// request path, so the caller polls `last_synced_at`.
+pub(crate) async fn sync_group(group_id: i32) -> AppResult<GroupSyncResponse> {
+    post_api(&format!("/api/v1/group/{group_id}/sync"), ()).await
 }
 
 pub(crate) async fn remove_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
@@ -625,9 +735,7 @@ pub(crate) async fn delete_group_invite(invite_id: String) -> AppResult<()> {
     delete_api(&format!("/api/v1/group-invite/{invite_id}")).await
 }
 
-/// The third element is the list's role shares. Nothing renders them yet —
-/// that is the groups frontend stage — but the tuple has to match the server's
-/// arity or serde rejects the whole response.
+/// Users, groups, and roles the list is shared with, in that order.
 pub(crate) async fn get_list_shares(
     list_id: i32,
 ) -> AppResult<(
@@ -644,6 +752,14 @@ pub(crate) async fn share_list_with_user(list_id: i32, share: ShareListUser) -> 
 
 pub(crate) async fn share_list_with_group(list_id: i32, share: ShareListGroup) -> AppResult<()> {
     post_api(&format!("/api/v1/list/{list_id}/share/group"), share).await
+}
+
+pub(crate) async fn share_list_with_role(list_id: i32, share: ShareListRole) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/role"), share).await
+}
+
+pub(crate) async fn unshare_list_from_role(list_id: i32, role_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/role/{role_id}")).await
 }
 
 pub(crate) async fn unshare_list_from_user(list_id: i32, user_id: i64) -> AppResult<()> {

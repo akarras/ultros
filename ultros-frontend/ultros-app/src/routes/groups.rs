@@ -1,7 +1,7 @@
 use crate::api::{
-    add_group_member, create_group, create_group_from_guild, create_group_invite, delete_group,
-    delete_group_invite, get_group_invites, get_group_members, get_groups, get_login,
-    list_manageable_discord_guilds, remove_group_member, use_group_invite,
+    create_group, create_group_from_guild, create_group_invite, delete_group_invite,
+    get_group_detail, get_group_invites, get_groups, get_login, list_manageable_discord_guilds,
+    use_group_invite,
 };
 use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
@@ -17,11 +17,17 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_params_map};
-use ultros_api_types::user::group::{CreateGroup, CreateGroupInvite, UserGroup};
+use ultros_api_types::user::group::{CreateGroup, CreateGroupInvite, GroupSource, UserGroup};
 
 /// Route prefix minted into invite links, matching the `group/invite/:invite_id`
 /// route registered in `lib.rs`.
 const GROUP_INVITE_PATH: &str = "/group/invite";
+
+/// Path of a group's detail page. Kept next to the invite prefix so both
+/// route shapes registered in `lib.rs` are named in one place.
+pub(crate) fn group_detail_path(group_id: i32) -> String {
+    format!("/groups/{group_id}")
+}
 
 /// Which creation panel is open, if any. The two are mutually exclusive so
 /// opening one closes the other.
@@ -37,31 +43,14 @@ pub fn Groups() -> impl IntoView {
     let i18n = use_i18n();
     let toasts = use_toast();
     let create_group_action = Action::new(move |group: &CreateGroup| create_group(group.clone()));
-    let delete_group_action = Action::new(move |id: &i32| delete_group(*id));
     let create_from_guild_action =
         Action::new(move |guild_id: &i64| create_group_from_guild(*guild_id));
-    // Wired into `groups_resource` below (unlike the owner's per-member
-    // remove action, which lives entirely inside `GroupCard`) because leaving
-    // a group changes which groups belong to *this* viewer's list, not just
-    // one card's member list.
-    let leave_group_action = Action::new(move |(group_id, user_id): &(i32, u64)| {
-        remove_group_member(*group_id, *user_id)
-    });
 
     Effect::new(move |_| {
         if let (Some(res), Some(toasts)) = (create_group_action.value().get(), toasts) {
             match res {
                 Ok(_) => toasts.success(t_string!(i18n, groups_group_created)),
                 Err(e) => toasts.error(format!("Failed to create group: {e}")),
-            }
-        }
-    });
-
-    Effect::new(move |_| {
-        if let (Some(res), Some(toasts)) = (delete_group_action.value().get(), toasts) {
-            match res {
-                Ok(_) => toasts.success(t_string!(i18n, groups_group_deleted)),
-                Err(e) => toasts.error(format!("Failed to delete group: {e}")),
             }
         }
     });
@@ -75,22 +64,11 @@ pub fn Groups() -> impl IntoView {
         }
     });
 
-    Effect::new(move |_| {
-        if let (Some(res), Some(toasts)) = (leave_group_action.value().get(), toasts) {
-            match res {
-                Ok(_) => toasts.success(t_string!(i18n, groups_left_group)),
-                Err(e) => toasts.error(format!("Failed to leave group: {e}")),
-            }
-        }
-    });
-
     let groups_resource = Resource::new(
         move || {
             (
                 create_group_action.version().get(),
-                delete_group_action.version().get(),
                 create_from_guild_action.version().get(),
-                leave_group_action.version().get(),
             )
         },
         move |_| get_groups(),
@@ -279,14 +257,7 @@ pub fn Groups() -> impl IntoView {
                                                                 each=move || groups.clone()
                                                                 key=move |group| group.id
                                                                 children=move |group| {
-                                                                    view! {
-                                                                        <GroupCard
-                                                                            group=group
-                                                                            delete_group_action=delete_group_action
-                                                                            leave_group_action=leave_group_action
-                                                                            user_id=Signal::derive(move || user_resource.get().flatten().map(|u| u.id))
-                                                                        />
-                                                                    }
+                                                                    view! { <GroupCard group=group /> }
                                                                 }
                                                             />
                                                         </div>
@@ -423,7 +394,14 @@ pub fn GroupInviteAccept() -> impl IntoView {
 /// The stored icon URL is a snapshot and can 404 if the guild changes its icon,
 /// so `on:error` falls back rather than leaving a broken image.
 #[component]
-fn GuildIcon(icon_url: Option<String>, name: String) -> impl IntoView {
+pub(crate) fn GuildIcon(
+    icon_url: Option<String>,
+    name: String,
+    /// Tailwind size classes, so the detail page's header can render a larger
+    /// icon out of the same fallback logic.
+    #[prop(default = "h-8 w-8")]
+    size: &'static str,
+) -> impl IntoView {
     let initial = name.chars().next().unwrap_or('?').to_string();
     let (failed, set_failed) = signal(false);
     move || {
@@ -432,227 +410,135 @@ fn GuildIcon(icon_url: Option<String>, name: String) -> impl IntoView {
             Some(url) => Either::Left(view! {
                 <img
                     src=url
-                    class="h-8 w-8 shrink-0 rounded object-cover"
+                    class=format!("{size} shrink-0 rounded object-cover")
                     alt=""
                     on:error=move |_| set_failed(true)
                 />
             }),
             None => Either::Right(view! {
-                <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-[color:var(--color-background-panel)] text-xs font-bold">
-                    {initial}
-                </span>
+                <span class=format!(
+                    "{size} flex shrink-0 items-center justify-center rounded bg-[color:var(--color-background-panel)] text-xs font-bold",
+                )>{initial}</span>
             }),
         }
     }
 }
 
+/// The one badge a group carries: frozen wins over mirrored, which wins over
+/// a plain guild link. A manual group gets nothing.
+///
+/// Pure — no resources, no context beyond i18n — so the SSR render tests can
+/// drive it straight from a fixture.
 #[component]
-fn GroupCard(
-    group: UserGroup,
-    delete_group_action: Action<i32, Result<(), crate::error::AppError>>,
-    leave_group_action: Action<(i32, u64), Result<(), crate::error::AppError>>,
-    user_id: Signal<Option<u64>>,
-) -> impl IntoView {
+pub(crate) fn GroupSourceBadge(source: GroupSource, frozen: bool) -> impl IntoView {
     let i18n = use_i18n();
-    let toasts = use_toast();
-    let (confirm_delete, set_confirm_delete) = signal(false);
-    let add_member_action =
-        Action::new(move |(group_id, user_id): &(i32, u64)| add_group_member(*group_id, *user_id));
-    let remove_member_action = Action::new(move |(group_id, user_id): &(i32, u64)| {
-        remove_group_member(*group_id, *user_id)
-    });
-
-    Effect::new(move |_| {
-        if let (Some(res), Some(toasts)) = (add_member_action.value().get(), toasts) {
-            match res {
-                Ok(_) => toasts.success(t_string!(i18n, groups_member_added)),
-                Err(e) => toasts.error(format!("Failed to add member: {e}")),
-            }
+    let badge = move |class: &'static str, icon, label: AnyView| {
+        view! {
+            <span class=format!(
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider {class}",
+            )>
+                <Icon icon=icon />
+                {label}
+            </span>
         }
-    });
+    };
+    move || match (frozen, source) {
+        (true, _) => Some(badge(
+            "border border-amber-500/50 text-amber-300",
+            i::BiUnlinkRegular,
+            t!(i18n, groups_badge_frozen).into_any(),
+        )),
+        (false, GroupSource::DiscordGuildMirrored) => Some(badge(
+            "border border-brand-500/50 text-brand-300",
+            i::BsDiscord,
+            t!(i18n, groups_badge_synced).into_any(),
+        )),
+        (false, GroupSource::DiscordGuild) => Some(badge(
+            "border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)]",
+            i::BsDiscord,
+            t!(i18n, groups_badge_discord).into_any(),
+        )),
+        (false, GroupSource::Manual) => None,
+    }
+}
 
-    Effect::new(move |_| {
-        if let (Some(res), Some(toasts)) = (remove_member_action.value().get(), toasts) {
-            match res {
-                Ok(_) => toasts.success(t_string!(i18n, groups_member_removed)),
-                Err(e) => toasts.error(format!("Failed to remove member: {e}")),
-            }
-        }
-    });
-
-    let members_resource = Resource::new(
-        move || {
-            (
-                group.id,
-                add_member_action.version().get(),
-                remove_member_action.version().get(),
-            )
-        },
-        move |(group_id, _, _)| get_group_members(group_id),
-    );
-
-    let (new_member_id, set_new_member_id) = signal(String::new());
+#[component]
+fn GroupCard(group: UserGroup) -> impl IntoView {
+    let i18n = use_i18n();
     let group_id = group.id;
     let group_name = group.name.clone();
     let guild_icon_url = group.guild_icon_url.clone();
     let is_guild_linked = group.guild_id.is_some();
+    let source = group.source;
+    let frozen = group.frozen_reason.is_some();
+    // Counts are not on `UserGroup`, so the card asks for the group's detail.
+    // One request per card, the same shape the member list had before it moved
+    // to the detail page.
+    let detail = Resource::new(move || group_id, get_group_detail);
 
     view! {
-        <div class="panel p-4 rounded-xl flex flex-col gap-4">
-            <div class="flex justify-between items-start gap-2">
-                <div class="flex items-center gap-2 overflow-hidden">
-                    {is_guild_linked.then(|| view! {
-                        <GuildIcon icon_url=guild_icon_url name=group_name.clone() />
+        <AppLink
+            href=group_detail_path(group_id)
+            attr:class="panel flex flex-col gap-3 rounded-xl p-4 transition-colors hover:border-[color:var(--brand-ring)]"
+            attr:aria-label=move || {
+                format!("{}: {}", t_string!(i18n, groups_open_group), group_name.clone())
+            }
+        >
+            <div class="flex items-center gap-2 overflow-hidden">
+                {is_guild_linked
+                    .then(|| {
+                        view! { <GuildIcon icon_url=guild_icon_url name=group.name.clone() /> }
                     })}
-                    <div class="flex flex-col gap-1 overflow-hidden">
-                        <span class="text-xl font-bold truncate text-[color:var(--brand-fg)]">
-                            {group_name.clone()}
-                        </span>
-                        {is_guild_linked.then(|| view! {
-                            <span class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-gray-400">
-                                <Icon icon=i::BsDiscord />
-                                {t!(i18n, groups_discord_linked)}
-                            </span>
-                        })}
-                    </div>
-                </div>
-                <Show when=move || user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)>
-                    <button
-                        class=move || if confirm_delete() { "btn-danger btn-sm" } else { "btn-ghost btn-sm text-gray-400 hover:text-white" }
-                        aria-label=move || if confirm_delete() { t_string!(i18n, groups_delete_group_confirm).to_string() } else { t_string!(i18n, groups_delete_group).to_string() }
-                        on:click=move |_| {
-                            if confirm_delete() {
-                                delete_group_action.dispatch(group.id);
-                            } else {
-                                set_confirm_delete(true);
-                            }
-                        }
-                    >
-                        <Icon icon=if confirm_delete() { i::BiTrashSolid } else { i::BiTrashRegular } />
-                        {move || confirm_delete().then_some(t!(i18n, groups_delete_group_confirm))}
-                    </button>
-                </Show>
+                <span class="truncate text-xl font-bold text-[color:var(--brand-fg)]">
+                    {group.name.clone()}
+                </span>
             </div>
 
-            <div class="flex flex-col gap-2">
-                <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">{t!(i18n, groups_members_heading)}</h4>
-                <Suspense fallback=move || view! { <div class="skeleton-block skeleton-shimmer h-8 rounded" /> }>
-                    {move || {
-                        members_resource.get().map(|res| {
-                            match res {
-                                Ok(members) => {
+            <GroupSourceBadge source=source frozen=frozen />
+
+            <Suspense fallback=move || {
+                view! { <div class="skeleton-block skeleton-shimmer h-4 w-32 rounded"></div> }
+            }>
+                {move || {
+                    detail
+                        .get()
+                        .map(|res| match res {
+                            Ok(detail) => {
+                                let members = detail.member_count;
+                                let roles = detail.roles.len() as i64;
+                                Either::Left(
                                     view! {
-                                        <div class="flex flex-col gap-1">
-                                            <For
-                                                each=move || members.clone()
-                                                key=move |member| member.user_id
-                                                children=move |member| {
-                                                    let member_id = member.user_id;
-                                                    let is_owner = group.owner_id == member_id;
-                                                    let (confirm_leave, set_confirm_leave) = signal(false);
-                                                    view! {
-                                                        <div class="flex justify-between items-center p-2 rounded bg-black/20 group">
-                                                            <div class="flex items-center gap-2">
-                                                                <span class="text-sm">{member.username}</span>
-                                                                {is_owner.then(|| view! {
-                                                                    <span class="text-[10px] px-1.5 py-0.5 rounded border border-brand-500/50 text-brand-300 font-bold uppercase">"Owner"</span>
-                                                                })}
-                                                            </div>
-                                                            <Show when=move || {
-                                                                !is_owner && user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)
-                                                            }>
-                                                                <button
-                                                                    class="opacity-0 group-hover:opacity-100 btn-ghost btn-xs text-red-400 hover:text-red-300"
-                                                                    aria-label=move || t_string!(i18n, groups_remove_member).to_string()
-                                                                    on:click=move |_| {
-                                                                        remove_member_action
-                                                                            .dispatch((group.id, member_id as u64));
-                                                                    }
-                                                                >
-                                                                    <Icon icon=i::BiXRegular />
-                                                                </button>
-                                                            </Show>
-                                                            <Show when=move || {
-                                                                !is_owner && user_id().map(|uid| uid as i64 == member_id).unwrap_or(false)
-                                                            }>
-                                                                <button
-                                                                    class=move || if confirm_leave() { "btn-danger btn-xs" } else { "btn-ghost btn-xs text-red-400 hover:text-red-300" }
-                                                                    aria-label=move || if confirm_leave() { t_string!(i18n, groups_leave_group_confirm).to_string() } else { t_string!(i18n, groups_leave_group).to_string() }
-                                                                    on:click=move |_| {
-                                                                        if confirm_leave() {
-                                                                            leave_group_action
-                                                                                .dispatch((group.id, member_id as u64));
-                                                                        } else {
-                                                                            set_confirm_leave(true);
-                                                                        }
-                                                                    }
-                                                                >
-                                                                    <Icon icon=i::BiExitRegular />
-                                                                    {move || confirm_leave().then_some(t!(i18n, groups_leave_group_confirm))}
-                                                                </button>
-                                                            </Show>
-                                                        </div>
-                                                    }
-                                                }
-                                            />
+                                        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[color:var(--color-text-muted)]">
+                                            <span>{t!(i18n, groups_member_count, count = members)}</span>
+                                            <span>{t!(i18n, groups_role_count, count = roles)}</span>
                                         </div>
-                                    }.into_any()
-                                }
-                                Err(e) => {
+                                    },
+                                )
+                            }
+                            Err(e) => {
+                                Either::Right(
                                     view! {
                                         <div class="text-xs text-red-400">
-                                            {move || t!(i18n, groups_error_loading_members, error = e.to_string())}
+                                            {move || t!(i18n, groups_detail_error, error = e.to_string())}
                                         </div>
-                                    }.into_any()
-                                }
+                                    },
+                                )
                             }
                         })
-                    }}
-                </Suspense>
-            </div>
-
-            <Show when=move || user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)>
-                <GroupInvitePanel group_id=group_id />
-            </Show>
-
-            <Show when=move || user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)>
-                <div class="flex flex-col gap-2 pt-2 border-t border-gray-700/50">
-                    <label for=format!("add-member-{}", group_id) class="text-xs font-semibold text-gray-400">{t!(i18n, groups_add_member)}</label>
-                    <div class="flex gap-2">
-                        <input
-                            id=format!("add-member-{}", group_id)
-                            class="input input-sm flex-1"
-                            placeholder=t_string!(i18n, groups_discord_id_placeholder)
-                            prop:value=new_member_id
-                            on:input=move |ev| set_new_member_id(event_target_value(&ev))
-                        />
-                        <button
-                            class="btn-secondary btn-sm"
-                            aria-label=move || t_string!(i18n, groups_add_member).to_string()
-                            prop:disabled=move || new_member_id().is_empty()
-                            on:click=move |_| {
-                                if let Ok(uid) = new_member_id().parse::<u64>() {
-                                    add_member_action.dispatch((group_id, uid));
-                                    set_new_member_id(String::new());
-                                }
-                            }
-                        >
-                            <Icon icon=i::BiPlusRegular />
-                        </button>
-                    </div>
-                </div>
-            </Show>
-        </div>
+                }}
+            </Suspense>
+        </AppLink>
     }
 }
 
-/// Owner-only invite link management for a single group.
+/// Owner-only invite link management for a single group. Lives on the group
+/// detail page.
 ///
-/// Split out of `GroupCard` so the invites resource is only created for cards
-/// the visitor owns — a member viewing someone else's group would just get a
-/// 403 from every one of these calls.
+/// Kept a separate component so the invites resource is only created for a
+/// group the visitor owns — a member would just get a 403 from every one of
+/// these calls.
 #[component]
-fn GroupInvitePanel(group_id: i32) -> impl IntoView {
+pub(crate) fn GroupInvitePanel(group_id: i32) -> impl IntoView {
     let i18n = use_i18n();
     let toasts = use_toast();
     let last_copied = use_context::<GlobalLastCopiedText>();
