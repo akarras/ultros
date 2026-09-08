@@ -19,6 +19,10 @@ export CARGO_PROFILE_TEST_DEBUG="${CARGO_PROFILE_TEST_DEBUG:-0}"
 # the client separately with `cargo leptos build` for the WASM target.
 cargo test --locked --workspace --exclude universalis --exclude ultros-client --lib --bins
 
+# The list CRDT convergence tests live in an integration target and must gate
+# Loro upgrades; --lib --bins above does not execute them.
+cargo test --locked -p ultros-list-doc --tests
+
 # Universalis mixes deterministic wire-format/status tests with six smoke tests
 # against its public API. Only those live tests are excluded from this gate:
 # availability and the current contents of Aether must not determine PR status.

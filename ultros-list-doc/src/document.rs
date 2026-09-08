@@ -45,6 +45,8 @@ pub enum DocError {
     OutdatedDependency,
     #[error("row `{0}` is not in the document")]
     MissingRow(RowKey),
+    #[error("quantity arithmetic exceeds the supported i64 range")]
+    QuantityOverflow,
 }
 
 /// What an import did. `pending` means the bytes depend on history this
@@ -297,7 +299,10 @@ impl ListDocument {
         match self.row_container(&key) {
             Some(row) => {
                 let current = value_i64(row.get(NEED)).unwrap_or(0);
-                row.insert(NEED, (current + need).max(0))?;
+                let combined = current
+                    .checked_add(need)
+                    .ok_or(DocError::QuantityOverflow)?;
+                row.insert(NEED, combined.max(0))?;
                 if let Some(target) = target {
                     row.insert(TARGET, target)?;
                 }
@@ -349,11 +354,22 @@ impl ListDocument {
         if new_key == *key {
             return Ok(new_key);
         }
+        // Validate arithmetic before deleting the source: a rejected move must
+        // leave both rows intact, including any pending document transaction.
+        let destination = self.row_container(&new_key);
+        let combined_need = destination
+            .as_ref()
+            .map(|existing| {
+                value_i64(existing.get(NEED))
+                    .unwrap_or(0)
+                    .checked_add(snapshot.need)
+                    .ok_or(DocError::QuantityOverflow)
+            })
+            .transpose()?;
         self.rows_map().delete(&key.to_string())?;
-        match self.row_container(&new_key) {
+        match destination {
             Some(existing) => {
-                let current = value_i64(existing.get(NEED)).unwrap_or(0);
-                existing.insert(NEED, current + snapshot.need)?;
+                existing.insert(NEED, combined_need.expect("destination was validated"))?;
                 if let Some(target) = snapshot.target {
                     existing.insert(TARGET, target)?;
                 }
@@ -385,7 +401,10 @@ impl ListDocument {
     /// display, never in the document.
     pub fn set_acquired(&self, key: &RowKey, value: i64) -> Result<(), DocError> {
         let current = self.row(key).ok_or(DocError::MissingRow(*key))?.acquired;
-        self.add_acquired(key, value - current)
+        let delta = value
+            .checked_sub(current)
+            .ok_or(DocError::QuantityOverflow)?;
+        self.add_acquired(key, delta)
     }
 
     /// The encoded version vector: what this document has seen.

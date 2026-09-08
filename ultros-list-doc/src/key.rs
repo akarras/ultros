@@ -87,6 +87,12 @@ impl FromStr for RowKey {
         let item_id = item
             .parse::<i32>()
             .map_err(|_| KeyError::ItemId(item.to_string()))?;
+        // Imported map keys must have a single spelling. Otherwise `01:any`
+        // and `1:any` produce duplicate typed rows, and row(&key) addresses
+        // only one of them. rows() ignores malformed keys consistently.
+        if item != item_id.to_string() {
+            return Err(KeyError::NonCanonical(s.to_string()));
+        }
         Ok(Self {
             item_id,
             quality: quality.parse()?,
@@ -100,6 +106,8 @@ pub enum KeyError {
     Shape(String),
     #[error("row key item id `{0}` is not a number")]
     ItemId(String),
+    #[error("row key `{0}` is not in canonical form")]
+    NonCanonical(String),
     #[error("row key quality `{0}` is not any, hq or nq")]
     Quality(String),
 }
