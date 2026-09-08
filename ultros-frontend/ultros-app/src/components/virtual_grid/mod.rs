@@ -6,12 +6,14 @@ pub mod metrics;
 pub mod query_grid;
 pub mod row_source;
 pub mod saved_views;
+use crate::components::icon::Icon;
 use crate::i18n::*;
 use layout::column_range;
 pub(crate) use layout::row_range;
 pub use layout::{ColumnFilter, GridColumn, GridLayout};
 use leptos::leptos_dom::helpers::{
-    AnimationFrameRequestHandle, request_animation_frame_with_handle,
+    AnimationFrameRequestHandle, TimeoutHandle, request_animation_frame_with_handle,
+    set_timeout_with_handle,
 };
 use leptos::{portal::Portal, prelude::*};
 use std::hash::Hash;
@@ -20,21 +22,34 @@ use web_sys::wasm_bindgen::JsCast;
 pub const GRID_HEADER_HEIGHT: f64 = 56.0;
 pub const GRID_OVERSCAN: usize = 4;
 
-/// Space a heading needs around its label: the drag grip and menu button
-/// (20px each) and the content wrapper's 4px side padding. That padding
-/// rule (`.grid-heading-content > div`) outranks the `px-3` the analyzers
-/// put on their own heading markup, so it is the whole story. Measured, not
-/// derived: a heading laid out at `max-content` is 48px wider than its
-/// label.
+/// Space a heading needs around its label: the drag grip (20px) and the
+/// content wrapper's 4px side padding. That padding rule
+/// (`.grid-heading-content > div`) outranks the `px-3` the analyzers put on
+/// their own heading markup, so it is the whole story. The column menu has
+/// no button of its own — it opens on right-click, press-and-hold, or the
+/// ContextMenu key — so it costs no width.
 #[cfg(feature = "hydrate")]
-const HEADING_CHROME: f64 = 48.0;
+const HEADING_CHROME: f64 = 28.0;
 /// The sort-direction icon (1em at the 12px heading size) and its 8px gap,
 /// present only on the sorted column.
 #[cfg(feature = "hydrate")]
 const HEADING_SORT_ICON: f64 = 20.0;
+/// The clear-filter button, present only while the column has a live filter.
+/// Same 20px slot as the menu button it sits beside.
+#[cfg(feature = "hydrate")]
+const HEADING_FILTER_CLEAR: f64 = 20.0;
 /// Chunk of rows measured between yields to the event loop.
 #[cfg(feature = "hydrate")]
 const FIT_CHUNK_ROWS: usize = 512;
+/// Distinct texts per column that get a real `measureText`, taken from the
+/// head of a longest-first estimate. Only the longest few can decide a
+/// column's width; measuring every distinct gil value was a third of the
+/// auto-fit pass in the 2026-09 profile.
+#[cfg(feature = "hydrate")]
+const FIT_MEASURE_CANDIDATES: usize = 64;
+/// Average glyph advance assumed when ranking candidates before measuring.
+#[cfg(feature = "hydrate")]
+const FIT_ESTIMATE_CHAR_PX: f64 = 8.0;
 /// Debounce for the automatic pass: live updates and lazy enrichment can
 /// change `each` several times a second, and one measurement after the burst
 /// is enough.
@@ -61,6 +76,36 @@ fn auto_fit_columns<T: Send + Sync + 'static>(
             .map(|c| c.id)
             .collect()
     })
+}
+
+/// Column geometry as custom properties on the canvas, one pair per
+/// position: `--gc{i}l` (left) and `--gc{i}w` (width). Headings and cells
+/// reference their position's pair statically (`column_style`), so a drag
+/// or an auto-fit pass updates one attribute on the canvas instead of
+/// running a reactive style closure — each a linear search of `placed` —
+/// for every cell on screen.
+fn column_vars(placed: &[layout::PlacedColumn]) -> String {
+    use std::fmt::Write;
+    let mut vars = String::with_capacity(placed.len() * 40);
+    for (i, c) in placed.iter().enumerate() {
+        let _ = write!(vars, "--gc{i}l:{}px;--gc{i}w:{}px;", c.left, c.width);
+    }
+    vars
+}
+
+/// The static style of a heading or cell at `position`; see `column_vars`.
+fn column_style(position: usize) -> String {
+    format!("left:var(--gc{position}l);width:var(--gc{position}w);")
+}
+
+/// The body cell a click landed in, for the one delegated listener on the
+/// canvas that replaces a listener per cell.
+fn clicked_cell(e: &web_sys::MouseEvent) -> Option<(usize, usize)> {
+    let target = e.target()?.dyn_into::<web_sys::Element>().ok()?;
+    let cell = target.closest(".virtual-grid-cell").ok()??;
+    let r = cell.get_attribute("data-grid-row")?.parse().ok()?;
+    let c = cell.get_attribute("data-grid-col")?.parse().ok()?;
+    Some((r, c))
 }
 
 #[derive(Clone, Debug)]
@@ -124,7 +169,55 @@ where
     M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
 {
     let i18n = use_i18n();
-    let filter_query = crate::components::app_link::use_location_or_default().query;
+    let location = crate::components::app_link::use_location_or_default();
+    let filter_query = location.query;
+    // Whether a column has anything to clear. Metric filters live in the
+    // packed `gf` map; a plain filter is live only when its key carries a
+    // value, because the "unlimited" landing defaults clear to an empty one.
+    let column_filtered = move |id: &'static str| {
+        columns.with(|defs| {
+            defs.iter().find(|c| c.id == id).is_some_and(|c| {
+                c.filters.iter().any(|f| {
+                    filter_query.with(|q| {
+                        if f.metric.is_some() {
+                            metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
+                        } else {
+                            q.get(f.key).is_some_and(|v| !v.is_empty())
+                        }
+                    })
+                })
+            })
+        })
+    };
+    #[cfg(feature = "hydrate")]
+    let navigate = leptos_router::hooks::use_navigate();
+    // One click takes a column's whole filter set off, however many separate
+    // filters it carries — the popover only offers them one at a time.
+    let clear_column = Callback::new(move |id: &'static str| {
+        let filters = columns.with_untracked(|defs| {
+            defs.iter()
+                .find(|c| c.id == id)
+                .map(|c| c.filters.clone())
+                .unwrap_or_default()
+        });
+        let next = filter::cleared_query(&filter_query.get_untracked(), &filters);
+        #[cfg(feature = "hydrate")]
+        navigate(
+            &format!(
+                "{}{}",
+                location.pathname.get_untracked(),
+                next.to_query_string()
+            ),
+            leptos_router::NavigateOptions {
+                replace: true,
+                scroll: false,
+                ..Default::default()
+            },
+        );
+        // SSR renders the button but never navigates.
+        #[cfg(not(feature = "hydrate"))]
+        let _ = next;
+    });
     let grid_id = StoredValue::new(id);
     let key = StoredValue::new(key);
     let header = StoredValue::new(header);
@@ -138,6 +231,12 @@ where
     ));
     let drag = RwSignal::new(None::<Drag>);
     let menu = RwSignal::new(None::<Menu>);
+    // Press-and-hold on a heading opens the column menu, the touch
+    // equivalent of the right-click a mouse gets. Holds the pending timer
+    // and the press origin, so finger jitter does not cancel the hold but a
+    // scroll does.
+    #[cfg(feature = "hydrate")]
+    let press = StoredValue::new_local(None::<(TimeoutHandle, f64, f64)>);
     // Reduce pointer movement to a boolean transition so automatic sizing
     // pauses once per gesture and resumes only after interaction finishes.
     #[cfg(feature = "hydrate")]
@@ -386,10 +485,64 @@ where
         search.set(String::new());
         menu.set(Some(Menu { id, x, y }));
     };
+    // How long a finger has to rest on a heading before its menu opens, and
+    // how far it may wander first. Below the drag threshold the grid itself
+    // uses, so a hold never doubles as the start of a column move.
+    #[cfg(feature = "hydrate")]
+    const HOLD_MS: u64 = 500;
+    #[cfg(feature = "hydrate")]
+    const HOLD_SLOP: f64 = 10.0;
+    #[cfg(feature = "hydrate")]
+    let cancel_hold = move || {
+        press.update_value(|p| {
+            if let Some((handle, _, _)) = p.take() {
+                handle.clear();
+            }
+        });
+    };
+    // Arms the hold. Mouse users have right-click, and the grip, resize
+    // handle and clear button own their own gestures, so neither arms it.
+    #[cfg(feature = "hydrate")]
+    let begin_hold = move |e: &web_sys::PointerEvent, id: &'static str, ci: usize| {
+        if e.pointer_type() == "mouse" {
+            return;
+        }
+        if e.target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|t| t.closest("button,.grid-resize-handle").ok().flatten())
+            .is_some()
+        {
+            return;
+        }
+        cancel_hold();
+        let (x, y) = (e.client_x(), e.client_y());
+        let handle = set_timeout_with_handle(
+            move || {
+                activate(0, ci);
+                open_menu(id, x, y);
+            },
+            std::time::Duration::from_millis(HOLD_MS),
+        );
+        if let Ok(handle) = handle {
+            press.set_value(Some((handle, x, y)));
+        }
+    };
+    #[cfg(feature = "hydrate")]
+    let hold_moved = move |e: &web_sys::PointerEvent| {
+        let wandered = press.with_value(|p| {
+            p.as_ref().is_some_and(|(_, x, y)| {
+                (e.client_x() - *x).abs() > HOLD_SLOP || (e.client_y() - *y).abs() > HOLD_SLOP
+            })
+        });
+        if wandered {
+            cancel_hold();
+        }
+    };
     // Measures `ids` against their heading labels and every current row with
     // the grid's real fonts, then hands the clamped widths to `apply`. Rows
-    // are processed in chunks with a yield between them, and a bump of
-    // `generation` (a newer request, cleanup) drops the pass on the floor.
+    // are formatted in chunks with a yield between them; only the longest
+    // distinct texts per column are then measured. A bump of `generation`
+    // (a newer request, cleanup) drops the pass on the floor.
     // Values that are not cached yet measure as whatever the row's `measure`
     // returns for them; nothing is fetched to size a column.
     #[cfg(feature = "hydrate")]
@@ -438,6 +591,14 @@ where
                             0.0
                         } else {
                             HEADING_SORT_ICON
+                        }
+                        // The clear-filter button only exists while the column
+                        // is filtered, so a fit that ignored it would clip the
+                        // title of exactly the columns a user is working in.
+                        + if column_filtered(def.id) {
+                            HEADING_FILTER_CLEAR
+                        } else {
+                            0.0
                         };
                         let title = ctx
                             .measure_text(&def.label)
@@ -460,24 +621,40 @@ where
                     .collect::<Vec<_>>();
                 ctx.set_font(&cell_font);
                 let data = each.get_untracked();
-                let mut cache = std::collections::HashMap::<String, f64>::new();
+                // Every distinct text per column, with the widest adornment
+                // it was seen with. Formatting each cell is what yields the
+                // text; measuring waits for the few candidates that can
+                // actually decide the width.
+                let mut candidates: Vec<std::collections::HashMap<String, f64>> = defs
+                    .iter()
+                    .map(|_| std::collections::HashMap::new())
+                    .collect();
                 for chunk in data.chunks(FIT_CHUNK_ROWS) {
                     if generation.try_get_untracked() != Some(expected) {
                         return;
                     }
                     for row in chunk {
-                        for (width, def) in widths.iter_mut().zip(&defs) {
+                        for (texts, def) in candidates.iter_mut().zip(&defs) {
                             let (text, adornments) = measure.with_value(|m| m(row, def.id));
-                            let text_width = *cache.entry(text).or_insert_with_key(|text| {
-                                ctx.measure_text(text).map(|m| m.width()).unwrap_or(0.0)
-                            });
-                            *width = width.max(text_width + adornments);
+                            let widest = texts.entry(text).or_insert(0.0);
+                            *widest = widest.max(adornments);
                         }
                     }
                     gloo_timers::future::TimeoutFuture::new(0).await;
                 }
                 if generation.try_get_untracked() != Some(expected) {
                     return;
+                }
+                let estimate = |text: &str, adornments: f64| {
+                    text.chars().count() as f64 * FIT_ESTIMATE_CHAR_PX + adornments
+                };
+                for (width, texts) in widths.iter_mut().zip(candidates) {
+                    let mut texts: Vec<(String, f64)> = texts.into_iter().collect();
+                    texts.sort_by(|a, b| estimate(&b.0, b.1).total_cmp(&estimate(&a.0, a.1)));
+                    for (text, adornments) in texts.into_iter().take(FIT_MEASURE_CANDIDATES) {
+                        let text_width = ctx.measure_text(&text).map(|m| m.width()).unwrap_or(0.0);
+                        *width = width.max(text_width + adornments);
+                    }
                 }
                 apply(
                     defs.iter()
@@ -565,12 +742,17 @@ where
         })
     });
     // Tab enters the grid once; Enter/F2 opts into controls in the active cell.
+    // The same pass paints the active body cell: cells carry no reactive
+    // class of their own (see the cell markup), so after every render and
+    // every move the outline is re-applied here, once, by position.
     Effect::new(move |_| {
         let _ = render_rows.get();
         let _ = render_cols.get();
-        if let Some(el) = port.get()
-            && let Ok(nodes) = el.query_selector_all("a,button,input,select,[tabindex]")
-        {
+        let (r, c) = active.get();
+        let Some(el) = port.get() else {
+            return;
+        };
+        if let Ok(nodes) = el.query_selector_all("a,button,input,select,[tabindex]") {
             for i in 0..nodes.length() {
                 if let Some(node) = nodes
                     .item(i)
@@ -579,6 +761,22 @@ where
                     let _ = node.set_attribute("tabindex", "-1");
                 }
             }
+        }
+        if let Ok(nodes) = el.query_selector_all(".virtual-grid-cell.grid-active") {
+            for i in 0..nodes.length() {
+                if let Some(node) = nodes
+                    .item(i)
+                    .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+                {
+                    let _ = node.class_list().remove_1("grid-active");
+                }
+            }
+        }
+        if r > 0
+            && let Ok(Some(cell)) =
+                el.query_selector(&format!("[data-grid-row='{r}'][data-grid-col='{c}']"))
+        {
+            let _ = cell.class_list().add_1("grid-active");
         }
     });
     let on_key = move |e: web_sys::KeyboardEvent| {
@@ -694,24 +892,29 @@ where
                 on:pointercancel=move |_| { if let Some(d) = drag.get_untracked() { state.set(d.original); drag.set(None); } }
                 style=move || format!("--grid-content-height: {}px;", GRID_HEADER_HEIGHT + count.get() as f64 * row_height + 18.0)
             >
-                <div class="virtual-grid-canvas" style=move || format!("width:{}px;min-width:100%;height:{}px;", total_width.get(), GRID_HEADER_HEIGHT + count.get() as f64 * row_height)>
+                <div class="virtual-grid-canvas"
+                    style=move || format!("width:{}px;min-width:100%;height:{}px;{}", total_width.get(), GRID_HEADER_HEIGHT + count.get() as f64 * row_height, placed.with(|p| column_vars(p)))
+                    on:click=move |e: web_sys::MouseEvent| { if let Some((r, c)) = clicked_cell(&e) { activate(r, c); } }
+                >
                     <div class="virtual-grid-header" role="row" aria-rowindex="1" style=format!("height:{GRID_HEADER_HEIGHT}px;")>
                         <For each=move || render_cols.get() key=|(i,c)| (*i,c.column.id) children=move |(ci,c)| {
                             let id = c.column.id;
                             let title = c.column.label.clone();
                             view! {
                                 <div class="virtual-grid-heading" role="columnheader" aria-colindex=ci + 1 aria-sort=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|c.column.aria_sort).unwrap_or("none"))
+                                    title=t_string!(i18n, grid_column_menu_hint).to_string()
                                     id=format!("{}-r0-c{ci}",grid_id.get_value()) data-column=id data-grid-row="0" data-grid-col=ci
                                     class:grid-active=move || active.get() == (0,ci)
-                                    class:grid-filter-active=move || columns.with(|defs| defs.iter().find(|c|c.id==id).is_some_and(|c|
-                                        c.filters.iter().any(|f|filter_query.with(|q| if f.metric.is_some() {
-                                            metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
-                                        } else {q.get(f.key).is_some_and(|v|!v.is_empty())}))))
+                                    class:grid-filter-active=move || column_filtered(id)
                                     class:grid-insert-before=move || drag.get().is_some_and(|d| d.target == Some((id,false)))
                                     class:grid-insert-after=move || drag.get().is_some_and(|d| d.target == Some((id,true)))
-                                    style=move || placed.with(|p| p.iter().find(|c| c.column.id == id).map(|c| format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
+                                    style=column_style(ci)
                                     on:contextmenu=move |e| { e.prevent_default(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
                                     on:click=move |_| activate(0,ci)
+                                    on:pointerdown=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] begin_hold(&e, id, ci); }
+                                    on:pointermove=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] hold_moved(&e); }
+                                    on:pointerup=move |_| { #[cfg(feature = "hydrate")] cancel_hold(); }
+                                    on:pointercancel=move |_| { #[cfg(feature = "hydrate")] cancel_hold(); }
                                 >
                                     <button type="button" class="grid-drag-handle" aria-label=t_string!(i18n, grid_move_column).to_string() title=t_string!(i18n, grid_move_column).to_string()
                                         on:pointerdown=move |e: web_sys::PointerEvent| {
@@ -723,9 +926,24 @@ where
                                         }
                                     >"⠿"</button>
                                     <div class="grid-heading-content">{header.with_value(|f| f(id))}</div>
-                                    <button type="button" class="grid-column-menu" aria-label=format!("{}: {title}",t_string!(i18n, grid_column_menu))
-                                        on:click=move |e| { e.stop_propagation(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
-                                    >"⋮"</button>
+                                    // The only button a heading carries besides the grip: the
+                                    // off switch for the column's filters, the affordance Flip
+                                    // Finder's World/Datacenter columns used to have on their
+                                    // own. It costs width only while a filter is on, and its
+                                    // presence is what makes a filtered column legible at a
+                                    // glance — the tinted cell behind it is the second cue.
+                                    {
+                                        let filtered_title = title.clone();
+                                        view! {
+                                            <Show when=move || column_filtered(id)>
+                                                <button type="button" class="grid-filter-clear"
+                                                    aria-label=format!("{}: {filtered_title}",t_string!(i18n, aria_remove_filter))
+                                                    title=t_string!(i18n, grid_filter_clear).to_string()
+                                                    on:click=move |e| { e.stop_propagation(); activate(0,ci); clear_column.run(id); }
+                                                ><Icon icon=icondata::MdiFilterRemove /></button>
+                                            </Show>
+                                        }
+                                    }
                                     <div class="grid-resize-handle" title=t_string!(i18n, grid_resize_hint).to_string()
                                         on:dblclick=move |e| { e.prevent_default(); e.stop_propagation(); fit(id); }
                                         on:pointerdown=move |e: web_sys::PointerEvent| {
@@ -746,13 +964,16 @@ where
                         let row=Memo::new(move |_| each.with(|data| data.get(ri).cloned()));
                         view! {
                             <div role="row" class="virtual-grid-row" data-even=ri % 2 == 0 aria-rowindex=ri + 2 style=format!("top:{}px;height:{row_height}px;",GRID_HEADER_HEIGHT + ri as f64*row_height)>
+                                // Deliberately inert per cell: geometry comes from the canvas's
+                                // custom properties, the active outline from one effect on the
+                                // grid, and clicks from one delegated listener on the canvas.
+                                // Anything reactive or listening here is multiplied by every
+                                // cell on screen, and rows are built while the user scrolls.
                                 <For each=move || render_cols.get() key=|(i,c)|(*i,c.column.id) children=move |(ci,c)| {
                                     let id=c.column.id;
                                     view! {
                                         <div class="virtual-grid-cell" role="gridcell" aria-colindex=ci + 1 id=format!("{}-r{}-c{ci}",grid_id.get_value(),ri+1) data-column=id data-grid-row=ri + 1 data-grid-col=ci
-                                            class:grid-active=move || active.get()==(ri+1,ci)
-                                            on:click=move |_| activate(ri+1,ci)
-                                            style=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
+                                            style=column_style(ci)
                                         >{move || view.with_value(|v| row.with(|row|row.as_ref().map(|row|v(row.clone(),id)).into_any()))}</div>
                                     }
                                 }/>
@@ -763,7 +984,7 @@ where
             </div>
             {move || menu.get().map(move |m| view! {
                 <Portal>
-                    <div class="grid-menu-backdrop" on:click=move |_| close_menu()></div>
+                    <div class="grid-menu-backdrop" on:pointerdown=move |_| close_menu()></div>
                     <div class="grid-menu-panel" node_ref=menu_ref tabindex="-1" role="dialog" aria-modal="true" aria-label=t_string!(i18n, grid_column_menu).to_string()
                         style=format!("left:clamp(8px,{}px,calc(100vw - 280px));top:clamp(8px,{}px,calc(100dvh - 430px));",m.x,m.y)
                         on:keydown=move |e| {
@@ -918,6 +1139,27 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
         },
     };
+
+    #[test]
+    fn cells_take_their_geometry_from_the_canvas_custom_properties() {
+        let layout = GridLayout::parse(None, &[]);
+        let columns = vec![
+            GridColumn::new("a", "A".into(), 100.0, false, true),
+            GridColumn::new("b", "B".into(), 80.0, false, true),
+        ];
+        let layout = GridLayout {
+            order: columns.iter().map(|c| c.id.to_string()).collect(),
+            ..layout
+        };
+        let placed = layout.columns_with(&columns, &BTreeMap::new());
+        assert_eq!(
+            column_vars(&placed),
+            "--gc0l:0px;--gc0w:100px;--gc1l:100px;--gc1w:80px;"
+        );
+        // A heading and a cell at the same position reference the same pair,
+        // which is what keeps them aligned after a resize or an auto-fit.
+        assert_eq!(column_style(1), "left:var(--gc1l);width:var(--gc1w);");
+    }
 
     #[test]
     fn automatic_sizing_pauses_until_menu_and_drag_both_finish_without_pointer_churn() {

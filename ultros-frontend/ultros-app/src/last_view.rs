@@ -130,6 +130,7 @@ pub fn has_restorable_view() -> bool {
 pub fn track_last_view() {
     #[cfg(feature = "hydrate")]
     {
+        use crate::query_defaults::query_signal_or_default;
         use leptos::prelude::*;
         use wasm_bindgen::JsCast;
         let location = leptos_router::hooks::use_location();
@@ -148,7 +149,7 @@ pub fn track_last_view() {
             {
                 let query = target.split_once('?').map(|(_, q)| q).unwrap_or_default();
                 for (key, value) in parse(query) {
-                    let (_, setter) = leptos_router::hooks::query_signal_with_options::<String>(
+                    let (_, setter) = query_signal_or_default::<String>(
                         key,
                         leptos_router::NavigateOptions {
                             replace: true,

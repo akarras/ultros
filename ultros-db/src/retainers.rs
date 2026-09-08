@@ -138,6 +138,18 @@ impl UltrosDb {
             .await?)
     }
 
+    /// Retainer ids this Discord user has claimed. Unlike
+    /// [`Self::get_owned_retainers`] this never creates a user row.
+    pub async fn get_owned_retainer_ids(&self, discord_user: i64) -> Result<Vec<i32>> {
+        Ok(owned_retainers::Entity::find()
+            .filter(owned_retainers::Column::DiscordId.eq(discord_user))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|o| o.retainer_id)
+            .collect())
+    }
+
     #[instrument]
     pub async fn remove_owned_retainer(
         &self,

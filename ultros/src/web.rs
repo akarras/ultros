@@ -6,11 +6,11 @@ pub(crate) mod item_card;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
-pub(crate) mod sale_stats_cache;
 pub(crate) mod sitemap;
 pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
+pub(crate) mod stats_cache;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
@@ -47,8 +47,8 @@ use ultros_api_types::price_series::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
-    CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild, GroupInvite,
-    UserGroup, UserGroupMember,
+    AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild,
+    GroupInvite, UserGroup, UserGroupMember,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -88,8 +88,9 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
-    get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines, recent_sales,
+    cheapest_per_world, get_best_deals, get_item_stats, get_listing_stats, get_market_heat,
+    get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
+    recent_sales,
 };
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
@@ -1243,6 +1244,9 @@ async fn refresh_world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
     State(universalis): State<UniversalisClient>,
+    State(listing_events): State<
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    >,
 ) -> Result<Redirect, WebError> {
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
@@ -1286,9 +1290,18 @@ async fn refresh_world_item_listings(
             });
         debug!("manually refreshed worlds: {listings_by_world:?}");
         for (world_id, listings) in listings_by_world {
-            let (added, removed) = db
+            let ultros_db::listings::ListingWrite {
+                added,
+                removed,
+                changes,
+            } = db
                 .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
                 .await?;
+            crate::record_listing_changes(
+                &listing_events,
+                &changes,
+                ultros_clickhouse::rows::ListingEventSource::Manual,
+            );
             senders
                 .listings
                 .send(EventType::Add(Arc::new(ListingEventData {
@@ -2100,10 +2113,122 @@ pub(crate) async fn add_group_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path((group_id, member_id)): Path<(i32, i64)>,
+    // `Option<Json<T>>` only produces `None` when the request has no JSON
+    // content type at all (axum 0.8's `OptionalFromRequest`); a request that
+    // *does* carry `Content-Type: application/json` still gets deserialized,
+    // and the existing frontend call sends that content type with body
+    // `null` (`serde_json` of `()`), which fails to deserialize into
+    // `AddGroupMember` directly. Wrapping the payload in an extra `Option`
+    // lets `null` and `{}` both deserialize to `None` while leaving "no body
+    // at all" handled by the outer `Option`.
+    body: Option<Json<Option<AddGroupMember>>>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_member(group_id, user.id as i64, member_id)
+    let display_name = body.and_then(|Json(b)| b).and_then(|b| b.display_name);
+    db.add_group_member(group_id, user.id as i64, member_id, display_name)
         .await?;
     Ok(Json(()))
+}
+
+/// Pins the `Option<Json<Option<AddGroupMember>>>` extractor behaviour that
+/// `add_group_member` relies on: axum 0.8's `Option<Json<T>>` only yields
+/// `None` when the request has no JSON content type at all, so a `null` or
+/// `{}` body sent *with* `Content-Type: application/json` (as the frontend
+/// does) must still deserialize successfully into the inner `Option`.
+#[cfg(test)]
+mod add_group_member_body_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn stub_handler(body: Option<Json<Option<AddGroupMember>>>) -> String {
+        match body.and_then(|Json(b)| b).and_then(|b| b.display_name) {
+            Some(name) => format!("some:{name}"),
+            None => "none".to_string(),
+        }
+    }
+
+    fn router() -> Router {
+        Router::new().route("/", post(stub_handler))
+    }
+
+    async fn body_text(response: axum::response::Response) -> String {
+        String::from_utf8(
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn no_body_and_no_content_type_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn json_null_body_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("null"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn empty_json_object_body_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn display_name_body_is_some() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"display_name":"Bob"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "some:Bob");
+    }
 }
 
 pub(crate) async fn remove_group_member(
@@ -2489,6 +2614,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/market_heat/{world}", get(get_market_heat))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route("/api/v1/sale_stats/{world}", get(get_sale_stats))
+        .route("/api/v1/listing_stats/{world}", get(get_listing_stats))
         .route("/api/v1/alerts/events", get(list_alert_events))
         .route(
             "/api/v1/alerts/events/{id}/resend",
@@ -2615,6 +2741,17 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/characters", get(user_characters))
         .route("/api/v1/detectregion", get(detect_region))
         .route("/api/v1/current_user", delete(delete_user))
+}
+
+/// Stamps every response with the commit this binary was built from so a
+/// stale wasm bundle can notice the server moved on. Outermost layer, so it
+/// covers SSR HTML, the JSON API, static files, `/pkg/`, and error responses.
+/// The client side lives in `ultros_app::global_state::app_update`.
+fn app_commit_header_layer() -> SetResponseHeaderLayer<HeaderValue> {
+    SetResponseHeaderLayer::overriding(
+        axum::http::HeaderName::from_static(ultros_api_types::app_version::APP_COMMIT_HEADER),
+        HeaderValue::from_static(env!("GIT_HASH")),
+    )
 }
 
 pub(crate) async fn start_web(
@@ -2750,7 +2887,8 @@ pub(crate) async fn start_web(
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
-        ));
+        ))
+        .layer(app_commit_header_layer());
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
@@ -2775,4 +2913,49 @@ pub(crate) async fn start_web(
         start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
+}
+
+#[cfg(test)]
+mod app_commit_header_tests {
+    use super::app_commit_header_layer;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use ultros_api_types::app_version::APP_COMMIT_HEADER;
+
+    fn router() -> Router {
+        Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(app_commit_header_layer())
+    }
+
+    async fn header_for(uri: &str) -> (StatusCode, Option<String>) {
+        let response = router()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let header = response
+            .headers()
+            .get(APP_COMMIT_HEADER)
+            .map(|v| v.to_str().unwrap().to_string());
+        (response.status(), header)
+    }
+
+    #[tokio::test]
+    async fn stamps_success_responses() {
+        let (status, header) = header_for("/ok").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+
+    #[tokio::test]
+    async fn stamps_not_found_responses() {
+        let (status, header) = header_for("/missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
 }

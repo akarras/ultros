@@ -152,7 +152,7 @@ MakePlace import, wrap them in `UndoManager::group_start` / `group_end`.
 `ultros-frontend/ultros-app/src/list_doc/` owns the browser side:
 
 - `store.rs`: persistence. Snapshots live in `localStorage` under
-  `ultros.listdoc.v1.{list_id}` as base64, with `ultros.listdoc.index` holding
+  `ultros.listdoc.v1.{user_id}.{list_id}` as base64, with a user-scoped index holding
   last-used timestamps and the last known `ListPermission` per list. At most
   20 lists are kept; saving a 21st evicts the least recently used. No peer id
   is stored (section 2). Saves happen on a 500 ms debounce after any change and
@@ -175,9 +175,13 @@ Page open sequence:
 2. Fetch the list's permission and owner name through the existing
    `GET /api/v1/list/{id}` (a client wrapper is added; the route exists with
    `RequireListPermission<READ>`). On success, refresh the cached permission.
-   If it fails with no local snapshot, show today's error state. If it fails
-   with a snapshot, keep rendering from the snapshot with the `offline`
-   status.
+   If it fails with no local snapshot, show today's error state. Only a
+   transient network or server failure may retain the current user's snapshot
+   with the `offline` status. An explicit authorization denial or deleted-list
+   response must clear that list's snapshot, cached permission, and in-memory
+   document, stop its subscription, and show today's error state. Logout or
+   account change also closes the document and prevents reading the previous
+   account's cache. A cached permission is never authority for another account.
 3. Connect and subscribe with the local version (section 5). Apply what the
    server sends; send what it lacks.
 4. Fetch listings through the existing `GET /api/v1/list/{id}/listings` as
@@ -190,7 +194,9 @@ whose resource is replaced by the document. To keep every existing component
 untouched, an adapter produces today's shapes from the document:
 
 - `ListItem { id, item_id, list_id, hq, quantity, acquired, target_price }`
-  is built per row, with `id` a stable 32-bit FNV hash of the row key. This id
+  is built per row, with `id` assigned by a stable one-to-one mapping of row
+  keys in the open list. A truncated hash is not unique and must not be used
+  to identify the target of an edit or deletion. This id
   exists only for `<For>` keys and row callbacks on the Labs page; the Labs
   page never sends it to a REST endpoint.
 - The `Action`s the rows and modals dispatch (`add_item`, `edit_item`,

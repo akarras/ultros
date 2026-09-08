@@ -631,7 +631,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 {match (shard_total, total) {
                                                     (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
                                                         <div class="text-[11px] text-[color:var(--color-text-muted)]">
-                                                            {t!(i18n, job_set_detail_materials_total_with_shards)} " "
+                                                            {t!(i18n, job_set_detail_materials_total_with_crystals)} " "
                                                             <Gil amount=with_shards as i32 />
                                                         </div>
                                                     }.into_any(),
@@ -671,7 +671,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 {match (shard_total, total) {
                                                     (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
                                                         <div class="text-[11px] text-[color:var(--color-text-muted)]">
-                                                            {t!(i18n, job_set_detail_materials_total_with_shards)} " "
+                                                            {t!(i18n, job_set_detail_materials_total_with_crystals)} " "
                                                             <Gil amount=with_shards as i32 />
                                                         </div>
                                                     }.into_any(),
@@ -691,7 +691,7 @@ pub fn JobSetDetail() -> impl IntoView {
                             view! {
                                 <div class="mt-3 pt-3 border-t border-white/5">
                                     <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)] mb-2">
-                                        {t!(i18n, job_set_detail_materials_shards)}
+                                        {t!(i18n, job_set_detail_materials_crystals)}
                                     </div>
                                     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-2">
                                         {shards.into_iter().map(material_row).collect::<Vec<_>>()}

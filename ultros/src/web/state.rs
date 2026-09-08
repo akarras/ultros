@@ -38,6 +38,9 @@ pub(crate) struct WebState {
     /// ClickHouse client for analytical queries (Phase 1+ uses this; Phase 0
     /// only writes via the analyzer's dual-write path).
     pub(crate) ch_client: ClickHouseClient,
+    /// ClickHouse `listing_events` mirror for the manual refresh route.
+    pub(crate) listing_events:
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     /// Shared Universalis client — reuses one connection pool instead of
     /// building a reqwest client per request.
     pub(crate) universalis: UniversalisClient,
@@ -45,8 +48,11 @@ pub(crate) struct WebState {
     /// [`crate::web::price_series_cache`].
     pub(crate) price_series_cache: crate::web::price_series_cache::PriceSeriesCache,
     /// Coalesces and serves stale bulk market-stat snapshots so page traffic
-    /// cannot multiply ClickHouse work. See [`crate::web::sale_stats_cache`].
-    pub(crate) sale_stats_cache: crate::web::sale_stats_cache::SaleStatsCache,
+    /// cannot multiply ClickHouse work. See [`crate::web::stats_cache`].
+    pub(crate) sale_stats_cache: crate::web::stats_cache::SaleStatsCache,
+    /// Same contract for `/api/v1/listing_stats`, as its own instance so a
+    /// listing snapshot never evicts a sale snapshot (or the reverse).
+    pub(crate) listing_stats_cache: crate::web::stats_cache::ListingStatsCache,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -127,6 +133,14 @@ impl FromRef<WebState> for ClickHouseClient {
     }
 }
 
+impl FromRef<WebState>
+    for ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>
+{
+    fn from_ref(input: &WebState) -> Self {
+        input.listing_events.clone()
+    }
+}
+
 impl FromRef<WebState> for UniversalisClient {
     fn from_ref(input: &WebState) -> Self {
         input.universalis.clone()
@@ -139,8 +153,14 @@ impl FromRef<WebState> for crate::web::price_series_cache::PriceSeriesCache {
     }
 }
 
-impl FromRef<WebState> for crate::web::sale_stats_cache::SaleStatsCache {
+impl FromRef<WebState> for crate::web::stats_cache::SaleStatsCache {
     fn from_ref(input: &WebState) -> Self {
         input.sale_stats_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.listing_stats_cache.clone()
     }
 }

@@ -14,6 +14,8 @@ pub struct Model {
     pub guild_icon_url: Option<String>,
     /// How membership is maintained. See `ultros_api_types::user::group::GroupSource`.
     pub source: i16,
+    /// Set when the bot was removed from the guild; see the API type doc.
+    pub frozen_reason: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -32,6 +34,8 @@ pub enum Relation {
     ListSharedGroup,
     #[sea_orm(has_many = "super::group_invite::Entity")]
     GroupInvite,
+    #[sea_orm(has_many = "super::group_role::Entity")]
+    GroupRole,
 }
 
 impl Related<super::discord_user::Entity> for Entity {
@@ -55,6 +59,12 @@ impl Related<super::list_shared_group::Entity> for Entity {
 impl Related<super::group_invite::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::GroupInvite.def()
+    }
+}
+
+impl Related<super::group_role::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::GroupRole.def()
     }
 }
 

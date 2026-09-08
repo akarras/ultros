@@ -1011,6 +1011,8 @@ pub struct BulkSaleStatsRow {
     /// Volume-weighted average per-unit price, rounded. Weighted by
     /// quantity so stack trades count per unit, not per transaction.
     pub vwap: i32,
+    /// Total gil traded in the window: `sum(price_per_item * quantity)`.
+    pub gil_volume: u64,
 }
 
 /// Aggregate min / median / mean per-unit sale price for **every**
@@ -1053,7 +1055,8 @@ pub async fn bulk_sale_stats(
             num_sold,
             last_sold_unix,
             units_sold,
-            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap
+            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap,
+            gil_volume_sum AS gil_volume
         FROM
         (
             SELECT
@@ -1116,6 +1119,99 @@ pub async fn bulk_confidence(
         .client()
         .query(&sql)
         .fetch_all::<BulkConfidenceRow>()
+        .await?)
+}
+
+/// One row of [`bulk_listing_alive`]: the alive listing set for one
+/// `(item_id, hq)` pair across the requested world set.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct BulkListingAliveRow {
+    pub item_id: i32,
+    pub hq: u8,
+    /// Listings whose last observed event is not `removed`.
+    pub alive_count: u32,
+    /// Sum of those listings' quantities.
+    pub alive_units: u64,
+    /// Distinct retainers among them.
+    pub distinct_retainers: u32,
+    /// Unix seconds when the least recently touched alive listing was last
+    /// reviewed by its retainer.
+    pub oldest_reviewed_unix: i64,
+    /// Median seconds since an alive listing was last touched, as of now.
+    pub median_age_secs: u32,
+    /// Lowest per-unit price among alive listings.
+    pub floor_alive: u32,
+}
+
+/// The alive listing set for **every** `(item, hq)` with stock across
+/// `world_ids`, from the scheduled `listing_alive` snapshots.
+///
+/// Backs `GET /api/v1/listing_stats/{worldDcOrRegion}`. Merging the worlds of
+/// a datacenter or region: counts and units add; distinct-retainer counts add
+/// too, which is exact because a retainer lives on one world (were one ever
+/// stored on two, the sum would over-count, never under); `oldest_reviewed`
+/// and `floor_alive` take the minimum over the worlds that have stock; and
+/// the median age is the exact merge of the per-world t-digest states. Those
+/// ages were measured at each row's `computed_at`, so the merged median is
+/// shifted forward by the time since the newest snapshot — at worst one
+/// refresh cadence stale for the older worlds.
+///
+/// Keys whose boards have emptied are stored as zero rows (see the schema)
+/// and dropped here, so an empty result means "nothing alive", not "not yet
+/// rolled up"; the endpoint treats both as a real, cacheable answer.
+///
+/// Every alias in the inner `SELECT` differs from the columns it aggregates
+/// (`alive_count_sum` beside `minIf(..., alive_count > 0)`): see
+/// [`bulk_sale_stats`] for the runtime alias trap this avoids.
+pub async fn bulk_listing_alive(
+    ch: &ClickHouseClient,
+    world_ids: &[i32],
+) -> Result<Vec<BulkListingAliveRow>, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+        SELECT
+            item_id,
+            hq,
+            alive_count_sum AS alive_count,
+            alive_units_sum AS alive_units,
+            distinct_retainers_sum AS distinct_retainers,
+            oldest_reviewed_unix,
+            toUInt32(greatest(0,
+                if(isNaN(median_age_at_compute), 0, median_age_at_compute) + elapsed_secs
+            )) AS median_age_secs,
+            floor_alive_min AS floor_alive
+        FROM
+        (
+            SELECT
+                item_id,
+                hq,
+                toUInt32(sum(alive_count)) AS alive_count_sum,
+                toUInt64(sum(alive_units)) AS alive_units_sum,
+                toUInt32(sum(distinct_retainers)) AS distinct_retainers_sum,
+                toInt64(toUnixTimestamp(minIf(oldest_reviewed_at, alive_count > 0)))
+                    AS oldest_reviewed_unix,
+                quantileTDigestMerge(0.5)(age_quantile) AS median_age_at_compute,
+                toInt64(now()) - toInt64(max(computed_at)) AS elapsed_secs,
+                toUInt32(minIf(floor_alive, alive_count > 0)) AS floor_alive_min
+            FROM listing_alive FINAL
+            WHERE world_id IN ({worlds})
+            GROUP BY item_id, hq
+            HAVING alive_count_sum > 0
+        )
+        "#
+    );
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<BulkListingAliveRow>()
         .await?)
 }
 

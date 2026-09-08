@@ -316,7 +316,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
 
         if line.is_shard {
             // Shards always contribute to shard_cost (full replacement value)
-            // so the UI can show "shards excluded: Xg". Whether they contribute
+            // so the UI can show "crystals excl.: Xg". Whether they contribute
             // to the headline cost depends on the mode.
             shard_cost = shard_cost.saturating_add(line_market_cost + line_on_hand_value);
             if matches!(opts.shards, ShardsMode::IncludeMarket) {

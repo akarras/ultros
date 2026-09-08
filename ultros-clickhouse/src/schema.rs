@@ -6,6 +6,8 @@
 //! - `sale_stats_window` — mergeable whole-market statistics by world/window
 //! - `item_quality_score` (Task 1.1) — trustworthiness per item
 //! - `_backfill_state` (Task 0.6) — resumable backfill cursor
+//! - `listing_alive` — the alive listing set per world/item/hq, replayed
+//!   from `listing_events`
 
 use clickhouse::Client;
 
@@ -20,6 +22,142 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_sales_hourly(client).await?;
     apply_sale_stats_window(client).await?;
     apply_item_category_map(client).await?;
+    apply_listing_events_table(client).await?;
+    apply_floor_changes_table(client).await?;
+    apply_listing_events_seed_marker(client).await?;
+    apply_listing_alive(client).await?;
+    Ok(())
+}
+
+/// Name of the one-row marker table that records the `listing_events` seed.
+pub const LISTING_EVENTS_SEED_MARKER_TABLE: &str = "_listing_events_seed";
+
+/// Append-only log of every change Ultros observes to `active_listing`.
+///
+/// Plain `MergeTree`: a re-sent listing whose state already matches is
+/// filtered by the Postgres diff before any write, so duplicates never reach
+/// this table and no dedup engine is needed. `ORDER BY (item, hq, world,
+/// time)` serves the "what happened to this item on this world" reads that
+/// every planned consumer starts from; monthly partitions plus the TTL keep
+/// retention a one-line change while volume is still unmeasured.
+async fn apply_listing_events_table(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS listing_events (
+                event_time      DateTime,
+                kind            Enum8('added' = 1, 'updated' = 2, 'removed' = 3),
+                source          Enum8('websocket' = 1, 'catchup' = 2, 'manual' = 3, 'snapshot' = 4),
+                item_id         Int32,
+                hq              UInt8,
+                world_id        Int32,
+                listing_id      String,
+                pg_listing_id   Int32,
+                retainer_id     Int32,
+                price_per_unit  UInt32,
+                quantity        UInt16,
+                prev_price      UInt32,
+                prev_quantity   UInt16,
+                reviewed_at     DateTime
+            )
+            ENGINE = MergeTree
+            PARTITION BY toYYYYMM(event_time)
+            ORDER BY (item_id, hq, world_id, event_time)
+            TTL event_time + INTERVAL 365 DAY
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// One row per transition of the analyzer's world-level lowest listing price
+/// for an `(item, hq)`. `price_per_unit = 0` means the board emptied.
+/// Tiny (one row per floor move) and the long-term series, so no TTL.
+async fn apply_floor_changes_table(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS floor_changes (
+                event_time      DateTime,
+                item_id         Int32,
+                hq              UInt8,
+                world_id        Int32,
+                price_per_unit  UInt32,
+                reason          Enum8('listing' = 1, 'refill' = 2, 'resync' = 3)
+            )
+            ENGINE = MergeTree
+            PARTITION BY toYYYYMM(event_time)
+            ORDER BY (item_id, hq, world_id, event_time)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Marker written once the `listing_events` seed has streamed every current
+/// `active_listing` row. Modelled on `_backfill_state`.
+async fn apply_listing_events_seed_marker(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {LISTING_EVENTS_SEED_MARKER_TABLE} (
+                seeded_at     DateTime,
+                rows_streamed UInt64
+            )
+            ENGINE = ReplacingMergeTree(seeded_at)
+            ORDER BY tuple()
+            "#
+        ))
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// The alive listing set per `(world, item, hq)`, replayed from
+/// `listing_events` by [`crate::rollups::refresh_listing_alive`] every 15
+/// minutes.
+///
+/// The bulk listing-stats endpoint reads a whole world, datacenter or region
+/// at once, so — like `sale_stats_window` — the sorting key starts with
+/// `world_id`, the inverse of the raw `listing_events` item-first key; that is
+/// what keeps a whole-market read bounded. `age_quantile` stores a t-digest
+/// state of listing ages (seconds since the retainer last touched the listing,
+/// measured at `computed_at`), so a datacenter or region median is an exact
+/// merge of its worlds rather than a re-scan of the event log.
+///
+/// Every key with any post-seed event gets a row on each refresh, including
+/// keys whose board has emptied (`alive_count = 0`, aggregates at their
+/// defaults): under `ReplacingMergeTree` a key that simply stopped being
+/// emitted would keep serving its last non-zero snapshot forever. Readers
+/// skip the zero rows. Previously nonzero keys also get zero rows when every
+/// replayable event disappears after a seed cutoff change or event expiry.
+async fn apply_listing_alive(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS listing_alive (
+                world_id           Int32,
+                item_id            Int32,
+                hq                 UInt8,
+                computed_at        DateTime,
+                alive_count        UInt32,
+                alive_units        UInt64,
+                distinct_retainers UInt32,
+                oldest_reviewed_at DateTime,
+                age_quantile       AggregateFunction(quantileTDigest(0.5), UInt32),
+                floor_alive        UInt32
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            ORDER BY (world_id, item_id, hq)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
     Ok(())
 }
 

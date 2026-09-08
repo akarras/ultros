@@ -87,9 +87,9 @@ async function main(){
         await page.screenshot({path:path.join(dir,'recipe-formula-headers-desktop.png'),fullPage:true});
       }
       assert(Math.abs(await page.$eval('.virtual-grid-heading[data-column="item"]',e=>e.getBoundingClientRect().width)-300)<1);
-      const menu=`.virtual-grid-heading[data-column="${column}"] .grid-column-menu`;
+      const menu=`.virtual-grid-heading[data-column="${column}"]`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));
-      await page.click(menu);
+      await page.click(menu,{button:'right'});
       const form=`.grid-column-filter[data-filter="${filter}"]`;
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';

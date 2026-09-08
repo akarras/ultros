@@ -261,97 +261,382 @@ pub fn purchase(needed: i64, offers: &[Offer], vendor: Option<i64>) -> Purchase 
     finish(needed, selected, vendor, false)
 }
 
+/// Gil-equivalent price of travel. A world hop is one loading screen from the
+/// aetheryte; a datacenter hop goes through the main menu and several loading
+/// screens. Zero weights reproduce pure gil ranking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TravelWeights {
+    pub world_hop: i64,
+    pub dc_hop: i64,
+}
+
+impl Default for TravelWeights {
+    fn default() -> Self {
+        Self {
+            world_hop: 2_000,
+            dc_hop: 10_000,
+        }
+    }
+}
+
+impl TravelWeights {
+    /// Gil-equivalent distance of a travel shape: the card ordering axis and
+    /// the travel part of `effective`.
+    pub fn distance(&self, travel: Travel) -> i64 {
+        (travel.dc_hops as i64)
+            .saturating_mul(self.dc_hop)
+            .saturating_add((travel.world_hops as i64).saturating_mul(self.world_hop))
+    }
+}
+
+/// Hops beyond the worlds already on the itinerary. Entering a datacenter
+/// lands on one of its worlds, so that first world is part of the DC hop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Travel {
+    pub dc_hops: usize,
+    pub world_hops: usize,
+}
+
+/// Everything route scoring needs besides market data. No UI or network
+/// dependencies, and fully value-comparable so it can live in a memo.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RouteContext {
+    pub home: i32,
+    /// World id to datacenter id. An unmapped world is treated as its own
+    /// datacenter so it is charged a DC hop rather than assumed free.
+    pub datacenters: BTreeMap<i32, i32>,
+    pub weights: TravelWeights,
+    /// Item to ticked-off listings, carried as snapshots: a bought listing
+    /// leaves the market, and the price paid should not drift afterwards.
+    pub locked: BTreeMap<i32, Vec<Offer>>,
+    /// `(item, world)` pairs the user reported as not available.
+    pub unavailable: BTreeSet<(i32, i32)>,
+}
+
+impl RouteContext {
+    pub fn dc_of(&self, world: i32) -> i32 {
+        self.datacenters.get(&world).copied().unwrap_or(-world)
+    }
+
+    /// Home plus every world holding a locked purchase: free to (re)visit.
+    pub fn visited(&self) -> BTreeSet<i32> {
+        let mut visited = BTreeSet::from([self.home]);
+        visited.extend(self.locked.values().flatten().map(|o| o.world));
+        visited
+    }
+
+    pub fn travel(&self, worlds: &BTreeSet<i32>) -> Travel {
+        let visited = self.visited();
+        let visited_dcs: BTreeSet<i32> = visited.iter().map(|w| self.dc_of(*w)).collect();
+        let new_worlds: Vec<i32> = worlds.difference(&visited).copied().collect();
+        let new_dcs: BTreeSet<i32> = new_worlds
+            .iter()
+            .map(|w| self.dc_of(*w))
+            .filter(|dc| !visited_dcs.contains(dc))
+            .collect();
+        Travel {
+            dc_hops: new_dcs.len(),
+            world_hops: new_worlds.len() - new_dcs.len(),
+        }
+    }
+
+    pub fn travel_cost(&self, travel: Travel) -> i64 {
+        self.weights.distance(travel)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ShoppingPlan {
     pub purchases: BTreeMap<i32, Purchase>,
+    /// Every non-home world with a purchase, locked stops included.
     pub worlds: BTreeSet<i32>,
     pub cost: i64,
     pub missing: i64,
     pub approximate: bool,
+    pub travel: Travel,
+    /// Gil cost plus the gil-equivalent travel cost: the ranking metric.
+    pub effective: i64,
 }
 
-pub fn shop(
+/// Locked listings are committed purchases: they count against the need at
+/// the price they were ticked at, and only the remainder goes to the market.
+fn purchase_with_locked(
+    needed: i64,
+    offers: &[Offer],
+    locked: &[Offer],
+    vendor: Option<i64>,
+) -> Purchase {
+    if locked.is_empty() {
+        return purchase(needed, offers, vendor);
+    }
+    let committed: i64 = locked.iter().map(|o| o.quantity).sum();
+    let inner = if needed > committed {
+        purchase(needed - committed, offers, vendor)
+    } else {
+        Purchase::default()
+    };
+    let mut all = locked.to_vec();
+    all.extend(inner.offers);
+    all.sort_by_key(|o| (o.world, o.id));
+    finish(needed, all, vendor.filter(|p| *p > 0), inner.approximate)
+}
+
+/// Per-item purchase results keyed by the exact listings the knapsack could
+/// see, so route search does not re-solve an item whose visible offers did
+/// not change between two world sets.
+type PurchaseCache = BTreeMap<(i32, Vec<i32>), Purchase>;
+
+fn shop_cached(
     materials: &[Material],
     market: &BTreeMap<i32, Vec<Offer>>,
     vendors: &BTreeMap<i32, i64>,
     allowed: &BTreeSet<i32>,
-    home: i32,
+    ctx: &RouteContext,
+    cache: &mut PurchaseCache,
 ) -> ShoppingPlan {
+    let visited = ctx.visited();
     let mut plan = ShoppingPlan::default();
     for m in materials
         .iter()
         .filter(|m| m.recipe.is_none() && m.remaining() > 0)
     {
+        let locked = ctx.locked.get(&m.item).map(Vec::as_slice).unwrap_or(&[]);
+        let locked_ids: BTreeSet<i32> = locked.iter().map(|o| o.id).collect();
         let offers: Vec<_> = market
             .get(&m.item)
             .into_iter()
             .flatten()
-            .filter(|o| allowed.contains(&o.world))
+            .filter(|o| allowed.contains(&o.world) || visited.contains(&o.world))
+            .filter(|o| !ctx.unavailable.contains(&(m.item, o.world)))
+            .filter(|o| !locked_ids.contains(&o.id))
             .cloned()
             .collect();
-        let p = purchase(m.remaining(), &offers, vendors.get(&m.item).copied());
+        let key = (m.item, offers.iter().map(|o| o.id).collect::<Vec<_>>());
+        let p = cache
+            .entry(key)
+            .or_insert_with(|| {
+                purchase_with_locked(
+                    m.remaining(),
+                    &offers,
+                    locked,
+                    vendors.get(&m.item).copied(),
+                )
+            })
+            .clone();
         plan.worlds
-            .extend(p.offers.iter().map(|o| o.world).filter(|w| *w != home));
+            .extend(p.offers.iter().map(|o| o.world).filter(|w| *w != ctx.home));
         plan.cost += p.cost;
         plan.missing += p.missing();
         plan.approximate |= p.approximate;
         plan.purchases.insert(m.item, p);
     }
+    plan.travel = ctx.travel(&plan.worlds);
+    plan.effective = plan.cost.saturating_add(ctx.travel_cost(plan.travel));
     plan
 }
 
-/// Home / up to 1 / up to 2 / up to 3 additional worlds / full scope.
-/// One-world candidates are exhaustive. Larger routes retain a bounded beam;
-/// the UI calls these best-found plans rather than promising global optimality.
+/// Buy every outstanding leaf from `allowed` worlds (plus the worlds already
+/// on the itinerary), honouring locked purchases and "not here" reports.
+pub fn shop(
+    materials: &[Material],
+    market: &BTreeMap<i32, Vec<Offer>>,
+    vendors: &BTreeMap<i32, i64>,
+    allowed: &BTreeSet<i32>,
+    ctx: &RouteContext,
+) -> ShoppingPlan {
+    shop_cached(
+        materials,
+        market,
+        vendors,
+        allowed,
+        ctx,
+        &mut PurchaseCache::new(),
+    )
+}
+
+/// Completeness first, then the travel-weighted cost, then plain gil, then
+/// the world set itself so ties resolve the same way on every run.
+pub fn rank(p: &ShoppingPlan) -> (i64, i64, i64, BTreeSet<i32>) {
+    (p.missing, p.effective, p.cost, p.worlds.clone())
+}
+
+pub const ROUTE_LIMIT: usize = 5;
+const BEAM_WIDTH: usize = 5;
+const BEAM_ROUNDS: usize = 4;
+
+/// Best-found routes collapsed onto the travel frontier (see `frontier`).
+/// Single-world additions are exhaustive; larger routes come from a bounded
+/// beam plus whole-datacenter and full-scope seeds, so the UI calls these
+/// best-found, not optimal. The no-travel plan is always evaluated and is
+/// always the first card; the full-scope plan is always evaluated, so the
+/// last card is always the most complete plan found and, among equally
+/// complete plans, the cheapest — but a more complete plan can still cost
+/// more gil than an earlier, incomplete one (see
+/// `full_scope_can_reuse_a_better_home_plan_for_large_stacks`).
 pub fn compare_routes(
     materials: &[Material],
     market: &BTreeMap<i32, Vec<Offer>>,
     vendors: &BTreeMap<i32, i64>,
-    home: i32,
-) -> Vec<ShoppingPlan> {
-    let candidates: BTreeSet<i32> = market
-        .values()
-        .flatten()
-        .map(|o| o.world)
-        .filter(|w| *w != home)
+    ctx: &RouteContext,
+) -> RouteComparison {
+    let visited = ctx.visited();
+    let needed: BTreeSet<i32> = materials
+        .iter()
+        .filter(|m| m.recipe.is_none() && m.remaining() > 0)
+        .map(|m| m.item)
         .collect();
-    let rank = |p: &ShoppingPlan| (p.missing, p.cost, p.worlds.len());
-    let home_set = BTreeSet::from([home]);
-    let baseline = shop(materials, market, vendors, &home_set, home);
-    let mut results = vec![baseline.clone()];
-    let mut beam = vec![(home_set, baseline)];
-    for _ in 0..3 {
-        let mut next = beam.clone();
-        let mut visited = BTreeSet::new();
-        for (set, _) in &beam {
-            for world in &candidates {
-                let mut allowed = set.clone();
-                allowed.insert(*world);
-                if visited.insert(allowed.clone()) {
-                    let plan = shop(materials, market, vendors, &allowed, home);
-                    next.push((allowed, plan));
+    let candidates: BTreeSet<i32> = market
+        .iter()
+        .filter(|(item, _)| needed.contains(item))
+        .flat_map(|(item, offers)| {
+            offers
+                .iter()
+                .filter(move |o| !ctx.unavailable.contains(&(*item, o.world)))
+                .map(|o| o.world)
+        })
+        .filter(|w| !visited.contains(w))
+        .collect();
+    let mut cache = PurchaseCache::new();
+    let mut pool: BTreeMap<BTreeSet<i32>, ShoppingPlan> = BTreeMap::new();
+    // Scoped so the closure's borrow of `pool` ends before the collapse below.
+    {
+        let mut evaluate = |allowed: BTreeSet<i32>| {
+            let plan = pool.entry(allowed.clone()).or_insert_with(|| {
+                shop_cached(materials, market, vendors, &allowed, ctx, &mut cache)
+            });
+            rank(plan)
+        };
+        let mut beam = vec![(evaluate(visited.clone()), visited.clone())];
+        for _ in 0..BEAM_ROUNDS {
+            let mut next = beam.clone();
+            for (_, set) in &beam {
+                for world in candidates.difference(set) {
+                    let mut allowed = set.clone();
+                    allowed.insert(*world);
+                    if !next.iter().any(|(_, s)| *s == allowed) {
+                        let key = evaluate(allowed.clone());
+                        next.push((key, allowed));
+                    }
                 }
             }
+            next.sort();
+            next.truncate(BEAM_WIDTH);
+            if next == beam {
+                break;
+            }
+            beam = next;
         }
-        next.sort_by_key(|(set, p)| (rank(p), set.clone()));
-        next.dedup_by(|a, b| a.0 == b.0);
-        next.truncate(4);
-        results.push(next[0].1.clone());
-        beam = next;
+        let mut full = visited.clone();
+        full.extend(&candidates);
+        evaluate(full);
+        let datacenters: BTreeSet<i32> = candidates.iter().map(|w| ctx.dc_of(*w)).collect();
+        for dc in datacenters {
+            let mut allowed = visited.clone();
+            allowed.extend(candidates.iter().filter(|w| ctx.dc_of(**w) == dc));
+            evaluate(allowed);
+        }
     }
-    let mut all = candidates;
-    all.insert(home);
-    let unrestricted = shop(materials, market, vendors, &all, home);
-    // A wider allowance can always reuse a cheaper narrow plan, even when the
-    // large-batch stack heuristic chooses a worse combination from more offers.
-    let best = results
-        .iter()
-        .chain(std::iter::once(&unrestricted))
-        .min_by_key(|p| rank(p))
-        .unwrap()
-        .clone();
-    results.push(best);
-    results
+    RouteComparison {
+        cards: frontier(pool.into_values(), &ctx.weights, ROUTE_LIMIT),
+    }
+}
+
+/// The route cards: a Pareto frontier over (travel distance, gil), shortest
+/// trip first. `cards[0]` is the no-new-travel baseline and the last card is
+/// the most complete plan found and, among equally complete plans, the
+/// cheapest — it is not necessarily cheaper in gil than an earlier,
+/// incomplete card.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RouteComparison {
+    pub cards: Vec<ShoppingPlan>,
+}
+
+impl RouteComparison {
+    pub fn baseline(&self) -> Option<&ShoppingPlan> {
+        self.cards.first()
+    }
+
+    pub fn cheapest(&self) -> Option<&ShoppingPlan> {
+        self.cards.last()
+    }
+
+    /// Index of the card `rank` prefers given the travel weights: the
+    /// default selection and the "Best value" badge.
+    pub fn best_value(&self) -> Option<usize> {
+        (0..self.cards.len()).min_by_key(|i| rank(&self.cards[*i]))
+    }
+}
+
+/// Collapse candidate plans onto the travel frontier. One card per travel
+/// shape (the plan with the fewest missing units, then the least gil), sorted
+/// by `weights.distance` then hop counts, keeping only cards that strictly
+/// improve on the card to their left (fewer missing, or equal missing and
+/// less gil). The baseline shape (no new travel) has distance zero and sorts
+/// first, so it is always kept. Longer frontiers are trimmed to `limit`
+/// (at least two) keeping the first and last cards, the min-`rank` card (so
+/// `best_value` never points at a card the trim discarded), and then the
+/// steps with the largest marginal improvement over their left neighbour.
+pub fn frontier(
+    plans: impl IntoIterator<Item = ShoppingPlan>,
+    weights: &TravelWeights,
+    limit: usize,
+) -> Vec<ShoppingPlan> {
+    let mut by_shape: BTreeMap<Travel, ShoppingPlan> = BTreeMap::new();
+    for plan in plans {
+        let better = by_shape.get(&plan.travel).is_none_or(|cur| {
+            (plan.missing, plan.cost, &plan.worlds) < (cur.missing, cur.cost, &cur.worlds)
+        });
+        if better {
+            by_shape.insert(plan.travel, plan);
+        }
+    }
+    let mut shapes: Vec<ShoppingPlan> = by_shape.into_values().collect();
+    shapes.sort_by_key(|p| (weights.distance(p.travel), p.travel));
+    let mut kept: Vec<ShoppingPlan> = Vec::new();
+    for plan in shapes {
+        let improves = kept
+            .last()
+            .is_none_or(|last| (plan.missing, plan.cost) < (last.missing, last.cost));
+        if improves {
+            kept.push(plan);
+        }
+    }
+    let limit = limit.max(2);
+    if kept.len() <= limit {
+        return kept;
+    }
+    let last = kept.len() - 1;
+    // The min-rank card is the default selection ("Best value"); it must
+    // survive the trim even when its marginal saving over its left neighbour
+    // is small, or `best_value()` (computed after trimming) could name a
+    // card the engine already discarded as worse.
+    let best = (0..kept.len()).min_by_key(|i| rank(&kept[*i])).unwrap_or(0);
+    // Marginal improvement over the left neighbour: completing more of the
+    // recipe outranks saving gil. Ties keep the shorter trip.
+    let mut middle: Vec<(usize, (i64, i64))> = (1..last)
+        .map(|i| {
+            (
+                i,
+                (
+                    kept[i - 1].missing - kept[i].missing,
+                    kept[i - 1].cost - kept[i].cost,
+                ),
+            )
+        })
+        .collect();
+    middle.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut keep: BTreeSet<usize> = BTreeSet::from([0, last, best]);
+    for (i, _) in middle {
+        if keep.len() >= limit {
+            break;
+        }
+        keep.insert(i);
+    }
+    kept.into_iter()
+        .enumerate()
+        .filter(|(i, _)| keep.contains(i))
+        .map(|(_, p)| p)
+        .collect()
 }
 
 #[cfg(test)]
@@ -373,6 +658,191 @@ mod tests {
             price,
         }
     }
+    fn ctx(home: i32, datacenters: &[(i32, i32)]) -> RouteContext {
+        RouteContext {
+            home,
+            datacenters: datacenters.iter().copied().collect(),
+            ..Default::default()
+        }
+    }
+    fn leaf(item: i32, needed: i64) -> Material {
+        Material {
+            item,
+            needed,
+            ..Default::default()
+        }
+    }
+    fn plan(travel: (usize, usize), cost: i64, missing: i64, worlds: &[i32]) -> ShoppingPlan {
+        ShoppingPlan {
+            travel: Travel {
+                dc_hops: travel.0,
+                world_hops: travel.1,
+            },
+            cost,
+            missing,
+            effective: cost,
+            worlds: worlds.iter().copied().collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn frontier_keeps_the_cheaper_plan_per_shape() {
+        let w = TravelWeights::default();
+        let cards = frontier(
+            [
+                plan((0, 0), 100, 0, &[]),
+                plan((0, 1), 90, 0, &[2]),
+                plan((0, 1), 80, 0, &[3]),
+            ],
+            &w,
+            5,
+        );
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[1].worlds, BTreeSet::from([3]));
+    }
+
+    #[test]
+    fn frontier_drops_further_and_dearer_but_keeps_further_and_cheaper() {
+        let w = TravelWeights::default();
+        let cards = frontier(
+            [
+                plan((0, 0), 100, 0, &[]),
+                plan((0, 1), 80, 0, &[2]),
+                plan((0, 2), 85, 0, &[2, 3]),
+                plan((1, 0), 60, 0, &[9]),
+            ],
+            &w,
+            5,
+        );
+        let costs: Vec<i64> = cards.iter().map(|p| p.cost).collect();
+        assert_eq!(costs, vec![100, 80, 60]);
+    }
+
+    #[test]
+    fn frontier_always_keeps_the_baseline() {
+        let w = TravelWeights::default();
+        // Nothing beats home.
+        let cards = frontier(
+            [plan((0, 0), 100, 0, &[]), plan((0, 1), 100, 0, &[2])],
+            &w,
+            5,
+        );
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].travel, Travel::default());
+        // Home is incomplete and dearer-looking plans that complete are kept.
+        let cards = frontier(
+            [plan((0, 0), 10, 3, &[]), plan((0, 1), 500, 0, &[2])],
+            &w,
+            5,
+        );
+        assert_eq!(cards.len(), 2);
+        assert_eq!((cards[0].missing, cards[1].missing), (3, 0));
+    }
+
+    #[test]
+    fn frontier_trims_to_the_limit_keeping_ends_and_largest_savings() {
+        let w = TravelWeights::default();
+        // Seven strict steps; marginal savings: 1, 50, 2, 40, 3, 30.
+        let cards = frontier(
+            [
+                plan((0, 0), 1000, 0, &[]),
+                plan((0, 1), 999, 0, &[2]),
+                plan((0, 2), 949, 0, &[2, 3]),
+                plan((0, 3), 947, 0, &[2, 3, 4]),
+                plan((0, 4), 907, 0, &[2, 3, 4, 5]),
+                plan((1, 0), 904, 0, &[9]),
+                plan((1, 1), 874, 0, &[9, 10]),
+            ],
+            &w,
+            5,
+        );
+        let costs: Vec<i64> = cards.iter().map(|p| p.cost).collect();
+        assert_eq!(costs, vec![1000, 949, 907, 904, 874]);
+    }
+
+    #[test]
+    fn frontier_trim_keeps_the_best_value_card() {
+        let w = TravelWeights::default();
+        // Same seven strictly-improving shapes as the trim test above, but
+        // the third middle card (a small marginal saving the old rule would
+        // drop) is given a distinctly low `effective` so `rank` prefers it.
+        let mut best = plan((0, 3), 947, 0, &[2, 3, 4]);
+        best.effective = 1;
+        let cards = frontier(
+            [
+                plan((0, 0), 1000, 0, &[]),
+                plan((0, 1), 999, 0, &[2]),
+                plan((0, 2), 949, 0, &[2, 3]),
+                best,
+                plan((0, 4), 907, 0, &[2, 3, 4, 5]),
+                plan((1, 0), 904, 0, &[9]),
+                plan((1, 1), 874, 0, &[9, 10]),
+            ],
+            &w,
+            5,
+        );
+        assert_eq!(cards.len(), 5);
+        let costs: Vec<i64> = cards.iter().map(|p| p.cost).collect();
+        assert_eq!(costs, vec![1000, 949, 947, 907, 874]);
+        assert_eq!(cards.first().map(|p| p.cost), Some(1000));
+        assert_eq!(cards.last().map(|p| p.cost), Some(874));
+        let comparison = RouteComparison { cards };
+        assert_eq!(
+            comparison.best_value().map(|i| comparison.cards[i].cost),
+            Some(947)
+        );
+    }
+
+    #[test]
+    fn frontier_orders_by_travel_weight_then_hops() {
+        let three_hops = plan((0, 3), 80, 0, &[2, 3, 4]);
+        let one_dc = plan((1, 0), 70, 0, &[9]);
+        let home = plan((0, 0), 100, 0, &[]);
+        // Default weights: 3 world hops (6,000) sort before 1 DC hop (10,000).
+        let cards = frontier(
+            [home.clone(), three_hops.clone(), one_dc.clone()],
+            &TravelWeights::default(),
+            5,
+        );
+        assert_eq!(
+            cards.iter().map(|p| p.cost).collect::<Vec<_>>(),
+            vec![100, 80, 70]
+        );
+        // A cheap DC hop sorts first, and then 3 world hops are dearer-and-further.
+        let cheap_dc = TravelWeights {
+            world_hop: 2_000,
+            dc_hop: 1_000,
+        };
+        let cards = frontier([home, three_hops, one_dc], &cheap_dc, 5);
+        assert_eq!(
+            cards.iter().map(|p| p.cost).collect::<Vec<_>>(),
+            vec![100, 70]
+        );
+        assert_eq!(
+            cheap_dc.distance(Travel {
+                dc_hops: 1,
+                world_hops: 2
+            }),
+            5_000
+        );
+    }
+
+    #[test]
+    fn best_value_follows_rank_not_position() {
+        let mut middle = plan((0, 1), 80, 0, &[2]);
+        middle.effective = 82;
+        let mut last = plan((1, 0), 70, 0, &[9]);
+        last.effective = 170;
+        let c = RouteComparison {
+            cards: vec![plan((0, 0), 100, 0, &[]), middle, last],
+        };
+        assert_eq!(c.best_value(), Some(1));
+        assert_eq!(c.baseline().map(|p| p.cost), Some(100));
+        assert_eq!(c.cheapest().map(|p| p.cost), Some(70));
+        assert_eq!(RouteComparison::default().best_value(), None);
+    }
+
     #[test]
     fn shared_intermediates_round_once_and_owned_is_consumed_once() {
         let root = recipe(1, 10, 1, &[(20, 1), (30, 1)]);
@@ -419,7 +889,7 @@ mod tests {
             &BTreeMap::from([(30, vec![offer(1, 1, 9, 10)])]),
             &BTreeMap::new(),
             &BTreeSet::from([1]),
-            1,
+            &ctx(1, &[]),
         );
         assert_eq!(plan.cost, 90);
         recipes.get_mut(&2).unwrap().ingredients = vec![(10, 1)];
@@ -466,10 +936,25 @@ mod tests {
             (1, vec![offer(1, 1, 2, 50), offer(2, 2, 2, 10)]),
             (2, vec![offer(3, 2, 1, 20)]),
         ]);
-        let plans = compare_routes(&lines, &market, &BTreeMap::new(), 1);
-        assert_eq!(plans[0].missing, 1);
-        assert_eq!((plans[1].cost, plans[1].missing), (40, 0));
-        assert_eq!(plans[1].worlds, BTreeSet::from([2]));
+        let c = compare_routes(
+            &lines,
+            &market,
+            &BTreeMap::new(),
+            &ctx(1, &[(1, 1), (2, 1)]),
+        );
+        // The incomplete home plan is the baseline; the complete plan is the
+        // best value even though home looks cheaper.
+        assert_eq!(c.cards[0].missing, 1);
+        let best = &c.cards[c.best_value().unwrap()];
+        assert_eq!((best.cost, best.missing), (40, 0));
+        assert_eq!(best.worlds, BTreeSet::from([2]));
+        assert_eq!(
+            best.travel,
+            Travel {
+                dc_hops: 0,
+                world_hops: 1
+            }
+        );
     }
     #[test]
     fn exact_stack_solver_matches_exhaustive_subsets() {
@@ -569,10 +1054,245 @@ mod tests {
             ..Default::default()
         }];
         let market = BTreeMap::from([(1, vec![offer(1, 1, 10_001, 2), offer(2, 2, 10_000, 1)])]);
-        let plans = compare_routes(&materials, &market, &BTreeMap::new(), 1);
-        assert_eq!(plans[4].cost, 20_002);
-        assert!(plans[4].worlds.is_empty());
-        assert!(plans[4].approximate);
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &ctx(1, &[]));
+        // The best value is never worse than the no-travel plan, even when the
+        // large-batch greedy path gets worse with more offers to choose from.
+        assert_eq!(c.best_value(), Some(0));
+        let home = c.baseline().unwrap();
+        assert_eq!(home.cost, 20_002);
+        assert!(home.worlds.is_empty());
+        assert!(home.approximate);
+    }
+
+    #[test]
+    fn travel_counts_a_new_datacenter_as_one_hop_plus_extra_worlds() {
+        let c = ctx(1, &[(1, 10), (2, 10), (3, 20), (4, 20)]);
+        let travel = |dc_hops, world_hops| Travel {
+            dc_hops,
+            world_hops,
+        };
+        assert_eq!(c.travel(&BTreeSet::new()), Travel::default());
+        assert_eq!(c.travel(&BTreeSet::from([2])), travel(0, 1));
+        assert_eq!(c.travel(&BTreeSet::from([3, 4])), travel(1, 1));
+        assert_eq!(c.travel(&BTreeSet::from([2, 3, 4])), travel(1, 2));
+        assert_eq!(c.travel_cost(travel(1, 2)), 10_000 + 2 * 2_000);
+        // A locked purchase on world 3 means that datacenter is already on the
+        // itinerary: its sibling is a plain world hop.
+        let mut locked = c.clone();
+        locked.locked.insert(9, vec![offer(1, 3, 1, 1)]);
+        assert_eq!(locked.travel(&BTreeSet::from([3, 4])), travel(0, 1));
+    }
+
+    #[test]
+    fn unmapped_world_is_charged_as_its_own_datacenter() {
+        let c = ctx(1, &[(1, 10)]);
+        assert_eq!(
+            c.travel(&BTreeSet::from([7])),
+            Travel {
+                dc_hops: 1,
+                world_hops: 0
+            }
+        );
+    }
+
+    #[test]
+    fn datacenter_weight_can_outrank_a_cheaper_foreign_listing() {
+        let materials = [leaf(1, 1)];
+        let market = BTreeMap::from([(1, vec![offer(1, 2, 1, 1_000), offer(2, 3, 1, 500)])]);
+        let mut c_ctx = ctx(1, &[(1, 10), (2, 10), (3, 20)]);
+        c_ctx.weights = TravelWeights {
+            world_hop: 100,
+            dc_hop: 5_000,
+        };
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &c_ctx);
+        let best = &c.cards[c.best_value().unwrap()];
+        assert_eq!(best.worlds, BTreeSet::from([2]));
+        assert_eq!((best.cost, best.effective), (1_000, 1_100));
+        // Both travel shapes are on the frontier regardless of weights.
+        assert_eq!(c.cards.len(), 3);
+        c_ctx.weights = TravelWeights {
+            world_hop: 0,
+            dc_hop: 0,
+        };
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &c_ctx);
+        assert_eq!(c.cards[c.best_value().unwrap()].worlds, BTreeSet::from([3]));
+    }
+
+    #[test]
+    fn locked_offer_is_kept_counted_and_makes_its_world_free() {
+        let materials = [leaf(1, 2), leaf(2, 1)];
+        // Item 1's locked listing is gone from the market: it was bought.
+        let market = BTreeMap::from([
+            (1, vec![offer(11, 1, 1, 100)]),
+            (2, vec![offer(21, 1, 1, 100), offer(22, 3, 1, 95)]),
+        ]);
+        let mut c_ctx = ctx(1, &[(1, 10), (3, 20)]);
+        c_ctx.locked.insert(1, vec![offer(10, 3, 1, 50)]);
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &c_ctx);
+        let best = &c.cards[c.best_value().unwrap()];
+        let first = &best.purchases[&1];
+        assert_eq!((first.quantity, first.cost, first.missing()), (2, 150, 0));
+        assert!(first.offers.iter().any(|o| o.id == 10));
+        // World 3 is already on the itinerary, so the 5 gil saving is free.
+        assert_eq!(best.purchases[&2].offers[0].id, 22);
+        assert_eq!(best.worlds, BTreeSet::from([3]));
+        assert_eq!(best.travel, Travel::default());
+        assert_eq!(best.effective, best.cost);
+    }
+
+    #[test]
+    fn locked_quantity_covering_the_need_buys_nothing_more() {
+        let materials = [leaf(1, 2)];
+        let market = BTreeMap::from([(1, vec![offer(11, 1, 5, 1)])]);
+        let mut c = ctx(1, &[(1, 10)]);
+        c.locked.insert(1, vec![offer(10, 1, 3, 7)]);
+        let plan = shop(
+            &materials,
+            &market,
+            &BTreeMap::new(),
+            &BTreeSet::from([1]),
+            &c,
+        );
+        let p = &plan.purchases[&1];
+        assert_eq!(
+            (p.quantity, p.cost, p.missing(), p.offers.len()),
+            (3, 21, 0, 1)
+        );
+    }
+
+    #[test]
+    fn locked_listing_still_on_the_market_is_not_bought_twice() {
+        let materials = [leaf(1, 4)];
+        let market = BTreeMap::from([(1, vec![offer(10, 1, 2, 5), offer(11, 1, 2, 9)])]);
+        let mut c = ctx(1, &[(1, 10)]);
+        c.locked.insert(1, vec![offer(10, 1, 2, 5)]);
+        let plan = shop(
+            &materials,
+            &market,
+            &BTreeMap::new(),
+            &BTreeSet::from([1]),
+            &c,
+        );
+        let ids: Vec<_> = plan.purchases[&1].offers.iter().map(|o| o.id).collect();
+        assert_eq!(ids, vec![10, 11]);
+        assert_eq!((plan.cost, plan.missing), (28, 0));
+    }
+
+    #[test]
+    fn locked_stock_reduces_the_vendor_top_up() {
+        let materials = [leaf(1, 5)];
+        let mut c = ctx(1, &[(1, 10)]);
+        c.locked.insert(1, vec![offer(10, 1, 2, 3)]);
+        let plan = shop(
+            &materials,
+            &BTreeMap::new(),
+            &BTreeMap::from([(1, 10)]),
+            &BTreeSet::from([1]),
+            &c,
+        );
+        let p = &plan.purchases[&1];
+        assert_eq!(
+            (p.vendor_quantity, p.quantity, p.cost, p.missing()),
+            (3, 5, 36, 0)
+        );
+    }
+
+    #[test]
+    fn unavailable_pair_is_skipped_without_blocking_the_world() {
+        let materials = [leaf(1, 1), leaf(2, 1)];
+        let market = BTreeMap::from([
+            (1, vec![offer(11, 2, 1, 10), offer(12, 1, 1, 100)]),
+            (2, vec![offer(21, 2, 1, 10)]),
+        ]);
+        let mut c_ctx = ctx(1, &[(1, 10), (2, 10)]);
+        c_ctx.unavailable.insert((1, 2));
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &c_ctx);
+        assert!(
+            c.cards
+                .iter()
+                .flat_map(|p| p.purchases.get(&1))
+                .flat_map(|p| &p.offers)
+                .all(|o| o.world != 2)
+        );
+        let best = &c.cards[c.best_value().unwrap()];
+        assert_eq!(best.purchases[&1].offers[0].id, 12);
+        assert_eq!(best.purchases[&2].offers[0].id, 21);
+        assert_eq!(best.missing, 0);
+    }
+
+    #[test]
+    fn unavailable_does_not_drop_a_locked_offer() {
+        let materials = [leaf(1, 1)];
+        let mut c = ctx(1, &[(1, 10), (2, 10)]);
+        c.locked.insert(1, vec![offer(10, 2, 1, 5)]);
+        c.unavailable.insert((1, 2));
+        let plan = shop(
+            &materials,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::from([1]),
+            &c,
+        );
+        assert_eq!((plan.cost, plan.missing), (5, 0));
+    }
+
+    #[test]
+    fn same_shape_routes_collapse_and_home_stays_best_value_for_small_savings() {
+        let materials = [leaf(1, 1)];
+        let market = BTreeMap::from([(
+            1,
+            (1..=8)
+                .map(|w| offer(w, w, 1, 100 - i64::from(w)))
+                .collect::<Vec<_>>(),
+        )]);
+        let c_ctx = ctx(1, &(1..=8).map(|w| (w, 10)).collect::<Vec<_>>());
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &c_ctx);
+        // Seven one-hop options collapse to the cheapest; two hops never help
+        // a one-unit purchase, so the frontier is home and one hop.
+        assert_eq!(c.cards.len(), 2);
+        assert!(c.cards[0].worlds.is_empty());
+        assert_eq!(c.cards[0].cost, 99);
+        assert_eq!(c.cards[1].worlds, BTreeSet::from([8]));
+        assert_eq!(c.cheapest().map(|p| p.cost), Some(92));
+        // A few gil never pays for a 2,000 gil hop.
+        assert_eq!(c.best_value(), Some(0));
+    }
+
+    #[test]
+    fn a_single_world_scope_yields_one_route() {
+        let materials = [leaf(1, 1)];
+        let market = BTreeMap::from([(1, vec![offer(1, 1, 1, 10)])]);
+        let c = compare_routes(&materials, &market, &BTreeMap::new(), &ctx(1, &[(1, 10)]));
+        assert_eq!(c.cards.len(), 1);
+        assert_eq!(c.cards[0].cost, 10);
+    }
+
+    #[test]
+    fn ranking_is_deterministic_under_ties_and_input_order() {
+        let materials = [leaf(1, 1)];
+        let forward = vec![offer(1, 3, 1, 10), offer(2, 2, 1, 10), offer(3, 1, 1, 50)];
+        let mut backward = forward.clone();
+        backward.reverse();
+        let mut c = ctx(1, &[(1, 10), (2, 10), (3, 10)]);
+        c.weights = TravelWeights {
+            world_hop: 0,
+            dc_hop: 0,
+        };
+        let a = compare_routes(
+            &materials,
+            &BTreeMap::from([(1, forward)]),
+            &BTreeMap::new(),
+            &c,
+        );
+        let b = compare_routes(
+            &materials,
+            &BTreeMap::from([(1, backward)]),
+            &BTreeMap::new(),
+            &c,
+        );
+        assert_eq!(a, b);
+        // Equal gil and travel: the lower world set wins.
+        assert_eq!(a.cards[a.best_value().unwrap()].worlds, BTreeSet::from([2]));
     }
 
     #[test]
@@ -616,7 +1336,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &BTreeSet::from([1]),
-            1,
+            &ctx(1, &[]),
         );
         assert_eq!((plan.cost, plan.missing), (0, 0));
     }

@@ -50,6 +50,14 @@ Vendored builds need **Perl + a C compiler** to configure and build OpenSSL from
   ```
   In Git Bash, prepend `/c/Strawberry/perl/bin:/c/Strawberry/c/bin:` to `$PATH`.
 
+  **Also set `OPENSSL_RUST_USE_NASM=0`.** `C:\Strawberry\c\bin` ships `nasm.exe`, and once
+  `openssl-src` can find it, it enables OpenSSL's x86_64 assembly — whose `sm4` perlasm generator
+  fails under Strawberry's Perl 5.42 (`Number found where operator expected ... near "$-144"`,
+  then `NMAKE : fatal error U1077`). The override forces the `no-asm` build that works. Like the
+  Perl trap, this only bites when `openssl-sys` actually rebuilds (a profile change such as
+  `CARGO_PROFILE_*_DEBUG=0`, a cold `target/`, a `cargo clean`), so a box that built fine for
+  weeks fails "out of nowhere".
+
 The first build takes ~10 minutes (compiling OpenSSL from source); subsequent builds reuse the cached artifact.
 
 ## Optional: install git hooks

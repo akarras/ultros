@@ -10,6 +10,26 @@
 
 ## Global Constraints
 
+- **Required before implementing Task 3:** Replace the `row_id` hash sketch
+  with collision-free identity for row keys and callbacks. The shown 31-bit
+  FNV mapping gives both `21482:any` and `41373:hq` the ID `1708812798`, so
+  `find_key` can edit or delete the wrong row. Carry the canonical `RowKey`
+  through callbacks, or maintain an explicit one-to-one ID mapping for the
+  open list; never assume a hash is unique. Add a regression that puts this
+  pair in one list and independently edits, removes, and restores each row.
+
+- **Required before implementing Tasks 2, 5, and 9:** Scope snapshot keys,
+  indexes, and in-memory handles to the authenticated user as well as the list.
+  The single-user storage and fallback snippets below are incomplete sketches:
+  adapt their signatures and callers rather than copying the list-id-only keys
+  or treating every API error as offline. Logout/account changes must close the
+  old handle and subscription. Explicit authentication/permission denial or a
+  deleted-list response must purge the affected cached snapshot and permission,
+  clear the rendered document, and stop syncing. Only transient transport/server
+  failures may use the same user's offline cache. Gate this with browser tests
+  for account A switching to B, permission revocation, list deletion, and a real
+  offline-to-online reconnect that preserves authorized edits.
+
 - Spec: `docs/superpowers/specs/2026-09-07-lists-local-first-sync-design.md`, sections 3 and 8; deviations recorded here and in the spec by Task 10: `AutoMarkPurchases` gains an optional `on_purchase` callback instead of calling the document directly, and the Labs page keeps a `Resource` (built from the document) so `AutoMarkPurchases` and the `Transition` body stay untouched.
 - The non-Labs page is byte-for-byte unchanged, except `AutoMarkPurchases` gaining an optional prop whose absence preserves today's behaviour.
 - All new user-facing strings in all seven locales. This phase adds none: status words reuse `RealtimeStatus`'s existing vocabulary.

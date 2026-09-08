@@ -85,6 +85,9 @@ pub(crate) async fn create_alert(
             )
             .await;
         }
+        AlertTrigger::RetainerSold {} => {
+            return create_retainer_sold_alert_handler(&db, &senders, owner, cooldown, &req).await;
+        }
         AlertTrigger::ListUpdate { list_id } => {
             return create_list_update_alert_handler(&db, &senders, owner, list_id, cooldown, &req)
                 .await;
@@ -294,6 +297,35 @@ async fn create_retainer_undercut_alert_handler(
     }))
 }
 
+async fn create_retainer_sold_alert_handler(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "retainer sale alerts require endpoint_ids"
+        )));
+    }
+    let (alert, _sale) = db
+        .create_retainer_sale_alert(owner, cooldown, &req.endpoint_ids)
+        .await
+        .map_err(ApiError::from)?;
+    // The sale listener rebuilds its rules on every `alerts` bus event.
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: AlertTrigger::RetainerSold {},
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
 async fn create_list_update_alert_handler(
     db: &UltrosDb,
     senders: &EventSenders,
@@ -420,6 +452,26 @@ pub(crate) async fn list_alerts(
             trigger: AlertTrigger::RetainerUndercut {
                 margin_percent: t.margin_percent,
             },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    let sale_rows = db
+        .get_user_retainer_sale_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, _) in sale_rows {
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::RetainerSold {},
             delivery: AlertDelivery::DiscordDm,
             endpoint_ids,
             enabled: a.enabled,

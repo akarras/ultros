@@ -49,9 +49,9 @@ async function main() {
     {}, expected);
   }
   async function menu(column) {
-    const selector = `.virtual-grid-heading[data-column="${column}"] .grid-column-menu`;
+    const selector = `.virtual-grid-heading[data-column="${column}"]`;
     await page.$eval(selector, element => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
-    await page.click(selector);
+    await page.click(selector, {button:'right'});
     await page.waitForSelector('.grid-menu-panel');
   }
   async function filter(column, operator, value = '') {
@@ -198,6 +198,7 @@ async function main() {
         ['scrip-sources', '/scrip-sources'],
       ];
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',
+        'market-sale-median-30', 'market-gil-7',
         'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7'];
       await page.setViewport({ width: 1600, height: 1000 });
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });

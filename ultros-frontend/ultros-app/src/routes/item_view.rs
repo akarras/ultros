@@ -1,5 +1,6 @@
 use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
 use crate::components::app_link::AppLink;
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::chart_query::{
     RangeDecision, RangePreset, SaleProbe, decide_range, effective_preset,
 };
@@ -30,7 +31,7 @@ use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
-use leptos_router::hooks::{use_params_map, use_query_map};
+use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use leptos_use::signal_debounced;
 use std::{
@@ -90,7 +91,7 @@ fn WorldButton(
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
     let label = world_name.clone();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     // Only the params this route actually owns are carried forward, so a
     // stale or hostile query key can't be reflected back into a link.
     let search = Signal::derive(move || {
@@ -1548,7 +1549,7 @@ fn ItemViewContent() -> impl IntoView {
     let realtime_status = RwSignal::new("connecting".to_string());
     let last_update_at = RwSignal::new(None::<chrono::DateTime<chrono::Utc>>);
     let params = use_params_map();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let item_id = Memo::new(move |_| {
         params()
             .get("id")

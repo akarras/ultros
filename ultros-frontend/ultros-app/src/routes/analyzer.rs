@@ -27,7 +27,6 @@ use crate::{
         control_bar::{ColumnOption, ControlBar, ControlBarPopovers, FilterOption},
         filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
         meta::*,
         query_button::QueryButton,
@@ -295,13 +294,48 @@ fn serialize_visible_cols_preserving(
     ids.join(",")
 }
 
+use crate::components::app_link::use_query_map_or_default;
+use crate::query_defaults::query_signal;
+use crate::query_defaults::query_signal_or_default;
+/// `?cols=` with one shared (non-native) id flipped, everything else kept
+/// in place. Absent param = the default view, whose only shared column is
+/// `sale_estimate` (see `serialize_visible_cols_preserving`).
+fn toggle_shared_col(previous: Option<&str>, id: &str) -> String {
+    let mut ids: Vec<&str> = previous
+        .unwrap_or("sale_estimate")
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .collect();
+    if let Some(i) = ids.iter().position(|t| *t == id) {
+        ids.remove(i);
+    } else {
+        ids.push(id);
+    }
+    ids.join(",")
+}
+
+/// The stat-column ids present in `?cols=`, for the picker's checkboxes.
+/// Native ids stay in `parse_visible_cols`; other shared ids (`market-world`)
+/// are not picker entries and are ignored here.
+fn shared_cols_in(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
+    raw.unwrap_or("")
+        .split(',')
+        .filter_map(|tok| {
+            crate::analyzer_kit::stat_columns::STAT_COLUMNS
+                .iter()
+                .find(|c| c.id == tok)
+                .map(|c| c.id)
+        })
+        .collect()
+}
+
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    hooks::{use_location, use_navigate, use_params_map},
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -1404,7 +1438,7 @@ fn AnalyzerTable(
     let (max_purchase_price, set_max_purchase_price) = filter_query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = filter_query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
-    let (cols_param, set_cols_param) = leptos_router::hooks::query_signal_with_options::<String>(
+    let (cols_param, set_cols_param) = query_signal_or_default::<String>(
         "cols",
         NavigateOptions {
             scroll: false,
@@ -1423,6 +1457,13 @@ fn AnalyzerTable(
     let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
     let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
+    // The toolbar picker also lists the shared sale-history columns; their
+    // checked state lives in `?cols=` beside the native ids.
+    let picker_visible = Memo::new(move |_| {
+        let mut set = visible_cols.get();
+        set.extend(shared_cols_in(cols_param().as_deref()));
+        set
+    });
     let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1666,12 +1707,15 @@ fn AnalyzerTable(
         })
         .collect::<Vec<_>>()
     });
-    // Columns the picker offers, in table order.
+    // Columns the picker offers: the native columns in table order, then
+    // every shared sale-history column grouped by window.
     let column_options = Memo::new(move |_| {
-        ALL_OPTIONAL_COLS
+        let mut options = ALL_OPTIONAL_COLS
             .iter()
             .map(|col| ColumnOption::new(col, col_label(col)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        options.extend(crate::analyzer_kit::stat_columns::market_picker_options());
+        options
     });
 
     // Held here because the category picker lives in the `+ Filter` menu and
@@ -1679,15 +1723,19 @@ fn AnalyzerTable(
     let popovers = ControlBarPopovers::new();
 
     let toggle_column = Callback::new(move |col: &'static str| {
+        let previous = cols_param.get_untracked();
         let mut set = visible_cols.get_untracked();
-        if set.contains(col) {
-            set.remove(col);
+        let extras = if ALL_OPTIONAL_COLS.contains(&col) {
+            if !set.remove(col) {
+                set.insert(col);
+            }
+            previous
         } else {
-            set.insert(col);
-        }
+            Some(toggle_shared_col(previous.as_deref(), col))
+        };
         set_cols_param.set(Some(serialize_visible_cols_preserving(
             &set,
-            cols_param.get_untracked().as_deref(),
+            extras.as_deref(),
         )));
     });
 
@@ -2362,7 +2410,7 @@ fn AnalyzerTable(
                     }
                 }
                 columns=column_options
-                visible_columns=visible_cols
+                visible_columns=picker_visible
                 on_toggle_column=toggle_column
                 on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
                 columns_extra=move || {
@@ -2913,52 +2961,18 @@ COL_ROI => (view! {
                                     />
                                 </div> }).into_any(),
 COL_WORLD => (view! {
-                                    <div class="  px-3 py-2 flex flex-row gap-2">
-                                        {t!(i18n, analyzer_col_world)}
-                                        <div>
-                                            {move || {
-                                                world_filter()
-                                                    .map(|_filter| {
-                                                        view! {
-                                                            <button
-                                                                type="button"
-                                                                aria-label=t_string!(i18n, aria_remove_filter)
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                                on:click=move |_| {
-                                                                    set_world_filter(None);
-                                                                }
-                                                            >
-                                                                <Icon icon=icondata::MdiFilterRemove />
-                                                            </button>
-                                                        }
-                                                    })
-                                            }}
-                                        </div>
-                                    </div>
+                                    // Clearing the filter is the grid header's
+                                    // own control now (VirtualGrid renders it
+                                    // for every filterable column), so this
+                                    // heading is just its label.
+                                    <div class="px-3 py-2">{t!(i18n, analyzer_col_world)}</div>
                                 }).into_any(),
 COL_DATACENTER => (view! {
-                                    <div class="  px-3 py-2 flex flex-row gap-2">
-                                        {t!(i18n, analyzer_col_datacenter)}
-                                        <div>
-                                            {move || {
-                                                datacenter_filter()
-                                                    .map(|_filter| {
-                                                        view! {
-                                                            <button
-                                                                type="button"
-                                                                aria-label=t_string!(i18n, aria_remove_filter)
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                                on:click=move |_| {
-                                                                    set_datacenter_filter(None);
-                                                                }
-                                                            >
-                                                                <Icon icon=icondata::MdiFilterRemove />
-                                                            </button>
-                                                        }
-                                                    })
-                                            }}
-                                        </div>
-                                    </div>
+                                    // Clearing the filter is the grid header's
+                                    // own control now (VirtualGrid renders it
+                                    // for every filterable column), so this
+                                    // heading is just its label.
+                                    <div class="px-3 py-2">{t!(i18n, analyzer_col_datacenter)}</div>
                                 }).into_any(),
 COL_TREND => (view! {
                                     <div class="  px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
@@ -3401,7 +3415,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = CONNECTED_REGIONS;
-    let query = use_query_map();
+    let query = use_query_map_or_default();
 
     let enabled_regions = move || {
         let map = query();
@@ -3655,7 +3669,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
 
     Effect::new(move |_| {
@@ -3850,6 +3864,35 @@ mod tests {
                 .split(',')
                 .any(|id| id == "sale_estimate")
         );
+    }
+
+    #[test]
+    fn shared_column_toggle_adds_then_removes_the_id() {
+        // No `?cols=` means the default view, whose only shared column is
+        // the sale estimate; ticking a stat column must keep it.
+        let on = toggle_shared_col(None, "market-sale-median-7");
+        assert_eq!(on, "sale_estimate,market-sale-median-7");
+        let off = toggle_shared_col(Some(&on), "market-sale-median-7");
+        assert_eq!(off, "sale_estimate");
+        // A later native toggle keeps the shared id (the preserving path).
+        let visible = parse_visible_cols(Some(&on));
+        let serialized = serialize_visible_cols_preserving(&visible, Some(&on));
+        assert!(
+            serialized.split(',').any(|id| id == "market-sale-median-7"),
+            "{serialized}"
+        );
+    }
+
+    #[test]
+    fn picker_checked_state_reads_stat_ids_out_of_cols() {
+        let set = shared_cols_in(Some(
+            "roi,market-sale-median-7,market-world,market-gil-30,bogus",
+        ));
+        assert_eq!(
+            set,
+            std::collections::HashSet::from(["market-sale-median-7", "market-gil-30"])
+        );
+        assert!(shared_cols_in(None).is_empty());
     }
 
     #[test]

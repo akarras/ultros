@@ -1,6 +1,51 @@
 use super::layout::ColumnFilter;
 use crate::{components::app_link::use_location_or_default, i18n::*};
 use leptos::prelude::*;
+use leptos_router::params::ParamsMap;
+
+/// Keys whose landing default means "unlimited", spelled as an explicit empty
+/// value. Removing one outright would let `seed_query_default` put the default
+/// back on the next navigation, so clearing them writes the empty string
+/// instead — which is also why `grid-filter-active` tests for a non-empty
+/// value rather than for the key's presence.
+fn clears_to_empty(key: &str) -> bool {
+    matches!(key, "next-sale" | "last-sold" | "min-sales")
+}
+
+/// Write the packed metric filters back into `gf`, dropping the param once
+/// nothing is left in it.
+fn write_metric_filters(query: &mut ParamsMap, filters: MetricFilters) {
+    query.remove("gf");
+    if !filters.is_empty() {
+        query.insert("gf", serde_json::to_string(&filters).unwrap_or_default());
+    }
+}
+
+/// `query` with every filter on one column cleared: metric filters drop out of
+/// the packed `gf` map, plain filters drop their own key.
+///
+/// One call clears a whole column, which is what the header's clear button
+/// needs — a column like Cost / unit carries four separate filters, and the
+/// popover only offers them one at a time.
+pub fn cleared_query(query: &ParamsMap, filters: &[ColumnFilter]) -> ParamsMap {
+    let mut query = query.clone();
+    let mut metrics = parse_filters(query.get("gf").as_deref());
+    let mut touched_metrics = false;
+    for filter in filters {
+        if filter.metric.is_some() {
+            touched_metrics |= metrics.remove(filter.key).is_some();
+        } else {
+            query.remove(filter.key);
+            if clears_to_empty(filter.key) {
+                query.insert(filter.key, String::new());
+            }
+        }
+    }
+    if touched_metrics {
+        write_metric_filters(&mut query, metrics);
+    }
+    query
+}
 
 #[component]
 pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
@@ -21,9 +66,7 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
         q.remove(key);
         if let Some(next) = next {
             q.insert(key, next);
-        }
-        // These landing defaults need an explicit empty value to mean unlimited.
-        else if matches!(key, "next-sale" | "last-sold" | "min-sales") {
+        } else if clears_to_empty(key) {
             q.insert(key, String::new());
         }
         #[cfg(feature = "hydrate")]
@@ -77,7 +120,7 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
     }.into_any()
 }
 
-use super::metrics::{FilterOp, MetricFilter, ValueKind, parse_filters};
+use super::metrics::{FilterOp, MetricFilter, MetricFilters, ValueKind, parse_filters};
 
 #[component]
 pub fn MetricSortControls(column: &'static str) -> impl IntoView {
@@ -143,10 +186,7 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
             }
             filters.insert(column.to_string(), filter);
         }
-        q.remove("gf");
-        if !filters.is_empty() {
-            q.insert("gf", serde_json::to_string(&filters).unwrap_or_default());
-        }
+        write_metric_filters(&mut q, filters);
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
@@ -208,5 +248,93 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
                 <button type="button" on:click=move |_|commit.run(true)>{t!(i18n,grid_filter_clear)}</button>
             </div>
         </form>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::metrics::ValueKind;
+    use super::*;
+
+    fn params(pairs: &[(&'static str, &str)]) -> ParamsMap {
+        let mut q = ParamsMap::new();
+        for (k, v) in pairs {
+            q.insert(*k, (*v).to_string());
+        }
+        q
+    }
+
+    fn plain(key: &'static str) -> ColumnFilter {
+        ColumnFilter::new(key, key.to_string(), false)
+    }
+
+    fn metric(key: &'static str) -> ColumnFilter {
+        ColumnFilter::metric(key, key.to_string(), ValueKind::Number)
+    }
+
+    #[test]
+    fn a_plain_filter_drops_its_key_and_leaves_the_rest_alone() {
+        let q = cleared_query(
+            &params(&[("world", "Gilgamesh"), ("sort", "profit")]),
+            &[plain("world")],
+        );
+        assert_eq!(q.get("world"), None);
+        assert_eq!(q.get("sort").as_deref(), Some("profit"));
+    }
+
+    #[test]
+    fn an_unlimited_default_clears_to_an_explicit_empty_value() {
+        // Removing the key outright would let the landing default seed itself
+        // back in, so "cleared" has to be spelled out.
+        let q = cleared_query(&params(&[("min-sales", "3")]), &[plain("min-sales")]);
+        assert_eq!(q.get("min-sales").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_metric_filter_drops_out_of_gf_without_disturbing_its_neighbours() {
+        let gf =
+            r#"{"grid:profit":{"op":"gte","value":"100"},"grid:roi":{"op":"gte","value":"5"}}"#;
+        let q = cleared_query(&params(&[("gf", gf)]), &[metric("grid:profit")]);
+        let left = parse_filters(q.get("gf").as_deref());
+        assert!(!left.contains_key("grid:profit"), "{left:?}");
+        assert_eq!(left.get("grid:roi").map(|f| f.value.as_str()), Some("5"));
+    }
+
+    #[test]
+    fn gf_disappears_once_its_last_filter_is_cleared() {
+        let gf = r#"{"grid:profit":{"op":"gte","value":"100"}}"#;
+        let q = cleared_query(&params(&[("gf", gf)]), &[metric("grid:profit")]);
+        assert_eq!(q.get("gf"), None);
+    }
+
+    #[test]
+    fn one_call_clears_every_filter_a_column_carries() {
+        // Cost / unit carries four; the popover only offers them one at a time.
+        let gf = r#"{"grid:cost":{"op":"lte","value":"9"}}"#;
+        let q = cleared_query(
+            &params(&[
+                ("gf", gf),
+                ("cost-basis", "listing"),
+                ("subcrafts", "1"),
+                ("min-sales", "3"),
+            ]),
+            &[
+                metric("grid:cost"),
+                plain("cost-basis"),
+                plain("subcrafts"),
+                plain("min-sales"),
+            ],
+        );
+        assert_eq!(q.get("gf"), None);
+        assert_eq!(q.get("cost-basis"), None);
+        assert_eq!(q.get("subcrafts"), None);
+        assert_eq!(q.get("min-sales").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_column_with_no_live_filter_leaves_gf_untouched() {
+        let gf = r#"{"grid:roi":{"op":"gte","value":"5"}}"#;
+        let q = cleared_query(&params(&[("gf", gf)]), &[metric("grid:profit")]);
+        assert_eq!(q.get("gf").as_deref(), Some(gf));
     }
 }

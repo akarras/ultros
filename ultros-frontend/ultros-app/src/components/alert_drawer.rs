@@ -39,6 +39,7 @@ pub enum AlertKind {
     #[default]
     ItemPrice,
     Undercut,
+    Sold,
 }
 
 /// Whether an existing alert belongs under the given drawer tab. List-scoped
@@ -48,6 +49,7 @@ fn trigger_matches_kind(trigger: &AlertTrigger, kind: AlertKind) -> bool {
         (trigger, kind),
         (AlertTrigger::BelowThreshold { .. }, AlertKind::ItemPrice)
             | (AlertTrigger::RetainerUndercut { .. }, AlertKind::Undercut)
+            | (AlertTrigger::RetainerSold {}, AlertKind::Sold)
     )
 }
 
@@ -176,6 +178,7 @@ pub fn AlertDrawer(
                 }
                 AlertTrigger::RetainerUndercut { margin_percent }
             }
+            AlertKind::Sold => AlertTrigger::RetainerSold {},
         };
         let endpoint_ids: Vec<i32> = selected_endpoints.get().into_iter().collect();
         if endpoint_ids.is_empty() {
@@ -201,6 +204,9 @@ pub fn AlertDrawer(
                             }
                             AlertKind::Undercut => {
                                 t_string!(i18n, undercut_alert_created_toast).to_string()
+                            }
+                            AlertKind::Sold => {
+                                t_string!(i18n, sold_alert_created_toast).to_string()
                             }
                         });
                     }
@@ -261,15 +267,20 @@ pub fn AlertDrawer(
                 <Show when=move || !locked_to_preset_item>
                     <div class="space-y-1">
                         <label class="text-sm font-semibold">{t!(i18n, alert_kind_label)}</label>
-                        <div class="grid grid-cols-2 gap-2">
+                        <div class="grid grid-cols-3 gap-2">
                             {kind_btn(AlertKind::ItemPrice, t_string!(i18n, alert_kind_item_price).to_string())}
                             {kind_btn(AlertKind::Undercut, t_string!(i18n, alert_kind_undercut).to_string())}
+                            {kind_btn(AlertKind::Sold, t_string!(i18n, alert_kind_sold).to_string())}
                         </div>
                     </div>
                 </Show>
 
                 <Show when=move || !locked_to_preset_item && kind.get() == AlertKind::Undercut>
                     <p class="text-sm opacity-80">{t!(i18n, undercut_alert_description)}</p>
+                </Show>
+
+                <Show when=move || !locked_to_preset_item && kind.get() == AlertKind::Sold>
+                    <p class="text-sm opacity-80">{t!(i18n, sold_alert_description)}</p>
                 </Show>
 
                 <Show when=move || kind.get() == AlertKind::ItemPrice>
@@ -432,6 +443,9 @@ pub fn AlertDrawer(
                                                             t_string!(i18n, alerts_margin_percent, margin = *margin_percent)
                                                         )
                                                     }
+                                                    AlertTrigger::RetainerSold {} => {
+                                                        t_string!(i18n, alerts_retainer_sold_rule).to_string()
+                                                    }
                                                     // Filtered out above; keep the match exhaustive.
                                                     _ => String::new(),
                                                 };
@@ -488,6 +502,7 @@ pub fn AlertDrawer(
                             {move || match kind.get() {
                                 AlertKind::ItemPrice => t_string!(i18n, alert_drawer_submit).to_string(),
                                 AlertKind::Undercut => t_string!(i18n, undercut_alert_submit).to_string(),
+                                AlertKind::Sold => t_string!(i18n, sold_alert_submit).to_string(),
                             }}
                         </span>
                     </button>
@@ -521,6 +536,16 @@ mod tests {
     }
 
     #[test]
+    fn sold_kind_matches_only_retainer_sold() {
+        let sold = AlertTrigger::RetainerSold {};
+        assert!(trigger_matches_kind(&sold, AlertKind::Sold));
+        assert!(!trigger_matches_kind(&sold, AlertKind::Undercut));
+        assert!(!trigger_matches_kind(&sold, AlertKind::ItemPrice));
+        let undercut = AlertTrigger::RetainerUndercut { margin_percent: 5 };
+        assert!(!trigger_matches_kind(&undercut, AlertKind::Sold));
+    }
+
+    #[test]
     fn list_scoped_alerts_never_show_in_drawer() {
         for trigger in [
             AlertTrigger::ListItemThreshold { list_id: 1 },
@@ -528,6 +553,7 @@ mod tests {
         ] {
             assert!(!trigger_matches_kind(&trigger, AlertKind::ItemPrice));
             assert!(!trigger_matches_kind(&trigger, AlertKind::Undercut));
+            assert!(!trigger_matches_kind(&trigger, AlertKind::Sold));
         }
     }
 }

@@ -175,7 +175,7 @@ pub fn AddRecipeToCurrentListModal(
                                             </label>
                                         </div>
 
-                                        <div class="flex items-center gap-2" title=t_string!(i18n, add_recipe_no_shards_title)>
+                                        <div class="flex items-center gap-2" title=t_string!(i18n, add_recipe_no_crystals_title)>
                                             <label class="text-sm cursor-pointer select-none flex items-center gap-1">
                                                 <input
                                                     type="checkbox"
@@ -183,7 +183,7 @@ pub fn AddRecipeToCurrentListModal(
                                                     prop:checked=no_crystals
                                                     on:change=move |e| set_no_crystals(event_target_checked(&e))
                                                 />
-                                                {t!(i18n, add_recipe_no_shards)}
+                                                {t!(i18n, add_recipe_no_crystals)}
                                             </label>
                                         </div>
 

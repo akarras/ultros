@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use ultros_api_types::{
     user::OwnedRetainer,
-    websocket::{ListEventData, ListingEventData},
+    websocket::{ListEventData, ListingEventData, SaleEventData},
 };
 use ultros_db::{
     UltrosDb,
@@ -18,6 +18,7 @@ use crate::event::{EventBus, EventType};
 
 use super::list_update_alert_tracker::ListUpdateAlertListener;
 use super::price_alert_tracker::PriceAlertListener;
+use super::sold_alert::RetainerSaleListener;
 use super::undercut_alert::{RetainerAlertListener, RetainerAlertTx};
 
 pub(crate) struct AlertManager {
@@ -25,6 +26,7 @@ pub(crate) struct AlertManager {
     current_retainer_alerts: HashMap<i32, RetainerAlertListener>,
     price_alerts: Option<PriceAlertListener>,
     list_update_alerts: Option<ListUpdateAlertListener>,
+    sale_alerts: Option<RetainerSaleListener>,
 }
 
 impl AlertManager {
@@ -35,7 +37,7 @@ impl AlertManager {
             EventBus<alert::Model>,
             EventBus<alert_retainer_undercut::Model>,
         ),
-        lists: EventBus<ListEventData>,
+        (lists, history): (EventBus<ListEventData>, EventBus<SaleEventData>),
         ctx: serenity_prelude::Context,
         token: CancellationToken,
         world_cache: Arc<WorldCache>,
@@ -45,6 +47,7 @@ impl AlertManager {
             current_retainer_alerts: HashMap::new(),
             price_alerts: None,
             list_update_alerts: None,
+            sale_alerts: None,
         };
         match ultros_db.get_all_alerts().await {
             Ok(all_alerts) => {
@@ -92,6 +95,19 @@ impl AlertManager {
         {
             Ok(listener) => manager.list_update_alerts = Some(listener),
             Err(e) => error!("failed to start list update alert listener: {e}"),
+        }
+        match RetainerSaleListener::start(
+            ultros_db.clone(),
+            listings.resubscribe(),
+            history,
+            retainers.resubscribe(),
+            alerts.resubscribe(),
+            ctx.clone(),
+        )
+        .await
+        {
+            Ok(listener) => manager.sale_alerts = Some(listener),
+            Err(e) => error!("failed to start retainer sale alert listener: {e}"),
         }
         loop {
             tokio::select! {

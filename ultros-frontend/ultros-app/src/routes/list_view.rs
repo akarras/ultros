@@ -605,8 +605,8 @@ pub fn ListView() -> impl IntoView {
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
                                     <button
                                         class="sticky-bar-button sticky-bar-button-shrink"
-                                        class:bg-brand-900=move || item_modal_open()
-                                        class:border-brand-500=move || item_modal_open()
+                                        class:bg-brand-900=move || item_modal_open.get()
+                                        class:border-brand-500=move || item_modal_open.get()
                                         on:click=move |_| set_item_modal_open(true)
                                     >
                                         <Icon icon=i::BiPlusRegular />
@@ -616,8 +616,8 @@ pub fn ListView() -> impl IntoView {
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
                                     <button
                                         class="sticky-bar-button sticky-bar-button-shrink"
-                                        class:bg-brand-900=move || recipe_modal_open()
-                                        class:border-brand-500=move || recipe_modal_open()
+                                        class:bg-brand-900=move || recipe_modal_open.get()
+                                        class:border-brand-500=move || recipe_modal_open.get()
                                         on:click=move |_| set_recipe_modal_open(true)
                                     >
                                         <Icon icon=i::BiBookAddRegular />

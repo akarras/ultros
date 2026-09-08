@@ -22,6 +22,12 @@ still leave gaps. Retrying
 an ambiguous insert can temporarily create physical duplicate rows; analytics
 queries use `FINAL` to deduplicate them before aggregating.
 
+`listing_events` and `floor_changes` (added 2026-09) have **no Postgres
+backfill**: Postgres holds only the current board, so dropped rows are gone.
+`floor_changes` self-heals on the analyzer's next resync (every boot, and after
+bus lag); `listing_events` simply has a gap. Watch
+`ultros_clickhouse_writer_dropped_rows_total{table=...}`.
+
 ## Detect and reconcile gaps
 
 Monitor increases in:

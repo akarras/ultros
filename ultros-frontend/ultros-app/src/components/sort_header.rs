@@ -193,7 +193,9 @@ pub fn SortableHeaderCell<M>(
     /// The formula operator this column plays, rendered before the label.
     #[prop(optional)]
     badge: Option<TermRole>,
-    /// Brand tint plus a bottom hairline: this column feeds Profit.
+    /// A gentle brand-tinted block behind the whole heading: this column
+    /// feeds Profit. (It used to be a bottom hairline, which landed on the
+    /// sub-label's descenders once headings grew a second line.)
     #[prop(optional, into)]
     emphasized: Option<Signal<bool>>,
     /// Line-2 content after the sub-label (the "use" pill). Rendered only
@@ -216,7 +218,7 @@ where
             c.push_str(" flex flex-col justify-center gap-0.5");
         }
         if emphasized.is_some_and(|e| e.get()) {
-            c.push_str(" shadow-[inset_0_-2px_0_var(--brand-ring)]");
+            c.push_str(" grid-heading-marked");
         }
         c
     };
@@ -492,10 +494,7 @@ mod test {
             assert!(html.contains("listing · Aether"), "{html}");
             assert!(html.contains("aria-hidden=\"true\""), "{html}");
             assert!(html.contains("sr-only"), "{html}");
-            assert!(
-                html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
-                "{html}"
-            );
+            assert!(html.contains("grid-heading-marked"), "{html}");
             // Without the props the markup is what it was.
             let plain = view! {
                 <SortableHeaderCell

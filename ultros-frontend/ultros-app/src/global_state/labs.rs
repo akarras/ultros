@@ -2,12 +2,14 @@
 //! A cookie, not localStorage: the list page renders on the server, so a
 //! client-only flag would hydrate a different page than it served.
 
+#![allow(dead_code)] // Public API used by Settings UI and route switches (later tasks)
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::components::app_link::use_query_map_or_default;
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 
 use super::cookies::Cookies;
 
@@ -69,7 +71,7 @@ impl fmt::Display for Labs {
 /// A memo prevents unrelated query changes from rebuilding the page.
 pub fn use_lab(token: &'static str) -> Signal<bool> {
     let cookie = use_context::<Cookies>().map(|c| c.use_cookie_typed::<_, Labs>(LABS_COOKIE).0);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     Memo::new(move |_| {
         let from_cookie = cookie.is_some_and(|c| c.get().is_some_and(|l| l.has(token)));
         let from_url = query.with(|q| {

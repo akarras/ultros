@@ -1,0 +1,235 @@
+//! The window × statistic matrix behind the shared `market-*` sale-history
+//! columns: the windows the server serves, the statistics each carries, the
+//! literal column ids (a bookmark and saved-view contract), the labels, and
+//! the Columns-picker options built from them. Every analyzer that renders
+//! `MarketGrid` gets all of these; the Flip Finder also lists them in its
+//! toolbar picker.
+
+use std::collections::HashSet;
+
+use crate::components::control_bar::{ColumnOption, PickerHeading};
+use crate::i18n::*;
+
+use super::needed::is_supported_window;
+
+/// A trailing sale-history window `/api/v1/sale_stats` serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Window {
+    D1,
+    D7,
+    D30,
+    D90,
+}
+
+impl Window {
+    pub const ALL: [Window; 4] = [Window::D1, Window::D7, Window::D30, Window::D90];
+
+    pub const fn days(self) -> u16 {
+        match self {
+            Window::D1 => 1,
+            Window::D7 => 7,
+            Window::D30 => 30,
+            Window::D90 => 90,
+        }
+    }
+
+    /// Position in [`Window::ALL`]; indexes `MarketData`'s per-window slots.
+    pub const fn index(self) -> usize {
+        match self {
+            Window::D1 => 0,
+            Window::D7 => 1,
+            Window::D30 => 2,
+            Window::D90 => 3,
+        }
+    }
+}
+
+const _: () = {
+    let mut i = 0;
+    while i < Window::ALL.len() {
+        assert!(
+            is_supported_window(Window::ALL[i].days()),
+            "a Window the server does not serve"
+        );
+        i += 1;
+    }
+};
+
+/// One statistic read from an `ItemSaleStats` row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StatKind {
+    Min,
+    Median,
+    Average,
+    SalesPerDay,
+    Cadence,
+    Units,
+    Sales,
+    Vwap,
+    GilVolume,
+}
+
+#[derive(Debug)]
+pub struct StatColumn {
+    pub kind: StatKind,
+    pub window: Window,
+    pub id: &'static str,
+}
+
+/// Ids are literals so `grep market-sale-median-7` finds the contract.
+macro_rules! window_columns {
+    ($($days:literal => $w:ident),* $(,)?) => {
+        [$(
+            StatColumn { kind: StatKind::Min,         window: Window::$w, id: concat!("market-sale-min-", $days) },
+            StatColumn { kind: StatKind::Median,      window: Window::$w, id: concat!("market-sale-median-", $days) },
+            StatColumn { kind: StatKind::Average,     window: Window::$w, id: concat!("market-sale-avg-", $days) },
+            StatColumn { kind: StatKind::SalesPerDay, window: Window::$w, id: concat!("market-sales-per-day-", $days) },
+            StatColumn { kind: StatKind::Cadence,     window: Window::$w, id: concat!("market-cadence-", $days) },
+            StatColumn { kind: StatKind::Units,       window: Window::$w, id: concat!("market-units-", $days) },
+            StatColumn { kind: StatKind::Sales,       window: Window::$w, id: concat!("market-sales-", $days) },
+            StatColumn { kind: StatKind::Vwap,        window: Window::$w, id: concat!("market-vwap-", $days) },
+            StatColumn { kind: StatKind::GilVolume,   window: Window::$w, id: concat!("market-gil-", $days) },
+        )*]
+    };
+}
+
+/// Window-major, kind order as declared: this is also the picker order.
+pub static STAT_COLUMNS: [StatColumn; 36] = window_columns!(1 => D1, 7 => D7, 30 => D30, 90 => D90);
+
+pub fn stat_column(kind: StatKind, window: Window) -> &'static StatColumn {
+    STAT_COLUMNS
+        .iter()
+        .find(|c| c.kind == kind && c.window == window)
+        .expect("every (kind, window) pair is in STAT_COLUMNS")
+}
+
+fn stat_name(kind: StatKind) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    match kind {
+        StatKind::Min => t_string!(i18n, market_stat_sale_min),
+        StatKind::Median => t_string!(i18n, market_stat_sale_median),
+        StatKind::Average => t_string!(i18n, market_stat_sale_avg),
+        StatKind::SalesPerDay => t_string!(i18n, market_stat_sales_per_day),
+        StatKind::Cadence => t_string!(i18n, market_stat_cadence),
+        StatKind::Units => t_string!(i18n, market_stat_units),
+        StatKind::Sales => t_string!(i18n, market_stat_sales),
+        StatKind::Vwap => t_string!(i18n, market_stat_vwap),
+        StatKind::GilVolume => t_string!(i18n, market_stat_gil),
+    }
+    .to_string()
+}
+
+/// "`{name}` (7d)" in the locale's own suffix form.
+fn with_window(name: String, window: Window) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    t_string!(
+        i18n,
+        market_stat_window,
+        stat = name,
+        days = window.days().to_string()
+    )
+    .to_string()
+}
+
+pub fn stat_label(kind: StatKind, window: Window) -> String {
+    with_window(stat_name(kind), window)
+}
+
+/// Whether any column of `window` is in the grid's wanted set (`?cols=`,
+/// `?gf=` filters, the `?sort=grid:` target, visible defs).
+pub fn window_wanted(needs: &HashSet<String>, window: Window) -> bool {
+    STAT_COLUMNS
+        .iter()
+        .any(|c| c.window == window && needs.contains(c.id))
+}
+
+/// Every stat column as a toolbar-picker option, grouped under one
+/// "Sale history (Nd)" heading per window.
+pub fn market_picker_options() -> Vec<ColumnOption> {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let history = t_string!(i18n, market_picker_group_history).to_string();
+    STAT_COLUMNS
+        .iter()
+        .map(|c| ColumnOption {
+            id: c.id,
+            label: stat_label(c.kind, c.window),
+            group: Some(PickerHeading {
+                label: with_window(history.clone(), c.window),
+                title: None,
+            }),
+            disabled: false,
+            hint: None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use leptos::prelude::*;
+    use leptos_i18n::context::init_i18n_context;
+
+    #[test]
+    fn legacy_ids_are_preserved_and_all_ids_are_unique() {
+        for id in [
+            "market-sale-min-7",
+            "market-sale-median-7",
+            "market-sale-avg-7",
+            "market-sales-per-day-7",
+            "market-cadence-7",
+            "market-units-7",
+            "market-sales-7",
+            "market-vwap-7",
+            "market-units-30",
+            "market-sales-30",
+            "market-vwap-30",
+        ] {
+            assert!(STAT_COLUMNS.iter().any(|c| c.id == id), "lost {id}");
+        }
+        let ids: HashSet<_> = STAT_COLUMNS.iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), STAT_COLUMNS.len());
+        assert_eq!(STAT_COLUMNS.len(), 9 * Window::ALL.len());
+    }
+
+    #[test]
+    fn every_id_ends_with_its_window() {
+        for c in &STAT_COLUMNS {
+            assert!(c.id.ends_with(&format!("-{}", c.window.days())), "{}", c.id);
+            assert!(std::ptr::eq(stat_column(c.kind, c.window), c));
+        }
+    }
+
+    #[test]
+    fn a_window_is_wanted_only_when_one_of_its_columns_is() {
+        let needs: HashSet<String> = ["market-sale-median-30", "roi"].map(str::to_owned).into();
+        assert!(window_wanted(&needs, Window::D30));
+        assert!(!window_wanted(&needs, Window::D90));
+        assert!(!window_wanted(&needs, Window::D1));
+    }
+
+    #[test]
+    fn labels_and_picker_match_the_legacy_seven_day_text() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            assert_eq!(stat_label(StatKind::Median, Window::D7), "Sale median (7d)");
+            assert_eq!(
+                stat_label(StatKind::GilVolume, Window::D90),
+                "Gil traded (90d)"
+            );
+            let options = market_picker_options();
+            assert_eq!(options.len(), STAT_COLUMNS.len());
+            let median = options
+                .iter()
+                .find(|o| o.id == "market-sale-median-7")
+                .unwrap();
+            assert_eq!(median.label, "Sale median (7d)");
+            assert_eq!(
+                median.group.as_ref().map(|g| g.label.as_str()),
+                Some("Sale history (7d)")
+            );
+            assert_eq!(options[0].id, "market-sale-min-1");
+        });
+    }
+}

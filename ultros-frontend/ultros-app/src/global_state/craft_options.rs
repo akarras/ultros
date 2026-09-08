@@ -20,10 +20,39 @@ pub struct CraftOptions {
     /// If None, on-hand uses LocalStorage.
     #[serde(default)]
     pub active_craft_list: Option<i32>,
+    /// Gil-equivalent cost of one world hop inside a datacenter, used by the
+    /// recipe planner's route ranking.
+    #[serde(default = "default_world_hop_gil")]
+    pub world_hop_gil: i64,
+    /// Gil-equivalent cost of entering another datacenter.
+    #[serde(default = "default_dc_hop_gil")]
+    pub dc_hop_gil: i64,
 }
 
 fn default_exclude_shards() -> bool {
     true
+}
+
+fn default_world_hop_gil() -> i64 {
+    crate::recipe_planner::TravelWeights::default().world_hop
+}
+
+fn default_dc_hop_gil() -> i64 {
+    crate::recipe_planner::TravelWeights::default().dc_hop
+}
+
+/// Upper bound for either hop weight; anything larger is a typo, not a preference.
+pub const MAX_HOP_GIL: i64 = 10_000_000;
+
+impl CraftOptions {
+    /// Planner travel weights, clamped so a hand-edited cookie cannot
+    /// overflow the route score.
+    pub fn travel_weights(&self) -> crate::recipe_planner::TravelWeights {
+        crate::recipe_planner::TravelWeights {
+            world_hop: self.world_hop_gil.clamp(0, MAX_HOP_GIL),
+            dc_hop: self.dc_hop_gil.clamp(0, MAX_HOP_GIL),
+        }
+    }
 }
 
 impl Default for CraftOptions {
@@ -34,6 +63,8 @@ impl Default for CraftOptions {
             exclude_shards: true,
             use_on_hand: false,
             active_craft_list: None,
+            world_hop_gil: default_world_hop_gil(),
+            dc_hop_gil: default_dc_hop_gil(),
         }
     }
 }
@@ -72,6 +103,8 @@ mod tests {
             exclude_shards: false,
             use_on_hand: true,
             active_craft_list: Some(42),
+            world_hop_gil: 1_500,
+            dc_hop_gil: 9_000,
         };
         let s = opts.to_string();
         let parsed: CraftOptions = s.parse().unwrap();
@@ -84,5 +117,21 @@ mod tests {
         let parsed: CraftOptions = r#"{"require_hq":true}"#.parse().unwrap();
         assert!(parsed.require_hq);
         assert!(parsed.exclude_shards); // serde default kicks in
+        assert_eq!((parsed.world_hop_gil, parsed.dc_hop_gil), (2_000, 10_000));
+    }
+
+    #[test]
+    fn travel_weights_round_trip_and_are_clamped() {
+        let opts = CraftOptions {
+            world_hop_gil: 500,
+            dc_hop_gil: 25_000,
+            ..Default::default()
+        };
+        let parsed: CraftOptions = opts.to_string().parse().unwrap();
+        assert_eq!((parsed.world_hop_gil, parsed.dc_hop_gil), (500, 25_000));
+        let parsed: CraftOptions =
+            r#"{"world_hop_gil":-5,"dc_hop_gil":99999999999}"#.parse().unwrap();
+        assert_eq!(parsed.travel_weights().world_hop, 0);
+        assert_eq!(parsed.travel_weights().dc_hop, MAX_HOP_GIL);
     }
 }
