@@ -56,7 +56,7 @@ use crate::{
         job_set_detail::JobSetDetail,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
         leve_analyzer::*,
-        list_view::*,
+        list_view_sync::ListRoute,
         lists::*,
         not_found::NotFound,
         recipe_analyzer::*,
@@ -541,7 +541,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />
-                            <Route path=path!(":id") view=ListView />
+                            <Route path=path!(":id") view=ListRoute />
                             <Route path=path!("") view=EditLists />
                         </ParentRoute>
                         <ParentRoute path=path!("items") view=ItemExplorer>

@@ -14,9 +14,10 @@
  *   7. Owner deletes the list and lands back on /list.
  *
  * Env:
- *   BASE_URL    default http://127.0.0.1:8080
- *   HEADLESS    "false" to watch, anything else runs headless
- *   TIMEOUT_MS  default 30000
+ *   BASE_URL     default http://127.0.0.1:8080
+ *   HEADLESS     "false" to watch, anything else runs headless
+ *   TIMEOUT_MS   default 30000
+ *   LABS_COOKIE  set to a Labs token (e.g. lists-sync) to run the flow under that experiment
  */
 
 "use strict";
@@ -34,6 +35,15 @@ async function login(page, baseUrl, user) {
   const resp = await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
   if (!resp || resp.status() >= 400) {
     throw new Error(`test login failed for ${user.username}: ${resp ? resp.status() : -1}`);
+  }
+  // Opt this session into a Labs experiment. The cookie is server-visible,
+  // so SSR and hydration agree; the page reloads below to pick it up.
+  if (process.env.LABS_COOKIE) {
+    await page.setCookie({ name: "LABS", value: process.env.LABS_COOKIE, url: baseUrl, path: "/" });
+    const labsResp = await page.goto(new URL("/list", baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    if (!labsResp || labsResp.status() >= 400) {
+      throw new Error(`reload under LABS=${process.env.LABS_COOKIE} failed for ${user.username}: ${labsResp ? labsResp.status() : -1}`);
+    }
   }
 }
 
@@ -189,6 +199,24 @@ async function main() {
     const listUrl = new URL(`/list/${listId}`, BASE_URL).toString();
     await ownerPage.goto(listUrl, { waitUntil: "domcontentloaded" });
     await waitForHydration(ownerPage, TIMEOUT_MS);
+
+    // `ListRoute` picks `ListViewSync` (marked with data-testid="list-view-sync")
+    // or plain `ListView` based on the LABS cookie — assert the flow actually
+    // exercised the branch it thinks it did.
+    const hasSyncMarker = await ownerPage.evaluate(
+      () => !!document.querySelector('[data-testid="list-view-sync"]'),
+    );
+    if (process.env.LABS_COOKIE) {
+      if (!hasSyncMarker) {
+        fail(failures, "expected [data-testid=list-view-sync] under LABS_COOKIE");
+      } else {
+        pass("Labs list page rendered under LABS_COOKIE");
+      }
+    } else if (hasSyncMarker) {
+      fail(failures, "did not expect [data-testid=list-view-sync] without LABS_COOKIE");
+    } else {
+      pass("legacy list page rendered without LABS_COOKIE");
+    }
 
     // Verify we can see write-only affordances (we are the owner).
     const hasAddItem = await ownerPage.evaluate(() =>
