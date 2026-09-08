@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-LOCALES_DIR = Path("ultros-frontend/ultros-app/locales")
+LOCALES_DIR = Path("ultros-frontend/ultros-i18n/locales")
 LOCALES = ["de", "fr", "ja", "cn", "ko", "tc"]
 
 # Each entry: key -> {locale: translation}

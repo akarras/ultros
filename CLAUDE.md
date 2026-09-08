@@ -74,7 +74,7 @@ Every user-facing string in `ultros-frontend/ultros-app/` must go through `lepto
 
 When you introduce a new string:
 
-1. Add the key to **every** locale file in `ultros-frontend/ultros-app/locales/` (`en`, `fr`, `de`, `ja`, `cn`, `ko`, `tc`). Adding only `en.json` is not acceptable — the build warns on missing keys per locale and `leptos-i18n` won't compile without the key in every file.
+1. Add the key to **every** locale file in `ultros-frontend/ultros-i18n/locales/` (`en`, `fr`, `de`, `ja`, `cn`, `ko`, `tc`). Adding only `en.json` is not acceptable — the build warns on missing keys per locale and `leptos-i18n` won't compile without the key in every file.
 2. Provide a real translation for each locale, not an English stub. If you genuinely can't translate, copy the English value and flag it in the PR so a native speaker can fix it — but the default is to translate.
 3. Use `snake_case` keys; group related strings by feature prefix (`venture_analyzer_*`, `welcome_*`) when there are several.
 

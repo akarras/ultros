@@ -10314,7 +10314,6 @@ dependencies = [
  "leptos_axum",
  "leptos_hotkeys",
  "leptos_i18n",
- "leptos_i18n_build",
  "leptos_meta",
  "leptos_router",
  "log",
@@ -10334,6 +10333,7 @@ dependencies = [
  "ultros-changelog",
  "ultros-charts",
  "ultros-db",
+ "ultros-i18n",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -10436,6 +10436,16 @@ dependencies = [
  "ultros-api-types",
  "universalis",
  "yoke",
+]
+
+[[package]]
+name = "ultros-i18n"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "leptos",
+ "leptos_i18n",
+ "leptos_i18n_build",
 ]
 
 [[package]]

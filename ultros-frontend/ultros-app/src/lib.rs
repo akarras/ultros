@@ -6,7 +6,7 @@ pub(crate) mod components;
 pub(crate) mod error;
 pub(crate) mod freshness;
 pub(crate) mod global_state;
-pub(crate) mod i18n_fallback;
+pub(crate) use ultros_i18n::fallback as i18n_fallback;
 pub mod last_view;
 pub(crate) mod math;
 pub(crate) mod price_basis;
@@ -20,7 +20,9 @@ pub(crate) mod social_meta;
 pub mod ssr_api;
 pub(crate) mod ws;
 
-include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
+// Keep existing imports stable while the generated translations compile separately.
+pub use ultros_i18n::i18n;
+
 use crate::components::app_link::AppLink;
 use i18n::*;
 
@@ -701,3 +703,35 @@ mod error_filter_wiring {
     }
 }
 pub mod script_escape;
+
+#[cfg(all(test, feature = "ssr"))]
+mod translation_boundary_tests {
+    use crate::i18n::*;
+    use leptos::prelude::*;
+
+    #[test]
+    fn shared_context_translates_and_renders_across_the_crate_boundary() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let context = leptos_i18n::context::init_i18n_context::<ultros_i18n::i18n::Locale>();
+            provide_context(context);
+            let i18n = crate::i18n_fallback::use_i18n_or_default();
+
+            i18n.set_locale(Locale::fr);
+            assert_eq!(context.get_locale_untracked(), Locale::fr);
+            assert_eq!(
+                t_string!(i18n, market_ingredient_label, item = "Bronze").to_string(),
+                "Ingrédient : Bronze"
+            );
+            let html = view! { <span>{t!(i18n, npc_location_unknown)}</span> }.to_html();
+            assert!(html.contains("Emplacement indisponible"));
+
+            context.set_locale(Locale::en);
+            assert_eq!(
+                t_string!(i18n, npc_location_unknown).to_string(),
+                "Location unavailable"
+            );
+        });
+    }
+}

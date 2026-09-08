@@ -24,7 +24,7 @@
 //! English strings in a loading placeholder is a far better outcome than a
 //! truncated response.
 //!
-//! This mirrors the fix in [`crate::components::clipboard`] (#1187) for the
+//! This mirrors the fix in the application's clipboard component (#1187) for the
 //! same failure mode on a different context.
 
 use crate::i18n::Locale;

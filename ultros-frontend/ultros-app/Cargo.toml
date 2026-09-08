@@ -7,6 +7,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-changelog = { path = "../../ultros-changelog" }
 leptos = { workspace = true, features = ["nightly"] }
 leptos_meta = { workspace = true }
@@ -99,14 +100,12 @@ flume = { version = "0.12.0", features = ["async"] }
 icondata_core.workspace = true
 leptos_i18n.workspace = true
 
-[build-dependencies]
-leptos_i18n_build.workspace = true
-
 [features]
 default = [
     "ssr",
 ] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = [
+    "ultros-i18n/hydrate",
     "leptos/hydrate",
     "gloo-net",
     "web-sys",
@@ -117,6 +116,7 @@ hydrate = [
     "leptos_i18n/hydrate",
 ]
 ssr = [
+    "ultros-i18n/ssr",
     "dep:tokio",
     "dep:tower",
     "leptos/ssr",
@@ -135,7 +135,7 @@ ssr = [
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 # Standing up a global executor is a prerequisite for building any reactive
-# effect outside of a running app — see `i18n_fallback`'s tests.
+# effect outside of a running app, including SSR component tests.
 any_spawner = { version = "0.3", features = ["futures-executor"] }
 # SSR render-to-string snapshots (list filter row, auto-mark modal).
 insta = "1"
