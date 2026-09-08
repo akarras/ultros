@@ -51,7 +51,8 @@ Measured on `main`, one row per page. "Distance" is to the target in §2, not to
 
 - `GET /api/v1/sale_stats/{world|dc|region}?window=1|7|30|90` (`ultros/src/web/api/sale_stats.rs`) reads the `sale_stats_window` rollup (t-digest medians merge across worlds), NQ/HQ as separate rows, `gil_volume` on the wire since #1313. `SaleStatsCache` (`ultros/src/web/sale_stats_cache.rs`): 512 keys, 64 MiB, 5 min fresh / 30 min stale, 2 concurrent loads, 12 s timeout, single-flight. Payloads on the wire: 7d world ≈249 KB, DC ≈481 KB, region ≈578 KB, 30d world ≈438 KB.
 - Rollup cadences (`ultros-clickhouse/src/rollups.rs:590-599`): 1d every 15 min, 7d hourly, 30d/90d every 6 h, `sales_hourly` every 15 min (trailing 30 h).
-- **`listing_events` and `floor_changes` (#1320) are write-only.** `queries.rs` has zero references to either table; there is no rollup, no query function, no endpoint. The seed makes the alive set complete from deploy. Volume on prod is unmeasured (owed: watch `ultros_clickhouse_writer_written_rows_total{table="listing_events"}` for a day).
+- **`listing_events` and `floor_changes` (#1320) are write-only.** `queries.rs` has zero references to either table; there is no rollup, no query function, no endpoint. The seed makes the alive set complete from deploy.
+- **Prod volume, measured 2026-09-08 02:24 UTC** (build `fee1e4f`, deployed 2026-09-07 18:31 UTC, read from `ultros.listing_events` on the box): seed `snapshot/added` **11,449,980** rows (the whole board); live websocket rows at a steady **≈170k/hour ≈ 4.1M/day** (adds 637k ≈ removes 654k, updates 36k over 8 h — a healthy feed), catch-up ≈21k over the same span. At ≈22 B/row compressed that is **≈33 GB/year under the 365-day TTL**, about the size of the whole `sales` table (1.97B rows, 28.8 GiB). `floor_changes`: 385k rows in 8 h (`listing` 210k, `refill` 175k, `resync` 1.4k at boot) ≈ **1.15M/day, ≈4 GB/year, and it has no TTL**. Neither number forces a change today; revisit the TTL when WS-I2 decides which windows the rollups actually read (90 days would cut `listing_events` to ≈8 GB).
 - No rate limiting anywhere; back-pressure is structural (cache + semaphore). A new bulk endpoint must copy that contract.
 
 ### 1.5 Issue audit
@@ -106,11 +107,11 @@ Nothing open asks for Trends, Currency Exchange, or Retainer listings to join �
 
 **Default.** 7d on every page except Trends (30d), via a `default_window` prop. A wider default silently changes every profit number (#1329's own caveat), so the default never moves in this roadmap.
 
-### 3.2 D2 — Joining means adopting `MarketGrid`, with one exception
+### 3.2 D2 — Joining means adopting `MarketGrid`, no exceptions
 
-Trends, Currency Exchange and Retainer listings adopt `MarketGrid` outright: their rows already carry `(item, hq, world)`, their tables are hand-rolled or plain `<table>`s, and the kit gives them virtualisation, typed filters, layout, views and every shared column in one move. Their existing native columns become `GridColumn`s + `GridMetric`s; their existing `?sort=` tokens get aliased on read so old links keep working.
+Trends, Currency Exchange, Item Explorer and Retainer listings adopt `MarketGrid` outright: their rows already carry `(item, hq, world)` or project onto it, their tables are hand-rolled, plain `<table>`s or a paginated `DataTableGrid`, and the kit gives them virtualisation, typed filters, layout, views and every shared column in one move. Their existing native columns become `GridColumn`s + `GridMetric`s; their existing `?sort=` tokens get aliased on read so old links keep working.
 
-**The exception is the Item Explorer.** Its row is one item with NQ and HQ as columns, it paginates for SEO, and #1316 just rebuilt it on `DataTableGrid` with a picker and `?cols=`. Splitting rows by quality or dropping pagination would be a product change nobody asked for. Instead the kit exposes its column *provider* — ids, labels, `market_value`, and the `MarketData` fetch gate — so `DataTableGrid` can render the same columns with the same ids, quality chosen per column (`market-sale-median` reads the row's cheapest quality; a `-hq` suffix is not needed because the explorer's `?cols=` is page-local). That is WS-H, and it is the only place a second rendering path is accepted.
+The Item Explorer was the candidate for an exception (one row per item with NQ and HQ as columns; paginated, crawlable category pages). Aaron chose to drop pagination (§7 #5); the row model stays one-per-item with the shared columns reading the cheapest quality, and WS-H carries the SEO checklist. No second rendering path exists in this roadmap.
 
 List View is not scheduled: Lists 2.0 is rewriting that file.
 
@@ -210,41 +211,47 @@ Rows are `TrendItem {item_id, hq, world_id, price, …}` → `MarketSubject::new
 
 Subject = the received item at NQ on the home world, `listing_price = price_per_item`. Native columns (item, qty received, profit, price per item, shops, cost item, hours between sales) become grid columns; its own `?cols=` vocabulary (`price_per_item`, `shops`, `cost`, `hours_between_sales`) is kept verbatim as the native ids so old links work, and `MarketGrid`'s id-skip rule means no collision. The real `<table>` with the `colspan` empty state becomes `QueryGrid`'s empty state. Hours-between-sales stays client-computed from `recentSales` (it is the page's velocity), but "Sales/day" from the shared family sits beside it so the two can be compared. The currency-quantity input stays in `ToolHeader`.
 
-### WS-H — Item Explorer renders the shared columns inside `DataTableGrid`
+### WS-H — Item Explorer joins `MarketGrid` (pagination dropped)
 
-**New issue** (§8). **Size** M–L. **After** WS-A (needs the provider surface). **Files** `analyzer_kit/market.rs` (expose `market_value` / labels / `use_market_data` as a provider without the grid), `routes/item_explorer.rs`, `item_explorer_filters.rs`, locales.
+**New issue** (§8). **Size** L. **After** WS-A. **Files** `routes/item_explorer.rs`, `item_explorer_filters.rs`, `item_explorer_toolbar.rs`, `ultros/src/web/sitemap.rs` (only if a URL shape changes), locales, `integration/shared-analyzer-data.cjs`.
 
-The explorer keeps `DataTableGrid`, pagination and its row model (§3.2). It gains the follow-window sale-history columns as optional, default-off entries in its existing picker; the quality read is the row's cheapest quality with the quality shown in the cell's title. `MarketData` is created only when a market column is in `?cols=` (the 7d world body is ≈249 KB, unacceptable on every category page by default). `column_availability` treats a market column as always fillable. Sorting by a market column is client-side over the current page only — say so in the sort menu, or exclude market columns from sort (recommended for v1).
+Decision §7 #5: the explorer becomes a `MarketGrid` consumer like the rest, and `?page=` / `?per_page=` go away. Two things #1316 just built must survive the move: the eight URL-backed filters and every-column sort (they become `GridMetric` filters and `grid:` sorts, with the old `?sort=name|ilvl|lv|price|hq|vendor|world|key` tokens aliased on read), and the hydration gate that keeps `CheapestPrice::NotLoaded` inert until after hydration so the server's row set and the client's first render cannot disagree (the GlitchTip cluster #1316 cites). `column_availability` stays: a column the set cannot fill is greyed in the picker with its reason.
 
-### WS-I — Listing-history backend: rollups, queries, endpoint
+**Row model.** One row per item stays (a category page is a catalogue, not a quality-split ledger). The subject for the shared columns is the item at its cheapest quality, with the quality named in the cell's title; an `hq`-suffixed pinned variant is not needed because the explorer's columns are page-local. `MarketData` is created only when a market column is in `?cols=` or a `grid:` sort/filter names one — the 7d world body is ≈249 KB and must not load on every category page by default.
 
-**New issue** (§8). **Size** L. **No frontend dependency; start now.** **Files** `ultros-clickhouse/src/{schema,rollups,queries}.rs`, `ultros/src/web/api/listing_stats.rs` (new), `ultros/src/web/sale_stats_cache.rs` (generalise the loader or clone it as `ListingStatsCache`), `ultros-api-types/src/listing_stats.rs` (new), `ultros/src/web.rs` routes, smoke tests under `ultros-clickhouse/tests/`.
+**SEO research (done 2026-09-07, prod).** `robots.txt` disallows `/*?*sort=` and `/*?*per_page=` but *allows* `?page=`, so pages 2..N of a category are crawlable today. The sitemap lists every `/items/category/{id}` and `/items/jobset/{abbr}` page **and every `/item/{id}` page** (`sitemap.rs:268`), so item discoverability does not depend on the explorer's deep pages; what changes is that a category page's server-rendered HTML shrinks to the virtual grid's first viewport. Before the PR ships: (1) Aaron checks Search Console for impressions on `?page=` URLs; (2) old `?page=N` links must redirect (or resolve) to the unpaginated page rather than 404; (3) add `Disallow: /*?*page=` at the same time so crawlers stop requesting the removed shape; (4) keep the category page's `<title>`/description untouched.
 
-Deliverables, per §3.4:
-1. `listing_stats_window` rollup keyed `(world_id, window_days, item_id, hq)`, refreshed on the same tickers as `sale_stats_window`, with the seven metrics. Time-to-sell pairs `listing_events.removed` with `sales` per #1317's rule; carry `matched_sales` and `ambiguous_sales` counts so the frontend can print coverage.
-2. `listing_floor_hourly` (item, hq, world, hour → last floor, forward-filled; 0 = empty board) refreshed every 15 min trailing 30 h like `sales_hourly`, plus a daily fold for 30/90d sparklines.
-3. `bulk_listing_stats(ch, world_ids, window) -> Vec<BulkListingStatsRow>` merging across worlds (sums add, floors take min, medians via t-digest states like `sale_stats`), and `floor_series_batch(ch, requests, hours)`.
-4. `GET /api/v1/listing_stats/{world}?window=` and `POST /api/v1/floor_series/{world}` with `sale_stats`' cache contract (5 min fresh / 30 min stale / 2 loads / 12 s), the same `Cache-Control`, metric `ultros_listing_stats_cache_total{disposition}`. Empty = `200`.
-5. Wire types serde-defaulted for forward compatibility, with the same old-shape test `ItemSaleStats` has.
-6. Smoke test against a throwaway ClickHouse: insert a scripted `listing_events` + `sales` fixture, assert each metric including one ambiguous pair that must not match.
+### WS-I — Listing-history backend: rollups, queries, endpoint (two PRs)
 
-Owed before the endpoint is trusted: the #1320 volume watch on prod and a TTL revisit.
+**New issue** (§8). **Size** L in total. **No frontend dependency; start now.** **Files** `ultros-clickhouse/src/{schema,rollups,queries}.rs`, `ultros/src/web/api/listing_stats.rs` (new), `ultros/src/web/sale_stats_cache.rs` (generalise the loader or clone it as `ListingStatsCache`), `ultros-api-types/src/listing_stats.rs` (new), `ultros/src/web.rs` routes, smoke tests under `ultros-clickhouse/tests/`.
 
-### WS-J — Listing-history columns in the kit
+Split by what the data can answer *today* (decision §7 #7: #1320 is on prod, Aaron wants alive-age soon):
 
-**New issue** (§8). **Size** M. **After** WS-A and WS-I, and after prod has ≥7 days of `listing_events`. **Files** `analyzer_kit/stat_columns.rs` (a `ListingKind` table, follow + pinned ids), `analyzer_kit/market.rs` (a second `MarketData` slot family fetched from `listing_stats` with the same `wanted` gate; `market-floor-30` sparkline via `floor_series` with the same visible-window enrichment as `market-trend-7`), `api.rs`, locales, `shared-analyzer-data.cjs`.
+**WS-I1 — the alive set (first PR).** Needs no window and is complete from the seed. A `listing_alive` rollup keyed `(world_id, item_id, hq)` refreshed every 15 min: per `listing_id` the last event (`argMax(kind, event_time)`), kept when it is not `removed`, restricted to events since the seed marker; per key `alive_count`, `alive_units`, `distinct_retainers`, `oldest_reviewed_at`, `median_age_secs` (age = `now − reviewed_at`, the retainer's last touch), `floor_alive` (min price among alive, cross-checked against `floor_changes`' last row). Endpoint `GET /api/v1/listing_stats/{world|dc|region}` (no `window` needed yet; accept and ignore it so WS-I2 is additive) with `sale_stats`' cache contract (5 min fresh / 30 min stale / 2 loads / 12 s), the same `Cache-Control`, metric `ultros_listing_stats_cache_total{disposition}`. Empty = `200`. Wire type serde-defaulted with the same old-shape test `ItemSaleStats` has. Smoke test: a scripted `listing_events` fixture with a reprice (`removed`+`added` on one `listing_id`) that must count once.
 
-Lands on every `MarketGrid` consumer at once — that is the payoff of WS-A. Picker group "Listing history". Tooltips carry the caveats from §3.4 verbatim. Nothing default-on.
+**WS-I2 — the windowed metrics (second PR, after ≥7 days of prod data).** `listing_stats_window` keyed `(world_id, window_days, item_id, hq)` on the same tickers as `sale_stats_window`: floor min/max over `floor_changes` (0 rows excluded from min), listings added/removed (`source != snapshot`), time-to-sell pairing `listing_events.removed` with `sales` per #1317's rule with `matched_sales` / `ambiguous_sales` counts, days of stock joining `sale_stats_window`. `listing_floor_hourly` (last floor per hour, forward-filled, 0 = empty) refreshed every 15 min trailing 30 h like `sales_hourly`, plus a daily fold, served by `POST /api/v1/floor_series/{world}` shaped like `sparklines`. Cross-world merge: sums add, floors take min, medians via t-digest states. Smoke test adds one ambiguous pair that must not match.
+
+Owed before either endpoint is trusted: the #1320 volume watch on prod (§1.4) and a TTL revisit.
+
+### WS-J — Listing-history columns in the kit (two PRs)
+
+**New issue** (§8). **Size** M in total. **Files** `analyzer_kit/stat_columns.rs` (a `ListingKind` table), `analyzer_kit/market.rs` (a second `MarketData` slot family fetched from `listing_stats` with the same `wanted` gate), `api.rs`, locales, `shared-analyzer-data.cjs`.
+
+**WS-J1 — alive-set columns.** After WS-A and WS-I1. Window-independent ids: `market-alive`, `market-alive-units`, `market-sellers`, `market-listing-age` (median), `market-oldest-listing`. One `listing_alive` slot on `MarketData`, fetched only when one of these ids is wanted. Picker group "Listings". Tooltip on the age columns: "since the retainer last touched it". This is the #1178 signal ("how stale is this board") on every analyzer, and the Flip Finder's Buy price gets a stale tone when the oldest alive listing is older than a threshold — the same idea as Phase J's, without the Postgres change.
+
+**WS-J2 — windowed columns and the floor sparkline.** After WS-I2 and ≥7 days of prod data. Follow-window ids `market-floor-min`, `market-floor-max`, `market-listings-added`, `market-listings-removed`, `market-time-to-sell`, `market-days-of-stock` (+ pinned `-N`), and `market-floor-30` via `floor_series` with the same visible-window enrichment as `market-trend-7`. Picker group "Listing history". Tooltips carry the caveats from §3.4 verbatim. Nothing default-on.
+
+Both land on every `MarketGrid` consumer at once — that is the payoff of WS-A.
 
 ### WS-K — Prod verification owed (no code)
 
-Run after each deploy, one agent with a browser: (1) #1313's checks — `sale_stats?window=1` returns `gil_volume > 0`; `/flip-finder/Gilgamesh?cols=profit_per_day,market-sale-median-30,market-gil-90` renders both headers with numbers and fires exactly `window=7,30,90`; bare page fires only `window=7`; four "Sale history (Nd)" groups in the picker. (2) #1320 — a day of `ultros_clickhouse_writer_written_rows_total{table="listing_events"}` and the dropped-rows counter; note the rate in `docs/ingest-observability.md`. (3) #1324 — the header press-and-hold on a real touch device. (4) After WS-A/B/C: the acceptance lines in their briefs.
+Run after each deploy, one agent with a browser. **Done 2026-09-07/08 against `fee1e4f`:** #1313's wire check passes (`sale_stats/Gilgamesh?window=1` → 7,463 rows, `gil_volume > 0` on every one; `window=90` → 19,117 rows); #1320's volume is measured (§1.4). **Still owed:** (1) #1313's browser half — `/flip-finder/Gilgamesh?cols=profit_per_day,market-sale-median-30,market-gil-90` renders both headers with numbers and fires exactly `window=7,30,90`, the bare page fires only `window=7`, four "Sale history (Nd)" groups in the picker; (2) the dropped-rows counter `ultros_clickhouse_writer_dropped_rows_total{table="listing_events"}` after a full day, and a line in `docs/ingest-observability.md` with the measured rate; (3) #1324's header press-and-hold on a real touch device; (4) after WS-A/B/C: the acceptance lines in their briefs.
 
-### WS-L — Later: naming, and one URL contract for the world
+### WS-L — Naming (wave 1), and one URL contract for the world (wave 3)
 
-**Size** S + M. Independent of everything above; schedule when the waves are done.
+**Size** S + M. Independent of everything above.
 
-- **Naming** (Aaron's call, §7 #4): rename the sidebar section and drop the "Analyzer" suffixes, or leave it. Copy only, seven locales, no routes.
+- **Naming** (decided, §7 #4): the sidebar section becomes "Analyzers"; "Recipe Analyzer" → "Recipes", "Leve Analyzer" → "Leves", "Venture Analyzer" → "Ventures", "FC Crafting" stays; `ToolHeader` titles and the home-page tool rail follow. Copy only, seven locales, no routes, no redirects. One small PR in wave 1.
 - **World transport** (from #1314's exploration; file as an issue): path `/tool/:world` on Flip Finder, Vendor Resale, Trends, FC Crafting versus `?world=` on Recipe, Venture, Leve, Scrip, plus FC Crafting's picker being wired to nothing. Unify on the path form with redirects from `?world=`; the four query-param pages each carry a copy-pasted `format!`-over-decoded-values effect that re-emits raw `&` and navigates with `replace: false`.
 
 ### WS-M — Candidate: Retainer listings as an analyzer
@@ -270,12 +277,12 @@ WS-M retainers: after WS-J
 
 | Wave | Runs in parallel | Agents | Gate to next wave |
 |---|---|---|---|
-| **0 (now)** | WS-A, WS-B, WS-I, WS-K(#1313/#1320 checks) | 4 | WS-A merged |
-| **1** | WS-C, WS-D, WS-F, WS-G, WS-E *spec+plan only* | 5 | all merged; WS-E plan reviewed |
-| **2** | WS-E code, WS-H, WS-J (if WS-I merged and data has aged) | 3 | — |
-| **3** | WS-L, WS-M | 2 | — |
+| **0 (now)** | WS-A, WS-B, WS-I1, WS-K (#1320 volume watch; #1313 checks done) | 4 | WS-A merged |
+| **1** | WS-C, WS-D, WS-F, WS-G, WS-L naming, WS-E *spec+plan only*, WS-J1 (once WS-I1 merged) | 6–7 | all merged; WS-E plan reviewed |
+| **2** | WS-E code, WS-H, WS-I2 (data has aged), WS-J2 | 4 | — |
+| **3** | WS-L world transport, WS-M | 2 | — |
 
-Thirteen PRs, roughly. Wave 0's four touch disjoint trees except WS-A/WS-B in `market.rs`; wave 1's five touch disjoint route files and only collide in the locale files.
+Sixteen PRs, roughly. Wave 0's four touch disjoint trees except WS-A/WS-B in `market.rs`; wave 1's touch disjoint route files and only collide in the locale files.
 
 ## 6. Conflict map and merge order
 
@@ -295,17 +302,17 @@ Thirteen PRs, roughly. Wave 0's four touch disjoint trees except WS-A/WS-B in `m
 
 Merge order inside a wave: smallest diff first (locales are append-only conflicts; the big PR rebases once). WS-A before WS-B if both are ready, because B's header cell reads the window-aware label A introduces.
 
-## 7. Decisions needed from Aaron
+## 7. Decisions — recorded 2026-09-07 (Aaron)
 
-1. **Sale median default-on in the Flip Finder** (#1325) — recommended yes, `market-sale-median` (follow-window) visible on a first visit, placed after Sale estimate. Saved views and links keep their exact columns because the default is consulted only when `?cols=` is absent.
-2. **Window model** — follow-window ids (§3.1, recommended) or rewrite suffixes on switch.
-3. **Basis follows the window** (§3.1, recommended) rather than a separate `revenue-window` key.
-4. **Naming** — rename "Tools" → "Analyzers" and drop the "Analyzer" suffix from the four that carry it (Recipes, Leves, Ventures, FC Crafting), or leave the names. Seven locales of copy, zero routes.
-5. **Item Explorer** — shared columns inside `DataTableGrid` (§3.2, recommended) versus a full grid migration that would drop pagination.
-6. **Listing metrics v1 scope** (§3.4) — include time-to-sell despite ≈60% pairing, labelled "matched sales only" (recommended), or hold it until a full month of data exists.
-7. **Phase J** (cheapest listing age via Postgres `listed_at`, #1278) — defer until WS-J's alive-age has been on prod (recommended), or run its design pass now.
-8. **World transport unification** — file it now as its own issue (recommended) even though it schedules last.
-9. **Issue hygiene** — file the seven drafts in §8 and an umbrella that links #1325–#1331; close #1278's J/K/L rows into it.
+1. **Sale median default-on in the Flip Finder** (#1325) — **yes.** `market-sale-median` (follow-window) visible on a first visit, placed after Sale estimate. Saved views and links keep their exact columns because the default is consulted only when `?cols=` is absent.
+2. **Window model** — **follow-window ids** (§3.1).
+3. **Basis follows the window** (§3.1) — **yes**, no separate `revenue-window` key.
+4. **Naming** — **agreed**: rename the sidebar section to "Analyzers" and drop the "Analyzer" suffix from the four that carry it. Seven locales of copy, zero routes. Scheduled in wave 1 (WS-L, naming half).
+5. **Item Explorer** — **drop pagination and migrate to `MarketGrid`**, with the SEO research recorded in WS-H (robots.txt already blocks `?sort=` and `?per_page=` but allows `?page=`; every item page is in the sitemap independently of the explorer, so the explorer's pages 2..N are not load-bearing for item discoverability). Aaron wants a second look before the PR ships; WS-H carries the checklist.
+6. **Listing metrics v1 scope** (§3.4) — **as recommended**: include time-to-sell, labelled "matched sales only".
+7. **Phase J** (cheapest listing age via Postgres `listed_at`, #1278) — **deferred.** Aaron wants WS-J's alive-listing age *soon*, since #1320 is already on prod: WS-I/WS-J are split so the alive-set metrics (which need no window and are complete from the seed) ship first (§4, WS-I1 / WS-J1).
+8. **World transport unification** — **file it now** as its own issue; schedules last.
+9. **Issue hygiene** — **file the drafts** in §8 and the umbrella.
 
 ## 8. Issue drafts (to file on go-ahead)
 
