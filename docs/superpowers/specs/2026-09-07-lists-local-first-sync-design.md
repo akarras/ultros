@@ -72,6 +72,9 @@ root map "rows"
   by two people, counts twice instead of one overwriting the other. Setting an
   absolute value (the legacy REST path, "got all", a typed number) is an
   increment of `new - current` by the writing peer.
+- `add_row` on an existing key adds `need` as a last-writer-wins write, so two
+  concurrent adds of the same item converge to one of them plus the base, not
+  both. Only `acquired` is additive under concurrency.
 - Removing a row is `rows.delete(key)`. A later add creates a fresh row under
   the same key. Loro's map is last-writer-wins per key, so a concurrent remove
   and add resolve by timestamp, and an edit inside a row that someone
@@ -97,6 +100,7 @@ impl ListDocument {
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError>;
     pub fn from_rows(meta: MetaSnapshot, rows: &[RowSnapshot]) -> Self;
 
+    pub fn schema(&self) -> Option<i64>;                  // meta.schema; None for a pre-schema document
     pub fn meta(&self) -> MetaSnapshot;
     pub fn rows(&self) -> Vec<RowSnapshot>;               // via get_deep_value, sorted by key
     pub fn row(&self, key: &RowKey) -> Option<RowSnapshot>;
@@ -117,6 +121,7 @@ impl ListDocument {
     pub fn export_shallow(&self) -> Result<Vec<u8>, DocError>;    // ExportMode::shallow_snapshot(&state_frontiers())
     pub fn export_all(&self) -> Result<Vec<u8>, DocError>;        // ExportMode::all_updates()
     pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError>;  // ExportMode::updates(&vv); empty = everything
+    pub fn can_export_since(&self, version: &[u8]) -> bool;  // version is at or after the shallow root
     pub fn sync_payload(&self, client_version: &[u8]) -> Result<SyncPayload, DocError>;  // Snapshot | Updates | UpToDate
     pub fn is_ahead_of(&self, version: &[u8]) -> bool;
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError>;     // wraps ImportStatus
@@ -229,9 +234,9 @@ The non-Labs page is byte-for-byte unchanged.
   carries the rules and is unit tested.
 - Undo of a key that another peer overwrote after your edit: Loro's manager
   transforms stack items against remote diffs. Phase 1 pins the observed
-  behaviour with a test (`undo_after_remote_overwrite`) and this spec adopts
-  whatever it is, documented in the crate. The plan does not add a guard
-  layer on top.
+  behaviour with a test (`undo_after_remote_overwrite`): Loro restores the
+  local prior value even over a later remote write, documented in the crate.
+  The plan does not add a guard layer on top.
 - No toast on undo in this spec. Toast actions belong to the redesign.
 
 ### 4. Server as a peer
@@ -495,3 +500,11 @@ after, recorded in the PR. Expected increase at most 750 KB compressed.
 - Local storage is per browser profile; a user with two browsers has two
   peers, which is correct and slightly surprising when their undo stacks
   differ.
+- A local undo restores this device's prior value even over a collaborator's
+  later write to the same field (pinned in `ultros-list-doc`'s
+  `undo_after_remote_overwrite`). On a shared list that silently overrides
+  someone else's edit. The redesign spec decides whether to guard the undo,
+  warn, or accept it.
+- The server imports client-supplied bytes. Junk keys are skipped and never
+  trusted, but nothing bounds row count or string sizes; Phase 3 decides limits
+  before the socket accepts updates from non-owners.
