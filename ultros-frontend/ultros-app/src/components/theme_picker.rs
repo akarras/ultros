@@ -34,25 +34,25 @@ pub fn PalettePicker(
     let settings = provide_theme_settings();
     let palette = settings.palette;
 
-    let set_palette = move |p: ThemePalette| palette.set(p);
-
-    let palette_button = move |label: &'static str, val: ThemePalette| {
-        let is_active = Signal::derive(move || palette.get() == val);
+    // Native radios provide arrow-key navigation, focus, and checked-state
+    // announcements without a second, hand-maintained radio implementation.
+    let palette_button = move |val: ThemePalette| {
         view! {
-            <button
-                role="radio"
-                class=move || {
-                    if is_active() {
-                        "btn-primary"
-                    } else {
-                        "btn-secondary"
-                    }
-                }
-                aria-checked=move || is_active().to_string()
-                on:click=move |_| set_palette(val)
-            >
-                {label}
-            </button>
+            <label class="palette-option">
+                <input
+                    type="radio"
+                    name="theme-palette"
+                    value=val.as_str()
+                    checked=move || palette.get() == val
+                    prop:checked=move || palette.get() == val
+                    on:change=move |_| palette.set(val)
+                />
+                <span class="palette-card">
+                    <span class="palette-swatch" data-palette=val.as_str() aria-hidden="true"></span>
+                    <span>{val.label()}</span>
+                    <span class="palette-check" aria-hidden="true">"✓"</span>
+                </span>
+            </label>
         }
     };
 
@@ -67,32 +67,11 @@ pub fn PalettePicker(
                     }
                 })}
             <div
-                class="flex flex-wrap gap-2"
+                class="palette-grid"
                 role="radiogroup"
                 aria-label=move || t_string!(i18n, theme_palette_label).to_string()
             >
-                // The six plain-colour palettes come first because `Violet` is
-                // `ThemePalette::default()`. Without a button for it, anyone
-                // who has never changed palette — i.e. every visitor to the
-                // welcome flow — sees a radiogroup with nothing checked.
-                {palette_button("Violet", ThemePalette::Violet)}
-                {palette_button("Teal", ThemePalette::Teal)}
-                {palette_button("Emerald", ThemePalette::Emerald)}
-                {palette_button("Amber", ThemePalette::Amber)}
-                {palette_button("Rose", ThemePalette::Rose)}
-                {palette_button("Sky", ThemePalette::Sky)}
-                {palette_button("Ultros", ThemePalette::Ultros)}
-                {palette_button("Maelstrom", ThemePalette::Maelstrom)}
-                {palette_button("Twin Adder", ThemePalette::TwinAdder)}
-                {palette_button("Ascian", ThemePalette::Ascian)}
-                {palette_button("Ishgard", ThemePalette::Ishgard)}
-                {palette_button("Crystarium", ThemePalette::Crystarium)}
-                {palette_button("Sharlayan", ThemePalette::Sharlayan)}
-                {palette_button("Tuliyollal", ThemePalette::Tuliyollal)}
-                {palette_button("Immortal Flames", ThemePalette::ImmortalFlames)}
-                {palette_button("Ul'dah", ThemePalette::Uldah)}
-                {palette_button("Limsa", ThemePalette::Limsa)}
-                {palette_button("Garlemald", ThemePalette::Garlemald)}
+                {ThemePalette::ALL.into_iter().map(palette_button).collect_view()}
             </div>
         </div>
     }

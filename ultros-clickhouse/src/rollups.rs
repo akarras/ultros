@@ -25,7 +25,7 @@
 use clickhouse::Client;
 use tracing::{info, instrument};
 
-use crate::{ClickHouseClient, ClickHouseError};
+use crate::{ClickHouseClient, ClickHouseError, schema::LISTING_EVENTS_SEED_MARKER_TABLE};
 
 /// Refresh `item_stats_window` for a single window size.
 ///
@@ -446,6 +446,127 @@ fn build_sale_stats_refresh_sql(window_days: u16) -> String {
     )
 }
 
+/// Refresh `listing_alive`: replay `listing_events` into the current alive
+/// listing set for every `(world, item, hq)`.
+///
+/// A listing's identity is its Universalis `listing_id`, falling back to the
+/// Postgres row id for rows recorded before the identity migration (an empty
+/// `listing_id`); without the fallback every legacy listing would collapse
+/// into one. Its state is the event with the greatest
+/// `(event_time, pg_listing_id, kind)`. `event_time` has second resolution
+/// and a reprice arrives as `removed` + `added` on one `listing_id` inside the
+/// same second, so a tie goes to the higher Postgres row id (the re-added row
+/// is the newer one) and, at an equal row id, to the larger `kind` — `removed`
+/// is a row's final state, and `updated` carries a newer price than the
+/// `added` it followed. A listing is alive when that last event is not
+/// `removed`.
+///
+/// Only events from the seed onwards count: anything older may be an `added`
+/// whose removal was never recorded. The seed's snapshot rows carry the time
+/// the stream *started* while the marker is stamped when it ends, so the
+/// cutoff is the snapshot's own time — a removal observed mid-stream must not
+/// be dropped, or its listing stays alive forever. A database that has never
+/// been seeded replays everything it has.
+/// Previously nonzero rollup keys also participate as non-alive inputs, so
+/// advancing the seed cutoff or expiring every event for a key writes a zero
+/// row instead of leaving the prior snapshot alive indefinitely.
+///
+/// One `INSERT ... SELECT`. Every alias differs from the columns it reads:
+/// ClickHouse resolves a same-scope alias in preference to the column, so
+/// reusing a column name nests aggregates at runtime (see
+/// [`crate::queries::bulk_sale_stats`]).
+#[instrument(skip(ch))]
+pub async fn refresh_listing_alive(ch: &ClickHouseClient) -> Result<u64, ClickHouseError> {
+    let sql = build_listing_alive_refresh_sql();
+    ch.client().query(&sql).execute().await?;
+
+    #[derive(clickhouse::Row, serde::Deserialize)]
+    struct Count {
+        n: u64,
+    }
+    let count: Count = ch
+        .client()
+        .query("SELECT count() AS n FROM listing_alive FINAL WHERE alive_count > 0")
+        .fetch_one()
+        .await?;
+    tracing::info!(keys_with_stock = count.n, "listing_alive refresh done");
+    Ok(count.n)
+}
+
+fn build_listing_alive_refresh_sql() -> String {
+    format!(
+        r#"
+        INSERT INTO listing_alive
+        SELECT
+            world_id,
+            item_id,
+            hq,
+            now() AS computed_at,
+            toUInt32(countIf(is_alive)) AS alive_count,
+            toUInt64(sumIf(last_quantity, is_alive)) AS alive_units,
+            toUInt32(uniqExactIf(last_retainer_id, is_alive)) AS distinct_retainers,
+            minIf(last_reviewed_at, is_alive) AS oldest_reviewed_at,
+            quantileTDigestStateIf(0.5)(age_secs, is_alive) AS age_quantile,
+            toUInt32(minIf(last_price, is_alive)) AS floor_alive
+        FROM
+        (
+            SELECT
+                world_id,
+                item_id,
+                hq,
+                last_kind != 'removed' AS is_alive,
+                last_quantity,
+                last_retainer_id,
+                last_reviewed_at,
+                toUInt32(greatest(0, toInt64(now()) - toInt64(last_reviewed_at))) AS age_secs,
+                last_price
+            FROM
+            (
+                SELECT
+                    world_id,
+                    item_id,
+                    hq,
+                    if(listing_id != '', listing_id, toString(pg_listing_id)) AS listing_key,
+                    argMax(kind, ord) AS last_kind,
+                    argMax(quantity, ord) AS last_quantity,
+                    argMax(retainer_id, ord) AS last_retainer_id,
+                    argMax(reviewed_at, ord) AS last_reviewed_at,
+                    argMax(price_per_unit, ord) AS last_price
+                FROM
+                (
+                    SELECT
+                        world_id, item_id, hq, listing_id, pg_listing_id, kind,
+                        quantity, retainer_id, reviewed_at, price_per_unit,
+                        (event_time, pg_listing_id, kind) AS ord
+                    FROM listing_events
+                    WHERE event_time >= (
+                        SELECT if(count() > 0, min(event_time),
+                                  (SELECT max(seeded_at) FROM {LISTING_EVENTS_SEED_MARKER_TABLE}))
+                        FROM listing_events
+                        WHERE source = 'snapshot'
+                    )
+                )
+                GROUP BY world_id, item_id, hq, listing_key
+            )
+            UNION ALL
+            SELECT
+                world_id,
+                item_id,
+                hq,
+                false AS is_alive,
+                toUInt16(0) AS last_quantity,
+                toInt32(0) AS last_retainer_id,
+                toDateTime(0) AS last_reviewed_at,
+                toUInt32(0) AS age_secs,
+                toUInt32(0) AS last_price
+            FROM listing_alive FINAL
+            WHERE alive_count > 0
+        )
+        GROUP BY world_id, item_id, hq
+        "#
+    )
+}
+
 /// Refresh `item_category_map` from xiv-gen.
 ///
 /// Maps every item with a known ItemSearchCategory to that category's
@@ -550,6 +671,9 @@ pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
     if let Err(e) = refresh_sales_hourly(ch).await {
         tracing::warn!(error = ?e, "sales_hourly refresh failed");
     }
+    if let Err(e) = refresh_listing_alive(ch).await {
+        tracing::warn!(error = ?e, "listing_alive refresh failed");
+    }
     Ok(())
 }
 
@@ -569,6 +693,8 @@ pub async fn refresh_window_with(client: &Client, window_days: u16) -> Result<()
 /// - 30-day window: every 6 hours
 /// - 90-day window: every 6 hours
 /// - Quality score: every 60 minutes (depends on the 30d window)
+/// - `listing_alive`: every 15 minutes (a listing-event replay, independent
+///   of the sale windows)
 ///
 /// All four window refreshers share a single tokio task with a `select!`
 /// over named intervals, so there's no resource contention between cadences
@@ -597,6 +723,10 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
     // 1-day rollup window and stays well ahead of the 60s browser cache
     // on the consuming endpoint.
     let mut tick_hourly = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+    // listing_alive feeds "how long has this sat on the board"; 15 min keeps
+    // it inside the consuming endpoint's 5 min fresh / 30 min stale window
+    // without a second full replay of listing_events per cadence.
+    let mut tick_listing_alive = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
 
     // All intervals fire immediately on first .tick() — burn those since
     // we already seeded above.
@@ -606,6 +736,7 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
     tick_quality.tick().await;
     tick_kpi.tick().await;
     tick_hourly.tick().await;
+    tick_listing_alive.tick().await;
 
     // If we miss a deadline (e.g. CH was slow), delay the next tick rather
     // than firing back-to-back catch-up ticks.
@@ -615,6 +746,7 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
     tick_quality.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     tick_kpi.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     tick_hourly.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick_listing_alive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -668,6 +800,11 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
                         tracing::warn!(error = ?e, "sales_hourly refresh failed");
                     }
                 }
+                _ = tick_listing_alive.tick() => {
+                    if let Err(e) = refresh_listing_alive(&ch).await {
+                        tracing::warn!(error = ?e, "listing_alive refresh failed");
+                    }
+                }
         }
     }
 }
@@ -683,5 +820,30 @@ mod tests {
         assert!(sql.contains("GROUP BY world_id, item_id, hq"));
         assert!(sql.contains("quantileTDigestState(0.5)(price_per_item)"));
         assert!(sql.contains("toUInt16(7) AS window_days"));
+    }
+
+    /// The shape the smoke test then proves against a server: scope-first
+    /// key, the seed cutoff read from the snapshot rows with the marker as
+    /// fallback, the legacy identity fallback, the deterministic tie-break,
+    /// and a mergeable age state rather than a finalized median.
+    #[test]
+    fn listing_alive_refresh_replays_from_the_seed_with_a_deterministic_tie_break() {
+        let sql = build_listing_alive_refresh_sql();
+        assert!(sql.contains("INSERT INTO listing_alive"));
+        assert!(sql.contains("GROUP BY world_id, item_id, hq\n"));
+        assert!(sql.contains("WHERE source = 'snapshot'"));
+        assert!(sql.contains("SELECT max(seeded_at) FROM _listing_events_seed"));
+        assert!(
+            sql.contains(
+                "if(listing_id != '', listing_id, toString(pg_listing_id)) AS listing_key"
+            )
+        );
+        assert!(sql.contains("(event_time, pg_listing_id, kind) AS ord"));
+        assert!(sql.contains("argMax(kind, ord) AS last_kind"));
+        assert!(sql.contains("last_kind != 'removed' AS is_alive"));
+        assert!(sql.contains("quantileTDigestStateIf(0.5)(age_secs, is_alive) AS age_quantile"));
+        // `-StateIf`, never `-IfState`: the latter's state type is
+        // `quantileTDigestIf`, which the column would refuse.
+        assert!(!sql.contains("IfState"));
     }
 }

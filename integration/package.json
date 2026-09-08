@@ -21,6 +21,7 @@
     "test:hover-card-stability": "node ./hover-card-stability.cjs",
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
+    "test:app-update": "node ./app-update.cjs",
     "test:shared-list": "node ./shared-list.cjs",
     "test:list-flow": "node ./list-flow.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",

@@ -1,4 +1,5 @@
 pub mod alert;
+pub mod app_version;
 pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
@@ -7,6 +8,7 @@ pub mod game_history;
 pub mod icon_size;
 pub mod item_stats;
 pub mod list;
+pub mod listing_stats;
 mod listings;
 pub mod market_heat;
 pub mod market_pulse;

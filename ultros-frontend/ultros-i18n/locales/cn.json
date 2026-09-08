@@ -2003,5 +2003,8 @@
     "leve_analyzer_preset_cheapest": "交付成本最低",
     "scrip_sources_preset_best_value": "单枚票据最划算",
     "scrip_sources_preset_orange_crafters": "橙色制作票据",
-    "scrip_sources_preset_orange_gatherers": "橙色采集票据"
+    "scrip_sources_preset_orange_gatherers": "橙色采集票据",
+    "update_banner_message": "Ultros 已更新。",
+    "update_banner_reload": "重新加载",
+    "update_banner_dismiss": "关闭"
 }

@@ -30,14 +30,15 @@ use crate::components::icon::Icon;
 use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
-    cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    platform::provide_platform_hotkeys, side_nav::provide_side_nav_settings,
-    theme::provide_theme_settings, toasts::provide_toast_context,
-    xiv_data::provide_xiv_data_revision,
+    app_update::provide_app_update_context, cheapest_prices::CheapestPrices,
+    clipboard_text::GlobalLastCopiedText, cookies::Cookies, platform::provide_platform_hotkeys,
+    side_nav::provide_side_nav_settings, theme::provide_theme_settings,
+    toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
         app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
+        update_banner::UpdateBanner,
     },
     routes::{
         about::*,
@@ -292,7 +293,7 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
         // page-level translate prompt). The class is repeated on `<body>` because
         // Translate walks the ancestor chain per text node. App has its own
         // locale switcher, so we never want the browser translating our markup.
-        <html lang="en" translate="no" class="notranslate" data-theme="dark" data-palette="violet">
+        <html lang="en" translate="no" class="notranslate" data-theme="dark" data-palette="ultros">
             <head>
                 <meta charset="utf-8" />
                 <meta name="google" content="notranslate" />
@@ -304,11 +305,9 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 // hydrate() lets us skip the /world_data, /detectregion, and
                 // /current_user round-trips on every cold load.
                 <script inner_html=bootstrap_script />
-                <script>
-    "(function(){try{var d=document.documentElement;var ls=localStorage;var g=function(k){try{return ls.getItem(k)}catch(_){return null}};var gc=function(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};var mode=g('theme.mode')||gc('theme_mode')||'system';if(mode==='system'){mode=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'};d.setAttribute('data-theme',mode==='light'?'light':'dark');var palette=g('theme.palette')||gc('theme_palette')||'violet';d.setAttribute('data-palette',palette)}catch(_){}})();"
-                </script>
+                <script inner_html=include_str!("theme-bootstrap.js") />
                 <style>
-    "#boot-progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:99999;pointer-events:none;transition:opacity .4s ease}#boot-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,#a78bfa,#f0abfc);box-shadow:0 0 8px rgba(167,139,250,.55);animation:boot-progress-grow 12s cubic-bezier(.05,.7,.1,1) forwards}#boot-progress.mid #boot-progress-bar{animation:boot-progress-mid 3s cubic-bezier(.2,.6,.2,1) forwards}#boot-progress.done{opacity:0}#boot-progress.done #boot-progress-bar{width:100%!important;transition:width .25s ease;animation:none}#boot-progress.error #boot-progress-bar{background:#ef4444;width:100%;animation:none;box-shadow:0 0 8px rgba(239,68,68,.55)}#boot-progress-status{position:fixed;top:8px;right:12px;z-index:99999;font:12px/1.2 system-ui,-apple-system,sans-serif;color:rgba(255,255,255,.55);pointer-events:none;letter-spacing:.02em}#boot-progress.error~#boot-progress-status,#boot-progress.error+#boot-progress-status{color:#fca5a5;pointer-events:auto}@keyframes boot-progress-grow{0%{width:0%}30%{width:25%}60%{width:50%}100%{width:75%}}@keyframes boot-progress-mid{0%{width:75%}100%{width:92%}}@media (prefers-reduced-motion:reduce){#boot-progress-bar{animation-duration:1s!important}#boot-progress{transition:none}}"
+    "#boot-progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:99999;pointer-events:none;transition:opacity .4s ease}#boot-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent,#a78bfa),var(--accent-decor,#e3a0ca));box-shadow:0 0 8px rgba(167,139,250,.55);animation:boot-progress-grow 12s cubic-bezier(.05,.7,.1,1) forwards}#boot-progress.mid #boot-progress-bar{animation:boot-progress-mid 3s cubic-bezier(.2,.6,.2,1) forwards}#boot-progress.done{opacity:0}#boot-progress.done #boot-progress-bar{width:100%!important;transition:width .25s ease;animation:none}#boot-progress.error #boot-progress-bar{background:#ef4444;width:100%;animation:none;box-shadow:0 0 8px rgba(239,68,68,.55)}#boot-progress-status{position:fixed;top:8px;right:12px;z-index:99999;font:12px/1.2 system-ui,-apple-system,sans-serif;color:rgba(255,255,255,.55);pointer-events:none;letter-spacing:.02em}#boot-progress.error~#boot-progress-status,#boot-progress.error+#boot-progress-status{color:#fca5a5;pointer-events:auto}@keyframes boot-progress-grow{0%{width:0%}30%{width:25%}60%{width:50%}100%{width:75%}}@keyframes boot-progress-mid{0%{width:75%}100%{width:92%}}@media (prefers-reduced-motion:reduce){#boot-progress-bar{animation-duration:1s!important}#boot-progress{transition:none}}"
                 </style>
                 <script>
     "(function(){try{var root=document.documentElement;var bar=document.createElement('div');bar.id='boot-progress';var inner=document.createElement('div');inner.id='boot-progress-bar';bar.appendChild(inner);var status=document.createElement('span');status.id='boot-progress-status';status.textContent='Loading\\u2026';root.appendChild(bar);root.appendChild(status);var done=false;var finish=function(){if(done)return;done=true;clearTimeout(wd);bar.classList.add('done');setTimeout(function(){if(bar.parentNode)bar.parentNode.removeChild(bar);if(status.parentNode)status.parentNode.removeChild(status);},450)};var fail=function(msg){if(done)return;done=true;clearTimeout(wd);bar.classList.add('error');status.innerHTML=msg+' \\u2014 <a href=\"\" onclick=\"location.reload();return false\" style=\"color:inherit;text-decoration:underline\">reload</a>'};window.addEventListener('ultros:wasm-loaded',function(){bar.classList.add('mid')});window.addEventListener('ultros:hydrated',finish);window.addEventListener('error',function(e){var f=(e&&e.filename)||'';if(f.indexOf('.wasm')!==-1||f.indexOf('/pkg/')!==-1)fail('Failed to load app')});window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;var msg=(r&&(r.message||(''+r)))||'';if(msg.indexOf('wasm')!==-1||msg.indexOf('WebAssembly')!==-1)fail('App crashed during load')});var wd=setTimeout(function(){fail('Loading is taking longer than expected')},30000)}catch(_){}})();"
@@ -490,6 +489,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_side_nav_settings();
     provide_platform_hotkeys();
     provide_toast_context();
+    provide_app_update_context();
     provide_xiv_data_revision();
     provide_on_hand_context();
     ws::realtime::provide_realtime_context();
@@ -521,8 +521,10 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
+            <UpdateBanner />
             <Router>
                 <SentryRouteTag />
+                <ReloadWhenStale />
                 <social_meta::ShareLocale />
                 <social_meta::SocialMetadata />
                 <AppShell>
@@ -629,6 +631,47 @@ fn SentryRouteTag() -> impl IntoView {
         Effect::new(move |_| {
             let path = location.pathname.get();
             set_sentry_tag("route", &path);
+        });
+    }
+}
+
+/// Once an update is pending, the next client-side route change becomes a
+/// full page load, so the user lands on the requested page with the current
+/// wasm bundle. Only `pathname` is watched: query-string changes (filters,
+/// sort, world pickers) keep the user on the page and never reload. Must be
+/// mounted inside `<Router>` because `use_location()` needs router context.
+#[component]
+fn ReloadWhenStale() -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        use crate::global_state::app_update::use_app_update;
+        let location = leptos_router::hooks::use_location();
+        let update = use_app_update();
+        Effect::new(move |previous: Option<String>| {
+            let path = location.pathname.get();
+            // Skip the first run: the path the page loaded on is not a navigation.
+            let navigated = previous.as_deref().is_some_and(|p| p != path);
+            // Untracked on purpose: fire on navigation, not on detection.
+            let stale = update.is_some_and(|u| u.pending.get_untracked().is_some());
+            if navigated && stale {
+                // The router publishes its destination before suspended routes
+                // finish and pushState updates the address bar. Reloading the
+                // browser's current URL here can send the user back to the page
+                // they are leaving; load the router's destination explicitly.
+                let search = location.search.get_untracked();
+                let hash = location.hash.get_untracked();
+                let mut destination = path.clone();
+                if !search.is_empty() {
+                    destination.push('?');
+                    destination.push_str(&search);
+                }
+                destination.push_str(&hash);
+                let browser_location = window().location();
+                if let Ok(origin) = browser_location.origin() {
+                    let _ = browser_location.set_href(&format!("{origin}{destination}"));
+                }
+            }
+            path
         });
     }
 }

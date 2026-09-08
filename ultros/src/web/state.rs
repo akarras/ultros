@@ -48,8 +48,11 @@ pub(crate) struct WebState {
     /// [`crate::web::price_series_cache`].
     pub(crate) price_series_cache: crate::web::price_series_cache::PriceSeriesCache,
     /// Coalesces and serves stale bulk market-stat snapshots so page traffic
-    /// cannot multiply ClickHouse work. See [`crate::web::sale_stats_cache`].
-    pub(crate) sale_stats_cache: crate::web::sale_stats_cache::SaleStatsCache,
+    /// cannot multiply ClickHouse work. See [`crate::web::stats_cache`].
+    pub(crate) sale_stats_cache: crate::web::stats_cache::SaleStatsCache,
+    /// Same contract for `/api/v1/listing_stats`, as its own instance so a
+    /// listing snapshot never evicts a sale snapshot (or the reverse).
+    pub(crate) listing_stats_cache: crate::web::stats_cache::ListingStatsCache,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -150,8 +153,14 @@ impl FromRef<WebState> for crate::web::price_series_cache::PriceSeriesCache {
     }
 }
 
-impl FromRef<WebState> for crate::web::sale_stats_cache::SaleStatsCache {
+impl FromRef<WebState> for crate::web::stats_cache::SaleStatsCache {
     fn from_ref(input: &WebState) -> Self {
         input.sale_stats_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.listing_stats_cache.clone()
     }
 }

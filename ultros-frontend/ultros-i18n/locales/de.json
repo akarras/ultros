@@ -2003,5 +2003,8 @@
     "leve_analyzer_preset_cheapest": "Am günstigsten zu erfüllen",
     "scrip_sources_preset_best_value": "Bester Wert pro Devise",
     "scrip_sources_preset_orange_crafters": "Orangene Handwerkerdevisen",
-    "scrip_sources_preset_orange_gatherers": "Orangene Sammlerdevisen"
+    "scrip_sources_preset_orange_gatherers": "Orangene Sammlerdevisen",
+    "update_banner_message": "Ultros wurde aktualisiert.",
+    "update_banner_reload": "Neu laden",
+    "update_banner_dismiss": "Schließen"
 }

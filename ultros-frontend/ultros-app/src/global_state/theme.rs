@@ -40,12 +40,6 @@ impl FromStr for ThemeMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ThemePalette {
     #[default]
-    Violet,
-    Teal,
-    Emerald,
-    Amber,
-    Rose,
-    Sky,
     Ultros,
     Maelstrom,
     TwinAdder,
@@ -61,14 +55,41 @@ pub enum ThemePalette {
 }
 
 impl ThemePalette {
+    /// The complete picker catalog; legacy names are accepted only on input.
+    pub const ALL: [Self; 12] = [
+        Self::Ultros,
+        Self::Maelstrom,
+        Self::TwinAdder,
+        Self::Ascian,
+        Self::Ishgard,
+        Self::Crystarium,
+        Self::Sharlayan,
+        Self::Tuliyollal,
+        Self::ImmortalFlames,
+        Self::Uldah,
+        Self::Limsa,
+        Self::Garlemald,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ultros => "Ultros",
+            Self::Maelstrom => "Maelstrom",
+            Self::TwinAdder => "Twin Adder",
+            Self::Ascian => "Ascian",
+            Self::Ishgard => "Ishgard",
+            Self::Crystarium => "Crystarium",
+            Self::Sharlayan => "Sharlayan",
+            Self::Tuliyollal => "Tuliyollal",
+            Self::ImmortalFlames => "Immortal Flames",
+            Self::Uldah => "Ul’dah",
+            Self::Limsa => "Limsa",
+            Self::Garlemald => "Garlemald",
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
-            ThemePalette::Violet => "violet",
-            ThemePalette::Teal => "teal",
-            ThemePalette::Emerald => "emerald",
-            ThemePalette::Amber => "amber",
-            ThemePalette::Rose => "rose",
-            ThemePalette::Sky => "sky",
             ThemePalette::Ultros => "ultros",
             ThemePalette::Maelstrom => "maelstrom",
             ThemePalette::TwinAdder => "twin-adder",
@@ -89,11 +110,11 @@ impl FromStr for ThemePalette {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.to_ascii_lowercase().as_str() {
-            "teal" => ThemePalette::Teal,
-            "emerald" => ThemePalette::Emerald,
-            "amber" => ThemePalette::Amber,
-            "rose" => ThemePalette::Rose,
-            "sky" => ThemePalette::Sky,
+            "teal" => ThemePalette::Limsa,
+            "emerald" => ThemePalette::TwinAdder,
+            "amber" => ThemePalette::Uldah,
+            "rose" => ThemePalette::Ascian,
+            "sky" => ThemePalette::Ishgard,
             "ultros" => ThemePalette::Ultros,
             "maelstrom" => ThemePalette::Maelstrom,
             "twin-adder" => ThemePalette::TwinAdder,
@@ -106,8 +127,8 @@ impl FromStr for ThemePalette {
             "uldah" => ThemePalette::Uldah,
             "limsa" => ThemePalette::Limsa,
             "garlemald" => ThemePalette::Garlemald,
-            "violet" => ThemePalette::Violet,
-            _ => ThemePalette::Violet,
+            "violet" => ThemePalette::Ultros,
+            _ => ThemePalette::Ultros,
         })
     }
 }
@@ -318,23 +339,27 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_palette_from_str() {
-        assert_eq!(ThemePalette::from_str("teal").unwrap(), ThemePalette::Teal);
-        assert_eq!(ThemePalette::from_str("TeAl").unwrap(), ThemePalette::Teal); // case-insensitive
-        assert_eq!(
-            ThemePalette::from_str("twin-adder").unwrap(),
-            ThemePalette::TwinAdder
-        );
-        assert_eq!(
-            ThemePalette::from_str("ultros").unwrap(),
-            ThemePalette::Ultros
-        );
+    fn palette_catalog_round_trips_and_has_a_visible_default() {
+        assert!(ThemePalette::ALL.contains(&ThemePalette::default()));
+        for palette in ThemePalette::ALL {
+            assert_eq!(palette.as_str().parse(), Ok(palette));
+            assert_eq!(palette.as_str().to_uppercase().parse(), Ok(palette));
+        }
+    }
 
-        // Check fallback behavior
-        assert_eq!(
-            ThemePalette::from_str("unknown").unwrap(),
-            ThemePalette::Violet
-        );
-        assert_eq!(ThemePalette::from_str("").unwrap(), ThemePalette::Violet);
+    #[test]
+    fn saved_generic_names_migrate_to_named_themes() {
+        for (saved, expected) in [
+            ("violet", ThemePalette::Ultros),
+            ("TeAl", ThemePalette::Limsa),
+            ("emerald", ThemePalette::TwinAdder),
+            ("amber", ThemePalette::Uldah),
+            ("rose", ThemePalette::Ascian),
+            ("sky", ThemePalette::Ishgard),
+            ("unknown", ThemePalette::Ultros),
+            ("", ThemePalette::Ultros),
+        ] {
+            assert_eq!(saved.parse(), Ok(expected));
+        }
     }
 }

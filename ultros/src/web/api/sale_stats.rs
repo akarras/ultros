@@ -28,7 +28,7 @@ use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use crate::web::{
     error::{ClickHouseQueryError, WebError},
-    sale_stats_cache::{CacheDisposition, CacheKey, SaleStatsCache},
+    stats_cache::{CacheKey, SaleStatsCache, cached_response},
 };
 
 const DEFAULT_WINDOW_DAYS: u16 = 7;
@@ -66,11 +66,7 @@ pub(crate) async fn get_sale_stats(
             move || async move { load_sale_stats(&ch, world_ids, window_days).await },
         )
         .await?;
-    let disposition = match cached.disposition {
-        CacheDisposition::Fresh => "fresh",
-        CacheDisposition::Loaded => "loaded",
-        CacheDisposition::Stale => "stale",
-    };
+    let disposition = cached.disposition.as_str();
     metrics::counter!(
         "ultros_sale_stats_cache_total",
         "disposition" => disposition
@@ -132,25 +128,4 @@ async fn load_sale_stats(
         .map(Bytes::from)
         .map_err(anyhow::Error::from)
         .map_err(Into::into)
-}
-
-fn cached_response(body: Bytes, disposition: &'static str) -> axum::response::Response {
-    (
-        [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/json".to_string(),
-            ),
-            (
-                axum::http::header::CACHE_CONTROL,
-                "public, max-age=300, s-maxage=300, stale-while-revalidate=1800".to_string(),
-            ),
-            (
-                axum::http::header::HeaderName::from_static("x-ultros-cache"),
-                disposition.to_string(),
-            ),
-        ],
-        body,
-    )
-        .into_response()
 }

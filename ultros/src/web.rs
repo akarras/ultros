@@ -6,11 +6,11 @@ pub(crate) mod item_card;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
-pub(crate) mod sale_stats_cache;
 pub(crate) mod sitemap;
 pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
+pub(crate) mod stats_cache;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
@@ -88,8 +88,9 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
-    get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines, recent_sales,
+    cheapest_per_world, get_best_deals, get_item_stats, get_listing_stats, get_market_heat,
+    get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
+    recent_sales,
 };
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
@@ -2613,6 +2614,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/market_heat/{world}", get(get_market_heat))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route("/api/v1/sale_stats/{world}", get(get_sale_stats))
+        .route("/api/v1/listing_stats/{world}", get(get_listing_stats))
         .route("/api/v1/alerts/events", get(list_alert_events))
         .route(
             "/api/v1/alerts/events/{id}/resend",
@@ -2739,6 +2741,17 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/characters", get(user_characters))
         .route("/api/v1/detectregion", get(detect_region))
         .route("/api/v1/current_user", delete(delete_user))
+}
+
+/// Stamps every response with the commit this binary was built from so a
+/// stale wasm bundle can notice the server moved on. Outermost layer, so it
+/// covers SSR HTML, the JSON API, static files, `/pkg/`, and error responses.
+/// The client side lives in `ultros_app::global_state::app_update`.
+fn app_commit_header_layer() -> SetResponseHeaderLayer<HeaderValue> {
+    SetResponseHeaderLayer::overriding(
+        axum::http::HeaderName::from_static(ultros_api_types::app_version::APP_COMMIT_HEADER),
+        HeaderValue::from_static(env!("GIT_HASH")),
+    )
 }
 
 pub(crate) async fn start_web(
@@ -2874,7 +2887,8 @@ pub(crate) async fn start_web(
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
-        ));
+        ))
+        .layer(app_commit_header_layer());
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
@@ -2899,4 +2913,49 @@ pub(crate) async fn start_web(
         start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
+}
+
+#[cfg(test)]
+mod app_commit_header_tests {
+    use super::app_commit_header_layer;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use ultros_api_types::app_version::APP_COMMIT_HEADER;
+
+    fn router() -> Router {
+        Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(app_commit_header_layer())
+    }
+
+    async fn header_for(uri: &str) -> (StatusCode, Option<String>) {
+        let response = router()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let header = response
+            .headers()
+            .get(APP_COMMIT_HEADER)
+            .map(|v| v.to_str().unwrap().to_string());
+        (response.status(), header)
+    }
+
+    #[tokio::test]
+    async fn stamps_success_responses() {
+        let (status, header) = header_for("/ok").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+
+    #[tokio::test]
+    async fn stamps_not_found_responses() {
+        let (status, header) = header_for("/missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
 }
