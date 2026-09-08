@@ -17,7 +17,7 @@ use poise::serenity_prelude::{
 use std::collections::HashSet;
 use ultros_api_types::alert::{DiscordWritableChannel, DiscordWritableGuild};
 
-use crate::web::error::ApiError;
+use crate::web::error::{ApiError, DiscordFailure};
 use crate::web::oauth::AuthUserCache;
 
 /// Resolved metadata for a Discord channel that is bound to a notification
@@ -160,19 +160,58 @@ fn role_colour(role: &Role) -> Option<String> {
     (role.colour.0 != 0).then(|| format!("#{:06x}", role.colour.0))
 }
 
+/// Turn a failed Discord call into an error whose message reaches the client.
+///
+/// The `kind` is what decides the status and whether an operator is paged;
+/// classification follows the repo's `is_transient` convention so this layer
+/// and the background sync task agree on what counts as weather.
+///
+/// Deliberately *not* `anyhow::anyhow!("{message}")`: `ApiError::AnyhowError`
+/// has no arm in `as_api_error`, so every message built here used to be
+/// replaced by "Internal server error" at the response boundary — including
+/// the 403 text the spec requires to be diagnosable from the UI.
+fn discord_error(message: String, error: &serenity::Error) -> ApiError {
+    let kind = if crate::group_sync::reconcile::is_transient(error) {
+        DiscordFailure::Transient
+    } else if matches!(error, serenity::Error::Http(_)) {
+        DiscordFailure::Misconfigured
+    } else {
+        // Decode, model and format errors are schema drift or a bug in this
+        // process — not something Discord told us, and not something an
+        // operator can fix by flipping a setting. They keep the 500 and the
+        // issue in the error tracker, because somebody here has to look.
+        return ApiError::from(anyhow::anyhow!("{message}"));
+    };
+    ApiError::Discord { message, kind }
+}
+
 /// The guild's importable roles, highest first, the order they appear in
 /// Discord's own role list.
 pub(crate) async fn importable_guild_roles(
     ctx: &serenity::Context,
     guild_id: i64,
 ) -> Result<Vec<(i64, String, i32, Option<String>)>, ApiError> {
+    importable_guild_roles_via(&ctx.http, guild_id).await
+}
+
+/// [`importable_guild_roles`] against a bare [`Http`], so the failure path can
+/// be driven end to end from a test: a `serenity::Context` cannot be built
+/// outside a running gateway connection, but an `Http` can be pointed at a
+/// mock.
+async fn importable_guild_roles_via(
+    http: &Http,
+    guild_id: i64,
+) -> Result<Vec<(i64, String, i32, Option<String>)>, ApiError> {
     let guild_id =
         u64::try_from(guild_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid guild_id")))?;
-    let roles = GuildId::new(guild_id).roles(&ctx.http).await.map_err(|e| {
-        ApiError::from(anyhow::anyhow!(
-            "Discord could not load the roles for that server: {e}. \
+    let roles = GuildId::new(guild_id).roles(http).await.map_err(|e| {
+        discord_error(
+            format!(
+                "Discord could not load the roles for that server: {e}. \
                  The bot must still be a member of it."
-        ))
+            ),
+            &e,
+        )
     })?;
     let mut roles: Vec<_> = roles
         .into_values()
@@ -206,12 +245,22 @@ pub(crate) async fn search_guild_members(
     query: &str,
     limit: u64,
 ) -> Result<Vec<Member>, ApiError> {
+    search_guild_members_via(&ctx.http, guild_id, query, limit).await
+}
+
+/// [`search_guild_members`] against a bare [`Http`] — see
+/// [`importable_guild_roles_via`] for why the split exists.
+async fn search_guild_members_via(
+    http: &Http,
+    guild_id: i64,
+    query: &str,
+    limit: u64,
+) -> Result<Vec<Member>, ApiError> {
     let guild_id =
         u64::try_from(guild_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid guild_id")))?;
-    ctx.http
-        .search_guild_members(GuildId::new(guild_id), query, Some(limit))
+    http.search_guild_members(GuildId::new(guild_id), query, Some(limit))
         .await
-        .map_err(|e| ApiError::from(anyhow::anyhow!("{}", member_search_error(&e))))
+        .map_err(|e| discord_error(member_search_error(&e), &e))
 }
 
 fn member_search_error(error: &serenity::Error) -> String {
@@ -462,6 +511,7 @@ pub(crate) async fn writable_guilds_for_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::response::IntoResponse;
 
     async fn mock_discord(app: axum::Router) -> (Http, tokio::task::JoinHandle<()>) {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -617,6 +667,115 @@ mod tests {
             assert!(!message.contains("Server Members intent"), "{status:?}");
             assert!(message.contains("connection reset"), "{status:?}");
         }
+    }
+
+    /// Serve `status` for every request and hand back the response the given
+    /// Discord call turns into, all the way through `IntoResponse`.
+    ///
+    /// Building the message is only half the job — the half the old tests
+    /// covered while the bug was live. What matters is that it survives
+    /// `ApiError::into_response`, so this asserts on the bytes on the wire.
+    async fn failure_response<F, Fut>(status: u16, call: F) -> (axum::http::StatusCode, String)
+    where
+        F: FnOnce(Http) -> Fut,
+        Fut: std::future::Future<Output = Result<(), ApiError>>,
+    {
+        let app = axum::Router::new().fallback(move || async move {
+            (
+                axum::http::StatusCode::from_u16(status).unwrap(),
+                axum::Json(serde_json::json!({"code": 0, "message": "Missing Access"})),
+            )
+        });
+        let (http, server) = mock_discord(app).await;
+        let error = call(http).await.expect_err("Discord returned an error");
+        server.abort();
+        let response = error.into_response();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    /// The 403 text is worth nothing if it does not reach the browser.
+    ///
+    /// It used to not: the message was built, wrapped in `anyhow`, and then
+    /// replaced with "Internal server error" by `ApiError::as_api_error`,
+    /// which downcasts only to the list/retainer/group error types. The
+    /// message-building test above passed the whole time.
+    #[tokio::test]
+    async fn a_forbidden_member_search_reaches_the_client_intact() {
+        let (status, body) = failure_response(403, |http| async move {
+            search_guild_members_via(&http, 1, "ali", 25)
+                .await
+                .map(|_| ())
+        })
+        .await;
+        assert_eq!(
+            status,
+            axum::http::StatusCode::BAD_GATEWAY,
+            "a refusal from Discord is an upstream failure, not the caller's fault"
+        );
+        assert!(
+            body.contains("Server Members intent"),
+            "the response body must name the intent: {body}"
+        );
+        assert!(
+            !body.contains("Internal server error"),
+            "the spec'd message must not be swallowed: {body}"
+        );
+    }
+
+    /// The role import picker fails through the same path, and the spec asks
+    /// for a clear message on all three of import, search and sync.
+    #[tokio::test]
+    async fn a_forbidden_role_listing_reaches_the_client_intact() {
+        let (status, body) = failure_response(403, |http| async move {
+            importable_guild_roles_via(&http, 1).await.map(|_| ())
+        })
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_GATEWAY);
+        assert!(
+            body.contains("must still be a member"),
+            "the response body must explain itself: {body}"
+        );
+        assert!(!body.contains("Internal server error"), "{body}");
+    }
+
+    /// A rate limit is weather. It answers 503 so the client knows to retry,
+    /// and it still says what happened rather than "Internal server error".
+    #[tokio::test]
+    async fn a_rate_limited_member_search_is_a_retryable_503() {
+        for status in [429, 500] {
+            let (status, body) = failure_response(status, |http| async move {
+                search_guild_members_via(&http, 1, "ali", 25)
+                    .await
+                    .map(|_| ())
+            })
+            .await;
+            assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+            assert!(body.contains("Discord member search failed"), "{body}");
+            // A transient blip must not send an operator to check a setting
+            // that is fine.
+            assert!(!body.contains("Server Members intent"), "{body}");
+        }
+    }
+
+    /// The carve-out is only for failures Discord actually reported. Schema
+    /// drift in serenity's own decoding is a bug on this side, so it keeps the
+    /// 500 and the tracker entry rather than being dressed up as an upstream
+    /// problem an operator is supposed to fix.
+    #[test]
+    fn a_local_decoding_bug_is_not_blamed_on_discord() {
+        let error = discord_error(
+            "Discord member search failed: bad payload".to_string(),
+            &serenity::Error::Other("unexpected shape"),
+        );
+        assert!(!matches!(error, ApiError::Discord { .. }));
+        assert_eq!(
+            error.into_response().status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     fn guild(id: u64, owner: bool, permissions: Permissions) -> serenity::GuildInfo {

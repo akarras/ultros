@@ -1,4 +1,10 @@
-use std::{num::ParseIntError, sync::Arc};
+use std::{
+    num::ParseIntError,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use axum::{
     Json,
@@ -13,7 +19,7 @@ use oauth2::{
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
     SeaDbErr, common_type_conversions::ApiConversionError, group_roles::GroupError,
@@ -65,6 +71,71 @@ impl ClickHouseQueryError {
             kind,
             source,
         }
+    }
+}
+
+/// Why a call to Discord failed, as far as the response boundary needs to care.
+///
+/// Only two things depend on this: the status the caller gets, and whether an
+/// operator is told. Both hinge on "will this clear on its own?", so that is
+/// the whole distinction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscordFailure {
+    /// Discord gave a definitive "no" that only a deploy change fixes — the
+    /// Server Members intent left off, the bot removed from the guild. The
+    /// caller did nothing wrong, so this is `502`, not `4xx`, and it is worth
+    /// waking an operator (once — see [`report_discord_misconfiguration`]).
+    Misconfigured,
+    /// A rate limit, a Discord 5xx, or no answer at all. Retrying works, so
+    /// it is a `503` and it stays out of the error tracker: member search runs
+    /// on a per-keystroke debounce, and one Discord blip would otherwise file
+    /// an issue per character typed.
+    Transient,
+}
+
+/// The one-shot latch behind the `Misconfigured` arm of
+/// [`reports_to_tracker`].
+static DISCORD_MISCONFIGURATION_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether this error should be filed as an issue in the error tracker, as
+/// opposed to merely logged.
+///
+/// `error!` is what the `sentry_tracing` layer captures, so this is the whole
+/// decision about who gets woken up. Not every 5xx belongs there: a dependency
+/// that is down or rate-limiting us is weather, and
+/// `GET /group/{id}/member-search` runs on a 300ms per-keystroke debounce, so
+/// one Discord 429 would otherwise file an issue per character typed.
+///
+/// `misconfiguration_latch` is a parameter rather than a direct read of the
+/// static so this is testable: a process-wide `AtomicBool` cannot be reset
+/// between tests that share a process.
+fn reports_to_tracker(
+    error: &ApiError,
+    status: StatusCode,
+    misconfiguration_latch: &AtomicBool,
+) -> bool {
+    if !status.is_server_error() {
+        return false;
+    }
+    match error {
+        // A disconnected Discord bot is a transient state, not a bug in this
+        // process — the same carve-out `WebError` makes for analyzer warm-up.
+        ApiError::ServiceUnavailable(_) => false,
+        ApiError::Discord {
+            kind: DiscordFailure::Transient,
+            ..
+        } => false,
+        // A misconfiguration is real and an operator has to see it, but it is
+        // identical on every request until someone changes the deploy. The
+        // spec asks for one loud line per process; `group_sync::reconcile`
+        // keeps its own latch for the same reason on the background path, and
+        // the two are deliberately separate so silencing one does not silence
+        // the other.
+        ApiError::Discord {
+            kind: DiscordFailure::Misconfigured,
+            ..
+        } => !misconfiguration_latch.swap(true, Ordering::Relaxed),
+        _ => true,
     }
 }
 
@@ -156,6 +227,20 @@ define_error_enum!(ApiError {
     /// the UI.
     #[error("{0}")]
     ServiceUnavailable(&'static str),
+    /// A call to Discord failed and the reason has to survive to the client.
+    ///
+    /// [`ServiceUnavailable`](ApiError::ServiceUnavailable) already does this
+    /// for the bot being offline, but it carries a `&'static str` and these
+    /// messages are built from Discord's own response — a status, a guild
+    /// name, Discord's own words. Routing them through `anyhow` instead is
+    /// what silently discarded them: `AnyhowError` has no arm in
+    /// `as_api_error`, so the 403 that names the Server Members intent was
+    /// constructed, formatted, and then replaced with "Internal server error".
+    #[error("{message}")]
+    Discord {
+        message: String,
+        kind: DiscordFailure,
+    },
 });
 
 impl ApiError {
@@ -176,6 +261,18 @@ impl ApiError {
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            // A refusal from Discord is an upstream answering "no" to *us*:
+            // 502 says the gateway between the caller and Discord is at
+            // fault, which is exactly right for an intent nobody enabled.
+            // A blip is a 503, which also says "retry".
+            ApiError::Discord {
+                kind: DiscordFailure::Misconfigured,
+                ..
+            } => StatusCode::BAD_GATEWAY,
+            ApiError::Discord {
+                kind: DiscordFailure::Transient,
+                ..
+            } => StatusCode::SERVICE_UNAVAILABLE,
             // A character id that the Lodestone doesn't know is a bad request
             // parameter, not a server fault - answering 500 both lied to the
             // caller and reported the typo to GlitchTip.
@@ -208,6 +305,13 @@ impl ApiError {
             // point of the variant.
             ApiError::ServiceUnavailable(message) => {
                 ultros_api_types::result::ApiError::Message((*message).to_string())
+            }
+            // Same reasoning, same trap: both Discord statuses are 5xx, so
+            // without an explicit arm the fallback below would swap the
+            // message for "Internal server error" and the endpoint would fail
+            // exactly as opaquely as before this variant existed.
+            ApiError::Discord { message, .. } => {
+                ultros_api_types::result::ApiError::Message(message.clone())
             }
             ApiError::CharacterClaimError(ClaimError::Lodestone(
                 ProfileError::CharacterNotFound(_),
@@ -313,6 +417,10 @@ fn api_report_title(error: &ApiError) -> std::borrow::Cow<'static, str> {
         ApiError::ClickHouse(e) => {
             std::borrow::Cow::Owned(format!("ClickHouse {} query failed ({})", e.query, e.kind))
         }
+        // Its own bucket for the same reason ClickHouse has one: a Discord
+        // misconfiguration wants an alert of its own, not a share of the
+        // "Generic API error" pile.
+        ApiError::Discord { .. } => std::borrow::Cow::Borrowed("Discord API call failed"),
         _ => std::borrow::Cow::Borrowed("Generic API error"),
     }
 }
@@ -336,18 +444,18 @@ impl IntoResponse for ApiError {
                 .into_response();
         }
         let status = self.as_status_code();
-        // A disconnected Discord bot is a transient state, not a bug in this
-        // process, so it stays out of `error!` and therefore out of GlitchTip
-        // — the same carve-out `WebError` makes for analyzer warm-up.
-        let is_expected_transient = matches!(self, ApiError::ServiceUnavailable(_));
-        if status.is_server_error() && !is_expected_transient {
-            // Same grouping rule as `WebError` — see `report_title`. The API
-            // routes are where the ClickHouse-backed endpoints live
-            // (item_stats, movers, resale_quality, market_heat), so collapsing
-            // them all under "Generic API error" is what made a ClickHouse
-            // outage indistinguishable from any other 500.
-            let title = api_report_title(&self);
+        let report_to_tracker =
+            reports_to_tracker(&self, status, &DISCORD_MISCONFIGURATION_REPORTED);
+        // Same grouping rule as `WebError` — see `report_title`. The API
+        // routes are where the ClickHouse-backed endpoints live (item_stats,
+        // movers, resale_quality, market_heat), so collapsing them all under
+        // "Generic API error" is what made a ClickHouse outage
+        // indistinguishable from any other 500.
+        let title = api_report_title(&self);
+        if report_to_tracker {
             error!(error = ?self, "{title}");
+        } else if status.is_server_error() {
+            warn!(error = ?self, %status, "{title}");
         }
         (
             status,
@@ -517,6 +625,123 @@ mod tests {
             ultros_api_types::result::ApiError::Message(
                 "The Ultros Discord bot is not connected".to_string()
             )
+        );
+    }
+
+    /// The Discord messages the spec spells out have to survive all the way to
+    /// the wire, which is the half `member_search_message`'s own unit test
+    /// could not see: the message was built correctly and then thrown away by
+    /// the `anyhow` catch-all below.
+    #[tokio::test]
+    async fn discord_failures_keep_their_message_and_a_sensible_status() {
+        let cases = [
+            (
+                DiscordFailure::Misconfigured,
+                StatusCode::BAD_GATEWAY,
+                "Discord refused the member search (403). The Ultros bot needs the \
+                 Server Members intent enabled in the Discord developer portal.",
+            ),
+            (
+                DiscordFailure::Transient,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Discord member search failed: connection reset",
+            ),
+        ];
+        for (kind, expected_status, message) in cases {
+            let error = ApiError::Discord {
+                message: message.to_string(),
+                kind,
+            };
+            assert_eq!(error.as_status_code(), expected_status, "{kind:?}");
+            assert_eq!(
+                error.as_api_error(),
+                ultros_api_types::result::ApiError::Message(message.to_string()),
+                "{kind:?}"
+            );
+
+            let response = error.into_response();
+            assert_eq!(response.status(), expected_status, "{kind:?}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert!(body.contains(message), "{kind:?}: {body}");
+            assert!(!body.contains("Internal server error"), "{kind:?}: {body}");
+        }
+    }
+
+    /// A transient Discord failure never reaches the error tracker.
+    ///
+    /// `member-search` fires on a 300ms per-keystroke debounce, so one Discord
+    /// 429 or blip would otherwise file an issue per character typed — a pile
+    /// of reports nobody can act on, burying the ones somebody can.
+    #[test]
+    fn a_transient_discord_failure_never_reaches_the_error_tracker() {
+        let error = ApiError::Discord {
+            message: "Discord member search failed: 429 Too Many Requests".to_string(),
+            kind: DiscordFailure::Transient,
+        };
+        let status = error.as_status_code();
+        assert!(
+            status.is_server_error(),
+            "still a 5xx — it just isn't this process's fault"
+        );
+        for attempt in 0..5 {
+            assert!(
+                !reports_to_tracker(&error, status, &AtomicBool::new(false)),
+                "attempt {attempt} filed an issue for a retryable Discord failure"
+            );
+        }
+    }
+
+    /// A misconfigured deploy is a real problem, so it is reported — but it is
+    /// identical on every request until somebody fixes it, so it is reported
+    /// exactly once per process, matching what `group_sync::reconcile` already
+    /// does on the background path.
+    #[test]
+    fn a_misconfiguration_is_reported_once_and_only_once() {
+        let error = ApiError::Discord {
+            message: "Discord refused the member search (403). The Ultros bot needs the \
+                      Server Members intent enabled in the Discord developer portal."
+                .to_string(),
+            kind: DiscordFailure::Misconfigured,
+        };
+        let status = error.as_status_code();
+        let latch = AtomicBool::new(false);
+        assert!(
+            reports_to_tracker(&error, status, &latch),
+            "an operator has to hear about a misconfigured intent"
+        );
+        for attempt in 1..5 {
+            assert!(
+                !reports_to_tracker(&error, status, &latch),
+                "attempt {attempt} repeated a report that says nothing new"
+            );
+        }
+    }
+
+    /// The carve-outs are narrow: an ordinary 500 still gets reported, or this
+    /// change would have quietly blinded the tracker.
+    #[test]
+    fn an_ordinary_server_error_is_still_reported() {
+        let error = ApiError::from(anyhow::anyhow!("something actually broke"));
+        assert!(reports_to_tracker(
+            &error,
+            error.as_status_code(),
+            &AtomicBool::new(false)
+        ));
+    }
+
+    /// Discord failures get their own reporting bucket rather than sharing the
+    /// "Generic API error" pile, so an unenabled intent can be alerted on.
+    #[test]
+    fn discord_failures_group_under_their_own_title() {
+        assert_eq!(
+            api_report_title(&ApiError::Discord {
+                message: "whatever".to_string(),
+                kind: DiscordFailure::Misconfigured,
+            }),
+            "Discord API call failed"
         );
     }
 
