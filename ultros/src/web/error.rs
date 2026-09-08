@@ -243,6 +243,27 @@ define_error_enum!(ApiError {
     },
 });
 
+impl From<ultros_db::list_doc::ListDocError> for ApiError {
+    fn from(error: ultros_db::list_doc::ListDocError) -> Self {
+        use ultros_db::list_doc::ListDocError;
+        match error {
+            ListDocError::List(inner) => ApiError::from(anyhow::Error::from(inner)),
+            ListDocError::MetaForbidden => ApiError::from(anyhow::Error::from(
+                ListError::Forbidden("only the list owner can change its name or scope"),
+            )),
+            ListDocError::InvalidUpdate => ApiError::from(anyhow::Error::from(
+                ListError::BadRequest("invalid document update"),
+            )),
+            ListDocError::MissingHistory => {
+                ApiError::from(anyhow::Error::from(ListError::BadRequest(
+                    "update depends on history this server does not have; resync from a snapshot",
+                )))
+            }
+            other => ApiError::from(anyhow::anyhow!("{other}")),
+        }
+    }
+}
+
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {

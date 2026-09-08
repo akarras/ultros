@@ -138,7 +138,9 @@ async fn handle_socket(
         retainer_undercut: _,
         history,
         lists,
+        list_docs,
     } = events;
+    let _ = &list_docs;
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
     let active_subscriptions = Arc::new(Mutex::new(HashSet::new()));

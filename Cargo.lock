@@ -10735,6 +10735,7 @@ dependencies = [
  "ultros-clickhouse",
  "ultros-db",
  "ultros-item-card",
+ "ultros-list-doc",
  "ultros-xiv-icons",
  "universalis",
  "url",

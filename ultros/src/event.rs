@@ -11,6 +11,25 @@ use ultros_db::entity::*;
 pub(crate) type EventBus<T> = tokio::sync::broadcast::Receiver<EventType<Arc<T>>>;
 pub(crate) type EventProducer<T> = tokio::sync::broadcast::Sender<EventType<Arc<T>>>;
 
+/// One merged list-document update, relayed to every other subscriber of
+/// that list. `origin_socket` is the socket that sent it, so the relay skips
+/// the sender; server-side writers carry `None`.
+///
+/// Nothing reads these fields yet: `crate::lists::ListSync` sends them, but
+/// the websocket relay that reads `EventReceivers::list_docs` lands in a
+/// later task of this plan (see `crate::lists`'s module doc).
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct ListDocEvent {
+    pub(crate) list_id: i32,
+    pub(crate) update: Vec<u8>,
+    pub(crate) origin_socket: Option<u64>,
+}
+
+/// Ring size for the list buses. A MakePlace import or a bulk HQ change
+/// emits one event per row; 40 slots turned those into `Stale` refetch storms.
+const LISTS_BUS_SIZE: usize = 1024;
+
 #[derive(Clone, Debug)]
 pub enum EventType<T> {
     Remove(T),
@@ -89,7 +108,8 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     let (alert_sender, alert_receiver) = channel(10);
     let (retainer_undercut_sender, retainer_undercut_receiver) = channel(40);
     let (history_sender, history_receiver) = channel(HISTORY_BUS_SIZE);
-    let (list_sender, list_receiver) = channel(40);
+    let (list_sender, list_receiver) = channel(LISTS_BUS_SIZE);
+    let (list_doc_sender, list_doc_receiver) = channel(LISTS_BUS_SIZE);
     (
         EventSenders {
             retainers: retainer_sender,
@@ -98,6 +118,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
             retainer_undercut: retainer_undercut_sender,
             history: history_sender,
             lists: list_sender,
+            list_docs: list_doc_sender,
         },
         EventReceivers {
             retainers: retainer_receiver,
@@ -106,6 +127,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
             retainer_undercut: retainer_undercut_receiver,
             history: history_receiver,
             lists: list_receiver,
+            list_docs: list_doc_receiver,
         },
     )
 }
@@ -118,6 +140,10 @@ pub(crate) struct EventSenders {
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
     pub(crate) history: EventProducer<SaleEventData>,
     pub(crate) lists: EventProducer<ListEventData>,
+    /// Sent by `crate::lists::ListSync::publish`, which has no callers until
+    /// a later task in this plan wires up the merge path.
+    #[allow(dead_code)]
+    pub(crate) list_docs: EventProducer<ListDocEvent>,
 }
 
 /// Base event type for communicating across different parts of the app
@@ -129,6 +155,7 @@ pub(crate) struct EventReceivers {
     pub(crate) retainer_undercut: EventBus<alert_retainer_undercut::Model>,
     pub(crate) history: EventBus<SaleEventData>,
     pub(crate) lists: EventBus<ListEventData>,
+    pub(crate) list_docs: EventBus<ListDocEvent>,
 }
 
 /// Outcome of a broadcast `recv()`, distinguished so callers can react
@@ -189,6 +216,7 @@ impl Clone for EventReceivers {
             retainer_undercut: self.retainer_undercut.resubscribe(),
             history: self.history.resubscribe(),
             lists: self.lists.resubscribe(),
+            list_docs: self.list_docs.resubscribe(),
         }
     }
 }
