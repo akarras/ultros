@@ -1,13 +1,20 @@
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+    signals::{PriceLookup, SignalView},
+};
 use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
     compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
+use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::query_signal;
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
@@ -19,16 +26,20 @@ use crate::{
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
-        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell},
         tool_help::*,
-        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
+        virtual_grid::{
+            ColumnFilter, GridColumn,
+            metrics::{GridMetric, GridValue},
+        },
         world_picker::WorldOnlyPicker,
     },
     global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
 };
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_meta::{Meta, Title};
-use leptos_router::hooks::{query_signal, use_params_map};
+use leptos_router::hooks::use_params_map;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::{
@@ -55,6 +66,10 @@ struct FCCraftProfitData {
     cost: i32,
     market_price: i32,
     cheapest_world_id: i32,
+    market_hq: bool,
+    listing_price: Option<i32>,
+    pricing_fallback: bool,
+    pricing_pending: bool,
     materials: Vec<MaterialInfo>,
     daily_sales: f32,
     avg_price: i32,
@@ -124,6 +139,31 @@ const FILTER_MIN_SALES: &str = "min-sales";
 const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
 const FILTER_USE_ON_HAND: &str = "on-hand";
 
+/// The page's built-in views, offered above the reader's own saved ones.
+///
+/// Queries only: the labels live in [`fc_crafting_presets`] because `t_string!`
+/// needs a literal key. Every key used here is pinned by a test below.
+const PRESET_QUERIES: [&str; 3] = [
+    "?min-sales=1&roi=30&sort=profit",
+    "?min-sales=0.5&profit=100000&sort=profit",
+    "?min-sales=1&shards-exclude=true&sort=profit",
+];
+
+fn fc_crafting_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, fc_crafting_preset_realistic).to_string(),
+        t_string!(i18n, fc_crafting_preset_big_ticket).to_string(),
+        t_string!(i18n, fc_crafting_preset_no_shards).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
+
 /// Filters the `+ Filter` menu can add, in menu order.
 const ADDABLE_FILTERS: &[&str] = &[
     FILTER_PROFIT,
@@ -133,7 +173,7 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_USE_ON_HAND,
 ];
 
-const FC_TABLE_CLASS: &str = "fc-craft-table rounded-2xl panel";
+const FC_TABLE_CLASS: &str = "fc-craft-table";
 
 fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitData) -> Ordering {
     match mode {
@@ -148,9 +188,9 @@ fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitDat
     }
 }
 
-fn calculate_fc_project_cost(
+fn calculate_fc_project_cost<P: PriceLookup + ?Sized>(
     sequence: &'static CompanyCraftSequence,
-    prices: &CheapestListingsMap,
+    prices: &P,
     data: &'static xiv_gen::Data,
     opts: &CraftingCostOptions<'_>,
 ) -> (
@@ -226,6 +266,7 @@ fn calculate_fc_project_cost(
         });
     }
 
+    material_infos.sort_unstable_by_key(|material| material.item_id.0);
     let clamp = |v: i64| -> i32 {
         if v > i32::MAX as i64 {
             i32::MAX
@@ -262,6 +303,9 @@ fn FCCraftingAnalyzerTable(
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let market = use_market_data(world);
+    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     let data = tracked_data();
     let items = &data.items;
     let sequences = &data.company_craft_sequences;
@@ -299,6 +343,18 @@ fn FCCraftingAnalyzerTable(
     let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let computed_data = Memo::new(move |_| {
+        let stats = market.stats7();
+        let cost_signal = cost_basis.get().unwrap_or_default();
+        let revenue_signal = revenue_basis.get().unwrap_or_default();
+        let pricing_pending = stats.is_none()
+            && (cost_signal.sale_stat().is_some() || revenue_signal.sale_stat().is_some());
+        let cost_prices = SignalView {
+            over: None,
+            base: &prices,
+            stats: cost_signal
+                .sale_stat()
+                .and_then(|stat| stats.as_deref().map(|index| (index, stat))),
+        };
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
             let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
@@ -338,18 +394,26 @@ fn FCCraftingAnalyzerTable(
                 }
             };
 
-            let market_price_summary = prices.find_matching_listings(sequence.result_item);
-            let market_price = market_price_summary.lowest_gil().unwrap_or(0);
+            let Some(revenue) = resolve_price(
+                &prices,
+                stats.as_deref(),
+                sequence.result_item,
+                None,
+                revenue_signal,
+            ) else {
+                continue;
+            };
+            let market_price = revenue.price;
 
             if market_price == 0 {
                 continue;
             }
 
-            let cheapest_world_id = market_price_summary
-                .lq
-                .map(|d| d.world_id)
-                .or(market_price_summary.hq.map(|d| d.world_id))
-                .unwrap_or(0);
+            let market_hq = revenue.hq;
+            let listings = prices.find_matching_listings(sequence.result_item);
+            let listing = if market_hq { listings.hq } else { listings.lq };
+            let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
+            let listing_price = listing.map(|entry| entry.price);
 
             // Fresh on-hand snapshot per sequence — compute_ingredient_cost consumes
             // from the snapshot, and reusing one across sequences would wrongly deplete
@@ -381,14 +445,27 @@ fn FCCraftingAnalyzerTable(
             };
 
             let (cost, materials, shard_cost, on_hand_savings) =
-                calculate_fc_project_cost(sequence, &prices, data, &opts);
+                calculate_fc_project_cost(sequence, &cost_prices, data, &opts);
+            let pricing_fallback = revenue.fallback
+                || materials.iter().any(|material| {
+                    resolve_price(
+                        &prices,
+                        stats.as_deref(),
+                        material.item_id.0,
+                        None,
+                        cost_signal,
+                    )
+                    .is_some_and(|price| price.fallback)
+                });
 
             if cost == 0 {
                 // Cost 0 means probably missing data or no materials required (unlikely for valid projects)
                 continue;
             }
 
-            if cost >= market_price {
+            // Listing fallback values cannot establish profitability while
+            // the selected sale-price inputs are still loading.
+            if !pricing_pending && cost >= market_price {
                 continue;
             }
 
@@ -406,6 +483,10 @@ fn FCCraftingAnalyzerTable(
                 cost,
                 market_price,
                 cheapest_world_id,
+                market_hq,
+                listing_price,
+                pricing_fallback,
+                pricing_pending,
                 materials,
                 daily_sales: sales_stats.daily_sales,
                 avg_price: sales_stats.avg_price,
@@ -417,20 +498,27 @@ fn FCCraftingAnalyzerTable(
 
         // Filter
         if let Some(min) = minimum_profit() {
-            results.retain(|d| d.profit >= min);
+            results.retain(|d| d.pricing_pending || d.profit >= min);
         }
         if let Some(min) = minimum_roi() {
-            results.retain(|d| d.return_on_investment >= min);
+            results.retain(|d| d.pricing_pending || d.return_on_investment >= min);
         }
         if let Some(min_sales) = min_daily_sales() {
             results.retain(|d| d.daily_sales >= min_sales);
         }
 
         // Sort
-        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        sort_and_truncate(&mut results, dir, 100, |a, b| compare_fc_crafts(mode, a, b));
+        results.sort_unstable_by(|a, b| {
+            let metric = compare_fc_crafts(mode, a, b);
+            let metric = if dir == SortDir::Asc {
+                metric
+            } else {
+                metric.reverse()
+            };
+            metric.then_with(|| a.sequence.key_id.0.cmp(&b.sequence.key_id.0))
+        });
 
         results
             .into_iter()
@@ -523,9 +611,23 @@ fn FCCraftingAnalyzerTable(
         set_use_on_hand(None);
     });
 
+    // Built outside `ControlBar`'s `actions` closure: that closure runs
+    // in a render effect and `t_string!` is tracked, so resolving the
+    // labels there would rebuild the whole slot on a language switch.
+    let presets = Signal::derive(move || fc_crafting_presets(i18n));
+
     view! {
             <div class="flex flex-col gap-6">
                 <ActiveListBanner />
+                <div class="flex flex-wrap gap-3">
+                    <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                        basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                        on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                    <MarketPriceControls label=t_string!(i18n, market_completed_price).to_string()
+                        basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
+                        on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+                </div>
+
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
@@ -536,7 +638,10 @@ fn FCCraftingAnalyzerTable(
                         .into_any()
                     }
                     actions=move || {
-                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="fc-crafting-analyzer-grid" presets=presets />
+                        }
                             .into_any()
                     }
                     available_filters=Signal::derive(filter_options)
@@ -647,7 +752,21 @@ fn FCCraftingAnalyzerTable(
                 </ControlBar>
 
                 <div class=FC_TABLE_CLASS>
-                     <QueryGrid id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
+                     <MarketGrid show_saved_views=false id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
+     market=market
+     subject=Arc::new(move |(_, row): &(usize, Arc<FCCraftProfitData>)| {
+         let mut subject = MarketSubject::new(row.sequence.result_item, row.market_hq, row.cheapest_world_id);
+         subject.listing_price = row.listing_price;
+         subject
+     })
+     metrics=vec![
+         GridMetric::text("item", move |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Text(items.get(&ItemId(row.sequence.result_item)).map(|item| item.name.to_string()).unwrap_or_default())),
+         GridMetric::number("profit", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.profit as f64) }),
+         GridMetric::number("roi", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.return_on_investment as f64) }),
+         GridMetric::number("cost", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost as f64) }),
+         GridMetric::number("market-price", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.market_price as f64) }),
+         GridMetric::number("daily-sales", |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Number(row.daily_sales as f64)),
+     ]
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string(), 320.0, false, true),
     { let mut col = GridColumn::new("profit",t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
@@ -692,7 +811,7 @@ fn FCCraftingAnalyzerTable(
                                     sort_dir
                                  />}.into_any(), _ => ().into_any()}}
      each=computed_data
-                        key=move |(index, data): &(usize, Arc<FCCraftProfitData>)| (*index, data.sequence.key_id)
+                        key=move |(_, data): &(usize, Arc<FCCraftProfitData>)| data.sequence.key_id
 
      measure=move |(_, data): &(usize, Arc<FCCraftProfitData>), id| {match id {"item" => (items.get(&ItemId(data.sequence.result_item)).map(|i|i.name.as_str()).unwrap_or_default().to_string(), 110.0),
     "profit" => (data.profit.separate_with_commas(), 42.0),
@@ -766,6 +885,8 @@ fn FCCraftingAnalyzerTable(
                                     </div>}.into_any(),
     "cost" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.cost />
+                                        {data.pricing_pending.then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_loading_prices)}</span> })}
+                                        {(!data.pricing_pending && data.pricing_fallback).then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_listing_fallback)}</span> })}
                                     </div>}.into_any(),
     "market-price" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.market_price />
@@ -902,6 +1023,42 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(
+                        std::str::FromStr::from_str(value)
+                            .map(|_: SortMode| ())
+                            .is_ok(),
+                        "{query}"
+                    ),
+                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
 
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.

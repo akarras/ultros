@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "The item column stops shoving your numbers off screen",
+  "blurb": "Flip Finder sized the item column to whatever the longest name in the current results happened to be, so every filter change moved the table under you and pushed profit and ROI out of view. It now keeps a steady width and truncates long names. Drag its border, or pick Auto fit from the column menu, whenever you want the full name back.",
+  "link": "/flip-finder"
+}

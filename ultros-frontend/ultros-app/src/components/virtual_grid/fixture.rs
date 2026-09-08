@@ -1,15 +1,21 @@
 //! Deterministic browser fixture. The route and component are absent in release builds.
 #[leptos::component(transparent)]
-pub fn GridFixtureRoutes() -> impl leptos_router::MatchNestedRoutes + Clone + Send {
+pub fn GridFixtureRoutes() -> leptos_router::any_nested_route::AnyNestedRoute {
+    use leptos_router::any_nested_route::IntoAnyNestedRoute;
     #[cfg(debug_assertions)]
     {
         use leptos::prelude::*;
         use leptos_router::{components::Route, path};
-        view! { <Route path=path!("__test/virtual-grid") view=GridFixture/> }.into_inner()
+        (
+            view! { <Route path=path!("__test/virtual-grid") view=GridFixture/> }.into_inner(),
+            view! { <Route path=path!("__test/shared-analyzer-data") view=QueryFixture/> }
+                .into_inner(),
+        )
+            .into_any_nested_route()
     }
     #[cfg(not(debug_assertions))]
     {
-        DisabledFixtureRoutes
+        DisabledFixtureRoutes.into_any_nested_route()
     }
 }
 
@@ -43,6 +49,7 @@ impl leptos_router::MatchNestedRoutes for DisabledFixtureRoutes {
 
 #[cfg(debug_assertions)]
 mod development {
+    use super::super::metrics::{GridMetric, GridValue};
     use super::super::query_grid::QueryGrid;
     use super::super::*;
     use leptos_router::hooks::*;
@@ -55,12 +62,89 @@ mod development {
         "c52", "c53", "c54", "c55", "c56", "c57", "c58", "c59", "c60", "c61", "c62", "c63",
     ];
 
+    #[derive(Clone, PartialEq)]
+    pub struct QueryRow {
+        id: usize,
+        loaded: bool,
+    }
+
+    fn query_value(row: &QueryRow, column: &str) -> GridValue {
+        match column {
+            "item" => GridValue::Text(format!("Row {}", row.id)),
+            "amount" if row.id == 249 => GridValue::Missing,
+            "amount" => GridValue::Number(row.id as f64),
+            "partial" if !row.loaded || row.id == 249 => GridValue::Pending,
+            "partial" if row.id == 247 => GridValue::Unavailable,
+            "partial" if row.id == 248 => GridValue::Missing,
+            "partial" => GridValue::Number(row.id as f64),
+            "worlds" => GridValue::Set(if row.id.is_multiple_of(2) {
+                vec!["Gilgamesh".into(), "Cactuar".into()]
+            } else {
+                vec!["Leviathan".into()]
+            }),
+            _ => GridValue::Missing,
+        }
+    }
+
+    fn query_text(row: &QueryRow, column: &str) -> String {
+        match query_value(row, column) {
+            GridValue::Number(value) => value.to_string(),
+            GridValue::Text(value) => value,
+            GridValue::Set(values) => values.join(", "),
+            GridValue::Missing => "No history".into(),
+            GridValue::Pending => "Awaiting data".into(),
+            GridValue::Unavailable => "Feed unavailable".into(),
+        }
+    }
+
+    /// Exercises filtering independently of market services and live data.
+    #[component]
+    pub fn QueryFixture() -> impl IntoView {
+        let loaded = RwSignal::new(0usize);
+        let rows = Memo::new(move |_| {
+            (0..250)
+                .map(|id| QueryRow {
+                    id,
+                    loaded: id < loaded.get(),
+                })
+                .collect::<Vec<_>>()
+        });
+        let columns = Signal::derive(|| {
+            vec![
+                GridColumn::new("item", "Item".into(), 180.0, false, true),
+                GridColumn::new("amount", "Amount".into(), 160.0, true, true),
+                GridColumn::new("partial", "Partial feed".into(), 180.0, true, true),
+                GridColumn::new("worlds", "Worlds".into(), 240.0, true, true),
+            ]
+        });
+        let metrics = vec![
+            GridMetric::text("item", |r: &QueryRow| query_value(r, "item")),
+            GridMetric::number("amount", |r: &QueryRow| query_value(r, "amount")),
+            GridMetric::number("partial", |r: &QueryRow| query_value(r, "partial")).partial(),
+            GridMetric::text("worlds", |r: &QueryRow| query_value(r, "worlds")),
+        ];
+        view! {
+            <h1>"Shared analyzer data fixture"</h1>
+            <button id="query-load-first" on:click=move |_| loaded.set(125)>"Load first half"</button>
+            <button id="query-load-all" on:click=move |_| loaded.set(250)>"Finish feed"</button>
+            <QueryGrid id="query-fixture-grid" label="Shared analyzer data fixture" each=rows columns metrics
+                key=|row: &QueryRow| row.id
+                header=|id| view! { <span>{id}</span> }.into_any()
+                view=|row, id| view! { <span data-fixture-id=row.id>{query_text(&row, id)}</span> }.into_any()
+                measure=|row, id| (query_text(row, id), 24.0)
+            />
+        }
+    }
+
     #[component]
     pub fn GridFixture() -> impl IntoView {
         let query = use_query_map();
         let tick = RwSignal::new(0u32);
         let sorts = RwSignal::new(0u32);
         let size = RwSignal::new(10_000usize);
+        // Simulates late enrichment without changing the row vector.
+        let enriched = RwSignal::new(false);
+        let measure_version = Signal::derive(move || u64::from(enriched.get()));
         let rows = Memo::new(move |_| (0..size.get()).map(|i| (i, tick.get())).collect::<Vec<_>>());
         let columns = Signal::derive(move || {
             IDS.iter()
@@ -78,8 +162,11 @@ mod development {
                 })
                 .collect::<Vec<_>>()
         });
-        let text = |(row, tick): &(usize, u32), id: &str| {
-            if *row == 9000 && id == "c00" {
+        let text = move |(row, tick): &(usize, u32), id: &str| {
+            if *row == 9000 && id == "c01" && enriched.get() {
+                "Late market enrichment outside the rendered window needs a much wider column"
+                    .to_string()
+            } else if *row == 9000 && id == "c00" {
                 "A deliberately long value outside the rendered window for auto-fit".to_string()
             } else {
                 format!("Row {row} / {id} / {tick}")
@@ -90,18 +177,19 @@ mod development {
             <button id="fixture-update" on:click=move |_|tick.update(|t|*t+=1)>"Update values"</button>
             <button id="fixture-empty" on:click=move |_|size.set(0)>"Empty results"</button>
             <button id="fixture-restore" on:click=move |_|size.set(10_000)>"Restore results"</button>
+            <button id="fixture-enrich" on:click=move |_|enriched.update(|value| *value = !*value)>"Toggle late enrichment"</button>
             <span id="fixture-sorts">{move || sorts.get()}</span>
-            <QueryGrid id="fixture-grid" label="Grid fixture" each=rows columns
+            <QueryGrid id="fixture-grid" label="Grid fixture" each=rows columns measure_version
                 key=|r:&(usize,u32)|r.0
                 header=move |id|view!{<button on:click=move |_|sorts.update(|s|*s+=1)>{id}</button>}.into_any()
-                view=move |row,id|view!{<div>{text(&row,id)}</div>}.into_any()
+                view=move |row,id|view!{<div>{move || text(&row,id)}</div>}.into_any()
                 measure=move |row,id|(text(row,id),32.0)
             />
         }
     }
 }
 #[cfg(debug_assertions)]
-use development::GridFixture;
+use development::{GridFixture, QueryFixture};
 
 #[cfg(test)]
 mod tests {
@@ -121,6 +209,7 @@ mod tests {
             "/flip-finder",
             "/recipe-analyzer",
             "/__test/virtual-grid",
+            "/__test/shared-analyzer-data",
         ] {
             let (matched, remaining) = DisabledFixtureRoutes.match_nested(path);
             assert!(matched.is_none(), "disabled fixture intercepted {path}");
@@ -150,10 +239,17 @@ mod tests {
         let routes = GridFixtureRoutes();
         assert_eq!(
             routes.generate_routes().into_iter().count(),
-            usize::from(cfg!(debug_assertions))
+            2 * usize::from(cfg!(debug_assertions))
         );
         assert_eq!(
             routes.match_nested("/__test/virtual-grid").0.is_some(),
+            cfg!(debug_assertions)
+        );
+        assert_eq!(
+            routes
+                .match_nested("/__test/shared-analyzer-data")
+                .0
+                .is_some(),
             cfg!(debug_assertions)
         );
         assert!(routes.match_nested("/flip-finder").0.is_none());

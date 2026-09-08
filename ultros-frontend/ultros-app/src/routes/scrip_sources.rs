@@ -1,4 +1,9 @@
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
@@ -13,7 +18,10 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
-        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
+        virtual_grid::{
+            ColumnFilter, GridColumn,
+            metrics::{GridMetric, GridValue},
+        },
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -21,16 +29,16 @@ use crate::{
     },
 };
 use leptos::prelude::*;
-use leptos_router::{
-    NavigateOptions,
-    hooks::{query_signal, use_navigate, use_query_map},
-};
+use leptos_i18n::I18nContext;
+use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::{collections::HashSet, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
+use crate::components::app_link::use_query_map_or_default;
 use crate::i18n::*;
+use crate::query_defaults::query_signal;
 
 #[derive(Clone, Debug, PartialEq)]
 struct ScripSourceData {
@@ -47,6 +55,12 @@ struct ScripSourceData {
     /// Ingredients the recipe actually uses.
     total_ingredients: u32,
     cheapest_world_id: i32,
+    market_item_id: i32,
+    market_item_name: String,
+    market_hq: bool,
+    listing_price: Option<i32>,
+    pricing_fallback: bool,
+    pricing_pending: bool,
     recipe: Option<&'static Recipe>,
 }
 
@@ -297,28 +311,49 @@ impl SortColumn for SortMode {
     }
 }
 
-/// Maximum rows rendered by the table.
-const ROW_LIMIT: usize = 100;
-
 // --- Filter registry -------------------------------------------------------
 // Each id is the `filter_query_signal` key it drives, so the list doubles as
 // the URL contract (mirrors the analyzer/currency-exchange convention).
 const FILTER_SCRIP: &str = "scrip";
 const FILTER_JOB: &str = "job";
 
+/// The page's built-in views, offered above the reader's own saved ones.
+///
+/// Queries only: the labels live in [`scrip_sources_presets`] because `t_string!`
+/// needs a literal key. Every key used here is pinned by a test below.
+const PRESET_QUERIES: [&str; 3] = [
+    "?sort=efficiency",
+    "?scrip=OrangeCrafters&sort=efficiency",
+    "?scrip=OrangeGatherers&sort=efficiency",
+];
+
+fn scrip_sources_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, scrip_sources_preset_best_value).to_string(),
+        t_string!(i18n, scrip_sources_preset_orange_crafters).to_string(),
+        t_string!(i18n, scrip_sources_preset_orange_gatherers).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
+
 /// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
 /// order.
 const ADDABLE_FILTERS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
 
-/// Rank the collected rows, collapse repeated items, and cap the list.
+/// Rank the collected rows and collapse repeated items without a result cap.
 ///
 /// The ranking has to be a *total* order. Rows are collected by iterating
 /// `collectables_shop_items`, a `std::collections::HashMap`, so they arrive
 /// here in an order that `RandomState` randomizes per process. The SSR server
 /// and the hydrating wasm client each build their own copy of the game data,
 /// so ranking that leaves ties unresolved puts different rows in different
-/// places — and, at the `limit` boundary, drops a different *set* of rows
-/// entirely — on the two sides. That is the hydration-mismatch class fixed for
+/// places on the two sides. That is the hydration-mismatch class fixed for
 /// the item page in #960. Tie-breaking on the stable item id pins one order.
 ///
 /// The composite key, in order:
@@ -335,7 +370,6 @@ fn rank_scrip_sources(
     mut results: Vec<ScripSourceData>,
     sort_mode: SortMode,
     dir: SortDir,
-    limit: usize,
 ) -> Vec<ScripSourceData> {
     results.sort_unstable_by(|a, b| {
         // `total_cmp` rather than `partial_cmp().unwrap()`: the unwrap was a
@@ -362,7 +396,6 @@ fn rank_scrip_sources(
     let mut seen = HashSet::with_capacity(results.len());
     results.retain(|r| seen.insert(r.item_id));
 
-    results.truncate(limit);
     results
 }
 
@@ -373,15 +406,25 @@ fn ScripSourceTable(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let market = use_market_data(world);
+    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
     let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
 
     // Create a lookup for recipes by result item
     let recipes_by_output = Memo::new(move |_| {
-        let mut map = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<i32, &'static Recipe> =
+            std::collections::HashMap::new();
         for recipe in recipes.values() {
-            map.insert(recipe.item_result, recipe);
+            // Choose consistently across the SSR and hydration data maps.
+            map.entry(recipe.item_result)
+                .and_modify(|current| {
+                    if recipe.key_id.0 < current.key_id.0 {
+                        *current = recipe;
+                    }
+                })
+                .or_insert(recipe);
         }
         map
     });
@@ -415,6 +458,9 @@ fn ScripSourceTable(
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
 
     let ranked_rows = Memo::new(move |_| {
+        let stats = market.stats7();
+        let basis = cost_basis.get().unwrap_or_default();
+        let pricing_pending = stats.is_none() && basis.sale_stat().is_some();
         let mut results = Vec::new();
         let recipes_lookup = recipes_by_output();
 
@@ -474,6 +520,10 @@ fn ScripSourceTable(
             let mut cost = 0;
             let mut priced_ingredients = 0u32;
             let mut total_ingredients = 0u32;
+            let mut pricing_fallback = false;
+            // The collectable cannot be sold. Market context belongs to its
+            // largest-cost ingredient, named explicitly alongside the metrics.
+            let mut market_ingredient = None;
 
             if let Some(r) = recipe {
                 // Sum ingredients
@@ -484,10 +534,18 @@ fn ScripSourceTable(
                         continue;
                     }
                     total_ingredients += 1;
-                    let price_summary = prices.find_matching_listings(ing_id);
-                    if let Some(price) = price_summary.lowest_gil() {
+                    if let Some(price) =
+                        resolve_price(&prices, stats.as_deref(), ing_id, None, basis)
+                    {
                         priced_ingredients += 1;
-                        cost += price * amount;
+                        pricing_fallback |= price.fallback;
+                        let line_cost = price.price.saturating_mul(amount);
+                        cost = i32::saturating_add(cost, line_cost);
+                        if market_ingredient.as_ref().is_none_or(|(largest, id, _)| {
+                            line_cost > *largest || (line_cost == *largest && ing_id < *id)
+                        }) {
+                            market_ingredient = Some((line_cost, ing_id, price));
+                        }
                     }
                 }
             } else {
@@ -500,6 +558,14 @@ fn ScripSourceTable(
             } // Nothing priceable, or free items: no cost to compare
 
             let cost_per_scrip = cost as f32 / scrip_amount as f32;
+            let (_, market_item_id, market_price) =
+                market_ingredient.expect("priced ingredients establish market context");
+            let listings = prices.find_matching_listings(market_item_id);
+            let listing = if market_price.hq {
+                listings.hq
+            } else {
+                listings.lq
+            };
 
             results.push(ScripSourceData {
                 item_id: ItemId(item_id),
@@ -512,16 +578,24 @@ fn ScripSourceTable(
                 cost_per_scrip,
                 priced_ingredients,
                 total_ingredients,
-                cheapest_world_id: 0, // Not tracked per ingredient
+                cheapest_world_id: listing.map(|entry| entry.world_id).unwrap_or(0),
+                market_item_id,
+                market_item_name: items
+                    .get(&ItemId(market_item_id))
+                    .map(|item| item.name.to_string())
+                    .unwrap_or_else(|| market_item_id.to_string()),
+                market_hq: market_price.hq,
+                listing_price: listing.map(|entry| entry.price),
+                pricing_fallback,
+                pricing_pending,
                 recipe,
             });
         }
 
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        // Rank the *full* set so the result count below is exact; the render
-        // memo applies `ROW_LIMIT`.
-        rank_scrip_sources(results, mode, dir, usize::MAX)
+        // Keep every eligible row; only the rendered cells are virtualized.
+        rank_scrip_sources(results, mode, dir)
     });
 
     let total_count = Memo::new(move |_| ranked_rows.with(|r| r.len()));
@@ -529,7 +603,6 @@ fn ScripSourceTable(
     let computed_data = Memo::new(move |_| {
         ranked_rows.with(|rows| {
             rows.iter()
-                .take(ROW_LIMIT)
                 .cloned()
                 .map(Arc::new)
                 .enumerate()
@@ -548,6 +621,15 @@ fn ScripSourceTable(
             .is_some_and(|s| s.is_gatherer())
     });
 
+    let scrip_label = move |scrip_type| match scrip_type {
+        ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+        ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+        ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+        ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+        ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+        ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+        ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+    };
     let scrip_options = move || {
         vec![
             (
@@ -639,19 +721,26 @@ fn ScripSourceTable(
         set_job_filter(None);
     });
 
+    // Built outside `ControlBar`'s `actions` closure: that closure runs
+    // in a render effect and `t_string!` is tracked, so resolving the
+    // labels there would rebuild the whole slot on a language switch.
+    let presets = Signal::derive(move || scrip_sources_presets(i18n));
+
     view! {
             <div class="flex flex-col gap-6">
+                <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
+                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                <p class="text-xs text-[color:var(--color-text-muted)]">
+                    {t!(i18n, market_collectable_note)}
+                </p>
+
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
                             <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
                                 {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
                             </span>
-                            <Show when=move || { total_count() > ROW_LIMIT }>
-                                <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
-                                    {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
-                                </span>
-                            </Show>
                             <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
                                 {move || t!(i18n, scrip_sources_region_pricing, region = world())}
                             </span>
@@ -659,7 +748,10 @@ fn ScripSourceTable(
                         .into_any()
                     }
                     actions=move || {
-                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="scrip-sources-grid" presets=presets />
+                        }
                             .into_any()
                     }
                     available_filters=Signal::derive(filter_options)
@@ -728,15 +820,32 @@ fn ScripSourceTable(
                     />
                 </Show>
 
-                <div class="rounded-2xl panel">
-                    <QueryGrid id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
+                <div>
+                    <MarketGrid show_saved_views=false id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
+     market=market
+     subject=Arc::new(move |(_, row): &(usize, Arc<ScripSourceData>)| {
+         let mut subject = MarketSubject::new(row.market_item_id, row.market_hq, row.cheapest_world_id);
+         subject.label = t_string!(i18n, market_ingredient_label, item = row.market_item_name.clone()).to_string();
+         subject.listing_price = row.listing_price;
+         subject
+     })
+     metrics=vec![
+         GridMetric::text("item", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(row.item_name.clone())).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::text("market-ingredient", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(row.market_item_name.clone())).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::number("cost-per-scrip", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost_per_scrip as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::number("scrip-amount", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Number(row.scrip_amount as f64)).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::number("cost", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::text("scrip-type", move |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(scrip_label(row.scrip_type))).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+     ]
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true),
+    GridColumn::new("market-ingredient", t_string!(i18n, market_ingredient).to_string(), 240.0, false, true),
     GridColumn::new("cost-per-scrip",t_string!(i18n, scrip_sources_cost_per_scrip).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::CostPerScrip, sort_dir.get().unwrap_or_else(||SortMode::CostPerScrip.default_dir()) == SortDir::Asc),
     GridColumn::new("scrip-amount",t_string!(i18n, scrip_sources_scrips).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::ScripAmount, sort_dir.get().unwrap_or_else(||SortMode::ScripAmount.default_dir()) == SortDir::Asc),
     GridColumn::new("cost",t_string!(i18n, scrip_sources_cost).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
     { let mut col = GridColumn::new("scrip-type",t_string!(i18n, scrip_sources_scrip_type_header).to_string(), 130.0, true, true); let mut filter = ColumnFilter::new("scrip", filter_label("scrip"), false); filter.options = scrip_options(); col.filters.push(filter); col }])
      header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_item)}</div>}.into_any(),
+    "market-ingredient" => view! { <span title=t_string!(i18n, market_ingredient_stats_title).to_string()>{t!(i18n, market_ingredient)}</span> }.into_any(),
     "cost-per-scrip" => view! {<div  class="w-full min-w-0">
                                     <SortHeader
                                         mode=SortMode::CostPerScrip
@@ -763,20 +872,23 @@ fn ScripSourceTable(
                                  </div>}.into_any(),
     "scrip-type" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_scrip_type_header)}</div>}.into_any(), _ => ().into_any()}}
      each=computed_data
-                        key=move |(index, data): &(usize, Arc<ScripSourceData>)| (*index, data.item_id)
+                        key=move |(_, data): &(usize, Arc<ScripSourceData>)| data.item_id
 
      measure=move |(_, data): &(usize, Arc<ScripSourceData>), id| {match id {"item" => (data.item_name.clone(), 110.0),
+    "market-ingredient" => (data.market_item_name.clone(), 30.0),
     "cost-per-scrip" => (format!("{:.1}",data.cost_per_scrip), 42.0),
     "scrip-amount" => (data.scrip_amount.to_string(), 42.0),
     "cost" => (data.cost.separate_with_commas(), 42.0),
-    "scrip-type" => (format!("{:?}",data.scrip_type), 42.0), _ => (String::new(), 0.0)}}
+    "scrip-type" => (scrip_label(data.scrip_type), 42.0), _ => (String::new(), 0.0)}}
      view=move |(index, data): (usize, Arc<ScripSourceData>), id| {
                             let item_id = data.item_id;
 
 
 
      let _ = index;
-     match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
+     match id {
+    "market-ingredient" => view! { <a class="truncate hover:text-brand-300" href=format!("/item/{}/{}", world(), data.market_item_id) title=t_string!(i18n, market_ingredient_cost_title).to_string()>{data.market_item_name.clone()}</a> }.into_any(),
+    "item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
                                          <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{}", world(), item_id.0)
@@ -824,6 +936,8 @@ fn ScripSourceTable(
                                     </div>}.into_any(),
     "cost" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.cost />
+                                        {data.pricing_pending.then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_loading_prices)}</span> })}
+                                        {(!data.pricing_pending && data.pricing_fallback).then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_listing_fallback)}</span> })}
                                         {(data.coverage_tier() != 0)
                                             .then(|| {
                                                 view! {
@@ -861,7 +975,7 @@ fn ScripSourceTable(
 #[component]
 pub fn ScripSources() -> impl IntoView {
     let i18n = use_i18n();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
@@ -990,6 +1104,42 @@ pub fn ScripSources() -> impl IntoView {
 mod tests {
     use super::*;
 
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(
+                        std::str::FromStr::from_str(value)
+                            .map(|_: SortMode| ())
+                            .is_ok(),
+                        "{query}"
+                    ),
+                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
+
     fn row(item_id: i32, scrip_amount: u32, cost: i32) -> ScripSourceData {
         ScripSourceData {
             item_id: ItemId(item_id),
@@ -1003,6 +1153,12 @@ mod tests {
             priced_ingredients: 3,
             total_ingredients: 3,
             cheapest_world_id: 0,
+            market_item_id: 0,
+            market_item_name: String::new(),
+            market_hq: false,
+            listing_price: None,
+            pricing_fallback: false,
+            pricing_pending: false,
             recipe: None,
         }
     }
@@ -1054,34 +1210,34 @@ mod tests {
                 let reversed: Vec<_> = forward.iter().rev().cloned().collect();
 
                 assert_eq!(
-                    ids(&rank_scrip_sources(forward, mode, dir, ROW_LIMIT)),
-                    ids(&rank_scrip_sources(reversed, mode, dir, ROW_LIMIT)),
+                    ids(&rank_scrip_sources(forward, mode, dir)),
+                    ids(&rank_scrip_sources(reversed, mode, dir)),
                     "{mode:?}/{dir:?} ranking changed with input order"
                 );
             }
         }
     }
 
-    /// The truncation boundary is the sharp edge of the same bug: with ties
-    /// spanning the cap, an unstable ranking changes *which* rows survive, so
-    /// the two sides render genuinely different items.
+    /// All rows beyond the former 100-row cap remain available in stable order.
     #[test]
-    fn truncation_keeps_the_same_rows_regardless_of_input_order() {
-        let forward: Vec<_> = (1..=10).map(|i| row(i, 20, 1000)).collect();
+    fn all_results_survive_regardless_of_input_order() {
+        let forward: Vec<_> = (1..=150).map(|i| row(i, 20, 1000)).collect();
         let reversed: Vec<_> = forward.iter().rev().cloned().collect();
+        assert_eq!(
+            rank_scrip_sources(forward.clone(), SortMode::Cost, SortDir::Asc).len(),
+            150
+        );
 
         assert_eq!(
             ids(&rank_scrip_sources(
                 forward,
                 SortMode::ScripAmount,
-                SortDir::Desc,
-                5
+                SortDir::Desc
             )),
             ids(&rank_scrip_sources(
                 reversed,
                 SortMode::ScripAmount,
-                SortDir::Desc,
-                5
+                SortDir::Desc
             )),
         );
     }
@@ -1094,7 +1250,7 @@ mod tests {
         // Item 1 at two reward tiers, with item 2 ranking between them.
         let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
 
-        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc, ROW_LIMIT);
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc);
 
         assert_eq!(ids(&ranked), vec![1, 2], "item 1 rendered twice");
     }
@@ -1104,7 +1260,7 @@ mod tests {
     fn dedup_keeps_the_best_ranked_row_for_an_item() {
         let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
 
-        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc, ROW_LIMIT);
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc);
 
         assert_eq!(ranked[0].scrip_amount, 40);
     }
@@ -1118,8 +1274,7 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows.clone(),
                 SortMode::ScripAmount,
-                SortMode::ScripAmount.default_dir(),
-                ROW_LIMIT
+                SortMode::ScripAmount.default_dir()
             )),
             vec![2, 3, 1]
         );
@@ -1128,8 +1283,7 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows.clone(),
                 SortMode::Cost,
-                SortMode::Cost.default_dir(),
-                ROW_LIMIT
+                SortMode::Cost.default_dir()
             )),
             vec![2, 3, 1]
         );
@@ -1138,8 +1292,7 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows,
                 SortMode::CostPerScrip,
-                SortMode::CostPerScrip.default_dir(),
-                ROW_LIMIT
+                SortMode::CostPerScrip.default_dir()
             )),
             vec![2, 3, 1]
         );
@@ -1156,22 +1309,12 @@ mod tests {
             (SortMode::CostPerScrip, vec![2, 3, 1], vec![1, 3, 2]),
         ] {
             assert_eq!(
-                ids(&rank_scrip_sources(
-                    rows.clone(),
-                    mode,
-                    SortDir::Asc,
-                    ROW_LIMIT
-                )),
+                ids(&rank_scrip_sources(rows.clone(), mode, SortDir::Asc)),
                 asc,
                 "{mode:?} ascending"
             );
             assert_eq!(
-                ids(&rank_scrip_sources(
-                    rows.clone(),
-                    mode,
-                    SortDir::Desc,
-                    ROW_LIMIT
-                )),
+                ids(&rank_scrip_sources(rows.clone(), mode, SortDir::Desc)),
                 desc,
                 "{mode:?} descending"
             );
@@ -1187,12 +1330,7 @@ mod tests {
 
         for dir in [SortDir::Asc, SortDir::Desc] {
             assert_eq!(
-                ids(&rank_scrip_sources(
-                    rows.clone(),
-                    SortMode::Cost,
-                    dir,
-                    ROW_LIMIT
-                )),
+                ids(&rank_scrip_sources(rows.clone(), SortMode::Cost, dir)),
                 vec![1, 2, 3],
                 "{dir:?} tie order"
             );
@@ -1219,7 +1357,7 @@ mod tests {
                     row(3, 20, 2000),
                 ];
 
-                let ranked = rank_scrip_sources(rows, mode, dir, ROW_LIMIT);
+                let ranked = rank_scrip_sources(rows, mode, dir);
 
                 assert_eq!(
                     ranked.last().map(|r| r.item_id.0),
@@ -1240,29 +1378,23 @@ mod tests {
         ];
 
         assert_eq!(
-            ids(&rank_scrip_sources(
-                rows,
-                SortMode::Cost,
-                SortDir::Asc,
-                ROW_LIMIT
-            )),
+            ids(&rank_scrip_sources(rows, SortMode::Cost, SortDir::Asc)),
             vec![2, 3, 1]
         );
     }
 
-    /// The tier boundary is also a truncation boundary: with the cap inside
-    /// the fully-priced tier, no partial row may sneak into the rendered set.
+    /// Partial coverage still sorts last while every candidate remains available.
     #[test]
-    fn truncation_prefers_fully_priced_rows() {
+    fn ranking_keeps_partial_rows_after_fully_priced_rows() {
         let rows = vec![
             partial_row(1, 100, 1, 1, 4),
             row(2, 10, 3000),
             row(3, 20, 2000),
         ];
 
-        let ranked = rank_scrip_sources(rows, SortMode::CostPerScrip, SortDir::Asc, 2);
+        let ranked = rank_scrip_sources(rows, SortMode::CostPerScrip, SortDir::Asc);
 
-        assert_eq!(ids(&ranked), vec![3, 2]);
+        assert_eq!(ids(&ranked), vec![3, 2, 1]);
     }
 
     /// Every `Currency` value that actually occurs in `CollectablesShopRewardScrip`

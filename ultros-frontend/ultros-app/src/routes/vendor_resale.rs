@@ -1,5 +1,14 @@
 use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
+    signals::{StatsIndex, stat_only},
+};
+use crate::components::app_link::use_query_map_or_default;
+use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::xiv_data::tracked_data;
+use crate::query_defaults::query_signal;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
@@ -15,7 +24,7 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader, cmp_none_last},
         tool_help::*,
-        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
+        virtual_grid::{ColumnFilter, GridColumn},
         world_picker::*,
     },
     error::AppError,
@@ -29,9 +38,10 @@ use chrono::{Duration, Utc};
 use humantime::parse_duration;
 use icondata as i;
 use leptos::{either::Either, prelude::*};
+use leptos_i18n::I18nContext;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    hooks::{use_location, use_navigate, use_params_map},
 };
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use thousands::Separable;
@@ -69,8 +79,35 @@ struct VendorProfitKey {
 struct VendorProfitData {
     item_id: i32,
     vendor_price: i32,
+    market_world_id: i32,
+    listing_price: Option<i32>,
     market_price: i32,
     sale_summary: Option<SaleSummary>,
+}
+
+/// Loading a selected statistic cannot reject a candidate using a temporary fallback.
+fn passes_financial_floor(value: i32, floor: Option<i32>, pending: bool) -> bool {
+    pending || floor.is_none_or(|floor| value > floor)
+}
+
+/// Resolve the chosen revenue input while preserving actual purchase/listing data.
+fn with_revenue_basis(
+    data: &Arc<VendorProfitData>,
+    basis: PriceSignal,
+    stats: Option<&StatsIndex>,
+) -> (Arc<VendorProfitData>, bool) {
+    let selected = basis
+        .sale_stat()
+        .and_then(|stat| stats.and_then(|index| stat_only(index, data.item_id, false, stat)));
+    let fallback = basis.sale_stat().is_some() && selected.is_none();
+    let repriced = if let Some(price) = selected {
+        let mut row = (**data).clone();
+        row.market_price = price;
+        Arc::new(row)
+    } else {
+        data.clone()
+    };
+    (repriced, fallback)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +115,7 @@ struct CalculatedVendorProfitData {
     inner: Arc<VendorProfitData>,
     profit: i32,
     return_on_investment: i32,
+    price_fallback: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -188,6 +226,33 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_SUSPICIOUS,
 ];
 
+/// The page's built-in views, formerly the preset buttons above the table.
+///
+/// Queries only: the labels live in [`vendor_resale_presets`] because
+/// `t_string!` needs a literal key. Keep each one a clean query string with no
+/// trailing separator — `sort=profit` is meaningful here because
+/// `SortMode::fallback()` is ROI, not profit.
+const PRESET_QUERIES: [&str; 3] = [
+    "?next-sale=7d&roi=100&profit=1000&sort=profit",
+    "?next-sale=1M&roi=500&profit=5000",
+    "?profit=50000",
+];
+
+fn vendor_resale_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, vendor_resale_preset_100_roi).to_string(),
+        t_string!(i18n, vendor_resale_preset_500_roi).to_string(),
+        t_string!(i18n, vendor_resale_preset_50k_profit).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
+
 /// Whether a row's market price is implausible relative to what the item
 /// actually sells for.
 ///
@@ -293,54 +358,84 @@ impl VendorProfitTable {
             }
         }
 
-        let mut sales_map: HashMap<VendorProfitKey, SaleData> = HashMap::new();
-        for sale in sales.sales {
-            sales_map.insert(
-                VendorProfitKey {
-                    item_id: sale.item_id,
-                    hq: sale.hq,
-                },
-                sale,
-            );
-        }
+        Self::from_catalog(sales, world_cheapest_listings, vendor_prices)
+    }
 
-        let mut table = Vec::new();
-
-        for listing in world_cheapest_listings.cheapest_listings {
-            if let Some(&vendor_price) = vendor_prices.get(&listing.item_id) {
-                // If the item is sold by a vendor
-                // Note: Vendor items are always NQ when bought, but can be sold as NQ.
-                // If listing is HQ, we can compare, but usually vendor resale is NQ -> NQ.
-                // However, sometimes people buy NQ from vendor and sell as HQ? No, that's crafting.
-                // We strictly look for Vendor -> Market.
-                // If the market listing is HQ, we shouldn't compare directly unless we want to compete with HQ?
-                // Usually vendor resale competes with NQ.
-                // Let's filter to only NQ listings for simplicity and correctness,
-                // OR we can include HQ listings if the user wants to see if they can undercut HQ with NQ (unlikely to work well).
-                // "Flip Finder" logic usually matches HQ to HQ.
-                // Vendor items are NQ. So we should compare with NQ market prices.
-
-                if listing.hq {
-                    continue;
-                }
-
-                let sale_summary = sales_map
-                    .remove(&VendorProfitKey {
-                        item_id: listing.item_id,
+    fn from_catalog(
+        sales: RecentSales,
+        listings: CheapestListings,
+        mut vendor_prices: HashMap<i32, i32>,
+    ) -> Self {
+        let mut sales_map: HashMap<_, _> = sales
+            .sales
+            .into_iter()
+            .filter(|sale| !sale.hq && !sale.sales.is_empty())
+            .map(|sale| {
+                (
+                    VendorProfitKey {
+                        item_id: sale.item_id,
                         hq: false,
-                    })
-                    .map(compute_summary);
-
-                table.push(Arc::new(VendorProfitData {
+                    },
+                    compute_summary(sale),
+                )
+            })
+            .collect();
+        let mut table = Vec::new();
+        for listing in listings
+            .cheapest_listings
+            .into_iter()
+            .filter(|listing| !listing.hq)
+        {
+            let Some(vendor_price) = vendor_prices.remove(&listing.item_id) else {
+                continue;
+            };
+            table.push(Arc::new(VendorProfitData {
+                item_id: listing.item_id,
+                vendor_price,
+                market_price: listing.cheapest_price,
+                market_world_id: listing.world_id,
+                listing_price: Some(listing.cheapest_price),
+                sale_summary: sales_map.remove(&VendorProfitKey {
                     item_id: listing.item_id,
-                    vendor_price,
-                    market_price: listing.cheapest_price,
-                    sale_summary,
-                }));
-            }
+                    hq: false,
+                }),
+            }));
         }
+        // Keep the remaining vendor catalog available for statistics-based
+        // pricing without inventing a listing or a listing location.
+        let mut unlisted: Vec<_> = vendor_prices.into_iter().collect();
+        unlisted.sort_unstable_by_key(|(item_id, _)| *item_id);
+        table.extend(unlisted.into_iter().map(|(item_id, vendor_price)| {
+            Arc::new(VendorProfitData {
+                item_id,
+                vendor_price,
+                market_price: 0,
+                market_world_id: 0,
+                listing_price: None,
+                sale_summary: sales_map.remove(&VendorProfitKey { item_id, hq: false }),
+            })
+        }));
+        Self(table)
+    }
 
-        VendorProfitTable(table)
+    fn candidates(
+        &self,
+        basis: PriceSignal,
+        stats: Option<&StatsIndex>,
+    ) -> Vec<Arc<VendorProfitData>> {
+        self.0
+            .iter()
+            .filter(|row| {
+                row.listing_price.is_some()
+                    || basis
+                        .sale_stat()
+                        .and_then(|stat| {
+                            stats.and_then(|index| stat_only(index, row.item_id, false, stat))
+                        })
+                        .is_some()
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -351,6 +446,12 @@ fn VendorResaleTable(
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let market = use_market_data(world);
+    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    let selected_revenue = Signal::derive(move || revenue_basis().unwrap_or_default());
+    let revenue_pending = Signal::derive(move || {
+        selected_revenue.get().sale_stat().is_some() && market.stats7().is_none()
+    });
     let realtime = use_realtime();
     let rt_status = realtime.clone();
     let realtime_status = Signal::derive(move || {
@@ -398,9 +499,11 @@ fn VendorResaleTable(
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
         let mut sorted_data = profits
-            .0
+            .candidates(selected_revenue.get(), market.stats7().as_deref())
             .iter()
             .map(|data| {
+                let (data, price_fallback) =
+                    with_revenue_basis(data, selected_revenue.get(), market.stats7().as_deref());
                 let estimated_revenue = if include_tax {
                     (data.market_price as f32 * 0.95) as i32
                 } else {
@@ -416,17 +519,18 @@ fn VendorResaleTable(
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    price_fallback,
                 }
             })
             .filter(move |data| {
-                minimum_profit()
-                    .map(|min| data.profit > min)
-                    .unwrap_or(true)
+                passes_financial_floor(data.profit, minimum_profit(), revenue_pending.get())
             })
             .filter(move |data| {
-                minimum_roi()
-                    .map(|roi| data.return_on_investment > roi)
-                    .unwrap_or(true)
+                passes_financial_floor(
+                    data.return_on_investment,
+                    minimum_roi(),
+                    revenue_pending.get(),
+                )
             })
             .filter(move |data| {
                 minimum_sales()
@@ -450,7 +554,8 @@ fn VendorResaleTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
-                show_suspicious_active()
+                revenue_pending.get()
+                    || show_suspicious_active()
                     || !is_suspicious_market_price(
                         data.inner.market_price,
                         data.inner.sale_summary.as_ref(),
@@ -474,11 +579,18 @@ fn VendorResaleTable(
         // descending arrow, so the one direction the table could produce was
         // also the only one it claimed. The shared header can now reach `asc`.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
-        sort_rows(
-            &mut sorted_data,
-            mode,
-            sort_dir().unwrap_or_else(|| mode.default_dir()),
-        );
+        let sort_pending = revenue_pending.get()
+            && matches!(
+                mode,
+                SortMode::Profit | SortMode::Roi | SortMode::MarketPrice
+            );
+        if !sort_pending {
+            sort_rows(
+                &mut sorted_data,
+                mode,
+                sort_dir().unwrap_or_else(|| mode.default_dir()),
+            );
+        }
         sorted_data
             .into_iter()
             .enumerate()
@@ -595,19 +707,77 @@ fn VendorResaleTable(
         set_show_suspicious(None);
     });
 
+    let queried_count = RwSignal::new(0usize);
+    type Row = (usize, CalculatedVendorProfitData);
+    let native_metrics = vec![
+        GridMetric::text("item", move |(_, d): &Row| {
+            GridValue::Text(
+                items
+                    .get(&ItemId(d.inner.item_id))
+                    .map(|i| i.name.clone())
+                    .unwrap_or_default(),
+            )
+        }),
+        GridMetric::text("hq", |_: &Row| GridValue::Text("NQ".into())),
+        GridMetric::number("profit", move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.profit as f64)
+            }
+        }),
+        GridMetric::number("roi", move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.return_on_investment as f64)
+            }
+        }),
+        GridMetric::number("vendor-price", |(_, d): &Row| {
+            GridValue::Number(d.inner.vendor_price as f64)
+        }),
+        GridMetric::number("market-price", move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.inner.market_price as f64)
+            }
+        }),
+        GridMetric::number("sale-time", |(_, d): &Row| {
+            d.inner
+                .sale_summary
+                .as_ref()
+                .and_then(|s| s.avg_sale_duration)
+                .map(|d| GridValue::Number(d.num_seconds() as f64))
+                .unwrap_or(GridValue::Missing)
+        }),
+    ];
+
+    // Built here, not inside `ControlBar`'s `actions` closure: that closure
+    // runs in a render effect, and `t_string!` is tracked, so resolving the
+    // labels there would subscribe the whole slot to the locale and rebuild
+    // `RealtimeStatus` and this menu on every language switch.
+    let presets = Signal::derive(move || vendor_resale_presets(i18n));
+
     view! {
         <div class="flex flex-col gap-6">
+            <MarketPriceControls basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string()/>
+            {move || (revenue_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
+
             <ControlBar sticky=false
                 summary=move || {
                     view! {
                         <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                            {move || t!(i18n, vendor_resale_results_count, n = move || sorted_data().len())}
+                            {move || t!(i18n, vendor_resale_results_count, n = move || queried_count.get())}
                         </span>
                     }
                     .into_any()
                 }
                 actions=move || {
-                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                    view! {
+                            <RealtimeStatus status=realtime_status last_update=last_update />
+                            <GridSavedViews id="vendor-resale-grid" presets=presets />
+                        }
                         .into_any()
                 }
                 available_filters=Signal::derive(filter_options)
@@ -759,8 +929,8 @@ fn VendorResaleTable(
             </ControlBar>
 
             // Results table
-            <div class="rounded-2xl panel">
-                <QueryGrid id="vendor-resale-grid" label=t_string!(i18n, vendor_resale_hq).to_string()
+            <div>
+                <MarketGrid show_saved_views=false id="vendor-resale-grid" label=t_string!(i18n, vendor_resale_hq).to_string()
  row_height=40.0
  columns=Signal::derive(move || vec![GridColumn::new("hq",t_string!(i18n, vendor_resale_hq).to_string(), 60.0, true, true),
 GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), 320.0, false, true),
@@ -815,12 +985,12 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
                                         sort_dir
                                     />
                                 </div>}.into_any(), _ => ().into_any()}}
+ market
+ on_rows=Callback::new(move |rows: Vec<(usize, CalculatedVendorProfitData)>| queried_count.set(rows.len()))
+ metrics=native_metrics
+ subject=Arc::new(move |(_, data): &(usize, CalculatedVendorProfitData)| { let mut subject = MarketSubject::new(data.inner.item_id, false, data.inner.market_world_id); subject.listing_price = data.inner.listing_price; subject })
  each=sorted_data
-                        key=move |(index, data): &(usize, CalculatedVendorProfitData)| (
-                            *index,
-                            data.inner.item_id,
-                            data.profit,
-                        )
+                        key=move |(_, data): &(usize, CalculatedVendorProfitData)| data.inner.item_id
 
  measure=move |(_, data): &(usize, CalculatedVendorProfitData), id| {match id {"hq" => (String::new(), 42.0),
 "item" => (items.get(&ItemId(data.inner.item_id)).map(|i|i.name.as_str()).unwrap_or_default().to_string(), 110.0),
@@ -868,9 +1038,9 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
                                         <Gil amount=data.inner.vendor_price />
                                     </div>}.into_any(),
 "market-price" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
-                                        <Gil amount=data.inner.market_price />
+                                        <Gil amount=data.inner.market_price />{data.price_fallback.then(|| t_string!(i18n, market_listing_fallback_badge).to_string())}
                                     </div>}.into_any(),
-"sale-time" => view! {<div  class="truncate flex items-center w-full min-w-0">
+"sale-time" => view! {<div  class="truncate text-right flex items-center justify-end w-full min-w-0">
                                         {data.inner
                                             .sale_summary
                                             .as_ref()
@@ -914,7 +1084,10 @@ pub fn VendorWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
-            <div class="flex flex-col gap-8">
+            <MetaDescription text=move || {
+                t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
+            } />
+            <div class="flex flex-col gap-4">
                 <ToolHeader
                     title=t_string!(i18n, vendor_resale).to_string()
                     summary=t_string!(i18n, vendor_resale_tool_summary_v2).to_string()
@@ -931,34 +1104,11 @@ pub fn VendorWorldView() -> impl IntoView {
                         t_string!(i18n, vendor_resale_assumption_hq_excluded).to_string(),
                         t_string!(i18n, vendor_resale_assumption_no_vendor_names).to_string(),
                     ]
-                />
-
-                // Controls Section
-                <div class="panel p-4 sm:p-6 rounded-2xl">
-                    <div class="flex flex-col gap-4">
-                        <MetaDescription text=move || {
-                            t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
-                        } />
-
-                        // World Navigator
-                        <div class="flex flex-col md:flex-row gap-4 items-center">
-                            <VendorWorldNavigator />
-                        </div>
-
-                        // Preset Filters
-                        <div class="flex flex-wrap gap-4">
-                            <PresetFilterButton
-                                href="?next-sale=7d&roi=100&profit=1000&sort=profit&"
-                                label=t_string!(i18n, vendor_resale_preset_100_roi).to_string()
-                            />
-                            <PresetFilterButton
-                                href="?next-sale=1M&roi=500&profit=5000&"
-                                label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
-                            />
-                            <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
-                        </div>
-                    </div>
-                </div>
+                >
+                    // In the header's controls slot, like every other
+                    // analyzer, and outside `Suspense` so it survives loading.
+                    <VendorWorldNavigator />
+                </ToolHeader>
 
                 // Main Content
                 <div class="min-h-screen">
@@ -998,18 +1148,6 @@ pub fn VendorWorldView() -> impl IntoView {
 }
 
 #[component]
-fn PresetFilterButton(href: &'static str, label: String) -> impl IntoView {
-    view! {
-        <a
-            href=href
-            class="btn-secondary"
-        >
-            {label}
-        </a>
-    }
-}
-
-#[component]
 fn VendorWorldNavigator() -> impl IntoView {
     let i18n = use_i18n();
     let nav = use_navigate();
@@ -1027,7 +1165,7 @@ fn VendorWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
 
     Effect::new(move |_| {
@@ -1142,6 +1280,159 @@ pub fn VendorResale() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(SortMode::from_str(value).is_ok(), "{query}"),
+                    "dir" => assert!(SortDir::from_str(value).is_ok(), "{query}"),
+                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sale_basis_includes_vendor_history_without_inventing_a_listing() {
+        use ultros_api_types::{cheapest_listings::CheapestListingItem, sale_stats::ItemSaleStats};
+        let table = VendorProfitTable::from_catalog(
+            RecentSales { sales: Vec::new() },
+            CheapestListings {
+                cheapest_listings: vec![CheapestListingItem {
+                    item_id: 1,
+                    hq: false,
+                    cheapest_price: 100,
+                    world_id: 42,
+                }],
+            },
+            [(1, 10), (2, 20), (3, 30), (4, 40)].into_iter().collect(),
+        );
+        let stats: StatsIndex = [
+            (
+                (2, false),
+                ItemSaleStats {
+                    item_id: 2,
+                    median_price: 150,
+                    min_price: 120,
+                    avg_price: 175,
+                    ..Default::default()
+                },
+            ),
+            (
+                (3, true),
+                ItemSaleStats {
+                    item_id: 3,
+                    hq: true,
+                    median_price: 999,
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let defaults = table.candidates(PriceSignal::ListingMin, Some(&stats));
+        assert_eq!(
+            defaults.iter().map(|row| row.item_id).collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(table.candidates(PriceSignal::SaleMedian, None).len(), 1);
+        for (basis, expected) in [
+            (PriceSignal::SaleMedian, 150),
+            (PriceSignal::SaleMin, 120),
+            (PriceSignal::SaleAvg, 175),
+        ] {
+            let rows = table.candidates(basis, Some(&stats));
+            assert_eq!(
+                rows.iter().map(|row| row.item_id).collect::<Vec<_>>(),
+                vec![1, 2]
+            );
+            let (history_only, fallback) = with_revenue_basis(&rows[1], basis, Some(&stats));
+            assert_eq!(history_only.market_price, expected);
+            assert_eq!(history_only.vendor_price, 20);
+            assert_eq!(history_only.listing_price, None);
+            assert_eq!(history_only.market_world_id, 0);
+            assert!(!fallback);
+        }
+    }
+
+    #[test]
+    fn pending_revenue_does_not_filter_using_temporary_fallback_prices() {
+        // The provisional listing fails the floor, but the eventual selected
+        // sale estimate passes it. It must stay eligible throughout loading.
+        assert!(passes_financial_floor(20, Some(100), true));
+        assert!(passes_financial_floor(120, Some(100), false));
+        assert!(!passes_financial_floor(20, Some(100), false));
+        assert!(passes_financial_floor(-10, None, false));
+    }
+
+    #[test]
+    fn selected_revenue_keeps_vendor_cost_and_actual_listing_context() {
+        use ultros_api_types::sale_stats::ItemSaleStats;
+        let original = calc(40, 100, None).inner;
+        let stats = [
+            (
+                (1, false),
+                ItemSaleStats {
+                    item_id: 1,
+                    median_price: 75,
+                    min_price: 50,
+                    avg_price: 90,
+                    ..Default::default()
+                },
+            ),
+            (
+                (1, true),
+                ItemSaleStats {
+                    item_id: 1,
+                    hq: true,
+                    median_price: 999,
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into_iter()
+        .collect::<StatsIndex>();
+        for (basis, expected) in [
+            (PriceSignal::SaleMedian, 75),
+            (PriceSignal::SaleMin, 50),
+            (PriceSignal::SaleAvg, 90),
+        ] {
+            let (priced, fallback) = with_revenue_basis(&original, basis, Some(&stats));
+            assert_eq!(priced.market_price, expected);
+            assert_eq!(priced.vendor_price, 40);
+            assert_eq!(priced.listing_price, Some(100));
+            assert!(!fallback);
+        }
+        let (priced, fallback) = with_revenue_basis(&original, PriceSignal::SaleMedian, None);
+        assert_eq!(priced.market_price, 100);
+        assert!(fallback);
+        let (priced, fallback) =
+            with_revenue_basis(&original, PriceSignal::ListingMin, Some(&stats));
+        assert!(Arc::ptr_eq(&priced, &original));
+        assert!(!fallback);
+    }
+
     use std::str::FromStr;
 
     #[test]
@@ -1202,6 +1493,8 @@ mod tests {
                 item_id: 1,
                 vendor_price,
                 market_price,
+                market_world_id: 0,
+                listing_price: Some(market_price),
                 sale_summary: avg_secs.map(|secs| SaleSummary {
                     item_id: 1,
                     hq: false,
@@ -1216,6 +1509,7 @@ mod tests {
             }),
             profit: market_price - vendor_price,
             return_on_investment: 0,
+            price_fallback: false,
         }
     }
 

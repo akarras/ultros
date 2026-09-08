@@ -300,6 +300,15 @@ pub fn ControlBar(
     children: ChildrenFn,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    // Grid filters share the URL with each tool's chips. Use the same queued
+    // query setter as those chips so Clear all merges every removal without
+    // replacing the user's column layout, visibility, or sort.
+    let (grid_filters, set_grid_filters) =
+        crate::query_defaults::filter_query_signal::<String>("gf");
+    let all_filters_empty = Signal::derive(move || {
+        is_empty()
+            && super::virtual_grid::metrics::parse_filters(grid_filters.get().as_deref()).is_empty()
+    });
     let popovers = popovers.unwrap_or_default();
     let ControlBarPopovers {
         filter_menu: show_filter_menu,
@@ -368,7 +377,10 @@ pub fn ControlBar(
                 <button
                     class="sticky-bar-button sticky-bar-button-shrink"
                     aria-label=t_string!(i18n, aria_clear_all_filters)
-                    on:click=move |_| on_clear_all.run(())
+                    on:click=move |_| {
+                        on_clear_all.run(());
+                        set_grid_filters.set(None);
+                    }
                 >
                     <Icon icon=icondata::MdiFilterRemove />
                     <span class="hidden md:inline sticky-bar-button-label">
@@ -382,7 +394,7 @@ pub fn ControlBar(
             <div class="h-8 flex items-center gap-2 min-w-0">
                 <div class="filter-chip-row" node_ref=chip_row>
                     {move || {
-                        is_empty()
+                        all_filters_empty()
                             .then(|| {
                                 view! {
                                     <span class="text-sm text-[color:var(--color-text-muted)] whitespace-nowrap">

@@ -16,8 +16,8 @@ use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
-    SeaDbErr, common_type_conversions::ApiConversionError, lists::ListError,
-    retainers::RetainerError, world_data::world_cache::WorldCacheError,
+    SeaDbErr, common_type_conversions::ApiConversionError, group_roles::GroupError,
+    lists::ListError, retainers::RetainerError, world_data::world_cache::WorldCacheError,
 };
 
 use crate::{analyzer_service::AnalyzerError, event};
@@ -182,7 +182,8 @@ impl ApiError {
                 }
                 None => StatusCode::INTERNAL_SERVER_ERROR,
             }
-            .or_else_status(e.downcast_ref::<RetainerError>()),
+            .or_else_status(e.downcast_ref::<RetainerError>())
+            .or_else_group_status(e.downcast_ref::<GroupError>()),
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -213,9 +214,32 @@ impl ApiError {
                         ultros_api_types::result::ApiError::Forbidden
                     }
                     Some(RetainerError::NotFound) => ultros_api_types::result::ApiError::NotFound,
-                    None => ultros_api_types::result::ApiError::Message(
-                        "Internal server error".to_string(),
-                    ),
+                    None => match e.downcast_ref::<GroupError>() {
+                        Some(GroupError::Forbidden(_)) => {
+                            ultros_api_types::result::ApiError::Forbidden
+                        }
+                        Some(GroupError::NotFound | GroupError::RoleNotFound) => {
+                            ultros_api_types::result::ApiError::NotFound
+                        }
+                        Some(GroupError::BadRequest(msg)) => {
+                            ultros_api_types::result::ApiError::BadRequest((*msg).into())
+                        }
+                        Some(GroupError::ManagedByDiscord) => {
+                            ultros_api_types::result::ApiError::BadRequest(
+                                "That member is managed by Discord; change their Discord role instead"
+                                    .into(),
+                            )
+                        }
+                        Some(GroupError::RoleManagedByDiscord) => {
+                            ultros_api_types::result::ApiError::BadRequest(
+                                "That role is managed by Discord; its members come from the Discord role"
+                                    .into(),
+                            )
+                        }
+                        None => ultros_api_types::result::ApiError::Message(
+                            "Internal server error".to_string(),
+                        ),
+                    },
                 },
             },
             _ => {
@@ -241,6 +265,26 @@ impl RetainerStatus for StatusCode {
         match retainer_error {
             Some(RetainerError::Forbidden(_)) => StatusCode::FORBIDDEN,
             Some(RetainerError::NotFound) => StatusCode::NOT_FOUND,
+            None => self,
+        }
+    }
+}
+
+trait GroupStatus {
+    fn or_else_group_status(self, group_error: Option<&GroupError>) -> StatusCode;
+}
+
+impl GroupStatus for StatusCode {
+    fn or_else_group_status(self, group_error: Option<&GroupError>) -> StatusCode {
+        if self != StatusCode::INTERNAL_SERVER_ERROR {
+            return self;
+        }
+        match group_error {
+            Some(GroupError::NotFound) | Some(GroupError::RoleNotFound) => StatusCode::NOT_FOUND,
+            Some(GroupError::Forbidden(_)) => StatusCode::FORBIDDEN,
+            Some(GroupError::BadRequest(_))
+            | Some(GroupError::ManagedByDiscord)
+            | Some(GroupError::RoleManagedByDiscord) => StatusCode::BAD_REQUEST,
             None => self,
         }
     }

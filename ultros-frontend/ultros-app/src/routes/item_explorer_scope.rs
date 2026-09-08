@@ -8,11 +8,11 @@
 
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::{IntoSignalSetter, SignalSetter};
-use leptos_router::hooks::query_signal;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::global_state::LocalWorldData;
 use crate::global_state::home_world::get_price_zone;
+use crate::query_defaults::query_signal;
 
 /// Resolved price scope for the item explorer subtree. Provided as
 /// context by `ItemExplorer` so the toolbar (picker, chip hrefs) and

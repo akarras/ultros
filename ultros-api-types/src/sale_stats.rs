@@ -36,6 +36,9 @@ pub struct ItemSaleStats {
     /// 0 = unknown.
     #[serde(default)]
     pub vwap: i32,
+    /// Total gil traded in the window (sum of price × quantity). 0 = unknown.
+    #[serde(default)]
+    pub gil_volume: u64,
     /// `num_sold / window_days`, precomputed server-side.
     #[serde(default)]
     pub sales_per_day: f32,
@@ -65,6 +68,7 @@ mod tests {
         assert_eq!(row.last_sold_unix, 0);
         assert_eq!(row.units_sold, 0);
         assert_eq!(row.vwap, 0);
+        assert_eq!(row.gil_volume, 0);
         assert_eq!(row.sales_per_day, 0.0);
         assert_eq!(row.confidence, ConfidenceBand::Unknown);
     }

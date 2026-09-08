@@ -20,8 +20,11 @@ where
             class=format!("inline-block {}", class.unwrap_or_default())
             content=move || {
                 view! {
+                    // `break-words`: the overlay caps its width at the
+                    // viewport, and this chrome clips overflow, so an
+                    // unbreakable run (a share URL) must wrap, not vanish.
                     <div class=format!(
-                        "{HOVER_CARD_CHROME} px-4 py-2 text-sm text-[color:var(--color-text)]",
+                        "{HOVER_CARD_CHROME} px-4 py-2 text-sm break-words text-[color:var(--color-text)]",
                     )>
                         <AccentHairline />
                         {move || tooltip_text.get()}

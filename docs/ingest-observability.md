@@ -17,6 +17,9 @@ the Prometheus endpoint at `:9091/metrics` (see `ultros/src/web_metrics.rs`).
 | `ultros_analyzer_snapshot_rejected_total` | counter | `reason` | Startup snapshots refused (`too_old`, `unparseable_name`, `future_dated`), causing a fall back to the Postgres reload. |
 | `ultros_analyzer_snapshot_age_seconds` | gauge | — | Age of the snapshot this process booted from. Set exactly once, at startup, and only when a snapshot restore succeeded — it does not tick upward afterwards, and a process that reloaded from Postgres has no sample at all. |
 | `ultros_websocket_liveness_timeouts_total` | counter | — | Websocket connections torn down for delivering no frames within the liveness deadline. |
+| `ultros_clickhouse_writer_*` | (existing) | `table` | Every writer metric now carries `table` = `sales`, `listing_events` or `floor_changes`; one bounded writer per table. |
+| `ultros_listing_events_seed_failures_total` | counter | — | The one-time `listing_events` seed failed and will retry in 10 minutes. Runs on the rollup leader. |
+| `ultros_floor_changes_bulk_failures_total` | counter | `reason` | A floor resync diff could not be bulk-inserted (`writer_not_ready`, `insert_failed`). Rows are dropped; the next resync re-derives them. |
 
 Pre-existing and still useful alongside these:
 `ultros_websocket_rx{WorldId}`, `ultros_catchup_items_recovered{world}`,

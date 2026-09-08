@@ -47,8 +47,8 @@ use ultros_api_types::price_series::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
-    CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild, GroupInvite,
-    UserGroup, UserGroupMember,
+    AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild,
+    GroupInvite, UserGroup, UserGroupMember,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -1243,6 +1243,9 @@ async fn refresh_world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
     State(universalis): State<UniversalisClient>,
+    State(listing_events): State<
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    >,
 ) -> Result<Redirect, WebError> {
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
@@ -1286,9 +1289,18 @@ async fn refresh_world_item_listings(
             });
         debug!("manually refreshed worlds: {listings_by_world:?}");
         for (world_id, listings) in listings_by_world {
-            let (added, removed) = db
+            let ultros_db::listings::ListingWrite {
+                added,
+                removed,
+                changes,
+            } = db
                 .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
                 .await?;
+            crate::record_listing_changes(
+                &listing_events,
+                &changes,
+                ultros_clickhouse::rows::ListingEventSource::Manual,
+            );
             senders
                 .listings
                 .send(EventType::Add(Arc::new(ListingEventData {
@@ -2100,10 +2112,122 @@ pub(crate) async fn add_group_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path((group_id, member_id)): Path<(i32, i64)>,
+    // `Option<Json<T>>` only produces `None` when the request has no JSON
+    // content type at all (axum 0.8's `OptionalFromRequest`); a request that
+    // *does* carry `Content-Type: application/json` still gets deserialized,
+    // and the existing frontend call sends that content type with body
+    // `null` (`serde_json` of `()`), which fails to deserialize into
+    // `AddGroupMember` directly. Wrapping the payload in an extra `Option`
+    // lets `null` and `{}` both deserialize to `None` while leaving "no body
+    // at all" handled by the outer `Option`.
+    body: Option<Json<Option<AddGroupMember>>>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_member(group_id, user.id as i64, member_id)
+    let display_name = body.and_then(|Json(b)| b).and_then(|b| b.display_name);
+    db.add_group_member(group_id, user.id as i64, member_id, display_name)
         .await?;
     Ok(Json(()))
+}
+
+/// Pins the `Option<Json<Option<AddGroupMember>>>` extractor behaviour that
+/// `add_group_member` relies on: axum 0.8's `Option<Json<T>>` only yields
+/// `None` when the request has no JSON content type at all, so a `null` or
+/// `{}` body sent *with* `Content-Type: application/json` (as the frontend
+/// does) must still deserialize successfully into the inner `Option`.
+#[cfg(test)]
+mod add_group_member_body_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn stub_handler(body: Option<Json<Option<AddGroupMember>>>) -> String {
+        match body.and_then(|Json(b)| b).and_then(|b| b.display_name) {
+            Some(name) => format!("some:{name}"),
+            None => "none".to_string(),
+        }
+    }
+
+    fn router() -> Router {
+        Router::new().route("/", post(stub_handler))
+    }
+
+    async fn body_text(response: axum::response::Response) -> String {
+        String::from_utf8(
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn no_body_and_no_content_type_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn json_null_body_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("null"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn empty_json_object_body_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn display_name_body_is_some() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"display_name":"Bob"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "some:Bob");
+    }
 }
 
 pub(crate) async fn remove_group_member(

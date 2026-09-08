@@ -4,6 +4,7 @@ pub mod common_type_conversions;
 mod discord;
 pub mod entity;
 mod ffxiv_character;
+pub mod group_roles;
 pub mod listings;
 pub mod lists;
 pub mod recently_updated;
@@ -109,6 +110,16 @@ impl UltrosDb {
         Migrator::up(&db, None).await?;
 
         Ok(Self { db })
+    }
+
+    /// Wrap an already-open connection **without** running migrations.
+    ///
+    /// For one-shot tools and integration tests that read a database owned by
+    /// something else — `connect()` refuses a database that has migrations this
+    /// build doesn't know about (a shared dev Postgres that a newer branch has
+    /// migrated), and a tool that only reads must not be blocked by that.
+    pub fn from_connection(db: DatabaseConnection) -> Self {
+        Self { db }
     }
 
     #[instrument(skip(self))]

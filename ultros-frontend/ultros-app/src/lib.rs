@@ -654,7 +654,22 @@ fn ReloadWhenStale() -> impl IntoView {
             // Untracked on purpose: fire on navigation, not on detection.
             let stale = update.is_some_and(|u| u.pending.get_untracked().is_some());
             if navigated && stale {
-                crate::components::update_banner::reload_page();
+                // The router publishes its destination before suspended routes
+                // finish and pushState updates the address bar. Reloading the
+                // browser's current URL here can send the user back to the page
+                // they are leaving; load the router's destination explicitly.
+                let search = location.search.get_untracked();
+                let hash = location.hash.get_untracked();
+                let mut destination = path.clone();
+                if !search.is_empty() {
+                    destination.push('?');
+                    destination.push_str(&search);
+                }
+                destination.push_str(&hash);
+                let browser_location = window().location();
+                if let Ok(origin) = browser_location.origin() {
+                    let _ = browser_location.set_href(&format!("{origin}{destination}"));
+                }
             }
             path
         });

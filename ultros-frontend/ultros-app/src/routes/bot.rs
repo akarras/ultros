@@ -64,6 +64,8 @@ pub fn BotGuide() -> impl IntoView {
                         ("/ffxiv retainer check_undercuts", t_string!(i18n, bot_cmd_retainer_check_undercuts_desc).to_string()),
                         ("/ffxiv retainer add_undercut_alert margin_percent:<0-200>", t_string!(i18n, bot_cmd_retainer_add_undercut_alert_desc).to_string()),
                         ("/ffxiv retainer remove_undercut_alert", t_string!(i18n, bot_cmd_retainer_remove_undercut_alert_desc).to_string()),
+                        ("/ffxiv retainer add_sale_alert", t_string!(i18n, bot_cmd_retainer_add_sale_alert_desc).to_string()),
+                        ("/ffxiv retainer remove_sale_alert", t_string!(i18n, bot_cmd_retainer_remove_sale_alert_desc).to_string()),
                     ]
                 />
 

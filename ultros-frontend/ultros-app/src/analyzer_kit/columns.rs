@@ -160,9 +160,6 @@ pub const fn sortability_for<M: Copy>(layer: Layer, wanted: Option<M>) -> Sortab
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CellCtx {
     pub now_unix: i64,
-    /// The page's Labs toggle (`analyzer-recipe` on the recipe analyzer):
-    /// the Price slot renders its note sub-line only under it.
-    pub preview: bool,
     /// Cost signals the sub-craft cap left unpriced, by
     /// `PriceSignal::index`; their cells render "—" with the cap title.
     pub capped_cost: [bool; 4],
@@ -173,6 +170,8 @@ pub struct CellCtx {
     /// The page's client-only 30-day statistics body. `None` on a page
     /// without one; `Some(signal holding None)` while it is in flight.
     pub stats_30: Option<LateStats>,
+    /// Failure of the separate 30-day request, distinct from empty history.
+    pub stats_30_unavailable: Option<RwSignal<bool>>,
 }
 
 /// One page's binding of a [`ColumnSpec`]: its `?cols=` token (`""` for
@@ -204,20 +203,8 @@ pub struct ToolColumnMeta<T: 'static, M: 'static> {
     /// of `cell_class` while this column is marked. `""` for a column
     /// that is never marked.
     pub formula_cell_class: &'static str,
-    /// The Labs token that gates this column. A gated column is absent
-    /// from the flat picker and from the `?cols=` contract the page uses
-    /// while the lab is off, so an old URL renders exactly as before.
+    /// Optional experiment token for tools that still gate a column.
     pub lab: Option<&'static str>,
-}
-
-pub fn picker_options<T, M>(
-    cols: &'static [ToolColumnMeta<T, M>],
-    i18n: I18nContext<Locale, I18nKeys>,
-) -> Vec<ColumnOption> {
-    cols.iter()
-        .filter(|c| !c.id.is_empty() && c.lab.is_none())
-        .map(|c| ColumnOption::new(c.id, (c.spec.label)(i18n)))
-        .collect()
 }
 
 /// What the grouped picker needs beyond the table: the places named in the
@@ -553,10 +540,11 @@ mod tests {
     fn cell_extractors_are_plain_fn_pointers() {
         let ctx = CellCtx {
             now_unix: 0,
-            preview: false,
+
             capped_cost: [false; 4],
             sparklines: None,
             stats_30: None,
+            stats_30_unavailable: None,
         };
         assert_eq!((COLS[1].cell)(&42, &ctx), CellValue::Gil(42));
         assert_eq!((COLS[0].cell)(&42, &ctx), CellValue::Custom);
@@ -754,16 +742,6 @@ mod tests {
             assert_eq!(got[5].group.as_ref().unwrap().label, "Market");
             assert_eq!(got[6].group.as_ref().unwrap().label, "Location");
             assert_eq!(got[7].group.as_ref().unwrap().label, "Other");
-            // The flat picker never lists a lab-gated column.
-            let flat = picker_options(&PICKER, i18n);
-            assert_eq!(
-                flat.iter().map(|o| o.id).collect::<Vec<_>>(),
-                ["confidence", "listing-world"]
-            );
-            assert_eq!(
-                flat[0],
-                ColumnOption::new("confidence", "Confidence".into())
-            );
         });
     }
 }

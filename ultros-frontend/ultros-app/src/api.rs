@@ -354,9 +354,27 @@ pub(crate) struct UndercutData {
 
 pub type Undercuts = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<UndercutData>)>)>;
 
-pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
+/// What the undercuts page needs: the undercut rows to show, plus every
+/// `(world_id, item_id)` the user's retainers list at all — including the
+/// ones that are currently cheapest. The live subscription has to watch the
+/// full set, otherwise an item that is cheapest now and gets undercut later
+/// would never trigger a refetch.
+#[derive(Deserialize, Serialize, Clone)]
+pub(crate) struct UndercutReport {
+    pub(crate) undercuts: Undercuts,
+    pub(crate) listed: Vec<(i32, i32)>,
+}
+
+pub(crate) async fn get_retainer_undercuts() -> AppResult<UndercutReport> {
     // get our retainer data
     let retainer_data = get_user_retainer_listings().await?;
+    let listed: Vec<(i32, i32)> = retainer_data
+        .retainers
+        .iter()
+        .flat_map(|(_, retainers)| retainers.iter())
+        .flat_map(|(_, listings)| listings.iter())
+        .map(|listing| (listing.world_id, listing.item_id))
+        .collect();
     // build a unique list of worlds and item ids so we can fetch additional info about them
     // optimized: use cheapest listings for each world & avoid looking up literally every retainer
     let worlds: Vec<i32> = retainer_data
@@ -422,7 +440,10 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
         })
         .collect::<Vec<_>>();
 
-    Ok(retainer_data)
+    Ok(UndercutReport {
+        undercuts: retainer_data,
+        listed,
+    })
 }
 
 /// Searches retainers based on their name

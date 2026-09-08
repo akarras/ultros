@@ -1,7 +1,7 @@
 //! The formula ledger as a row of chips: `[=] Profit / unit  [+] revenue
 //! · place  [−] 5% tax  [−] cost · place`. A term is fixed (static chip)
 //! or selectable (a native `<select>` inside the chip writing one URL
-//! param). Inline for the row under "Sell on"; Stacked for popovers.
+//! param). Chips wrap above the results toolbar on narrow screens.
 
 use leptos::prelude::*;
 
@@ -40,12 +40,6 @@ impl StripTerm {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum StripLayout {
-    Inline,
-    Stacked,
-}
-
 fn select_view(s: StripSelect) -> AnyView {
     let StripSelect {
         value,
@@ -69,14 +63,10 @@ fn select_view(s: StripSelect) -> AnyView {
 }
 
 #[component]
-pub fn FormulaStrip(terms: Vec<StripTerm>, layout: StripLayout) -> impl IntoView {
+pub fn FormulaStrip(terms: Vec<StripTerm>) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
-    let container = match layout {
-        StripLayout::Inline => "flex flex-wrap items-center gap-2",
-        StripLayout::Stacked => "flex flex-col items-stretch gap-1.5",
-    };
     view! {
-        <div class=container>
+        <div class="flex flex-wrap items-center gap-2">
             {terms.into_iter().map(|term| {
                 let chip_class = if term.select.is_some() { "filter-chip" } else { "filter-chip bg-transparent" };
                 let degraded = term.degraded;
@@ -143,7 +133,7 @@ mod tests {
                     degraded: Signal::derive(|| false),
                 },
             ];
-            let html = view! { <FormulaStrip terms=terms layout=StripLayout::Inline /> }.to_html();
+            let html = view! { <FormulaStrip terms=terms /> }.to_html();
             assert_eq!(html.matches("<select").count(), 1, "{html}");
             assert!(html.contains("Profit / unit"), "{html}");
             assert!(html.contains("Gilgamesh"), "{html}");

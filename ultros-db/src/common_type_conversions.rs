@@ -1,8 +1,9 @@
 use crate::{
     entity::{
-        self, datacenter, discord_user, final_fantasy_character, group_invite, list, list_activity,
-        list_invite, list_item, list_shared_group, list_shared_user, owned_retainers, region,
-        unknown_final_fantasy_character, user_group, user_group_member,
+        self, datacenter, discord_user, final_fantasy_character, group_invite, group_role, list,
+        list_activity, list_invite, list_item, list_shared_group, list_shared_role,
+        list_shared_user, owned_retainers, region, unknown_final_fantasy_character, user_group,
+        user_group_member,
     },
     world_data::world_cache::WorldCache,
 };
@@ -10,11 +11,12 @@ use thiserror::Error;
 use ultros_api_types::{
     ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
     list::{
-        List, ListActivity, ListActivityKind, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
+        List, ListActivity, ListActivityKind, ListInvite, ListItem, ListSharedGroup,
+        ListSharedRole, ListSharedUser,
     },
     retainer::Retainer,
     user::OwnedRetainer,
-    user::group::{GroupInvite, UserGroup, UserGroupMember},
+    user::group::{GroupInvite, GroupRole, UserGroup, UserGroupMember},
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
 };
@@ -115,6 +117,25 @@ impl From<ListSharedGroupReturn> for ListSharedGroup {
     }
 }
 
+pub struct ListSharedRoleReturn(
+    pub list_shared_role::Model,
+    pub group_role::Model,
+    pub user_group::Model,
+);
+
+impl From<ListSharedRoleReturn> for ListSharedRole {
+    fn from(ListSharedRoleReturn(shared, role, group): ListSharedRoleReturn) -> Self {
+        Self {
+            list_id: shared.list_id,
+            role_id: shared.role_id,
+            role_name: role.name,
+            group_id: group.id,
+            group_name: group.name,
+            permission: shared.permission.into(),
+        }
+    }
+}
+
 impl From<user_group::Model> for UserGroup {
     fn from(value: user_group::Model) -> Self {
         let user_group::Model {
@@ -124,6 +145,7 @@ impl From<user_group::Model> for UserGroup {
             guild_id,
             guild_icon_url,
             source,
+            frozen_reason,
         } = value;
         Self {
             id,
@@ -132,18 +154,47 @@ impl From<user_group::Model> for UserGroup {
             guild_id,
             guild_icon_url,
             source: source.into(),
+            frozen_reason,
         }
     }
 }
 
-pub struct UserGroupMemberReturn(pub user_group_member::Model, pub discord_user::Model);
+/// A group member joined to their user row, plus the ids of the roles they
+/// hold in that group.
+pub struct UserGroupMemberReturn(
+    pub user_group_member::Model,
+    pub discord_user::Model,
+    pub Vec<i32>,
+);
 
 impl From<UserGroupMemberReturn> for UserGroupMember {
-    fn from(UserGroupMemberReturn(member, user): UserGroupMemberReturn) -> Self {
+    fn from(UserGroupMemberReturn(member, user, roles): UserGroupMemberReturn) -> Self {
         Self {
             group_id: member.group_id,
             user_id: member.user_id,
             username: user.username,
+            source: member.source.into(),
+            roles,
+        }
+    }
+}
+
+/// A role plus its member count, which is a separate aggregate query.
+#[derive(Debug)]
+pub struct GroupRoleReturn(pub group_role::Model, pub i64);
+
+impl From<GroupRoleReturn> for GroupRole {
+    fn from(GroupRoleReturn(role, member_count): GroupRoleReturn) -> Self {
+        Self {
+            id: role.id,
+            group_id: role.group_id,
+            name: role.name,
+            discord_role_id: role.discord_role_id,
+            source: role.source.into(),
+            sync_state: role.sync_state.into(),
+            last_synced_at: role.last_synced_at,
+            position: role.position,
+            member_count,
         }
     }
 }

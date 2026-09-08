@@ -140,27 +140,6 @@ fn column_aria_sort<M: SortColumn>(
     }
 }
 
-/// Sort `rows` under `cmp` oriented by `dir`, truncating to the best `limit`
-/// rows first when there are more than that. Both steps share the one
-/// oriented comparator — truncating in a fixed direction while sorting in the
-/// other would keep exactly the wrong rows.
-pub fn sort_and_truncate<T>(
-    rows: &mut Vec<T>,
-    dir: SortDir,
-    limit: usize,
-    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
-) {
-    let oriented = |a: &T, b: &T| match dir {
-        SortDir::Asc => cmp(a, b),
-        SortDir::Desc => cmp(a, b).reverse(),
-    };
-    if rows.len() > limit {
-        rows.select_nth_unstable_by(limit, oriented);
-        rows.truncate(limit);
-    }
-    rows.sort_unstable_by(oriented);
-}
-
 /// Compare two optional sort keys so rows without a value sort last in
 /// *both* directions. The direction flip applies only between two present
 /// values — reversing the whole comparator instead would drag the
@@ -214,7 +193,9 @@ pub fn SortableHeaderCell<M>(
     /// The formula operator this column plays, rendered before the label.
     #[prop(optional)]
     badge: Option<TermRole>,
-    /// Brand tint plus a bottom hairline: this column feeds Profit.
+    /// A gentle brand-tinted block behind the whole heading: this column
+    /// feeds Profit. (It used to be a bottom hairline, which landed on the
+    /// sub-label's descenders once headings grew a second line.)
     #[prop(optional, into)]
     emphasized: Option<Signal<bool>>,
     /// Line-2 content after the sub-label (the "use" pill). Rendered only
@@ -237,7 +218,7 @@ where
             c.push_str(" flex flex-col justify-center gap-0.5");
         }
         if emphasized.is_some_and(|e| e.get()) {
-            c.push_str(" bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] shadow-[inset_0_-2px_0_var(--brand-ring)]");
+            c.push_str(" grid-heading-marked");
         }
         c
     };
@@ -255,30 +236,30 @@ where
             // unset) never emitted before this component grew these props.
             {match (badge, sub_label) {
                 (None, None) => {
-                    view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }.into_any()
+                    view! { <SortHeader mode label sort_mode sort_dir reset_keys compact=embedded /> }.into_any()
                 }
                 (badge, sub_label) => view! {
                     {match badge {
                         Some(role) => view! {
-                            <div class="flex items-center gap-2 min-w-0">
+                            <div class="flex items-center gap-2 min-w-0 [&>a]:min-w-0 [&>a]:flex-1 [&>a]:overflow-hidden">
                                 <TermBadge role=role />
-                                <SortHeader mode label sort_mode sort_dir reset_keys />
+                                <SortHeader mode label sort_mode sort_dir reset_keys compact=embedded />
                             </div>
                         }
                         .into_any(),
                         None => {
-                            view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }
+                            view! { <SortHeader mode label sort_mode sort_dir reset_keys compact=embedded /> }
                                 .into_any()
                         }
                     }}
                     {sub_label.map(|s| match trailing {
                         None => view! {
-                            <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
+                            <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full" title=move || s.get()>{move || s.get()}</div>
                         }
                         .into_any(),
                         Some(trailing) => view! {
                             <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] flex items-center gap-1 max-w-full">
-                                <span class="truncate">{move || s.get()}</span>
+                                <span class="truncate" title=move || s.get()>{move || s.get()}</span>
                                 {trailing.run()}
                             </div>
                         }
@@ -313,6 +294,9 @@ pub fn SortHeader<M>(
     /// page 7 of a completely different ordering.
     #[prop(optional)]
     reset_keys: &'static [&'static str],
+    /// Truncate the title within a resizable grid while retaining the sort icon.
+    #[prop(optional)]
+    compact: bool,
 ) -> impl IntoView
 where
     M: SortColumn,
@@ -342,8 +326,12 @@ where
                 sort_href(&pathname(), query(), mode, is_active(), dir(), reset_keys)
             }
         >
-            <div class="flex items-center gap-2">
-                {label}
+            <div class=if compact { "flex items-center gap-2 min-w-0 [&>svg]:shrink-0" } else { "flex items-center gap-2" }>
+                {if compact {
+                    view! { <span class="truncate min-w-0">{label}</span> }.into_any()
+                } else {
+                    label.into_any()
+                }}
                 {move || {
                     is_active()
                         .then(|| match dir() {
@@ -473,38 +461,12 @@ mod test {
     }
 
     #[test]
-    fn sort_and_truncate_orders_both_directions() {
-        let mut rows = vec![3, 1, 2];
-        sort_and_truncate(&mut rows, SortDir::Asc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows, vec![1, 2, 3]);
-        sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows, vec![3, 2, 1]);
-    }
-
-    #[test]
     fn cmp_none_last_keeps_missing_values_last_in_both_directions() {
         let mut rows = vec![Some(2), None, Some(1), Some(3), None];
         rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Asc, Ord::cmp));
         assert_eq!(rows, vec![Some(1), Some(2), Some(3), None, None]);
         rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Desc, Ord::cmp));
         assert_eq!(rows, vec![Some(3), Some(2), Some(1), None, None]);
-    }
-
-    #[test]
-    fn truncation_follows_the_sort_direction() {
-        // The regression this helper exists to prevent: a truncation keyed to
-        // a fixed descending metric would keep the LARGEST rows and then sort
-        // them ascending — the cheapest rows, the ones the click asked for,
-        // would never make the cut.
-        let mut rows: Vec<i32> = (0..500).collect();
-        sort_and_truncate(&mut rows, SortDir::Asc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows.len(), 100);
-        assert_eq!(rows, (0..100).collect::<Vec<_>>());
-
-        let mut rows: Vec<i32> = (0..500).collect();
-        sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
-        assert_eq!(rows.len(), 100);
-        assert_eq!(rows, (400..500).rev().collect::<Vec<_>>());
     }
 
     #[test]
@@ -532,10 +494,7 @@ mod test {
             assert!(html.contains("listing · Aether"), "{html}");
             assert!(html.contains("aria-hidden=\"true\""), "{html}");
             assert!(html.contains("sr-only"), "{html}");
-            assert!(
-                html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
-                "{html}"
-            );
+            assert!(html.contains("grid-heading-marked"), "{html}");
             // Without the props the markup is what it was.
             let plain = view! {
                 <SortableHeaderCell

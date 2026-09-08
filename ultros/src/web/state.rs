@@ -38,6 +38,9 @@ pub(crate) struct WebState {
     /// ClickHouse client for analytical queries (Phase 1+ uses this; Phase 0
     /// only writes via the analyzer's dual-write path).
     pub(crate) ch_client: ClickHouseClient,
+    /// ClickHouse `listing_events` mirror for the manual refresh route.
+    pub(crate) listing_events:
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     /// Shared Universalis client — reuses one connection pool instead of
     /// building a reqwest client per request.
     pub(crate) universalis: UniversalisClient,
@@ -124,6 +127,14 @@ impl FromRef<WebState> for SearchService {
 impl FromRef<WebState> for ClickHouseClient {
     fn from_ref(input: &WebState) -> Self {
         input.ch_client.clone()
+    }
+}
+
+impl FromRef<WebState>
+    for ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>
+{
+    fn from_ref(input: &WebState) -> Self {
+        input.listing_events.clone()
     }
 }
 

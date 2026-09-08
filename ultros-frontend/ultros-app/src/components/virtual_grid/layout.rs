@@ -7,6 +7,7 @@ pub struct ColumnFilter {
     pub label: String,
     pub numeric: bool,
     pub options: Vec<(&'static str, String)>,
+    pub metric: Option<super::metrics::ValueKind>,
 }
 
 impl ColumnFilter {
@@ -16,7 +17,14 @@ impl ColumnFilter {
             label,
             numeric,
             options: Vec::new(),
+            metric: None,
         }
+    }
+
+    pub fn metric(id: &'static str, label: String, kind: super::metrics::ValueKind) -> Self {
+        let mut filter = Self::new(id, label, kind == super::metrics::ValueKind::Number);
+        filter.metric = Some(kind);
+        filter
     }
 }
 
@@ -25,12 +33,22 @@ pub struct GridColumn {
     pub id: &'static str,
     pub label: String,
     pub width: f64,
+    /// Space beside the title for badges, in addition to the grid controls.
+    pub heading_adornments: f64,
+    /// Additional header lines and their non-text width (e.g. a use button).
+    pub heading_lines: Vec<(String, f64)>,
     pub min_width: f64,
     pub max_width: f64,
+    /// Whether the automatic pass may size this column from its content.
+    /// Off, the column keeps `width` until the user drags it or asks for
+    /// "Auto fit" from its menu — for columns whose content is long and
+    /// varies enough that fitting it would push everything else off screen.
+    pub auto_fit: bool,
     pub optional: bool,
     pub visible: bool,
     pub aria_sort: &'static str,
     pub filters: Vec<ColumnFilter>,
+    pub query_sort: bool,
 }
 
 impl GridColumn {
@@ -39,13 +57,24 @@ impl GridColumn {
             id,
             label,
             width,
+            heading_adornments: 0.0,
+            heading_lines: Vec::new(),
             min_width: 60.0,
             max_width: 800.0,
+            auto_fit: true,
             optional,
             visible,
             aria_sort: "none",
             filters: Vec::new(),
+            query_sort: false,
         }
+    }
+
+    /// Opts the column out of the automatic content pass, keeping the
+    /// declared width as its default.
+    pub fn fixed_width(mut self) -> Self {
+        self.auto_fit = false;
+        self
     }
 
     pub fn clamp(&self, width: f64) -> f64 {
@@ -137,8 +166,14 @@ impl GridLayout {
         serde_json::to_string(self).unwrap_or_default()
     }
 
-    /// Only a changed order prefix and non-default widths belong in a URL.
-    /// IDs remain stable if a later release adds or removes other columns.
+    /// Only a changed order prefix and explicitly set widths belong in a
+    /// URL. IDs remain stable if a later release adds or removes other
+    /// columns.
+    ///
+    /// Every width in `widths` is kept, even one equal to the definition's
+    /// fallback: a column without an entry is auto-fitted to its content, so
+    /// "120 because the user dragged it there" and "no entry" are different
+    /// layouts.
     pub fn compact(&self, columns: &[GridColumn]) -> Option<String> {
         let prefix = (0..=self.order.len())
             .find(|&n| {
@@ -155,7 +190,7 @@ impl GridLayout {
             .filter_map(|(id, width)| {
                 let column = columns.iter().find(|c| c.id == id)?;
                 let width = column.clamp(*width).round() as u32;
-                (width != column.width.round() as u32).then(|| format!("{id}.{}", base36(width)))
+                Some(format!("{id}.{}", base36(width)))
             })
             .collect::<Vec<_>>()
             .join(".");
@@ -176,13 +211,33 @@ impl GridLayout {
         }
     }
 
+    #[cfg(test)]
     pub fn columns(&self, definitions: &[GridColumn]) -> Vec<PlacedColumn> {
+        self.columns_with(definitions, &BTreeMap::new())
+    }
+
+    /// Places the visible columns. A column's width is, in order: the width
+    /// the user set (`self.widths`), the `fitted` width the grid measured
+    /// from its content, then the definition's fallback — which is what the
+    /// server and the first client render use, before anything has been
+    /// measured.
+    pub fn columns_with(
+        &self,
+        definitions: &[GridColumn],
+        fitted: &BTreeMap<String, f64>,
+    ) -> Vec<PlacedColumn> {
         let mut left = 0.0;
         self.order
             .iter()
             .filter_map(|id| {
                 let column = definitions.iter().find(|c| c.id == id && c.visible)?;
-                let width = column.clamp(*self.widths.get(id).unwrap_or(&column.width));
+                let width = column.clamp(
+                    *self
+                        .widths
+                        .get(id)
+                        .or_else(|| fitted.get(id))
+                        .unwrap_or(&column.width),
+                );
                 let placed = PlacedColumn {
                     column: column.clone(),
                     left,
@@ -320,9 +375,38 @@ mod tests {
         assert_eq!(restored.order, ["trend", "item", "new", "profit"]);
         assert_eq!(restored.widths["profit"], 100.0);
         assert!(compact.len() * 3 < layout.encode().len());
+        // A width equal to the fallback is still an explicit choice: without
+        // it the column would auto-fit instead.
         layout.widths.insert("profit".into(), 120.0);
         layout.move_to("trend", "profit", true);
+        assert_eq!(layout.compact(&defs).as_deref(), Some("2~~profit.3c"));
+        layout.widths.clear();
         assert_eq!(layout.compact(&defs), None);
+    }
+    #[test]
+    fn fitted_widths_fill_in_below_explicit_ones() {
+        let mut defs = columns();
+        defs[2].visible = true;
+        let mut layout = GridLayout::parse(None, &defs);
+        layout.widths.insert("profit".into(), 90.0);
+        let fitted = BTreeMap::from([
+            ("item".to_string(), 300.0),
+            ("profit".to_string(), 500.0),
+            ("trend".to_string(), 5.0),
+        ]);
+        assert_eq!(
+            layout
+                .columns_with(&defs, &fitted)
+                .iter()
+                .map(|c| (c.column.id, c.left, c.width))
+                .collect::<Vec<_>>(),
+            [
+                ("item", 0.0, 300.0),
+                ("profit", 300.0, 90.0),
+                ("trend", 390.0, 60.0)
+            ]
+        );
+        assert_eq!(layout.columns(&defs)[0].width, 240.0);
     }
     #[test]
     fn both_axes_are_bounded_and_last_cells_reachable() {

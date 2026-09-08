@@ -1,5 +1,6 @@
 use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
 use crate::components::app_link::AppLink;
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::chart_query::{
     RangeDecision, RangePreset, SaleProbe, decide_range, effective_preset,
 };
@@ -30,7 +31,7 @@ use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
-use leptos_router::hooks::{use_params_map, use_query_map};
+use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use leptos_use::signal_debounced;
 use std::{
@@ -90,7 +91,7 @@ fn WorldButton(
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
     let label = world_name.clone();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     // Only the params this route actually owns are carried forward, so a
     // stale or hostile query key can't be reflected back into a link.
     let search = Signal::derive(move || {
@@ -616,7 +617,12 @@ pub(crate) fn RealPriceSummary(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
 ) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
+    // Not `use_i18n()`: `ListingsPanel` builds this inside a `<Transition>`,
+    // so on the server it can be constructed under the fresh, empty owner
+    // `ScopedFuture` substitutes when the request's owner was already
+    // disposed. The panicking accessor aborts the SSR response there
+    // (GlitchTip #7294); the default locale does not.
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
 
     view! {
         <Transition fallback=move || ()>
@@ -1543,7 +1549,7 @@ fn ItemViewContent() -> impl IntoView {
     let realtime_status = RwSignal::new("connecting".to_string());
     let last_update_at = RwSignal::new(None::<chrono::DateTime<chrono::Utc>>);
     let params = use_params_map();
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let item_id = Memo::new(move |_| {
         params()
             .get("id")
@@ -2020,5 +2026,27 @@ mod tests {
             elements[2]["item"],
             "https://ultros.app/item/Gilgamesh/12345"
         );
+    }
+
+    /// Reproduces GlitchTip #7294. `RealPriceSummary` renders inside
+    /// `ListingsPanel`'s `<Transition>`, so on the server it can be built
+    /// under the fresh, empty owner `ScopedFuture` substitutes once the
+    /// request's owner has been disposed. Reading i18n with the panicking
+    /// accessor there aborts the whole SSR response; the fallback renders the
+    /// default locale instead.
+    ///
+    /// The read happens in the component body, before the `<Transition>`, so
+    /// simply building the view is enough to trip the old bug -- the resource
+    /// never has to resolve.
+    #[test]
+    fn real_price_summary_builds_without_an_i18n_context() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let listing_resource = Resource::new(|| (), |_| async { Err(AppError::ParamMissing) });
+            let item_id = Memo::new(|_| 12345);
+            // Panicked with "I18n context is missing" before the fix.
+            let _ = view! { <RealPriceSummary listing_resource item_id /> };
+        });
     }
 }

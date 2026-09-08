@@ -119,6 +119,8 @@ async fn widened_columns_match_the_fixture() {
     assert_eq!(row.units_sold, 4);
     // Quantity-weighted, not the flat mean of 150.
     assert_eq!(row.vwap, 175);
+    // 100 × 1 + 200 × 3.
+    assert_eq!(row.gil_volume, 700);
     assert_eq!(row.last_sold_unix, newer);
 
     let bands = queries::bulk_confidence(&ch, FIXTURE_WORLD)

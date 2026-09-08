@@ -97,29 +97,34 @@ impl UltrosDb {
         channel_id: i64,
         discord_user: i64,
     ) -> Result<(alert::Model, Vec<alert_retainer_undercut::Model>)> {
-        let (discord, alert) = alert_discord_destination::Entity::find()
+        let destinations = alert_discord_destination::Entity::find()
             .find_also_related(alert::Entity)
             .filter(
                 alert_discord_destination::Column::ChannelId
                     .eq(channel_id)
                     .and(alert::Column::Owner.eq(discord_user)),
             )
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow::Error::msg(
-                "Alert not found for this discord channel",
-            ))?;
-        let alert =
-            alert.expect("Since we're querying based on FK we shoudln't ever panic here...");
-        // now query to ensure this alert has a retainer undercut associated
-        let undercut = alert_retainer_undercut::Entity::find()
-            .filter(alert_retainer_undercut::Column::AlertId.eq(alert.id))
             .all(&self.db)
             .await?;
-        discord.delete(&self.db).await?;
-        let _ = try_join_all(undercut.clone().into_iter().map(|u| u.delete(&self.db))).await?;
-        alert.clone().delete(&self.db).await?;
-        Ok((alert, undercut))
+        // Only an alert that actually carries an undercut row qualifies: a
+        // sale alert registered in the same channel must be left alone.
+        for (discord, alert) in destinations {
+            let Some(alert) = alert else { continue };
+            let undercut = alert_retainer_undercut::Entity::find()
+                .filter(alert_retainer_undercut::Column::AlertId.eq(alert.id))
+                .all(&self.db)
+                .await?;
+            if undercut.is_empty() {
+                continue;
+            }
+            discord.delete(&self.db).await?;
+            let _ = try_join_all(undercut.clone().into_iter().map(|u| u.delete(&self.db))).await?;
+            alert.clone().delete(&self.db).await?;
+            return Ok((alert, undercut));
+        }
+        Err(anyhow::Error::msg(
+            "Alert not found for this discord channel",
+        ))
     }
 
     /// Create an alert + alert_item_threshold + alert_notification_rule + (if needed) notification_endpoint
@@ -712,6 +717,160 @@ impl UltrosDb {
         }
         txn.commit().await?;
         Ok((alert, undercut))
+    }
+
+    /// Create an alert + alert_retainer_sale in one transaction and bind the
+    /// supplied notification endpoints. A sold alert has no parameters.
+    pub async fn create_retainer_sale_alert(
+        &self,
+        owner: i64,
+        cooldown_seconds: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<(alert::Model, alert_retainer_sale::Model)> {
+        use sea_orm::TransactionTrait;
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        let sale = alert_retainer_sale::Entity::insert(alert_retainer_sale::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert.id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok((alert, sale))
+    }
+
+    pub async fn get_user_retainer_sale_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_retainer_sale::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_retainer_sale::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_retainer_sale_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_retainer_sale::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_retainer_sale::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Discord-command path: alert + legacy channel destination + sale row,
+    /// then a channel endpoint bound through the shared delivery pipeline.
+    pub async fn add_discord_retainer_sale_alert(
+        &self,
+        channel_id: i64,
+        discord_user: i64,
+    ) -> Result<alert::Model> {
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(discord_user),
+            enabled: ActiveValue::default(),
+            last_fired_at: ActiveValue::default(),
+            cooldown_seconds: ActiveValue::default(),
+        })
+        .exec_with_returning(&self.db)
+        .await?;
+        alert_discord_destination::Entity::insert(alert_discord_destination::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            channel_id: Set(channel_id),
+        })
+        .exec(&self.db)
+        .await?;
+        alert_retainer_sale::Entity::insert(alert_retainer_sale::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+        })
+        .exec(&self.db)
+        .await?;
+        let endpoint_id = self
+            .get_or_create_channel_endpoint(
+                discord_user,
+                channel_id,
+                &format!("Discord channel {channel_id}"),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        self.set_alert_rules(discord_user, alert.id, &[endpoint_id])
+            .await?;
+        Ok(alert)
+    }
+
+    /// Delete the sold alert this user registered in this channel. Only alerts
+    /// that carry an `alert_retainer_sale` row qualify, so an undercut alert in
+    /// the same channel is left alone.
+    pub async fn delete_discord_sale_alert(
+        &self,
+        channel_id: i64,
+        discord_user: i64,
+    ) -> Result<alert::Model> {
+        let destinations = alert_discord_destination::Entity::find()
+            .find_also_related(alert::Entity)
+            .filter(
+                alert_discord_destination::Column::ChannelId
+                    .eq(channel_id)
+                    .and(alert::Column::Owner.eq(discord_user)),
+            )
+            .all(&self.db)
+            .await?;
+        for (destination, alert) in destinations {
+            let Some(alert) = alert else { continue };
+            let has_sale_row = alert_retainer_sale::Entity::find()
+                .filter(alert_retainer_sale::Column::AlertId.eq(alert.id))
+                .one(&self.db)
+                .await?
+                .is_some();
+            if !has_sale_row {
+                continue;
+            }
+            destination.delete(&self.db).await?;
+            // alert_retainer_sale and alert_notification_rule cascade.
+            alert.clone().delete(&self.db).await?;
+            return Ok(alert);
+        }
+        Err(anyhow::Error::msg(
+            "No sale alert found for this discord channel",
+        ))
     }
 
     /// Create an alert that fires whenever the referenced list or one of its

@@ -7,6 +7,7 @@
   "scripts": {
     "test:virtual-grid": "node ./virtual-grid.cjs",
     "test:analyzer-grids": "node ./analyzer-grids.cjs",
+    "test:shared-analyzer-data": "node ./shared-analyzer-data.cjs",
     "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",
     "run": "node ./runner.cjs",
     "test": "npm run test:desktop && npm run test:mobile && npm run test:wide",
@@ -17,8 +18,10 @@
     "test:item-source-nav": "node ./item-source-nav.cjs",
     "test:recipe-planner": "node ./recipe-planner.cjs",
     "test:hover-card-navigation": "node ./hover-card-navigation.cjs",
+    "test:hover-card-stability": "node ./hover-card-stability.cjs",
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
+    "test:app-update": "node ./app-update.cjs",
     "test:shared-list": "node ./shared-list.cjs",
     "test:list-flow": "node ./list-flow.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",

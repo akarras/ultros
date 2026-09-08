@@ -1,12 +1,18 @@
 use crate::analysis::{
     DELTA_DEAD_BAND_PCT, DerivedConfidence, SaleSummary, derived_confidence,
     flip_estimated_sale_price, flip_profit, get_sales_cadence, is_troll_listing,
-    median_in_place_i32, price_drift_pct, profit_per_day, return_on_investment, roi_badge_class,
-    sale_tax, signed_delta_class, sniper_clamp, velocity_per_day,
+    median_in_place_i32, price_drift_pct, profit_per_day_from_rate, return_on_investment,
+    roi_badge_class, sale_tax, signed_delta_class, sniper_clamp, velocity_per_day,
 };
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
 };
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
+    signals::{StatsIndex, stat_only},
+};
+use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -21,7 +27,6 @@ use crate::{
         control_bar::{ColumnOption, ControlBar, ControlBarPopovers, FilterOption},
         filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
         meta::*,
         query_button::QueryButton,
@@ -34,7 +39,7 @@ use crate::{
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
         tooltip::*,
-        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
+        virtual_grid::{ColumnFilter, GridColumn},
         world_picker::*,
     },
     error::{AppError, AppResult},
@@ -62,6 +67,8 @@ type FlipKey = (i32, bool);
 struct FlipEnrichment {
     quality: Option<ResaleQualityRow>,
     sparkline: Option<Vec<u32>>,
+    quality_failed: bool,
+    sparkline_failed: bool,
 }
 
 // Per feed, exactly as the two maps used to `extend` independently: a batch
@@ -74,6 +81,8 @@ impl Absorb for FlipEnrichment {
         if newer.sparkline.is_some() {
             self.sparkline = newer.sparkline;
         }
+        self.quality_failed = self.quality.is_none() && newer.quality_failed;
+        self.sparkline_failed = self.sparkline.is_none() && newer.sparkline_failed;
     }
 }
 
@@ -93,28 +102,55 @@ fn sparkline_for<'a>(store: &'a FlipStore, key: &FlipKey) -> Option<&'a [u32]> {
     store.get(key).and_then(|v| v.sparkline.as_deref())
 }
 
+/// Missing history is confirmed only by a successful quality request.
+fn quality_absence_value(store: &FlipStore, key: &FlipKey) -> GridValue {
+    if store.get(key).is_some_and(|value| value.quality_failed) {
+        GridValue::Unavailable
+    } else if store.is_settled(key) {
+        GridValue::Missing
+    } else {
+        GridValue::Pending
+    }
+}
+
 /// Fold the two feed responses into one value per key. A feed that failed
-/// contributes nothing — its keys still settle (the hook settles every
-/// requested key), so those cells show "—" rather than a skeleton forever,
-/// exactly as before the lift. Errors stay silent, as they were.
+/// contributes its failure status to every requested key. Each feed can
+/// succeed independently; failed history must not satisfy a missing-data query.
 fn zip_flip_enrichment(
+    requested: &[FlipKey],
     quality: AppResult<ResaleQualityResponse>,
     sparklines: AppResult<SparklinesResponse>,
 ) -> Vec<(FlipKey, FlipEnrichment)> {
-    let mut by_key: HashMap<FlipKey, FlipEnrichment> = HashMap::new();
+    let mut by_key: HashMap<FlipKey, FlipEnrichment> = requested
+        .iter()
+        .map(|&key| {
+            (
+                key,
+                FlipEnrichment {
+                    quality_failed: quality.is_err(),
+                    sparkline_failed: sparklines.is_err(),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
     // The key is bound before the `Some(row)` move: an assignment evaluates
     // its value before its place, so `entry((row.item_id, row.hq)) = Some(row)`
     // would read a moved `row` (E0382).
     if let Ok(q) = quality {
         for row in q.rows {
             let key = (row.item_id, row.hq);
-            by_key.entry(key).or_default().quality = Some(row);
+            if let Some(value) = by_key.get_mut(&key) {
+                value.quality = Some(row);
+            }
         }
     }
     if let Ok(s) = sparklines {
         for series in s.series {
             let key = (series.item_id, series.hq);
-            by_key.entry(key).or_default().sparkline = Some(series.points);
+            if let Some(value) = by_key.get_mut(&key) {
+                value.sparkline = Some(series.points);
+            }
         }
     }
     // Map order is irrelevant: this feeds another map, never the DOM.
@@ -139,12 +175,12 @@ async fn fetch_flip_enrichment(
         post_sparklines(
             &world,
             SparklinesRequest {
-                items: keys,
+                items: keys.clone(),
                 hours: Some(168),
             },
         ),
     );
-    zip_flip_enrichment(quality, sparklines)
+    zip_flip_enrichment(&keys, quality, sparklines)
 }
 
 /// Both endpoints cap a batch; use the smaller cap and chunk unusually
@@ -182,6 +218,14 @@ const COL_TREND: &str = "trend";
 const COL_SALES_PER_DAY: &str = "sales_per_day";
 const COL_VOLUME_30D: &str = "volume_30d";
 
+/// The item column's width, and the whole story for it: unlike every other
+/// column it opts out of the grid's automatic content fit. Item names run
+/// long and vary wildly between filters, so fitting them shoved the numbers
+/// that matter off screen and moved the table around under the reader every
+/// time the rows changed. Long names truncate instead; the user can still
+/// drag the border or pick "Auto fit" from the column menu.
+const ITEM_COLUMN_WIDTH: f64 = 380.0;
+
 const ALL_OPTIONAL_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
     COL_TAX,
@@ -200,19 +244,24 @@ const ALL_OPTIONAL_COLS: &[&str] = &[
 /// user explicitly sets the param (even to ""), we respect that exact
 /// set instead of falling back to defaults.
 ///
-/// Sales/Day is default-on even though the ClickHouse rollup doesn't cover
-/// every row: its cadence badge falls back to the buffer-derived rate, so it
-/// renders something on every row (it replaced the old numeric Velocity
-/// column, which showed the same rate less legibly). The remaining
-/// ClickHouse-only columns (trend, 30d volume) are off because they have no
-/// fallback and would be blank on uncovered rows. ROI is off because it
-/// ranks by ratio, which is the wrong objective when retainer slots are the
-/// scarce resource.
+/// Everything but Tax and 30d Volume. Sales/Day is on even though the
+/// ClickHouse rollup doesn't cover every row: its cadence badge falls back
+/// to the buffer-derived rate, so it renders something on every row. Trend
+/// has no such fallback and is blank on uncovered rows, but with the grid
+/// sizing columns to content that costs little, and a sparkline is the
+/// quickest read on whether a price is holding. ROI stays a secondary
+/// signal (it ranks by ratio, the wrong objective when retainer slots are
+/// the scarce resource) but is worth a glance next to Profit/Day. Tax is
+/// derivable from the sale price and 30d Volume is blank without
+/// enrichment, so those two remain opt-in.
 const DEFAULT_VISIBLE_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
+    COL_ROI,
     COL_DRIFT,
     COL_CONFIDENCE,
     COL_WORLD,
+    COL_DATACENTER,
+    COL_TREND,
     COL_SALES_PER_DAY,
     COL_LAST_SOLD,
 ];
@@ -224,13 +273,69 @@ fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static s
 fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> String {
     crate::components::control_bar::serialize_visible_cols(visible, ALL_OPTIONAL_COLS)
 }
+
+/// Toolbar controls only own their legacy columns; shared/provider columns
+/// remain selected when a legacy column is toggled.
+fn serialize_visible_cols_preserving(
+    visible: &std::collections::HashSet<&'static str>,
+    previous: Option<&str>,
+) -> String {
+    let native = serialize_visible_cols(visible);
+    let mut ids: Vec<_> = native.split(',').filter(|id| !id.is_empty()).collect();
+    for id in previous
+        .unwrap_or("sale_estimate")
+        .split(',')
+        .filter(|id| !id.is_empty())
+    {
+        if !ALL_OPTIONAL_COLS.contains(&id) && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids.join(",")
+}
+
+use crate::components::app_link::use_query_map_or_default;
+use crate::query_defaults::query_signal;
+use crate::query_defaults::query_signal_or_default;
+/// `?cols=` with one shared (non-native) id flipped, everything else kept
+/// in place. Absent param = the default view, whose only shared column is
+/// `sale_estimate` (see `serialize_visible_cols_preserving`).
+fn toggle_shared_col(previous: Option<&str>, id: &str) -> String {
+    let mut ids: Vec<&str> = previous
+        .unwrap_or("sale_estimate")
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .collect();
+    if let Some(i) = ids.iter().position(|t| *t == id) {
+        ids.remove(i);
+    } else {
+        ids.push(id);
+    }
+    ids.join(",")
+}
+
+/// The stat-column ids present in `?cols=`, for the picker's checkboxes.
+/// Native ids stay in `parse_visible_cols`; other shared ids (`market-world`)
+/// are not picker entries and are ignored here.
+fn shared_cols_in(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
+    raw.unwrap_or("")
+        .split(',')
+        .filter_map(|tok| {
+            crate::analyzer_kit::stat_columns::STAT_COLUMNS
+                .iter()
+                .find(|c| c.id == tok)
+                .map(|c| c.id)
+        })
+        .collect()
+}
+
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    hooks::{use_location, use_navigate, use_params_map},
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -270,12 +375,50 @@ struct ProfitData {
     sale_summary: SaleSummary,
 }
 
+/// Auto-fit includes the localized fallback annotation actually rendered in the cell.
+fn sale_estimate_measure_text(price: i32, fallback: bool, fallback_label: &str) -> String {
+    use thousands::Separable;
+    let mut text = price.separate_with_commas();
+    if fallback {
+        text.push_str(fallback_label);
+    }
+    text
+}
+
+/// Loading a selected statistic cannot reject a candidate using a temporary fallback.
+fn passes_financial_floor(value: i32, floor: Option<i32>, pending: bool) -> bool {
+    pending || floor.is_none_or(|floor| value > floor)
+}
+
+/// Resolve the chosen revenue input while preserving actual purchase/listing data.
+fn with_revenue_basis(
+    data: &Arc<ProfitData>,
+    basis: PriceSignal,
+    stats: Option<&StatsIndex>,
+) -> (Arc<ProfitData>, bool) {
+    let selected = basis.sale_stat().and_then(|stat| {
+        stats.and_then(|index| {
+            stat_only(index, data.sale_summary.item_id, data.sale_summary.hq, stat)
+        })
+    });
+    let fallback = basis.sale_stat().is_some() && selected.is_none();
+    let repriced = if let Some(price) = selected {
+        let mut row = (**data).clone();
+        row.estimated_sale_price = price;
+        Arc::new(row)
+    } else {
+        data.clone()
+    };
+    (repriced, fallback)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
     profit_per_day: i32,
+    price_fallback: bool,
 }
 
 /// Output of the filter + sort pass over the profit table.
@@ -1235,6 +1378,13 @@ fn AnalyzerTable(
     on_market_update: Callback<MarketScope>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let market = use_market_data(world);
+    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    let selected_revenue = Signal::derive(move || revenue_basis().unwrap_or_default());
+    let revenue_pending = Signal::derive(move || {
+        selected_revenue.get().sale_stat().is_some() && market.stats7().is_none()
+    });
+    let rate_pending = Signal::derive(move || market.stats7().is_none());
     // Keeps the name chip mounted (in edit state) between "picked from the
     // + Filter menu" and "first committed value" — an empty ?name= URL param
     // is not relied on to round-trip.
@@ -1288,7 +1438,7 @@ fn AnalyzerTable(
     let (max_purchase_price, set_max_purchase_price) = filter_query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = filter_query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
-    let (cols_param, set_cols_param) = leptos_router::hooks::query_signal_with_options::<String>(
+    let (cols_param, set_cols_param) = query_signal_or_default::<String>(
         "cols",
         NavigateOptions {
             scroll: false,
@@ -1307,6 +1457,13 @@ fn AnalyzerTable(
     let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
     let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
+    // The toolbar picker also lists the shared sale-history columns; their
+    // checked state lives in `?cols=` beside the native ids.
+    let picker_visible = Memo::new(move |_| {
+        let mut set = visible_cols.get();
+        set.extend(shared_cols_in(cols_param().as_deref()));
+        set
+    });
     let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1433,42 +1590,57 @@ fn AnalyzerTable(
             c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
             c if c == COL_DATACENTER => t_string!(i18n, analyzer_col_datacenter).to_string(),
             c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
-            c if c == COL_SALES_PER_DAY => t_string!(i18n, analyzer_col_sales_per_day).to_string(),
-            c if c == COL_VOLUME_30D => t_string!(i18n, analyzer_col_volume_30d).to_string(),
+            c if c == COL_SALES_PER_DAY => t_string!(i18n, market_sales_per_day_7).to_string(),
+            c if c == COL_VOLUME_30D => t_string!(i18n, market_sales_30_cleaned).to_string(),
             c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
             _ => String::new(),
         }
     };
 
+    // Default column order, with the width each column has until the grid
+    // has measured its content (the server render, and the client until
+    // rows arrive). The grid auto-fits every column the user hasn't sized,
+    // so these only need to be close: they're the widths a settled English
+    // Gilgamesh view landed on. The item column is the exception — it opts
+    // out of auto-fit (see `ITEM_COLUMN_WIDTH`) and keeps its width for
+    // good.
     let grid_columns = Memo::new(move |_| {
         let visible = visible_cols.get();
         [
             ("hq", 70.0),
-            ("item", 330.0),
-            ("profit", 120.0),
-            (COL_PROFIT_PER_DAY, 125.0),
-            (COL_TAX, 110.0),
-            (COL_DRIFT, 100.0),
-            (COL_CONFIDENCE, 115.0),
+            ("item", ITEM_COLUMN_WIDTH),
+            ("profit", 114.0),
+            (COL_PROFIT_PER_DAY, 135.0),
             (COL_ROI, 95.0),
-            ("buy_price", 125.0),
-            (COL_WORLD, 150.0),
-            (COL_DATACENTER, 160.0),
+            (COL_TAX, 110.0),
+            (COL_DRIFT, 107.0),
+            (COL_CONFIDENCE, 123.0),
+            ("buy_price", 131.0),
+            ("sale_estimate", 150.0),
+            (COL_WORLD, 114.0),
+            (COL_DATACENTER, 110.0),
             (COL_TREND, 140.0),
-            (COL_SALES_PER_DAY, 130.0),
+            (COL_SALES_PER_DAY, 126.0),
             (COL_VOLUME_30D, 105.0),
             (COL_LAST_SOLD, 120.0),
         ]
         .into_iter()
         .map(|(id, width)| {
-            let optional = ALL_OPTIONAL_COLS.contains(&id);
+            let optional = ALL_OPTIONAL_COLS.contains(&id) || id == "sale_estimate";
             let mut col = GridColumn::new(
                 id,
-                col_label(id),
+                if id == "sale_estimate" {
+                    t_string!(i18n, market_sale_estimate).to_string()
+                } else {
+                    col_label(id)
+                },
                 width,
                 optional,
-                !optional || visible.contains(id),
+                !optional || visible.contains(id) || id == "sale_estimate",
             );
+            if id == "item" {
+                col = col.fixed_width();
+            }
             let filters: &[(&str, bool)] = match id {
                 "item" => &[(FILTER_NAME, false), (FILTER_CATEGORY, true)],
                 "profit" => &[(FILTER_PROFIT, true)],
@@ -1535,12 +1707,15 @@ fn AnalyzerTable(
         })
         .collect::<Vec<_>>()
     });
-    // Columns the picker offers, in table order.
+    // Columns the picker offers: the native columns in table order, then
+    // every shared sale-history column grouped by window.
     let column_options = Memo::new(move |_| {
-        ALL_OPTIONAL_COLS
+        let mut options = ALL_OPTIONAL_COLS
             .iter()
             .map(|col| ColumnOption::new(col, col_label(col)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        options.extend(crate::analyzer_kit::stat_columns::market_picker_options());
+        options
     });
 
     // Held here because the category picker lives in the `+ Filter` menu and
@@ -1548,13 +1723,20 @@ fn AnalyzerTable(
     let popovers = ControlBarPopovers::new();
 
     let toggle_column = Callback::new(move |col: &'static str| {
+        let previous = cols_param.get_untracked();
         let mut set = visible_cols.get_untracked();
-        if set.contains(col) {
-            set.remove(col);
+        let extras = if ALL_OPTIONAL_COLS.contains(&col) {
+            if !set.remove(col) {
+                set.insert(col);
+            }
+            previous
         } else {
-            set.insert(col);
-        }
-        set_cols_param.set(Some(serialize_visible_cols(&set)));
+            Some(toggle_shared_col(previous.as_deref(), col))
+        };
+        set_cols_param.set(Some(serialize_visible_cols_preserving(
+            &set,
+            extras.as_deref(),
+        )));
     });
 
     // Adding a filter seeds it with `default_filter_value` so the chip has
@@ -1732,31 +1914,44 @@ fn AnalyzerTable(
             .rows()
             .iter()
             .map(|data| {
+                let (data, price_fallback) =
+                    with_revenue_basis(data, selected_revenue.get(), market.stats7().as_deref());
                 let profit =
                     flip_profit(data.estimated_sale_price, data.cheapest_price, include_tax);
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
-                let profit_per_day = profit_per_day(profit, &data.sale_summary);
+                // Profit/day uses exactly the rate displayed by the cadence column.
+                let key = (data.sale_summary.item_id, data.sale_summary.hq);
+                let rate = market
+                    .stats7()
+                    .and_then(|stats| stats.get(&key).map(|s| s.sales_per_day))
+                    .or_else(|| velocity_per_day(&data.sale_summary));
+                let profit_per_day = rate
+                    .map(|rate| profit_per_day_from_rate(profit, rate))
+                    .unwrap_or_default();
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
                     profit_per_day,
+                    price_fallback,
                 }
             })
             .filter(move |data| {
-                minimum_profit()
-                    .map(|min| data.profit > min)
-                    .unwrap_or(true)
+                passes_financial_floor(data.profit, minimum_profit(), revenue_pending.get())
             })
             .filter(move |data| {
-                minimum_profit_per_day()
-                    .map(|min| data.profit_per_day > min)
-                    .unwrap_or(true)
+                passes_financial_floor(
+                    data.profit_per_day,
+                    minimum_profit_per_day(),
+                    rate_pending.get(),
+                )
             })
             .filter(move |data| {
-                minimum_roi()
-                    .map(|roi| data.return_on_investment > roi)
-                    .unwrap_or(true)
+                passes_financial_floor(
+                    data.return_on_investment,
+                    minimum_roi(),
+                    revenue_pending.get(),
+                )
             })
             .filter(move |data| {
                 minimum_sales()
@@ -1765,19 +1960,22 @@ fn AnalyzerTable(
             })
             .filter(move |data| {
                 // Velocity floor. Mirrors the Sales/Day column's preference —
-                // ClickHouse rate first, derived rate as fallback — so the
-                // number shown is the number evaluated. Reading `enrichment`
-                // here is the same pattern the suspicious filter below uses;
-                // the hook's non-reactive claim set (`analyzer_kit::enrichment`)
-                // breaks the recompute -> refetch loop.
-                velocity_floor()
-                    .map(|min| {
-                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                        let ch = enrichment
-                            .with(|store| quality_for(store, &key).map(|q| q.sales_per_day));
-                        passes_velocity_floor(min, ch, velocity_per_day(&data.inner.sale_summary))
-                    })
-                    .unwrap_or(true)
+                // Full-scope seven-day rate first, recent-buffer fallback.
+                // The displayed cadence and profit/day use this same source.
+                rate_pending.get()
+                    || velocity_floor()
+                        .map(|min| {
+                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                            let ch = market
+                                .stats7()
+                                .and_then(|stats| stats.get(&key).map(|s| s.sales_per_day));
+                            passes_velocity_floor(
+                                min,
+                                ch,
+                                velocity_per_day(&data.inner.sale_summary),
+                            )
+                        })
+                        .unwrap_or(true)
             })
             .filter(move |data| {
                 category_filter()
@@ -1924,11 +2122,16 @@ fn AnalyzerTable(
         // Fall back through `SortColumn` rather than a literal, so the rows
         // are ordered by exactly what the header highlights and arrows.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
-        sort_rows(
-            &mut sorted_data,
-            mode,
-            sort_dir().unwrap_or_else(|| mode.default_dir()),
-        );
+        let sort_pending = (revenue_pending.get()
+            && matches!(mode, SortMode::Profit | SortMode::Roi | SortMode::Tax))
+            || (rate_pending.get() && mode == SortMode::ProfitPerDay);
+        if !sort_pending {
+            sort_rows(
+                &mut sorted_data,
+                mode,
+                sort_dir().unwrap_or_else(|| mode.default_dir()),
+            );
+        }
         FilteredRows {
             rows: sorted_data.into_iter().enumerate().collect(),
             rows_lacking_data,
@@ -1940,6 +2143,7 @@ fn AnalyzerTable(
     // keeps its `each` wiring unchanged.
     let sorted_data = Memo::new(move |_| filtered_rows.with(|f| f.rows.clone()));
     let rows_lacking_data = Memo::new(move |_| filtered_rows.with(|f| f.rows_lacking_data));
+    let queried_rows = RwSignal::new(Vec::<(usize, CalculatedProfitData)>::new());
 
     // --- Visible-window lazy enrichment -------------------------------------
     // Rendered row range published by the VirtualScroller (see view! below).
@@ -1960,7 +2164,7 @@ fn AnalyzerTable(
         };
         let buy_filter = buy_filter();
         let range = visible_range.get();
-        let mut item_ids = sorted_data.with(|data| {
+        let mut item_ids = queried_rows.with(|data| {
             let (start, end) = range;
             let lo = start.saturating_sub(PREFETCH_MARGIN);
             let hi = (end + PREFETCH_MARGIN).min(data.len());
@@ -2020,7 +2224,7 @@ fn AnalyzerTable(
     // deduped, reset on a world change; see `analyzer_kit::enrichment`.
     use_visible_enrichment(
         enrichment,
-        sorted_data.into(),
+        queried_rows.into(),
         visible_range.into(),
         world,
         flip_key,
@@ -2028,9 +2232,143 @@ fn AnalyzerTable(
         FLIP_ENRICHMENT,
     );
 
+    // Native ClickHouse cells can change without changing a row's pricing.
+    // Track the store revision without cloning it or scanning candidate rows.
+    let native_measure_version = Memo::new(move |previous: Option<&u64>| {
+        enrichment.with(|_| ());
+        previous.copied().unwrap_or_default().wrapping_add(1)
+    });
+
+    type Row = (usize, CalculatedProfitData);
+    let worlds_for_metric = worlds.clone();
+    let worlds_for_dc_metric = worlds.clone();
+    let native_metrics = vec![
+        GridMetric::text("item", move |(_, d): &Row| {
+            GridValue::Text(
+                items
+                    .get(&ItemId(d.inner.sale_summary.item_id))
+                    .map(|i| i.name.clone())
+                    .unwrap_or_default(),
+            )
+        }),
+        GridMetric::text("hq", |(_, d): &Row| {
+            GridValue::Text(if d.inner.sale_summary.hq { "HQ" } else { "NQ" }.into())
+        }),
+        GridMetric::number("profit", move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.profit as f64)
+            }
+        }),
+        GridMetric::number(COL_PROFIT_PER_DAY, move |(_, d): &Row| {
+            if market.stats7().is_none() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.profit_per_day as f64)
+            }
+        }),
+        GridMetric::number(COL_TAX, move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(sale_tax(d.inner.estimated_sale_price) as f64)
+            }
+        }),
+        GridMetric::number(COL_ROI, move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.return_on_investment as f64)
+            }
+        }),
+        GridMetric::number("buy_price", |(_, d): &Row| {
+            GridValue::Number(d.inner.cheapest_price as f64)
+        }),
+        GridMetric::number("sale_estimate", move |(_, d): &Row| {
+            if revenue_pending.get() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(d.inner.estimated_sale_price as f64)
+            }
+        }),
+        GridMetric::number(COL_DRIFT, |(_, d): &Row| {
+            price_drift_pct(&d.inner.prices)
+                .map(|v| GridValue::Number(v as f64))
+                .unwrap_or(GridValue::Missing)
+        }),
+        GridMetric::number(COL_LAST_SOLD, |(_, d): &Row| {
+            d.inner
+                .sale_summary
+                .days_since_last_sale
+                .map(|v| GridValue::Number(v.num_seconds() as f64))
+                .unwrap_or(GridValue::Missing)
+        }),
+        GridMetric::text(COL_WORLD, move |(_, d): &Row| {
+            worlds_for_metric
+                .lookup_selector(AnySelector::World(d.inner.cheapest_world_id))
+                .map(|w| GridValue::Text(w.get_name().to_string()))
+                .unwrap_or(GridValue::Missing)
+        }),
+        GridMetric::text(COL_DATACENTER, move |(_, d): &Row| {
+            worlds_for_dc_metric
+                .lookup_selector(AnySelector::World(d.inner.cheapest_world_id))
+                .and_then(|w| {
+                    worlds_for_dc_metric
+                        .get_datacenters(&w)
+                        .first()
+                        .map(|dc| GridValue::Text(dc.name.clone()))
+                })
+                .unwrap_or(GridValue::Missing)
+        }),
+        GridMetric::number(COL_VOLUME_30D, move |(_, d): &Row| {
+            let key = (d.inner.sale_summary.item_id, d.inner.sale_summary.hq);
+            enrichment.with(|store| {
+                quality_for(store, &key)
+                    .map(|q| GridValue::Number(q.sample_size as f64))
+                    .unwrap_or_else(|| quality_absence_value(store, &key))
+            })
+        })
+        .partial(),
+        GridMetric::number(COL_SALES_PER_DAY, move |(_, d): &Row| {
+            let Some(stats) = market.stats7() else {
+                return GridValue::Pending;
+            };
+            let key = (d.inner.sale_summary.item_id, d.inner.sale_summary.hq);
+            stats
+                .get(&key)
+                .map(|s| s.sales_per_day)
+                .or_else(|| velocity_per_day(&d.inner.sale_summary))
+                .map(|v| GridValue::Number(v as f64))
+                .unwrap_or(GridValue::Missing)
+        }),
+        GridMetric::text(COL_CONFIDENCE, move |(_, d): &Row| {
+            let key = (d.inner.sale_summary.item_id, d.inner.sale_summary.hq);
+            enrichment.with(|store| {
+                quality_for(store, &key)
+                    .map(|q| match q.confidence_band {
+                        ConfidenceBand::High => {
+                            GridValue::Text(t_string!(i18n, analyzer_confidence_high).to_string())
+                        }
+                        ConfidenceBand::Medium => {
+                            GridValue::Text(t_string!(i18n, analyzer_confidence_medium).to_string())
+                        }
+                        ConfidenceBand::Low | ConfidenceBand::Unusable => {
+                            GridValue::Text(t_string!(i18n, analyzer_confidence_low).to_string())
+                        }
+                        ConfidenceBand::Unknown => GridValue::Missing,
+                    })
+                    .unwrap_or_else(|| quality_absence_value(store, &key))
+            })
+        })
+        .partial(),
+    ];
     let worlds_for_measure = worlds.clone();
     view! {
         <div class="flex flex-col gap-4" data-testid="flip-finder-table">
+            <MarketPriceControls basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string() listing_label=t_string!(i18n, market_conservative_estimate).to_string() show_fallback_note=false/>
+            {move || (revenue_pending.get() || rate_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
+            <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_conservative_note)}</p>
             <ControlBar sticky=false
                 chip_row=chip_row
                 summary=move || {
@@ -2039,7 +2377,7 @@ fn AnalyzerTable(
                             {move || {
                                 t_string!(i18n, analyzer_rows_count)
                                     .to_string()
-                                    .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
+                                    .replace("%count%", &queried_rows.with(|d| d.len()).to_string())
                             }}
                         </span>
                         // Data-transparency note: the drift / confidence / volume
@@ -2055,9 +2393,7 @@ fn AnalyzerTable(
                                 .then(|| {
                                     view! {
                                         <span class="text-xs text-[color:var(--color-text-muted)] truncate min-w-0">
-                                            {t_string!(i18n, analyzer_rows_lacking_data)
-                                                .to_string()
-                                                .replace("%count%", &n.to_string())}
+                                            {t!(i18n, analyzer_rows_lacking_data, count = n)}
                                         </span>
                                     }
                                 })
@@ -2074,7 +2410,7 @@ fn AnalyzerTable(
                     }
                 }
                 columns=column_options
-                visible_columns=visible_cols
+                visible_columns=picker_visible
                 on_toggle_column=toggle_column
                 on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
                 columns_extra=move || {
@@ -2543,15 +2879,21 @@ fn AnalyzerTable(
             </ControlBar>
 
 
-            <QueryGrid
+            <MarketGrid
                 id="flip-finder-grid"
+                show_saved_views=false
                 label=t_string!(i18n, flip_finder).to_string()
+                measure_version=Signal::derive(move || native_measure_version.get())
+                market
+                on_rows=Callback::new(move |rows| queried_rows.set(rows))
+                metrics=native_metrics
+                subject=Arc::new(move |(_, data): &(usize, CalculatedProfitData)| { let mut subject = MarketSubject::new(data.inner.sale_summary.item_id, data.inner.sale_summary.hq, data.inner.cheapest_world_id); subject.listing_price = Some(data.inner.cheapest_price); subject })
                 each=sorted_data
                 columns=grid_columns
                 visible_range=visible_range
                 row_height=FLIP_ROW_HEIGHT_PX
                 key=move |(_, data): &(usize, CalculatedProfitData)| (data.inner.sale_summary.item_id, data.inner.cheapest_world_id, data.inner.sale_summary.hq)
-                header=move |column| { match column { "hq" => (view! { <div class="  px-2 text-center">
+                header=move |column| { match column { "sale_estimate" => view! { <span>{t!(i18n, market_sale_estimate)}</span> }.into_any(), "hq" => (view! { <div class="  px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div> }).into_any(),
 "item" => (view! { <div class="  px-3">
@@ -2619,52 +2961,18 @@ COL_ROI => (view! {
                                     />
                                 </div> }).into_any(),
 COL_WORLD => (view! {
-                                    <div class="  px-3 py-2 flex flex-row gap-2">
-                                        {t!(i18n, analyzer_col_world)}
-                                        <div>
-                                            {move || {
-                                                world_filter()
-                                                    .map(|_filter| {
-                                                        view! {
-                                                            <button
-                                                                type="button"
-                                                                aria-label=t_string!(i18n, aria_remove_filter)
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                                on:click=move |_| {
-                                                                    set_world_filter(None);
-                                                                }
-                                                            >
-                                                                <Icon icon=icondata::MdiFilterRemove />
-                                                            </button>
-                                                        }
-                                                    })
-                                            }}
-                                        </div>
-                                    </div>
+                                    // Clearing the filter is the grid header's
+                                    // own control now (VirtualGrid renders it
+                                    // for every filterable column), so this
+                                    // heading is just its label.
+                                    <div class="px-3 py-2">{t!(i18n, analyzer_col_world)}</div>
                                 }).into_any(),
 COL_DATACENTER => (view! {
-                                    <div class="  px-3 py-2 flex flex-row gap-2">
-                                        {t!(i18n, analyzer_col_datacenter)}
-                                        <div>
-                                            {move || {
-                                                datacenter_filter()
-                                                    .map(|_filter| {
-                                                        view! {
-                                                            <button
-                                                                type="button"
-                                                                aria-label=t_string!(i18n, aria_remove_filter)
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                                on:click=move |_| {
-                                                                    set_datacenter_filter(None);
-                                                                }
-                                                            >
-                                                                <Icon icon=icondata::MdiFilterRemove />
-                                                            </button>
-                                                        }
-                                                    })
-                                            }}
-                                        </div>
-                                    </div>
+                                    // Clearing the filter is the grid header's
+                                    // own control now (VirtualGrid renders it
+                                    // for every filterable column), so this
+                                    // heading is just its label.
+                                    <div class="px-3 py-2">{t!(i18n, analyzer_col_datacenter)}</div>
                                 }).into_any(),
 COL_TREND => (view! {
                                     <div class="  px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
@@ -2677,7 +2985,7 @@ COL_TREND => (view! {
 COL_SALES_PER_DAY => (view! {
                                     <div class="  px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
 
-                                        <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
+                                        <span>{t!(i18n, market_sales_per_day_7)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
@@ -2685,7 +2993,7 @@ COL_SALES_PER_DAY => (view! {
                                 }).into_any(),
 COL_VOLUME_30D => (view! {
                                     <div class="  px-3 py-2 flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
-                                        <span>{t!(i18n, analyzer_col_volume_30d)}</span>
+                                        <span>{t!(i18n, market_sales_30_cleaned)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
@@ -2709,6 +3017,7 @@ COL_LAST_SOLD => (view! {
                     let text = match column {
                         "item" => items.get(&ItemId(data.inner.sale_summary.item_id)).map(|i|i.name.clone()).unwrap_or_default(),
                         "hq" => if data.inner.sale_summary.hq { t_string!(i18n,analyzer_col_hq).to_string() } else { String::new() },
+                        "sale_estimate" => sale_estimate_measure_text(data.inner.estimated_sale_price, data.price_fallback, t_string!(i18n, market_fallback_badge)),
                         "profit" => data.profit.separate_with_commas(),
                         COL_PROFIT_PER_DAY => data.profit_per_day.separate_with_commas(),
                         COL_TAX => sale_tax(data.inner.estimated_sale_price).separate_with_commas(),
@@ -2727,7 +3036,24 @@ COL_LAST_SOLD => (view! {
                         }).unwrap_or_else(||t_string!(i18n,analyzer_last_sold_never).to_string()),
                         _ => String::new(),
                     };
-                    let padding=match column { "item"=>150.0, COL_TREND=>140.0, COL_SALES_PER_DAY=>200.0, "profit"|"buy_price"|COL_PROFIT_PER_DAY|COL_TAX=>48.0, _=>32.0 };
+                    // Everything in the cell besides the measured text, from the
+                    // rendered markup: `px-3` (24) and the 1px column border
+                    // on every cell; `px-4`, the 40px icon, the clipboard and
+                    // list buttons and their gaps on Item; the 20px gil icon on
+                    // the gil columns; the 80px sparkline on Trend; the whole
+                    // cadence badge on Sales/Day (its text is not measured).
+                    // Badge text is 12px but measured at the grid's 14px, which
+                    // covers the badge's own padding.
+                    let padding=match column {
+                        "item"=>150.0,
+                        COL_TREND=>106.0,
+                        COL_SALES_PER_DAY=>126.0,
+                        "profit"|"buy_price"|"sale_estimate"|COL_PROFIT_PER_DAY|COL_TAX=>48.0,
+                        COL_ROI=>40.0,
+                        COL_DRIFT=>30.0,
+                        COL_WORLD|COL_DATACENTER|COL_LAST_SOLD=>26.0,
+                        _=>32.0,
+                    };
                     (text,padding)
                 }
                 view=move |(index, data): (usize, CalculatedProfitData), column| {
@@ -2766,7 +3092,7 @@ COL_LAST_SOLD => (view! {
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
 
-                    match column { "hq" => (view! { <div class="px-2 py-2   flex items-center justify-center">
+                    match column { "sale_estimate" => view! { <div class="px-3 py-2 text-right" title=if data.price_fallback { t_string!(i18n, market_conservative_fallback_title).to_string() } else { t_string!(i18n, market_selected_estimate_title).to_string() }><Gil amount=data.inner.estimated_sale_price />{data.price_fallback.then(|| t_string!(i18n, market_fallback_badge).to_string())}</div> }.into_any(), "hq" => (view! { <div class="px-2 py-2   flex items-center justify-center">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
@@ -2942,26 +3268,24 @@ COL_SALES_PER_DAY => ({
                                         // falls back to the buffer-derived rate — the same
                                         // rate the velocity floor filter evaluates — so
                                         // every row renders something.
-                                        let (quality, settled) = enrichment.with(|store| (
-                                            quality_for(store, &row_key).map(|q| (q.sales_per_day, q.sample_size)),
-                                            store.is_settled(&row_key),
-                                        ));
+                                        let stats = market.stats7();
+                                        let settled = stats.is_some();
+                                        let quality = stats.as_ref().and_then(|index| index.get(&row_key)).map(|s| (s.sales_per_day, s.num_sold));
                                         let inner = match (quality, settled) {
                                             (Some((sales_per_day, sample_size)), _) => {
                                                 let cadence = get_sales_cadence(sales_per_day, sample_size as usize);
                                                 view! { <SalesCadenceBadge cadence sales_per_day=sales_per_day compact=true /> }.into_any()
                                             }
-                                            (None, true) => match row_velocity {
+                                            (None, _) => match row_velocity {
                                                 Some(spd) => {
                                                     let cadence = get_sales_cadence(spd, row_num_sold);
                                                     view! { <SalesCadenceBadge cadence sales_per_day=spd compact=true /> }.into_any()
                                                 }
                                                 None => view! { "—" }.into_any(),
                                             },
-                                            (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div class="px-3 py-2   flex items-center justify-center">
+                                            <div class="px-3 py-2   flex items-center justify-center" title=if quality.is_some() { t_string!(i18n, market_sales_rate_title).to_string() } else { t_string!(i18n, market_recent_fallback_title).to_string() }>
                                                 {inner}
                                             </div>
                                         }
@@ -3091,7 +3415,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = CONNECTED_REGIONS;
-    let query = use_query_map();
+    let query = use_query_map_or_default();
 
     let enabled_regions = move || {
         let map = query();
@@ -3345,7 +3669,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
-    let query = use_query_map();
+    let query = use_query_map_or_default();
     let location = use_location();
 
     Effect::new(move |_| {
@@ -3418,6 +3742,82 @@ pub fn Analyzer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_revenue_does_not_filter_using_temporary_fallback_prices() {
+        // The provisional listing fails the floor, but the eventual selected
+        // sale estimate passes it. It must stay eligible throughout loading.
+        assert!(passes_financial_floor(20, Some(100), true));
+        assert!(passes_financial_floor(120, Some(100), false));
+        assert!(!passes_financial_floor(20, Some(100), false));
+        assert!(passes_financial_floor(-10, None, false));
+    }
+
+    #[test]
+    fn selected_revenue_preserves_quality_buy_price_and_compatibility_fallback() {
+        use ultros_api_types::sale_stats::ItemSaleStats;
+        let mut original = calc(0, 0, 0).inner;
+        let row = Arc::make_mut(&mut original);
+        row.estimated_sale_price = 80;
+        row.cheapest_price = 35;
+        row.cheapest_world_id = 42;
+        row.sale_summary.hq = true;
+        let stats = [
+            (
+                (1, false),
+                ItemSaleStats {
+                    item_id: 1,
+                    median_price: 10,
+                    ..Default::default()
+                },
+            ),
+            (
+                (1, true),
+                ItemSaleStats {
+                    item_id: 1,
+                    hq: true,
+                    median_price: 120,
+                    min_price: 90,
+                    avg_price: 140,
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into_iter()
+        .collect::<StatsIndex>();
+        for (basis, expected) in [
+            (PriceSignal::SaleMedian, 120),
+            (PriceSignal::SaleMin, 90),
+            (PriceSignal::SaleAvg, 140),
+        ] {
+            let (priced, fallback) = with_revenue_basis(&original, basis, Some(&stats));
+            assert_eq!(priced.estimated_sale_price, expected);
+            assert_eq!(
+                (
+                    priced.cheapest_price,
+                    priced.cheapest_world_id,
+                    priced.sale_summary.hq
+                ),
+                (35, 42, true)
+            );
+            assert!(!fallback);
+            assert_eq!(
+                flip_profit(priced.estimated_sale_price, priced.cheapest_price, false),
+                expected - 35
+            );
+        }
+        let (compat, fallback) =
+            with_revenue_basis(&original, PriceSignal::ListingMin, Some(&stats));
+        assert!(Arc::ptr_eq(&compat, &original));
+        assert!(!fallback);
+        for unavailable in [None, Some(&StatsIndex::new())] {
+            let (priced, fallback) =
+                with_revenue_basis(&original, PriceSignal::SaleMedian, unavailable);
+            assert_eq!(priced.estimated_sale_price, 80);
+            assert!(fallback);
+        }
+    }
+
     use ultros_api_types::recent_sales::{SaleData, Sales};
     use ultros_api_types::sparklines::SparklineSeries;
 
@@ -3438,6 +3838,61 @@ mod tests {
             hq,
             sales: prices_and_days.iter().map(|(p, d)| sale(*p, *d)).collect(),
         }
+    }
+
+    #[test]
+    fn legacy_column_toggle_preserves_shared_and_provider_columns() {
+        let original =
+            "world,market-sale-median-7,market-world,sale_estimate,custom-provider-column";
+        let mut visible = parse_visible_cols(Some(original));
+        visible.remove(COL_WORLD);
+        visible.insert(COL_ROI);
+        let serialized = serialize_visible_cols_preserving(&visible, Some(original));
+        let ids: Vec<_> = serialized.split(',').collect();
+        assert!(!ids.contains(&"world"));
+        for id in [
+            "roi",
+            "market-sale-median-7",
+            "market-world",
+            "sale_estimate",
+            "custom-provider-column",
+        ] {
+            assert!(ids.contains(&id), "lost {id}");
+        }
+        assert!(
+            serialize_visible_cols_preserving(&visible, None)
+                .split(',')
+                .any(|id| id == "sale_estimate")
+        );
+    }
+
+    #[test]
+    fn shared_column_toggle_adds_then_removes_the_id() {
+        // No `?cols=` means the default view, whose only shared column is
+        // the sale estimate; ticking a stat column must keep it.
+        let on = toggle_shared_col(None, "market-sale-median-7");
+        assert_eq!(on, "sale_estimate,market-sale-median-7");
+        let off = toggle_shared_col(Some(&on), "market-sale-median-7");
+        assert_eq!(off, "sale_estimate");
+        // A later native toggle keeps the shared id (the preserving path).
+        let visible = parse_visible_cols(Some(&on));
+        let serialized = serialize_visible_cols_preserving(&visible, Some(&on));
+        assert!(
+            serialized.split(',').any(|id| id == "market-sale-median-7"),
+            "{serialized}"
+        );
+    }
+
+    #[test]
+    fn picker_checked_state_reads_stat_ids_out_of_cols() {
+        let set = shared_cols_in(Some(
+            "roi,market-sale-median-7,market-world,market-gil-30,bogus",
+        ));
+        assert_eq!(
+            set,
+            std::collections::HashSet::from(["market-sale-median-7", "market-gil-30"])
+        );
+        assert!(shared_cols_in(None).is_empty());
     }
 
     #[test]
@@ -3855,6 +4310,7 @@ mod tests {
             profit,
             return_on_investment: roi,
             profit_per_day: ppd,
+            price_fallback: false,
         }
     }
 
@@ -3897,7 +4353,8 @@ mod tests {
             world_id: 100,
             series: vec![series(1, false, vec![5, 6]), series(3, false, vec![1])],
         });
-        let mut got = zip_flip_enrichment(quality, sparklines);
+        let mut got =
+            zip_flip_enrichment(&[(1, false), (2, true), (3, false)], quality, sparklines);
         got.sort_by_key(|(k, _)| *k);
         assert_eq!(got.len(), 3);
         // Both halves.
@@ -3918,22 +4375,84 @@ mod tests {
     }
 
     #[test]
+    fn failed_quality_is_not_confirmed_missing_and_keeps_successful_sparkline() {
+        use crate::components::virtual_grid::metrics::{FilterOp, MetricFilter};
+        let key = (1, false);
+        let mut store = FlipStore::default();
+        store.merge(
+            &[key],
+            zip_flip_enrichment(
+                &[key],
+                Err(AppError::NoItem),
+                Ok(SparklinesResponse {
+                    world_id: 100,
+                    series: vec![series(1, false, vec![2, 3])],
+                }),
+            ),
+        );
+        assert_eq!(quality_absence_value(&store, &key), GridValue::Unavailable);
+        assert_eq!(sparkline_for(&store, &key), Some(&[2, 3][..]));
+        assert!(!store.get(&key).unwrap().sparkline_failed);
+        for op in [FilterOp::Missing, FilterOp::Present] {
+            assert_eq!(
+                MetricFilter {
+                    op,
+                    value: String::new()
+                }
+                .matches(&quality_absence_value(&store, &key), true),
+                None
+            );
+        }
+        // A subsequent successful empty quality response establishes absence;
+        // a failed sparkline request preserves the already loaded series.
+        store.merge(
+            &[key],
+            zip_flip_enrichment(
+                &[key],
+                Ok(ResaleQualityResponse {
+                    world_id: 100,
+                    window_days: 30,
+                    rows: Vec::new(),
+                }),
+                Err(AppError::NoItem),
+            ),
+        );
+        assert_eq!(quality_absence_value(&store, &key), GridValue::Missing);
+        assert_eq!(sparkline_for(&store, &key), Some(&[2, 3][..]));
+        assert_eq!(
+            MetricFilter {
+                op: FilterOp::Missing,
+                value: String::new()
+            }
+            .matches(&quality_absence_value(&store, &key), true),
+            Some(true)
+        );
+        let failed_both =
+            zip_flip_enrichment(&[(2, true)], Err(AppError::NoItem), Err(AppError::NoItem));
+        assert!(failed_both[0].1.quality_failed && failed_both[0].1.sparkline_failed);
+    }
+
+    #[test]
     fn zip_keeps_the_feed_that_succeeded() {
         let sparklines = Ok(SparklinesResponse {
             world_id: 100,
             series: vec![series(1, false, vec![2, 3])],
         });
         assert_eq!(
-            zip_flip_enrichment(Err(AppError::NoItem), sparklines),
+            zip_flip_enrichment(&[(1, false)], Err(AppError::NoItem), sparklines),
             vec![(
                 (1, false),
                 FlipEnrichment {
                     quality: None,
                     sparkline: Some(vec![2, 3]),
+                    quality_failed: true,
+                    sparkline_failed: false,
                 }
             )]
         );
-        assert!(zip_flip_enrichment(Err(AppError::NoItem), Err(AppError::NoItem)).is_empty());
+        let failed =
+            zip_flip_enrichment(&[(1, false)], Err(AppError::NoItem), Err(AppError::NoItem));
+        assert!(failed[0].1.quality_failed && failed[0].1.sparkline_failed);
     }
 
     /// The three states every lazy cell and floor distinguishes, read the
@@ -3948,6 +4467,7 @@ mod tests {
         store.merge(
             &[(1, false), (2, false)],
             zip_flip_enrichment(
+                &[(1, false), (2, false)],
                 Ok(ResaleQualityResponse {
                     world_id: 100,
                     window_days: 30,
@@ -3982,6 +4502,7 @@ mod tests {
                 FlipEnrichment {
                     quality: Some(quality_row(1, false, ConfidenceBand::High, 0.0)),
                     sparkline: Some(vec![1, 2]),
+                    ..Default::default()
                 },
             )],
         );
@@ -3994,6 +4515,8 @@ mod tests {
                 FlipEnrichment {
                     quality: None,
                     sparkline: Some(vec![3]),
+                    quality_failed: true,
+                    ..Default::default()
                 },
             )],
         );
@@ -4084,6 +4607,7 @@ mod tests {
             profit: 0,
             return_on_investment: 0,
             profit_per_day: 0,
+            price_fallback: false,
         }
     }
 
@@ -4187,12 +4711,6 @@ mod tests {
     }
 
     #[test]
-    fn roi_is_optional_and_off_by_default() {
-        assert!(ALL_OPTIONAL_COLS.contains(&COL_ROI));
-        assert!(!DEFAULT_VISIBLE_COLS.contains(&COL_ROI));
-    }
-
-    #[test]
     fn tax_is_optional_and_off_by_default() {
         // Profit is already post-tax by default; the tax column is
         // supplementary detail, so it ships opt-in.
@@ -4201,23 +4719,41 @@ mod tests {
     }
 
     #[test]
-    fn new_columns_are_on_by_default() {
-        for col in [COL_DRIFT, COL_CONFIDENCE, COL_SALES_PER_DAY] {
-            assert!(ALL_OPTIONAL_COLS.contains(&col), "{col} missing from ALL");
-            assert!(DEFAULT_VISIBLE_COLS.contains(&col), "{col} not default-on");
-        }
+    fn sale_estimate_measurement_includes_only_the_rendered_fallback_annotation() {
+        assert_eq!(
+            sale_estimate_measure_text(12_345, false, " (fallback)"),
+            "12,345"
+        );
+        assert_eq!(
+            sale_estimate_measure_text(12_345, true, " (fallback)"),
+            "12,345 (fallback)"
+        );
+        assert_eq!(
+            sale_estimate_measure_text(12_345, true, "（代替価格）"),
+            "12,345（代替価格）"
+        );
     }
 
     #[test]
-    fn ch_only_columns_are_off_by_default() {
-        // Sales/Day is exempt: it falls back to the buffer-derived rate, so
-        // it renders on every row and ships default-on.
-        for col in [COL_TREND, COL_VOLUME_30D, COL_DATACENTER] {
-            assert!(
-                !DEFAULT_VISIBLE_COLS.contains(&col),
-                "{col} should be opt-in (no fallback where ClickHouse lacks coverage)"
-            );
+    fn default_columns_are_everything_but_tax_and_volume() {
+        for col in [
+            COL_PROFIT_PER_DAY,
+            COL_ROI,
+            COL_DRIFT,
+            COL_CONFIDENCE,
+            COL_WORLD,
+            COL_DATACENTER,
+            COL_TREND,
+            COL_SALES_PER_DAY,
+            COL_LAST_SOLD,
+        ] {
+            assert!(ALL_OPTIONAL_COLS.contains(&col), "{col} missing from ALL");
+            assert!(DEFAULT_VISIBLE_COLS.contains(&col), "{col} not default-on");
         }
+        // 30d Volume is blank on rows ClickHouse doesn't cover and has no
+        // fallback, so it stays opt-in.
+        assert!(!DEFAULT_VISIBLE_COLS.contains(&COL_VOLUME_30D));
+        assert_eq!(DEFAULT_VISIBLE_COLS.len(), ALL_OPTIONAL_COLS.len() - 2);
     }
 
     #[test]

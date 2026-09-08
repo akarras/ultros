@@ -58,6 +58,7 @@ pub trait Absorb {
 pub struct Enrichment<K, V> {
     map: HashMap<K, V>,
     settled: HashSet<K>,
+    unavailable: HashSet<K>,
 }
 
 // Hand-written: a derived `Default` would demand `K: Default + V: Default`,
@@ -67,6 +68,7 @@ impl<K, V> Default for Enrichment<K, V> {
         Self {
             map: HashMap::new(),
             settled: HashSet::new(),
+            unavailable: HashSet::new(),
         }
     }
 }
@@ -80,11 +82,12 @@ impl<K: Copy + Eq + Hash, V> Enrichment<K, V> {
         self.settled.contains(key)
     }
 
-    /// The key's cell state: `Ready` with the value, `Missing` once a fetch
-    /// has settled the key without one, `Loading` until then. The
-    /// three-way read every lazy cell makes, in one place, so no page
-    /// re-derives it from `get` and `is_settled`.
+    /// A failed request cannot establish whether history is missing. Keep
+    /// that state distinct for filters and their data-coverage notices.
     pub fn state(&self, key: &K) -> Enrich<&V> {
+        if self.unavailable.contains(key) {
+            return Enrich::Unavailable;
+        }
         match (self.map.get(key), self.settled.contains(key)) {
             (Some(v), _) => Enrich::Ready(v),
             (None, true) => Enrich::Missing,
@@ -95,9 +98,8 @@ impl<K: Copy + Eq + Hash, V> Enrichment<K, V> {
     /// Merge one batch: every value folds into `map` — a new key is
     /// inserted, an existing one [`Absorb`]s the newer value — and every
     /// `requested` key is settled whether or not a value came back for it.
-    /// A fetch that failed contributes an empty `results` and still settles
-    /// its keys, so cells switch loading -> "—" instead of shimmering
-    /// forever.
+    /// Only a successful empty response establishes that history is missing.
+    /// Failed requests go through `merge_batch` instead.
     pub fn merge(&mut self, requested: &[K], results: Vec<(K, V)>)
     where
         V: Absorb,
@@ -111,6 +113,44 @@ impl<K: Copy + Eq + Hash, V> Enrichment<K, V> {
             }
         }
         self.settled.extend(requested.iter().copied());
+        for key in requested {
+            self.unavailable.remove(key);
+        }
+    }
+
+    pub fn merge_batch(&mut self, requested: &[K], batch: EnrichmentBatch<K, V>)
+    where
+        V: Absorb,
+    {
+        match batch {
+            EnrichmentBatch::Ready(values) => self.merge(requested, values),
+            EnrichmentBatch::Unavailable => {
+                self.settled.extend(requested.iter().copied());
+                self.unavailable.extend(requested.iter().copied());
+            }
+        }
+    }
+}
+
+/// Providers can preserve legacy vector results or explicitly report failure
+/// with a Result. Empty successful responses and failed requests stay distinct.
+pub enum EnrichmentBatch<K, V> {
+    Ready(Vec<(K, V)>),
+    Unavailable,
+}
+
+impl<K, V> From<Vec<(K, V)>> for EnrichmentBatch<K, V> {
+    fn from(values: Vec<(K, V)>) -> Self {
+        Self::Ready(values)
+    }
+}
+
+impl<K, V, E> From<Result<Vec<(K, V)>, E>> for EnrichmentBatch<K, V> {
+    fn from(result: Result<Vec<(K, V)>, E>) -> Self {
+        match result {
+            Ok(values) => Self::Ready(values),
+            Err(_) => Self::Unavailable,
+        }
     }
 }
 
@@ -193,44 +233,6 @@ pub fn verdict<T: PartialEq>(observed: Option<T>, expected: &T) -> Verdict {
     }
 }
 
-/// Tailwind's `md` breakpoint, spelled the way the stylesheet spells it.
-///
-/// `rem`, not `768px`: `md:` compiles to `@media (min-width: 48rem)`, which
-/// resolves against the root font size. A reader who has raised theirs sees
-/// the columns appear at a wider CSS pixel width than 768, and a `px` query
-/// would disagree with the very rule it is meant to track.
-pub const MD_VIEWPORT_QUERY: &str = "(min-width: 48rem)";
-
-/// Is the viewport at or above Tailwind's `md`? — the fetch-side twin of a
-/// column's `hidden md:block`.
-///
-/// **Read this only on a fetch path.** A lazy column that is `hidden` below
-/// `md` paints nothing there, so the body behind it is pure cost: the phone
-/// pays the transfer and the main-thread parse for zero pixels. Gating the
-/// *fetch* on the viewport fixes that. Gating anything that decides *markup*
-/// on it would not: SSR has no viewport, so the server and the first client
-/// render would disagree and hydration would tear. Hence the rule the
-/// analyzer routes follow — this signal may reach a `Memo` an `Effect`
-/// consumes, and must never reach a `view!`, a class string, or a branch
-/// over what is rendered.
-///
-/// Both ends of that are safe by construction:
-///
-/// * On the server `leptos-use`'s `ssr` feature compiles `use_media_query`
-///   down to a signal that is always `false` — no `matchMedia` read exists.
-/// * On the client it starts `false` too and an `Effect` flips it, so the
-///   first client render matches the server's and nothing is fetched in the
-///   window before the listener attaches.
-///
-/// Resize-aware: `use_media_query` subscribes to the `MediaQueryList`'s
-/// `change` event, so a rotation or a dragged window edge crossing 48rem
-/// re-runs whatever reads this. The listener is removed by the `on_cleanup`
-/// the hook registers with the calling owner, so call it from the component
-/// that owns the fetch — not from one that remounts.
-pub fn use_wide_viewport() -> Signal<bool> {
-    leptos_use::use_media_query(MD_VIEWPORT_QUERY)
-}
-
 /// Scope epochs outlive individual scroll windows. A completed request may
 /// enrich an older window, but must never enrich a previous visit to a scope
 /// (including A -> B -> A). Pending debounces additionally need their window
@@ -309,7 +311,7 @@ impl<S: Clone + PartialEq, K: Copy + Eq + Hash> RequestTracker<S, K> {
 /// compile on the server), which is what keeps `fetch` client-only. Never
 /// `new_isomorphic` / `new_sync` here, and never a `spawn_local` or
 /// `TimeoutFuture` outside an effect body.
-pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
+pub fn use_visible_enrichment<T, K, V, S, F, Fut, B>(
     store: RwSignal<Enrichment<K, V>>,
     rows: Signal<Vec<T>>,
     visible_range: Signal<(usize, usize)>,
@@ -323,7 +325,8 @@ pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
     V: Absorb + Send + Sync + 'static,
     S: Clone + PartialEq + Send + Sync + 'static,
     F: Fn(S, Vec<K>) -> Fut + Clone + 'static,
-    Fut: Future<Output = Vec<(K, V)>> + 'static,
+    Fut: Future<Output = B> + 'static,
+    B: Into<EnrichmentBatch<K, V>>,
 {
     let tracker = StoredValue::new(RequestTracker::<S, K>::default());
 
@@ -361,15 +364,15 @@ pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
             if !claimed {
                 return; // superseded by another window/scope, or disposed
             }
-            let results: Vec<(K, V)> = futures::future::join_all(
+            let results = futures::future::join_all(
                 chunk_keys(&keys, cfg.max_keys_per_request)
                     .into_iter()
-                    .map(|chunk| fetch(scope_now.clone(), chunk)),
+                    .map(|chunk| {
+                        let request = fetch(scope_now.clone(), chunk.clone());
+                        async move { (chunk, request.await.into()) }
+                    }),
             )
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+            .await;
             // The requests awaited the network: the scope may have changed
             // (the reset above already cleared `requested`, so the new scope
             // refetches these keys) or the component been disposed. Never
@@ -383,7 +386,11 @@ pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
             // Merge whatever came back and settle every requested key —
             // success or error — so cells switch loading -> value / "—". No
             // retry loop: a scope change resets everything.
-            let _ = store.try_update(|s| s.merge(&keys, results));
+            let _ = store.try_update(|s| {
+                for (chunk, batch) in results {
+                    s.merge_batch(&chunk, batch);
+                }
+            });
         });
     });
 }
@@ -472,53 +479,6 @@ mod tests {
         fn absorb(&mut self, newer: Self) {
             *self = newer;
         }
-    }
-
-    /// The fetch gate has to open at exactly the width the `hidden md:*`
-    /// columns appear at. Tailwind v4's default `md` is 48rem and this
-    /// project takes the default, so the constant is that verbatim — but
-    /// nothing in Rust can see the compiled stylesheet, so pin the two
-    /// facts the constant rests on instead.
-    #[test]
-    fn the_md_query_tracks_the_stylesheet_breakpoint() {
-        const STYLESHEET: &str = include_str!("../../../../style/tailwind.css");
-        assert_eq!(MD_VIEWPORT_QUERY, "(min-width: 48rem)");
-        // A `--breakpoint-md` in `@theme` would move `md:` without moving
-        // this constant, and the gate would open at the wrong width.
-        assert!(
-            !STYLESHEET.contains("--breakpoint-md"),
-            "the stylesheet redefines Tailwind's md; MD_VIEWPORT_QUERY must follow it"
-        );
-        // Deliberately no assertion on the stylesheet's one hand-written
-        // `@media (min-width: 48rem)`: that rule belongs to FC crafting and
-        // has nothing to do with this constant, so deleting or reformatting
-        // it would fail this test for no real reason. The `--breakpoint-md`
-        // guard above is the one that actually protects the constant.
-        //
-        // Note `Cargo.toml`'s `tailwind-version = "v3.4.1"` is stale and
-        // inert — v3 cannot parse this stylesheet's `@import "tailwindcss"`
-        // / `@theme`, and the built CSS carries v4's rem ladder
-        // (`width >= 48rem`). The v4 reading is the correct one.
-        // rem, not px: `md:` resolves against the root font size.
-        assert!(!MD_VIEWPORT_QUERY.contains("px"));
-    }
-
-    /// The half of the hydration invariant a unit test can actually reach:
-    /// on the server the gate is closed, so no `matchMedia` read can reach
-    /// SSR markup and the first client render (which starts from the same
-    /// `false`) cannot disagree with it. The client half — the `Effect` that
-    /// flips it and the `change` listener that keeps it honest through a
-    /// resize — needs a DOM and is not covered here.
-    #[cfg(feature = "ssr")]
-    #[test]
-    fn the_viewport_gate_is_closed_on_the_server() {
-        let owner = Owner::new();
-        owner.with(|| {
-            assert!(
-                !use_wide_viewport().get(),
-                "a server-side viewport read must never report wide"
-            );
-        });
     }
 
     #[test]
@@ -651,6 +611,23 @@ mod tests {
             Verdict::Stale
         );
         assert_eq!(verdict(None::<String>, &started), Verdict::Disposed);
+    }
+
+    #[test]
+    fn failed_batches_are_distinct_from_successful_empty_history() {
+        let mut store = Enrichment::<u8, u8>::default();
+        store.merge_batch(&[1], Err::<Vec<(u8, u8)>, ()>(()).into());
+        store.merge_batch(&[2], Ok::<Vec<(u8, u8)>, ()>(Vec::new()).into());
+        store.merge_batch(&[3], vec![(3, 0)].into());
+        assert_eq!(store.state(&1), Enrich::Unavailable);
+        assert_eq!(store.state(&2), Enrich::Missing);
+        assert_eq!(store.state(&3), Enrich::Ready(&0));
+        assert_eq!(store.state(&4), Enrich::Loading);
+        assert!(store.is_settled(&1));
+        // Failure of one chunk does not erase successfully loaded chunks.
+        store.merge_batch(&[1], vec![(1, 7)].into());
+        assert_eq!(store.state(&1), Enrich::Ready(&7));
+        assert_eq!(store.state(&2), Enrich::Missing);
     }
 
     #[test]

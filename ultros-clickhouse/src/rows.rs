@@ -5,8 +5,24 @@
 //! `ultros-db`/`ultros-api-types` types live alongside the struct so the
 //! mapping is obvious at the call site.
 
+use chrono::{DateTime, Utc};
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+use ultros_db::{
+    entity::active_listing,
+    listings::{ListingChange, ListingChangeKind},
+};
+
+/// A ClickHouse table a [`crate::writer::Writer`] can insert into.
+///
+/// The client validates each insert against the live table schema
+/// (`RowBinaryWithNamesAndTypes`), so a struct's field *names* must match the
+/// table's column names exactly, in addition to the types. `RowOwned` +
+/// `RowWrite` is what `Insert::write` needs for a plain (non-borrowing) row.
+pub trait TableRow: clickhouse::RowOwned + clickhouse::RowWrite + Send + Sync {
+    const TABLE: &'static str;
+}
 
 /// Mirrors the `sales` table. Used by [`crate::writer::Writer`] for inserts
 /// and by [`crate::queries`] / [`crate::backfill`] for reads.
@@ -50,7 +66,7 @@ impl SaleRow {
             item_id: m.sold_item_id,
             hq: m.hq as u8,
             world_id: m.world_id,
-            price_per_item: m.price_per_item.max(0) as u32,
+            price_per_item: clamp_price(m.price_per_item),
             quantity: clamp_qty(m.quantity),
             buying_character_id: m.buying_character_id as i64,
             buyer_name,
@@ -66,12 +82,167 @@ impl SaleRow {
             item_id: s.sold_item_id,
             hq: s.hq as u8,
             world_id: s.world_id,
-            price_per_item: s.price_per_item.max(0) as u32,
+            price_per_item: clamp_price(s.price_per_item),
             quantity: clamp_qty(s.quantity),
             buying_character_id: s.buying_character_id as i64,
             buyer_name: s.buyer_name.clone().unwrap_or_default(),
         }
     }
+}
+
+impl TableRow for SaleRow {
+    const TABLE: &'static str = "sales";
+}
+
+/// `listing_events.kind`. Values are the Enum8 codes in the DDL.
+#[derive(Serialize_repr, Deserialize_repr, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i8)]
+pub enum ListingEventKind {
+    Added = 1,
+    Updated = 2,
+    Removed = 3,
+}
+
+impl From<ListingChangeKind> for ListingEventKind {
+    fn from(kind: ListingChangeKind) -> Self {
+        match kind {
+            ListingChangeKind::Added => Self::Added,
+            ListingChangeKind::Updated => Self::Updated,
+            ListingChangeKind::Removed => Self::Removed,
+        }
+    }
+}
+
+/// `listing_events.source`: which ingest path observed the change.
+#[derive(Serialize_repr, Deserialize_repr, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i8)]
+pub enum ListingEventSource {
+    /// The Universalis websocket listener.
+    Websocket = 1,
+    /// `UpdateService` catch-up and full sweeps (REST boards).
+    Catchup = 2,
+    /// The `/item/refresh/{world}/{item}` route.
+    Manual = 3,
+    /// The one-time seed from the current `active_listing` table.
+    Snapshot = 4,
+}
+
+/// Mirrors the `listing_events` table. Append-only; one row per observed
+/// change to `active_listing`. See the 2026-09-07 listing-history spec.
+#[derive(Row, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ListingEventRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub event_time: DateTime<Utc>,
+    pub kind: ListingEventKind,
+    pub source: ListingEventSource,
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    /// Universalis' listing identity; empty for rows stored before the
+    /// identity migration.
+    pub listing_id: String,
+    /// `active_listing.id`, so a legacy add/remove pair can still be joined.
+    pub pg_listing_id: i32,
+    pub retainer_id: i32,
+    pub price_per_unit: u32,
+    pub quantity: u16,
+    /// 0 unless `kind == Updated`.
+    pub prev_price: u32,
+    /// 0 unless `kind == Updated`.
+    pub prev_quantity: u16,
+    /// Universalis `last_review_time`, distinct from our observation time.
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub reviewed_at: DateTime<Utc>,
+}
+
+impl ListingEventRow {
+    pub fn from_change(change: &ListingChange, source: ListingEventSource) -> Self {
+        let row = &change.row;
+        Self {
+            event_time: change.observed_at,
+            kind: change.kind.into(),
+            source,
+            item_id: row.item_id,
+            hq: row.hq as u8,
+            world_id: row.world_id,
+            listing_id: row.listing_id.clone().unwrap_or_default(),
+            pg_listing_id: row.id,
+            retainer_id: row.retainer_id,
+            price_per_unit: clamp_price(row.price_per_unit),
+            quantity: clamp_qty(row.quantity),
+            prev_price: change.prev_price_per_unit.map(clamp_price).unwrap_or(0),
+            prev_quantity: change.prev_quantity.map(clamp_qty).unwrap_or(0),
+            reviewed_at: DateTime::from_naive_utc_and_offset(row.timestamp, Utc),
+        }
+    }
+
+    /// A seed row: the listing was on the board when recording started.
+    pub fn from_snapshot(row: &active_listing::Model, observed_at: DateTime<Utc>) -> Self {
+        Self::from_change(
+            &ListingChange::added(row.clone(), observed_at),
+            ListingEventSource::Snapshot,
+        )
+    }
+}
+
+impl TableRow for ListingEventRow {
+    const TABLE: &'static str = "listing_events";
+}
+
+/// `floor_changes.reason`: which analyzer path moved the floor.
+#[derive(Serialize_repr, Deserialize_repr, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i8)]
+pub enum FloorChangeReason {
+    /// A listing event lowered (or created) the floor.
+    Listing = 1,
+    /// The cheapest listing was removed and the floor was re-read from Postgres.
+    Refill = 2,
+    /// A full rebuild of the map from Postgres (boot, or after bus lag) found a
+    /// different value than the map held.
+    Resync = 3,
+}
+
+/// Mirrors the `floor_changes` table: one row per transition of the
+/// world-level lowest listing price for an `(item, hq)`. `price_per_unit = 0`
+/// means the board emptied.
+#[derive(Row, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FloorChangeRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub event_time: DateTime<Utc>,
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    pub price_per_unit: u32,
+    pub reason: FloorChangeReason,
+}
+
+impl FloorChangeRow {
+    pub fn new(
+        event_time: DateTime<Utc>,
+        item_id: i32,
+        hq: bool,
+        world_id: i32,
+        price_per_unit: i32,
+        reason: FloorChangeReason,
+    ) -> Self {
+        Self {
+            event_time,
+            item_id,
+            hq: hq as u8,
+            world_id,
+            price_per_unit: clamp_price(price_per_unit),
+            reason,
+        }
+    }
+}
+
+impl TableRow for FloorChangeRow {
+    const TABLE: &'static str = "floor_changes";
+}
+
+/// Prices are domain-constrained non-negative; the Postgres column is `i32`.
+fn clamp_price(p: i32) -> u32 {
+    p.max(0) as u32
 }
 
 /// Clamp an `i32` quantity into a non-negative `u16`. FFXIV stacks cap at 999
@@ -216,5 +387,101 @@ mod tests {
         sale.hq = true;
         let row = SaleRow::from_api_sale(&sale);
         assert_eq!(row.hq, 1);
+    }
+
+    fn fixture_listing(price: i32, quantity: i32) -> active_listing::Model {
+        active_listing::Model {
+            id: 77,
+            world_id: 40,
+            item_id: 7,
+            retainer_id: 12,
+            price_per_unit: price,
+            quantity,
+            hq: true,
+            timestamp: NaiveDate::from_ymd_opt(2026, 9, 1)
+                .unwrap()
+                .and_hms_opt(8, 0, 0)
+                .unwrap(),
+            listing_id: Some("123456789012345678".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn listing_event_from_updated_change_carries_previous_state() {
+        let observed_at = Utc::now();
+        let previous = fixture_listing(500, 3);
+        let change = ListingChange::upserted(fixture_listing(450, 2), Some(&previous), observed_at);
+        let row = ListingEventRow::from_change(&change, ListingEventSource::Websocket);
+        assert_eq!(row.kind, ListingEventKind::Updated);
+        assert_eq!(row.source, ListingEventSource::Websocket);
+        assert_eq!(row.event_time, observed_at);
+        assert_eq!(row.item_id, 7);
+        assert_eq!(row.hq, 1);
+        assert_eq!(row.world_id, 40);
+        assert_eq!(row.listing_id, "123456789012345678");
+        assert_eq!(row.pg_listing_id, 77);
+        assert_eq!(row.retainer_id, 12);
+        assert_eq!(row.price_per_unit, 450);
+        assert_eq!(row.quantity, 2);
+        assert_eq!(row.prev_price, 500);
+        assert_eq!(row.prev_quantity, 3);
+        assert_eq!(row.reviewed_at.naive_utc(), change.row.timestamp);
+    }
+
+    #[test]
+    fn listing_event_from_added_or_removed_change_has_zero_previous_state() {
+        let observed_at = Utc::now();
+        let added = ListingChange::added(fixture_listing(100, 1), observed_at);
+        let row = ListingEventRow::from_change(&added, ListingEventSource::Catchup);
+        assert_eq!(row.kind, ListingEventKind::Added);
+        assert_eq!(row.prev_price, 0);
+        assert_eq!(row.prev_quantity, 0);
+
+        let removed = ListingChange::removed(fixture_listing(100, 1), observed_at);
+        let row = ListingEventRow::from_change(&removed, ListingEventSource::Manual);
+        assert_eq!(row.kind, ListingEventKind::Removed);
+        assert_eq!(row.price_per_unit, 100);
+    }
+
+    #[test]
+    fn listing_event_uses_empty_listing_id_for_legacy_rows_and_clamps() {
+        let observed_at = Utc::now();
+        let mut legacy = fixture_listing(-5, 70_000);
+        legacy.listing_id = None;
+        let change = ListingChange::added(legacy, observed_at);
+        let row = ListingEventRow::from_change(&change, ListingEventSource::Websocket);
+        assert_eq!(row.listing_id, "");
+        assert_eq!(row.price_per_unit, 0);
+        assert_eq!(row.quantity, u16::MAX);
+    }
+
+    #[test]
+    fn listing_event_from_snapshot_is_an_added_snapshot_row() {
+        let observed_at = Utc::now();
+        let row = ListingEventRow::from_snapshot(&fixture_listing(300, 4), observed_at);
+        assert_eq!(row.kind, ListingEventKind::Added);
+        assert_eq!(row.source, ListingEventSource::Snapshot);
+        assert_eq!(row.event_time, observed_at);
+        assert_eq!(row.price_per_unit, 300);
+    }
+
+    #[test]
+    fn floor_change_row_maps_hq_and_clamps_price() {
+        let now = Utc::now();
+        let row = FloorChangeRow::new(now, 7, true, 40, 250, FloorChangeReason::Refill);
+        assert_eq!(row.hq, 1);
+        assert_eq!(row.price_per_unit, 250);
+        assert_eq!(row.reason, FloorChangeReason::Refill);
+        let empty = FloorChangeRow::new(now, 7, false, 40, -1, FloorChangeReason::Resync);
+        assert_eq!(empty.hq, 0);
+        assert_eq!(empty.price_per_unit, 0);
+    }
+
+    #[test]
+    fn table_names_match_the_schema() {
+        assert_eq!(SaleRow::TABLE, "sales");
+        assert_eq!(ListingEventRow::TABLE, "listing_events");
+        assert_eq!(FloorChangeRow::TABLE, "floor_changes");
     }
 }

@@ -30,6 +30,7 @@ use crate::{
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
+use crate::components::app_link::use_query_map_or_default;
 
 pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
     tracked_data()
@@ -37,6 +38,22 @@ pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
         .get(&item_id)
         .map(|i| i.item_search_category == CRYSTAL_SEARCH_CATEGORY)
         .unwrap_or(false)
+}
+
+/// Every id `is_shard_item` matches, sorted for `binary_search`. For hot
+/// loops: `is_shard_item` pays `tracked_data()`'s context lookup and
+/// `DataRevision` subscription on every call, which recipe pricing made
+/// once per ingredient of every recipe and sub-recipe. This reads the data
+/// once (still tracked, so a locale swap re-runs the caller).
+pub(crate) fn shard_item_ids() -> Vec<i32> {
+    let mut ids: Vec<i32> = tracked_data()
+        .items
+        .iter()
+        .filter(|(_, item)| item.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+        .map(|(id, _)| id.0)
+        .collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// Matches against items that start with the same prefix
@@ -281,7 +298,7 @@ fn CraftOptionsToggleRow() -> impl IntoView {
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let i18n = use_i18n();
-    let query = leptos_router::hooks::use_query_map();
+    let query = use_query_map_or_default();
     let params = leptos_router::hooks::use_params_map();
     let (home, _) = crate::global_state::home_world::use_home_world();
     // Share the options signal between the ingredient rows and planner link.
@@ -611,6 +628,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                             <Icon icon=icondata::FaStoreSolid attr:class="text-xs opacity-70" />
                             <span class="truncate">{shop.name.as_str()}</span>
                         </div>
+                        <super::npc_locations::NpcLocations npc_id=resident.key_id.0 />
                     </a>
                 })
             }).collect_view())
@@ -1170,6 +1188,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                     {job_name}
                                 </span>
                              </div>
+                             <super::npc_locations::LeveIssuers leve_id=leve.key_id.0 />
                         </div>
                     }
                 })
