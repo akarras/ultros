@@ -53,6 +53,7 @@ async function main() {
     assert.equal(await page.$eval('[aria-label="Buy from"]', e => e.value), 'datacenter');
     await page.setJavaScriptEnabled(true);
     await page.setRequestInterception(true);
+    let homeUnavailable = false;
     page.on('request', request => {
       const match = new URL(request.url()).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
       if (!match) return request.continue();
@@ -61,7 +62,7 @@ async function main() {
         { id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 100 },
         { id: item * 10 + 2, world_id: 63, quantity: 3, price_per_unit: 150 },
         { id: item * 10 + 3, world_id: 79, quantity: 12, price_per_unit: 50 },
-      ].map(l => [{ ...l, item_id: item, retainer_id: l.id, hq: false, timestamp: '2026-09-05T12:00:00' },
+      ].filter(l => !homeUnavailable || l.world_id !== 63).map(l => [{ ...l, item_id: item, retainer_id: l.id, hq: false, timestamp: '2026-09-05T12:00:00' },
         { id: l.id, world_id: l.world_id, name: 'Recipe fixture', retainer_city_id: 1 }]);
       return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ listings, sales: [], last_updated: [{ world_id: 63, updated_at: '2026-09-05T12:00:00' }, { world_id: 79, updated_at: '2026-09-05T12:00:00' }] }) });
     });
@@ -177,6 +178,15 @@ async function main() {
     await page.$$eval('button', buttons => buttons.find(b => b.textContent === 'Add remaining materials to a list').click());
     await page.waitForFunction(() => document.body.textContent.includes('Sign in to save this plan to a list.'));
     assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('owned')), new URL(shared).searchParams.get('owned'), 'opening Save must preserve the public plan');
+    // An incomplete home baseline still needs its shortage warning even
+    // when the comparison line identifies it as the baseline card.
+    homeUnavailable = true;
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated);
+    await page.waitForFunction(() => {
+      const home = document.querySelector('section[aria-label="World visit comparison"] button');
+      return home?.textContent.includes('Stay home') && home.textContent.includes('units unavailable · partial cost');
+    });
     assert.deepEqual(errors, [], 'browser errors');
     fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ passed: true, href, first, shared, subcraft: source }, null, 2));
     console.log('Recipe planner: SSR, hydration, quantities, owned inventory, shared links and layouts passed.');

@@ -894,7 +894,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                                     view!{<span class=badge_class data-testid="route-badge">{text}</span>}
                                 })}</span>
                                 <strong class="block text-xl tabular-nums">{gil(p.cost)}</strong>
-                                <span class="block text-xs">{match line { Some(SavingLine::Partial(n))=>format!("{n} units unavailable · partial cost"), _=>stops }}</span>
+                                <span class="block text-xs">{if p.missing > 0 {format!("{} units unavailable · partial cost",p.missing)} else {stops}}</span>
                                 {match line {
                                     Some(SavingLine::Saved(s))=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_saved_vs_home, gil = gil(s)).to_string()}</span>}),
                                     Some(SavingLine::Completes)=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_completes).to_string()}</span>}),
