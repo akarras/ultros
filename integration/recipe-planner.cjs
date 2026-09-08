@@ -105,6 +105,9 @@ async function main() {
     const cardSelector = 'section[aria-label="World visit comparison"] button';
     const stayHome = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.textContent.includes('Stay home')));
     assert.ok(stayHome >= 0, 'a Stay home card must be offered');
+    assert.equal(stayHome, 0, 'Stay home is always the first card');
+    assert.equal(await page.$$eval(`${cardSelector} [data-testid="route-badge"]`, badges => badges.filter(b => b.textContent.includes('Cheapest')).length), 1, 'exactly one card is badged Cheapest');
+    assert.ok(await page.$$eval(cardSelector, buttons => buttons.at(-1).textContent.includes('Cheapest')), 'the cheapest card is the last card');
     await page.$$eval(cardSelector, (buttons, i) => buttons[i].click(), stayHome);
     await page.waitForFunction(() => new URL(location.href).searchParams.get('route') === 'home');
     assert.equal(await page.$$eval(cardSelector, (buttons, i) => buttons[i].getAttribute('aria-pressed'), stayHome), 'true');
@@ -116,6 +119,7 @@ async function main() {
       // survives the re-plan while the reported pair leaves the itinerary.
       const routeCard = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.textContent.includes('world hop')));
       assert.ok(routeCard >= 0, 'fixtures on two worlds must offer a one-hop route');
+      assert.ok(await page.$$eval(cardSelector, (buttons, i) => buttons[i].textContent.includes('saved vs staying home'), routeCard), 'the cheaper hop card shows its saving vs staying home');
       await page.$$eval(cardSelector, (buttons, i) => buttons[i].click(), routeCard);
       await page.waitForFunction(() => /^\d+(,\d+)*$/.test(new URL(location.href).searchParams.get('route') || ''));
       await page.waitForFunction(() => document.querySelectorAll('[data-testid^="stop-"]').length >= 2);

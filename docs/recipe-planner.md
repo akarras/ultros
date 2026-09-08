@@ -9,10 +9,10 @@ calculates the spend for the actual quantity and whole market-board stacks.
 `quantity` is desired output (1–9999). `world` is the starting world;
 `buy-scope=world|datacenter|region` defaults to datacenter. `route` selects
 the shopping route: `home`, or the non-home world ids to visit, sorted and
-comma-separated (`route=63,79`). Absent means the best-ranked route. A shared
+comma-separated (`route=63,79`). Absent means the Best value card. A shared
 route that no longer ranks is still computed and shown as a pinned card.
 `visits=0|1|2|3|4` is the retired hop budget from older links; it is read as
-"the first ranked route with at most that many extra worlds" and dropped from
+"the best-ranked card with at most that many extra worlds" and dropped from
 new share links. `unavailable=item:world,...` records "Not here" reports.
 Datacenter/region item-page links resolve a starting world within that scope.
 `require-hq` strictly filters HQ-capable ingredient purchases; `output-hq`
@@ -43,17 +43,23 @@ fill remaining demand, assuming the player has vendor access. Large cases
 the cheaper complete result of unit-price and stack-price greedy candidates and
 are marked approximate.
 
-Routes are ranked by `(missing, effective, cost, worlds)`, where `effective`
-is gil plus a travel cost: a world hop (a non-home world inside a datacenter
-already being visited) and a datacenter hop (the first world in a new
-datacenter) each carry a gil-equivalent weight from the craft-options cookie
+Route cards are the travel frontier. Each candidate plan has a travel shape
+(datacenter hops and world hops beyond the worlds already on the itinerary)
+and a distance, the gil-equivalent travel cost from the craft-options cookie
 (`world_hop_gil`, default 2,000; `dc_hop_gil`, default 10,000; adjustable in
-Planner settings). Worlds already on the itinerary, including the home world
-and any world with a ticked purchase, are free to revisit. The search evaluates
-every single-world addition exhaustively, then a beam of five promising sets
-for larger routes, plus whole-datacenter and full-scope seeds; plans are
-collapsed by the worlds actually visited and the top five distinct routes are
-shown. The UI therefore labels routes **best-found**, not globally optimal.
+Planner settings). The engine keeps the best plan per shape, sorts shapes by
+distance, and keeps only cards that strictly improve on the card to their
+left (fewer missing units, or equal missing and less gil). "Stay home" (the
+no-new-travel plan) is therefore always the first card, and because the full
+scope is always evaluated and more worlds never cost more gil, the cheapest
+plan found is always the last card, however many hops it takes. At most five
+cards are shown; longer frontiers keep the first and last cards and the steps
+with the largest marginal saving. The card `rank` `(missing, effective, cost,
+worlds)` prefers is badged **Best value** and is the default selection; the
+last card is badged **Cheapest**. The search evaluates every single-world
+addition exhaustively, then a beam of five promising sets for larger routes,
+plus whole-datacenter and full-scope seeds, so the UI labels routes
+**best-found**, not globally optimal.
 Complete supply ranks ahead of partial supply; partial totals remain visibly
 incomplete. Travel is weighted in gil, not modeled as time or teleport fees,
 and vendor stops are not counted. Price age comes from ingest timestamps, not
