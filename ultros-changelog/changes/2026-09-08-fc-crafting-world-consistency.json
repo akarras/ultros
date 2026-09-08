@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "FC Crafting follows your selected world",
+  "blurb": "Shared links, the world picker, and browser history now keep FC Crafting on the same world. Changing worlds updates recent sales and regional material prices together."
+}

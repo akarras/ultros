@@ -188,6 +188,15 @@ if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then
     fi
 fi
 
+if [ "${RUN_FC_CRAFTING_WORLD:-1}" != "0" ]; then
+    log "running FC crafting world consistency E2E"
+    fc_world_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:fc-crafting-world ) || fc_world_exit=$?
+    if [ "$fc_world_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$fc_world_exit"
+    fi
+fi
+
 if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
     log "running analyzer grid and last-view E2E"
     analyzer_grids_exit=0
