@@ -1,7 +1,7 @@
 # Market data everywhere — roadmap
 
 **Date:** 2026-09-07
-**Status:** draft for Aaron's review; the workstream briefs are written to be handed to parallel agents as-is
+**Status:** decisions recorded (§7), issues filed (§8); the workstream briefs are written to be handed to parallel agents as-is
 **Base:** `main` at `fee1e4fc` (#1324). Everything below was verified against that tree, not against issue titles.
 **Issues audited:** #1325, #1326, #1327, #1328, #1329, #1330, #1331 (open, all from the #1313 brainstorm); #1178, #1133, #1132 (open, adjacent); #1278, #1202, #1233, #1180, #1296 (closed, still informative).
 
@@ -314,24 +314,21 @@ Merge order inside a wave: smallest diff first (locales are append-only conflict
 8. **World transport unification** — **file it now** as its own issue; schedules last.
 9. **Issue hygiene** — **file the drafts** in §8 and the umbrella.
 
-## 8. Issue drafts (to file on go-ahead)
+## 8. Issues (filed 2026-09-08)
 
-**Umbrella — "Market data everywhere: the same market inputs and columns on every analyzer"**
-Links this document; checklist of WS-A…WS-M with #1325–#1331 mapped as in §1.5; the decisions in §7 with Aaron's answers recorded as they arrive.
+| Workstream | Issue |
+|---|---|
+| Umbrella — checklist of every workstream, the decisions, the prod measurements | #1349 |
+| WS-A, WS-B, WS-C, WS-D, WS-E | #1328 + #1329, #1327, #1325 + #1326, #1330, #1331 (pre-existing) |
+| WS-F Trends joins `MarketGrid` | #1344 |
+| WS-G Currency Exchange joins `MarketGrid` | #1345 |
+| WS-H Item Explorer joins `MarketGrid`, pagination dropped | #1346 |
+| WS-I `listing_stats` backend (I1 alive set, I2 windowed) | #1342 |
+| WS-J listing-history columns in the kit (J1, J2) | #1343 |
+| WS-L one URL contract for the world | #1347 |
+| WS-M retainer listings as an analyzer | #1348 |
 
-**WS-F — "Trends joins MarketGrid"** — body from §4 WS-F. Labels: enhancement, website.
-
-**WS-G — "Currency Exchange joins MarketGrid"** — body from §4 WS-G.
-
-**WS-H — "Item Explorer: shared sale-history columns inside DataTableGrid"** — body from §4 WS-H, with the "row is one item, both qualities" constraint stated so nobody proposes a grid swap.
-
-**WS-I — "listing_stats: rollups, queries and an endpoint over listing_events / floor_changes"** — body from §3.4 + §4 WS-I; references #1320 and the owed volume watch.
-
-**WS-J — "Listing-history columns in the analyzer kit"** — body from §4 WS-J; blocked-by WS-A and WS-I.
-
-**WS-L — "One URL contract for the world on every tool"** — the #1314 findings quoted, FC Crafting's dead picker first.
-
-**WS-M — "Retainer listings as an analyzer (MarketGrid + listing history)"** — body from §4 WS-M.
+This document is PR #1341.
 
 ## 9. Deliberately left out
 
