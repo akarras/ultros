@@ -18,6 +18,26 @@ pub struct SearchService {
     category_field: tantivy::schema::Field,
 }
 
+/// Reduces what the user typed to the plain text the index was built from.
+///
+/// The search box is an item-name search, not a query language, so `Lover's`
+/// has to find "Courtly Lover's Scepter". tantivy's `QueryParser` gives `'`,
+/// `"`, `:`, `(`, `^`, `*`, `[` and the uppercase words `AND`/`OR`/`NOT`/`IN`
+/// a meaning of their own, and an unbalanced quote is a hard parse error that
+/// `search` turns into zero results (issue #1298).
+///
+/// Titles were indexed with `en_stem`, whose `SimpleTokenizer` splits on every
+/// non-alphanumeric char and then lowercases, so applying the same two rules
+/// here yields exactly the tokens the index holds while leaving the parser
+/// nothing to misread.
+fn plain_text_query(query: &str) -> String {
+    query
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect()
+}
+
 impl SearchService {
     pub fn new() -> anyhow::Result<Self> {
         let mut schema_builder = Schema::builder();
@@ -193,8 +213,9 @@ impl SearchService {
         fuzzy_parser.set_field_fuzzy(self.title_field, false, 2, true);
         fuzzy_parser.set_field_fuzzy(self.category_field, false, 1, true);
 
-        let exact_query = exact_parser.parse_query(query_str);
-        let fuzzy_query = fuzzy_parser.parse_query(query_str);
+        let query_str = plain_text_query(query_str);
+        let exact_query = exact_parser.parse_query(&query_str);
+        let fuzzy_query = fuzzy_parser.parse_query(&query_str);
 
         let query = match (exact_query, fuzzy_query) {
             (Ok(eq), Ok(fq)) => Box::new(BooleanQuery::union(vec![eq, fq])) as Box<dyn Query>,
@@ -256,5 +277,66 @@ impl SearchService {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_text_query_strips_query_syntax_the_index_never_saw() {
+        // Every char the tokenizer split on becomes a separator, so the query
+        // yields exactly the tokens the index holds.
+        assert_eq!(
+            plain_text_query("courtly lover's scepter"),
+            "courtly lover s scepter"
+        );
+        assert_eq!(
+            plain_text_query("Skybuilders' Alembic"),
+            "skybuilders  alembic"
+        );
+        assert_eq!(
+            plain_text_query("title:foo (bar) \"baz\" -qux^2 ["),
+            "title foo  bar   baz   qux 2  "
+        );
+        // Uppercase operators are lowercased into ordinary words.
+        assert_eq!(
+            plain_text_query("Ring AND Thing OR NOT IN"),
+            "ring and thing or not in"
+        );
+    }
+
+    /// Issue #1298: typing the item's real name, apostrophe included, returned
+    /// nothing because tantivy's grammar treats `'` as a phrase delimiter and
+    /// an unbalanced one is a parse error.
+    #[test]
+    fn finds_an_item_whose_name_has_an_apostrophe() {
+        let service = SearchService::new().expect("index builds from embedded data");
+        let data = xiv_gen_db::data();
+        let item = data
+            .items
+            .values()
+            .find(|i| i.item_search_category > 0 && i.name.contains("'s "))
+            .expect("game data has a marketable possessive item name");
+
+        let query = item.name.to_lowercase();
+        let results = service.search(&query);
+        assert!(
+            results.iter().any(|r| r.title == item.name),
+            "searching {query:?} did not return {:?}, got {:?}",
+            item.name,
+            results.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn query_syntax_characters_never_produce_a_parse_failure() {
+        let service = SearchService::new().expect("index builds from embedded data");
+        for query in ["lover's", "(", "\"", "title:", "[", "*", "AND", "'"] {
+            // Must not panic; results may legitimately be empty.
+            let _ = service.search(query);
+        }
+        assert!(!service.search("lover's").is_empty());
     }
 }
