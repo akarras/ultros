@@ -6,7 +6,7 @@
 pub mod cells;
 pub mod columns;
 pub mod enrichment;
-pub mod formula;
+pub use ultros_calc::formula;
 pub mod grid;
 pub mod hop;
 pub mod market;
