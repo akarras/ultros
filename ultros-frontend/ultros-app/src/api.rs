@@ -15,7 +15,7 @@ use ultros_api_types::{
     item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
-        ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
+        ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
     },
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
@@ -625,9 +625,16 @@ pub(crate) async fn delete_group_invite(invite_id: String) -> AppResult<()> {
     delete_api(&format!("/api/v1/group-invite/{invite_id}")).await
 }
 
+/// The third element is the list's role shares. Nothing renders them yet —
+/// that is the groups frontend stage — but the tuple has to match the server's
+/// arity or serde rejects the whole response.
 pub(crate) async fn get_list_shares(
     list_id: i32,
-) -> AppResult<(Vec<ListSharedUser>, Vec<ListSharedGroup>)> {
+) -> AppResult<(
+    Vec<ListSharedUser>,
+    Vec<ListSharedGroup>,
+    Vec<ListSharedRole>,
+)> {
     fetch_api(&format!("/api/v1/list/{list_id}/shares")).await
 }
 

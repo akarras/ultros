@@ -150,7 +150,9 @@ pub(crate) fn ShareListSection(
             )
         },
         move |_| async move {
-            let (users, groups) = get_list_shares(list_id).await?;
+            // Role shares are fetched but not yet rendered — the role section
+            // of this modal lands with the groups frontend stage.
+            let (users, groups, _roles) = get_list_shares(list_id).await?;
             let invites = get_list_invites(list_id).await?;
             let owned_groups = get_groups().await?;
             Ok::<_, crate::error::AppError>((users, groups, invites, owned_groups))
