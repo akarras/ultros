@@ -2387,6 +2387,9 @@ pub(crate) async fn import_group_discord_role(
     // without this would be up to six hours of the feature looking broken.
     // Recorded against the rate limiter too, so pressing "Sync now" on the
     // page that just imported does not walk the same guild a second time.
+    // `spawn_reconcile` gives the window back if that reconcile does not
+    // actually run, so a bot that is offline does not leave the owner told
+    // "recently synced" over a `last_synced_at` that never moved.
     crate::group_sync::sync_rate_limiter().record(guild_id, std::time::Instant::now());
     crate::group_sync::spawn_reconcile(db, guild_id);
     Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
@@ -2397,6 +2400,13 @@ pub(crate) async fn import_group_discord_role(
 /// `Ran` means "started": the walk happens off the request path, and the page
 /// polls `last_synced_at` to see it finish. Rate limited per guild, because
 /// the work is a full member listing and the trigger is a button.
+///
+/// The window has to be claimed here, before the walk is spawned, so this
+/// request can answer. `spawn_reconcile` releases it again whenever the walk
+/// did not actually sync anything — the bot is offline, Discord refused, a
+/// reconcile of the guild was already running — because otherwise a failed
+/// press would answer `RecentlySynced` for five minutes over a
+/// `last_synced_at` that is null or days old.
 pub(crate) async fn sync_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,

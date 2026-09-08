@@ -2,9 +2,16 @@
 //!
 //! These are a latency optimization, not the source of truth — reconciliation
 //! is (see [`super::reconcile`]). Everything here applies the same idempotent
-//! plans through the same DB primitive reconciliation uses, so an event and a
-//! reconcile racing on one guild land on the same state either way, and a
-//! missed event costs freshness rather than correctness.
+//! plans through the same DB primitive reconciliation uses, and a missed event
+//! costs freshness rather than correctness.
+//!
+//! An event is always about what Discord says *right now*, so it applies
+//! through `apply_role_sync` with no snapshot timestamp: there is nothing
+//! staler than it to defer to. Reconciliation is the side that has to prove
+//! its plan is not out of date, and [`super::reconcile`] documents exactly how
+//! far that goes — a reconcile can no longer undo an add made here, but one
+//! whose snapshot predates a removal made here can still re-add the member,
+//! until its next pass.
 //!
 //! Each function takes the *parsed fields* of an event rather than a live
 //! serenity `Context`, so the policy is testable against a database fixture
@@ -352,9 +359,19 @@ mod tests {
             .unwrap();
         assert_eq!(role.0.sync_state, GroupRoleSyncState::Orphaned as i16);
         assert_eq!(role.1, 1, "members are kept");
-        // ...and the guild no longer appears in a reconcile cycle.
+        // ...and the role stops taking membership from gateway events.
         assert!(
-            !db.guilds_with_synced_roles()
+            db.synced_roles_for_guild(guild_id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // The guild does still appear in a reconcile cycle, though, so the
+        // role can come back if Discord lists it again. Orphaning used to be a
+        // one-way door: nothing but role creation ever wrote `Synced`, so one
+        // anomalous response disabled sync for good.
+        assert!(
+            db.guilds_with_discord_roles()
                 .await
                 .unwrap()
                 .contains(&guild_id)
@@ -372,7 +389,7 @@ mod tests {
         assert_eq!(on_guild_delete(&db, guild_id, true).await.unwrap(), None);
 
         assert!(
-            db.guilds_with_synced_roles()
+            db.guilds_with_discord_roles()
                 .await
                 .unwrap()
                 .contains(&guild_id)
@@ -399,7 +416,7 @@ mod tests {
         assert!(group.frozen_reason.is_some());
         assert_eq!(member_count, 2, "owner and synced member both stay");
         assert!(
-            !db.guilds_with_synced_roles()
+            !db.guilds_with_discord_roles()
                 .await
                 .unwrap()
                 .contains(&guild_id)

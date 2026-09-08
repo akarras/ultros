@@ -5,9 +5,116 @@
 //! gateway handlers both funnel through these functions, so the two paths
 //! cannot disagree about what "in sync" means, and the interesting cases are
 //! testable without a database or a Discord connection.
+//!
+//! [`plan`] and [`desired_members`] are deliberately literal: they say what
+//! the snapshot they were handed implies, including "remove everybody" when
+//! the snapshot is empty. Deciding whether a snapshot is worth believing is a
+//! separate job, done by [`check_member_list`] and [`check_removals`], which
+//! reconciliation calls before it applies anything.
 
 use std::collections::{BTreeMap, HashSet};
+use std::fmt;
 use ultros_db::group_roles::{RoleSyncPlan, SyncedRole};
+
+/// A role holding fewer members than this is exempt from
+/// [`check_removals`]: at that size a percentage says nothing. A three-person
+/// role losing two people is 67% and an entirely ordinary Tuesday.
+pub(crate) const REMOVAL_BREAKER_MIN_MEMBERS: usize = 10;
+
+/// The share of a role's current members a single reconcile may remove before
+/// the snapshot is treated as wrong rather than the guild as emptied.
+///
+/// Fifty percent, because of what the two failure modes cost. Gateway events
+/// already handle ordinary churn one member at a time, so by the time a
+/// reconcile runs, `current` has usually shrunk alongside Discord and the
+/// plan's removes are a handful of stragglers. A reconcile that suddenly wants
+/// to drop half a role is therefore far more likely to be reading a bad
+/// snapshot — a truncated page, an intent that answers empty instead of 403,
+/// a proxy that returned a partial body — than to be watching an exodus that
+/// every gateway event somehow missed. Refusing costs stale membership until
+/// the next pass, which is recoverable; proceeding revokes list access for
+/// half a guild, which is not.
+pub(crate) const REMOVAL_BREAKER_PERCENT: usize = 50;
+
+/// Why a computed plan must not be applied.
+///
+/// Every variant means the same thing to the caller: throw the whole guild's
+/// plan away and leave membership exactly as it is. A guild we could not read
+/// properly is not a guild that emptied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UnsafePlan {
+    /// Discord answered with no members at all.
+    EmptyMemberList,
+    /// One role would lose an implausible share of its members at once.
+    MassRemoval {
+        role_id: i32,
+        removes: usize,
+        current: usize,
+    },
+}
+
+impl fmt::Display for UnsafePlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyMemberList => write!(
+                f,
+                "Discord listed no members for this guild, which cannot be true — the bot is \
+                 itself a member. Treating the response as bad rather than as an emptied server"
+            ),
+            Self::MassRemoval {
+                role_id,
+                removes,
+                current,
+            } => write!(
+                f,
+                "reconciling role {role_id} would remove {removes} of its {current} members, over \
+                 the {REMOVAL_BREAKER_PERCENT}% circuit breaker. Refusing the whole guild's plan; \
+                 membership is unchanged"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for UnsafePlan {}
+
+/// Refuse to plan against a member list that cannot be real.
+///
+/// A guild always has at least one member, because the bot reading it is one.
+/// An empty 200 is therefore never "the server emptied", it is a Discord
+/// incident, a proxy oddity, or an intent state answering empty instead of
+/// 403 — and [`plan`] would faithfully turn it into "remove everybody".
+pub(crate) fn check_member_list(members: &[GuildMember]) -> Result<(), UnsafePlan> {
+    if members.is_empty() {
+        return Err(UnsafePlan::EmptyMemberList);
+    }
+    Ok(())
+}
+
+/// Refuse a plan that would remove an implausible share of one role.
+///
+/// This is the backstop for the failures [`check_member_list`] cannot see: a
+/// member list that is short rather than empty. See
+/// [`REMOVAL_BREAKER_PERCENT`] for why the line is where it is.
+///
+/// Tripping is deliberately loud and deliberately sticky. If a role really did
+/// lose most of its members without the gateway noticing, reconciliation stays
+/// refused until a human looks — deleting and re-importing the role, or
+/// trimming it by hand, clears it. That is the intended trade: a stuck sync is
+/// visible and reversible, a mass eviction is neither.
+pub(crate) fn check_removals(
+    role_id: i32,
+    removes: usize,
+    current: usize,
+) -> Result<(), UnsafePlan> {
+    if current >= REMOVAL_BREAKER_MIN_MEMBERS && removes * 100 > current * REMOVAL_BREAKER_PERCENT {
+        return Err(UnsafePlan::MassRemoval {
+            role_id,
+            removes,
+            current,
+        });
+    }
+    Ok(())
+}
 
 /// One guild member as reconciliation sees them: who they are, what to call
 /// them, and which Discord roles they hold.
@@ -187,6 +294,8 @@ mod tests {
                 adds: vec![(3, "cat")],
                 removes: vec![2],
             },
+            // What `plan` says, not what reconciliation does with it:
+            // `check_removals` refuses a plan this shape before it is applied.
             Case {
                 name: "an emptied Discord role removes everyone",
                 desired: vec![],
@@ -269,12 +378,73 @@ mod tests {
         assert_eq!(desired_members(100, 999, &members), desired(&[]));
     }
 
-    /// The whole-server case on an empty guild must produce an empty desired
-    /// set, not "leave everything alone" — otherwise a server the bot can no
-    /// longer read members for would look identical to a full one.
+    /// An empty member list is refused outright rather than planned against.
+    ///
+    /// This replaces a test that asserted the opposite — that `@everyone` on
+    /// an empty list wants nobody, which reconciliation then applied as
+    /// "remove every synced member of the group". A guild can never actually
+    /// have zero members: the bot reading it is one. So the empty response is
+    /// always a failure to read, and the only safe reading of it is "do not
+    /// plan".
+    ///
+    /// `desired_members` itself stays pure and still answers "nobody" — the
+    /// refusal lives one layer up, in the guard reconciliation calls before it
+    /// plans anything.
     #[test]
-    fn everyone_on_an_empty_member_list_wants_nobody() {
-        assert_eq!(desired_members(100, 100, &[]), desired(&[]));
+    fn an_empty_member_list_is_refused_instead_of_removing_everyone() {
+        assert_eq!(
+            check_member_list(&[]),
+            Err(UnsafePlan::EmptyMemberList),
+            "an empty guild member list must never produce a plan"
+        );
+        assert_eq!(
+            check_member_list(&[member(1, "ann", &[])]),
+            Ok(()),
+            "a guild with members plans normally"
+        );
+    }
+
+    /// The circuit breaker for the case the empty check cannot see: a short
+    /// member list rather than an absent one.
+    #[test]
+    fn a_mass_removal_is_refused_and_ordinary_churn_is_not() {
+        // Six of ten is over the line, five of ten is not.
+        assert_eq!(
+            check_removals(7, 6, 10),
+            Err(UnsafePlan::MassRemoval {
+                role_id: 7,
+                removes: 6,
+                current: 10,
+            })
+        );
+        assert_eq!(check_removals(7, 5, 10), Ok(()));
+        // A whole-server role losing everybody is the exact shape of a
+        // truncated response, and is refused however large the role is.
+        assert!(check_removals(7, 5_000, 5_000).is_err());
+        // Small roles are exempt: at that size a share means nothing.
+        assert_eq!(
+            check_removals(7, 9, 9),
+            Ok(()),
+            "a role under the minimum may empty out"
+        );
+        assert_eq!(check_removals(7, 0, 10_000), Ok(()), "no removes, no worry");
+    }
+
+    /// The two guards compose the way reconciliation uses them: an empty
+    /// snapshot never even reaches the breaker, and a plausible one that
+    /// happens to remove a lot still does.
+    #[test]
+    fn the_guards_refuse_the_snapshots_that_would_wipe_a_role() {
+        let members = [member(1, "ann", &[500])];
+        assert!(check_member_list(&members).is_ok());
+        // Discord returned one member; the role had a thousand.
+        let current: HashSet<i64> = (1..=1000).collect();
+        let got = plan(7, &desired_members(100, 500, &members), &current);
+        assert_eq!(got.removes.len(), 999);
+        assert!(
+            check_removals(7, got.removes.len(), current.len()).is_err(),
+            "a short member list must not empty the role"
+        );
     }
 
     #[test]

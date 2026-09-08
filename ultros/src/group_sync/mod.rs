@@ -11,9 +11,13 @@
 //! - [`diff`] is the set logic both of them share, which is why they cannot
 //!   disagree about what "in sync" means.
 //!
-//! The two write paths are idempotent and go through the same DB primitive
-//! (`apply_role_sync`), so a reconcile racing an event converges to the same
-//! state regardless of which lands first.
+//! Both write paths are idempotent and go through the same DB primitive, but
+//! idempotence alone does not make them order-independent: reconciliation acts
+//! on a snapshot it took minutes ago, and an event that landed since is newer.
+//! What is guaranteed, and what is not, is spelled out in [`reconcile`] —
+//! briefly, a stale reconcile can no longer *remove* someone an event just
+//! added, and a stale reconcile that re-adds someone an event just removed is
+//! corrected on the next pass.
 
 pub(crate) mod diff;
 pub(crate) mod events;

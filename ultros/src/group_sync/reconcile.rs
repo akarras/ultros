@@ -6,8 +6,28 @@
 //! sent. This walks the guild from scratch and makes the database match, so
 //! any drift is bounded by the cycle interval rather than lasting forever.
 //!
-//! Both paths apply the same idempotent plans through the same DB primitive,
-//! so a reconcile racing an event converges to the same state whichever wins.
+//! ## What racing a gateway event actually guarantees
+//!
+//! Both paths apply idempotent plans through the same DB primitive, but that
+//! alone does *not* make the order irrelevant: reconciliation's plan is
+//! computed from a member snapshot taken minutes earlier and applied later, so
+//! a gateway event landing in that window is newer information than the plan
+//! that is about to overwrite it.
+//!
+//! What holds:
+//!
+//! - **Removes cannot undo a newer add.** Reconciliation applies through
+//!   `apply_role_sync_from_snapshot`, which skips removing any role membership
+//!   created after the snapshot was taken. That is the direction that loses
+//!   access, and it is closed in the database, so it holds across processes.
+//! - **Two reconciles of one guild do not overlap** in this process; see
+//!   [`begin_reconcile`].
+//!
+//! What does not hold: a reconcile whose snapshot predates a role *removal*
+//! can still re-add the member the gateway just removed. That grants access
+//! rather than losing it, and the next cycle — which snapshots after the
+//! event — takes it back, so the divergence is bounded by
+//! [`RECONCILE_INTERVAL`] and never silent about membership somebody had.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,13 +46,22 @@ use super::diff::{self, GuildMember};
 /// Discord's maximum page size for `GET /guilds/{id}/members`.
 const MEMBER_PAGE_SIZE: u64 = 1000;
 
-/// A guild larger than this is not something this bot is in, so hitting the
-/// cap means the cursor is not advancing the way we think it is. Stop and say
-/// so rather than paginating forever against Discord's rate limiter.
+/// Discord's own ceiling on guild size, so a guild this bot is in cannot
+/// exceed it. Reaching the cap means the cursor is not advancing the way we
+/// think it is, and the pages we did get are not the guild.
 const MEMBER_HARD_CAP: usize = 250_000;
 
-/// How often every guild with a synced role is walked.
+/// How often every guild with a Discord-backed role is walked.
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// How long to wait for the gateway before giving up on a reconcile cycle.
+///
+/// The first tick can beat the bot's connection — a slow start, a Discord
+/// outage at boot — and without this the next attempt is a whole
+/// [`RECONCILE_INTERVAL`] away, which is six hours of a freshly deployed
+/// instance never syncing anything.
+const CTX_RETRY_DELAY: Duration = Duration::from_secs(30);
+const CTX_RETRIES: usize = 20;
 
 /// The gateway needs time to connect before the first cycle, and a cold start
 /// already has plenty else to do. Reconciliation is a background correctness
@@ -53,6 +82,8 @@ static MEMBERS_FORBIDDEN_REPORTED: AtomicBool = AtomicBool::new(false);
 pub(crate) struct GuildSyncReport {
     pub roles: usize,
     pub orphaned: usize,
+    /// Roles that were orphaned and are syncing again.
+    pub restored: usize,
     pub members_seen: usize,
     pub added: usize,
     pub removed: usize,
@@ -141,7 +172,46 @@ fn note_members_failure(guild_id: i64, error: &serenity::Error) {
     }
 }
 
+/// Whether pagination should ask for another page after this one.
+///
+/// Split out from [`fetch_guild_members`] so the two conditions that must
+/// *fail* rather than truncate are testable without a gateway connection. Both
+/// of them mean the same thing — the pages collected so far are not the guild
+/// — and a partial member list is exactly the input that turns
+/// reconciliation into a mass removal, so neither may return the members it
+/// has.
+fn wants_another_page(
+    fetched: usize,
+    page_len: usize,
+    highest: u64,
+    after: Option<u64>,
+) -> Result<bool> {
+    // Discord pages members by ascending user id and returns a short page at
+    // the end. This is the only way the walk finishes with the whole guild.
+    if page_len < MEMBER_PAGE_SIZE as usize {
+        return Ok(false);
+    }
+    if Some(highest) <= after {
+        anyhow::bail!("Discord member pagination did not advance");
+    }
+    if fetched >= MEMBER_HARD_CAP {
+        // Not a stopping point: a guild cannot be this large, so the cursor is
+        // misbehaving and what we hold is a truncated prefix. Returning it
+        // would put every member past the cap into `plan.removes` and drop
+        // them from the role — and from the group. Fail instead, so the guild
+        // is skipped and existing membership is left untouched.
+        anyhow::bail!(
+            "Discord member pagination passed the {MEMBER_HARD_CAP} hard cap at {fetched} \
+             members, which no guild reaches; refusing to treat a truncated list as the guild"
+        );
+    }
+    Ok(true)
+}
+
 /// Every member of the guild, paginated at Discord's maximum page size.
+///
+/// Either the full membership or an error. There is no third answer: a partial
+/// list is indistinguishable from a shrunken guild once it reaches [`diff`].
 async fn fetch_guild_members(
     ctx: &serenity::Context,
     guild_id: GuildId,
@@ -165,20 +235,7 @@ async fn fetch_guild_members(
                 role_ids: member.roles.iter().map(|role| role.get() as i64).collect(),
             });
         }
-        // Discord pages members by ascending user id and returns a short page
-        // at the end.
-        if page_len < MEMBER_PAGE_SIZE as usize {
-            break;
-        }
-        if Some(highest) <= after {
-            anyhow::bail!("Discord member pagination did not advance");
-        }
-        if members.len() >= MEMBER_HARD_CAP {
-            warn!(
-                guild_id = guild_id.get(),
-                fetched = members.len(),
-                "stopping member pagination at the hard cap"
-            );
+        if !wants_another_page(members.len(), page_len, highest, after)? {
             break;
         }
         after = Some(highest);
@@ -187,14 +244,16 @@ async fn fetch_guild_members(
 }
 
 /// Reconcile one guild against Discord. `Ok(None)` means the guild has nothing
-/// synced and was skipped without touching Discord at all.
+/// Discord-backed and was skipped without touching Discord at all.
 pub(crate) async fn reconcile_guild(
     db: &UltrosDb,
     ctx: &serenity::Context,
     guild_id: i64,
 ) -> Result<Option<GuildSyncReport>> {
-    let synced = db.synced_roles_for_guild(guild_id).await?;
-    if synced.is_empty() {
+    // Orphaned roles are included so a role that stopped syncing can start
+    // again; see `restore_roles`.
+    let backed = db.discord_roles_for_guild(guild_id).await?;
+    if backed.is_empty() {
         return Ok(None);
     }
     let mut report = GuildSyncReport::default();
@@ -206,50 +265,80 @@ pub(crate) async fn reconcile_guild(
         .into_keys()
         .map(|role| role.get() as i64)
         .collect();
+    if live.is_empty() {
+        // Every guild has `@everyone`, so an empty listing is a bad response,
+        // not a guild without roles — and believing it would orphan every
+        // synced role of the guild in one pass.
+        anyhow::bail!("Discord listed no roles for this guild, which cannot be true");
+    }
 
     // A role Discord no longer has stops syncing but keeps its members, so the
     // list share pointing at it does not silently lose everyone.
-    let mut roles = Vec::with_capacity(synced.len());
-    for role in synced {
+    let mut roles = Vec::with_capacity(backed.len());
+    let mut restore = Vec::new();
+    for entry in backed {
         // `@everyone` is returned by the roles endpoint, but orphaning it by
         // accident would silently switch off whole-server sync, so it is never
         // a candidate for orphaning on the strength of a role listing.
-        if diff::is_everyone_role(guild_id, role.discord_role_id)
-            || live.contains(&role.discord_role_id)
+        if diff::is_everyone_role(guild_id, entry.role.discord_role_id)
+            || live.contains(&entry.role.discord_role_id)
         {
-            roles.push(role);
-        } else {
-            db.mark_role_orphaned(guild_id, role.discord_role_id)
+            if entry.orphaned {
+                restore.push(entry.role.role_id);
+            }
+            roles.push(entry.role);
+        } else if !entry.orphaned {
+            db.mark_role_orphaned(guild_id, entry.role.discord_role_id)
                 .await?;
             report.orphaned += 1;
         }
+    }
+    report.restored = db.restore_roles(restore).await?;
+    if report.restored > 0 {
+        info!(
+            guild_id,
+            restored = report.restored,
+            "Discord listed these roles again; they are syncing once more"
+        );
     }
     report.roles = roles.len();
     if roles.is_empty() {
         return Ok(Some(report));
     }
 
+    // Taken before the fetch, not after: anything that changes while we are
+    // reading Discord is newer than what we are reading, and the apply step
+    // uses this to refuse to undo it.
+    let snapshot_at = chrono::Utc::now();
     let members = fetch_guild_members(ctx, discord_guild).await?;
     report.members_seen = members.len();
+    // Nothing below runs against a member list we do not believe.
+    diff::check_member_list(&members)?;
 
     // Every user we already had in one of these roles: their `discord_user`
     // row certainly exists, which is what makes the bulk name refresh below
     // safe to run over them.
+    //
+    // Note that every plan is computed, and every plan is checked, before any
+    // of them is applied: a snapshot that produced one implausible plan is not
+    // a snapshot to trust for the guild's other roles either, so tripping the
+    // breaker leaves the whole guild untouched rather than half-applied.
     let mut known: HashSet<i64> = HashSet::new();
     let mut by_group: BTreeMap<i32, Vec<RoleSyncPlan>> = BTreeMap::new();
     for role in &roles {
         let desired = diff::desired_members(guild_id, role.discord_role_id, &members);
         let current = db.role_member_ids(role.role_id).await?;
+        let plan = diff::plan(role.role_id, &desired, &current);
+        diff::check_removals(role.role_id, plan.removes.len(), current.len())?;
         known.extend(current.iter().copied());
-        by_group.entry(role.group_id).or_default().push(diff::plan(
-            role.role_id,
-            &desired,
-            &current,
-        ));
+        by_group.entry(role.group_id).or_default().push(plan);
     }
 
     for (group_id, plans) in by_group {
-        report.absorb(db.apply_role_sync(group_id, plans).await?);
+        report.absorb(
+            db.apply_role_sync_from_snapshot(group_id, plans, snapshot_at)
+                .await?,
+        );
     }
 
     // Names of members who were already in place, which the apply step has no
@@ -266,29 +355,101 @@ pub(crate) async fn reconcile_guild(
     Ok(Some(report))
 }
 
+/// Guilds with a reconcile in flight in this process.
+///
+/// Nothing else serialized these: `spawn_reconcile` is fire-and-forget and the
+/// role-import endpoint calls it per role, so importing three roles used to
+/// start three whole-guild walks at once, each computing a plan from its own
+/// snapshot and applying it over the others'.
+///
+/// An overlapping run is rejected rather than queued. A second walk of the
+/// same guild started seconds after the first has nothing new to find, and
+/// queueing would only spend Discord's rate limit budget saying so.
+///
+/// This is process-local, which is the honest scope of the guarantee: it stops
+/// this instance racing itself, not two instances racing each other. The
+/// correctness guard that does hold across processes is the snapshot timestamp
+/// (`apply_role_sync_from_snapshot`), which lives in the database.
+static IN_FLIGHT: LazyLock<Mutex<HashSet<i64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Held for the whole of one guild's reconcile — fetch and apply both.
+struct ReconcileGuard {
+    guild_id: i64,
+}
+
+impl Drop for ReconcileGuard {
+    fn drop(&mut self) {
+        IN_FLIGHT
+            .lock()
+            .expect("reconcile guard set poisoned")
+            .remove(&self.guild_id);
+    }
+}
+
+/// Claim a guild for a reconcile, or `None` if one is already running.
+fn begin_reconcile(guild_id: i64) -> Option<ReconcileGuard> {
+    let claimed = IN_FLIGHT
+        .lock()
+        .expect("reconcile guard set poisoned")
+        .insert(guild_id);
+    // Deliberately two statements: the lock is released before a guard can
+    // exist. `ReconcileGuard::drop` takes the same lock, so building one while
+    // still holding it deadlocks the instant the claim fails and the
+    // just-built guard is dropped.
+    claimed.then(|| ReconcileGuard { guild_id })
+}
+
 /// Reconcile one guild, logging the outcome. Used by every caller that is not
 /// interested in the report itself.
-async fn reconcile_and_log(db: &UltrosDb, ctx: &serenity::Context, guild_id: i64) {
-    match reconcile_guild(db, ctx, guild_id).await {
-        Ok(Some(report)) => info!(
+///
+/// Returns whether a reconcile actually ran to completion, which is what the
+/// rate-limit window should be keyed on: a run that never started, or that
+/// Discord refused, has not synced anything and must not lock the owner out of
+/// pressing the button again.
+async fn reconcile_and_log(db: &UltrosDb, ctx: &serenity::Context, guild_id: i64) -> bool {
+    let Some(_guard) = begin_reconcile(guild_id) else {
+        debug!(
             guild_id,
-            roles = report.roles,
-            orphaned = report.orphaned,
-            members_seen = report.members_seen,
-            added = report.added,
-            removed = report.removed,
-            left_group = report.left_group,
-            handed_over = report.handed_over,
-            names_refreshed = report.names_refreshed,
-            "reconciled Discord group membership"
-        ),
-        Ok(None) => debug!(guild_id, "no synced roles, nothing to reconcile"),
-        Err(error) => report_failure(guild_id, &error),
+            "a reconcile for this guild is already running, skipping this one"
+        );
+        return false;
+    };
+    match reconcile_guild(db, ctx, guild_id).await {
+        Ok(Some(report)) => {
+            info!(
+                guild_id,
+                roles = report.roles,
+                orphaned = report.orphaned,
+                restored = report.restored,
+                members_seen = report.members_seen,
+                added = report.added,
+                removed = report.removed,
+                left_group = report.left_group,
+                handed_over = report.handed_over,
+                names_refreshed = report.names_refreshed,
+                "reconciled Discord group membership"
+            );
+            true
+        }
+        Ok(None) => {
+            debug!(guild_id, "no Discord roles, nothing to reconcile");
+            false
+        }
+        Err(error) => {
+            report_failure(guild_id, &error);
+            false
+        }
     }
 }
 
 /// Reconcile one guild in the background. Callers on a request path use this
 /// so a whole-server member walk never happens inline in an HTTP handler.
+///
+/// The caller has already opened the rate-limit window (it has to, to answer
+/// the request), so this closes it again on every path that did not sync:
+/// otherwise a reconcile that bailed because the bot was offline would still
+/// have the owner told "recently synced" for five minutes, over a
+/// `last_synced_at` that is null or days old.
 pub(crate) fn spawn_reconcile(db: UltrosDb, guild_id: i64) {
     tokio::spawn(async move {
         let Some(ctx) = crate::alerts::delivery::get_serenity_ctx() else {
@@ -296,19 +457,47 @@ pub(crate) fn spawn_reconcile(db: UltrosDb, guild_id: i64) {
                 guild_id,
                 "cannot reconcile group membership, the Discord bot is not connected"
             );
+            sync_rate_limiter().release(guild_id);
             return;
         };
-        reconcile_and_log(&db, &ctx, guild_id).await;
+        if !reconcile_and_log(&db, &ctx, guild_id).await {
+            sync_rate_limiter().release(guild_id);
+        }
     });
 }
 
-/// Walk every guild with at least one synced role, sequentially.
+/// The gateway context, waiting a while for it rather than writing the whole
+/// cycle off. See [`CTX_RETRY_DELAY`].
+async fn wait_for_serenity_ctx(
+    token: &CancellationToken,
+) -> Option<std::sync::Arc<serenity::Context>> {
+    for attempt in 0..CTX_RETRIES {
+        if let Some(ctx) = crate::alerts::delivery::get_serenity_ctx() {
+            return Some(ctx);
+        }
+        debug!(
+            attempt,
+            "the Discord bot is not connected yet, waiting before the group sync cycle"
+        );
+        tokio::select! {
+            _ = token.cancelled() => return None,
+            _ = tokio::time::sleep(CTX_RETRY_DELAY) => {}
+        }
+    }
+    warn!(
+        "skipping group membership reconciliation, the Discord bot did not connect within \
+         {:?}",
+        CTX_RETRY_DELAY * CTX_RETRIES as u32
+    );
+    None
+}
+
+/// Walk every guild with at least one Discord-backed role, sequentially.
 async fn reconcile_all(db: &UltrosDb, token: &CancellationToken) {
-    let Some(ctx) = crate::alerts::delivery::get_serenity_ctx() else {
-        warn!("skipping group membership reconciliation, the Discord bot is not connected");
+    let Some(ctx) = wait_for_serenity_ctx(token).await else {
         return;
     };
-    let guilds = match db.guilds_with_synced_roles().await {
+    let guilds = match db.guilds_with_discord_roles().await {
         Ok(guilds) => guilds,
         Err(error) => {
             error!("could not list guilds to reconcile: {error:?}");
@@ -320,7 +509,10 @@ async fn reconcile_all(db: &UltrosDb, token: &CancellationToken) {
         if token.is_cancelled() {
             return;
         }
-        reconcile_and_log(db, &ctx, guild_id).await;
+        // The periodic cycle deliberately does not touch the rate limiter: it
+        // runs far slower than the window, and it is not what the window is
+        // there to throttle.
+        let _ = reconcile_and_log(db, &ctx, guild_id).await;
         tokio::select! {
             _ = token.cancelled() => return,
             _ = tokio::time::sleep(BETWEEN_GUILDS) => {}
@@ -392,6 +584,21 @@ impl SyncRateLimiter {
             .expect("sync rate limiter poisoned")
             .insert(guild_id, now);
     }
+
+    /// Reopen the window for a run that did not happen.
+    ///
+    /// Both callers have to claim the window before the work starts, because
+    /// they answer an HTTP request and the work is spawned. When the spawned
+    /// run turns out not to sync anything — the bot is offline, Discord
+    /// refused, another reconcile of the guild was already going — the claim
+    /// bought nothing, and leaving it would tell the owner "recently synced"
+    /// for five minutes over a `last_synced_at` that never moved.
+    pub(crate) fn release(&self, guild_id: i64) {
+        self.last_run
+            .lock()
+            .expect("sync rate limiter poisoned")
+            .remove(&guild_id);
+    }
 }
 
 pub(crate) fn sync_rate_limiter() -> &'static SyncRateLimiter {
@@ -417,6 +624,78 @@ mod tests {
         assert!(
             transient_status(None),
             "a request that never got a response is transient"
+        );
+    }
+
+    /// A short page is the only way a member walk ends successfully.
+    #[test]
+    fn pagination_stops_on_a_short_page() {
+        assert!(!wants_another_page(1500, 500, 9_000, Some(8_000)).unwrap());
+        assert!(wants_another_page(2000, MEMBER_PAGE_SIZE as usize, 9_000, Some(8_000)).unwrap());
+    }
+
+    /// Reaching the hard cap is a broken cursor, not a big guild, and the
+    /// pages in hand are a truncated prefix. Truncating there used to `break`
+    /// and return them, which put every member past the cap into
+    /// `plan.removes` — dropping them from the role and from the group.
+    #[test]
+    fn passing_the_member_hard_cap_fails_instead_of_truncating() {
+        let error = wants_another_page(
+            MEMBER_HARD_CAP,
+            MEMBER_PAGE_SIZE as usize,
+            900_000,
+            Some(800_000),
+        )
+        .expect_err("a truncated member list must not be returned as the guild");
+        assert!(
+            error.to_string().contains("hard cap"),
+            "the failure should name the cap: {error}"
+        );
+    }
+
+    /// The adjacent guard, which already behaved: a cursor that does not move
+    /// would otherwise loop or silently stop short.
+    #[test]
+    fn a_stalled_cursor_fails() {
+        assert!(
+            wants_another_page(1000, MEMBER_PAGE_SIZE as usize, 8_000, Some(8_000)).is_err(),
+            "a cursor that did not advance is a failure, not an end"
+        );
+    }
+
+    /// Only one reconcile of a guild at a time, so a burst of role imports
+    /// cannot have three snapshots of one guild racing to overwrite each
+    /// other's plans.
+    #[test]
+    fn a_guild_reconcile_excludes_another_of_the_same_guild() {
+        let guild = 4_242;
+        let first = begin_reconcile(guild).expect("the first run claims the guild");
+        assert!(
+            begin_reconcile(guild).is_none(),
+            "a second run of the same guild is rejected"
+        );
+        // ...but a different guild is unaffected.
+        let other = begin_reconcile(guild + 1).expect("other guilds are independent");
+        drop(other);
+        drop(first);
+        assert!(
+            begin_reconcile(guild).is_some(),
+            "the guild is claimable again once the run finishes"
+        );
+    }
+
+    /// A reconcile that never ran must not leave the owner told "recently
+    /// synced" for the next five minutes.
+    #[test]
+    fn releasing_reopens_the_window_for_a_run_that_did_not_happen() {
+        let limiter = SyncRateLimiter::new();
+        let start = Instant::now();
+        assert!(limiter.try_acquire(1, start));
+        assert!(!limiter.try_acquire(1, start));
+        limiter.release(1);
+        assert!(
+            limiter.try_acquire(1, start),
+            "the next press should be allowed to try again"
         );
     }
 

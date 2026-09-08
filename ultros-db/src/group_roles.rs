@@ -46,6 +46,14 @@ pub struct SyncedRole {
     pub discord_role_id: i64,
 }
 
+/// A Discord-backed role and whether it is currently orphaned, so a reconcile
+/// can tell "stopped syncing" from "never synced" and put the former back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscordBackedRole {
+    pub role: SyncedRole,
+    pub orphaned: bool,
+}
+
 /// The changes reconciliation (or a gateway event) wants applied to one role.
 #[derive(Debug, Clone, Default)]
 pub struct RoleSyncPlan {
@@ -457,7 +465,16 @@ impl UltrosDb {
         Ok(!self.synced_roles_for_guild(guild_id).await?.is_empty())
     }
 
-    pub async fn guilds_with_synced_roles(&self) -> Result<Vec<i64>> {
+    /// Every guild a reconcile cycle should walk.
+    ///
+    /// Orphaned roles count. Orphaning is one anomalous roles listing away,
+    /// and if an orphaned role also excluded its guild from the cycle then a
+    /// single bad response would switch sync off for good, with no way back
+    /// short of deleting and re-importing the role. Including these guilds is
+    /// what lets [`restore_roles`](Self::restore_roles) put one back into
+    /// service when its Discord role turns up again. A guild whose roles are
+    /// all genuinely gone costs one roles listing per cycle and stops there.
+    pub async fn guilds_with_discord_roles(&self) -> Result<Vec<i64>> {
         let ids: Vec<i64> = user_group::Entity::find()
             .select_only()
             .column(user_group::Column::GuildId)
@@ -469,11 +486,69 @@ impl UltrosDb {
             .filter(user_group::Column::GuildId.is_not_null())
             .filter(user_group::Column::FrozenReason.is_null())
             .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
-            .filter(group_role::Column::SyncState.eq(GroupRoleSyncState::Synced as i16))
             .into_tuple()
             .all(&self.db)
             .await?;
         Ok(ids)
+    }
+
+    /// Every Discord-backed role of a guild, orphaned ones included, which is
+    /// what reconciliation needs to decide which are still live.
+    pub async fn discord_roles_for_guild(&self, guild_id: i64) -> Result<Vec<DiscordBackedRole>> {
+        let rows: Vec<(i32, i32, i64, i16)> = group_role::Entity::find()
+            .select_only()
+            .column(group_role::Column::Id)
+            .column(group_role::Column::GroupId)
+            .column(group_role::Column::DiscordRoleId)
+            .column(group_role::Column::SyncState)
+            .join(
+                sea_orm::JoinType::InnerJoin,
+                group_role::Relation::UserGroup.def(),
+            )
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .filter(user_group::Column::FrozenReason.is_null())
+            .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+            .filter(group_role::Column::DiscordRoleId.is_not_null())
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(role_id, group_id, discord_role_id, sync_state)| DiscordBackedRole {
+                    role: SyncedRole {
+                        role_id,
+                        group_id,
+                        discord_role_id,
+                    },
+                    orphaned: GroupRoleSyncState::from(sync_state) == GroupRoleSyncState::Orphaned,
+                },
+            )
+            .collect())
+    }
+
+    /// Put orphaned roles back into service, because Discord listed their
+    /// roles again.
+    ///
+    /// Orphaning is cheap to do and, without this, permanent: nothing else in
+    /// the codebase ever writes `Synced` after role creation. A role that was
+    /// orphaned by a bad roles listing — or by a `GuildRoleDelete` for a role
+    /// that came back — recovers on the next cycle instead of needing the
+    /// owner to notice and re-import.
+    pub async fn restore_roles(&self, role_ids: Vec<i32>) -> Result<usize> {
+        if role_ids.is_empty() {
+            return Ok(0);
+        }
+        let result = group_role::Entity::update_many()
+            .col_expr(
+                group_role::Column::SyncState,
+                sea_orm::sea_query::Expr::value(GroupRoleSyncState::Synced as i16),
+            )
+            .filter(group_role::Column::Id.is_in(role_ids))
+            .filter(group_role::Column::SyncState.eq(GroupRoleSyncState::Orphaned as i16))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected as usize)
     }
 
     pub async fn synced_roles_for_guild(&self, guild_id: i64) -> Result<Vec<SyncedRole>> {
@@ -524,10 +599,50 @@ impl UltrosDb {
     /// which case their membership is handed over to `Manual` instead.
     /// Manual members are never removed. Every `plan.role_id` must belong to
     /// `group_id`, or the whole call is rejected with `RoleNotFound`.
+    ///
+    /// For a plan built from a point-in-time snapshot of Discord, use
+    /// [`apply_role_sync_from_snapshot`](Self::apply_role_sync_from_snapshot)
+    /// instead. This entry point is for plans about what Discord says *right
+    /// now* — a gateway event about one member — where there is no staleness
+    /// to guard against.
     pub async fn apply_role_sync(
         &self,
         group_id: i32,
         plans: Vec<RoleSyncPlan>,
+    ) -> Result<SyncSummary> {
+        self.apply_role_sync_inner(group_id, plans, None).await
+    }
+
+    /// Apply reconciliation output computed from a snapshot taken at
+    /// `snapshot_at`.
+    ///
+    /// Identical to [`apply_role_sync`](Self::apply_role_sync) except that
+    /// removes skip any role membership created *after* the snapshot. Walking
+    /// a large guild's member list takes minutes, and a gateway event landing
+    /// in that window is newer information than the snapshot: the member shows
+    /// up in `current` (read after the event) but not in `desired` (computed
+    /// before it), and without this the stale plan would evict them — losing
+    /// them the role, and their group membership with it, until the next pass
+    /// hours later.
+    ///
+    /// The comparison is against the database's own `added_at` column rather
+    /// than anything held in memory, so it holds when the reconcile and the
+    /// event are handled by different processes.
+    pub async fn apply_role_sync_from_snapshot(
+        &self,
+        group_id: i32,
+        plans: Vec<RoleSyncPlan>,
+        snapshot_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<SyncSummary> {
+        self.apply_role_sync_inner(group_id, plans, Some(snapshot_at))
+            .await
+    }
+
+    async fn apply_role_sync_inner(
+        &self,
+        group_id: i32,
+        plans: Vec<RoleSyncPlan>,
+        snapshot_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<SyncSummary> {
         let mut summary = SyncSummary::default();
         let txn = self.db.begin().await?;
@@ -567,12 +682,26 @@ impl UltrosDb {
                 summary.added += 1;
             }
             if !plan.removes.is_empty() {
-                let result = group_role_member::Entity::delete_many()
+                let mut delete = group_role_member::Entity::delete_many()
                     .filter(group_role_member::Column::RoleId.eq(plan.role_id))
-                    .filter(group_role_member::Column::UserId.is_in(plan.removes.clone()))
-                    .exec(&txn)
-                    .await?;
+                    .filter(group_role_member::Column::UserId.is_in(plan.removes.clone()));
+                if let Some(snapshot_at) = snapshot_at {
+                    // Anything joined after the snapshot was taken is newer
+                    // than the plan and outranks it.
+                    delete =
+                        delete.filter(group_role_member::Column::AddedAt.lte::<chrono::DateTime<
+                            chrono::FixedOffset,
+                        >>(
+                            snapshot_at.into()
+                        ));
+                }
+                let result = delete.exec(&txn).await?;
                 summary.removed += result.rows_affected as usize;
+                // A user whose row was spared stays in `removed_users`, which
+                // costs one extra id in the "should they leave the group"
+                // query below. That query re-reads the role memberships inside
+                // this transaction, still finds their spared row, and keeps
+                // them — so the spare survives both halves.
                 removed_users.extend(plan.removes);
             }
         }
@@ -855,6 +984,10 @@ pub(crate) async fn insert_role_member(
     group_role_member::Entity::insert(group_role_member::ActiveModel {
         role_id: ActiveValue::Set(role_id),
         user_id: ActiveValue::Set(user_id),
+        // An existing row keeps its original `added_at` (the conflict clause
+        // below updates nothing), so re-affirming a membership does not make
+        // it look newer than it is.
+        added_at: ActiveValue::Set(chrono::Utc::now().into()),
     })
     .on_conflict(
         OnConflict::columns([
@@ -1706,7 +1839,7 @@ pub(crate) mod tests {
         assert_eq!(synced[0].role_id, role.id);
         assert_eq!(synced[0].discord_role_id, role.discord_role_id.unwrap());
         assert!(
-            db.guilds_with_synced_roles()
+            db.guilds_with_discord_roles()
                 .await
                 .unwrap()
                 .contains(&guild_id)
@@ -1746,8 +1879,108 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .is_empty(),
-            "orphaned roles are not reconciled again"
+            "an orphaned role no longer takes membership from gateway events"
         );
+        // ...but the guild is still walked, and the role is still offered to
+        // the walk, because orphaning has to be reversible: it is one bad
+        // roles listing away and nothing else ever writes `Synced` back.
+        assert!(
+            db.guilds_with_discord_roles()
+                .await
+                .unwrap()
+                .contains(&guild_id)
+        );
+        let backed = db.discord_roles_for_guild(guild_id).await.unwrap();
+        let orphan = backed
+            .iter()
+            .find(|entry| entry.role.role_id == role.id)
+            .expect("the orphaned role is still listed for reconciliation");
+        assert!(orphan.orphaned);
+
+        assert_eq!(
+            db.restore_roles(vec![role.id]).await.unwrap(),
+            1,
+            "seeing the Discord role again puts it back into service"
+        );
+        assert_eq!(
+            db.synced_roles_for_guild(guild_id).await.unwrap().len(),
+            1,
+            "and it syncs again"
+        );
+        assert!(
+            is_role_member(&db, role.id, user).await,
+            "without disturbing its members"
+        );
+        assert_eq!(
+            db.restore_roles(vec![role.id]).await.unwrap(),
+            0,
+            "restoring an already-synced role changes nothing"
+        );
+    }
+
+    /// A stale reconcile must not undo a gateway event that landed while its
+    /// snapshot was being fetched. The role membership carries the time it was
+    /// created; a plan older than that has no business removing it.
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn a_snapshot_older_than_the_membership_does_not_remove_it() {
+        let db = test_db().await;
+        let (group, _owner, role, _guild_id) = guild_group_with_synced_role(&db).await;
+        let user = next_id();
+
+        // T0: the reconcile starts reading Discord, where this user has no
+        // role yet.
+        let snapshot_at = chrono::Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // T1: a gateway event grants them the role.
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![(user, "U".to_string())],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+
+        // T2: the stale plan lands. They are in `current` and not in
+        // `desired`, so it wants them gone.
+        let summary = db
+            .apply_role_sync_from_snapshot(
+                group.id,
+                vec![RoleSyncPlan {
+                    role_id: role.id,
+                    adds: vec![],
+                    removes: vec![user],
+                }],
+                snapshot_at,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.removed, 0, "the newer membership outranks the plan");
+        assert_eq!(summary.left_group, 0);
+        assert!(is_role_member(&db, role.id, user).await);
+        assert!(is_group_member(&db, group.id, user).await);
+
+        // A snapshot taken *after* the membership removes it as normal, so
+        // this defers to newer writes rather than disabling removal.
+        let later = db
+            .apply_role_sync_from_snapshot(
+                group.id,
+                vec![RoleSyncPlan {
+                    role_id: role.id,
+                    adds: vec![],
+                    removes: vec![user],
+                }],
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(later.removed, 1);
+        assert!(!is_group_member(&db, group.id, user).await);
     }
 
     #[tokio::test]
