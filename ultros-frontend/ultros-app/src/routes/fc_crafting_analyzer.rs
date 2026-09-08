@@ -969,7 +969,15 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
         // Canonicalize a cookie fallback without adding a history entry. The
         // picker itself pushes navigation; selection is always derived from it.
         if let Some(world) = selected_world.get() {
-            fallback_navigation(world, true);
+            let navigate = fallback_navigation.clone();
+            // The bare and world-qualified paths mount separate route owners.
+            // Let hydration's delayed storage reads finish before replacing the
+            // first owner, and discard a callback if selection changed meanwhile.
+            request_animation_frame(move || {
+                if selected_world.try_get_untracked().flatten().as_ref() == Some(&world) {
+                    navigate(world, true);
+                }
+            });
         }
     });
     let set_selected_world = SignalSetter::map(move |world: Option<World>| {
