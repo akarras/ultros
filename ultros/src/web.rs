@@ -51,7 +51,8 @@ use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
     AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
     DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
-    ImportDiscordRole, RenameGroupRole, UserGroup, UserGroupDetail, UserGroupMember,
+    GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
+    UserGroupDetail, UserGroupMember,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -2356,8 +2357,11 @@ pub(crate) async fn create_group_role(
 }
 
 /// Import a Discord role into the group. Membership arrives from
-/// reconciliation, which stage 4 owns; this returns as soon as the role row
-/// exists, with `last_synced_at` still null for the page to poll on.
+/// reconciliation: this returns as soon as the role row exists, with
+/// `last_synced_at` still null for the page to poll on, and kicks off a
+/// reconcile for the guild in the background. Waiting for that here would put
+/// a whole-guild member walk on a request path, which for `@everyone` on a
+/// large server is not a request anybody would sit through.
 pub(crate) async fn import_group_discord_role(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -2379,7 +2383,45 @@ pub(crate) async fn import_group_discord_role(
     let role = db
         .import_discord_role(id, user.id as i64, discord_role_id, name, position)
         .await?;
+    // The role exists but has nobody in it until a reconcile runs, which
+    // without this would be up to six hours of the feature looking broken.
+    // Recorded against the rate limiter too, so pressing "Sync now" on the
+    // page that just imported does not walk the same guild a second time.
+    crate::group_sync::sync_rate_limiter().record(guild_id, std::time::Instant::now());
+    crate::group_sync::spawn_reconcile(db, guild_id);
     Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
+}
+
+/// Reconcile this group's Discord membership now.
+///
+/// `Ran` means "started": the walk happens off the request path, and the page
+/// polls `last_synced_at` to see it finish. Rate limited per guild, because
+/// the work is a full member listing and the trigger is a button.
+pub(crate) async fn sync_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<GroupSyncResponse>, ApiError> {
+    // Also proves ownership, that the group is still linked to a guild, and
+    // that the bot is connected to answer for it.
+    let (guild_id, _ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let last_synced_at = db
+        .get_group_roles(id, user.id as i64)
+        .await?
+        .into_iter()
+        .filter_map(|GroupRoleReturn(role, _)| role.last_synced_at)
+        .max();
+    if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, std::time::Instant::now()) {
+        return Ok(Json(GroupSyncResponse {
+            status: GroupSyncStatus::RecentlySynced,
+            last_synced_at,
+        }));
+    }
+    crate::group_sync::spawn_reconcile(db, guild_id);
+    Ok(Json(GroupSyncResponse {
+        status: GroupSyncStatus::Ran,
+        last_synced_at,
+    }))
 }
 
 pub(crate) async fn rename_group_role(
@@ -2570,6 +2612,17 @@ mod group_role_route_tests {
         format!("search:{id}:[{q}]")
     }
 
+    async fn sync_stub(Path(id): Path<i32>) -> Json<GroupSyncResponse> {
+        Json(GroupSyncResponse {
+            status: if id == 7 {
+                GroupSyncStatus::Ran
+            } else {
+                GroupSyncStatus::RecentlySynced
+            },
+            last_synced_at: None,
+        })
+    }
+
     async fn share_role_stub(Path(id): Path<i32>, Json(share): Json<ShareListRole>) -> String {
         format!("share:{id}:{}:{}", share.role_id, share.permission as i16)
     }
@@ -2597,6 +2650,7 @@ mod group_role_route_tests {
                 post(add_role_member_stub).delete(remove_role_member_stub),
             )
             .route("/api/v1/group/{id}/member-search", get(member_search_stub))
+            .route("/api/v1/group/{id}/sync", post(sync_stub))
             .route("/api/v1/list/{id}/share/role", post(share_role_stub))
             .route(
                 "/api/v1/list/{id}/share/role/{role_id}",
@@ -2710,6 +2764,23 @@ mod group_role_route_tests {
         let (status, body) = call("GET", "/api/v1/group/7/member-search?q=bo%20b", None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "search:7:[bo b]");
+    }
+
+    /// `sync` is a static segment on the same prefix as `{id}/invites` and
+    /// `{id}/roles`, and its response is the shape the page polls on.
+    #[tokio::test]
+    async fn sync_answers_on_the_group_prefix_with_a_status_and_a_timestamp() {
+        let (status, body) = call("POST", "/api/v1/group/7/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"status":"Ran","last_synced_at":null}"#);
+
+        let (status, body) = call("POST", "/api/v1/group/8/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"status":"RecentlySynced","last_synced_at":null}"#);
+
+        // It is a POST: a GET must not silently do nothing and look fine.
+        let (status, _) = call("GET", "/api/v1/group/7/sync", None).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -3286,6 +3357,7 @@ fn api_router() -> Router<WebState> {
             "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/group/{id}/sync", post(sync_group))
         .route("/api/v1/group/{id}/invites", get(get_group_invites))
         .route(
             "/api/v1/group/{id}/invite/create",
