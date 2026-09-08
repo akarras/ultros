@@ -73,14 +73,15 @@ use ultros_db::ActiveValue;
 use ultros_db::common_type_conversions::GroupRoleReturn;
 use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
+use ultros_list_doc::{Quality, RowKey};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use crate::character_claim::CharacterClaimService;
+use crate::lists::{Actor, ListSync, Origin};
 
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
-use crate::alerts::price_alert_tracker::resolve_item_name;
 use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
@@ -168,35 +169,6 @@ async fn record_list_activity(
         EventType::added(ListEventData::Activity(activity.clone())),
     );
     Ok(activity)
-}
-
-fn item_change_payload(
-    before: &ultros_db::entity::list_item::Model,
-    after: &ultros_db::entity::list_item::Model,
-) -> serde_json::Value {
-    let mut changes = serde_json::Map::new();
-    if before.hq != after.hq {
-        changes.insert("hq".to_string(), serde_json::json!([before.hq, after.hq]));
-    }
-    if before.quantity != after.quantity {
-        changes.insert(
-            "quantity".to_string(),
-            serde_json::json!([before.quantity, after.quantity]),
-        );
-    }
-    if before.acquired != after.acquired {
-        changes.insert(
-            "acquired".to_string(),
-            serde_json::json!([before.acquired, after.acquired]),
-        );
-    }
-    if before.target_price != after.target_price {
-        changes.insert(
-            "target_price".to_string(),
-            serde_json::json!([before.target_price, after.target_price]),
-        );
-    }
-    serde_json::Value::Object(changes)
 }
 
 async fn restore_analyzer_view(
@@ -1666,195 +1638,110 @@ pub(crate) async fn create_list(
 }
 
 pub(crate) async fn edit_list(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(list): Json<List>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db
-        .update_list(list.id, user.id as i64, |ulist| {
-            use ultros_api_types::world_helper::AnySelector;
-            let (datacenter_id, region_id, world_id) = match list.wdr_filter {
-                AnySelector::Datacenter(dc) => (Some(dc), None, None),
-                AnySelector::Region(region) => (None, Some(region), None),
-                AnySelector::World(world) => (None, None, Some(world)),
-            };
-            ulist.datacenter_id = ActiveValue::Set(datacenter_id);
-            ulist.region_id = ActiveValue::Set(region_id);
-            ulist.world_id = ActiveValue::Set(world_id);
-            ulist.name = ActiveValue::Set(list.name);
+    let actor = Actor::from_user(&user, Origin::Rest);
+    let name = list.name.clone();
+    let scope = list.wdr_filter;
+    list_sync
+        .edit_as_server(list.id, &actor, move |doc| {
+            doc.rename(&name)?;
+            doc.set_scope(scope)
         })
         .await?;
-    send_list_event(
-        &senders,
-        EventType::updated(ListEventData::List(List::try_from(list.clone())?)),
-    );
-    record_list_activity(
-        &db,
-        &senders,
-        list.id,
-        &user,
-        ListActivityKind::ListUpdated,
-        None,
-        None,
-        serde_json::json!({ "name": list.name.clone() }),
-        format!("{} updated list {}", user.name, list.name),
-    )
-    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn post_item_to_list(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     perm: crate::web::list_permission::RequireListPermission<
         { crate::web::list_permission::WRITE },
     >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
-    let ListItem {
-        item_id,
-        hq,
-        quantity,
-        acquired,
-        ..
-    } = item;
-    let item = db
-        .add_item_to_list(&list, perm.user_id, item_id, hq, quantity, acquired)
+    let actor = Actor::from_user(&user, Origin::Rest);
+    let key = RowKey::new(item.item_id, item.hq);
+    let need = item.quantity.unwrap_or(1) as i64;
+    let acquired = item.acquired.unwrap_or(0) as i64;
+    let target = item.target_price;
+    list_sync
+        .edit_as_server(perm.list_id, &actor, move |doc| {
+            doc.add_row(key, need, target)?;
+            if acquired != 0 {
+                doc.add_acquired(&key, acquired)?;
+            }
+            Ok(())
+        })
         .await?;
-    send_list_event(
-        &senders,
-        EventType::added(ListEventData::ListItem(item.clone().into())),
-    );
-    let item_name = resolve_item_name(item.item_id);
-    record_list_activity(
-        &db,
-        &senders,
-        item.list_id,
-        &user,
-        ListActivityKind::ItemAdded,
-        Some(item.id),
-        Some(item.item_id),
-        serde_json::json!({
-            "quantity": item.quantity,
-            "acquired": item.acquired,
-            "hq": item.hq,
-            "target_price": item.target_price,
-        }),
-        format!("{} added {}", user.name.clone(), item_name),
-    )
-    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn post_items_to_list(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
 ) -> Result<Json<()>, ApiError> {
-    let (list, _) = db.get_list(id, user.id as i64).await?;
-
-    let _list = db
-        .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
+    let actor = Actor::from_user(&user, Origin::Rest);
+    list_sync
+        .edit_as_server(id, &actor, move |doc| {
+            for item in items {
+                let key = RowKey::new(item.item_id, item.hq);
+                doc.add_row(key, item.quantity.unwrap_or(1) as i64, item.target_price)?;
+                let acquired = item.acquired.unwrap_or(0) as i64;
+                if acquired != 0 {
+                    doc.add_acquired(&key, acquired)?;
+                }
+            }
+            Ok(())
+        })
         .await?;
-    // For bulk add, we might want to send a "refresh" event or all items.
-    // Given the current structure, maybe just sending a list update is enough if we want to be simple,
-    // but the task says synchronize buying.
-    // For now, let's just trigger a refetch by sending the List update.
-    send_list_event(
-        &senders,
-        EventType::updated(ListEventData::List(List::try_from(list.clone())?)),
-    );
-    record_list_activity(
-        &db,
-        &senders,
-        list.id,
-        &user,
-        ListActivityKind::ItemAdded,
-        None,
-        None,
-        serde_json::json!({ "bulk": true }),
-        format!("{} imported items into {}", user.name, list.name),
-    )
-    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn edit_list_item(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
     let before = db.get_list_item(item.id, user.id as i64).await?;
-    let item = item.into();
-    let item = db.update_list_item(item, user.id as i64).await?;
-    send_list_event(
-        &senders,
-        EventType::updated(ListEventData::ListItem(item.clone().into())),
-    );
-    let item_name = resolve_item_name(item.item_id);
-    let before_acquired = before.acquired.unwrap_or(0);
-    let after_acquired = item.acquired.unwrap_or(0);
-    let quantity = item.quantity.unwrap_or(1);
-    let kind = if after_acquired >= quantity && before_acquired < quantity {
-        ListActivityKind::ItemAcquired
-    } else {
-        ListActivityKind::ItemUpdated
-    };
-    let message = if kind == ListActivityKind::ItemAcquired {
-        format!("{} got {}", user.name, item_name)
-    } else {
-        format!("{} updated {}", user.name, item_name)
-    };
-    record_list_activity(
-        &db,
-        &senders,
-        item.list_id,
-        &user,
-        kind,
-        Some(item.id),
-        Some(item.item_id),
-        item_change_payload(&before, &item),
-        message,
-    )
-    .await?;
+    let actor = Actor::from_user(&user, Origin::Rest);
+    let key = RowKey::new(before.item_id, before.hq);
+    let quality = Quality::from(item.hq);
+    let need = item.quantity.unwrap_or(1) as i64;
+    let acquired = item.acquired.unwrap_or(0) as i64;
+    let target = item.target_price;
+    list_sync
+        .edit_as_server(before.list_id, &actor, move |doc| {
+            let key = if quality != key.quality {
+                doc.set_quality(&key, quality)?
+            } else {
+                key
+            };
+            doc.set_need(&key, need)?;
+            doc.set_acquired(&key, acquired)?;
+            doc.set_target(&key, target)
+        })
+        .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_list_item(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
-    let item = db.remove_item_from_list(user.id as i64, id).await?;
-    send_list_event(
-        &senders,
-        EventType::removed(ListEventData::ListItem(item.clone().into())),
-    );
-    let item_name = resolve_item_name(item.item_id);
-    record_list_activity(
-        &db,
-        &senders,
-        item.list_id,
-        &user,
-        ListActivityKind::ItemRemoved,
-        Some(item.id),
-        Some(item.item_id),
-        serde_json::json!({
-            "quantity": item.quantity,
-            "acquired": item.acquired,
-            "hq": item.hq,
-            "target_price": item.target_price,
-        }),
-        format!("{} removed {}", user.name, item_name),
-    )
-    .await?;
+    let item = db.get_list_item(id, user.id as i64).await?;
+    let actor = Actor::from_user(&user, Origin::Rest);
+    let key = RowKey::new(item.item_id, item.hq);
+    list_sync
+        .edit_as_server(item.list_id, &actor, move |doc| doc.remove_row(&key))
+        .await?;
     Ok(Json(()))
 }
 
@@ -1866,70 +1753,59 @@ pub(crate) struct BulkHqUpdate {
 
 pub(crate) async fn bulk_edit_list_items_hq(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(data): Json<BulkHqUpdate>,
 ) -> Result<Json<()>, ApiError> {
-    let list_ids = db
-        .set_list_items_hq(user.id as i64, &data.ids, data.hq)
-        .await?;
-
-    for list_id in list_ids {
-        if let Ok((list, _)) = db.get_list(list_id, user.id as i64).await {
-            send_list_event(
-                &senders,
-                EventType::updated(ListEventData::List(List::try_from(list)?)),
-            );
-            let _ = record_list_activity(
-                &db,
-                &senders,
-                list_id,
-                &user,
-                ListActivityKind::ItemUpdated,
-                None,
-                None,
-                serde_json::json!({ "bulk_hq": data.hq, "count": data.ids.len() }),
-                format!("{} bulk updated HQ for {} items", user.name, data.ids.len()),
-            )
-            .await;
-        }
+    let actor = Actor::from_user(&user, Origin::Rest);
+    let quality = Quality::from(data.hq);
+    let mut by_list: HashMap<i32, Vec<RowKey>> = HashMap::new();
+    for id in data.ids {
+        let item = db.get_list_item(id, user.id as i64).await?;
+        by_list
+            .entry(item.list_id)
+            .or_default()
+            .push(RowKey::new(item.item_id, item.hq));
     }
-
+    for (list_id, keys) in by_list {
+        list_sync
+            .edit_as_server(list_id, &actor, move |doc| {
+                for key in keys {
+                    if key.quality != quality {
+                        doc.set_quality(&key, quality)?;
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+    }
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_multiple_list_items(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<()>, ApiError> {
-    let deleted_items = try_join_all(
-        ids.into_iter()
-            .map(|id| db.remove_item_from_list(user.id as i64, id)),
-    )
-    .await?;
-    let deleted_count = deleted_items.len();
-    let list_id = deleted_items.first().map(|item| item.list_id);
-    for item in deleted_items {
-        send_list_event(
-            &senders,
-            EventType::removed(ListEventData::ListItem(item.into())),
-        );
+    let actor = Actor::from_user(&user, Origin::Rest);
+    let mut by_list: HashMap<i32, Vec<RowKey>> = HashMap::new();
+    for id in ids {
+        let item = db.get_list_item(id, user.id as i64).await?;
+        by_list
+            .entry(item.list_id)
+            .or_default()
+            .push(RowKey::new(item.item_id, item.hq));
     }
-    if let Some(list_id) = list_id {
-        record_list_activity(
-            &db,
-            &senders,
-            list_id,
-            &user,
-            ListActivityKind::ItemsRemoved,
-            None,
-            None,
-            serde_json::json!({ "count": deleted_count }),
-            format!("{} removed {deleted_count} items", user.name),
-        )
-        .await?;
+    for (list_id, keys) in by_list {
+        list_sync
+            .edit_as_server(list_id, &actor, move |doc| {
+                for key in keys {
+                    doc.remove_row(&key)?;
+                }
+                Ok(())
+            })
+            .await?;
     }
     Ok(Json(()))
 }

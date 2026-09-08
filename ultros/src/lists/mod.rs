@@ -1,14 +1,12 @@
 //! Lists: the local-first document's server side (spec section 4).
 //!
-//! `ListSync` is wired into `WebState` and `discord::Data` by this task, but
-//! nothing calls its methods yet — the REST, websocket and bot handlers that
-//! construct an `Actor` and drive `apply_update`/`edit_as_server` land in
-//! Task 5/6 of this plan. Until then the whole module tree is unreachable
-//! from any live call graph, which `dead_code` cannot tell apart from code
-//! that is simply unused.
-#![allow(dead_code, unused_imports)]
+//! `ListSync` is wired into `WebState` and `discord::Data`, and the REST and
+//! bot writers (Task 5 of this plan) now drive `edit_as_server` through it.
+//! `Origin::Socket`, `subscribe_payload` and `apply_update` still have no
+//! caller — those land with the websocket handler in Task 6 — so they keep
+//! their own narrow `#[allow(dead_code)]` below instead of a file-level one.
 
 pub(crate) mod activity;
 pub(crate) mod sync;
 
-pub(crate) use sync::{Actor, Applied, ListSync, Origin};
+pub(crate) use sync::{Actor, ListSync, Origin};

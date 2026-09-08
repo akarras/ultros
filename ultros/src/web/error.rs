@@ -259,6 +259,11 @@ impl From<ultros_db::list_doc::ListDocError> for ApiError {
                     "update depends on history this server does not have; resync from a snapshot",
                 )))
             }
+            // Keep the typed `DbErr` on the `DbError` variant instead of
+            // stringifying it through `anyhow`, so the `#[source]` chain and
+            // GlitchTip grouping survive the same way every other DB failure
+            // in this file does.
+            ListDocError::Db(e) => ApiError::DbError(e),
             other => ApiError::from(anyhow::anyhow!("{other}")),
         }
     }

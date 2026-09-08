@@ -236,4 +236,23 @@ mod tests {
         );
         assert_eq!(entries[0].message, "Aaron imported 11 items");
     }
+
+    /// Exactly `BULK_THRESHOLD` rows of one kind must NOT collapse: the
+    /// threshold is a strict `>`, not `>=`. Pins that boundary.
+    #[test]
+    fn exactly_bulk_threshold_added_rows_do_not_collapse() {
+        let changes: Vec<ProjectedChange> = (0..BULK_THRESHOLD as i32)
+            .map(|i| ProjectedChange {
+                change: RowChange::Added(snapshot(i, 1, 0)),
+                row: row(100 + i, i),
+            })
+            .collect();
+        let entries = entries_for("Aaron", &changes, None, |_| "x".into());
+        assert_eq!(entries.len(), BULK_THRESHOLD, "no collapse at the boundary");
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.kind == ListActivityKind::ItemAdded && e.list_item_id.is_some())
+        );
+    }
 }
