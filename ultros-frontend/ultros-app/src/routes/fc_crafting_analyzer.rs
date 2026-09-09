@@ -1,9 +1,11 @@
+use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
     signals::{PriceLookup, SignalView},
 };
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
     compute_ingredient_cost, vendor_price_map,
@@ -12,6 +14,7 @@ use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap}
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
+use crate::global_state::use_world_helper;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::query_signal;
@@ -37,14 +40,21 @@ use crate::{
     global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
 };
 use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_i18n::I18nContext;
 use leptos_meta::{Meta, Title};
-use leptos_router::hooks::use_params_map;
+use leptos_router::{
+    NavigateOptions,
+    hooks::{use_location, use_navigate, use_params_map},
+    location::Url,
+};
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
+    world::World,
+    world_helper::WorldHelper,
 };
 use xiv_gen::{
     CompanyCraftPartId, CompanyCraftProcessId, CompanyCraftSequence, CompanyCraftSupplyItemId,
@@ -905,6 +915,19 @@ fn FCCraftingAnalyzerTable(
         }
 }
 
+// Resolve synchronously on both SSR and hydration. A valid route always wins
+// over the cookie, including after browser history navigation.
+fn selected_fc_world(
+    worlds: &WorldHelper,
+    route: Option<&str>,
+    home: Option<World>,
+) -> Option<World> {
+    route
+        .and_then(|name| worlds.lookup_world_by_name(&Url::unescape(name)))
+        .and_then(|world| world.as_world().cloned())
+        .or(home)
+}
+
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
@@ -915,19 +938,59 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
-    let region = use_region_for_world(move || params.with(|p| p.get("world").clone()));
-
-    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
-        get_cheapest_listings(&region).await
+    let worlds = use_world_helper().ok();
+    let selected_world = Memo::new(move |_| {
+        worlds.as_ref().and_then(|worlds| {
+            params.with(|p| selected_fc_world(worlds, p.get_str("world"), home_world.get()))
+        })
+    });
+    let location = use_location();
+    let query = use_query_map_or_default();
+    let navigate = use_navigate();
+    let navigate_to_world = move |world: World, replace: bool| {
+        if let Some(url) = world_nav_url(
+            "/fc-crafting-analyzer",
+            &world.name,
+            &location.pathname.get_untracked(),
+            &query.get_untracked(),
+        ) {
+            navigate(
+                &format!("{url}{}", location.hash.get_untracked()),
+                NavigateOptions {
+                    replace,
+                    scroll: false,
+                    ..Default::default()
+                },
+            );
+        }
+    };
+    let fallback_navigation = navigate_to_world.clone();
+    Effect::new(move |_| {
+        // Canonicalize a cookie fallback without adding a history entry. The
+        // picker itself pushes navigation; selection is always derived from it.
+        if let Some(world) = selected_world.get() {
+            let navigate = fallback_navigation.clone();
+            // The bare and world-qualified paths mount separate route owners.
+            // Let hydration's delayed storage reads finish before replacing the
+            // first owner, and discard a callback if selection changed meanwhile.
+            request_animation_frame(move || {
+                if selected_world.try_get_untracked().flatten().as_ref() == Some(&world) {
+                    navigate(world, true);
+                }
+            });
+        }
+    });
+    let set_selected_world = SignalSetter::map(move |world: Option<World>| {
+        if let Some(world) = world {
+            navigate_to_world(world, false);
+        }
     });
 
-    let (selected_world, set_selected_world) = signal(None);
-    Effect::new(move |_| {
-        if selected_world.get_untracked().is_none()
-            && let Some(home) = home_world.get()
-        {
-            set_selected_world(Some(home));
-        }
+    // Ingredients and shared sale statistics deliberately remain regional.
+    // Only the native recent-sales estimate is scoped to the selected world.
+    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
+    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
+        get_cheapest_listings(&region).await
     });
 
     let recent_sales = ArcResource::new(selected_world, move |world| async move {
@@ -971,13 +1034,16 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                                 .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
                         }}
                     </Suspense>
-                    <Show when=move || selected_world.get().is_some()>
+                    <div data-testid="fc-world-picker">
                         <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, fc_crafting_analyzer_select_world)}</label>
                         <WorldOnlyPicker
                             current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
+                            set_current_world=set_selected_world
                         />
-                    </Show>
+                    </div>
+                    <span class="text-sm text-[color:var(--color-text-muted)]" data-testid="fc-market-scope">
+                        {t!(i18n, market_scope)} ": " {move || region.get()}
+                    </span>
                 </ToolHeader>
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -1023,6 +1089,93 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn world_fixture() -> WorldHelper {
+        use ultros_api_types::world::{Datacenter, Region, WorldData};
+        WorldHelper::new(WorldData {
+            regions: [
+                (1, "North-America", vec!["Gilgamesh", "Goblin"]),
+                (2, "Europe", vec!["Cerberus"]),
+                (3, "中国", vec!["陆行鸟"]),
+            ]
+            .into_iter()
+            .map(|(id, name, names)| Region {
+                id,
+                name: name.into(),
+                datacenters: vec![Datacenter {
+                    id,
+                    name: format!("dc-{id}"),
+                    region_id: id,
+                    worlds: names
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, name)| World {
+                            id: id * 10 + index as i32,
+                            name: name.into(),
+                            datacenter_id: id,
+                        })
+                        .collect(),
+                }],
+            })
+            .collect(),
+        })
+    }
+
+    #[test]
+    fn route_wins_over_cookie_and_history_restores_world_and_region() {
+        use ultros_api_types::world_helper::AnyResult;
+        let worlds = world_fixture();
+        let home = worlds
+            .lookup_world_by_name("Cerberus")
+            .unwrap()
+            .as_world()
+            .cloned();
+        // Same-region switch, cross-region switch, Back, Forward.
+        for (route, region) in [
+            ("Gilgamesh", "North-America"),
+            ("Goblin", "North-America"),
+            ("Cerberus", "Europe"),
+            ("Goblin", "North-America"),
+            ("Cerberus", "Europe"),
+        ] {
+            let selected = selected_fc_world(&worlds, Some(route), home.clone()).unwrap();
+            assert_eq!(
+                selected.name, route,
+                "recent sales must follow the route, not the cookie"
+            );
+            assert_eq!(
+                worlds.get_region(AnyResult::World(&selected)).name,
+                region,
+                "listings and shared statistics keep the selected world's regional scope"
+            );
+        }
+    }
+
+    #[test]
+    fn cookie_is_only_a_fallback_and_encoded_worlds_resolve() {
+        let worlds = world_fixture();
+        let home = worlds
+            .lookup_world_by_name("Goblin")
+            .unwrap()
+            .as_world()
+            .cloned();
+        for route in [None, Some("unknown"), Some("Europe")] {
+            assert_eq!(selected_fc_world(&worlds, route, home.clone()), home);
+        }
+        assert_eq!(selected_fc_world(&worlds, None, None), None);
+        assert_eq!(
+            selected_fc_world(&worlds, Some("%E9%99%86%E8%A1%8C%E9%B8%9F"), home)
+                .unwrap()
+                .name,
+            "陆行鸟"
+        );
+        assert_eq!(
+            selected_fc_world(&worlds, Some("Gilgamesh"), None)
+                .unwrap()
+                .name,
+            "Gilgamesh"
+        );
+    }
 
     /// A preset is applied by rebuilding the URL from its query, so a stray
     /// separator or an empty pair would ship straight into the address bar.
