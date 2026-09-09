@@ -44,6 +44,7 @@ mod m20260907_000001_group_roles;
 mod m20260907_000001_list_doc;
 mod m20260908_000001_group_role_member_added_at;
 mod m20260908_000002_group_sync_revision;
+mod m20260908_000003_market_sweep;
 
 pub struct Migrator;
 
@@ -97,6 +98,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260908_000001_group_role_member_added_at::Migration),
             Box::new(m20260908_000002_group_sync_revision::Migration),
             Box::new(m20260907_000001_list_doc::Migration),
+            Box::new(m20260908_000003_market_sweep::Migration),
         ]
     }
 }

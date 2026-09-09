@@ -11245,6 +11245,7 @@ dependencies = [
  "ultros-grid-core",
  "ultros-i18n",
  "ultros-ui",
+ "ultros-ui-grid",
  "wasm-bindgen",
  "web-sys",
 ]

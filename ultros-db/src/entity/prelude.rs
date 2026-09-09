@@ -26,6 +26,8 @@ pub use super::list_shared_group::Entity as ListSharedGroup;
 pub use super::list_shared_role::Entity as ListSharedRole;
 pub use super::list_shared_user::Entity as ListSharedUser;
 pub use super::listing_last_updated::Entity as ListingLastUpdated;
+pub use super::market_sweep::Entity as MarketSweep;
+pub use super::market_sweep_world::Entity as MarketSweepWorld;
 pub use super::materia_listing::Entity as MateriaListing;
 pub use super::notification_endpoint::Entity as NotificationEndpoint;
 pub use super::owned_ffxiv_character::Entity as OwnedFfxivCharacter;

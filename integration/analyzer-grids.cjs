@@ -90,14 +90,19 @@ async function main(){
       const menu=`.virtual-grid-heading[data-column="${column}"]`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));
       await page.click(menu,{button:'right'});
-      const form=`.grid-column-filter[data-filter="${filter}"]`;
+      const registered=tool!=='recipe-analyzer';
+      const form=registered?`.grid-column-filter[data-metric-filter="${column}"]`:`.grid-column-filter[data-filter="${filter}"]`;
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';
-      if(filter==='scrip')await page.select(`${form} select`,selected);
+      if(filter==='scrip')await page.select(`${form} select[aria-label="Value"]`,selected);
       else {await page.click(`${form} input`,{count:3});await page.type(`${form} input`,selected);}
-      const display=filter==='scrip'?await page.$eval(form+' select',e=>e.selectedOptions[0].textContent):selected;
+      const display=filter==='scrip'?await page.$eval(form+' select[aria-label="Value"]',e=>e.selectedOptions[0].textContent):selected;
       await page.click(`${form} button[type="submit"]`);
-      await page.waitForFunction((filter,value)=>new URL(location.href).searchParams.get(filter)===value,{},filter,selected);
+      await page.waitForFunction((filter,column,value,registered)=>{
+        const query=new URL(location.href).searchParams;
+        return (registered?JSON.parse(query.get('gf')||'{}')[column]?.value:query.get(filter))===value;
+      },{},filter,column,selected,registered);
+      if(registered)assert.equal(new URL(page.url()).searchParams.has(filter),false,'edits retire the legacy alias');
       await page.waitForSelector(`.virtual-grid-heading[data-column="${column}"].grid-filter-active`);
       await page.waitForFunction(display=>[...document.querySelectorAll('.filter-chip')].some(e=>e.textContent.includes(display)),{},display);
       await page.keyboard.press('Escape');
@@ -109,7 +114,8 @@ async function main(){
       // A bare return is restored by HTTP before the SSR document is generated.
       const response=await goto(page,`${route}?lang=ja${world}`);
       assert(response.request().redirectChain().some(r=>r.response()?.status()===307),'bare entry is restored before SSR');
-      assert.equal(new URL(page.url()).searchParams.get(filter),selected);
+      const restored=new URL(page.url()).searchParams;
+      assert.equal(registered?JSON.parse(restored.get('gf')||'{}')[column]?.value:restored.get(filter),selected);
       assert.equal(new URL(page.url()).searchParams.get('lang'),'ja');
       assert.equal(new URL(page.url()).searchParams.get('l'),'2~~item.8c');
       // Explicit shared links override this device's last view.

@@ -14,6 +14,12 @@ pub fn vendor_price_map() -> &'static HashMap<i32, i32> {
         let mut map = HashMap::new();
         for items in data.gil_shop_items.values() {
             for shop_item in items {
+                // Seasonal rows are not a cost floor: an ingredient whose only
+                // vendor is a festival stall cannot be bought to make the
+                // recipe today, so pricing against it understates the craft.
+                if !shop_item.availability.is_obtainable() {
+                    continue;
+                }
                 if let Some(item) = data.items.get(&xiv_gen::ItemId(shop_item.item))
                     && item.price_mid > 0
                 {

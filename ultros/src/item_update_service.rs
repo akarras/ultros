@@ -7,15 +7,17 @@ use std::{
     time::Duration,
 };
 
+use chrono::Utc;
 use futures::{StreamExt, stream};
+use sea_orm::prelude::DateTimeWithTimeZone;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument, warn};
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_db::{
-    UltrosDb,
+    SeaDbErr, UltrosDb,
     common::partial_diff_iterator::{DiffItem, PartialDiffIterator},
-    entity::{listing_last_updated::Model, world},
+    entity::{listing_last_updated::Model, market_sweep, market_sweep_world, world},
     listings::ListingSummary,
     world_data::world_cache::WorldCache,
 };
@@ -106,27 +108,96 @@ fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
 /// load on Universalis for zero extra coverage.
 ///
 /// `try_begin_full_sweep` claims it from the saturation branch's else-arm
-/// in `check_for_missed_items_on_world`; Task 6 adds a second caller from
-/// `/rescan_market`.
+/// in `check_for_missed_items_on_world` and from `/rescan_market`.
 #[derive(Default)]
 pub(crate) struct SweepLock(AtomicBool);
 
+/// Stable Postgres advisory-lock id electing the one replica allowed to run a
+/// full sweep. Distinct from `ROLLUP_SCHEDULER_LOCK_KEY` in `main.rs`; the two
+/// leases are unrelated and a replica may hold either, both, or neither.
+const FULL_SWEEP_LOCK_KEY: i64 = 0x53_57_45_45_50;
+
 /// Held for the duration of a full sweep; frees the lock on drop (including
 /// panics, so a crashed sweep never wedges the command).
-pub(crate) struct SweepLockGuard(Arc<SweepLock>);
+pub(crate) struct SweepLockGuard {
+    lock: Arc<SweepLock>,
+    /// Connection holding [`FULL_SWEEP_LOCK_KEY`]. `None` for the in-process
+    /// claim on its own, which is all the unit tests and a database-less
+    /// caller need.
+    lease: Option<sea_orm::sqlx::pool::PoolConnection<sea_orm::sqlx::Postgres>>,
+}
 
 impl SweepLock {
     pub(crate) fn try_claim(self: &Arc<Self>) -> Option<SweepLockGuard> {
         self.0
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
-            .map(|_| SweepLockGuard(self.clone()))
+            .map(|_| SweepLockGuard {
+                lock: self.clone(),
+                lease: None,
+            })
     }
 }
 
 impl Drop for SweepLockGuard {
     fn drop(&mut self) {
-        self.0.0.store(false, Ordering::SeqCst);
+        self.lock.0.store(false, Ordering::SeqCst);
+        if let Some(mut connection) = self.lease.take() {
+            // Never return a possibly locked session to the pool, including
+            // cancellation while the asynchronous unlock is in flight.
+            connection.close_on_drop();
+            // A session advisory lock outlives the connection's return to the
+            // pool, and `Drop` cannot await, so the unlock is handed to a
+            // task. A process that dies before it runs is still fine:
+            // Postgres releases the lock along with the session.
+            tokio::spawn(async move {
+                if let Err(error) =
+                    sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+                        .bind(FULL_SWEEP_LOCK_KEY)
+                        .fetch_one(&mut *connection)
+                        .await
+                {
+                    warn!(?error, "could not release the full sweep advisory lock");
+                }
+            });
+        }
+    }
+}
+
+impl SweepLockGuard {
+    /// Stop polling the worker as soon as its session lease is lost. The
+    /// worker uses other pool connections, so those recovering cannot be
+    /// mistaken for continued ownership of this dedicated session.
+    pub(crate) async fn run<F: std::future::Future>(&mut self, work: F) -> Option<F::Output> {
+        let Some(connection) = self.lease.as_mut() else {
+            return Some(work.await);
+        };
+        let lost = async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                let alive = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    sea_orm::sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&mut **connection),
+                )
+                .await;
+                if !matches!(alive, Ok(Ok(_))) {
+                    warn!("lost full market sweep lease; stopping the worker");
+                    return;
+                }
+            }
+        };
+        run_until_lease_lost(work, lost).await
+    }
+}
+
+async fn run_until_lease_lost<F: std::future::Future>(
+    work: F,
+    lost: impl std::future::Future<Output = ()>,
+) -> Option<F::Output> {
+    tokio::select! {
+        biased;
+        _ = lost => None,
+        result = work => Some(result),
     }
 }
 
@@ -150,6 +221,10 @@ pub(crate) struct UpdateService {
     pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
     /// Serializes full sweeps — see [`SweepLock`].
     pub(crate) sweep_lock: Arc<SweepLock>,
+    /// Fires on shutdown. A full sweep runs for hours and is routinely cut
+    /// short by a deploy; watching this lets it stop on a chunk boundary with
+    /// its cursor written, rather than being killed mid-write.
+    pub(crate) shutdown: CancellationToken,
 }
 
 /// True when `error` is a Universalis `404`, i.e. it does not know the entity
@@ -259,6 +334,25 @@ pub(crate) struct WorldSweepSummary {
     duration: std::time::Duration,
 }
 
+impl WorldSweepSummary {
+    /// Reads a world's totals back out of its persisted progress row. A sweep
+    /// spanning a restart reports through this for every world, so the closing
+    /// numbers cover the whole run rather than the process that finished it.
+    fn from_progress(world_name: &str, row: &market_sweep_world::Model) -> Self {
+        let count = |value: i64| u64::try_from(value).unwrap_or_default();
+        Self {
+            world_name: world_name.to_string(),
+            tally: CatchupTally {
+                changed: count(row.changed),
+                noop: count(row.noop),
+                failed: count(row.failed),
+                chunks_failed: count(row.chunks_failed),
+            },
+            duration: std::time::Duration::from_millis(count(row.elapsed_ms)),
+        }
+    }
+}
+
 /// Fired after each world completes during [`UpdateService::do_full_world_sweep`]
 /// so a long-running sweep can report interim status. `/rescan_market`
 /// (`admin.rs`) forwards these through a throttled channel into a Discord
@@ -283,23 +377,42 @@ impl SweepProgress {
 /// summary safely under Discord's 2000-character message cap.
 const REPORT_MAX_LISTED_WORLDS: usize = 10;
 
-/// Result of a completed full sweep across every world, returned by
+/// Result of a full sweep across every world, returned by
 /// [`UpdateService::do_full_world_sweep`].
 pub(crate) struct SweepReport {
     worlds: Vec<WorldSweepSummary>,
+    worlds_total: usize,
+    /// Wall-clock since the sweep was *started*, which for a resumed sweep
+    /// spans every process that has worked on it.
     duration: std::time::Duration,
+    /// True when shutdown stopped the sweep partway. Nothing was lost — the
+    /// cursor is on disk and the next start resumes from it.
+    interrupted: bool,
 }
 
 impl SweepReport {
+    /// True when the sweep ran to the end and no longer needs resuming.
+    pub(crate) fn is_complete(&self) -> bool {
+        !self.interrupted
+    }
+
     pub(crate) fn summary_text(&self) -> String {
         let changed: u64 = self.worlds.iter().map(|w| w.tally.changed).sum();
         let failed: u64 = self.worlds.iter().map(|w| w.tally.failed).sum();
         let chunks_failed: u64 = self.worlds.iter().map(|w| w.tally.chunks_failed).sum();
         let minutes = self.duration.as_secs() / 60;
-        let mut text = format!(
-            "Full market sweep finished: {} worlds in {minutes} min — {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped.",
-            self.worlds.len()
-        );
+        let mut text = if self.interrupted {
+            format!(
+                "Full market sweep paused at {}/{} worlds after {minutes} min — the server is restarting and will pick it up where it left off. {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped so far.",
+                self.worlds.len(),
+                self.worlds_total
+            )
+        } else {
+            format!(
+                "Full market sweep finished: {} worlds in {minutes} min — {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped.",
+                self.worlds.len()
+            )
+        };
         // Flags the single slowest world so an operator can spot one world
         // dragging out the whole sweep (e.g. Universalis rate-limiting it
         // harder than the rest) without having to dig through server logs.
@@ -328,6 +441,135 @@ impl SweepReport {
         }
         text
     }
+}
+
+/// A full sweep's durable identity: the row it records progress against, plus
+/// whatever an earlier process already recorded for it.
+///
+/// Obtained from [`UpdateService::begin_or_resume_sweep`] (the `/rescan_market`
+/// path) or [`UpdateService::resume_sweep`] (startup), and handed to
+/// [`UpdateService::do_full_world_sweep`].
+pub(crate) struct SweepRun {
+    sweep: market_sweep::Model,
+    /// Per-world progress rows already on disk, keyed by world id.
+    progress: HashMap<i32, market_sweep_world::Model>,
+    /// True when this picked up a sweep an earlier process left unfinished
+    /// rather than starting a new one.
+    pub(crate) resumed: bool,
+}
+
+impl SweepRun {
+    /// Channel the sweep should report to, from the `/rescan_market` that
+    /// started it — which may have been in a process that no longer exists.
+    pub(crate) fn discord_channel_id(&self) -> Option<i64> {
+        self.sweep.discord_channel_id
+    }
+
+    /// Worlds already swept before this process picked the sweep up.
+    pub(crate) fn worlds_done(&self) -> usize {
+        self.progress
+            .values()
+            .filter(|world| world.completed_at.is_some())
+            .count()
+    }
+}
+
+/// A world's slot in the persisted sweep, written after every chunk so an
+/// interrupted sweep loses at most one chunk of work.
+///
+/// `prior` is the row as this process found it; the tallies handed to
+/// [`WorldCheckpoint::record`] are only what *this* process has recovered, and
+/// are added on top. Keeping the two apart is what lets `CatchupTally::record`
+/// report honest per-process metrics while the persisted row keeps growing
+/// across restarts.
+struct WorldCheckpoint<'a> {
+    db: &'a UltrosDb,
+    prior: market_sweep_world::Model,
+    started: Instant,
+}
+
+impl WorldCheckpoint<'_> {
+    /// Persists the resume point mid-world. A failed write costs resume
+    /// precision and nothing else — the next process simply restarts this
+    /// world further back — so it is logged rather than aborting a multi-hour
+    /// sweep. The world's *completion* is stamped by `do_full_world_sweep`,
+    /// which is the only place that knows the whole world was walked.
+    async fn record(&self, next_item_id: i32, run: &CatchupTally) {
+        let row = merged_progress(&self.prior, run, next_item_id, self.started.elapsed(), None);
+        if let Err(error) = self.db.record_market_sweep_progress(&row).await {
+            warn!(
+                ?error,
+                world_id = row.world_id,
+                "could not record market sweep progress; resume will restart this world earlier"
+            );
+        }
+    }
+}
+
+/// A world's progress row before any process has touched it.
+fn new_world_progress(sweep_id: i32, world_id: i32) -> market_sweep_world::Model {
+    market_sweep_world::Model {
+        sweep_id,
+        world_id,
+        next_item_id: 0,
+        completed_at: None,
+        changed: 0,
+        noop: 0,
+        failed: 0,
+        chunks_failed: 0,
+        elapsed_ms: 0,
+    }
+}
+
+/// Folds one process's share of a world (`run`, `elapsed`) into the row a
+/// previous process left behind, producing the row to persist.
+fn merged_progress(
+    prior: &market_sweep_world::Model,
+    run: &CatchupTally,
+    next_item_id: i32,
+    elapsed: std::time::Duration,
+    completed_at: Option<DateTimeWithTimeZone>,
+) -> market_sweep_world::Model {
+    let add = |before: i64, during: u64| before.saturating_add(during as i64);
+    market_sweep_world::Model {
+        sweep_id: prior.sweep_id,
+        world_id: prior.world_id,
+        next_item_id,
+        completed_at,
+        changed: add(prior.changed, run.changed),
+        noop: add(prior.noop, run.noop),
+        failed: add(prior.failed, run.failed),
+        chunks_failed: add(prior.chunks_failed, run.chunks_failed),
+        elapsed_ms: add(prior.elapsed_ms, elapsed.as_millis() as u64),
+    }
+}
+
+/// Wall-clock since a sweep was started, which for a resumed sweep spans every
+/// process that has worked on it. Clocks that ran backwards read as zero.
+fn elapsed_since(started_at: DateTimeWithTimeZone) -> std::time::Duration {
+    (Utc::now().fixed_offset() - started_at)
+        .to_std()
+        .unwrap_or_default()
+}
+
+/// Where a resumed world picks back up: the index of the first item id at or
+/// after `next_item_id` in the sweep's ascending item list.
+///
+/// The cursor is an item id rather than a chunk offset so that a game-data
+/// bump between restarts — which adds items and shifts every offset after
+/// them — still resumes at the right place.
+fn resume_offset(items: &[i32], next_item_id: i32) -> usize {
+    items.partition_point(|id| *id < next_item_id)
+}
+
+/// Cursor to record once `chunk` has been attempted: the first item id past
+/// it, or `fallback` when there was nothing left to attempt.
+///
+/// Advances over a chunk Universalis refused as well as one it answered — the
+/// skip is already tallied in `chunks_failed` and reported, and rewinding to
+/// it on resume would mean re-fetching every chunk that succeeded after it.
+fn cursor_past(chunk: &[i32], fallback: i32) -> i32 {
+    chunk.last().map_or(fallback, |id| id.saturating_add(1))
 }
 
 struct CmpListing(Model);
@@ -379,19 +621,106 @@ impl UpdateService {
         });
     }
 
+    /// Every marketable item id, in ascending order.
+    ///
+    /// Sorted because `xiv_gen_db`'s item table is a `HashMap`, whose
+    /// iteration order changes from process to process. A full sweep records
+    /// its resume point as an item id in this order, so the order has to be
+    /// the same in the process that resumes as in the one that stopped.
     pub(crate) fn all_marketable_items() -> Box<[i32]> {
-        xiv_gen_db::data()
+        let mut items: Vec<i32> = xiv_gen_db::data()
             .items
             .values()
             .filter(|i| i.item_search_category != 0)
             .map(|i| i.key_id.0)
-            .collect()
+            .collect();
+        items.sort_unstable();
+        items.into_boxed_slice()
     }
 
-    /// Claims the global full-sweep lock. `None` when a sweep (manual or
-    /// saturation-triggered) is already running. See [`SweepLock`].
-    pub(crate) fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
-        self.sweep_lock.try_claim()
+    /// Claims the right to run a full sweep. `None` when one is already
+    /// running — here or on another replica.
+    ///
+    /// Two locks, because a sweep has to be unique in two scopes.
+    /// [`SweepLock`] keeps one process from starting two. The Postgres session
+    /// advisory lock keeps a second replica from resuming the *same* sweep:
+    /// the resume cursor lives in a shared database and every replica reads it
+    /// on startup, so an in-process flag alone stopped being enough the moment
+    /// sweeps became resumable. Session locks die with the connection, so a
+    /// replica killed mid-sweep releases it with nothing to clean up.
+    pub(crate) async fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
+        let mut guard = self.sweep_lock.try_claim()?;
+        let pool = self.db.get_connection().get_postgres_connection_pool();
+        let mut connection = match pool.acquire().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                warn!(
+                    ?error,
+                    "could not acquire a connection for the full sweep lease"
+                );
+                return None;
+            }
+        };
+        // Cancellation can happen after Postgres grants the lock but before
+        // the query result is delivered. Such a session must not be pooled.
+        connection.close_on_drop();
+        match sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+            .bind(FULL_SWEEP_LOCK_KEY)
+            .fetch_one(&mut *connection)
+            .await
+        {
+            Ok(true) => {
+                guard.lease = Some(connection);
+                Some(guard)
+            }
+            // Another replica is sweeping. Dropping `guard` frees the
+            // in-process flag we speculatively claimed above.
+            Ok(false) => None,
+            Err(error) => {
+                warn!(?error, "could not claim the full sweep lease");
+                None
+            }
+        }
+    }
+
+    /// Loads the sweep an earlier process left unfinished, if any, together
+    /// with the per-world progress it recorded. `None` means there is nothing
+    /// to resume.
+    pub(crate) async fn resume_sweep(&self) -> Result<Option<SweepRun>, SeaDbErr> {
+        let Some(sweep) = self.db.active_market_sweep().await? else {
+            return Ok(None);
+        };
+        Ok(Some(self.load_progress(sweep, true).await?))
+    }
+
+    /// The unfinished sweep, or a fresh one when none is in flight.
+    /// `channel_id` becomes where the sweep reports, including after a
+    /// restart. Check [`SweepRun::resumed`] to tell the two cases apart.
+    pub(crate) async fn begin_or_resume_sweep(
+        &self,
+        channel_id: Option<i64>,
+    ) -> Result<SweepRun, SeaDbErr> {
+        let (sweep, resumed) = self.db.begin_or_resume_market_sweep(channel_id).await?;
+        self.load_progress(sweep, resumed).await
+    }
+
+    async fn load_progress(
+        &self,
+        sweep: market_sweep::Model,
+        resumed: bool,
+    ) -> Result<SweepRun, SeaDbErr> {
+        let progress = self
+            .db
+            .market_sweep_progress(sweep.id)
+            .await?
+            .into_iter()
+            .map(|row| (row.world_id, row))
+            .collect();
+        Ok(SweepRun {
+            sweep,
+            progress,
+            resumed,
+        })
     }
 
     /// Sweeps over every single marketable item in the game, ignoring the
@@ -399,41 +728,107 @@ impl UpdateService {
     /// aborts: failed chunks are skipped and reported via the returned
     /// [`SweepReport`]. `progress` fires after each world completes.
     ///
+    /// Resumable: worlds `run` records as already swept are skipped, a world
+    /// left partway through restarts at its cursor, and the cursor is written
+    /// after every chunk. Shutdown stops the sweep at the next chunk boundary
+    /// and leaves it unfinished for the next process to pick up — the report
+    /// then says [`SweepReport::is_complete`] is false.
+    ///
     /// Callers must hold a [`SweepLockGuard`] (see
     /// [`UpdateService::try_begin_full_sweep`]) so only one full sweep runs.
     pub(crate) async fn do_full_world_sweep(
         &self,
+        run: SweepRun,
         mut progress: impl FnMut(SweepProgress),
     ) -> SweepReport {
+        let SweepRun {
+            sweep,
+            progress: mut recorded,
+            ..
+        } = run;
         let all_marketable_items = Self::all_marketable_items();
         let worlds: Vec<&world::Model> = self.world_cache.get_all_worlds().copied().collect();
         let worlds_total = worlds.len();
-        let started = Instant::now();
+        if worlds_total == 0 {
+            // The world cache had not loaded. Nothing was swept, so the sweep
+            // has to stay unfinished — stamping it done here would silently
+            // drop a run the next start would otherwise resume.
+            error!("a full market sweep found no worlds; leaving it to be resumed");
+            return SweepReport {
+                worlds: Vec::new(),
+                worlds_total,
+                duration: elapsed_since(sweep.started_at),
+                interrupted: true,
+            };
+        }
         let mut summaries = Vec::with_capacity(worlds_total);
         let (mut items_changed, mut chunks_failed) = (0u64, 0u64);
+        let mut interrupted = false;
         for world in worlds {
-            let world_started = Instant::now();
-            info!(world = %world.name, "full sweep: scanning world");
-            let tally = self.check_items(world, &all_marketable_items).await;
-            tally.record(&world.name);
-            // A world that got nothing — every chunk skipped — has not been
-            // refetched, so it must not burn its cooldown; releasing lets the
-            // next saturated cycle retry. Partial coverage still counts:
-            // re-sweeping a world we mostly refetched would hammer
-            // Universalis for little gain, which is what the cooldown exists
-            // to stop.
-            if tally.made_progress() {
-                self.confirm_full_sweep(world.id);
+            let prior = recorded
+                .remove(&world.id)
+                .unwrap_or_else(|| new_world_progress(sweep.id, world.id));
+            let row = if prior.completed_at.is_some() {
+                // Swept before the restart. Its totals still belong in the
+                // report, but nothing is re-fetched and no metric is
+                // re-emitted: this process did not do that work.
+                prior
             } else {
-                self.release_full_sweep_slot(world.id);
-            }
-            items_changed += tally.changed;
-            chunks_failed += tally.chunks_failed;
-            summaries.push(WorldSweepSummary {
-                world_name: world.name.clone(),
-                tally,
-                duration: world_started.elapsed(),
-            });
+                if self.shutdown.is_cancelled() {
+                    interrupted = true;
+                    break;
+                }
+                let world_started = Instant::now();
+                let offset = resume_offset(&all_marketable_items, prior.next_item_id);
+                if offset > 0 {
+                    info!(world = %world.name, resume_from = prior.next_item_id, "full sweep: resuming world");
+                } else {
+                    info!(world = %world.name, "full sweep: scanning world");
+                }
+                let checkpoint = WorldCheckpoint {
+                    db: &self.db,
+                    prior,
+                    started: world_started,
+                };
+                let remaining = &all_marketable_items[offset..];
+                let tally = self
+                    .check_items_with(world, remaining, Some(&checkpoint))
+                    .await;
+                tally.record(&world.name);
+                // A world that got nothing — every chunk skipped — has not
+                // been refetched, so it must not burn its cooldown; releasing
+                // lets the next saturated cycle retry. Partial coverage still
+                // counts: re-sweeping a world we mostly refetched would hammer
+                // Universalis for little gain, which is what the cooldown
+                // exists to stop.
+                if tally.made_progress() {
+                    self.confirm_full_sweep(world.id);
+                } else {
+                    self.release_full_sweep_slot(world.id);
+                }
+                if self.shutdown.is_cancelled() {
+                    // Shutdown cut the world short. The last chunk's
+                    // checkpoint already recorded where to pick up, so leave
+                    // the world unstamped rather than claiming it is done.
+                    interrupted = true;
+                    break;
+                }
+                let completed = merged_progress(
+                    &checkpoint.prior,
+                    &tally,
+                    cursor_past(remaining, checkpoint.prior.next_item_id),
+                    world_started.elapsed(),
+                    Some(Utc::now().fixed_offset()),
+                );
+                if let Err(error) = self.db.record_market_sweep_progress(&completed).await {
+                    // The world will simply be swept again after a restart.
+                    warn!(?error, world = %world.name, "could not record the completed world");
+                }
+                completed
+            };
+            items_changed += u64::try_from(row.changed).unwrap_or_default();
+            chunks_failed += u64::try_from(row.chunks_failed).unwrap_or_default();
+            summaries.push(WorldSweepSummary::from_progress(&world.name, &row));
             progress(SweepProgress {
                 worlds_done: summaries.len(),
                 worlds_total,
@@ -441,9 +836,21 @@ impl UpdateService {
                 chunks_failed,
             });
         }
+        if !interrupted && let Err(error) = self.db.finish_market_sweep(sweep.id).await {
+            // The sweep is done but still looks unfinished, so the next start
+            // resumes it — finding every world stamped complete and closing it
+            // out immediately. Wasteful, not wrong.
+            error!(
+                ?error,
+                sweep_id = sweep.id,
+                "could not mark the market sweep finished"
+            );
+        }
         SweepReport {
             worlds: summaries,
-            duration: started.elapsed(),
+            worlds_total,
+            duration: elapsed_since(sweep.started_at),
+            interrupted,
         }
     }
 
@@ -535,9 +942,13 @@ impl UpdateService {
                 // overlapping a manual /rescan_market sweep. If it's busy,
                 // hand the world slot back unstamped so the next saturated
                 // cycle retries.
-                if let Some(_guard) = self.try_begin_full_sweep() {
+                if let Some(mut guard) = self.try_begin_full_sweep().await {
                     warn!(world = %world.name, "recency window saturated, running full item sweep");
-                    let tally = self.check_items(world, &Self::all_marketable_items()).await;
+                    let items = Self::all_marketable_items();
+                    let Some(tally) = guard.run(self.check_items(world, &items)).await else {
+                        self.release_full_sweep_slot(world.id);
+                        return Ok(());
+                    };
                     tally.record(&world.name);
                     // Same rule as `do_full_world_sweep`: a world with no
                     // progress at all must not burn its cooldown for a sweep
@@ -549,7 +960,10 @@ impl UpdateService {
                     }
                 } else {
                     self.release_full_sweep_slot(world.id);
-                    warn!(world = %world.name, "recency window saturated, but a full sweep is already running");
+                    // Either another sweep holds the lock (here or on another
+                    // replica) or the lease could not be taken; both are
+                    // logged in detail by `try_begin_full_sweep`.
+                    warn!(world = %world.name, "recency window saturated, but the full sweep lock is unavailable");
                 }
             } else {
                 warn!(world = %world.name, "recency window saturated, full sweep on cooldown");
@@ -681,12 +1095,34 @@ impl UpdateService {
         ))
     }
 
+    /// Refetches `item_ids` for `world`. Used both by the five-minute catch-up
+    /// passes and, via [`UpdateService::check_items_with`], by the full sweep.
     async fn check_items(&self, world: &world::Model, item_ids: &[i32]) -> CatchupTally {
+        self.check_items_with(world, item_ids, None).await
+    }
+
+    /// [`UpdateService::check_items`] with an optional per-chunk checkpoint.
+    ///
+    /// `checkpoint` is `Some` only for the full sweep, which runs for hours
+    /// and has to survive a deploy; the catch-up passes cover a couple hundred
+    /// items and are cheaper to redo than to record. When it is `Some`, the
+    /// pass also stops at the next chunk boundary once shutdown is signalled,
+    /// leaving the cursor where the next process should resume.
+    async fn check_items_with(
+        &self,
+        world: &world::Model,
+        item_ids: &[i32],
+        checkpoint: Option<&WorldCheckpoint<'_>>,
+    ) -> CatchupTally {
         let world_id = WorldId(world.id);
         let world_name = &world.name;
         let mut tally = CatchupTally::default();
         let total_chunks = item_ids.chunks(100).len();
         for (chunk_index, item_ids) in item_ids.chunks(100).enumerate() {
+            if checkpoint.is_some() && self.shutdown.is_cancelled() {
+                info!(world = %world_name, "full sweep: stopping for shutdown; progress is recorded");
+                break;
+            }
             let market_data = match retry_transient(|| {
                 self.universalis
                     .marketboard_current_data(world_name, item_ids)
@@ -706,6 +1142,9 @@ impl UpdateService {
                     )
                     .increment(1);
                     tally.chunks_failed += 1;
+                    if let Some(checkpoint) = checkpoint {
+                        checkpoint.record(cursor_past(item_ids, 0), &tally).await;
+                    }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
@@ -792,6 +1231,9 @@ impl UpdateService {
             for outcome in outcomes {
                 tally.add(outcome);
             }
+            if let Some(checkpoint) = checkpoint {
+                checkpoint.record(cursor_past(item_ids, 0), &tally).await;
+            }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         tally
@@ -853,6 +1295,120 @@ fn missed_updates(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn losing_the_lease_drops_the_in_flight_sweep() {
+        struct OnDrop(Arc<AtomicBool>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (started, running) = tokio::sync::oneshot::channel();
+        let work = async {
+            let _guard = OnDrop(dropped.clone());
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        };
+        let lost = async {
+            running.await.unwrap();
+        };
+        assert_eq!(run_until_lease_lost(work, lost).await, None);
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_completed_sweep_keeps_its_result_while_the_lease_is_alive() {
+        assert_eq!(
+            run_until_lease_lost(async { 42 }, std::future::pending()).await,
+            Some(42)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_known_lost_lease_never_polls_the_worker() {
+        let polled = AtomicBool::new(false);
+        let work = async { polled.store(true, Ordering::SeqCst) };
+        assert_eq!(run_until_lease_lost(work, async {}).await, None);
+        assert!(!polled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MIGRATION_TEST_DATABASE_URL"]
+    async fn sweep_lease_excludes_another_session_and_releases_when_closed() {
+        use sea_orm::sqlx::{postgres::PgPoolOptions, query_scalar};
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut owner = pool.acquire().await.unwrap();
+        let mut contender = pool.acquire().await.unwrap();
+        // Never contend with a real sweep sharing this development database.
+        let key = chrono::Utc::now().timestamp_micros() ^ i64::from(std::process::id());
+        let acquired: bool = query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *owner)
+            .await
+            .unwrap();
+        assert!(acquired);
+        let acquired: bool = query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *contender)
+            .await
+            .unwrap();
+        assert!(!acquired);
+        owner.close().await.unwrap();
+        let acquired: bool = query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *contender)
+            .await
+            .unwrap();
+        assert!(
+            acquired,
+            "a replacement session can take over after the owner exits"
+        );
+        contender.close().await.unwrap();
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MIGRATION_TEST_DATABASE_URL and permission to terminate its own test session"]
+    async fn sweep_worker_stops_when_its_lease_session_is_terminated() {
+        use sea_orm::sqlx::{postgres::PgPoolOptions, query_scalar};
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut owner = pool.acquire().await.unwrap();
+        owner.close_on_drop();
+        let own_pid: i32 = query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *owner)
+            .await
+            .unwrap();
+        let mut guard = Arc::new(SweepLock::default()).try_claim().unwrap();
+        guard.lease = Some(owner);
+        // Only this test's freshly acquired connection is terminated.
+        let terminated: bool = query_scalar("SELECT pg_terminate_backend($1)")
+            .bind(own_pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(terminated);
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(25),
+            guard.run(std::future::pending::<()>()),
+        )
+        .await
+        .expect("lease heartbeat must stop the worker");
+        assert_eq!(stopped, None);
+        drop(guard);
+        pool.close().await;
+    }
     use chrono::{DateTime, Local};
 
     const WORLD_ID: i32 = 34;
@@ -1259,30 +1815,40 @@ mod tests {
         }
     }
 
+    /// A sweep that reached the end of every world it was given.
+    fn finished_report(worlds: Vec<WorldSweepSummary>, duration: Duration) -> SweepReport {
+        SweepReport {
+            worlds_total: worlds.len(),
+            worlds,
+            duration,
+            interrupted: false,
+        }
+    }
+
     #[test]
     fn sweep_report_summary_flags_the_slowest_world() {
-        let report = SweepReport {
-            worlds: vec![
+        let report = finished_report(
+            vec![
                 world_summary_with_duration("Sargatanas", 1, 0, Duration::from_secs(30)),
                 world_summary_with_duration("Ravana", 1, 0, Duration::from_secs(150)),
                 world_summary_with_duration("Cerberus", 1, 0, Duration::from_secs(45)),
             ],
-            duration: Duration::from_secs(225),
-        };
+            Duration::from_secs(225),
+        );
         let text = report.summary_text();
         assert!(text.contains("Slowest world: Ravana (2m30s)"), "{text}");
     }
 
     #[test]
     fn sweep_report_summary_totals_and_flags_incomplete_worlds() {
-        let report = SweepReport {
-            worlds: vec![
+        let report = finished_report(
+            vec![
                 world_summary("Sargatanas", 10, 0),
                 world_summary("Ravana", 5, 2),
                 world_summary("Cerberus", 0, 1),
             ],
-            duration: Duration::from_secs(2 * 3600 + 90),
-        };
+            Duration::from_secs(2 * 3600 + 90),
+        );
         let text = report.summary_text();
         assert!(text.contains("3 worlds"));
         assert!(text.contains("15"), "total changed items: {text}");
@@ -1303,13 +1869,145 @@ mod tests {
         let worlds: Vec<_> = (0..40)
             .map(|i| world_summary(&format!("World{i}"), 1, 1))
             .collect();
-        let report = SweepReport {
-            worlds,
-            duration: Duration::from_secs(3600),
-        };
+        let report = finished_report(worlds, Duration::from_secs(3600));
         let text = report.summary_text();
         assert!(text.contains("+30 more"), "{text}");
         assert!(text.len() <= 2000, "must fit one Discord message: {text}");
+    }
+
+    /// A sweep stopped by a deploy has to say so rather than reporting the
+    /// worlds it got through as a finished run — the numbers are a fraction of
+    /// the sweep, and the operator's next question is whether they have to
+    /// start it again (they do not).
+    #[test]
+    fn an_interrupted_sweep_reports_how_far_it_got_and_that_it_resumes() {
+        let report = SweepReport {
+            worlds: vec![world_summary("Sargatanas", 10, 0)],
+            worlds_total: 90,
+            duration: Duration::from_secs(45 * 60),
+            interrupted: true,
+        };
+        let text = report.summary_text();
+        assert!(!report.is_complete());
+        assert!(text.contains("paused at 1/90 worlds"), "{text}");
+        assert!(text.contains("where it left off"), "{text}");
+        assert!(
+            !text.contains("finished"),
+            "an interrupted sweep is not a finished one: {text}"
+        );
+    }
+
+    #[test]
+    fn a_completed_sweep_is_reported_as_finished() {
+        let report = finished_report(
+            vec![world_summary("Sargatanas", 10, 0)],
+            Duration::from_secs(60),
+        );
+        assert!(report.is_complete());
+        assert!(report.summary_text().contains("finished"));
+    }
+
+    /// Every marketable item, ascending. The resume cursor is an index into
+    /// this order, and `xiv_gen_db`'s item table is a `HashMap` whose
+    /// iteration order differs per process — so without the sort a sweep would
+    /// resume at an item id that meant something else in the process that
+    /// recorded it.
+    #[test]
+    fn the_sweeps_item_order_is_stable_across_processes() {
+        let items = UpdateService::all_marketable_items();
+        assert!(!items.is_empty(), "the game has marketable items");
+        assert!(
+            items.windows(2).all(|pair| pair[0] < pair[1]),
+            "item ids must be sorted and unique"
+        );
+    }
+
+    #[test]
+    fn a_world_resumes_at_the_first_item_it_has_not_swept() {
+        let items = [10, 20, 30, 40];
+        assert_eq!(resume_offset(&items, 0), 0, "a fresh world starts at 0");
+        assert_eq!(resume_offset(&items, 30), 2);
+        assert_eq!(
+            resume_offset(&items, 41),
+            items.len(),
+            "a finished world has nothing left"
+        );
+    }
+
+    /// The cursor is an item id, not an offset, so items added by a game-data
+    /// bump between restarts do not shift the resume point onto other items.
+    #[test]
+    fn items_added_between_restarts_do_not_move_the_resume_point() {
+        let before = [10, 20, 30, 40];
+        let cursor = cursor_past(&before[..2], 0);
+        let after = [5, 10, 15, 20, 30, 40];
+        assert_eq!(
+            &after[resume_offset(&after, cursor)..],
+            &[30, 40],
+            "everything swept before the restart stays swept"
+        );
+    }
+
+    #[test]
+    fn the_cursor_advances_past_an_attempted_chunk() {
+        assert_eq!(cursor_past(&[10, 20, 30], 0), 31);
+        assert_eq!(
+            cursor_past(&[], 77),
+            77,
+            "nothing left to attempt leaves the cursor alone"
+        );
+        assert_eq!(
+            cursor_past(&[i32::MAX], 0),
+            i32::MAX,
+            "the last item in the game does not overflow the cursor"
+        );
+    }
+
+    /// A sweep spanning two processes has to report the sum of both, not the
+    /// share of whichever one happened to finish it.
+    #[test]
+    fn progress_accumulates_across_restarts() {
+        let prior = market_sweep_world::Model {
+            changed: 7,
+            noop: 3,
+            failed: 1,
+            chunks_failed: 2,
+            elapsed_ms: 5_000,
+            ..new_world_progress(1, 21)
+        };
+        let run = CatchupTally {
+            changed: 4,
+            noop: 1,
+            failed: 0,
+            chunks_failed: 1,
+        };
+        let merged = merged_progress(&prior, &run, 900, Duration::from_secs(2), None);
+        assert_eq!(merged.sweep_id, 1);
+        assert_eq!(merged.world_id, 21);
+        assert_eq!(merged.next_item_id, 900);
+        assert_eq!((merged.changed, merged.noop), (11, 4));
+        assert_eq!((merged.failed, merged.chunks_failed), (1, 3));
+        assert_eq!(merged.elapsed_ms, 7_000);
+        assert!(
+            merged.completed_at.is_none(),
+            "a mid-world checkpoint does not finish the world"
+        );
+    }
+
+    /// Worlds swept before a restart are read back out of the database, so
+    /// they still count toward the closing report.
+    #[test]
+    fn a_restored_world_reports_the_totals_it_was_stored_with() {
+        let row = market_sweep_world::Model {
+            changed: 12,
+            chunks_failed: 2,
+            elapsed_ms: 90_000,
+            ..new_world_progress(1, 21)
+        };
+        let summary = WorldSweepSummary::from_progress("Sargatanas", &row);
+        assert_eq!(summary.tally.changed, 12);
+        assert_eq!(summary.tally.chunks_failed, 2);
+        assert_eq!(summary.duration, Duration::from_secs(90));
     }
 
     #[test]

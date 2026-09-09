@@ -16,6 +16,74 @@ const PROBE_ITEM: &str = "Grade 2 Gemdraught of Mind";
 
 #[test]
 fn en_pack_decodes_and_contains_the_probe_item() {
+    let Some(data) = decode_en_pack("en_pack_decodes_and_contains_the_probe_item") else {
+        return;
+    };
+
+    data.items
+        .iter()
+        .find(|(_, item)| item.name == PROBE_ITEM)
+        .unwrap_or_else(|| panic!("expected to find an item named {PROBE_ITEM:?}"));
+}
+
+/// The pack carries fields that exist in no CSV column — they are resolved
+/// during generation from sheets that are then thrown away. Nothing at runtime
+/// can rebuild them, so a generator that silently stopped populating one would
+/// only show up as an empty vendor panel or a resale suggestion for an item
+/// nobody can buy. Assert they survived the round trip.
+#[test]
+fn en_pack_carries_the_derived_vendor_fields() {
+    let Some(data) = decode_en_pack("en_pack_carries_the_derived_vendor_fields") else {
+        return;
+    };
+
+    assert!(
+        !data.gil_shop_npcs.is_empty(),
+        "pack has no shop -> NPC index"
+    );
+    assert!(
+        data.gil_shop_npcs.values().all(|npcs| !npcs.is_empty()),
+        "every indexed shop should name at least one NPC"
+    );
+
+    // Usagi Kabuto (#1362): sold only by a Heavensturn festival vendor and by
+    // the Calamity Salvager to players holding a 2013 event achievement.
+    let usagi = data
+        .items
+        .values()
+        .find(|i| i.name == "Usagi Kabuto")
+        .expect("Usagi Kabuto missing from the pack")
+        .key_id;
+    let rows: Vec<_> = data
+        .gil_shop_items
+        .values()
+        .flatten()
+        .filter(|r| r.item == usagi.0)
+        .collect();
+    assert!(!rows.is_empty(), "Usagi Kabuto is sold by no shop");
+    assert!(
+        rows.iter().all(|r| !r.availability.is_obtainable()),
+        "no Usagi Kabuto row should be obtainable, got {:?}",
+        rows.iter().map(|r| r.availability).collect::<Vec<_>>()
+    );
+
+    // The classifier must not collapse to a single verdict: ordinary vendor
+    // stock has to stay `Open`, or every resale candidate would be filtered.
+    let open = data
+        .gil_shop_items
+        .values()
+        .flatten()
+        .filter(|r| r.availability == xiv_gen::VendorAvailability::Open)
+        .count();
+    assert!(
+        open > 10_000,
+        "expected most shop rows to be ungated, got {open}"
+    );
+}
+
+/// Decodes the committed pack, or returns `None` after explaining why it could
+/// not (missing file or un-pulled LFS stub) so a fresh clone stays green.
+fn decode_en_pack(test_name: &str) -> Option<xiv_gen::Data> {
     let path = repo_root().join("data").join("xiv-db").join("en.rkyv");
 
     let bytes = match std::fs::read(&path) {
@@ -25,20 +93,19 @@ fn en_pack_decodes_and_contains_the_probe_item() {
             // has no real pack file here. Don't fail `cargo test` for that —
             // just say so and move on.
             eprintln!(
-                "skipping en_pack_decodes_and_contains_the_probe_item: could not read {}: {error}",
+                "skipping {test_name}: could not read {}: {error}",
                 path.display()
             );
-            return;
+            return None;
         }
     };
 
     if is_lfs_pointer_stub(&bytes) {
         eprintln!(
-            "skipping en_pack_decodes_and_contains_the_probe_item: {} is an LFS pointer stub \
-             (run `git lfs pull`)",
+            "skipping {test_name}: {} is an LFS pointer stub (run `git lfs pull`)",
             path.display()
         );
-        return;
+        return None;
     }
 
     let mut decoded = Vec::new();
@@ -52,13 +119,10 @@ fn en_pack_decodes_and_contains_the_probe_item() {
     let mut aligned = rkyv::AlignedVec::with_capacity(decoded.len());
     aligned.extend_from_slice(&decoded);
 
-    let data = rkyv::from_bytes::<xiv_gen::Data>(&aligned)
-        .expect("failed to deserialize data/xiv-db/en.rkyv");
-
-    data.items
-        .iter()
-        .find(|(_, item)| item.name == PROBE_ITEM)
-        .unwrap_or_else(|| panic!("expected to find an item named {PROBE_ITEM:?}"));
+    Some(
+        rkyv::from_bytes::<xiv_gen::Data>(&aligned)
+            .expect("failed to deserialize data/xiv-db/en.rkyv"),
+    )
 }
 
 /// LFS pointer stubs are small text files starting with this line; real pack
