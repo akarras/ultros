@@ -623,11 +623,22 @@ async function main() {
     });
     if (settingsClicked2) {
       await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
-      const deleteBtn = await ownerPage.$('[data-testid="list-delete-btn"]');
+      // Click in-page by selector rather than through an element handle: the
+      // drawer is re-rendered whenever the list resource changes (a market
+      // update or a list broadcast), and a handle taken a moment earlier is
+      // then "not clickable or not an Element".
+      const clickDelete = () =>
+        ownerPage.evaluate(() => {
+          const b = document.querySelector('[data-testid="list-delete-btn"]');
+          if (!b) return false;
+          b.click();
+          return true;
+        });
+      const deleteBtn = await clickDelete();
       if (!deleteBtn) {
         fail(failures, "delete button not found");
       } else {
-        await deleteBtn.click(); // first click: confirm prompt
+        // first click: confirm prompt
         // Wait for the button to re-render into its confirm state rather
         // than sleeping — the dev-build WASM can take >500ms to apply it.
         await ownerPage
@@ -639,11 +650,10 @@ async function main() {
             { timeout: 10000 },
           )
           .catch(() => {});
-        const deleteBtn2 = await ownerPage.$('[data-testid="list-delete-btn"]');
+        const deleteBtn2 = await clickDelete();
         if (!deleteBtn2) {
           fail(failures, "delete confirm button not found");
         } else {
-          await deleteBtn2.click();
           await ownerPage
             .waitForFunction(() => window.location.pathname === "/list", { timeout: 15000 })
             .catch(() => {});
