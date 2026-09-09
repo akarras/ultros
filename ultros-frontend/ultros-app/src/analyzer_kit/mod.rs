@@ -8,7 +8,7 @@ pub mod columns;
 pub mod enrichment;
 pub use ultros_calc::formula;
 pub mod grid;
-pub mod hop;
+pub use ultros_crafting::hop;
 pub mod market;
 pub use ultros_calc::needed;
 pub mod signals;

@@ -10333,6 +10333,7 @@ dependencies = [
  "ultros-calc",
  "ultros-changelog",
  "ultros-charts",
+ "ultros-crafting",
  "ultros-db",
  "ultros-i18n",
  "uuid",
@@ -10420,6 +10421,15 @@ dependencies = [
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-crafting"
+version = "0.1.0"
+dependencies = [
+ "ultros-api-types",
+ "ultros-calc",
+ "xiv-gen",
 ]
 
 [[package]]

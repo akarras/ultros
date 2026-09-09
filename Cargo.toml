@@ -15,6 +15,7 @@ members = [
     "ultros-frontend/ultros-calc",
     "ultros-frontend/ultros-i18n",
     "ultros-frontend/ultros-xiv-icons",
+    "ultros-frontend/ultros-crafting",
     "proc-macros/dumb-csv-macros",
     "proc-macros/field-iterator-macros",
     "proc-macros/xiv-gen-macros",
