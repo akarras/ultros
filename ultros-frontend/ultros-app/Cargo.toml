@@ -98,6 +98,8 @@ leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch
 send_wrapper = "0.6"
 icondata_core.workspace = true
 leptos_i18n.workspace = true
+ultros-list-doc = { path = "../../ultros-list-doc" }
+base64 = "0.22.1"
 
 [features]
 default = [

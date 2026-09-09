@@ -18,7 +18,7 @@ use loro::{
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::key::{Quality, RowKey};
-use crate::snapshot::{MetaSnapshot, RowSnapshot, encode_scope, parse_scope};
+use crate::snapshot::{MetaSnapshot, RowChange, RowSnapshot, encode_scope, parse_scope};
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -518,6 +518,52 @@ impl ListDocument {
     }
 }
 
+/// Re-express `local_rows` on top of `fresh` as *new* local operations.
+///
+/// `fresh` is the server's truth (a document just built from the server's
+/// snapshot); `local_rows` is the row state of the copy being abandoned.
+/// Every row field that differs is written to `fresh` with the ordinary
+/// mutations, so the result is a normal local commit against history the
+/// server actually has — which is the whole point: the operations the
+/// server could not accept (history it compacted away, or a meta change it
+/// forbade) are replaced by fresh ones it can.
+///
+/// Rows present in `fresh` but absent from `local_rows` are **left alone**.
+/// The local copy cannot tell "another peer added this row while we were
+/// diverged" from "we deleted it locally", and resurrecting a row the user
+/// deleted is a far cheaper mistake than deleting a row somebody else
+/// added. A local delete that loses this race can be redone by hand.
+///
+/// Returns whether anything had to be re-applied.
+pub fn rebase_rows(fresh: &ListDocument, local_rows: &[RowSnapshot]) -> Result<bool, DocError> {
+    let mut reapplied = false;
+    for change in crate::snapshot::diff_rows(&fresh.rows(), local_rows) {
+        match change {
+            RowChange::Added(row) => {
+                fresh.add_row(row.key, row.need, row.target)?;
+                if row.acquired != 0 {
+                    fresh.set_acquired(&row.key, row.acquired)?;
+                }
+                reapplied = true;
+            }
+            RowChange::Removed(_) => {}
+            RowChange::Updated { before, after } => {
+                if before.need != after.need {
+                    fresh.set_need(&after.key, after.need)?;
+                }
+                if before.acquired != after.acquired {
+                    fresh.set_acquired(&after.key, after.acquired)?;
+                }
+                if before.target != after.target {
+                    fresh.set_target(&after.key, after.target)?;
+                }
+                reapplied = true;
+            }
+        }
+    }
+    Ok(reapplied)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -773,6 +819,36 @@ mod tests {
     }
 
     #[test]
+    fn undo_fires_a_local_update_that_round_trips() {
+        use crate::undo::ListUndo;
+        use std::sync::{Arc, Mutex};
+
+        let a = ListDocument::from_rows(meta(), &[]);
+        let seen: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let _sub = a.on_local_update(move |bytes| sink.lock().unwrap().push(bytes.to_vec()));
+        let mut undo = ListUndo::with_merge_interval(&a, 0);
+
+        a.add_row(RowKey::new(1, None), 2, None).unwrap();
+        assert!(undo.undo().unwrap());
+
+        let updates = seen.lock().unwrap();
+        assert_eq!(
+            updates.len(),
+            2,
+            "one local update for the add, one for the undo"
+        );
+
+        // Importing both into a fresh document round-trips to no rows: the
+        // undo's ops apply cleanly on top of the add.
+        let fresh = ListDocument::new();
+        for update in updates.iter() {
+            fresh.import(update).unwrap();
+        }
+        assert!(fresh.rows().is_empty());
+    }
+
+    #[test]
     fn on_change_fires_for_local_and_remote_changes() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -895,5 +971,66 @@ mod tests {
             "an unreadable version gets everything"
         );
         assert!(a.is_ahead_of(&[]));
+    }
+
+    #[test]
+    fn rebase_rows_reapplies_local_edits_onto_a_server_snapshot() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        // Local copy: A need 3, B need 1. Server snapshot: A need 2, C need 5.
+        let local = ListDocument::from_rows(
+            meta(),
+            &[row(1, Quality::Any, 3, 0), row(2, Quality::Any, 1, 0)],
+        );
+        let server = ListDocument::from_rows(
+            meta(),
+            &[row(1, Quality::Any, 2, 0), row(3, Quality::Any, 5, 0)],
+        );
+
+        let fresh = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+        let commits = Arc::new(AtomicUsize::new(0));
+        let sink = commits.clone();
+        let _sub = fresh.on_local_update(move |_| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        });
+
+        assert!(rebase_rows(&fresh, &local.rows()).unwrap());
+
+        assert_eq!(
+            fresh.rows(),
+            vec![
+                row(1, Quality::Any, 3, 0),
+                row(2, Quality::Any, 1, 0),
+                row(3, Quality::Any, 5, 0),
+            ],
+            "local need survives, the local-only row is re-added, the server-only row is kept"
+        );
+        assert!(
+            commits.load(Ordering::SeqCst) > 0,
+            "the re-applied edits are local operations the outbox can send"
+        );
+    }
+
+    #[test]
+    fn rebase_rows_is_a_no_op_when_local_matches_the_snapshot() {
+        let server = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 2, 1)]);
+        let fresh = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+        assert!(!rebase_rows(&fresh, &server.rows()).unwrap());
+        assert_eq!(fresh.rows(), server.rows());
+    }
+
+    #[test]
+    fn rebase_rows_reapplies_acquired_and_target() {
+        let server = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 2, 0)]);
+        let local_rows = [RowSnapshot {
+            target: Some(500),
+            ..row(1, Quality::Any, 2, 4)
+        }];
+        let fresh = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+        assert!(rebase_rows(&fresh, &local_rows).unwrap());
+        assert_eq!(fresh.rows(), local_rows.to_vec());
     }
 }

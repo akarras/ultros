@@ -10780,6 +10780,7 @@ version = "0.1.0"
 dependencies = [
  "any_spawner",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "cookie",
  "futures",
@@ -10814,6 +10815,7 @@ dependencies = [
  "ultros-crafting",
  "ultros-frontend-core",
  "ultros-i18n",
+ "ultros-list-doc",
  "ultros-ui",
  "ultros-ui-alerts",
  "ultros-ui-charts",

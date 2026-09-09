@@ -6,6 +6,7 @@ pub(crate) mod components;
 pub(crate) use ultros_api_client::error;
 pub use ultros_ui_market::freshness;
 pub(crate) mod global_state;
+pub(crate) mod list_doc;
 pub(crate) use ultros_calc::math;
 pub(crate) use ultros_i18n::fallback as i18n_fallback;
 pub use ultros_ui_query::last_view;

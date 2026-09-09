@@ -9,7 +9,7 @@ mod client {
     use send_wrapper::SendWrapper;
     use std::{
         cell::{Cell, RefCell},
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         rc::{Rc, Weak},
     };
     use ultros_api_types::websocket::ClientMessage;
@@ -17,6 +17,19 @@ mod client {
     use web_sys::{CloseEvent, Event, MessageEvent, WebSocket};
 
     type Handler = Box<dyn Fn(ServerClient)>;
+
+    /// One entry in `subscription_messages`. Most subscriptions (market
+    /// filters, legacy list subscriptions) send the same JSON on every
+    /// reconnect, so the serialized text is captured once. A list document
+    /// subscription's version changes as the local document advances, so
+    /// its replay message must be rebuilt at send time from a factory
+    /// rather than replayed verbatim (spec section 5: a stale version in
+    /// the replayed handshake would make the server's diff miss whatever
+    /// the client committed since the original subscribe).
+    enum SubscriptionEntry {
+        Static(String),
+        Dynamic(Rc<dyn Fn() -> ClientMessage>),
+    }
 
     #[derive(Clone)]
     pub struct RealtimeClient {
@@ -33,7 +46,15 @@ mod client {
     struct RealtimeInner {
         socket: RefCell<Option<WebSocket>>,
         handlers: RefCell<HashMap<u64, Handler>>,
-        subscription_messages: RefCell<HashMap<u64, String>>,
+        subscription_messages: RefCell<HashMap<u64, SubscriptionEntry>>,
+        /// Subscription ids created by `subscribe_list_doc`, so the bare
+        /// `ServerClient::Error` broadcast arm in `dispatch_message` can
+        /// skip them: a list-doc handler must only ever see an `Error` that
+        /// was scoped to it (wrapped in `SubscriptionEvent` by the server),
+        /// never one meant for some other subscription attempt on the same
+        /// socket. Legacy (market/list) handlers are unaffected and keep
+        /// receiving every broadcast `Error` as before.
+        list_doc_subscriptions: RefCell<HashSet<u64>>,
         pending_messages: RefCell<Vec<String>>,
         next_subscription_id: Cell<u64>,
         reconnect_attempt: Cell<u32>,
@@ -58,6 +79,7 @@ mod client {
                     socket: RefCell::new(None),
                     handlers: RefCell::new(HashMap::new()),
                     subscription_messages: RefCell::new(HashMap::new()),
+                    list_doc_subscriptions: RefCell::new(HashSet::new()),
                     pending_messages: RefCell::new(Vec::new()),
                     next_subscription_id: Cell::new(1),
                     reconnect_attempt: Cell::new(0),
@@ -123,6 +145,56 @@ mod client {
             }
         }
 
+        /// Spec section 5: subscribe to a list's document. `version` is
+        /// called both for the immediate handshake and, if the socket
+        /// reconnects, again at replay time — so it must read the *current*
+        /// local version (typically `move || handle.version()`), not a
+        /// value captured once at subscribe time. The server treats every
+        /// reply on this subscription id as a (re)handshake: a fresh
+        /// `ListDocSubscribed` also arrives after a `MissingHistory` resync
+        /// on the update path, not only on the first reply.
+        pub fn subscribe_list_doc(
+            &self,
+            list_id: i32,
+            version: impl Fn() -> Vec<u8> + 'static,
+            handler: impl Fn(ServerClient) + 'static,
+        ) -> RealtimeSubscription {
+            let subscription_id = self.next_subscription_id();
+            self.inner
+                .handlers
+                .borrow_mut()
+                .insert(subscription_id, Box::new(handler));
+            self.inner
+                .list_doc_subscriptions
+                .borrow_mut()
+                .insert(subscription_id);
+            let factory: Rc<dyn Fn() -> ClientMessage> =
+                Rc::new(move || ClientMessage::SubscribeListDoc {
+                    subscription_id: Some(subscription_id),
+                    list_id,
+                    version: version(),
+                });
+            self.send_dynamic_subscription(subscription_id, factory);
+            RealtimeSubscription {
+                client: self.clone(),
+                subscription_id,
+            }
+        }
+
+        /// One local commit. Sent only if the socket is open right now;
+        /// returns whether it went out. Never queued into
+        /// `pending_messages` on failure — an offline edit is not lost, it
+        /// just waits in the document itself, and the next handshake's
+        /// `export_since` diff covers it along with everything else the
+        /// server lacks (spec section 5's "no offline queue").
+        pub fn send_list_doc_update(&self, list_id: i32, update: Vec<u8>) -> bool {
+            let Ok(text) = serde_json::to_string(&ClientMessage::ListDocUpdate { list_id, update })
+            else {
+                return false;
+            };
+            self.send_text(&text)
+        }
+
         fn next_subscription_id(&self) -> u64 {
             let id = self.inner.next_subscription_id.get();
             self.inner.next_subscription_id.set(id + 1);
@@ -136,7 +208,25 @@ mod client {
             self.inner
                 .subscription_messages
                 .borrow_mut()
-                .insert(subscription_id, text.clone());
+                .insert(subscription_id, SubscriptionEntry::Static(text.clone()));
+            if !self.send_text(&text) {
+                self.connect();
+            }
+        }
+
+        fn send_dynamic_subscription(
+            &self,
+            subscription_id: u64,
+            factory: Rc<dyn Fn() -> ClientMessage>,
+        ) {
+            let message = factory();
+            self.inner
+                .subscription_messages
+                .borrow_mut()
+                .insert(subscription_id, SubscriptionEntry::Dynamic(factory));
+            let Ok(text) = serde_json::to_string(&message) else {
+                return;
+            };
             if !self.send_text(&text) {
                 self.connect();
             }
@@ -185,8 +275,19 @@ mod client {
                     inner.reconnect_attempt.set(0);
                     inner.set_status.set("live".to_string());
                     if let Some(socket) = inner.socket.borrow().as_ref().cloned() {
-                        for message in inner.subscription_messages.borrow().values() {
-                            let _ = socket.send_with_str(message);
+                        for entry in inner.subscription_messages.borrow().values() {
+                            let text = match entry {
+                                SubscriptionEntry::Static(text) => Some(text.clone()),
+                                // Rebuilt now, not replayed verbatim: a
+                                // list-doc subscription's version may have
+                                // moved since it was first sent.
+                                SubscriptionEntry::Dynamic(factory) => {
+                                    serde_json::to_string(&factory()).ok()
+                                }
+                            };
+                            if let Some(text) = text {
+                                let _ = socket.send_with_str(&text);
+                            }
                         }
                         for message in inner.pending_messages.borrow_mut().drain(..) {
                             let _ = socket.send_with_str(&message);
@@ -237,7 +338,61 @@ mod client {
                 .subscription_messages
                 .borrow_mut()
                 .remove(&subscription_id);
+            self.inner
+                .list_doc_subscriptions
+                .borrow_mut()
+                .remove(&subscription_id);
             self.send_control(ClientMessage::Unsubscribe { subscription_id });
+        }
+    }
+
+    impl RealtimeSubscription {
+        /// Re-send this subscription's message, rebuilding a dynamic one
+        /// from its factory (so a list-doc handshake goes out with the
+        /// *current* local version). Used when the server says the
+        /// subscription went `Stale`: spec section 5 wants a fresh
+        /// handshake, not just a status change.
+        ///
+        /// Takes only `subscription_messages.borrow()`, and drops it before
+        /// running the factory or touching the socket, so this is safe to
+        /// call from anywhere a handler's own callbacks run — but not from
+        /// inside `dispatch_message` itself, which holds
+        /// `handlers.borrow()` (callers defer it; see `list_doc::sync`).
+        ///
+        /// Returns whether the message actually went out over an open
+        /// socket. The factory runs (and, for a list-doc subscription,
+        /// consumes any one-shot "ask for a snapshot" flag it reads) even
+        /// when this returns `false` — a caller that armed such a flag
+        /// before calling this needs the return value to know whether to
+        /// re-arm it (M2), since a failed send here means the flag's effect
+        /// never reached the server.
+        pub fn resubscribe(&self) -> bool {
+            let entry = self
+                .client
+                .inner
+                .subscription_messages
+                .borrow()
+                .get(&self.subscription_id)
+                .map(|entry| match entry {
+                    SubscriptionEntry::Static(text) => Ok(text.clone()),
+                    SubscriptionEntry::Dynamic(factory) => Err(factory.clone()),
+                });
+            let text = match entry {
+                Some(Ok(text)) => text,
+                Some(Err(factory)) => {
+                    let Ok(text) = serde_json::to_string(&factory()) else {
+                        return false;
+                    };
+                    text
+                }
+                None => return false,
+            };
+            if self.client.send_text(&text) {
+                true
+            } else {
+                self.client.connect();
+                false
+            }
         }
     }
 
@@ -285,8 +440,18 @@ mod client {
                 }
             }
             ServerClient::Error { .. } => {
-                for handler in inner.handlers.borrow().values() {
-                    handler(message.clone());
+                // A bare Error is a broadcast: every handler on the socket
+                // normally sees it, matching legacy behaviour. List-doc
+                // handlers are the exception (see `list_doc_subscriptions`
+                // above) — they only ever get an Error that the server
+                // scoped to them via SubscriptionEvent, so a broadcast
+                // meant for some other subscription attempt on the socket
+                // is not confused for one about their own list.
+                let list_doc_ids = inner.list_doc_subscriptions.borrow();
+                for (subscription_id, handler) in inner.handlers.borrow().iter() {
+                    if !list_doc_ids.contains(subscription_id) {
+                        handler(message.clone());
+                    }
                 }
             }
             ServerClient::ListDocSubscribed {
@@ -365,6 +530,15 @@ mod client {
 
     pub struct RealtimeSubscription;
 
+    impl RealtimeSubscription {
+        /// No socket on this half, so nothing to re-send. `false` matches
+        /// the client half's "didn't go out" return for a closed socket —
+        /// harmless here since SSR never really drives this state machine.
+        pub fn resubscribe(&self) -> bool {
+            false
+        }
+    }
+
     impl RealtimeClient {
         pub fn new() -> Self {
             Self {
@@ -388,6 +562,19 @@ mod client {
             _handler: impl Fn(ServerClient) + 'static,
         ) -> RealtimeSubscription {
             RealtimeSubscription
+        }
+
+        pub fn subscribe_list_doc(
+            &self,
+            _list_id: i32,
+            _version: impl Fn() -> Vec<u8> + 'static,
+            _handler: impl Fn(ServerClient) + 'static,
+        ) -> RealtimeSubscription {
+            RealtimeSubscription
+        }
+
+        pub fn send_list_doc_update(&self, _list_id: i32, _update: Vec<u8>) -> bool {
+            false
         }
     }
 }
