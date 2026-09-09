@@ -71,7 +71,18 @@ pub fn Groups() -> impl IntoView {
                 create_from_guild_action.version().get(),
             )
         },
-        move |_| get_groups(),
+        move |_| async move {
+            let groups = get_groups().await?;
+            let cards = futures::future::join_all(groups.into_iter().map(|group| async move {
+                let counts = get_group_detail(group.id)
+                    .await
+                    .map(|detail| (detail.member_count, detail.roles.len() as i64))
+                    .map_err(|error| error.to_string());
+                (group, counts)
+            }))
+            .await;
+            Ok::<_, crate::error::AppError>(cards)
+        },
     );
 
     let (panel, set_panel) = signal(CreatePanel::Closed);
@@ -255,9 +266,9 @@ pub fn Groups() -> impl IntoView {
                                                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                                             <For
                                                                 each=move || groups.clone()
-                                                                key=move |group| group.id
-                                                                children=move |group| {
-                                                                    view! { <GroupCard group=group /> }
+                                                                key=move |(group, _)| group.id
+                                                                children=move |(group, counts)| {
+                                                                    view! { <GroupCard group=group counts=counts /> }
                                                                 }
                                                             />
                                                         </div>
@@ -442,7 +453,7 @@ pub(crate) fn GroupSourceBadge(source: GroupSource, frozen: bool) -> impl IntoVi
             </span>
         }
     };
-    move || match (frozen, source) {
+    match (frozen, source) {
         (true, _) => Some(badge(
             "border border-amber-500/50 text-amber-300",
             i::BiUnlinkRegular,
@@ -463,7 +474,7 @@ pub(crate) fn GroupSourceBadge(source: GroupSource, frozen: bool) -> impl IntoVi
 }
 
 #[component]
-fn GroupCard(group: UserGroup) -> impl IntoView {
+fn GroupCard(group: UserGroup, counts: Result<(i64, i64), String>) -> impl IntoView {
     let i18n = use_i18n();
     let group_id = group.id;
     let group_name = group.name.clone();
@@ -471,10 +482,8 @@ fn GroupCard(group: UserGroup) -> impl IntoView {
     let is_guild_linked = group.guild_id.is_some();
     let source = group.source;
     let frozen = group.frozen_reason.is_some();
-    // Counts are not on `UserGroup`, so the card asks for the group's detail.
-    // One request per card, the same shape the member list had before it moved
-    // to the detail page.
-    let detail = Resource::new(move || group_id, get_group_detail);
+    // Resolve counts in the parent resource: per-card resources created inside
+    // its streamed list produce nested hydration boundaries with missing markers.
 
     view! {
         <AppLink
@@ -496,37 +505,19 @@ fn GroupCard(group: UserGroup) -> impl IntoView {
 
             <GroupSourceBadge source=source frozen=frozen />
 
-            <Suspense fallback=move || {
-                view! { <div class="skeleton-block skeleton-shimmer h-4 w-32 rounded"></div> }
-            }>
-                {move || {
-                    detail
-                        .get()
-                        .map(|res| match res {
-                            Ok(detail) => {
-                                let members = detail.member_count;
-                                let roles = detail.roles.len() as i64;
-                                Either::Left(
-                                    view! {
-                                        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[color:var(--color-text-muted)]">
-                                            <span>{t!(i18n, groups_member_count, count = members)}</span>
-                                            <span>{t!(i18n, groups_role_count, count = roles)}</span>
-                                        </div>
-                                    },
-                                )
-                            }
-                            Err(e) => {
-                                Either::Right(
-                                    view! {
-                                        <div class="text-xs text-red-400">
-                                            {move || t!(i18n, groups_detail_error, error = e.to_string())}
-                                        </div>
-                                    },
-                                )
-                            }
-                        })
-                }}
-            </Suspense>
+            {match counts {
+                Ok((members, roles)) => Either::Left(view! {
+                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[color:var(--color-text-muted)]">
+                        <span>{t!(i18n, groups_member_count, count = members)}</span>
+                        <span>{t!(i18n, groups_role_count, count = roles)}</span>
+                    </div>
+                }),
+                Err(error) => Either::Right(view! {
+                    <div class="text-xs text-red-400">
+                        {move || t!(i18n, groups_detail_error, error = error.clone())}
+                    </div>
+                }),
+            }}
         </AppLink>
     }
 }

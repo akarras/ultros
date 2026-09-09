@@ -8,9 +8,8 @@ pub struct Model {
     pub role_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: i64,
-    /// When this membership was created. Reconciliation compares it against
-    /// the time its Discord snapshot was taken so a stale plan cannot remove
-    /// somebody a gateway event added while the snapshot was being fetched.
+    /// Membership creation time, retained for audit. Sync ordering uses the
+    /// group's revision, which survives removal of individual memberships.
     pub added_at: DateTimeWithTimeZone,
 }
 

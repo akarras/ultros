@@ -2477,8 +2477,12 @@ pub(crate) async fn add_group_role_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+    body: Option<Json<Option<AddGroupMember>>>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_role_member(group_id, user.id as i64, role_id, member_id)
+    let display_name = body
+        .and_then(|Json(body)| body)
+        .and_then(|body| body.display_name);
+    db.add_group_role_member_with_name(group_id, user.id as i64, role_id, member_id, display_name)
         .await?;
     Ok(Json(()))
 }
@@ -2611,8 +2615,15 @@ mod group_role_route_tests {
 
     async fn add_role_member_stub(
         Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+        body: Option<Json<Option<AddGroupMember>>>,
     ) -> String {
-        format!("add:{group_id}:{role_id}:{member_id}")
+        let name = body
+            .and_then(|Json(body)| body)
+            .and_then(|body| body.display_name);
+        format!(
+            "add:{group_id}:{role_id}:{member_id}{}",
+            name.map(|name| format!(":{name}")).unwrap_or_default()
+        )
     }
 
     async fn remove_role_member_stub(
@@ -2754,6 +2765,15 @@ mod group_role_route_tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "add:7:12:1234567890123456789");
+
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            Some(r#"{"display_name":"New Discord member"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "add:7:12:1234567890123456789:New Discord member");
 
         let (status, body) = call(
             "DELETE",

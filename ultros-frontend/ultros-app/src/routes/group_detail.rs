@@ -741,12 +741,16 @@ fn use_debounced(source: Signal<String>, delay_ms: u32) -> Signal<String> {
 #[component]
 fn MemberSearchPicker(
     group_id: i32,
+    #[prop(optional)] role_id: Option<i32>,
     #[prop(into)] on_pick: Callback<GroupMemberSearchResult>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (query, set_query) = signal(String::new());
     let debounced = use_debounced(query.into(), SEARCH_DEBOUNCE_MS);
-    let input_id = format!("group-member-search-{group_id}");
+    let input_id = match role_id {
+        Some(role_id) => format!("group-member-search-{group_id}-role-{role_id}"),
+        None => format!("group-member-search-{group_id}"),
+    };
     let results = Resource::new(
         move || (group_id, debounced.get()),
         move |(group_id, query)| async move {
@@ -1227,8 +1231,9 @@ fn GroupRoleRow(
     let (rename_value, set_rename_value) = signal(role.name.clone());
     let (confirm_delete, set_confirm_delete) = signal(false);
 
-    let add_role_member =
-        Action::new(move |user_id: &i64| add_group_role_member(group_id, role_id, *user_id));
+    let add_role_member = Action::new(move |(user_id, display_name): &(i64, String)| {
+        add_group_role_member(group_id, role_id, *user_id, display_name.clone())
+    });
     let remove_role_member =
         Action::new(move |user_id: &i64| remove_group_role_member(group_id, role_id, *user_id));
 
@@ -1385,10 +1390,11 @@ fn GroupRoleRow(
                                 <Show when=move || is_owner.get()>
                                     <MemberSearchPicker
                                         group_id=group_id
+                                        role_id=role_id
                                         on_pick=Callback::new(move |
                                             candidate: GroupMemberSearchResult|
                                         {
-                                            add_role_member.dispatch(candidate.user_id);
+                                            add_role_member.dispatch((candidate.user_id, candidate.display_name));
                                         })
                                     />
                                 </Show>

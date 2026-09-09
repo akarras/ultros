@@ -3,31 +3,12 @@
 //!
 //! Gateway events (see [`super::events`]) keep membership fresh between runs,
 //! but they can be missed — a dropped shard, a restart, an event Discord never
-//! sent. This walks the guild from scratch and makes the database match, so
-//! any drift is bounded by the cycle interval rather than lasting forever.
+//! sent. Periodic walks attempt to repair that drift. Snapshot, size and removal
+//! guards can refuse a pass, so convergence is not bounded by the cycle interval
+//! and some refusals require operator intervention.
 //!
-//! ## What racing a gateway event actually guarantees
-//!
-//! Both paths apply idempotent plans through the same DB primitive, but that
-//! alone does *not* make the order irrelevant: reconciliation's plan is
-//! computed from a member snapshot taken minutes earlier and applied later, so
-//! a gateway event landing in that window is newer information than the plan
-//! that is about to overwrite it.
-//!
-//! What holds:
-//!
-//! - **Removes cannot undo a newer add.** Reconciliation applies through
-//!   `apply_role_sync_from_snapshot`, which skips removing any role membership
-//!   created after the snapshot was taken. That is the direction that loses
-//!   access, and it is closed in the database, so it holds across processes.
-//! - **Two reconciles of one guild do not overlap** in this process; see
-//!   [`begin_reconcile`].
-//!
-//! What does not hold: a reconcile whose snapshot predates a role *removal*
-//! can still re-add the member the gateway just removed. That grants access
-//! rather than losing it, and the next cycle — which snapshots after the
-//! event — takes it back, so the divergence is bounded by
-//! [`RECONCILE_INTERVAL`] and never silent about membership somebody had.
+//! Snapshots capture persisted group revisions before Discord requests. Apply
+//! locks each group and refuses a snapshot after any newer sync or freeze.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,9 +27,8 @@ use super::diff::{self, GuildMember};
 /// Discord's maximum page size for `GET /guilds/{id}/members`.
 const MEMBER_PAGE_SIZE: u64 = 1000;
 
-/// Discord's own ceiling on guild size, so a guild this bot is in cannot
-/// exceed it. Reaching the cap means the cursor is not advancing the way we
-/// think it is, and the pages we did get are not the guild.
+/// Our per-reconciliation member budget. Larger Discord guilds can exist;
+/// exceeding this budget refuses the snapshot rather than applying its prefix.
 const MEMBER_HARD_CAP: usize = 250_000;
 
 /// How often every guild with a Discord-backed role is walked.
@@ -80,6 +60,7 @@ static MEMBERS_FORBIDDEN_REPORTED: AtomicBool = AtomicBool::new(false);
 /// What one guild's reconcile did, for the summary log.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct GuildSyncReport {
+    pub discarded: bool,
     pub roles: usize,
     pub orphaned: usize,
     /// Roles that were orphaned and are syncing again.
@@ -94,6 +75,7 @@ pub(crate) struct GuildSyncReport {
 
 impl GuildSyncReport {
     fn absorb(&mut self, summary: SyncSummary) {
+        self.discarded |= summary.discarded;
         self.added += summary.added;
         self.removed += summary.removed;
         self.left_group += summary.left_group;
@@ -195,14 +177,13 @@ fn wants_another_page(
         anyhow::bail!("Discord member pagination did not advance");
     }
     if fetched >= MEMBER_HARD_CAP {
-        // Not a stopping point: a guild cannot be this large, so the cursor is
-        // misbehaving and what we hold is a truncated prefix. Returning it
+        // Reaching our budget leaves a potentially truncated prefix. Returning it
         // would put every member past the cap into `plan.removes` and drop
         // them from the role — and from the group. Fail instead, so the guild
         // is skipped and existing membership is left untouched.
         anyhow::bail!(
-            "Discord member pagination passed the {MEMBER_HARD_CAP} hard cap at {fetched} \
-             members, which no guild reaches; refusing to treat a truncated list as the guild"
+            "Discord member pagination reached our {MEMBER_HARD_CAP} member hard cap at {fetched} \
+             members; refusing to treat a potentially truncated list as the guild"
         );
     }
     Ok(true)
@@ -256,6 +237,14 @@ pub(crate) async fn reconcile_guild(
     if backed.is_empty() {
         return Ok(None);
     }
+    let mut revisions = BTreeMap::new();
+    for entry in &backed {
+        if let std::collections::btree_map::Entry::Vacant(slot) =
+            revisions.entry(entry.role.group_id)
+        {
+            slot.insert(db.group_sync_revision(entry.role.group_id).await?);
+        }
+    }
     let mut report = GuildSyncReport::default();
 
     let discord_guild = GuildId::new(u64::try_from(guild_id)?);
@@ -306,10 +295,6 @@ pub(crate) async fn reconcile_guild(
         return Ok(Some(report));
     }
 
-    // Taken before the fetch, not after: anything that changes while we are
-    // reading Discord is newer than what we are reading, and the apply step
-    // uses this to refuse to undo it.
-    let snapshot_at = chrono::Utc::now();
     let members = fetch_guild_members(ctx, discord_guild).await?;
     report.members_seen = members.len();
     // Nothing below runs against a member list we do not believe.
@@ -336,9 +321,13 @@ pub(crate) async fn reconcile_guild(
 
     for (group_id, plans) in by_group {
         report.absorb(
-            db.apply_role_sync_from_snapshot(group_id, plans, snapshot_at)
+            db.apply_role_sync_from_snapshot(group_id, plans, revisions[&group_id])
                 .await?,
         );
+    }
+
+    if report.discarded {
+        return Ok(Some(report));
     }
 
     // Names of members who were already in place, which the apply step has no
@@ -368,7 +357,7 @@ pub(crate) async fn reconcile_guild(
 ///
 /// This is process-local, which is the honest scope of the guarantee: it stops
 /// this instance racing itself, not two instances racing each other. The
-/// correctness guard that does hold across processes is the snapshot timestamp
+/// correctness guard that does hold across processes is the persisted revision
 /// (`apply_role_sync_from_snapshot`), which lives in the database.
 static IN_FLIGHT: LazyLock<Mutex<HashSet<i64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -399,6 +388,12 @@ fn begin_reconcile(guild_id: i64) -> Option<ReconcileGuard> {
     claimed.then(|| ReconcileGuard { guild_id })
 }
 
+const SNAPSHOT_ATTEMPTS: usize = 3;
+
+fn retry_discarded_snapshot(completed_attempts: usize) -> bool {
+    completed_attempts < SNAPSHOT_ATTEMPTS
+}
+
 /// Reconcile one guild, logging the outcome. Used by every caller that is not
 /// interested in the report itself.
 ///
@@ -414,32 +409,51 @@ async fn reconcile_and_log(db: &UltrosDb, ctx: &serenity::Context, guild_id: i64
         );
         return false;
     };
-    match reconcile_guild(db, ctx, guild_id).await {
-        Ok(Some(report)) => {
-            info!(
-                guild_id,
-                roles = report.roles,
-                orphaned = report.orphaned,
-                restored = report.restored,
-                members_seen = report.members_seen,
-                added = report.added,
-                removed = report.removed,
-                left_group = report.left_group,
-                handed_over = report.handed_over,
-                names_refreshed = report.names_refreshed,
-                "reconciled Discord group membership"
-            );
-            true
-        }
-        Ok(None) => {
-            debug!(guild_id, "no Discord roles, nothing to reconcile");
-            false
-        }
-        Err(error) => {
-            report_failure(guild_id, &error);
-            false
+    for attempt in 1..=SNAPSHOT_ATTEMPTS {
+        match reconcile_guild(db, ctx, guild_id).await {
+            Ok(Some(report)) if report.discarded => {
+                if retry_discarded_snapshot(attempt) {
+                    debug!(
+                        guild_id,
+                        attempt, "membership changed during snapshot; fetching a fresh snapshot"
+                    );
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                } else {
+                    warn!(
+                        guild_id,
+                        attempt,
+                        "skipped Discord membership reconciliation: snapshots kept losing their revision fence"
+                    );
+                    return false;
+                }
+            }
+            Ok(Some(report)) => {
+                info!(
+                    guild_id,
+                    roles = report.roles,
+                    orphaned = report.orphaned,
+                    restored = report.restored,
+                    members_seen = report.members_seen,
+                    added = report.added,
+                    removed = report.removed,
+                    left_group = report.left_group,
+                    handed_over = report.handed_over,
+                    names_refreshed = report.names_refreshed,
+                    "reconciled Discord group membership"
+                );
+                return true;
+            }
+            Ok(None) => {
+                debug!(guild_id, "no Discord roles, nothing to reconcile");
+                return false;
+            }
+            Err(error) => {
+                report_failure(guild_id, &error);
+                return false;
+            }
         }
     }
+    false
 }
 
 /// Reconcile one guild in the background. Callers on a request path use this
@@ -610,6 +624,14 @@ pub(crate) fn sync_rate_limiter() -> &'static SyncRateLimiter {
 mod tests {
     use super::*;
 
+    #[test]
+    fn discarded_snapshot_retries_are_bounded() {
+        assert!(retry_discarded_snapshot(1));
+        assert!(retry_discarded_snapshot(2));
+        assert!(!retry_discarded_snapshot(3));
+        assert!(!retry_discarded_snapshot(4));
+    }
+
     /// A guild that could not be read must be skipped and retried, never
     /// treated as a guild that emptied. Only failures that will clear on their
     /// own are worth a quiet `warn!`; a definitive refusal is a real problem.
@@ -634,7 +656,7 @@ mod tests {
         assert!(wants_another_page(2000, MEMBER_PAGE_SIZE as usize, 9_000, Some(8_000)).unwrap());
     }
 
-    /// Reaching the hard cap is a broken cursor, not a big guild, and the
+    /// Reaching our hard cap leaves a potentially incomplete snapshot, and the
     /// pages in hand are a truncated prefix. Truncating there used to `break`
     /// and return them, which put every member past the cap into
     /// `plan.removes` — dropping them from the role and from the group.

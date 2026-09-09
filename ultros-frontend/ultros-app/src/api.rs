@@ -686,10 +686,13 @@ pub(crate) async fn add_group_role_member(
     group_id: i32,
     role_id: i32,
     user_id: i64,
+    display_name: String,
 ) -> AppResult<()> {
     post_api(
         &format!("/api/v1/group/{group_id}/roles/{role_id}/members/{user_id}"),
-        (),
+        AddGroupMember {
+            display_name: Some(display_name),
+        },
     )
     .await
 }

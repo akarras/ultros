@@ -260,7 +260,6 @@ impl UltrosDb {
         &self,
         discord_user: i64,
     ) -> Result<Vec<(list::Model, Option<String>)>> {
-        // This should probably also include lists shared with the user
         let owned_lists = list::Entity::find()
             .find_also_related(discord_user::Entity)
             .filter(list::Column::Owner.eq(discord_user))
@@ -289,9 +288,28 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
 
+        let role_lists = list::Entity::find()
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::List.def().rev(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::GroupRole.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                group_role::Relation::GroupRoleMember.def(),
+            )
+            .filter(group_role_member::Column::UserId.eq(discord_user))
+            .find_also_related(discord_user::Entity)
+            .all(&self.db)
+            .await?;
+
         let mut all_lists = owned_lists;
         all_lists.extend(shared_lists);
         all_lists.extend(group_lists);
+        all_lists.extend(role_lists);
         all_lists.sort_by_key(|(l, _)| l.id);
         all_lists.dedup_by_key(|(l, _)| l.id);
 
@@ -340,7 +358,26 @@ impl UltrosDb {
             .one(&self.db)
             .await?;
 
-        Ok(group_list)
+        if group_list.is_some() {
+            return Ok(group_list);
+        }
+        Ok(list::Entity::find()
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::List.def().rev(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::GroupRole.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                group_role::Relation::GroupRoleMember.def(),
+            )
+            .filter(group_role_member::Column::UserId.eq(discord_user))
+            .filter(list::Column::Name.eq(list_name))
+            .one(&self.db)
+            .await?)
     }
 
     pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<(list::Model, String)> {
@@ -770,6 +807,7 @@ impl UltrosDb {
             guild_icon_url: ActiveValue::Set(guild_icon_url),
             source: ActiveValue::Set(source as i16),
             frozen_reason: ActiveValue::Set(None),
+            sync_revision: ActiveValue::Set(0),
         }
         .insert(&txn)
         .await?;
@@ -1669,6 +1707,123 @@ mod role_share_tests {
         assert_eq!(
             db.get_permission(list.id, in_group_only.id).await.unwrap(),
             ListPermission::None
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn role_shared_lists_are_discovered_deduplicated_and_revoked() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let member = fresh_user(&db, "role-discovery").await;
+        let outsider = fresh_user(&db, "group-only").await;
+        db.add_group_member(group.id, owner.id, outsider.id, None)
+            .await
+            .unwrap();
+        let first = db
+            .create_group_role(group.id, owner.id, "First".into())
+            .await
+            .unwrap();
+        let second = db
+            .create_group_role(group.id, owner.id, "Second".into())
+            .await
+            .unwrap();
+        for role in [&first, &second] {
+            db.add_group_role_member(group.id, owner.id, role.id, member.id)
+                .await
+                .unwrap();
+        }
+        let name = format!("Role discovery {}", member.id);
+        let list = db
+            .create_list(owner.clone(), name.clone(), None)
+            .await
+            .unwrap();
+        db.share_list_with_role(list.id, owner.id, first.id, ListPermission::Read)
+            .await
+            .unwrap();
+        db.share_list_with_role(list.id, owner.id, second.id, ListPermission::Write)
+            .await
+            .unwrap();
+        let discovered = db.get_lists_for_user(member.id).await.unwrap();
+        let matching: Vec<_> = discovered
+            .iter()
+            .filter(|(row, _)| row.id == list.id)
+            .collect();
+        assert_eq!(matching.len(), 1, "multiple role shares produce one list");
+        assert_eq!(matching[0].1.as_deref(), Some(owner.username.as_str()));
+        assert_eq!(
+            db.get_list_by_name_for_user(member.id, &name)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            list.id
+        );
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::Write
+        );
+        assert!(
+            !db.get_lists_for_user(outsider.id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|(row, _)| row.id == list.id)
+        );
+        assert!(
+            db.get_list_by_name_for_user(outsider.id, &name)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        db.share_list_with_group(list.id, owner.id, group.id, ListPermission::Read)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_lists_for_user(member.id)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|(row, _)| row.id == list.id)
+                .count(),
+            1
+        );
+        db.unshare_list_from_group(list.id, owner.id, group.id)
+            .await
+            .unwrap();
+        db.remove_group_role_member(group.id, owner.id, second.id, member.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::Read
+        );
+        assert!(
+            db.get_lists_for_user(member.id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|(row, _)| row.id == list.id)
+        );
+        db.unshare_list_from_role(list.id, owner.id, first.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::None
+        );
+        assert!(
+            !db.get_lists_for_user(member.id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|(row, _)| row.id == list.id)
+        );
+        assert!(
+            db.get_list_by_name_for_user(member.id, &name)
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

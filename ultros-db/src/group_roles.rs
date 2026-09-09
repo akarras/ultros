@@ -65,6 +65,8 @@ pub struct RoleSyncPlan {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SyncSummary {
+    /// A snapshot lost its revision fence or sync eligibility and was not applied.
+    pub discarded: bool,
     pub added: usize,
     pub removed: usize,
     /// Members who left the group entirely because they held no other
@@ -406,12 +408,38 @@ impl UltrosDb {
         role_id: i32,
         user_id: i64,
     ) -> Result<()> {
+        self.add_group_role_member_with_name(group_id, owner_id, role_id, user_id, None)
+            .await
+    }
+
+    /// Add a Discord search result, including someone who has not logged in.
+    pub async fn add_group_role_member_with_name(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        role_id: i32,
+        user_id: i64,
+        display_name: Option<String>,
+    ) -> Result<()> {
         self.load_owned_group(group_id, owner_id).await?;
         let role = self.load_role_in_group(group_id, role_id).await?;
         if GroupRoleSource::from(role.source) == GroupRoleSource::DiscordRole {
             return Err(GroupError::RoleManagedByDiscord.into());
         }
         let txn = self.db.begin().await?;
+        if let Some(username) = display_name {
+            discord_user::Entity::insert(discord_user::ActiveModel {
+                id: ActiveValue::Set(user_id),
+                username: ActiveValue::Set(username),
+            })
+            .on_conflict(
+                OnConflict::column(discord_user::Column::Id)
+                    .update_column(discord_user::Column::Id)
+                    .to_owned(),
+            )
+            .exec(&txn)
+            .await?;
+        }
         ensure_group_member(&txn, group_id, user_id, GroupMemberSource::Manual).await?;
         insert_role_member(&txn, role_id, user_id).await?;
         txn.commit().await?;
@@ -539,16 +567,59 @@ impl UltrosDb {
         if role_ids.is_empty() {
             return Ok(0);
         }
-        let result = group_role::Entity::update_many()
-            .col_expr(
-                group_role::Column::SyncState,
-                sea_orm::sea_query::Expr::value(GroupRoleSyncState::Synced as i16),
-            )
-            .filter(group_role::Column::Id.is_in(role_ids))
-            .filter(group_role::Column::SyncState.eq(GroupRoleSyncState::Orphaned as i16))
-            .exec(&self.db)
+        self.set_role_sync_state(role_ids, GroupRoleSyncState::Synced)
+            .await
+    }
+
+    /// All role-state writers take the same group lock as membership apply.
+    async fn set_role_sync_state(
+        &self,
+        role_ids: Vec<i32>,
+        state: GroupRoleSyncState,
+    ) -> Result<usize> {
+        let txn = self.db.begin().await?;
+        let groups: Vec<i32> = group_role::Entity::find()
+            .select_only()
+            .column(group_role::Column::GroupId)
+            .distinct()
+            .filter(group_role::Column::Id.is_in(role_ids.clone()))
+            .order_by_asc(group_role::Column::GroupId)
+            .into_tuple()
+            .all(&txn)
             .await?;
-        Ok(result.rows_affected as usize)
+        let mut changed = 0;
+        for group_id in groups {
+            let Some(group) = user_group::Entity::find_by_id(group_id)
+                .lock_exclusive()
+                .one(&txn)
+                .await?
+            else {
+                continue;
+            };
+            if group.guild_id.is_none() || group.frozen_reason.is_some() {
+                continue;
+            }
+            let result = group_role::Entity::update_many()
+                .col_expr(
+                    group_role::Column::SyncState,
+                    sea_orm::sea_query::Expr::value(state as i16),
+                )
+                .filter(group_role::Column::GroupId.eq(group_id))
+                .filter(group_role::Column::Id.is_in(role_ids.clone()))
+                .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+                .filter(group_role::Column::SyncState.ne(state as i16))
+                .exec(&txn)
+                .await?;
+            if result.rows_affected > 0 {
+                let revision = group.sync_revision + 1;
+                let mut active: user_group::ActiveModel = group.into();
+                active.sync_revision = ActiveValue::Set(revision);
+                active.update(&txn).await?;
+            }
+            changed += result.rows_affected as usize;
+        }
+        txn.commit().await?;
+        Ok(changed)
     }
 
     pub async fn synced_roles_for_guild(&self, guild_id: i64) -> Result<Vec<SyncedRole>> {
@@ -613,28 +684,24 @@ impl UltrosDb {
         self.apply_role_sync_inner(group_id, plans, None).await
     }
 
-    /// Apply reconciliation output computed from a snapshot taken at
-    /// `snapshot_at`.
-    ///
-    /// Identical to [`apply_role_sync`](Self::apply_role_sync) except that
-    /// removes skip any role membership created *after* the snapshot. Walking
-    /// a large guild's member list takes minutes, and a gateway event landing
-    /// in that window is newer information than the snapshot: the member shows
-    /// up in `current` (read after the event) but not in `desired` (computed
-    /// before it), and without this the stale plan would evict them — losing
-    /// them the role, and their group membership with it, until the next pass
-    /// hours later.
-    ///
-    /// The comparison is against the database's own `added_at` column rather
-    /// than anything held in memory, so it holds when the reconcile and the
-    /// event are handled by different processes.
+    /// Capture before Discord requests; every applied sync advances this fence.
+    pub async fn group_sync_revision(&self, group_id: i32) -> Result<i64> {
+        Ok(user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(GroupError::NotFound)?
+            .sync_revision)
+    }
+
+    /// Discard a snapshot in full if a newer sync or freeze committed since
+    /// its revision was captured. In particular, stale adds cannot undo revocation.
     pub async fn apply_role_sync_from_snapshot(
         &self,
         group_id: i32,
         plans: Vec<RoleSyncPlan>,
-        snapshot_at: chrono::DateTime<chrono::Utc>,
+        expected_revision: i64,
     ) -> Result<SyncSummary> {
-        self.apply_role_sync_inner(group_id, plans, Some(snapshot_at))
+        self.apply_role_sync_inner(group_id, plans, Some(expected_revision))
             .await
     }
 
@@ -642,10 +709,22 @@ impl UltrosDb {
         &self,
         group_id: i32,
         plans: Vec<RoleSyncPlan>,
-        snapshot_at: Option<chrono::DateTime<chrono::Utc>>,
+        expected_revision: Option<i64>,
     ) -> Result<SyncSummary> {
         let mut summary = SyncSummary::default();
         let txn = self.db.begin().await?;
+        let group = user_group::Entity::find_by_id(group_id)
+            .lock_exclusive()
+            .one(&txn)
+            .await?
+            .ok_or(GroupError::NotFound)?;
+        if group.guild_id.is_none()
+            || group.frozen_reason.is_some()
+            || expected_revision.is_some_and(|revision| revision != group.sync_revision)
+        {
+            summary.discarded = expected_revision.is_some();
+            return Ok(summary);
+        }
 
         let group_role_ids: HashSet<i32> = group_role::Entity::find()
             .select_only()
@@ -659,6 +738,27 @@ impl UltrosDb {
         if plans.iter().any(|p| !group_role_ids.contains(&p.role_id)) {
             return Err(GroupError::RoleNotFound.into());
         }
+
+        let eligible: HashSet<i32> = group_role::Entity::find()
+            .select_only()
+            .column(group_role::Column::Id)
+            .filter(group_role::Column::GroupId.eq(group_id))
+            .filter(group_role::Column::Source.eq(GroupRoleSource::DiscordRole as i16))
+            .filter(group_role::Column::SyncState.eq(GroupRoleSyncState::Synced as i16))
+            .into_tuple()
+            .all(&txn)
+            .await?
+            .into_iter()
+            .collect();
+        let plans: Vec<_> = plans
+            .into_iter()
+            .filter(|plan| eligible.contains(&plan.role_id))
+            .collect();
+        // Even an already-absent removal carries newer negative information.
+        let next_revision = group.sync_revision + 1;
+        let mut active: user_group::ActiveModel = group.into();
+        active.sync_revision = ActiveValue::Set(next_revision);
+        active.update(&txn).await?;
 
         let mut touched_roles = Vec::with_capacity(plans.len());
         let mut removed_users: HashSet<i64> = HashSet::new();
@@ -682,26 +782,12 @@ impl UltrosDb {
                 summary.added += 1;
             }
             if !plan.removes.is_empty() {
-                let mut delete = group_role_member::Entity::delete_many()
+                let result = group_role_member::Entity::delete_many()
                     .filter(group_role_member::Column::RoleId.eq(plan.role_id))
-                    .filter(group_role_member::Column::UserId.is_in(plan.removes.clone()));
-                if let Some(snapshot_at) = snapshot_at {
-                    // Anything joined after the snapshot was taken is newer
-                    // than the plan and outranks it.
-                    delete =
-                        delete.filter(group_role_member::Column::AddedAt.lte::<chrono::DateTime<
-                            chrono::FixedOffset,
-                        >>(
-                            snapshot_at.into()
-                        ));
-                }
-                let result = delete.exec(&txn).await?;
+                    .filter(group_role_member::Column::UserId.is_in(plan.removes.clone()))
+                    .exec(&txn)
+                    .await?;
                 summary.removed += result.rows_affected as usize;
-                // A user whose row was spared stays in `removed_users`, which
-                // costs one extra id in the "should they leave the group"
-                // query below. That query re-reads the role memberships inside
-                // this transaction, still finds their spared row, and keeps
-                // them — so the spare survives both halves.
                 removed_users.extend(plan.removes);
             }
         }
@@ -851,13 +937,7 @@ impl UltrosDb {
         if role_ids.is_empty() {
             return Ok(());
         }
-        group_role::Entity::update_many()
-            .col_expr(
-                group_role::Column::SyncState,
-                sea_orm::sea_query::Expr::value(GroupRoleSyncState::Orphaned as i16),
-            )
-            .filter(group_role::Column::Id.is_in(role_ids))
-            .exec(&self.db)
+        self.set_role_sync_state(role_ids, GroupRoleSyncState::Orphaned)
             .await?;
         Ok(())
     }
@@ -904,14 +984,15 @@ impl UltrosDb {
         guild_id: i64,
         reason: String,
     ) -> Result<Option<i32>> {
+        let txn = self.db.begin().await?;
         let Some(group) = user_group::Entity::find()
             .filter(user_group::Column::GuildId.eq(guild_id))
-            .one(&self.db)
+            .lock_exclusive()
+            .one(&txn)
             .await?
         else {
             return Ok(None);
         };
-        let txn = self.db.begin().await?;
         group_role::Entity::update_many()
             .col_expr(
                 group_role::Column::Source,
@@ -937,6 +1018,7 @@ impl UltrosDb {
             .exec(&txn)
             .await?;
         let mut active: user_group::ActiveModel = group.clone().into();
+        active.sync_revision = ActiveValue::Set(group.sync_revision + 1);
         active.guild_id = ActiveValue::Set(None);
         active.source = ActiveValue::Set(GroupSource::Manual as i16);
         active.frozen_reason = ActiveValue::Set(Some(reason));
@@ -1919,8 +2001,8 @@ pub(crate) mod tests {
     }
 
     /// A stale reconcile must not undo a gateway event that landed while its
-    /// snapshot was being fetched. The role membership carries the time it was
-    /// created; a plan older than that has no business removing it.
+    /// snapshot was being fetched. The persisted revision changes on the
+    /// event, invalidating every part of the older plan.
     #[tokio::test]
     #[ignore = "requires live DB"]
     async fn a_snapshot_older_than_the_membership_does_not_remove_it() {
@@ -1930,8 +2012,7 @@ pub(crate) mod tests {
 
         // T0: the reconcile starts reading Discord, where this user has no
         // role yet.
-        let snapshot_at = chrono::Utc::now();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let snapshot_revision = db.group_sync_revision(group.id).await.unwrap();
 
         // T1: a gateway event grants them the role.
         db.apply_role_sync(
@@ -1955,11 +2036,12 @@ pub(crate) mod tests {
                     adds: vec![],
                     removes: vec![user],
                 }],
-                snapshot_at,
+                snapshot_revision,
             )
             .await
             .unwrap();
 
+        assert!(summary.discarded);
         assert_eq!(summary.removed, 0, "the newer membership outranks the plan");
         assert_eq!(summary.left_group, 0);
         assert!(is_role_member(&db, role.id, user).await);
@@ -1975,12 +2057,146 @@ pub(crate) mod tests {
                     adds: vec![],
                     removes: vec![user],
                 }],
-                chrono::Utc::now(),
+                db.group_sync_revision(group.id).await.unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(later.removed, 1);
         assert!(!is_group_member(&db, group.id, user).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn stale_snapshot_cannot_restore_a_removed_or_already_absent_member() {
+        let db = test_db().await;
+        let (group, _owner, role, _guild) = guild_group_with_synced_role(&db).await;
+        let user = next_id();
+        for initially_present in [true, false] {
+            if initially_present {
+                db.apply_role_sync(
+                    group.id,
+                    vec![RoleSyncPlan {
+                        role_id: role.id,
+                        adds: vec![(user, "Member".into())],
+                        removes: vec![],
+                    }],
+                )
+                .await
+                .unwrap();
+            }
+            let revision = db.group_sync_revision(group.id).await.unwrap();
+            db.apply_role_sync(
+                group.id,
+                vec![RoleSyncPlan {
+                    role_id: role.id,
+                    adds: vec![],
+                    removes: vec![user],
+                }],
+            )
+            .await
+            .unwrap();
+            let summary = db
+                .apply_role_sync_from_snapshot(
+                    group.id,
+                    vec![RoleSyncPlan {
+                        role_id: role.id,
+                        adds: vec![(user, "Member".into())],
+                        removes: vec![],
+                    }],
+                    revision,
+                )
+                .await
+                .unwrap();
+            assert!(summary.discarded);
+            assert_eq!(summary.added, 0);
+            assert!(!is_role_member(&db, role.id, user).await);
+            assert!(!is_group_member(&db, group.id, user).await);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn freezing_rejects_pending_snapshot_and_gateway_changes() {
+        let db = test_db().await;
+        let (group, _owner, role, guild) = guild_group_with_synced_role(&db).await;
+        let user = next_id();
+        let newcomer = next_id();
+        db.apply_role_sync(
+            group.id,
+            vec![RoleSyncPlan {
+                role_id: role.id,
+                adds: vec![(user, "Member".into())],
+                removes: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+        let revision = db.group_sync_revision(group.id).await.unwrap();
+        db.freeze_group_for_guild(guild, "Removed".into())
+            .await
+            .unwrap();
+        let plan = RoleSyncPlan {
+            role_id: role.id,
+            adds: vec![(newcomer, "Late".into())],
+            removes: vec![user],
+        };
+        let rejected = db
+            .apply_role_sync_from_snapshot(group.id, vec![plan.clone()], revision)
+            .await
+            .unwrap();
+        assert!(rejected.discarded);
+        db.apply_role_sync(group.id, vec![plan]).await.unwrap();
+        assert!(is_role_member(&db, role.id, user).await);
+        assert!(is_group_member(&db, group.id, user).await);
+        assert!(!is_role_member(&db, role.id, newcomer).await);
+        assert!(!is_group_member(&db, group.id, newcomer).await);
+        assert_eq!(db.restore_roles(vec![role.id]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn manual_role_accepts_unknown_discord_user_after_authorization() {
+        let db = test_db().await;
+        let (group, owner, synced, _guild) = guild_group_with_synced_role(&db).await;
+        let role = db
+            .create_group_role(group.id, owner.id, "Manual".into())
+            .await
+            .unwrap();
+        let user = next_id();
+        assert!(
+            db.add_group_role_member_with_name(
+                group.id,
+                owner.id + 1,
+                role.id,
+                user,
+                Some("New".into())
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            db.add_group_role_member_with_name(
+                group.id,
+                owner.id,
+                synced.id,
+                user,
+                Some("New".into())
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            discord_user::Entity::find_by_id(user)
+                .one(&db.db)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        db.add_group_role_member_with_name(group.id, owner.id, role.id, user, Some("New".into()))
+            .await
+            .unwrap();
+        assert!(is_role_member(&db, role.id, user).await);
+        assert!(is_group_member(&db, group.id, user).await);
     }
 
     #[tokio::test]

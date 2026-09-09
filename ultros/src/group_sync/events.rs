@@ -2,16 +2,12 @@
 //!
 //! These are a latency optimization, not the source of truth — reconciliation
 //! is (see [`super::reconcile`]). Everything here applies the same idempotent
-//! plans through the same DB primitive reconciliation uses, and a missed event
-//! costs freshness rather than correctness.
+//! plans through the same DB primitive reconciliation uses. Missed events leave
+//! stale membership until a later event or an accepted reconciliation repairs it;
+//! reconciliation's refusal guards can require operator intervention.
 //!
-//! An event is always about what Discord says *right now*, so it applies
-//! through `apply_role_sync` with no snapshot timestamp: there is nothing
-//! staler than it to defer to. Reconciliation is the side that has to prove
-//! its plan is not out of date, and [`super::reconcile`] documents exactly how
-//! far that goes — a reconcile can no longer undo an add made here, but one
-//! whose snapshot predates a removal made here can still re-add the member,
-//! until its next pass.
+//! Events advance the persisted group revision, including already-absent
+//! removals, so older snapshots cannot undo revocation.
 //!
 //! Each function takes the *parsed fields* of an event rather than a live
 //! serenity `Context`, so the policy is testable against a database fixture
@@ -37,6 +33,7 @@ async fn apply(db: &UltrosDb, plans: Vec<(i32, Vec<RoleSyncPlan>)>) -> Result<Sy
     let mut total = SyncSummary::default();
     for (group_id, plans) in plans {
         let summary = db.apply_role_sync(group_id, plans).await?;
+        total.discarded |= summary.discarded;
         total.added += summary.added;
         total.removed += summary.removed;
         total.left_group += summary.left_group;

@@ -6,18 +6,18 @@
 //!   match. It is the source of truth, and it runs on a timer, on demand from
 //!   the group page, and immediately after a role is imported.
 //! - [`events`] handles gateway events so a role change shows up in seconds
-//!   instead of hours. Purely a latency optimization: everything it does,
-//!   reconciliation would also do on its next pass.
+//!   instead of hours. Later accepted reconciliation passes repair missed events;
+//!   refusal guards can leave membership stale until an operator intervenes.
 //! - [`diff`] is the set logic both of them share, which is why they cannot
 //!   disagree about what "in sync" means.
 //!
 //! Both write paths are idempotent and go through the same DB primitive, but
 //! idempotence alone does not make them order-independent: reconciliation acts
 //! on a snapshot it took minutes ago, and an event that landed since is newer.
-//! What is guaranteed, and what is not, is spelled out in [`reconcile`] —
-//! briefly, a stale reconcile can no longer *remove* someone an event just
-//! added, and a stale reconcile that re-adds someone an event just removed is
-//! corrected on the next pass.
+//! A persisted group revision rejects the entire snapshot when a newer event
+//! or lifecycle transition has committed, protecting both grants and revocations.
+//! Reconciliation retries with fresh snapshots at most three times; exhausted
+//! retries leave membership unchanged and report that the sync was skipped.
 
 use poise::serenity_prelude as serenity;
 
