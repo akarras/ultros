@@ -59,12 +59,12 @@ async function checkItemSectionNav(page) {
     if (!nav) return ["item section navigation is missing"];
     const failures = [];
     const links = [...nav.querySelectorAll("a")];
-    const sections = ["#overview", "#listings", "#history", "#sources", "#related"];
-    if (JSON.stringify(links.slice(0, 5).map((link) => link.getAttribute("href"))) !== JSON.stringify(sections)) {
+    const sections = ["#overview", "#listings", "#history", "#market-history", "#sources", "#related"];
+    if (JSON.stringify(links.slice(0, sections.length).map((link) => link.getAttribute("href"))) !== JSON.stringify(sections)) {
       failures.push("item section navigation changed the existing link order");
     }
     const allowed = ["#crafting-recipes", "#exchange-sources", "#leve-sources", "#vendor-sources"];
-    const sources = links.slice(5);
+    const sources = links.slice(sections.length);
     const hrefs = sources.map((link) => link.getAttribute("href"));
     if (new Set(hrefs).size !== hrefs.length) failures.push("duplicate source shortcuts");
     for (const link of sources) {
