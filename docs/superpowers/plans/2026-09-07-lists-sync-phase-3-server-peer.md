@@ -537,65 +537,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Add `sync_payload` to the document crate, test first**
 
-In `ultros-list-doc/src/document.rs` tests:
-
-```rust
-    #[test]
-    fn sync_payload_picks_snapshot_updates_or_up_to_date() {
-        let key = RowKey::new(1, None);
-        let server = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
-        assert!(matches!(server.sync_payload(&[]).unwrap(), SyncPayload::Snapshot(_)));
-        assert!(matches!(server.sync_payload(b"junk").unwrap(), SyncPayload::Snapshot(_)));
-        let client = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
-        assert_eq!(server.sync_payload(&client.version()).unwrap(), SyncPayload::UpToDate);
-        server.set_need(&key, 3).unwrap();
-        let SyncPayload::Updates(bytes) = server.sync_payload(&client.version()).unwrap() else {
-            panic!("expected updates");
-        };
-        client.import(&bytes).unwrap();
-        assert_eq!(client.row(&key).unwrap().need, 3);
-        // A client that is ahead gets nothing to import; it will send its own diff.
-        client.set_need(&key, 4).unwrap();
-        assert!(matches!(server.sync_payload(&client.version()).unwrap(), SyncPayload::Updates(_)));
-    }
-```
-
-Then add to `document.rs`:
-
-```rust
-/// The server's answer to a subscribe handshake (spec section 5).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SyncPayload {
-    Snapshot(Vec<u8>),
-    Updates(Vec<u8>),
-    UpToDate,
-}
-```
-
-and inside `impl ListDocument`:
-
-```rust
-    /// What to send a peer that reports `client_version`: a snapshot when it
-    /// has nothing usable, nothing when it is level, otherwise the updates it
-    /// lacks. A peer that is ahead still gets `Updates`, possibly carrying
-    /// nothing new; it then sends its own diff.
-    pub fn sync_payload(&self, client_version: &[u8]) -> Result<SyncPayload, DocError> {
-        if client_version.is_empty() {
-            return Ok(SyncPayload::Snapshot(self.export_snapshot()?));
-        }
-        let Ok(client) = VersionVector::decode(client_version) else {
-            return Ok(SyncPayload::Snapshot(self.export_snapshot()?));
-        };
-        if client == self.doc.oplog_vv() {
-            return Ok(SyncPayload::UpToDate);
-        }
-        Ok(SyncPayload::Updates(
-            self.doc.export(ExportMode::updates(&client))?,
-        ))
-    }
-```
-
-Add `SyncPayload` to the `pub use document::{...}` line in `lib.rs`. Run `cargo test -p ultros-list-doc sync_payload`; expected 1 passed.
+`SyncPayload`, `sync_payload`, `can_export_since` and `is_ahead_of` already
+exist in the crate (Phase 2 fix wave); nothing to add here.
 
 - [ ] **Step 2: Add the dependency and the constructor**
 

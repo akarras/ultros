@@ -71,43 +71,9 @@
 
 - [ ] **Step 1: Test and implement `is_ahead_of`**
 
-In `document.rs` tests:
-
-```rust
-    #[test]
-    fn is_ahead_of_reports_unsent_local_work() {
-        let a = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 1, 0)]);
-        let b = ListDocument::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
-        assert!(!a.is_ahead_of(&b.version()));
-        a.set_need(&RowKey::new(1, None), 2).unwrap();
-        assert!(a.is_ahead_of(&b.version()));
-        b.import(&a.export_since(&b.version()).unwrap()).unwrap();
-        assert!(!a.is_ahead_of(&b.version()));
-        assert!(a.is_ahead_of(b"junk"), "an unreadable version gets everything");
-        assert!(a.is_ahead_of(&[]));
-    }
-```
-
-Then in `impl ListDocument`:
-
-```rust
-    /// True when this document holds operations the holder of `version` has
-    /// not seen: there is something to send it.
-    pub fn is_ahead_of(&self, version: &[u8]) -> bool {
-        let Ok(theirs) = VersionVector::decode(version) else {
-            return true;
-        };
-        let mine = self.doc.oplog_vv();
-        mine.iter()
-            .any(|(peer, counter)| theirs.get(peer).is_none_or(|seen| seen < counter))
-    }
-```
-
-If `iter()` does not resolve on `VersionVector`, replace the body's last statement with `!theirs.includes_vv(&mine)`; both express the same test.
-
-Add `pub use loro::Subscription;` to `lib.rs` (the browser stores subscriptions without depending on `loro` itself).
-
-Run: `cargo test -p ultros-list-doc is_ahead_of`; expected 1 passed.
+`is_ahead_of` already exists in the crate (Phase 2 fix wave); only the
+`pub use loro::Subscription;` re-export remains for this step if missing --
+check `lib.rs` first (the fix wave added it there too).
 
 - [ ] **Step 2: Frontend dependencies and error**
 
@@ -924,6 +890,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `ClientMessage::{SubscribeListDoc, ListDocUpdate}`, `ServerClient::{ListDocSubscribed, ListDocUpdate, Stale, Error}`, `ListDocPayload`, `ListDocHandle`.
 - Produces: `RealtimeClient::subscribe_list_doc(&self, list_id: i32, version: Vec<u8>, handler: impl Fn(ServerClient) + 'static) -> RealtimeSubscription`, `RealtimeClient::send_list_doc_update(&self, list_id: i32, update: Vec<u8>)`, `list_doc::sync::start(handle: ListDocHandle, realtime: RealtimeClient, on_stale: impl Fn() + Clone + 'static, on_remote_change: impl Fn() + Clone + 'static) -> RealtimeSubscription`.
+- A closure passed to `on_local_update` must be `Send + Sync`; capture the realtime client, whose inner `Rc` is already wrapped in `SendWrapper`, rather than a raw `web_sys::WebSocket`.
 
 - [ ] **Step 1: Realtime client methods**
 

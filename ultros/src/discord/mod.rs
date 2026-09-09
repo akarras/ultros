@@ -75,6 +75,92 @@ async fn register(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Gateway events that feed group membership sync.
+///
+/// Every branch that touches the database opens with one indexed early-out, so
+/// events from the guilds that have no synced roles — which is most of them —
+/// cost a single query and nothing else. The handlers themselves live in
+/// [`crate::group_sync::events`], taking parsed fields rather than a context,
+/// so they can be tested without a gateway connection; this function is only
+/// the unwrapping.
+///
+/// Failures are logged and swallowed. None of this is load-bearing for the
+/// bot's other duties, and reconciliation will pick up whatever was dropped.
+async fn handle_event(event: &serenity::FullEvent, data: &Data) {
+    use crate::group_sync::events;
+
+    let db = &data.db;
+    let result: Result<(), anyhow::Error> = match event {
+        serenity::FullEvent::GuildMemberAddition { new_member } => events::on_member_upsert(
+            db,
+            new_member.guild_id.get() as i64,
+            new_member.user.id.get() as i64,
+            // The global name, never the guild nickname: see
+            // `group_sync::global_display_name`.
+            &crate::group_sync::global_display_name(&new_member.user),
+            &new_member
+                .roles
+                .iter()
+                .map(|role| role.get() as i64)
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .map(|_| ()),
+        // The raw event is used rather than `new`, which is only populated
+        // from the cache: a role grant has to be handled whether or not the
+        // member happens to be cached.
+        serenity::FullEvent::GuildMemberUpdate { event: update, .. } => events::on_member_upsert(
+            db,
+            update.guild_id.get() as i64,
+            update.user.id.get() as i64,
+            // The global name, never the guild nickname: `discord_user` is
+            // one row shared site-wide.
+            &crate::group_sync::global_display_name(&update.user),
+            &update
+                .roles
+                .iter()
+                .map(|role| role.get() as i64)
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .map(|_| ()),
+        serenity::FullEvent::GuildMemberRemoval { guild_id, user, .. } => {
+            events::on_member_removal(db, guild_id.get() as i64, user.id.get() as i64)
+                .await
+                .map(|_| ())
+        }
+        serenity::FullEvent::GuildRoleDelete {
+            guild_id,
+            removed_role_id,
+            ..
+        } => events::on_role_delete(db, guild_id.get() as i64, removed_role_id.get() as i64).await,
+        // `unavailable` separates a Discord outage from a real removal. Only
+        // the latter freezes the group.
+        serenity::FullEvent::GuildDelete { incomplete, .. } => {
+            events::on_guild_delete(db, incomplete.id.get() as i64, incomplete.unavailable)
+                .await
+                .map(|frozen| {
+                    if let Some(group_id) = frozen {
+                        tracing::warn!(
+                            guild_id = incomplete.id.get(),
+                            group_id,
+                            "the bot was removed from a guild; its group is frozen and \
+                             membership is now manual"
+                        );
+                    }
+                })
+        }
+        serenity::FullEvent::GuildCreate { guild, .. } => {
+            events::on_guild_create(guild.id.get() as i64);
+            Ok(())
+        }
+        _ => Ok(()),
+    };
+    if let Err(error) = result {
+        tracing::warn!("group membership sync failed to handle a gateway event: {error:?}");
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_discord(
     db: UltrosDb,
@@ -92,6 +178,12 @@ pub(crate) async fn start_discord(
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![age(), register(), ping(), ffxiv::ffxiv()],
+            event_handler: |_ctx, event, _framework, data| {
+                Box::pin(async move {
+                    handle_event(event, data).await;
+                    Ok(())
+                })
+            },
             ..Default::default()
         })
         .setup(move |ctx: &serenity::Context, _ready, framework| {
@@ -145,11 +237,18 @@ pub(crate) async fn start_discord(
         })
         .build();
 
-    let mut client =
-        serenity::Client::builder(discord_token, serenity::GatewayIntents::non_privileged())
-            .framework(framework)
-            .await
-            .unwrap();
+    // GUILD_MEMBERS is privileged and must be enabled for the application in
+    // the Discord developer portal before this process starts, or the gateway
+    // refuses the connection outright. It is what delivers member add/update/
+    // remove events and what makes the guild member list readable, which is
+    // the whole basis of group membership sync.
+    let mut client = serenity::Client::builder(
+        discord_token,
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_MEMBERS,
+    )
+    .framework(framework)
+    .await
+    .unwrap();
     let shard_manager = client.shard_manager.clone();
     tokio::spawn(async move {
         token.cancelled().await;
@@ -157,4 +256,41 @@ pub(crate) async fn start_discord(
     });
 
     client.start().await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user(overrides: serde_json::Value) -> serenity::User {
+        let mut base = serde_json::json!({
+            "id": "1", "username": "raw_username", "discriminator": "0",
+            "global_name": null, "avatar": null, "bot": false
+        });
+        let serde_json::Value::Object(overrides) = overrides else {
+            panic!("user overrides must be an object");
+        };
+        for (key, value) in overrides {
+            base[key] = value;
+        }
+        serde_json::from_value(base).unwrap()
+    }
+
+    /// The name a synced member is stored under, and therefore the one every
+    /// group and list share on the site shows them by.
+    ///
+    /// It is the *global* name, never the guild nickname. `discord_user` holds
+    /// one row per person for the whole site, so taking the nickname would let
+    /// any one server rename that person everywhere on Ultros — which is what
+    /// this used to do, preferring `nick` the way `Member::display_name` does.
+    #[test]
+    fn a_members_stored_name_ignores_their_guild_nickname() {
+        use crate::group_sync::global_display_name;
+
+        let plain = user(serde_json::json!({}));
+        let with_global = user(serde_json::json!({"global_name": "Global Name"}));
+
+        assert_eq!(global_display_name(&with_global), "Global Name");
+        assert_eq!(global_display_name(&plain), "raw_username");
+    }
 }

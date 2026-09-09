@@ -146,6 +146,7 @@ impl From<user_group::Model> for UserGroup {
             guild_icon_url,
             source,
             frozen_reason,
+            sync_revision: _,
         } = value;
         Self {
             id,

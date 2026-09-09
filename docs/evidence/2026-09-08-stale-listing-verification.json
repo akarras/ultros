@@ -1,0 +1,3131 @@
+{
+  "issue": 1178,
+  "conclusion": "Persistent listing-floor drift reproduced; issue must remain open",
+  "capture_artifact_directory": "/home/chew/.codex/visualizations/2026/09/08/01a082fb-bef2-7530-bba2-d60c0e46c871/stale-listing-evidence",
+  "captures": [
+    {
+      "started_at": "2026-09-08T21:50:24.035549+00:00",
+      "world": "Jenova",
+      "world_id": 40,
+      "items": [
+        21713,
+        35034,
+        49303,
+        47173,
+        47183,
+        44051,
+        47172,
+        47182,
+        5342,
+        47170,
+        50830,
+        50256
+      ],
+      "method": "Universalis before, analyzer, Ultros boards, Universalis after",
+      "local_revision": "0a9fbdb268f3657a8789eb0fff694f91d0fbf637",
+      "production_revisions": [
+        "0a9fbdb"
+      ],
+      "comparisons": [
+        {
+          "item_id": 21713,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904022949,
+            1788904022949
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T00:07:26.243910"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 0,
+            "ultros": 0
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": null,
+          "universalis_oldest_review_seconds": null,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1783955950,
+                "price": 8000,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788763149,
+                "price": 39999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788479296,
+                "price": 39000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788274960,
+                "price": 38999,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 35034,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904219425,
+            1788904219425
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:50:19.565532"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 9,
+            "ultros": 9
+          },
+          "universalis_floor": {
+            "NQ": 19998,
+            "HQ": 24999
+          },
+          "ultros_floor": {
+            "NQ": 19998,
+            "HQ": 24999
+          },
+          "retainer_city_metadata_difference_count": 1,
+          "ultros_oldest_review": "2026-08-19T20:15:55",
+          "universalis_oldest_review_seconds": 1788904218,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788822573,
+                "price": 11000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788818516,
+                "price": 10699,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788100898,
+                "price": 13909,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788403605,
+                "price": 30000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788403604,
+                "price": 23999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788403603,
+                "price": 23750,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 19998,
+            "HQ": 24999
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 49303,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904006925,
+            1788904006925
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:45:15.097600"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 8,
+            "ultros": 8
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 470357
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 470357
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-06T23:51:52",
+          "universalis_oldest_review_seconds": 1788904005,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788826762,
+                "price": 699998,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788824489,
+                "price": 470377,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788817001,
+                "price": 470376,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 470357
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47173,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904003474,
+            1788904003474
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:45:11.083025"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 9,
+            "ultros": 9
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-07T23:17:04",
+          "universalis_oldest_review_seconds": 1788904001,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788837051,
+                "price": 375995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788827246,
+                "price": 999998,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788825507,
+                "price": 375995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47183,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904000820,
+            1788904000820
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:45:02.846317"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 8,
+            "ultros": 8
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 375995
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 375995
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-07T23:16:33",
+          "universalis_oldest_review_seconds": 1788903997,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788823015,
+                "price": 400000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788823010,
+                "price": 343000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788823005,
+                "price": 245995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 375995
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 44051,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904010980,
+            1788904010980
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:46:51.140989"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 60,
+            "ultros": 60
+          },
+          "universalis_floor": {
+            "NQ": 484,
+            "HQ": 568
+          },
+          "ultros_floor": {
+            "NQ": 484,
+            "HQ": 568
+          },
+          "retainer_city_metadata_difference_count": 12,
+          "ultros_oldest_review": "2026-08-16T04:19:03",
+          "universalis_oldest_review_seconds": 1788903997,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788838071,
+                "price": 568,
+                "quantity": 3
+              },
+              {
+                "timestamp": 1788829796,
+                "price": 600,
+                "quantity": 10
+              },
+              {
+                "timestamp": 1788829794,
+                "price": 605,
+                "quantity": 9
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788841507,
+                "price": 568,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788841506,
+                "price": 566,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788833524,
+                "price": 676,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 484,
+            "HQ": 568
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47172,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903996093,
+            1788903996093
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:44:58.838706"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 15,
+            "ultros": 15
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 395985
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 395985
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-09-03T10:43:53",
+          "universalis_oldest_review_seconds": 1788903993,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788826637,
+                "price": 125994,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788822982,
+                "price": 195995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788822979,
+                "price": 144993,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 395985
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47182,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903994018,
+            1788903994018
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:44:43.074332"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 14,
+            "ultros": 14
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 145992
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 145992
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-05T01:13:33",
+          "universalis_oldest_review_seconds": 1788903991,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788828820,
+                "price": 115994,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788815058,
+                "price": 2499999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788788032,
+                "price": 245995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 145992
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 5342,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903993921,
+            1788903993921
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:46:34.043645"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 11,
+            "ultros": 11
+          },
+          "universalis_floor": {
+            "NQ": 90,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 90,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 3,
+          "ultros_oldest_review": "2026-08-29T08:10:16",
+          "universalis_oldest_review_seconds": 1788903992,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788806729,
+                "price": 95,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788797508,
+                "price": 100,
+                "quantity": 51
+              },
+              {
+                "timestamp": 1788787393,
+                "price": 95,
+                "quantity": 99
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 90,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47170,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903984189,
+            1788903984189
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:44:38.146452"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 9,
+            "ultros": 4
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "retainer_city_metadata_difference_count": null,
+          "ultros_oldest_review": "2026-09-08T01:08:51",
+          "universalis_oldest_review_seconds": 1788903982,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788825110,
+                "price": 375995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788825108,
+                "price": 375995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788825106,
+                "price": 245995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 5,
+          "universalis_only_candidates_price_quantity": [
+            {
+              "hq": true,
+              "price": 824034,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 1361640,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 825524,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 929000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 1363049,
+              "quantity": 1,
+              "count": 1
+            }
+          ]
+        },
+        {
+          "item_id": 50830,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788845530890,
+            1788845530890
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T05:32:10.995859"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 29,
+            "ultros": 29
+          },
+          "universalis_floor": {
+            "NQ": 53419,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 53419,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-08-10T04:48:12",
+          "universalis_oldest_review_seconds": 1788845530,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788842820,
+                "price": 49999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788842819,
+                "price": 49990,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788842817,
+                "price": 49900,
+                "quantity": 1
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 53419,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 50256,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788845587450,
+            1788845587450
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T05:33:07.551490"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 4,
+            "ultros": 4
+          },
+          "universalis_floor": {
+            "NQ": 259990,
+            "HQ": 249000
+          },
+          "ultros_floor": {
+            "NQ": 259990,
+            "HQ": 249000
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-09-06T23:28:53",
+          "universalis_oldest_review_seconds": 1788845587,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788670733,
+                "price": 216997,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788460538,
+                "price": 259990,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788392209,
+                "price": 235995,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788761853,
+                "price": 245000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788683523,
+                "price": 216000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788399929,
+                "price": 262878,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 259990,
+            "HQ": 249000
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        }
+      ],
+      "finished_at": "2026-09-08T21:50:35.310080+00:00",
+      "capture_name": "round1",
+      "requests": [
+        {
+          "file": "round1/analyzer.json",
+          "sha256": "8ee06c182d9989516d927aec7e0a1c032928e4a4725a41b405416305b680aaab",
+          "url": "https://ultros.app/api/v1/cheapest/Jenova",
+          "started_at": "2026-09-08T21:50:29.006385+00:00",
+          "finished_at": "2026-09-08T21:50:29.402754+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-21713.json",
+          "sha256": "6c8bee093ab2491a836b9e3413131c724ffa024eeb1b5b62be55b0c8063e9527",
+          "url": "https://ultros.app/api/v1/listings/Jenova/21713",
+          "started_at": "2026-09-08T21:50:29.416128+00:00",
+          "finished_at": "2026-09-08T21:50:30.205990+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-35034.json",
+          "sha256": "0960a9d8f5623146901121df280d28d47ba62fada17756e42871cefb68c62aff",
+          "url": "https://ultros.app/api/v1/listings/Jenova/35034",
+          "started_at": "2026-09-08T21:50:30.206533+00:00",
+          "finished_at": "2026-09-08T21:50:30.443229+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-44051.json",
+          "sha256": "59311ddf2e42eb6d7c43989e5a1b5c08ff1988e9746a4a9a50a7579fa8bdd645",
+          "url": "https://ultros.app/api/v1/listings/Jenova/44051",
+          "started_at": "2026-09-08T21:50:31.179617+00:00",
+          "finished_at": "2026-09-08T21:50:31.387097+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-47170.json",
+          "sha256": "e76287ed3c3e34aefb483d3835a5aed8072e87b7f2135672f2fc3bde1935c136",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47170",
+          "started_at": "2026-09-08T21:50:32.090762+00:00",
+          "finished_at": "2026-09-08T21:50:32.553496+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-47172.json",
+          "sha256": "a4b563532807238ed33f66a1de527c1117b2350e53cd321fa55ade99608c8bf5",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47172",
+          "started_at": "2026-09-08T21:50:31.387761+00:00",
+          "finished_at": "2026-09-08T21:50:31.718211+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-47173.json",
+          "sha256": "55f7b2aaf9e322ed71cadbec59a84762e160b3a48dced19b7d724f7b288b941f",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47173",
+          "started_at": "2026-09-08T21:50:30.586803+00:00",
+          "finished_at": "2026-09-08T21:50:30.828527+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-47182.json",
+          "sha256": "ef1e90b81848d49da4e5ff25637b1e1198ff84402c064ee9523c6820f00d8d59",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47182",
+          "started_at": "2026-09-08T21:50:31.718811+00:00",
+          "finished_at": "2026-09-08T21:50:31.864151+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-47183.json",
+          "sha256": "7ad6603277f65995b5993f560aa48e28de96a2853311b901c00f8a7f43447db0",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47183",
+          "started_at": "2026-09-08T21:50:30.829098+00:00",
+          "finished_at": "2026-09-08T21:50:31.179013+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-49303.json",
+          "sha256": "6392f42d89183a661af5b5ba2cd40a724a0b7f581be6da0e4ae6485e8adad9e1",
+          "url": "https://ultros.app/api/v1/listings/Jenova/49303",
+          "started_at": "2026-09-08T21:50:30.443922+00:00",
+          "finished_at": "2026-09-08T21:50:30.586283+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-50256.json",
+          "sha256": "ada8a4a4426da7e21cc0735d9925c2d13abde6bb2dfc1cab4e9cbedc65908e04",
+          "url": "https://ultros.app/api/v1/listings/Jenova/50256",
+          "started_at": "2026-09-08T21:50:32.748969+00:00",
+          "finished_at": "2026-09-08T21:50:33.092819+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-50830.json",
+          "sha256": "db5a26daa925fda131388972c57736e3ff87c55885b224ea0d496f7e28f253b9",
+          "url": "https://ultros.app/api/v1/listings/Jenova/50830",
+          "started_at": "2026-09-08T21:50:32.554092+00:00",
+          "finished_at": "2026-09-08T21:50:32.748356+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/ultros-5342.json",
+          "sha256": "ec1358d8dedc549d2f0fb8d73e270760e7bb9b683e9ae15ad953df33cd94d0e8",
+          "url": "https://ultros.app/api/v1/listings/Jenova/5342",
+          "started_at": "2026-09-08T21:50:31.864744+00:00",
+          "finished_at": "2026-09-08T21:50:32.090208+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/universalis-after.json",
+          "sha256": "936bf3bd0c996fd41d83e0403af372bef670dfc73a855c7044c850ef80583639",
+          "url": "https://universalis.app/api/v2/40/21713,35034,49303,47173,47183,44051,47172,47182,5342,47170,50830,50256?listings=1000&entries=20",
+          "started_at": "2026-09-08T21:50:33.093361+00:00",
+          "finished_at": "2026-09-08T21:50:35.301694+00:00",
+          "status": 200
+        },
+        {
+          "file": "round1/universalis-before.json",
+          "sha256": "4210014e23cbf54bf7936601ed42d94763d666f363ef347c4ac1a11ed4c108d8",
+          "url": "https://universalis.app/api/v2/40/21713,35034,49303,47173,47183,44051,47172,47182,5342,47170,50830,50256?listings=1000&entries=20",
+          "started_at": "2026-09-08T21:50:24.037563+00:00",
+          "finished_at": "2026-09-08T21:50:29.004980+00:00",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "started_at": "2026-09-08T21:53:06.909882+00:00",
+      "world": "Jenova",
+      "world_id": 40,
+      "items": [
+        44061,
+        17954,
+        5669,
+        44012,
+        4422,
+        8161
+      ],
+      "method": "Universalis before, analyzer, Ultros boards, Universalis after",
+      "local_revision": "0a9fbdb268f3657a8789eb0fff694f91d0fbf637",
+      "production_revisions": [
+        "0a9fbdb"
+      ],
+      "comparisons": [
+        {
+          "item_id": 44061,
+          "state": "moving_upstream_board",
+          "universalis_upload_ms": [
+            1788904271409,
+            1788904272151
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:51:12.294534"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 22,
+            "ultros": 22
+          },
+          "universalis_floor": {
+            "NQ": 4000,
+            "HQ": 11989
+          },
+          "ultros_floor": {
+            "NQ": 4000,
+            "HQ": 11989
+          },
+          "retainer_city_metadata_difference_count": 5,
+          "ultros_oldest_review": "2026-08-21T22:51:48",
+          "universalis_oldest_review_seconds": 1788904269,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788894435,
+                "price": 1694,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788841893,
+                "price": 2500,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788841891,
+                "price": 1983,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788904138,
+                "price": 10005,
+                "quantity": 2
+              },
+              {
+                "timestamp": 1788904135,
+                "price": 3999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788844624,
+                "price": 1980,
+                "quantity": 6
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 4000,
+            "HQ": 11989
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 17954,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904202757,
+            1788904202763
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:49:59.290326"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 16,
+            "ultros": 16
+          },
+          "universalis_floor": {
+            "NQ": 28796,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 28796,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 5,
+          "ultros_oldest_review": "2026-08-15T02:59:19",
+          "universalis_oldest_review_seconds": 1788904201,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788903971,
+                "price": 28792,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788899848,
+                "price": 28500,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788891911,
+                "price": 28792,
+                "quantity": 1
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 28796,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 5669,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903708961,
+            1788903708961
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:41:49.087383"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 1,
+            "ultros": 10
+          },
+          "universalis_floor": {
+            "NQ": 500000,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 5000,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": null,
+          "ultros_oldest_review": "2026-09-07T02:39:40",
+          "universalis_oldest_review_seconds": 1788903707,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788903429,
+                "price": 10200,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903427,
+                "price": 10000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903426,
+                "price": 10000,
+                "quantity": 1
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 5000,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 9,
+          "ultros_only_candidates_price_quantity": [
+            {
+              "hq": false,
+              "price": 7001,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 9999,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 7000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 10000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 10000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 5000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 9998,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 7000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 5000,
+              "quantity": 1,
+              "count": 1
+            }
+          ],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 44012,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904037262,
+            1788904037262
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:47:17.401355"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 62,
+            "ultros": 64
+          },
+          "universalis_floor": {
+            "NQ": 800,
+            "HQ": 5000
+          },
+          "ultros_floor": {
+            "NQ": 800,
+            "HQ": 5000
+          },
+          "retainer_city_metadata_difference_count": null,
+          "ultros_oldest_review": "2026-08-29T16:04:35",
+          "universalis_oldest_review_seconds": 1788904029,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788862639,
+                "price": 887,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788841698,
+                "price": 1000,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788840861,
+                "price": 1002,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788903419,
+                "price": 859,
+                "quantity": 5
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 800,
+            "HQ": 5000
+          },
+          "ultros_only_candidates_count": 2,
+          "ultros_only_candidates_price_quantity": [
+            {
+              "hq": false,
+              "price": 1891,
+              "quantity": 1,
+              "count": 2
+            }
+          ],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 4422,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903442919,
+            1788903442919
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:37:23.038361"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 21,
+            "ultros": 21
+          },
+          "universalis_floor": {
+            "NQ": 2000000,
+            "HQ": 10004
+          },
+          "ultros_floor": {
+            "NQ": 2000000,
+            "HQ": 10004
+          },
+          "retainer_city_metadata_difference_count": 4,
+          "ultros_oldest_review": "2026-08-20T20:28:08",
+          "universalis_oldest_review_seconds": 1788903438,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788901595,
+                "price": 3000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788667513,
+                "price": 1000000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788629457,
+                "price": 24100000,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788903395,
+                "price": 10000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903394,
+                "price": 8000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903260,
+                "price": 8000,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 2000000,
+            "HQ": 10004
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 8161,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903707765,
+            1788903707765
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:41:47.886481"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 5,
+            "ultros": 5
+          },
+          "universalis_floor": {
+            "NQ": 6000,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 6000,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-09-07T07:17:14",
+          "universalis_oldest_review_seconds": 1788903708,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788903162,
+                "price": 5000,
+                "quantity": 20
+              },
+              {
+                "timestamp": 1788836565,
+                "price": 4994,
+                "quantity": 2
+              },
+              {
+                "timestamp": 1788835139,
+                "price": 5000,
+                "quantity": 20
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 6000,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        }
+      ],
+      "finished_at": "2026-09-08T21:53:11.111481+00:00",
+      "capture_name": "recent1",
+      "requests": [
+        {
+          "file": "recent1/analyzer.json",
+          "sha256": "13b2405f5bc2d991739fa4a572c3f5b61681a7b0b0c53a8f726e09c4bc6c6b72",
+          "url": "https://ultros.app/api/v1/cheapest/Jenova",
+          "started_at": "2026-09-08T21:53:08.425547+00:00",
+          "finished_at": "2026-09-08T21:53:08.680979+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/ultros-17954.json",
+          "sha256": "d7de6eeb11a2c03a08e81eaef53ee3a755ea99f385e0cd608178e98f77c79fac",
+          "url": "https://ultros.app/api/v1/listings/Jenova/17954",
+          "started_at": "2026-09-08T21:53:08.828863+00:00",
+          "finished_at": "2026-09-08T21:53:08.953082+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/ultros-44012.json",
+          "sha256": "1527ef530ae2670dc9b3bbf3a40021ae119e5d7b5dd9d3234eaa61ecbaf2c350",
+          "url": "https://ultros.app/api/v1/listings/Jenova/44012",
+          "started_at": "2026-09-08T21:53:09.155841+00:00",
+          "finished_at": "2026-09-08T21:53:09.347080+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/ultros-44061.json",
+          "sha256": "719f50d9ff0fed59d5cdedff56321ed6b2448cfa779c4029cd55ed3a8dbc8c11",
+          "url": "https://ultros.app/api/v1/listings/Jenova/44061",
+          "started_at": "2026-09-08T21:53:08.694407+00:00",
+          "finished_at": "2026-09-08T21:53:08.828252+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/ultros-4422.json",
+          "sha256": "d58fb213bcb8ba0dafb410a5981fd5bb77234883fbcd6ada15b6f70d2a7aa80b",
+          "url": "https://ultros.app/api/v1/listings/Jenova/4422",
+          "started_at": "2026-09-08T21:53:09.347841+00:00",
+          "finished_at": "2026-09-08T21:53:09.473094+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/ultros-5669.json",
+          "sha256": "4eb4d2d1737772b9cea50feb9392d29d2d77e74099ac3e4e3cab7d5b6b81501c",
+          "url": "https://ultros.app/api/v1/listings/Jenova/5669",
+          "started_at": "2026-09-08T21:53:08.953652+00:00",
+          "finished_at": "2026-09-08T21:53:09.155268+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/ultros-8161.json",
+          "sha256": "46a7e994c126a959207a6e876d3b9fbb4c78682c281914e684b384f3d58ff736",
+          "url": "https://ultros.app/api/v1/listings/Jenova/8161",
+          "started_at": "2026-09-08T21:53:09.473705+00:00",
+          "finished_at": "2026-09-08T21:53:09.600262+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/universalis-after.json",
+          "sha256": "e0204f06cc0a7bdfcb7ad592d44011fb691c609ff71ee0c2664f2c2f49e20d0f",
+          "url": "https://universalis.app/api/v2/40/44061,17954,5669,44012,4422,8161?listings=1000&entries=20",
+          "started_at": "2026-09-08T21:53:09.600812+00:00",
+          "finished_at": "2026-09-08T21:53:11.106357+00:00",
+          "status": 200
+        },
+        {
+          "file": "recent1/universalis-before.json",
+          "sha256": "b731d4423a2aed701bffad28e886c871161de35126761bd2239e13a1d33eb784",
+          "url": "https://universalis.app/api/v2/40/44061,17954,5669,44012,4422,8161?listings=1000&entries=20",
+          "started_at": "2026-09-08T21:53:06.911873+00:00",
+          "finished_at": "2026-09-08T21:53:08.424688+00:00",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "started_at": "2026-09-08T21:59:31.189541+00:00",
+      "world": "Jenova",
+      "world_id": 40,
+      "items": [
+        21713,
+        35034,
+        49303,
+        47173,
+        47183,
+        44051,
+        47172,
+        47182,
+        5342,
+        47170,
+        50830,
+        50256,
+        44061,
+        17954,
+        5669,
+        44012,
+        4422,
+        8161
+      ],
+      "method": "Universalis before, analyzer, Ultros boards, Universalis after",
+      "local_revision": "0a9fbdb268f3657a8789eb0fff694f91d0fbf637",
+      "production_revisions": [
+        "0a9fbdb"
+      ],
+      "comparisons": [
+        {
+          "item_id": 21713,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904022949,
+            1788904022949
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T00:07:26.243910"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 0,
+            "ultros": 0
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": null,
+          "universalis_oldest_review_seconds": null,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1783955950,
+                "price": 8000,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788763149,
+                "price": 39999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788479296,
+                "price": 39000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788274960,
+                "price": 38999,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 35034,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904219425,
+            1788904219425
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:50:19.565532"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 9,
+            "ultros": 9
+          },
+          "universalis_floor": {
+            "NQ": 19998,
+            "HQ": 24999
+          },
+          "ultros_floor": {
+            "NQ": 19998,
+            "HQ": 24999
+          },
+          "retainer_city_metadata_difference_count": 1,
+          "ultros_oldest_review": "2026-08-19T20:15:55",
+          "universalis_oldest_review_seconds": 1788904218,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788822573,
+                "price": 11000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788818516,
+                "price": 10699,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788100898,
+                "price": 13909,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788403605,
+                "price": 30000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788403604,
+                "price": 23999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788403603,
+                "price": 23750,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 19998,
+            "HQ": 24999
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 49303,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904006925,
+            1788904006925
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:45:15.097600"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 8,
+            "ultros": 8
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 470357
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 470357
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-06T23:51:52",
+          "universalis_oldest_review_seconds": 1788904005,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788826762,
+                "price": 699998,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788824489,
+                "price": 470377,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788817001,
+                "price": 470376,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 470357
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47173,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904003474,
+            1788904003474
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:45:11.083025"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 9,
+            "ultros": 9
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-07T23:17:04",
+          "universalis_oldest_review_seconds": 1788904001,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788837051,
+                "price": 375995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788827246,
+                "price": 999998,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788825507,
+                "price": 375995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47183,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904000820,
+            1788904000820
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:45:02.846317"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 8,
+            "ultros": 8
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 375995
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 375995
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-07T23:16:33",
+          "universalis_oldest_review_seconds": 1788903997,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788823015,
+                "price": 400000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788823010,
+                "price": 343000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788823005,
+                "price": 245995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 375995
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 44051,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904010980,
+            1788904010980
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:46:51.140989"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 60,
+            "ultros": 60
+          },
+          "universalis_floor": {
+            "NQ": 484,
+            "HQ": 568
+          },
+          "ultros_floor": {
+            "NQ": 484,
+            "HQ": 568
+          },
+          "retainer_city_metadata_difference_count": 12,
+          "ultros_oldest_review": "2026-08-16T04:19:03",
+          "universalis_oldest_review_seconds": 1788903997,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788838071,
+                "price": 568,
+                "quantity": 3
+              },
+              {
+                "timestamp": 1788829796,
+                "price": 600,
+                "quantity": 10
+              },
+              {
+                "timestamp": 1788829794,
+                "price": 605,
+                "quantity": 9
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788841507,
+                "price": 568,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788841506,
+                "price": 566,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788833524,
+                "price": 676,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 484,
+            "HQ": 568
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47172,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903996093,
+            1788903996093
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:44:58.838706"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 15,
+            "ultros": 15
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 395985
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 395985
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-09-03T10:43:53",
+          "universalis_oldest_review_seconds": 1788903993,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788826637,
+                "price": 125994,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788822982,
+                "price": 195995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788822979,
+                "price": 144993,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 395985
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47182,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903994018,
+            1788903994018
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:44:43.074332"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 14,
+            "ultros": 14
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 145992
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 145992
+          },
+          "retainer_city_metadata_difference_count": 0,
+          "ultros_oldest_review": "2026-09-05T01:13:33",
+          "universalis_oldest_review_seconds": 1788903991,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788828820,
+                "price": 115994,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788815058,
+                "price": 2499999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788788032,
+                "price": 245995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 145992
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 5342,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903993921,
+            1788903993921
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:46:34.043645"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 11,
+            "ultros": 11
+          },
+          "universalis_floor": {
+            "NQ": 90,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 90,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 3,
+          "ultros_oldest_review": "2026-08-29T08:10:16",
+          "universalis_oldest_review_seconds": 1788903992,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788806729,
+                "price": 95,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788797508,
+                "price": 100,
+                "quantity": 51
+              },
+              {
+                "timestamp": 1788787393,
+                "price": 95,
+                "quantity": 99
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 90,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 47170,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903984189,
+            1788903984189
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:44:38.146452"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 9,
+            "ultros": 4
+          },
+          "universalis_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "retainer_city_metadata_difference_count": null,
+          "ultros_oldest_review": "2026-09-08T01:08:51",
+          "universalis_oldest_review_seconds": 1788903982,
+          "recent_sales": {
+            "NQ": [],
+            "HQ": [
+              {
+                "timestamp": 1788825110,
+                "price": 375995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788825108,
+                "price": 375995,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788825106,
+                "price": 245995,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": null,
+            "HQ": 375994
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 5,
+          "universalis_only_candidates_price_quantity": [
+            {
+              "hq": true,
+              "price": 824034,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 1361640,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 825524,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 929000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": true,
+              "price": 1363049,
+              "quantity": 1,
+              "count": 1
+            }
+          ]
+        },
+        {
+          "item_id": 50830,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788845530890,
+            1788845530890
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T05:32:10.995859"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 29,
+            "ultros": 29
+          },
+          "universalis_floor": {
+            "NQ": 53419,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 53419,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-08-10T04:48:12",
+          "universalis_oldest_review_seconds": 1788845530,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788842820,
+                "price": 49999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788842819,
+                "price": 49990,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788842817,
+                "price": 49900,
+                "quantity": 1
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 53419,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 50256,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788845587450,
+            1788845587450
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T05:33:07.551490"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 4,
+            "ultros": 4
+          },
+          "universalis_floor": {
+            "NQ": 259990,
+            "HQ": 249000
+          },
+          "ultros_floor": {
+            "NQ": 259990,
+            "HQ": 249000
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-09-06T23:28:53",
+          "universalis_oldest_review_seconds": 1788845587,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788670733,
+                "price": 216997,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788460538,
+                "price": 259990,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788392209,
+                "price": 235995,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788761853,
+                "price": 245000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788683523,
+                "price": 216000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788399929,
+                "price": 262878,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 259990,
+            "HQ": 249000
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 44061,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904272151,
+            1788904272151
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:51:12.294534"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 22,
+            "ultros": 22
+          },
+          "universalis_floor": {
+            "NQ": 4000,
+            "HQ": 11989
+          },
+          "ultros_floor": {
+            "NQ": 4000,
+            "HQ": 11989
+          },
+          "retainer_city_metadata_difference_count": 5,
+          "ultros_oldest_review": "2026-08-21T22:51:48",
+          "universalis_oldest_review_seconds": 1788904269,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788894435,
+                "price": 1694,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788841893,
+                "price": 2500,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788841891,
+                "price": 1983,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788904138,
+                "price": 10005,
+                "quantity": 2
+              },
+              {
+                "timestamp": 1788904135,
+                "price": 3999,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788844624,
+                "price": 1980,
+                "quantity": 6
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 4000,
+            "HQ": 11989
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 17954,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904202763,
+            1788904202763
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:49:59.290326"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 16,
+            "ultros": 16
+          },
+          "universalis_floor": {
+            "NQ": 28796,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 28796,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 5,
+          "ultros_oldest_review": "2026-08-15T02:59:19",
+          "universalis_oldest_review_seconds": 1788904201,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788903971,
+                "price": 28792,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788899848,
+                "price": 28500,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788891911,
+                "price": 28792,
+                "quantity": 1
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 28796,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 5669,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903708961,
+            1788903708961
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:41:49.087383"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 1,
+            "ultros": 10
+          },
+          "universalis_floor": {
+            "NQ": 500000,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 5000,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": null,
+          "ultros_oldest_review": "2026-09-07T02:39:40",
+          "universalis_oldest_review_seconds": 1788903707,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788903429,
+                "price": 10200,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903427,
+                "price": 10000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903426,
+                "price": 10000,
+                "quantity": 1
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 5000,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 9,
+          "ultros_only_candidates_price_quantity": [
+            {
+              "hq": false,
+              "price": 7001,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 9999,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 7000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 10000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 10000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 5000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 9998,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 7000,
+              "quantity": 1,
+              "count": 1
+            },
+            {
+              "hq": false,
+              "price": 5000,
+              "quantity": 1,
+              "count": 1
+            }
+          ],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 44012,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788904037262,
+            1788904037262
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:47:17.401355"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 62,
+            "ultros": 64
+          },
+          "universalis_floor": {
+            "NQ": 800,
+            "HQ": 5000
+          },
+          "ultros_floor": {
+            "NQ": 800,
+            "HQ": 5000
+          },
+          "retainer_city_metadata_difference_count": null,
+          "ultros_oldest_review": "2026-08-29T16:04:35",
+          "universalis_oldest_review_seconds": 1788904029,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788862639,
+                "price": 887,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788841698,
+                "price": 1000,
+                "quantity": 99
+              },
+              {
+                "timestamp": 1788840861,
+                "price": 1002,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788903419,
+                "price": 859,
+                "quantity": 5
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 800,
+            "HQ": 5000
+          },
+          "ultros_only_candidates_count": 2,
+          "ultros_only_candidates_price_quantity": [
+            {
+              "hq": false,
+              "price": 1891,
+              "quantity": 1,
+              "count": 2
+            }
+          ],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 4422,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903442919,
+            1788903442919
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:37:23.038361"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 21,
+            "ultros": 21
+          },
+          "universalis_floor": {
+            "NQ": 2000000,
+            "HQ": 10004
+          },
+          "ultros_floor": {
+            "NQ": 2000000,
+            "HQ": 10004
+          },
+          "retainer_city_metadata_difference_count": 4,
+          "ultros_oldest_review": "2026-08-20T20:28:08",
+          "universalis_oldest_review_seconds": 1788903438,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788901595,
+                "price": 3000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788667513,
+                "price": 1000000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788629457,
+                "price": 24100000,
+                "quantity": 1
+              }
+            ],
+            "HQ": [
+              {
+                "timestamp": 1788903395,
+                "price": 10000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903394,
+                "price": 8000,
+                "quantity": 1
+              },
+              {
+                "timestamp": 1788903260,
+                "price": 8000,
+                "quantity": 1
+              }
+            ]
+          },
+          "analyzer_floor": {
+            "NQ": 2000000,
+            "HQ": 10004
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        },
+        {
+          "item_id": 8161,
+          "state": "stable_bracket",
+          "universalis_upload_ms": [
+            1788903707765,
+            1788903707765
+          ],
+          "ultros_ingest_markers": [
+            {
+              "world_id": 40,
+              "updated_at": "2026-09-08T21:41:47.886481"
+            }
+          ],
+          "listing_counts": {
+            "universalis": 5,
+            "ultros": 5
+          },
+          "universalis_floor": {
+            "NQ": 6000,
+            "HQ": null
+          },
+          "ultros_floor": {
+            "NQ": 6000,
+            "HQ": null
+          },
+          "retainer_city_metadata_difference_count": 2,
+          "ultros_oldest_review": "2026-09-07T07:17:14",
+          "universalis_oldest_review_seconds": 1788903708,
+          "recent_sales": {
+            "NQ": [
+              {
+                "timestamp": 1788903162,
+                "price": 5000,
+                "quantity": 20
+              },
+              {
+                "timestamp": 1788836565,
+                "price": 4994,
+                "quantity": 2
+              },
+              {
+                "timestamp": 1788835139,
+                "price": 5000,
+                "quantity": 20
+              }
+            ],
+            "HQ": []
+          },
+          "analyzer_floor": {
+            "NQ": 6000,
+            "HQ": null
+          },
+          "ultros_only_candidates_count": 0,
+          "ultros_only_candidates_price_quantity": [],
+          "universalis_only_candidates_count": 0,
+          "universalis_only_candidates_price_quantity": []
+        }
+      ],
+      "finished_at": "2026-09-08T21:59:38.813073+00:00",
+      "capture_name": "followup",
+      "requests": [
+        {
+          "file": "followup/analyzer.json",
+          "sha256": "dbb7d0dda5f1202ac9e63be8e8a95746599acd356edf26a5a8b08794fa588227",
+          "url": "https://ultros.app/api/v1/cheapest/Jenova",
+          "started_at": "2026-09-08T21:59:34.304339+00:00",
+          "finished_at": "2026-09-08T21:59:34.660709+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-17954.json",
+          "sha256": "62ac722eacbe268d09190c86e17c994051521a14812d8cc5264aab4ea8856ac2",
+          "url": "https://ultros.app/api/v1/listings/Jenova/17954",
+          "started_at": "2026-09-08T21:59:36.681952+00:00",
+          "finished_at": "2026-09-08T21:59:36.817090+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-21713.json",
+          "sha256": "4fd87d4f458b90de88e0ffb7e6a1f39f49090c2dd03a7891211f0f634ee03c55",
+          "url": "https://ultros.app/api/v1/listings/Jenova/21713",
+          "started_at": "2026-09-08T21:59:34.677313+00:00",
+          "finished_at": "2026-09-08T21:59:34.867398+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-35034.json",
+          "sha256": "52fe5ab057f59236f8517a33888dd74c704c0e374f6f4c33b19152e965b78159",
+          "url": "https://ultros.app/api/v1/listings/Jenova/35034",
+          "started_at": "2026-09-08T21:59:34.867968+00:00",
+          "finished_at": "2026-09-08T21:59:35.031397+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-44012.json",
+          "sha256": "2275f02150cadb6c446c59c2fa91aa520199e5c246eb3851ca835283bef70312",
+          "url": "https://ultros.app/api/v1/listings/Jenova/44012",
+          "started_at": "2026-09-08T21:59:36.963335+00:00",
+          "finished_at": "2026-09-08T21:59:37.100952+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-44051.json",
+          "sha256": "33cf1d5c8f8fd758f89f18fda107b2f8e019ef1a084a2dd350a72fb4642667b5",
+          "url": "https://ultros.app/api/v1/listings/Jenova/44051",
+          "started_at": "2026-09-08T21:59:35.543332+00:00",
+          "finished_at": "2026-09-08T21:59:35.653955+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-44061.json",
+          "sha256": "b4ccf4b3240e7d79ad4d4e70d5bef406de78d9da597d59032dfdbec1ee798916",
+          "url": "https://ultros.app/api/v1/listings/Jenova/44061",
+          "started_at": "2026-09-08T21:59:36.489253+00:00",
+          "finished_at": "2026-09-08T21:59:36.681333+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-4422.json",
+          "sha256": "8e4e98494d9f0d6cd66ec830a7c36a37d9ca8ecb5f7e9cd5273deb56ab60433d",
+          "url": "https://ultros.app/api/v1/listings/Jenova/4422",
+          "started_at": "2026-09-08T21:59:37.101725+00:00",
+          "finished_at": "2026-09-08T21:59:37.226613+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-47170.json",
+          "sha256": "a4a13754e841f82fa7c34a95ad90a2c5bdf89d2348d2bb2c726634c557b2ba1d",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47170",
+          "started_at": "2026-09-08T21:59:36.071234+00:00",
+          "finished_at": "2026-09-08T21:59:36.216522+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-47172.json",
+          "sha256": "007d271fcc4a5071c0e05b447520e97eff733258bac7ccb39b456de758a8f00a",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47172",
+          "started_at": "2026-09-08T21:59:35.654604+00:00",
+          "finished_at": "2026-09-08T21:59:35.803300+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-47173.json",
+          "sha256": "9a45ee28ceccf13a5b4544893d3150a5d39f599df52aacefd4c513bc2e10a268",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47173",
+          "started_at": "2026-09-08T21:59:35.200933+00:00",
+          "finished_at": "2026-09-08T21:59:35.388960+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-47182.json",
+          "sha256": "403e000dd2adf44af84a66abe508ed270ee884b42b6b2ba82a3da711b2400e9b",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47182",
+          "started_at": "2026-09-08T21:59:35.803904+00:00",
+          "finished_at": "2026-09-08T21:59:35.942603+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-47183.json",
+          "sha256": "2b051cb3bebbab99df6674e51ad917c2a2479f078b7cfc7a343e33f223ac3ff7",
+          "url": "https://ultros.app/api/v1/listings/Jenova/47183",
+          "started_at": "2026-09-08T21:59:35.389520+00:00",
+          "finished_at": "2026-09-08T21:59:35.542779+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-49303.json",
+          "sha256": "6ef80a13bdacdae9c982183c440efbfc304013d0e9289f1b9bb243bad7bd4584",
+          "url": "https://ultros.app/api/v1/listings/Jenova/49303",
+          "started_at": "2026-09-08T21:59:35.032009+00:00",
+          "finished_at": "2026-09-08T21:59:35.200346+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-50256.json",
+          "sha256": "804b016a40327c30d4a500eba82860d4ab16839ff3e7ef8e699ab791deaa8080",
+          "url": "https://ultros.app/api/v1/listings/Jenova/50256",
+          "started_at": "2026-09-08T21:59:36.342985+00:00",
+          "finished_at": "2026-09-08T21:59:36.488705+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-50830.json",
+          "sha256": "2605852f884ddffdf73826be2d0e8ff3bf1f5d45cb0d59fc4c959feea28671ff",
+          "url": "https://ultros.app/api/v1/listings/Jenova/50830",
+          "started_at": "2026-09-08T21:59:36.217099+00:00",
+          "finished_at": "2026-09-08T21:59:36.342322+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-5342.json",
+          "sha256": "1d558d329810fe81d2e01efd4d7363beef9af505e1973b7b64f4a6c6daac8364",
+          "url": "https://ultros.app/api/v1/listings/Jenova/5342",
+          "started_at": "2026-09-08T21:59:35.943234+00:00",
+          "finished_at": "2026-09-08T21:59:36.070654+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-5669.json",
+          "sha256": "56b1f87c1041d910a4d0e07fcd88e34f5a38556aca493ea41dbb442bbe04bfd1",
+          "url": "https://ultros.app/api/v1/listings/Jenova/5669",
+          "started_at": "2026-09-08T21:59:36.817949+00:00",
+          "finished_at": "2026-09-08T21:59:36.962764+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/ultros-8161.json",
+          "sha256": "8d440ba83b08ebf9ffea1ac9ebe93b3d321406b151b94f64f0ce9767ba1d96df",
+          "url": "https://ultros.app/api/v1/listings/Jenova/8161",
+          "started_at": "2026-09-08T21:59:37.227207+00:00",
+          "finished_at": "2026-09-08T21:59:37.348649+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/universalis-after.json",
+          "sha256": "8790672daa00fdeaa33826355b7091b108ce6c93027b815fc0ccfb4289424669",
+          "url": "https://universalis.app/api/v2/40/21713,35034,49303,47173,47183,44051,47172,47182,5342,47170,50830,50256,44061,17954,5669,44012,4422,8161?listings=1000&entries=20",
+          "started_at": "2026-09-08T21:59:37.349066+00:00",
+          "finished_at": "2026-09-08T21:59:38.797304+00:00",
+          "status": 200
+        },
+        {
+          "file": "followup/universalis-before.json",
+          "sha256": "44e6b4bc8c25cab711cca2fe26342431b204a3d1dc6666ce0a2b47b9073d2418",
+          "url": "https://universalis.app/api/v2/40/21713,35034,49303,47173,47183,44051,47172,47182,5342,47170,50830,50256,44061,17954,5669,44012,4422,8161?listings=1000&entries=20",
+          "started_at": "2026-09-08T21:59:31.191412+00:00",
+          "finished_at": "2026-09-08T21:59:34.301797+00:00",
+          "status": 200
+        }
+      ]
+    }
+  ],
+  "diagnostic_requests": [
+    {
+      "file": "drift-aggregated.json",
+      "sha256": "87eac3ad49efe55da5d291a51e49e516e8353b9780037b0c51fa1014a4691985",
+      "url": "https://universalis.app/api/v2/aggregated/40/5669,44012",
+      "started_at": "2026-09-08T21:54:03.030800+00:00",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 08 Sep 2026 21:54:03 GMT",
+        "age": null,
+        "cache-control": null,
+        "cf-cache-status": "DYNAMIC",
+        "x-ultros-commit": null,
+        "content-type": "application/json; charset=utf-8"
+      },
+      "body": {
+        "results": [
+          {
+            "itemId": 5669,
+            "nq": {
+              "minListing": {
+                "world": {
+                  "price": 500000
+                },
+                "dc": {
+                  "price": 2850,
+                  "worldId": 79
+                },
+                "region": {
+                  "price": 30,
+                  "worldId": 81
+                }
+              },
+              "recentPurchase": {
+                "world": {
+                  "price": 10200,
+                  "timestamp": 1788903429000
+                },
+                "dc": {
+                  "price": 10200,
+                  "timestamp": 1788903429000,
+                  "worldId": 40
+                },
+                "region": {
+                  "price": 10200,
+                  "timestamp": 1788903429000,
+                  "worldId": 40
+                }
+              },
+              "averageSalePrice": {
+                "world": {
+                  "price": 6506.173913043478
+                },
+                "dc": {
+                  "price": 8847.010204081633
+                },
+                "region": {
+                  "price": 7032.762491444217
+                }
+              },
+              "dailySaleVelocity": {
+                "world": {
+                  "quantity": 17.635615499708976
+                },
+                "dc": {
+                  "quantity": 200.3814857906981
+                },
+                "region": {
+                  "quantity": 746.82997406807
+                }
+              }
+            },
+            "hq": {
+              "minListing": {},
+              "recentPurchase": {},
+              "averageSalePrice": {},
+              "dailySaleVelocity": {}
+            },
+            "worldUploadTimes": [
+              {
+                "worldId": 40,
+                "timestamp": 1788903708961
+              },
+              {
+                "worldId": 79,
+                "timestamp": 1788844007886
+              },
+              {
+                "worldId": 81,
+                "timestamp": 1788902109724
+              }
+            ]
+          },
+          {
+            "itemId": 44012,
+            "nq": {
+              "minListing": {
+                "world": {
+                  "price": 800
+                },
+                "dc": {
+                  "price": 450,
+                  "worldId": 63
+                },
+                "region": {
+                  "price": 200,
+                  "worldId": 37
+                }
+              },
+              "recentPurchase": {
+                "world": {
+                  "price": 887,
+                  "timestamp": 1788862639000
+                },
+                "dc": {
+                  "price": 459,
+                  "timestamp": 1788896555000,
+                  "worldId": 63
+                },
+                "region": {
+                  "price": 307,
+                  "timestamp": 1788902763000,
+                  "worldId": 53
+                }
+              },
+              "averageSalePrice": {
+                "world": {
+                  "price": 1028.4048964218455
+                },
+                "dc": {
+                  "price": 927.7058649289099
+                },
+                "region": {
+                  "price": 1013.8001743299194
+                }
+              },
+              "dailySaleVelocity": {
+                "world": {
+                  "quantity": 135.71754036010847
+                },
+                "dc": {
+                  "quantity": 862.8670674125772
+                },
+                "region": {
+                  "quantity": 3518.6880565126257
+                }
+              }
+            },
+            "hq": {
+              "minListing": {
+                "world": {
+                  "price": 5000
+                },
+                "dc": {
+                  "price": 459,
+                  "worldId": 63
+                },
+                "region": {
+                  "price": 250,
+                  "worldId": 37
+                }
+              },
+              "recentPurchase": {
+                "world": {
+                  "price": 859,
+                  "timestamp": 1788903419000
+                },
+                "dc": {
+                  "price": 859,
+                  "timestamp": 1788903419000,
+                  "worldId": 40
+                },
+                "region": {
+                  "price": 859,
+                  "timestamp": 1788903419000,
+                  "worldId": 40
+                }
+              },
+              "averageSalePrice": {
+                "world": {
+                  "price": 4673.91475409836
+                },
+                "dc": {
+                  "price": 2684.339242932439
+                },
+                "region": {
+                  "price": 2549.83704974271
+                }
+              },
+              "dailySaleVelocity": {
+                "world": {
+                  "quantity": 77.9545194158815
+                },
+                "dc": {
+                  "quantity": 533.4133796475262
+                },
+                "region": {
+                  "quantity": 1788.0977441245248
+                }
+              }
+            },
+            "worldUploadTimes": [
+              {
+                "worldId": 40,
+                "timestamp": 1788904037262
+              },
+              {
+                "worldId": 63,
+                "timestamp": 1788898042400
+              },
+              {
+                "worldId": 37,
+                "timestamp": 1788902918355
+              }
+            ]
+          }
+        ],
+        "failedItems": []
+      },
+      "finished_at": "2026-09-08T21:54:03.383337+00:00"
+    },
+    {
+      "file": "drift-recency.json",
+      "sha256": "68b880cf8cad592ae5db75d457ca8dd369ac893a458b59da855ba04231ffc7fb",
+      "url": "https://universalis.app/api/v2/extra/stats/most-recently-updated?world=Jenova&entries=200",
+      "started_at": "2026-09-08T21:54:03.383737+00:00",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 08 Sep 2026 21:54:03 GMT",
+        "age": null,
+        "cache-control": null,
+        "cf-cache-status": "DYNAMIC",
+        "x-ultros-commit": null,
+        "content-type": "application/json; charset=utf-8"
+      },
+      "finished_at": "2026-09-08T21:54:03.653011+00:00",
+      "body_summary": {
+        "count": 200,
+        "oldest_upload_ms": 1788903842854,
+        "newest_upload_ms": 1788904443378,
+        "sample_matches": [
+          {
+            "itemID": 44012,
+            "lastUploadTime": 1788904032433,
+            "worldID": 40,
+            "worldName": "Jenova"
+          }
+        ],
+        "5669_present": false
+      }
+    }
+  ]
+}

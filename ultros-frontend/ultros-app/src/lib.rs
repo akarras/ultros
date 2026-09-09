@@ -8,10 +8,10 @@ pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) use ultros_i18n::fallback as i18n_fallback;
 pub mod last_view;
-pub(crate) mod math;
+pub(crate) use ultros_calc::math;
 pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
-pub(crate) mod recipe_planner;
+pub(crate) use ultros_calc::recipe_planner;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
 pub mod social_card;
@@ -49,6 +49,7 @@ use crate::{
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        group_detail::GroupDetail,
         groups::*,
         help::*,
         history::*,
@@ -540,6 +541,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         </ParentRoute>
                         <Route path=path!("alerts") view=Alerts />
                         <Route path=path!("groups") view=Groups />
+                        <Route path=path!("groups/:id") view=GroupDetail />
                         <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />

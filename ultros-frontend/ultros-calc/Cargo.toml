@@ -1,0 +1,9 @@
+[package]
+name = "ultros-calc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+chrono.workspace = true
+ultros-api-types = { path = "../../ultros-api-types" }

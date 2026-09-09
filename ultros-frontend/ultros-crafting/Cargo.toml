@@ -1,0 +1,12 @@
+[package]
+name = "ultros-crafting"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+ultros-calc = { path = "../ultros-calc" }
+xiv-gen = { path = "../../xiv-gen", default-features = false, features = ["item", "recipe"] }
+
+[dev-dependencies]
+ultros-api-types = { path = "../../ultros-api-types" }

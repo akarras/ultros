@@ -8,6 +8,9 @@ pub struct Model {
     pub role_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: i64,
+    /// Membership creation time, retained for audit. Sync ordering uses the
+    /// group's revision, which survives removal of individual memberships.
+    pub added_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

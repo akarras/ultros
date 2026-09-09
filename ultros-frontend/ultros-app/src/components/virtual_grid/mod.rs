@@ -1,8 +1,7 @@
 //! A single native scrollport with independently virtualized rows and columns.
 mod filter;
 pub mod fixture;
-pub mod layout;
-pub mod metrics;
+pub use ultros_grid_core::{layout, metrics};
 pub mod query_grid;
 pub mod row_source;
 pub mod saved_views;

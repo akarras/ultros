@@ -6,6 +6,7 @@ pub(crate) mod character_claim;
 mod discord;
 pub(crate) mod event;
 mod fd_limit;
+pub(crate) mod group_sync;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
@@ -721,6 +722,12 @@ async fn main() -> Result<()> {
     // failure looks like a healthy process serving frozen numbers, so this gauge
     // is the only thing that makes one visible from outside.
     ingest_health::spawn_staleness_gauge(db.clone(), world_cache.clone(), token.clone());
+    // Discord group membership. Gateway events keep it fresh minute to minute;
+    // this is the periodic pass that repairs whatever the gateway missed while
+    // the process was down or a shard was reconnecting. It waits for the bot to
+    // come up on its own, so it is spawned here rather than inside the Discord
+    // setup hook — a database it can reach is all it needs to start.
+    group_sync::spawn_reconcile_scheduler(db.clone(), token.clone());
     // begin listening to universalis events
     // load configuration from environment
     let config = envy::from_env::<Config>()?;
