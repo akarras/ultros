@@ -13,7 +13,13 @@ type ListViewResult =
     Result<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>), crate::error::AppError>;
 
 #[component]
-pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
+pub fn AutoMarkPurchases(
+    list_view: Resource<ListViewResult>,
+    /// The Labs page routes purchases into its document instead of the
+    /// resource-plus-REST path; without it, behaviour is unchanged.
+    #[prop(optional, into)]
+    on_purchase: Option<Callback<(i32, bool)>>,
+) -> impl IntoView {
     let i18n = use_i18n();
     let (watch_character_name, set_watch_character_name) = signal("".to_string());
     let (is_watching, set_is_watching) = signal(false);
@@ -40,7 +46,10 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                     return;
                 };
                 for (sale, _) in event.sales {
-                    mark_item_purchased(list_view, sale.sold_item_id);
+                    match on_purchase {
+                        Some(callback) => callback.run((sale.sold_item_id, sale.hq)),
+                        None => mark_item_purchased(list_view, sale.sold_item_id),
+                    }
                 }
             },
         );
