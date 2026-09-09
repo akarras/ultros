@@ -476,8 +476,43 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                     _ => None,
                 };
                 if let Some(new_locale) = new_locale {
-                    i18n.set_locale(new_locale);
-                    components::language_picker::reload_locale_data(new_locale);
+                    // Switching the locale rewrites every translated text node
+                    // and bumps `DataRevision`, which re-renders everything that
+                    // reads `tracked_data()`. `GuessedRegion` is provided on both
+                    // sides, but this guess only runs in an `Effect`, so the SSR
+                    // HTML is always English while the client immediately wants
+                    // ja/cn/ko — every page load in these regions is a scheduled
+                    // DOM rewrite. Effects are queued on the executor, and
+                    // hydration continues asynchronously across `Suspense`
+                    // boundaries, so that rewrite can land *while* tachys is
+                    // still walking the SSR DOM. Its cursor then finds a node
+                    // the view tree does not expect and panics
+                    // (`Element::cast_from(cursor.current()).unwrap()`,
+                    // tachys `svg/mod.rs:306`) — GlitchTip #7309, reported from
+                    // a CN client whose breadcrumbs show `en.rkyv` loading and
+                    // the panic 63ms after `app run!`.
+                    //
+                    // Deferring to the next animation frame lets hydration
+                    // finish against the English DOM it was rendered as, then
+                    // re-translates reactively. Same fix, same reason, as the
+                    // `delay_during_hydration` on `RecentItems::new()`.
+                    let apply = move || {
+                        i18n.set_locale(new_locale);
+                        components::language_picker::reload_locale_data(new_locale);
+                    };
+                    #[cfg(feature = "hydrate")]
+                    {
+                        // `reload_locale_data` reads `DataRevision` out of
+                        // context, and a raw animation-frame callback runs with
+                        // no reactive owner, so carry this one across.
+                        let owner = Owner::current();
+                        leptos::leptos_dom::helpers::request_animation_frame(move || match owner {
+                            Some(owner) => owner.with(apply),
+                            None => apply(),
+                        });
+                    }
+                    #[cfg(not(feature = "hydrate"))]
+                    apply();
                 }
             }
         }
