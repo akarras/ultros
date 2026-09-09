@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 rkyv = { version = "0.7.42", features = ["validation", "size_32", "hashbrown"], default-features = false, optional = true }
+base64 = "0.22.1"
 
 [features]
 default = []

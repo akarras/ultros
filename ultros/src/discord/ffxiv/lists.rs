@@ -8,6 +8,9 @@ use itertools::Itertools;
 use poise::serenity_prelude::User;
 use ultros_api_types::list::ListPermission;
 use ultros_db::world_data::world_cache::AnySelector;
+
+use crate::lists::{Actor, Origin};
+use ultros_list_doc::RowKey;
 #[poise::command(
     slash_command,
     prefix_command,
@@ -339,9 +342,16 @@ async fn add_item(
     let list = resolve_list(&ctx, author_id, &list_name)
         .await?
         .ok_or(anyhow!("List not found"))?;
+    let actor = Actor {
+        user_id: author_id,
+        username: ctx.author().name.clone(),
+        origin: Origin::Bot,
+    };
+    let key = RowKey::new(item_id, hq);
+    let need = quantity.unwrap_or(1) as i64;
     ctx.data()
-        .db
-        .add_item_to_list(&list, author_id, item_id, hq, quantity, None)
+        .list_sync
+        .edit_as_server(list.id, &actor, move |doc| doc.add_row(key, need, None))
         .await?;
     ctx.send(
         poise::CreateReply::default().embed(
@@ -376,9 +386,15 @@ async fn remove_item(
         .into_iter()
         .find(|i| i.item_id == id)
         .ok_or(anyhow!("Unable to find item on list"))?;
+    let actor = Actor {
+        user_id: author_id,
+        username: ctx.author().name.clone(),
+        origin: Origin::Bot,
+    };
+    let key = RowKey::new(item.item_id, item.hq);
     ctx.data()
-        .db
-        .remove_item_from_list(author_id, item.id)
+        .list_sync
+        .edit_as_server(list.id, &actor, move |doc| doc.remove_row(&key))
         .await?;
     Ok(())
 }

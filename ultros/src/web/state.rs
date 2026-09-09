@@ -53,6 +53,9 @@ pub(crate) struct WebState {
     /// Same contract for `/api/v1/listing_stats`, as its own instance so a
     /// listing snapshot never evicts a sale snapshot (or the reverse).
     pub(crate) listing_stats_cache: crate::web::stats_cache::ListingStatsCache,
+    /// The local-first list document's server side: merge path, activity
+    /// classification, and the legacy-event/relay fanout.
+    pub(crate) list_sync: crate::lists::ListSync,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -171,5 +174,11 @@ impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
 impl FromRef<WebState> for CancellationToken {
     fn from_ref(input: &WebState) -> Self {
         input.token.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::lists::ListSync {
+    fn from_ref(input: &WebState) -> Self {
+        input.list_sync.clone()
     }
 }
