@@ -278,6 +278,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_flow_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_flow_exit"
         fi
+        log "running list-sync E2E (test-auth feature detected)"
+        list_sync_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-sync ) || list_sync_exit=$?
+        if [ "$list_sync_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_sync_exit"
+        fi
         log "running list-flow E2E under Labs lists-sync"
         list_flow_labs_exit=0
         ( cd integration && BASE_URL="$BASE_URL" LABS_COOKIE=lists-sync npm run test:list-flow ) || list_flow_labs_exit=$?

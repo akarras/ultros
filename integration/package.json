@@ -26,6 +26,7 @@
     "test:shared-list": "node ./shared-list.cjs",
     "test:list-socket-revocation": "node ./list-socket-revocation.cjs",
     "test:list-flow": "node ./list-flow.cjs",
+    "test:list-sync": "node ./list-sync.cjs",
     "test:labs": "node ./labs.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",
     "test:list-view-rename": "node ./list-view-rename.cjs",
