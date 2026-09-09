@@ -2,9 +2,10 @@ use crate::api::{
     claim_character, delete_user, get_characters, search_characters, unclaim_character,
 };
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+use crate::components::tool_help::ToolHeader;
 use crate::components::{
     ad::*, crafter_settings::CrafterSettings, loading::*, skeleton::BoxSkeleton, toggle::Toggle,
-    tool_help::ToolHeader, world_name::*, world_picker::*,
+    world_name::*, world_picker::*,
 };
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
@@ -411,11 +412,13 @@ pub fn Settings() -> impl IntoView {
             <MetaRobotsNoIndex />
 
             <div class="space-y-6">
-                <ToolHeader
-                    title=t_string!(i18n, settings).to_string()
-                    summary=t_string!(i18n, settings_tool_summary).to_string()
-                    context=t_string!(i18n, settings_tool_context).to_string()
-                />
+                {move || view! {
+                    <ToolHeader
+                        title=t_string!(i18n, settings).to_string()
+                        summary=t_string!(i18n, settings_tool_summary).to_string()
+                        context=t_string!(i18n, settings_tool_context).to_string()
+                    />
+                }}
                 <LanguageSettings />
                 <HomeWorldPicker />
                 <CrafterSettings />

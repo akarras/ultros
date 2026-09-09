@@ -1,7 +1,0 @@
-{
-  "category": "improvements",
-  "importance": "low",
-  "title": "Settings and gear set pages get a proper header",
-  "blurb": "Both pages now open with the same header the rest of Ultros uses, with an info button explaining what the page covers — where your preferences are stored, and which world each gear set total is priced against.",
-  "link": "/settings"
-}

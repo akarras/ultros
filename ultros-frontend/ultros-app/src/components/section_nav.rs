@@ -44,7 +44,8 @@ pub fn SectionNav(#[prop(into)] item_id: Signal<i32>, children: Children) -> imp
     let label = move |section: Section| match section {
         Section::Overview => t_string!(i18n, item_view_nav_overview).to_string(),
         Section::Listings => t_string!(i18n, item_view_nav_listings).to_string(),
-        Section::History => t_string!(i18n, item_view_nav_history).to_string(),
+        Section::History => t_string!(i18n, sale_history).to_string(),
+        Section::SalesChart => t_string!(i18n, sales_chart).to_string(),
         Section::Sources => t_string!(i18n, item_view_nav_sources).to_string(),
         Section::Related => t_string!(i18n, item_view_nav_related).to_string(),
     };

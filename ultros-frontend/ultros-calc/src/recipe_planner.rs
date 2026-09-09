@@ -358,6 +358,25 @@ pub struct ShoppingPlan {
     pub effective: i64,
 }
 
+/// Stable display order independent of the solver branch (exact, greedy,
+/// insufficient supply, or locked purchases). Listing IDs break price/stack
+/// ties so checking a purchase never changes the ordering by itself.
+pub fn itinerary(plan: &ShoppingPlan) -> BTreeMap<i32, Vec<(i32, Offer)>> {
+    let mut stops: BTreeMap<i32, Vec<(i32, Offer)>> = BTreeMap::new();
+    for (item, purchase) in &plan.purchases {
+        for offer in &purchase.offers {
+            stops
+                .entry(offer.world)
+                .or_default()
+                .push((*item, offer.clone()));
+        }
+    }
+    for rows in stops.values_mut() {
+        rows.sort_by_key(|(item, o)| (*item, o.price, o.quantity, o.id));
+    }
+    stops
+}
+
 /// Locked listings are committed purchases: they count against the need at
 /// the price they were ticked at, and only the remainder goes to the market.
 fn purchase_with_locked(
@@ -670,6 +689,36 @@ mod tests {
             item,
             needed,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn itinerary_order_survives_locking_for_every_purchase_branch() {
+        // Price order differs from ID order, as on the reported Fire Cluster
+        // itinerary. The locked path sorts by ID; greedy and partial paths do
+        // not. The presentation must remain stable through tick and untick.
+        let offers = vec![offer(2, 1, 6000, 1), offer(1, 1, 6000, 2)];
+        for needed in [12000, 13000, 2] {
+            let market = BTreeMap::from([(42, offers.clone())]);
+            let materials = [leaf(42, needed)];
+            let allowed = BTreeSet::from([1]);
+            let mut context = ctx(1, &[(1, 1)]);
+            let before = shop(&materials, &market, &BTreeMap::new(), &allowed, &context);
+            let bought = before.purchases[&42]
+                .offers
+                .iter()
+                .find(|o| o.id == 2)
+                .unwrap()
+                .clone();
+            context.locked.insert(42, vec![bought]);
+            let after = shop(&materials, &market, &BTreeMap::new(), &allowed, &context);
+            assert_eq!(before.cost, after.cost);
+            assert_eq!(itinerary(&before), itinerary(&after), "needed={needed}");
+            context.locked.clear();
+            assert_eq!(
+                before,
+                shop(&materials, &market, &BTreeMap::new(), &allowed, &context)
+            );
         }
     }
     fn plan(travel: (usize, usize), cost: i64, missing: i64, worlds: &[i32]) -> ShoppingPlan {

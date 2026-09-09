@@ -212,6 +212,7 @@ pub fn build_price_density_chart(
                 label: display.format(label_format).to_string(),
                 series_values: Vec::new(),
                 volume: n as i64,
+                listing_floor: None,
             }
         })
         .collect();

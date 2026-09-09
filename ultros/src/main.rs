@@ -10,6 +10,7 @@ pub(crate) mod group_sync;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
+pub(crate) mod lists;
 pub(crate) mod lodestone_profile;
 #[cfg(feature = "profiling")]
 pub mod profiling;
@@ -635,6 +636,7 @@ async fn main() -> Result<()> {
     let startup_client = universalis_client.clone();
     let init = db.clone();
     let (senders, receivers) = create_event_busses();
+    let list_sync = lists::ListSync::new(db.clone(), senders.clone());
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
@@ -771,6 +773,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(start_discord(
         db.clone(),
+        list_sync.clone(),
         senders.clone(),
         receivers.clone(),
         analyzer_service.clone(),
@@ -820,6 +823,7 @@ async fn main() -> Result<()> {
         price_series_cache: Default::default(),
         sale_stats_cache: Default::default(),
         listing_stats_cache: Default::default(),
+        list_sync,
     };
     let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
     let web_finished = tokio::select! {

@@ -54,15 +54,24 @@ async function main() {
     await page.setJavaScriptEnabled(true);
     await page.setRequestInterception(true);
     let homeUnavailable = false;
+    let denseMarket = false;
     page.on('request', request => {
       const match = new URL(request.url()).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
       if (!match) return request.continue();
       const item = Number(match[1]);
-      const listings = [
+      const marketRows = denseMarket
+        ? [63, 79].flatMap(world => Array.from({ length: 90 }, (_, n) => ({
+          // Cheap rows have larger IDs: ticking one used to switch from
+          // price order to ID order and move it underneath the pointer.
+          id: item * 10000 + world * 100 + 90 - n,
+          world_id: world, quantity: 99, price_per_unit: 100 + n,
+        })))
+        : [
         { id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 100 },
         { id: item * 10 + 2, world_id: 63, quantity: 3, price_per_unit: 150 },
         { id: item * 10 + 3, world_id: 79, quantity: 12, price_per_unit: 50 },
-      ].filter(l => !homeUnavailable || l.world_id !== 63).map(l => [{ ...l, item_id: item, retainer_id: l.id, hq: false, timestamp: '2026-09-05T12:00:00' },
+      ];
+      const listings = marketRows.filter(l => !homeUnavailable || l.world_id !== 63).map(l => [{ ...l, item_id: item, retainer_id: l.id, hq: false, timestamp: '2026-09-05T12:00:00' },
         { id: l.id, world_id: l.world_id, name: 'Recipe fixture', retainer_city_id: 1 }]);
       return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ listings, sales: [], last_updated: [{ world_id: 63, updated_at: '2026-09-05T12:00:00' }, { world_id: 79, updated_at: '2026-09-05T12:00:00' }] }) });
     });
@@ -178,6 +187,36 @@ async function main() {
     await page.$$eval('button', buttons => buttons.find(b => b.textContent === 'Add remaining materials to a list').click());
     await page.waitForFunction(() => document.body.textContent.includes('Sign in to save this plan to a list.'));
     assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('owned')), new URL(shared).searchParams.get('owned'), 'opening Save must preserve the public plan');
+    // Dense itinerary regression: checking a purchase must preserve stable
+    // listing identity/order, including native input focus. No timing threshold:
+    // DOM retention directly catches the expensive full-itinerary rebuild.
+    denseMarket = true;
+    const denseUrl = new URL('/recipe/37835?world=Gilgamesh&quantity=9999&shards-exclude=false&route=79', BASE);
+    await page.goto(denseUrl.href, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated);
+    await page.waitForFunction(() => document.querySelectorAll('[data-listing-id]').length >= 400);
+    const tickSelector = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('[data-listing-id]'));
+      window.__itineraryRows = rows;
+      window.__itineraryTotal = document.querySelector('[data-testid="plan-total"]').textContent;
+      // A non-home purchase also changes remaining-travel metadata.
+      const row = rows.find(row => row.dataset.testid.endsWith('-79'));
+      if (!row) throw new Error('dense fixture must include a non-home purchase');
+      return `[data-listing-id="${row.dataset.listingId}"] input`;
+    });
+    for (const checked of [true, false]) {
+      await page.click(tickSelector);
+      await page.waitForFunction((selector, checked) => document.querySelector(selector)?.checked === checked, {}, tickSelector, checked);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('[data-listing-id]'));
+        return rows.length === window.__itineraryRows.length && rows.every((row, i) => row === window.__itineraryRows[i]);
+      }), true, 'tick/untick retains the same row DOM nodes in the same order');
+      assert.equal(await page.$eval(tickSelector, e => e === document.activeElement), true, 'checkbox keeps keyboard focus');
+      assert.equal(await page.evaluate(() => document.querySelector('[data-testid="plan-total"]').textContent === window.__itineraryTotal), true, 'ticking an already selected stack preserves spend');
+      assert.equal(new URL(page.url()).searchParams.get('route'), '79', 'the explicit route stays pinned');
+    }
+    denseMarket = false;
     // An incomplete home baseline still needs its shortage warning even
     // when the comparison line identifies it as the baseline card.
     homeUnavailable = true;
