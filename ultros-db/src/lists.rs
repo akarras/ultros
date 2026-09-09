@@ -1,6 +1,5 @@
 use crate::{
     UltrosDb,
-    common::try_update_value::ActiveValueCmpSet,
     common_type_conversions::{
         ListSharedGroupReturn, ListSharedRoleReturn, ListSharedUserReturn, UserGroupMemberReturn,
     },
@@ -15,14 +14,11 @@ use anyhow::Result;
 use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ExprTrait, IntoActiveModel,
-    JoinType, ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ExprTrait, JoinType,
+    ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
     sea_query::Expr,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
@@ -211,28 +207,6 @@ impl UltrosDb {
         .insert(&self.db)
         .await?;
         Ok(list)
-    }
-
-    pub async fn update_list<T>(
-        &self,
-        list_id: i32,
-        discord_user: i64,
-        update: T,
-    ) -> Result<list::Model>
-    where
-        T: FnOnce(&mut list::ActiveModel),
-    {
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Owner {
-            return Err(ListError::Forbidden("Only the owner can update list settings").into());
-        }
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::NotFound)?;
-        let mut model = list.into_active_model();
-        update(&mut model);
-        Ok(model.update(&self.db).await?)
     }
 
     /// Deletes the given list assuming that it is owned by the Discord user
@@ -478,106 +452,6 @@ impl UltrosDb {
         Ok(query.all(&self.db).await?)
     }
 
-    /// Adds an item to the list.
-    #[instrument(skip(self))]
-    pub async fn add_item_to_list(
-        &self,
-        list: &list::Model,
-        discord_user: i64,
-        item_id: i32,
-        hq: Option<bool>,
-        quantity: Option<i32>,
-        acquired: Option<i32>,
-    ) -> Result<list_item::Model> {
-        let permission = self.get_permission(list.id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to add item to list").into(),
-            );
-        }
-        // if the item already exists in the list, just update the existing list
-        let existing = list_item::Entity::find()
-            .filter(list_item::Column::ListId.eq(list.id))
-            .filter(list_item::Column::ItemId.eq(item_id))
-            .filter(list_item::Column::Hq.eq(hq))
-            .one(&self.db)
-            .await?;
-        if let Some(item) = existing {
-            let new_quantity = item.quantity.unwrap_or(1) + quantity.unwrap_or(1);
-            let mut item = item.into_active_model();
-            item.quantity = ActiveValue::Set(Some(new_quantity));
-            Ok(item.update(&self.db).await?)
-        } else {
-            Ok(list_item::ActiveModel {
-                id: Default::default(),
-                item_id: ActiveValue::Set(item_id),
-                list_id: ActiveValue::Set(list.id),
-                hq: ActiveValue::Set(hq),
-                quantity: ActiveValue::Set(quantity),
-                acquired: ActiveValue::Set(acquired),
-                target_price: ActiveValue::Set(None),
-            }
-            .insert(&self.db)
-            .await?)
-        }
-    }
-
-    /// Update list item
-    #[instrument(skip(self))]
-    pub async fn update_list_item(
-        &self,
-        updated_item: list_item::Model,
-        discord_user: i64,
-    ) -> Result<list_item::Model> {
-        let permission = self
-            .get_permission(updated_item.list_id, discord_user)
-            .await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to update list item").into(),
-            );
-        }
-        let mut item = list_item::Entity::find_by_id(updated_item.id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::BadRequest("Item not found"))?
-            .into_active_model();
-        item.hq.cmp_set_value(updated_item.hq);
-        item.quantity.cmp_set_value(updated_item.quantity);
-        item.acquired.cmp_set_value(updated_item.acquired);
-        item.target_price.cmp_set_value(updated_item.target_price);
-        if item.is_changed() {
-            Ok(item.update(&self.db).await?)
-        } else {
-            Ok(updated_item)
-        }
-    }
-
-    /// Update only the `target_price` on a list_item. Requires `Write`
-    /// permission on the owning list. Pass `None` to clear an existing target.
-    #[instrument(skip(self))]
-    pub async fn set_list_item_target_price(
-        &self,
-        owner: i64,
-        list_item_id: i32,
-        target_price: Option<i64>,
-    ) -> Result<()> {
-        let item = list_item::Entity::find_by_id(list_item_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::BadRequest("Item not found"))?;
-        let permission = self.get_permission(item.list_id, owner).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to update list item").into(),
-            );
-        }
-        let mut active: list_item::ActiveModel = item.into_active_model();
-        active.target_price = ActiveValue::Set(target_price);
-        active.update(&self.db).await?;
-        Ok(())
-    }
-
     /// Return all list_items for `list_id` that have a non-null `target_price`.
     /// Used by the price tracker to pre-compute per-list thresholds on refresh.
     pub async fn get_list_items_with_target(&self, list_id: i32) -> Result<Vec<list_item::Model>> {
@@ -593,123 +467,6 @@ impl UltrosDb {
     /// operation via the `alert_list_threshold` row.
     pub async fn get_list_by_id(&self, list_id: i32) -> Result<Option<list::Model>> {
         Ok(list::Entity::find_by_id(list_id).one(&self.db).await?)
-    }
-
-    // #[instrument(skip(self))]
-    pub async fn add_items_to_list(
-        &self,
-        list: &list::Model,
-        discord_user: i64,
-        items: impl Iterator<Item = list_item::Model>,
-    ) -> Result<u64> {
-        let permission = self.get_permission(list.id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to add items to list").into(),
-            );
-        }
-        // for items that are already matching our list, we should update and insert
-        let mut existing_list_items: HashMap<_, _> = list
-            .find_related(list_item::Entity)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|item| ((item.list_id, item.hq, item.item_id), item))
-            .collect();
-
-        let mut insert_queue = vec![];
-        let mut updated_models = vec![];
-        items.into_iter().for_each(|item| {
-            let key = (list.id, item.hq, item.item_id);
-            // removing from the map and assuming that the incoming list won't have duplicates
-            if let Some(existing) = existing_list_items.remove(&key) {
-                let new_quantity = existing.quantity.unwrap_or(1) + item.quantity.unwrap_or(1);
-                let mut existing = existing.into_active_model();
-                existing.quantity = ActiveValue::Set(Some(new_quantity));
-                updated_models.push(existing);
-            } else {
-                insert_queue.push(item);
-            }
-        });
-        try_join_all(
-            updated_models
-                .into_iter()
-                .map(|updated| updated.update(&self.db)),
-        )
-        .await?;
-        let many = list_item::Entity::insert_many(insert_queue.into_iter().map(|item| {
-            let list_item::Model {
-                item_id,
-                hq,
-                quantity,
-                acquired,
-                target_price,
-                ..
-            } = item;
-            let list_id = list.id;
-            list_item::ActiveModel {
-                id: Default::default(),
-                item_id: ActiveValue::Set(item_id),
-                list_id: ActiveValue::Set(list_id),
-                hq: ActiveValue::Set(hq),
-                quantity: ActiveValue::Set(quantity),
-                acquired: ActiveValue::Set(acquired),
-                target_price: ActiveValue::Set(target_price),
-            }
-        }))
-        .exec_without_returning(&self.db)
-        .await?;
-        Ok(many)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn set_list_items_hq(
-        &self,
-        discord_user: i64,
-        list_item_ids: &[i32],
-        hq: Option<bool>,
-    ) -> Result<Vec<i32>> {
-        let items = list_item::Entity::find()
-            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
-            .all(&self.db)
-            .await?;
-        let list_ids: HashSet<i32> = items.iter().map(|i| i.list_id).collect();
-        let list_ids_vec: Vec<i32> = list_ids.iter().copied().collect();
-        for list_id in list_ids {
-            let permission = self.get_permission(list_id, discord_user).await?;
-            if permission < ListPermission::Write {
-                return Err(
-                    ListError::Forbidden("Insufficient permissions to update list items").into(),
-                );
-            }
-        }
-
-        list_item::Entity::update_many()
-            .col_expr(list_item::Column::Hq, Expr::value(hq))
-            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
-            .exec(&self.db)
-            .await?;
-        Ok(list_ids_vec)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn remove_item_from_list(
-        &self,
-        discord_user: i64,
-        list_item_id: i32,
-    ) -> Result<list_item::Model> {
-        let list_item = list_item::Entity::find_by_id(list_item_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::BadRequest("No list item"))?;
-        let permission = self.get_permission(list_item.list_id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to remove item from list").into(),
-            );
-        }
-        list_item.clone().delete(&self.db).await?;
-        Ok(list_item)
     }
 
     pub async fn get_listings_for_list(

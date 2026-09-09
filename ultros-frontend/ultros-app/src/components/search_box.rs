@@ -464,6 +464,10 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                     <span>{t!(i18n, search_hint_items)}</span>
                 </div>
                 <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaHammerSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_recipes)}</span>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
                     <Icon icon=i::FaWrenchSolid attr:class="text-[color:var(--color-text-muted)]" />
                     <span>{t!(i18n, search_hint_tools)}</span>
                 </div>
@@ -564,6 +568,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                                                     "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
                                                     "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
                                                     "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                    "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
                                                     "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
                                                     "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
                                                     _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
@@ -575,6 +580,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                                                 "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
                                                 "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
                                                 "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
                                                 "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
                                                 "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
                                                 _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),

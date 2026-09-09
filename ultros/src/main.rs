@@ -10,6 +10,7 @@ pub(crate) mod group_sync;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
+pub(crate) mod lists;
 pub(crate) mod lodestone_profile;
 #[cfg(feature = "profiling")]
 pub mod profiling;
@@ -635,6 +636,7 @@ async fn main() -> Result<()> {
     let startup_client = universalis_client.clone();
     let init = db.clone();
     let (senders, receivers) = create_event_busses();
+    let list_sync = lists::ListSync::new(db.clone(), senders.clone());
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
@@ -716,8 +718,17 @@ async fn main() -> Result<()> {
         full_sweep_cooldowns: Default::default(),
         uncovered_worlds: Default::default(),
         sweep_lock: Default::default(),
+        shutdown: token.clone(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
+    // A full sweep runs for hours, so a deploy lands in the middle of nearly
+    // every one. Its progress is persisted per chunk; this picks up whatever
+    // the last process left unfinished instead of waiting for an operator to
+    // notice and re-issue `/rescan_market`.
+    crate::discord::ffxiv::admin::spawn_interrupted_sweep_resume(
+        update_service.clone(),
+        token.clone(),
+    );
     // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
     // failure looks like a healthy process serving frozen numbers, so this gauge
     // is the only thing that makes one visible from outside.
@@ -771,6 +782,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(start_discord(
         db.clone(),
+        list_sync.clone(),
         senders.clone(),
         receivers.clone(),
         analyzer_service.clone(),
@@ -820,6 +832,7 @@ async fn main() -> Result<()> {
         price_series_cache: Default::default(),
         sale_stats_cache: Default::default(),
         listing_stats_cache: Default::default(),
+        list_sync,
     };
     let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
     let web_finished = tokio::select! {

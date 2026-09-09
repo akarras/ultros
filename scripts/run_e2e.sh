@@ -240,6 +240,11 @@ case " ${LEPTOS_FEATURES:-} " in
             test_exit="$login_exit"
         fi
         log "running shared-list flow (test-auth feature detected)"
+        socket_revocation_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-socket-revocation ) || socket_revocation_exit=$?
+        if [ "$socket_revocation_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$socket_revocation_exit"
+        fi
         shared_list_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-list ) || shared_list_exit=$?
         if [ "$shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
@@ -255,6 +260,12 @@ case " ${LEPTOS_FEATURES:-} " in
         ( cd integration && BASE_URL="$BASE_URL" npm run test:group-shared-list ) || group_shared_list_exit=$?
         if [ "$group_shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$group_shared_list_exit"
+        fi
+        log "running group detail page states (test-auth feature detected)"
+        group_detail_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:group-detail ) || group_detail_exit=$?
+        if [ "$group_detail_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$group_detail_exit"
         fi
         log "running list-flow E2E (test-auth feature detected)"
         labs_exit=0

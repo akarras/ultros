@@ -243,6 +243,39 @@ define_error_enum!(ApiError {
     },
 });
 
+impl From<ultros_db::list_doc::ListDocError> for ApiError {
+    fn from(error: ultros_db::list_doc::ListDocError) -> Self {
+        use ultros_db::list_doc::ListDocError;
+        use ultros_list_doc::DocError;
+        match error {
+            ListDocError::List(inner) => ApiError::from(anyhow::Error::from(inner)),
+            ListDocError::MetaForbidden => ApiError::from(anyhow::Error::from(
+                ListError::Forbidden("only the list owner can change its name or scope"),
+            )),
+            ListDocError::InvalidUpdate => ApiError::from(anyhow::Error::from(
+                ListError::BadRequest("invalid document update"),
+            )),
+            ListDocError::MissingHistory => {
+                ApiError::from(anyhow::Error::from(ListError::BadRequest(
+                    "update depends on history this server does not have; resync from a snapshot",
+                )))
+            }
+            // A row that isn't in the document (already removed, or a stale
+            // client-side id) is a 404, not the 500 the `other` catch-all
+            // below would otherwise give it.
+            ListDocError::Doc(DocError::MissingRow(_)) => {
+                ApiError::from(anyhow::Error::from(ListError::NotFound))
+            }
+            // Keep the typed `DbErr` on the `DbError` variant instead of
+            // stringifying it through `anyhow`, so the `#[source]` chain and
+            // GlitchTip grouping survive the same way every other DB failure
+            // in this file does.
+            ListDocError::Db(e) => ApiError::DbError(e),
+            other => ApiError::from(anyhow::anyhow!("{other}")),
+        }
+    }
+}
+
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {

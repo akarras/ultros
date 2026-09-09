@@ -1117,6 +1117,9 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 [data-theme="light"] [data-item-section-nav] a[href="#vendor-sources"] {
     @apply text-amber-800;
 }
+[data-theme="light"] .vendor-gate-seasonal {
+    @apply text-amber-800;
+}
 
 /* Light-mode text utility fixes for contrast */
 [data-theme="light"] .text-gray-300,
@@ -1208,6 +1211,38 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 [data-theme="light"] .panel {
     background-image: none;
     background-color: var(--color-background-elevated);
+}
+
+/* Hover affordance for panels that are genuinely interactive -- a link, a
+   button, a clickable tile. Kept as an opt-in beside `.panel` so static
+   surfaces stop advertising a lift they never had: `.card` bakes the lift
+   into every consumer, which is why the feature tiles and read-only detail
+   tiles all appeared clickable.
+
+   Unlike `.card`, the ring rides on `box-shadow` rather than `outline`.
+   `.card` claims `outline` for its hover ring and then has to zero it with
+   `focus-visible:outline-none`, which also erases the global
+   `:focus-visible` ring -- so a focusable `.card` (the vendor anchor in
+   Related Items) had no keyboard focus indicator at all. Leaving `outline`
+   untouched here keeps that ring intact. */
+@utility panel-interactive {
+    @apply transition-all duration-300;
+}
+.panel-interactive:hover {
+    transform: translateY(-0.125rem);
+    box-shadow:
+        0 16px 28px -12px rgba(0, 0, 0, 0.34),
+        0 6px 12px -8px rgba(0, 0, 0, 0.2),
+        0 0 0 1px color-mix(in srgb, var(--brand-ring) 35%, transparent);
+}
+.panel-interactive:active {
+    transform: translateY(0);
+}
+[data-theme="light"] .panel-interactive:hover {
+    box-shadow:
+        0 14px 22px -14px rgba(0, 0, 0, 0.16),
+        0 6px 10px -8px rgba(0, 0, 0, 0.1),
+        0 0 0 1px color-mix(in srgb, var(--brand-ring) 40%, transparent);
 }
 
 @utility card {

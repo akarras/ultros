@@ -176,6 +176,111 @@ async function main() {
     await count(1);
     await first(249);
     await page.screenshot({ path: path.join(artifacts, 'missing-mobile.png'), fullPage: true });
+    // The real MarketGrid wrapper, including a delayed complete statistics body.
+    await page.setViewport({ width: 1280, height: 900 });
+    let releaseStats;
+    let holdStats = true;
+    const sortFixture = request => {
+      const url = new URL(request.url());
+      if (!url.pathname.startsWith('/api/v1/sale_stats/')) return request.continue();
+      const body = { stats: [42, 43].map((item_id, index) => ({ item_id, hq: false,
+        min_price: 50 + index * 50, median_price: 100 + index * 100, avg_price: 110 + index * 100,
+        num_sold: 14, units_sold: 28, vwap: 100 + index * 100, sales_per_day: 2,
+        gil_volume: 2800, last_sold_unix: 1788900000, confidence: 'high',
+      })) };
+      const respond = () => request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      if (url.searchParams.get('window') === '30' && holdStats) releaseStats = respond;
+      else return respond();
+    };
+    await page.setRequestInterception(true);
+    page.on('request', sortFixture);
+    const median = 'market-sale-median-30';
+    const heading = column => `.virtual-grid-heading[data-column="${column}"]`;
+    const sortLink = column => `[data-metric-sort="${column}"]`;
+    async function sorted(column, dir) {
+      await page.waitForFunction((column, dir) => {
+        const q = new URL(location.href).searchParams;
+        return q.get('sort') === `grid:${column}` && q.get('dir') === dir
+          && document.querySelector(`.virtual-grid-heading[data-column="${column}"]`)?.getAttribute('aria-sort') === (dir === 'asc' ? 'ascending' : 'descending');
+      }, {}, column, dir);
+      assert.equal(await page.$eval(`${sortLink(column)} [aria-hidden]`, el => el.textContent), dir === 'asc' ? '↑' : '↓');
+    }
+    async function marketFirst(id) {
+      await page.waitForFunction(id => document.querySelector('.virtual-grid-cell[data-column="item"] [data-window-item]')?.dataset.windowItem === String(id), {}, id);
+    }
+    const preserved = { 'market-window-test': '1', window: '30', revenue: 'sale-median',
+      scope: 'Gilgamesh', cols: `${median},market-sale-min-7,market-trend-7,market-drift-7`,
+      gf: JSON.stringify({ 'market-quality': { op: 'eq', value: 'NQ' } }),
+      l: '2~~market-sale-median-30.5k', custom: 'a & b', lang: 'en' };
+    await open({ ...preserved, sort: 'price', dir: 'asc' });
+    await count(3);
+    assert.equal(await page.$eval(heading('item'), el => el.getAttribute('aria-sort')), 'ascending');
+    await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell')].some(el => /Loading/.test(el.textContent)));
+    await page.click(sortLink(median));
+    await sorted(median, 'desc');
+    assert.equal(await page.$eval(heading('item'), el => el.getAttribute('aria-sort')), 'none', 'unregistered native sort clears');
+    await count(3);
+    await marketFirst(42); // No premature ranking while a complete body is pending.
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="status"]')].some(el => /sort/i.test(el.textContent)));
+    for (const [key, value] of Object.entries(preserved)) assert.equal(new URL(page.url()).searchParams.get(key), value, `${key} survives sorting`);
+    assert(releaseStats, 'complete 30-day body was held');
+    holdStats = false;
+    await releaseStats();
+    await marketFirst(43);
+    await page.click(sortLink(median));
+    await sorted(median, 'asc');
+    await marketFirst(42);
+    assert.equal(await page.$eval('.virtual-grid-cell[data-column="item"][data-grid-row="3"] [data-window-item]', el => el.dataset.windowItem), '44', 'missing history remains last');
+    // Follow the grid keyboard model: focus grid, choose header, Enter, Tab past
+    // its move handle, then Enter on the actual sort link.
+    await page.click(heading(median), { button: 'right' });
+    await page.keyboard.press('Escape');
+    await page.focus('.virtual-grid');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.metricSort), median);
+    await page.keyboard.press('Enter');
+    await sorted(median, 'desc');
+    await marketFirst(43);
+    await page.keyboard.press('Escape');
+    const reloadUrl = page.url();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__queryHydrated);
+    await sorted(median, 'desc');
+    await marketFirst(43);
+    assert.equal(page.url(), reloadUrl);
+    const marketSsr = await browser.newPage();
+    await marketSsr.setJavaScriptEnabled(false);
+    await marketSsr.goto(reloadUrl, { waitUntil: 'domcontentloaded' });
+    assert.equal(await marketSsr.$eval(heading(median), el => el.getAttribute('aria-sort')), 'descending');
+    assert.equal(await marketSsr.$eval(sortLink(median), el => new URL(el.href).searchParams.get('dir')), 'asc');
+    assert.equal(await marketSsr.$eval('.virtual-grid-cell[data-column="item"] [data-window-item]', el => el.dataset.windowItem), '42', 'SSR keeps original order before statistics arrive');
+    await marketSsr.close();
+    for (const partial of ['market-trend-7', 'market-drift-7']) {
+      await page.$eval(heading(partial), el => el.scrollIntoView({ block: 'nearest', inline: 'center' }));
+      assert.equal(await page.$(`${heading(partial)} .grid-heading-content a, ${heading(partial)} .grid-heading-content button`), null);
+      assert.equal(await page.$eval(heading(partial), el => el.getAttribute('aria-sort')), 'none');
+      await menu(partial);
+      assert.equal(await page.$$eval('.grid-menu-panel a', links => links.filter(link => /sort=grid/.test(link.href)).length), 0);
+      await page.keyboard.press('Escape');
+    }
+    await page.setViewport({ width: 393, height: 844, isMobile: true, hasTouch: true });
+    await page.waitForFunction(() => window.__queryHydrated);
+    await page.$eval(heading(median), el => el.scrollIntoView({ block: 'nearest', inline: 'center' }));
+    await page.tap(sortLink(median));
+    await sorted(median, 'asc');
+    await marketFirst(42);
+    await menu(median);
+    await page.click('.grid-menu-panel a[href*="dir=desc"]');
+    await sorted(median, 'desc');
+    await marketFirst(43);
+    assert.equal(new URL(page.url()).searchParams.getAll('sort').length, 1, 'menu and header share replacement semantics');
+    assert.equal(new URL(page.url()).searchParams.getAll('dir').length, 1);
+    await page.keyboard.press('Escape');
+    await page.screenshot({ path: path.join(artifacts, 'shared-sort-mobile.png'), fullPage: true });
+    page.off('request', sortFixture);
+    await page.setRequestInterception(false);
+    console.log('PASS shared headers: delayed body, click/toggle, native replacement, URL preservation/reload, aria-sort, keyboard, touch, missing last, partial exclusion');
     if (process.env.CHECK_ANALYZER_ROUTES === '1') {
       const fixture = process.env.ANALYZER_MARKET_FIXTURE === '0' ? null
         : require('./shared-analyzer-market-fixture.cjs').marketFixture();
@@ -283,6 +388,33 @@ async function main() {
           }
           await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
           await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
+        }
+        if (tool !== 'recipe-analyzer') {
+          await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+          const native = tool === 'scrip-sources' ? 'cost' : 'profit';
+          await page.waitForSelector(`${heading(native)} a`);
+          await page.click(`${heading(native)} a`);
+          await page.waitForFunction(() => !new URL(location.href).searchParams.get('sort')?.startsWith('grid:'));
+          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await page.waitForSelector(sortLink(medianColumn));
+          const beforeSort = new URL(page.url()).searchParams;
+          await page.click(sortLink(medianColumn));
+          await sorted(medianColumn, 'desc');
+          for (const [key, value] of beforeSort) if (!['sort', 'dir'].includes(key)) {
+            assert.equal(new URL(page.url()).searchParams.get(key), value, `${tool}: ${key} survives native-to-shared sort`);
+          }
+          assert.equal(await page.$$eval('.virtual-grid-heading[aria-sort]', headings => headings.filter(el => el.getAttribute('aria-sort') !== 'none').length), 1);
+          await page.click(sortLink(medianColumn));
+          await sorted(medianColumn, 'asc');
+          await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+          await page.waitForSelector(`${heading(native)} a`);
+          assert.equal(await page.$('.virtual-grid-heading a[aria-current="true"]'), null, `${tool}: native sort arrow is inactive`);
+          await page.click(`${heading(native)} a`);
+          await page.waitForFunction(() => !new URL(location.href).searchParams.get('sort')?.startsWith('grid:'));
+          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await page.waitForSelector(sortLink(medianColumn));
+          assert.equal(await page.$eval(heading(medianColumn), el => el.getAttribute('aria-sort')), 'none');
+          assert.equal(await page.$(`${sortLink(medianColumn)} [aria-hidden]`), null);
         }
         await filter(medianColumn, 'present');
         await menu(medianColumn);

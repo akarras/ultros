@@ -233,6 +233,33 @@ pub struct SaleEventData {
     pub sales: Vec<(SaleHistory, UnknownCharacter)>,
 }
 
+/// Document bytes inside the JSON socket framing. Updates are small, so the
+/// base64 overhead is accepted (spec section 5).
+pub mod base64_bytes {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        STANDARD.decode(text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The server's answer to `SubscribeListDoc`.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+pub enum ListDocPayload {
+    /// The client had no usable version: here is the whole document.
+    Snapshot(#[serde(with = "base64_bytes")] Vec<u8>),
+    /// What the client's version lacks.
+    Updates(#[serde(with = "base64_bytes")] Vec<u8>),
+    UpToDate,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum ListEventData {
     List(crate::list::List),
@@ -245,6 +272,20 @@ pub enum ServerClient {
     Sales(EventType<SaleEventData>),
     Listings(EventType<ListingEventData>),
     ListUpdate(EventType<ListEventData>),
+    ListDocSubscribed {
+        subscription_id: u64,
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        version: Vec<u8>,
+        payload: ListDocPayload,
+    },
+    /// Another peer's update, relayed. Wrapped in `SubscriptionEvent` by the
+    /// server so the client routes it to the right handler.
+    ListDocUpdate {
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        update: Vec<u8>,
+    },
     SubscriptionEvent {
         subscription_id: u64,
         event: Box<ServerClient>,
@@ -286,6 +327,21 @@ pub enum ClientMessage {
         #[serde(default)]
         subscription_id: Option<u64>,
         list_id: i32,
+    },
+    /// Subscribe to a list's document (spec section 5). `version` is the
+    /// client's encoded version vector; empty on a first visit.
+    SubscribeListDoc {
+        #[serde(default)]
+        subscription_id: Option<u64>,
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        version: Vec<u8>,
+    },
+    /// The bytes of one local commit.
+    ListDocUpdate {
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        update: Vec<u8>,
     },
 }
 
@@ -716,5 +772,52 @@ mod tests {
         let message = ServerClient::Stale { subscription_id: 1 };
 
         assert!(is_list_market_update_relevant(&message, &[42]));
+    }
+
+    #[test]
+    fn list_doc_messages_round_trip_bytes_as_base64() {
+        let bytes = vec![0u8, 1, 127, 255];
+        let subscribe = ClientMessage::SubscribeListDoc {
+            subscription_id: Some(3),
+            list_id: 9,
+            version: bytes.clone(),
+        };
+        let text = serde_json::to_string(&subscribe).unwrap();
+        assert!(text.contains("\"version\":\"AAF//w==\""), "{text}");
+        let back: ClientMessage = serde_json::from_str(&text).unwrap();
+        assert!(
+            matches!(back, ClientMessage::SubscribeListDoc { version, list_id: 9, .. } if version == bytes)
+        );
+
+        let subscribed = ServerClient::ListDocSubscribed {
+            subscription_id: 3,
+            list_id: 9,
+            version: bytes.clone(),
+            payload: ListDocPayload::Updates(bytes.clone()),
+        };
+        let text = serde_json::to_string(&subscribed).unwrap();
+        let back: ServerClient = serde_json::from_str(&text).unwrap();
+        assert!(
+            matches!(back, ServerClient::ListDocSubscribed { payload: ListDocPayload::Updates(u), .. } if u == bytes)
+        );
+
+        let update = ServerClient::ListDocUpdate {
+            list_id: 9,
+            update: bytes.clone(),
+        };
+        let back: ServerClient =
+            serde_json::from_str(&serde_json::to_string(&update).unwrap()).unwrap();
+        assert!(matches!(back, ServerClient::ListDocUpdate { update, .. } if update == bytes));
+
+        let up_to_date: ListDocPayload =
+            serde_json::from_str(&serde_json::to_string(&ListDocPayload::UpToDate).unwrap())
+                .unwrap();
+        assert_eq!(up_to_date, ListDocPayload::UpToDate);
+        assert!(
+            serde_json::from_str::<ClientMessage>(
+                r#"{"ListDocUpdate":{"list_id":1,"update":"not base64!"}}"#
+            )
+            .is_err()
+        );
     }
 }

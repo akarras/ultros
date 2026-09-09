@@ -10735,6 +10735,7 @@ dependencies = [
  "ultros-clickhouse",
  "ultros-db",
  "ultros-item-card",
+ "ultros-list-doc",
  "ultros-xiv-icons",
  "universalis",
  "url",
@@ -10765,6 +10766,7 @@ dependencies = [
 name = "ultros-api-types"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "rkyv",
  "serde",
@@ -10940,6 +10942,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ultros-api-types",
+ "ultros-list-doc",
  "universalis",
  "yoke",
 ]

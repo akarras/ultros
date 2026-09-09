@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "PWA app title and manifest fixed",
+  "blurb": "Installing Ultros as a Progressive Web App now correctly displays 'Ultros' as the app name."
+}

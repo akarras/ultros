@@ -2,8 +2,8 @@ use crate::components::app_link::AppLink;
 use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::prelude::*;
-use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, RwLock};
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
 use xiv_gen::{
     GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup, Recipe, SpecialShop,
@@ -401,7 +401,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     });
 
     Some(view! {
-        <div class="card p-4 sm:p-5 space-y-4 rounded-lg border border-brand-700/30 hover:shadow-lg hover:border-brand-500/50 transition-all min-w-0">
+        <div class="panel p-4 sm:p-5 space-y-4 min-w-0">
             <div class="flex flex-col gap-3 border-b border-brand-700/30 pb-3 lg:flex-row lg:items-center lg:justify-between">
                 <div class="flex min-w-0 flex-wrap items-center gap-3">
                     <SmallItemDisplay item=target_item />
@@ -598,11 +598,11 @@ fn VendorGateBadge(availability: VendorAvailability) -> impl IntoView {
         ),
         VendorAvailability::SeasonalShop => (
             t!(i18n, vendor_gate_seasonal_shop).into_any(),
-            "text-amber-300 border-amber-500/40",
+            "vendor-gate-seasonal text-amber-300 border-amber-500/40",
         ),
         VendorAvailability::SeasonalUnlock => (
             t!(i18n, vendor_gate_seasonal_unlock).into_any(),
-            "text-amber-300 border-amber-500/40",
+            "vendor-gate-seasonal text-amber-300 border-amber-500/40",
         ),
     };
     Some(view! {
@@ -632,7 +632,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:bg-[color:var(--color-base)]/50 hover:shadow-md border border-brand-700/30"
+                        class="group flex flex-col gap-2 panel panel-interactive p-3"
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
                             <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
@@ -671,21 +671,36 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 /// vendor price any reader of this could act on (#1362). An item keeps its
 /// place here as long as *one* row is reachable, so a seasonal duplicate of an
 /// ordinary vendor item changes nothing.
-static VENDOR_ITEM_IDS: LazyLock<HashSet<i32>> = LazyLock::new(|| {
-    let data = tracked_data();
-    let mut set = HashSet::new();
-    for items in data.gil_shop_items.values() {
-        for shop_item in items {
-            if shop_item.availability.is_obtainable() {
-                set.insert(shop_item.item);
-            }
-        }
+// Availability can differ between the independently versioned locale packs.
+// Cache each immutable data instance, rather than the first request's locale.
+// xiv-gen-db leaks these instances (both data_for and client locale reloads),
+// so their addresses are stable and cannot be reused by another dataset.
+type VendorItemsByData = HashMap<usize, HashSet<i32>>;
+static VENDOR_ITEM_IDS: LazyLock<RwLock<VendorItemsByData>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn is_vendor_item_in(data: &'static xiv_gen::Data, item_id: i32) -> bool {
+    let key = std::ptr::from_ref(data).addr();
+    if let Some(items) = VENDOR_ITEM_IDS.read().unwrap().get(&key) {
+        return items.contains(&item_id);
     }
-    set
-});
+    VENDOR_ITEM_IDS
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_insert_with(|| {
+            data.gil_shop_items
+                .values()
+                .flatten()
+                .filter(|row| row.availability.is_obtainable())
+                .map(|row| row.item)
+                .collect()
+        })
+        .contains(&item_id)
+}
 
 pub(crate) fn is_vendor_item(item_id: i32) -> bool {
-    VENDOR_ITEM_IDS.contains(&item_id)
+    is_vendor_item_in(tracked_data(), item_id)
 }
 
 pub(crate) fn get_vendor_price(item_id: i32) -> Option<u32> {
@@ -804,7 +819,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         let trades = get_trade_costs(shop, item_id());
                         trades.into_iter().map(move |costs| {
                             view! {
-                                <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-brand-700/30">
+                                <div class="group flex flex-col gap-2 panel p-3">
                                     <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
                                     <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
                                         <span class="font-semibold text-brand-300">{t!(i18n, related_items_costs_label)}</span>
@@ -1001,6 +1016,22 @@ mod tests {
             assert!(
                 is_vendor_item(*id),
                 "item {id} is merely unlockable and should stay vendor-sold"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_availability_follows_locale_data_in_both_lookup_orders() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let tc = xiv_gen_db::data_for(xiv_gen::Language::Tc);
+        // Lord's Yukata (Blue) has only seasonal English rows. The older TC
+        // fork has an unmatched shop row that intentionally defaults to Open.
+        // Neither locale may inherit the other one's first cached verdict.
+        for (data, expected) in [(tc, true), (en, false), (en, false), (tc, true)] {
+            assert_eq!(is_vendor_item_in(data, 2967), expected);
+            assert!(
+                is_vendor_item_in(data, 5364),
+                "ordinary Maple Log stays sold"
             );
         }
     }
@@ -1390,7 +1421,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-[color:var(--color-outline)] hover:border-brand-300/60">
+                        <div class="group flex flex-col gap-2 panel p-3">
                              <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2 mt-1">
                                 <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">
