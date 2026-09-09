@@ -249,8 +249,9 @@ pub(crate) fn ShareListSection(
                                         </option>
                                         <For
                                             each=move || owned_groups.clone()
-                                            key=|group| group.id
-                                            children=move |group| {
+                                            key=|summary| summary.group.id
+                                            children=move |summary| {
+                                                let group = summary.group;
                                                 view! {
                                                     <option value=group.id.to_string()>{group.name}</option>
                                                 }

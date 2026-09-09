@@ -16,7 +16,7 @@ use ultros_api_types::{
     },
     retainer::Retainer,
     user::OwnedRetainer,
-    user::group::{GroupInvite, GroupRole, UserGroup, UserGroupMember},
+    user::group::{GroupInvite, GroupRole, UserGroup, UserGroupMember, UserGroupSummary},
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
 };
@@ -156,6 +156,21 @@ impl From<user_group::Model> for UserGroup {
             guild_icon_url,
             source: source.into(),
             frozen_reason,
+        }
+    }
+}
+
+/// A group plus its member and role counts, both separate aggregate queries.
+pub struct UserGroupSummaryReturn(pub user_group::Model, pub i64, pub i64);
+
+impl From<UserGroupSummaryReturn> for UserGroupSummary {
+    fn from(
+        UserGroupSummaryReturn(group, member_count, role_count): UserGroupSummaryReturn,
+    ) -> Self {
+        Self {
+            group: group.into(),
+            member_count,
+            role_count,
         }
     }
 }

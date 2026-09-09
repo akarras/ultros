@@ -1,7 +1,6 @@
 use crate::api::{
     create_group, create_group_from_guild, create_group_invite, delete_group_invite,
-    get_group_detail, get_group_invites, get_groups, get_login, list_manageable_discord_guilds,
-    use_group_invite,
+    get_group_invites, get_groups, get_login, list_manageable_discord_guilds, use_group_invite,
 };
 use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
@@ -17,7 +16,9 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_params_map};
-use ultros_api_types::user::group::{CreateGroup, CreateGroupInvite, GroupSource, UserGroup};
+use ultros_api_types::user::group::{
+    CreateGroup, CreateGroupInvite, GroupSource, UserGroupSummary,
+};
 
 /// Route prefix minted into invite links, matching the `group/invite/:invite_id`
 /// route registered in `lib.rs`.
@@ -71,18 +72,9 @@ pub fn Groups() -> impl IntoView {
                 create_from_guild_action.version().get(),
             )
         },
-        move |_| async move {
-            let groups = get_groups().await?;
-            let cards = futures::future::join_all(groups.into_iter().map(|group| async move {
-                let counts = get_group_detail(group.id)
-                    .await
-                    .map(|detail| (detail.member_count, detail.roles.len() as i64))
-                    .map_err(|error| error.to_string());
-                (group, counts)
-            }))
-            .await;
-            Ok::<_, crate::error::AppError>(cards)
-        },
+        // One request for the whole grid: the list endpoint carries each
+        // group's member and role counts, so no card fetches its own detail.
+        move |_| async move { get_groups().await },
     );
 
     let (panel, set_panel) = signal(CreatePanel::Closed);
@@ -266,9 +258,9 @@ pub fn Groups() -> impl IntoView {
                                                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                                             <For
                                                                 each=move || groups.clone()
-                                                                key=move |(group, _)| group.id
-                                                                children=move |(group, counts)| {
-                                                                    view! { <GroupCard group=group counts=counts /> }
+                                                                key=move |summary| summary.group.id
+                                                                children=move |summary| {
+                                                                    view! { <GroupCard summary=summary /> }
                                                                 }
                                                             />
                                                         </div>
@@ -473,17 +465,26 @@ pub(crate) fn GroupSourceBadge(source: GroupSource, frozen: bool) -> impl IntoVi
     }
 }
 
+/// One card in the groups grid. Counts come in with the group from the list
+/// endpoint — a per-card resource would be a request per card, and creating
+/// one inside the parent resource's streamed list produces nested hydration
+/// boundaries with missing markers.
+///
+/// Pure, like `GroupSourceBadge`, so an SSR test can render it from a fixture.
 #[component]
-fn GroupCard(group: UserGroup, counts: Result<(i64, i64), String>) -> impl IntoView {
+fn GroupCard(summary: UserGroupSummary) -> impl IntoView {
     let i18n = use_i18n();
+    let UserGroupSummary {
+        group,
+        member_count,
+        role_count,
+    } = summary;
     let group_id = group.id;
     let group_name = group.name.clone();
     let guild_icon_url = group.guild_icon_url.clone();
     let is_guild_linked = group.guild_id.is_some();
     let source = group.source;
     let frozen = group.frozen_reason.is_some();
-    // Resolve counts in the parent resource: per-card resources created inside
-    // its streamed list produce nested hydration boundaries with missing markers.
 
     view! {
         <AppLink
@@ -505,19 +506,10 @@ fn GroupCard(group: UserGroup, counts: Result<(i64, i64), String>) -> impl IntoV
 
             <GroupSourceBadge source=source frozen=frozen />
 
-            {match counts {
-                Ok((members, roles)) => Either::Left(view! {
-                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[color:var(--color-text-muted)]">
-                        <span>{t!(i18n, groups_member_count, count = members)}</span>
-                        <span>{t!(i18n, groups_role_count, count = roles)}</span>
-                    </div>
-                }),
-                Err(error) => Either::Right(view! {
-                    <div class="text-xs text-red-400">
-                        {move || t!(i18n, groups_detail_error, error = error.clone())}
-                    </div>
-                }),
-            }}
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[color:var(--color-text-muted)]">
+                <span>{t!(i18n, groups_member_count, count = member_count)}</span>
+                <span>{t!(i18n, groups_role_count, count = role_count)}</span>
+            </div>
         </AppLink>
     }
 }
@@ -674,5 +666,54 @@ pub(crate) fn GroupInvitePanel(group_id: i32) -> impl IntoView {
                 }}
             </Suspense>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ultros_api_types::user::group::UserGroup;
+
+    fn summary(member_count: i64, role_count: i64) -> UserGroupSummary {
+        UserGroupSummary {
+            group: UserGroup {
+                id: 12,
+                name: "Crafting Crew".to_string(),
+                owner_id: 1,
+                guild_id: None,
+                guild_icon_url: None,
+                source: GroupSource::Manual,
+                frozen_reason: None,
+            },
+            member_count,
+            role_count,
+        }
+    }
+
+    /// The counts a card shows come straight off the list response now, so a
+    /// card renders them without a resource of its own — nothing here awaits.
+    #[test]
+    fn card_renders_counts_from_the_list_response() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        Owner::new().with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<Locale>());
+            // `t!` renders an interpolated count as its own node, so the number
+            // and its label are only adjacent once the hydration markers go.
+            let render = |summary: UserGroupSummary| {
+                view! { <GroupCard summary=summary /> }
+                    .to_html()
+                    .replace("<!>", "")
+            };
+
+            let html = render(summary(4, 2));
+            assert!(html.contains("Crafting Crew"));
+            assert!(html.contains("4 members"), "{html}");
+            assert!(html.contains("2 roles"), "{html}");
+            assert!(html.contains(&group_detail_path(12)));
+
+            // A group with no roles reads as zero rather than going missing.
+            let roleless = render(summary(1, 0));
+            assert!(roleless.contains("0 roles"), "{roleless}");
+        });
     }
 }
