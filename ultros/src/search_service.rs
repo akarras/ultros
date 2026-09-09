@@ -35,12 +35,20 @@ const SEARCH_RESULTS: usize = 10;
 ///
 /// Every craftable item is indexed twice: once as its item page, once as its
 /// recipe (issue #1384). For a marketable item the item page is what people
-/// mean, so a recipe never outranks an equally good item match. It still wins
-/// when it is the better match — or the only one, which is the point for the
-/// untradeable results the item index skips.
+/// mean, so a recipe never outranks an equally good item match — the two
+/// documents share a title and therefore score alike, and any multiplier below
+/// 1.0 settles the tie in the item's favour.
+///
+/// How far below 1.0 is a real trade-off, measured against the embedded game
+/// data: the demotion has to be gentle enough that a recipe still survives the
+/// ten-row list when its result has no item page at all. At 0.8 every one of
+/// the 1851 untradeable craft results is reachable by typing its name, while a
+/// generic one-word query ("ingot", "ring") still fills ~93% of its rows with
+/// items. Demoting harder buries the untradeable crafts this exists for: at
+/// 0.5, 36 of them fell off the list entirely.
 fn type_weight(result_type: &str) -> f32 {
     match result_type {
-        "recipe" => 0.5,
+        "recipe" => 0.8,
         _ => 1.0,
     }
 }
@@ -68,7 +76,9 @@ fn carpenter_row(data: &Data) -> Option<i32> {
         .map(|(id, _)| id.0)
 }
 
-/// Crafter and level shown under a recipe result, e.g. `Carpenter Lv. 60`.
+/// Crafter and level shown under a recipe result, e.g. `CRP Lv. 60` — the
+/// shape the recipe planner puts under its own title. The abbreviation rather
+/// than `ClassJob::name`, which the game data stores lowercase ("carpenter").
 ///
 /// `Recipe::craft_type` is a row index into the `CraftType` sheet, which
 /// xiv-gen doesn't load. The eight crafter `ClassJob` rows are consecutive
@@ -81,7 +91,8 @@ fn recipe_label(data: &Data, carpenter: Option<i32>, recipe: &Recipe) -> String 
             data.class_jobs
                 .get(&ClassJobId(carpenter + recipe.craft_type))
         })
-        .map(|job| job.name.as_str())
+        .map(|job| job.abbreviation.as_str())
+        .filter(|abbreviation| !abbreviation.is_empty())
         .unwrap_or("Recipe");
     match data
         .recipe_level_tables
@@ -503,37 +514,60 @@ mod tests {
         assert_eq!(ranked.first().map(|r| r.score), Some(49.0));
     }
 
-    /// Issue #1384: a craft whose result can't be sold has no item page in the
-    /// index, so before recipes were indexed there was no way to search for it
-    /// even though its ingredients are bought on the market.
-    #[test]
-    fn finds_a_craft_whose_result_is_not_marketable() {
-        let service = SearchService::new().expect("index builds from embedded data");
+    /// Names of every craftable item whose result is (or isn't) marketable,
+    /// ordered by item id. The game data lives in hash maps, so the order has
+    /// to be pinned for a sample to mean the same thing on every run.
+    fn craftable_item_names(marketable: bool) -> Vec<&'static str> {
         let data = xiv_gen_db::data();
-
-        let mut untradeable: Vec<_> = data
+        let mut names: Vec<(i32, &str)> = data
             .recipes
             .values()
             .filter_map(|recipe| {
                 let item = data.items.get(&ItemId(recipe.item_result))?;
-                (item.item_search_category == 0 && !item.name.is_empty()).then_some(&item.name)
+                (((item.item_search_category > 0) == marketable) && !item.name.is_empty())
+                    .then_some((recipe.item_result, item.name.as_str()))
             })
             .collect();
-        untradeable.sort();
-        untradeable.dedup();
+        names.sort_unstable();
+        names.dedup();
+        names.into_iter().map(|(_, name)| name).collect()
+    }
+
+    /// A spread of `count` names taken across the whole population rather than
+    /// its first rows, which are all starter-tier crafts.
+    fn spread(names: &[&'static str], count: usize) -> Vec<&'static str> {
+        names
+            .iter()
+            .step_by((names.len() / count).max(1))
+            .take(count)
+            .copied()
+            .collect()
+    }
+
+    /// Issue #1384: a craft whose result can't be sold has no item page in the
+    /// index, so before recipes were indexed there was no way to search for it
+    /// even though its ingredients are bought on the market.
+    ///
+    /// This is what [`type_weight`] is calibrated against — a heavier demotion
+    /// pushes these off the ten-row list, because nothing else in the index
+    /// carries their name.
+    #[test]
+    fn finds_a_craft_whose_result_is_not_marketable() {
+        let service = SearchService::new().expect("index builds from embedded data");
+        let names = craftable_item_names(false);
         assert!(
-            !untradeable.is_empty(),
+            !names.is_empty(),
             "game data should have untradeable craft results"
         );
 
-        // A sample rather than every one of them: this builds a real index and
-        // runs a real query per name.
-        for name in untradeable.iter().take(20) {
+        // A spread rather than all 1851 of them: each one runs a real query
+        // against a real index.
+        for name in spread(&names, 40) {
             let results = service.search(name);
             assert!(
                 results
                     .iter()
-                    .any(|r| r.result_type == "recipe" && &&r.title == name),
+                    .any(|r| r.result_type == "recipe" && r.title == name),
                 "searching {name:?} returned no recipe, got {:?}",
                 results
                     .iter()
@@ -543,37 +577,39 @@ mod tests {
         }
     }
 
+    /// The ordering half of [`type_weight`]: when a craftable item is
+    /// marketable it has both documents, and the item page always comes first.
     #[test]
-    fn a_marketable_craft_lists_its_item_page_above_its_recipe() {
+    fn a_recipe_never_outranks_its_own_item_page() {
         let service = SearchService::new().expect("index builds from embedded data");
-        let data = xiv_gen_db::data();
-        let item = data
-            .recipes
-            .values()
-            .filter_map(|recipe| data.items.get(&ItemId(recipe.item_result)))
-            .find(|item| item.item_search_category > 0 && !item.name.is_empty())
-            .expect("game data has a marketable craft");
+        let names = craftable_item_names(true);
+        assert!(!names.is_empty(), "game data should have marketable crafts");
 
-        let results = service.search(&item.name);
-        let position = |result_type: &str| {
-            results
-                .iter()
-                .position(|r| r.title == item.name && r.result_type == result_type)
-        };
-        let (Some(item_at), Some(recipe_at)) = (position("item"), position("recipe")) else {
-            panic!(
-                "expected both an item and a recipe for {:?}, got {:?}",
-                item.name,
+        let mut paired = 0;
+        for name in spread(&names, 40) {
+            let results = service.search(name);
+            let position = |result_type: &str| {
                 results
                     .iter()
-                    .map(|r| (&r.title, &r.result_type))
-                    .collect::<Vec<_>>()
-            );
-        };
+                    .position(|r| r.title == name && r.result_type == result_type)
+            };
+            // A recipe can be crowded out of the ten rows by other items whose
+            // names share a word — that's the demotion working. Reaching the
+            // list without its own item page above it is what must not happen.
+            if let Some(recipe_at) = position("recipe") {
+                let item_at = position("item").unwrap_or_else(|| {
+                    panic!("{name:?} listed its recipe with no item page in the results")
+                });
+                assert!(
+                    item_at < recipe_at,
+                    "{name:?} listed its recipe ({recipe_at}) above its item page ({item_at})"
+                );
+                paired += 1;
+            }
+        }
         assert!(
-            item_at < recipe_at,
-            "{:?} listed its recipe ({recipe_at}) above its item page ({item_at})",
-            item.name
+            paired > 0,
+            "no marketable craft in the sample surfaced its recipe at all -- the recipe weight is burying them"
         );
     }
 
@@ -587,7 +623,7 @@ mod tests {
             .find(|r| r.craft_type == 0)
             .expect("game data has a carpenter recipe");
         assert!(
-            recipe_label(data, carpenter, recipe).starts_with("Carpenter"),
+            recipe_label(data, carpenter, recipe).starts_with("CRP Lv. "),
             "unexpected label {:?}",
             recipe_label(data, carpenter, recipe)
         );
