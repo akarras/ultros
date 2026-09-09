@@ -54,6 +54,13 @@ pub struct ListDocHandle {
     /// the local copy has been explicitly discarded. The page constructs a
     /// fresh handle if it re-opens the list.
     purged: RwSignal<bool>,
+    /// Set by [`Self::close`]. A closed handle is detached from its
+    /// document's change subscriptions, so an edit applied to it would
+    /// mutate a document nothing is listening to: no revision bump, no
+    /// outbox entry, no save. Callers must therefore refuse to edit through
+    /// a closed handle rather than silently dropping the edit — see
+    /// [`Self::is_closed_or_disposed`].
+    closed: RwSignal<bool>,
 }
 
 impl ListDocHandle {
@@ -94,6 +101,7 @@ impl ListDocHandle {
             status: RwSignal::new("connecting".to_string()),
             permission: RwSignal::new(permission),
             purged: RwSignal::new(false),
+            closed: RwSignal::new(false),
         };
         handle.install_persistence();
         handle
@@ -106,8 +114,18 @@ impl ListDocHandle {
     /// `StoredValue`/signal panics — which on wasm is an `unreachable` that
     /// takes the whole module down — so every accessor below checks first
     /// and behaves as though the handle were simply closed.
-    fn is_closed(&self) -> bool {
+    fn is_disposed(&self) -> bool {
         self.doc.try_with_value(|_| ()).is_none()
+    }
+
+    /// Whether this handle can still accept an edit. False once the page has
+    /// [`closed`](Self::close) it (its document subscriptions are gone, so a
+    /// mutation would notify nobody) and false once its nodes are disposed.
+    /// The page checks this before routing a user action into
+    /// [`Self::apply`], so a closed document reports an error instead of
+    /// swallowing the edit.
+    pub fn is_closed_or_disposed(&self) -> bool {
+        self.is_disposed() || self.closed.try_get_untracked().unwrap_or(true)
     }
 
     /// Runs `f` against the document, or `None` once this handle is closed
@@ -155,6 +173,14 @@ impl ListDocHandle {
     /// One user action, one undo step. The document commits inside, which
     /// bumps `revision` and pushes the update onto `outbox`.
     pub fn apply(&self, edit: Edit) -> Result<(), DocError> {
+        // A closed (or disposed) handle has no live subscriptions and no
+        // page to show a result: mutating it would be invisible. The page
+        // guards this with `is_closed_or_disposed` and reports "document is
+        // closed"; this is the belt-and-braces half.
+        if self.is_closed_or_disposed() {
+            log::debug!("list {}: edit dropped, handle closed", self.list_id);
+            return Ok(());
+        }
         self.with_doc(|doc| {
             let mut result = Ok(());
             if self
@@ -179,6 +205,9 @@ impl ListDocHandle {
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
         // `pending: false` is the neutral answer for a closed handle: the
         // caller must not schedule a resync for a document that is gone.
+        if self.is_closed_or_disposed() {
+            return Ok(ImportReport { pending: false });
+        }
         self.with_doc(|doc| doc.import(bytes))
             .unwrap_or(Ok(ImportReport { pending: false }))
     }
@@ -260,7 +289,7 @@ impl ListDocHandle {
         // The browser copy still has to go even for a closed handle, but the
         // in-memory swap below would touch disposed nodes, so stop after the
         // storage half.
-        if self.is_closed() {
+        if self.is_disposed() {
             store::purge(&BrowserStorage, self.user_id, self.list_id);
             return;
         }
@@ -303,7 +332,7 @@ impl ListDocHandle {
         snapshot: &[u8],
         keep_local_meta: bool,
     ) -> Result<bool, DocError> {
-        if self.is_closed() {
+        if self.is_closed_or_disposed() {
             return Ok(false);
         }
         let local_rows = self.rows();
@@ -362,7 +391,7 @@ impl ListDocHandle {
         // Idempotent, and safe to call after the owner is gone: the page
         // closes the handle from inside the lifecycle Effect's cleanup and
         // again from its own `on_cleanup`.
-        if self.is_closed() {
+        if self.is_closed_or_disposed() {
             return;
         }
         if !self.purged.try_get_untracked().unwrap_or(true) {
@@ -370,6 +399,27 @@ impl ListDocHandle {
         }
         let _ = self.save_timer.try_update_value(|timer| *timer = None);
         let _ = self.subscriptions.try_update_value(|subs| subs.clear());
+        self.closed.set(true);
+    }
+
+    /// Release every reactive node this handle owns. Call only on a handle
+    /// the page has already [`closed`](Self::close) and replaced — navigating
+    /// between lists would otherwise leave each superseded document, its undo
+    /// stack and its signals in the owner's arena for the lifetime of the
+    /// page. Every accessor above goes through `try_*`, so the copies of this
+    /// handle still held by a socket callback or a queued timer keep behaving
+    /// as though it were closed instead of panicking.
+    pub fn dispose(self) {
+        self.doc.dispose();
+        self.undo.dispose();
+        self.subscriptions.dispose();
+        self.save_timer.dispose();
+        self.revision.dispose();
+        self.outbox.dispose();
+        self.status.dispose();
+        self.permission.dispose();
+        self.purged.dispose();
+        self.closed.dispose();
     }
 
     /// Save half a second after the last change, and immediately when the
@@ -378,16 +428,24 @@ impl ListDocHandle {
     fn install_persistence(&self) {
         let handle = *self;
         Effect::new(move |_| {
-            let _ = handle.revision.get();
+            // Every access is `try_*`: this Effect belongs to the page's
+            // owner, so it outlives a handle the page disposed after
+            // superseding it (`ListDocHandle::dispose`), and reading a
+            // disposed signal on wasm aborts the module.
+            if handle.revision.try_get().is_none() {
+                return;
+            }
             // Dropping the previous timeout cancels it.
-            handle.save_timer.update_value(|timer| *timer = None);
-            if handle.purged.get_untracked() {
+            let _ = handle.save_timer.try_update_value(|timer| *timer = None);
+            if handle.purged.try_get_untracked().unwrap_or(true) {
                 return;
             }
             let timeout = gloo_timers::callback::Timeout::new(SAVE_DEBOUNCE_MS, move || {
                 handle.save_now();
             });
-            handle.save_timer.set_value(Some(timeout));
+            let _ = handle
+                .save_timer
+                .try_update_value(move |timer| *timer = Some(timeout));
         });
         let handle = *self;
         let _ = leptos_use::use_event_listener(

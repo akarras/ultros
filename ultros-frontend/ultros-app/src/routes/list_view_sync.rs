@@ -6,8 +6,10 @@
 //! copied, so the two pages cannot drift apart; what differs here is the
 //! data source and the handle's lifecycle.
 
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::global_state::xiv_data::tracked_data;
 
@@ -69,6 +71,12 @@ use xiv_gen::ItemId;
 struct ListingsCache {
     list_id: i32,
     version: u32,
+    /// The value of the page's `revalidate_version` this entry was fetched
+    /// at. A revalidation (Global Constraint 2) must reach the server: if
+    /// the cache could satisfy it, an unshared or deleted list would keep
+    /// rendering from prices fetched while the client still had access, and
+    /// the 403/404 that `is_denial` acts on would never arrive.
+    revalidate: u32,
     list: ListWithPermission,
     listings: HashMap<i32, Vec<ActiveListing>>,
     /// The item ids the fetch that filled this cache covered — every row the
@@ -85,6 +93,38 @@ struct ListingsCache {
 fn covered_ids(items: &[(ListItem, Vec<ActiveListing>)]) -> HashSet<i32> {
     items.iter().map(|(item, _)| item.item_id).collect()
 }
+
+/// How long a burst of relayed list broadcasts is allowed to coalesce into
+/// a single revalidation. Every row edit on a shared list comes back to us
+/// as a `ListItem` broadcast, and the Labs page already has those rows from
+/// its document — the revalidation exists only so a *permission* change
+/// (Global Constraint 2) is noticed by an idle page, so paying one REST
+/// fetch per remote keystroke would be pure waste.
+#[cfg(feature = "hydrate")]
+const REVALIDATE_DEBOUNCE_MS: u32 = 1000;
+
+/// The trailing-debounce timer. A real `Timeout` on the client; a unit
+/// placeholder on the SSR half, where `Effect`s never run and so no
+/// subscription is ever created to schedule one.
+#[cfg(feature = "hydrate")]
+type RevalidateTimer = gloo_timers::callback::Timeout;
+#[cfg(not(feature = "hydrate"))]
+type RevalidateTimer = ();
+
+/// Ask for a revalidation `REVALIDATE_DEBOUNCE_MS` from now, replacing any
+/// request already pending. Dropping the previous `Timeout` cancels it, so
+/// N broadcasts inside the window cost exactly one fetch, fired after the
+/// last of them.
+#[cfg(feature = "hydrate")]
+fn schedule_revalidate(slot: &Rc<RefCell<Option<RevalidateTimer>>>, bump: WriteSignal<u32>) {
+    let timer = gloo_timers::callback::Timeout::new(REVALIDATE_DEBOUNCE_MS, move || {
+        bump.update(|v| *v += 1);
+    });
+    *slot.borrow_mut() = Some(timer);
+}
+
+#[cfg(not(feature = "hydrate"))]
+fn schedule_revalidate(_slot: &Rc<RefCell<Option<RevalidateTimer>>>, _bump: WriteSignal<u32>) {}
 
 /// A failure that means the browser must stop keeping a local copy of this
 /// list (Global Constraint 2): the server says the list is gone, or that
@@ -113,6 +153,14 @@ fn is_denial(error: &AppError) -> bool {
 /// anonymous one cannot write to a list at all.
 fn apply_edit(handle: RwSignal<Option<ListDocHandle>>, edit: Edit) -> Result<(), AppError> {
     match handle.get_untracked() {
+        // A closed handle is detached from its document's subscriptions, so
+        // applying an edit through it would change nothing anyone can see.
+        // Say so rather than reporting a success that never happened; the
+        // page normally clears `handle` alongside every `close`, so this is
+        // the last line of defence, not the usual path.
+        Some(handle) if handle.is_closed_or_disposed() => {
+            Err(AppError::ListDoc("document is closed".to_string()))
+        }
         Some(handle) => handle.apply(edit).map_err(AppError::from),
         None => Err(AppError::ListDoc("document is not open yet".to_string())),
     }
@@ -128,6 +176,7 @@ async fn load_view(
     handle: RwSignal<Option<ListDocHandle>>,
     cache: StoredValue<Option<ListingsCache>>,
     listings_version: u32,
+    revalidate_version: u32,
 ) -> ListViewResult {
     let Some(doc_handle) = handle.get_untracked() else {
         // No document yet (SSR, the first client paint, an anonymous
@@ -139,6 +188,7 @@ async fn load_view(
             cache.set_value(Some(ListingsCache {
                 list_id: id,
                 version: listings_version,
+                revalidate: revalidate_version,
                 list: list.clone(),
                 listings: items
                     .iter()
@@ -158,7 +208,10 @@ async fn load_view(
         .map(|row| row.key.item_id)
         .collect();
     let cached = cache.get_value().filter(|c| {
-        c.list_id == id && c.version == listings_version && wanted_ids.is_subset(&c.covered)
+        c.list_id == id
+            && c.version == listings_version
+            && c.revalidate == revalidate_version
+            && wanted_ids.is_subset(&c.covered)
     });
     let base = match cached {
         Some(cached) => cached,
@@ -169,6 +222,7 @@ async fn load_view(
                 let fresh = ListingsCache {
                     list_id: id,
                     version: listings_version,
+                    revalidate: revalidate_version,
                     list,
                     listings: items
                         .into_iter()
@@ -199,6 +253,7 @@ async fn load_view(
                     Some(list) => ListingsCache {
                         list_id: id,
                         version: listings_version,
+                        revalidate: revalidate_version,
                         list,
                         listings: HashMap::new(),
                         covered: wanted_ids.clone(),
@@ -315,6 +370,14 @@ pub fn ListViewSync() -> impl IntoView {
     // document supplies rows, so a local edit never refetches prices.
     let (external_update_version, set_external_update_version) = signal(0);
     let (activity_update_version, set_activity_update_version) = signal(0);
+    // Global Constraint 2: bumped (on a debounce) by ANY list broadcast for
+    // this list, and part of the `list_view` resource's key, so an idle page
+    // re-asks the server whether it may still read this list. An unshare or
+    // a delete both reach a still-subscribed client as a list broadcast
+    // (`ultros/src/web.rs`: `unshare_list_from_user` -> `record_list_activity`
+    // + `broadcast_list_update`; `delete_list` -> `EventType::removed`), and
+    // the refetch's 403/404 is what `is_denial` turns into a purge.
+    let (revalidate_version, set_revalidate_version) = signal(0u32);
     let (listings_version, set_listings_version) = signal(0u32);
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
@@ -327,9 +390,12 @@ pub fn ListViewSync() -> impl IntoView {
                 handle.get().map(|handle| handle.revision.get()),
                 listings_version.get(),
                 external_update_version.get(),
+                revalidate_version.get(),
             )
         },
-        move |(id, _, listings_v, _)| load_view(id, handle, listings_cache, listings_v),
+        move |(id, _, listings_v, _, revalidate_v)| {
+            load_view(id, handle, listings_cache, listings_v, revalidate_v)
+        },
     );
     let user_resource = Resource::new(|| {}, |_| async move { crate::api::get_login().await.ok() });
     let self_user_id = Signal::derive(move || user_resource.get().flatten().map(|u| u.id));
@@ -363,11 +429,25 @@ pub fn ListViewSync() -> impl IntoView {
             return;
         };
         if id != 0 {
+            // Created inside the Effect body so the Effect's own closure
+            // stays `Send + Sync` (it captures no `Rc`); the handler it is
+            // moved into has no such bound.
+            let revalidate_timer: Rc<RefCell<Option<RevalidateTimer>>> =
+                Rc::new(RefCell::new(None));
             let sub = realtime.subscribe_list(id, move |message| {
-                if let ServerClient::ListUpdate(WEvent::Added(ListEventData::Activity(_))) = message
-                {
+                let ServerClient::ListUpdate(event) = message else {
+                    return;
+                };
+                if matches!(event, WEvent::Added(ListEventData::Activity(_))) {
                     set_activity_update_version.update(|v| *v += 1);
                 }
+                // Any broadcast for this list — activity, the list row
+                // itself, a row event — is a reason to re-ask the server
+                // whether we may still read it. The page cannot tell a
+                // revocation from a rename by the payload (an unshare
+                // broadcasts an ordinary `List` update), so it revalidates
+                // on all of them and lets the REST answer decide.
+                schedule_revalidate(&revalidate_timer, set_revalidate_version);
             });
             activity_subscription.set_value(Some(sub));
         }
@@ -472,10 +552,19 @@ pub fn ListViewSync() -> impl IntoView {
                     if open_for.get_value() == Some(wanted) {
                         return;
                     }
-                    // An account switch: flush and detach the old document
-                    // before its successor claims the signal.
+                    // An account switch (or a move to another list): flush and
+                    // detach the old document before its successor claims
+                    // the signal, then release its reactive nodes. The page
+                    // owner outlives every list it shows, so without the
+                    // `dispose` each superseded document, undo stack and
+                    // signal set would sit in the arena until navigation
+                    // away from the page. Every accessor on the handle is
+                    // `try_*`-based, so the copies still held by a queued
+                    // timer or socket callback keep behaving as closed.
                     if let Some(previous) = handle.get_untracked() {
                         previous.close();
+                        handle.set(None);
+                        previous.dispose();
                     }
                     let opened = match page_owner.clone() {
                         Some(owner) => owner.with(|| ListDocHandle::open(wanted.0, wanted.1)),
@@ -503,11 +592,15 @@ pub fn ListViewSync() -> impl IntoView {
                 }
                 _ => {
                     // Signed out, or no list id. Drop the document; the page
-                    // falls back to the read-only REST render.
+                    // falls back to the read-only REST render. `handle` is
+                    // cleared unconditionally so no `close`d handle is ever
+                    // left reachable through it. The nodes are NOT disposed:
+                    // nothing replaces this document, and the page's own
+                    // `on_cleanup` still closes whatever it finds here.
                     if let Some(previous) = handle.get_untracked() {
                         previous.close();
-                        handle.set(None);
                     }
+                    handle.set(None);
                     open_for.set_value(None);
                 }
             }
@@ -540,17 +633,16 @@ pub fn ListViewSync() -> impl IntoView {
                     // the subscription. Safe from inside the callback: sync
                     // defers every callback past the socket's dispatch.
                     //
-                    // `Denied` covers two different things (see
-                    // `sync::classify_error`): "you may not have this list",
-                    // which must purge, and "sign in to edit lists", which
-                    // is a lapsed session and must NOT — the user's offline
-                    // edits have to survive signing back in. Only a
-                    // still-signed-in session can produce the first, so the
-                    // login answer is what tells them apart.
+                    // `NotSignedIn` is the exception: a lapsed session says
+                    // nothing about whether the user still has this list, so
+                    // the snapshot is kept and only the sync stops — signing
+                    // back in resumes where they left off. `classify_error`
+                    // makes that distinction from the server's own wording,
+                    // rather than the page guessing it from a login resource
+                    // that never refetches (and so still reads "signed in"
+                    // for exactly the cookie that just expired).
                     use crate::list_doc::sync::ErrorKind;
-                    let signed_in = user_resource.get_untracked().flatten().is_some();
-                    let purge = matches!(kind, ErrorKind::NotFound)
-                        || (matches!(kind, ErrorKind::Denied) && signed_in);
+                    let purge = matches!(kind, ErrorKind::Denied | ErrorKind::NotFound);
                     if let Some(denied) = handle.get_untracked() {
                         if purge {
                             denied.purge();

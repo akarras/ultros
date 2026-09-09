@@ -21,9 +21,14 @@ use crate::ws::realtime::{RealtimeClient, RealtimeSubscription};
 /// change on the server silently breaks this classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
-    /// No permission to read or write this list (including "not signed
-    /// in"). The local copy is no longer trustworthy to keep syncing.
+    /// This user may not read or write this list. The local copy is no
+    /// longer trustworthy to keep syncing and must be purged.
     Denied,
+    /// The socket has no session at all ("sign in to edit lists"). This says
+    /// nothing about whether the user still has the list, so the local copy
+    /// must be kept — signing back in has to resume where they left off —
+    /// while sync stops.
+    NotSignedIn,
     /// The list itself is gone.
     NotFound,
     /// A non-owner tried to change the list's name or scope; the row data
@@ -51,16 +56,18 @@ pub enum ErrorKind {
 /// Any other text (including future/renamed server errors) classifies as
 /// `Transient` and is logged without disturbing the local document.
 ///
-/// Note that `Denied` therefore covers two different situations, and the
-/// page's `on_denied` handler must tell them apart before it destroys
-/// anything: `"Insufficient permissions"` means this user may not have the
-/// list (purge it), while `"sign in to edit lists"` only means the session
-/// lapsed — the snapshot must be kept, or the user loses every edit they
-/// made offline the moment their cookie expires. `routes/list_view_sync.rs`
-/// distinguishes them by whether the login resource still resolved to a
-/// user.
+/// `"sign in to edit lists"` and `"Insufficient permissions"` are kept
+/// apart at classification time rather than guessed at afterwards: the
+/// first means the session lapsed and the snapshot must be **kept** (or the
+/// user loses every edit they made offline the moment their cookie
+/// expires), the second means this user may not have the list at all and it
+/// must be purged. The page used to tell them apart by asking whether the
+/// login resource had resolved to a user, but that resource never refetches,
+/// so a cookie that lapsed mid-session still looked signed in and purged.
 pub fn classify_error(message: &str) -> ErrorKind {
-    if message == "sign in to edit lists" || message.contains("Insufficient permissions") {
+    if message == "sign in to edit lists" {
+        ErrorKind::NotSignedIn
+    } else if message.contains("Insufficient permissions") {
         ErrorKind::Denied
     } else if message.contains("List not found") {
         ErrorKind::NotFound
@@ -168,8 +175,9 @@ fn defer(task: impl FnOnce() + 'static) {
 ///
 /// `on_denied` fires, after status is set to `"offline"`, for a scoped
 /// error that means this client should stop trying to sync this document
-/// (`ErrorKind::Denied` / `ErrorKind::NotFound`); Task 8 wires it to
-/// `handle.purge()` plus dropping this subscription. **All three callbacks
+/// (`ErrorKind::Denied` / `ErrorKind::NotFound` / `ErrorKind::NotSignedIn`);
+/// Task 8 wires the first two to `handle.purge()` and the last to a plain
+/// `close()` that keeps the snapshot, both plus dropping this subscription. **All three callbacks
 /// run after `dispatch_message` has returned**, so dropping the
 /// `SyncSubscription` from inside one of them is safe.
 pub fn start(
@@ -438,7 +446,7 @@ pub fn start(
             ServerClient::Error { message } => {
                 let kind = classify_error(&message);
                 match kind {
-                    ErrorKind::Denied | ErrorKind::NotFound => {
+                    ErrorKind::Denied | ErrorKind::NotFound | ErrorKind::NotSignedIn => {
                         handle.set_status("offline");
                         let on_denied = on_denied.clone();
                         defer(move || on_denied(kind));
@@ -469,7 +477,12 @@ pub fn start(
 
     let sender = realtime;
     let drain = Effect::new(move |_| {
-        let pending = handle.outbox.get();
+        // `try_get`, not `get`: the page disposes a handle once it has been
+        // superseded, and this Effect is only disposed when the owning
+        // `SyncSubscription` is dropped — which happens a tick later.
+        let Some(pending) = handle.outbox.try_get() else {
+            return;
+        };
         if pending.is_empty() {
             return;
         }
@@ -531,8 +544,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_error_anonymous_update_is_denied() {
-        assert_eq!(classify_error("sign in to edit lists"), ErrorKind::Denied);
+    fn classify_error_anonymous_update_is_not_signed_in() {
+        assert_eq!(
+            classify_error("sign in to edit lists"),
+            ErrorKind::NotSignedIn
+        );
     }
 
     #[test]
