@@ -12,7 +12,12 @@
 //! height therefore tracks the filters in use rather than the filters that
 //! exist.
 //!
-//! ## The height lock
+//! Registered grid hosts provide `FilterRegistry` in the common owner. Their
+//! native and shared metric definitions populate the menu and editable chips;
+//! the bar grows as chips wrap because their grids own the scrolling. Legacy
+//! hosts can continue passing their own options and children during migration.
+//!
+//! ## The height lock for legacy hosts
 //!
 //! The bar is pinned to exactly [`STICKY_BAR_HEIGHT`] because the table header
 //! sticks directly beneath it at that offset — a bar that grew with its
@@ -26,6 +31,9 @@
 //!
 //! Anything added to row 1 needs to be able to yield too.
 
+use crate::components::virtual_grid::registry::{
+    FilterRegistry, RegisteredFilterChips, RegisteredFilterEditor, RegisteredFilterMenu,
+};
 use std::collections::HashSet;
 
 use leptos::prelude::*;
@@ -269,22 +277,24 @@ pub fn ControlBar(
     columns_extra: ViewFn,
     /// Filters the `+ Filter` menu offers — already narrowed to the ones not
     /// on screen as a chip.
-    #[prop(into)]
+    #[prop(into, default = Signal::derive(Vec::new))]
     available_filters: Signal<Vec<FilterOption>>,
     /// Add one filter, seeded with something to show.
+    #[prop(default = Callback::new(|_| ()))]
     on_add_filter: Callback<&'static str>,
     /// Extra controls below the filter list — a picker whose chip is
     /// read-only has to live here, since there is nothing to type into.
     #[prop(optional, into)]
     filter_menu_extra: ViewFn,
     /// Clear every filter at once.
+    #[prop(default = Callback::new(|_| ()))]
     on_clear_all: Callback<()>,
     /// Shown in the chip row when nothing is filtered.
     #[prop(into)]
     empty_label: Signal<String>,
     /// True when no chip is rendered — drives `empty_label`. Kept separate
     /// from `children` because only the caller knows what its chips do.
-    #[prop(into)]
+    #[prop(into, default = Signal::derive(|| true))]
     is_empty: Signal<bool>,
     /// Pass one when the page drives the popovers from its own extra content.
     #[prop(optional)]
@@ -297,17 +307,30 @@ pub fn ControlBar(
     chip_row: NodeRef<leptos::html::Div>,
     /// One [`FilterChip`](crate::components::filter_chip::FilterChip) per
     /// active filter.
-    children: ChildrenFn,
+    #[prop(optional)]
+    children: Option<ChildrenFn>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let registry = use_context::<FilterRegistry>();
+    let location = crate::components::app_link::use_location_or_default();
+    #[cfg(feature = "hydrate")]
+    let nav = leptos_router::hooks::use_navigate();
     // Grid filters share the URL with each tool's chips. Use the same queued
     // query setter as those chips so Clear all merges every removal without
     // replacing the user's column layout, visibility, or sort.
     let (grid_filters, set_grid_filters) =
         crate::query_defaults::filter_query_signal::<String>("gf");
     let all_filters_empty = Signal::derive(move || {
-        is_empty()
-            && super::virtual_grid::metrics::parse_filters(grid_filters.get().as_deref()).is_empty()
+        if let Some(registry) = registry {
+            !registry
+                .entries()
+                .iter()
+                .any(|e| registry.active(&e.filter, &location.query.get()))
+        } else {
+            is_empty()
+                && super::virtual_grid::metrics::parse_filters(grid_filters.get().as_deref())
+                    .is_empty()
+        }
     });
     let popovers = popovers.unwrap_or_default();
     let ControlBarPopovers {
@@ -326,7 +349,12 @@ pub fn ControlBar(
     // Both of the bar's own popovers are anchored inside it, so one
     // container dismisses both: tap-away, route change, Escape.
     let bar_ref = NodeRef::<leptos::html::Div>::new();
-    let popover_token = use_dismissable(bar_ref, move || popovers.close());
+    let popover_token = use_dismissable(bar_ref, move || {
+        popovers.close();
+        if let Some(r) = registry {
+            r.editing.set(None);
+        }
+    });
 
     // `ViewFn` is not `Copy`, and each of these is read from inside a nested
     // reactive closure — stored so those closures stay `FnMut`.
@@ -338,7 +366,7 @@ pub fn ControlBar(
     let has_columns = Signal::derive(move || !columns.get().is_empty());
 
     view! {
-        <div class="sticky-bar px-2 py-1 flex flex-col gap-1" style=format!("height: {STICKY_BAR_HEIGHT}px; position: {};", if sticky { "sticky" } else { "relative" }) node_ref=bar_ref>
+        <div class="sticky-bar px-2 py-1 flex flex-col gap-1" class:registered-filter-bar=registry.is_some() style=format!("{} position: {};", if registry.is_some() { format!("min-height: {STICKY_BAR_HEIGHT}px;") } else { format!("height: {STICKY_BAR_HEIGHT}px;") }, if sticky { "sticky" } else { "relative" }) node_ref=bar_ref>
             // Row 1 — result count and view-level controls.
             <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
                 // The one item allowed to give up space. `overflow-hidden` is
@@ -378,8 +406,15 @@ pub fn ControlBar(
                     class="sticky-bar-button sticky-bar-button-shrink"
                     aria-label=t_string!(i18n, aria_clear_all_filters)
                     on:click=move |_| {
-                        on_clear_all.run(());
-                        set_grid_filters.set(None);
+                        if let Some(registry) = registry {
+                            registry.editing.set(None);
+                            let _q = registry.clear_all(&location.query.get_untracked());
+                            #[cfg(feature = "hydrate")]
+                            nav(&format!("{}{}", location.pathname.get_untracked(), _q.to_query_string()), leptos_router::NavigateOptions { replace: true, scroll: false, ..Default::default() });
+                        } else {
+                            on_clear_all.run(());
+                            set_grid_filters.set(None);
+                        }
                     }
                 >
                     <Icon icon=icondata::MdiFilterRemove />
@@ -391,8 +426,8 @@ pub fn ControlBar(
 
             // Row 2 — the filters themselves. One chip per active filter, and
             // nothing at all for the ones that are not in use.
-            <div class="h-8 flex items-center gap-2 min-w-0">
-                <div class="filter-chip-row" node_ref=chip_row>
+            <div class=if registry.is_some() { "min-h-8 flex items-start gap-2 min-w-0" } else { "h-8 flex items-center gap-2 min-w-0" }>
+                <div class="filter-chip-row" style=if registry.is_some() { "flex-wrap: wrap; overflow: visible; height: auto;" } else { "" } node_ref=chip_row>
                     {move || {
                         all_filters_empty()
                             .then(|| {
@@ -403,10 +438,12 @@ pub fn ControlBar(
                                 }
                             })
                     }}
-                    {children()}
+                    {registry.map(|registry| view! { <RegisteredFilterChips registry/> })}
+                    {children.map(|children| children())}
                 </div>
                 <button
                     class="sticky-bar-button"
+                    data-add-filter-menu
                     aria-expanded=move || show_filter_menu.get().to_string()
                     on:click=move |_| {
                         show_columns_picker.set(false);
@@ -430,6 +467,7 @@ pub fn ControlBar(
                     .then(|| {
                         view! {
                             <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
+                                {registry.map(|registry| view! { <RegisteredFilterMenu registry on_select=Callback::new(move |_| show_filter_menu.set(false))/> })}
                                 {move || {
                                     available_filters
                                         .get()
@@ -454,6 +492,8 @@ pub fn ControlBar(
                         }
                     })
             }}
+
+            {registry.map(|registry| view! { <RegisteredFilterEditor registry/> })}
 
             // Columns picker. A popover rather than a panel so opening it
             // cannot change the bar's height.

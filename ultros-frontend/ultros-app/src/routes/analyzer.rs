@@ -7,13 +7,18 @@ use crate::analysis::{
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
 };
+use crate::analyzer_kit::filters::{
+    duration_value, price_control, register_filters, toggle_control,
+};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
-    market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
+    market::{MarketGrid, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
+use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::registry::FilterAlias;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -25,8 +30,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
-        control_bar::{ColumnOption, ControlBar, ControlBarPopovers, FilterOption},
-        filter_chip::FilterChip,
+        control_bar::{ColumnOption, ControlBar, ControlBarPopovers},
         gil::*,
         item_icon::*,
         meta::*,
@@ -37,7 +41,6 @@ use crate::{
         skeleton::{SingleLineSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton},
         sort_header::{SortColumn, SortDir, SortHeader, cmp_none_last},
         sparkline::Sparkline,
-        toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
         tooltip::*,
         virtual_grid::{ColumnFilter, GridColumn},
@@ -315,7 +318,7 @@ fn shared_cols_in(raw: Option<&str>) -> std::collections::HashSet<&'static str> 
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
-use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
+use leptos::{either::Either, prelude::*};
 use leptos_router::{
     NavigateOptions,
     hooks::{use_location, use_navigate, use_params_map},
@@ -334,10 +337,6 @@ use ultros_api_types::{
     },
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
-#[cfg(feature = "hydrate")]
-use web_sys::wasm_bindgen::JsCast;
-#[cfg(feature = "hydrate")]
-use web_sys::wasm_bindgen::closure::Closure;
 use xiv_gen::ItemId;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -369,6 +368,7 @@ fn sale_estimate_measure_text(price: i32, fallback: bool, fallback_label: &str) 
 }
 
 /// Loading a selected statistic cannot reject a candidate using a temporary fallback.
+#[cfg(test)]
 fn passes_financial_floor(value: i32, floor: Option<i32>, pending: bool) -> bool {
     pending || floor.is_none_or(|floor| value > floor)
 }
@@ -452,11 +452,13 @@ impl SortColumn for SortMode {
 
 /// `?quality=` — show only HQ or only NQ rows. Param absent = both.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg(test)]
 enum QualityFilter {
     Hq,
     Nq,
 }
 
+#[cfg(test)]
 impl FromStr for QualityFilter {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -468,6 +470,7 @@ impl FromStr for QualityFilter {
     }
 }
 
+#[cfg(test)]
 impl std::fmt::Display for QualityFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -796,6 +799,7 @@ impl ProfitTable {
 /// values are treated as "no floor". Normalizing in one place keeps the
 /// filter, the chip and the toolbar input agreeing about whether a floor
 /// is active.
+#[cfg(test)]
 fn normalize_velocity_floor(raw: Option<f32>) -> Option<f32> {
     raw.filter(|v| v.is_finite())
 }
@@ -806,10 +810,12 @@ fn normalize_velocity_floor(raw: Option<f32>) -> Option<f32> {
 /// is the rate the filter evaluates, and falls back to the rate derived
 /// from the 6-sale buffer for the ~93% of rows the rollup does not cover.
 /// A row with no rate at all cannot clear a floor.
+#[cfg(test)]
 fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -> bool {
     ch_rate.or(derived).map(|v| v >= min).unwrap_or(false)
 }
 
+#[cfg(test)]
 fn passes_quality(filter: QualityFilter, hq: bool) -> bool {
     match filter {
         QualityFilter::Hq => hq,
@@ -821,6 +827,7 @@ fn passes_quality(filter: QualityFilter, hq: bool) -> bool {
 /// recompute rather than once per row. A blank query maps to `None` (no
 /// filter) — the chip seeds empty so the user can type into it, and that
 /// state must not blank the table.
+#[cfg(test)]
 fn normalize_name_query(raw: &str) -> Option<String> {
     let q = raw.trim().to_lowercase();
     (!q.is_empty()).then_some(q)
@@ -829,6 +836,7 @@ fn normalize_name_query(raw: &str) -> Option<String> {
 /// Case-insensitive substring match against a query pre-normalized by
 /// [`normalize_name_query`]. Runs per row, so only the item name is
 /// lowercased here.
+#[cfg(test)]
 fn matches_normalized_name(query_lower: &str, item_name: &str) -> bool {
     item_name.to_lowercase().contains(query_lower)
 }
@@ -839,6 +847,7 @@ fn matches_normalized_name(query_lower: &str, item_name: &str) -> bool {
 /// too few sales to compute a drift fails an explicit floor — the velocity
 /// floor's rule — and the sticky bar counts it toward the "rows lack data"
 /// note so the drop is visible rather than silent.
+#[cfg(test)]
 fn passes_drift_floor(min: f32, drift: Option<f32>) -> bool {
     drift.map(|d| d >= min).unwrap_or(false)
 }
@@ -879,14 +888,12 @@ fn passes_confidence_floor(
 /// and the visible-window fetch would never fire. So unknown rows pass,
 /// and only a *known* volume below the floor drops a row (the suspicious
 /// filter's rule).
+#[cfg(test)]
 fn passes_volume_floor(min: u32, ch_volume: Option<u32>) -> bool {
     ch_volume.map(|v| v >= min).unwrap_or(true)
 }
 
-// --- Filter registry -------------------------------------------------------
-// Each id is the `query_signal` key it drives, so the list doubles as the
-// URL contract. The sticky bar renders one chip per *set* filter and the
-// `+ Filter` menu offers the rest — no filter is ever drawn twice.
+// Legacy URL keys retained for bookmarks and registered controls.
 const FILTER_PROFIT: &str = "profit";
 const FILTER_PROFIT_PER_DAY: &str = "ppd";
 const FILTER_ROI: &str = "roi";
@@ -907,94 +914,10 @@ const FILTER_NAME: &str = "name";
 const FILTER_MIN_DRIFT: &str = "drift";
 const FILTER_MIN_CONFIDENCE: &str = "confidence";
 const FILTER_MIN_VOLUME: &str = "min-volume";
-// Chip-only filters: picked from a list or off a row rather than typed, so
-// they are never offered by the `+ Filter` menu.
+// Scope controls retain their existing URL tokens.
 const FILTER_CATEGORY: &str = "category";
 const FILTER_WORLD: &str = "world";
 const FILTER_DATACENTER: &str = "datacenter";
-
-/// Filters the `+ Filter` menu can add, in menu order.
-const ADDABLE_FILTERS: &[&str] = &[
-    FILTER_PROFIT,
-    FILTER_PROFIT_PER_DAY,
-    FILTER_ROI,
-    FILTER_SALES,
-    FILTER_VELOCITY,
-    FILTER_MIN_BUY,
-    FILTER_MAX_PRICE,
-    FILTER_NEXT_SALE,
-    FILTER_LAST_SOLD,
-    FILTER_PRE_TAX,
-    FILTER_SHOW_SUSPICIOUS,
-    FILTER_QUALITY,
-    FILTER_NAME,
-    FILTER_MIN_DRIFT,
-    FILTER_MIN_CONFIDENCE,
-    FILTER_MIN_VOLUME,
-];
-
-/// Value a filter takes when it is added from the `+ Filter` menu.
-///
-/// A filter with no starting value would render a chip with nothing in it,
-/// so every entry in [`ADDABLE_FILTERS`] must have one, except `FILTER_NAME`,
-/// whose chip deliberately mounts in edit state instead (see the arm below).
-fn default_filter_value(id: &str) -> &'static str {
-    match id {
-        FILTER_PROFIT => "100000",
-        FILTER_PROFIT_PER_DAY => "10000",
-        FILTER_ROI => "200",
-        FILTER_SALES => "2",
-        FILTER_VELOCITY => "0.2",
-        FILTER_MIN_BUY => "5000",
-        FILTER_MAX_PRICE => "500000",
-        FILTER_NEXT_SALE => "7d",
-        FILTER_LAST_SOLD => "1d",
-        // Booleans: the chip's presence *is* the value, so `x` restores the
-        // default (post-tax, suspicious rows hidden).
-        FILTER_PRE_TAX => "false",
-        FILTER_SHOW_SUSPICIOUS => "true",
-        FILTER_QUALITY => "hq",
-        // Name search deliberately seeds empty: its chip mounts in edit
-        // state (`start_editing`) so there is never an empty resting chip.
-        FILTER_NAME => "",
-        FILTER_MIN_DRIFT => "-10",
-        FILTER_MIN_CONFIDENCE => "medium",
-        FILTER_MIN_VOLUME => "10",
-        _ => "",
-    }
-}
-
-/// Apply an edited chip value to a numeric filter.
-///
-/// A parse failure keeps `current`. The toolbar these chips replaced did the
-/// same (`if let Ok(v) = … { set } else if value.is_empty() { clear }`), and
-/// the alternative is worse than it sounds: `set(raw.parse().ok())` deletes
-/// the filter the user is in the middle of editing the moment they type
-/// something the target type rejects — `-5` into a `usize` count, say — with
-/// no message and no undo. Only an explicit clear removes a filter, and by
-/// the time a value reaches here `committed_value` has already mapped blank
-/// input to `None`.
-fn commit_numeric<T: FromStr>(current: Option<T>, raw: Option<String>) -> Option<T> {
-    match raw {
-        None => None,
-        Some(s) => s.parse::<T>().ok().or(current),
-    }
-}
-
-/// Render a velocity floor for the chip's resting state.
-///
-/// `f32::to_string` prints the round-tripped `?vel=0.2` as
-/// `0.20000000298023224`. Two decimals is finer than the filter's own
-/// resolution, and the result parses back to the same value, so the input
-/// shows this too rather than a second, uglier spelling of the same number.
-fn format_velocity_floor(v: f32) -> String {
-    let s = format!("{v:.2}");
-    match s.contains('.') {
-        // `trim_end_matches('0')` alone would turn "10.00" into "1".
-        true => s.trim_end_matches('0').trim_end_matches('.').to_string(),
-        false => s,
-    }
-}
 
 /// Rendered width, in px, of every optional column the user has switched on.
 ///
@@ -1215,20 +1138,10 @@ fn AnalyzerTableSkeleton() -> impl IntoView {
     }
 }
 
-/// Filters the `+ Filter` menu should offer: everything addable that is not
-/// already on screen as a chip.
-fn available_filters(active: &[&str]) -> Vec<&'static str> {
-    ADDABLE_FILTERS
-        .iter()
-        .copied()
-        .filter(|id| !active.contains(id))
-        .collect()
-}
-
 /// Regions whose cross-region listings can be pulled in alongside the
 /// current world's own region. Shared between the cross-region toggle's
 /// resource (in `AnalyzerWorldView`) and the per-region opt-out checkboxes
-/// rendered in the Columns popover (in `AnalyzerTable`) — both need the same
+/// registered by `AnalyzerTable` — both need the same
 /// list, and only one of them may query it.
 const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
 
@@ -1341,28 +1254,15 @@ fn AnalyzerTable(
     profits: Memo<Option<ProfitTableHandle>>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
-    /// Outlier-filtering toggle state. Only drives the toggle's own label
-    /// here — the caller applies it when building `profits`.
-    filter_outliers: Signal<bool>,
-    /// Current world's region name, if resolvable. Only used to exclude the
-    /// current region from the cross-region opt-out list in the Columns
-    /// popover.
+    /// Excludes the current region from the registered buy-region controls.
     region: Signal<Option<String>>,
-    /// Current state of the cross-region toggle, mirroring `filter_outliers`.
-    cross_region_enabled: Signal<bool>,
-    /// The caller's own `query_signal` setters for `?cross=` / `?filter-outliers=`.
-    /// Threaded through as props rather than re-derived here so there is a
-    /// single `query_signal` per URL key instead of two independent ones
-    /// drifting in and out of the router's query-mutation queue.
-    set_cross_region_enabled: SignalSetter<Option<bool>>,
-    set_filter_outliers: SignalSetter<Option<bool>>,
     /// Fired when a realtime event invalidates one or more market boards,
     /// carrying which ones so the caller can refetch just those.
     on_market_update: Callback<MarketScope>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let market = use_market_data(world);
-    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    let (revenue_basis, _set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     market.require_price_basis(Signal::derive(move || {
         revenue_basis.get().unwrap_or_default()
     }));
@@ -1381,7 +1281,7 @@ fn AnalyzerTable(
     // to false, rendering one unfiltered pass per tick under an active
     // `?name=`). `profits` being reactive is what removed the rebuild, so they
     // belong here again.
-    let name_chip_pending = RwSignal::new(false);
+
     // True once client hydration has finished; gates localized-name matching
     // (see the name filter below).
     let hydrated = RwSignal::new(false);
@@ -1400,30 +1300,16 @@ fn AnalyzerTable(
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    // Filter params use `filter_query_signal` (replace: true, scroll: false):
-    // every keystroke in a chip writes the URL, and `query_signal`'s defaults
-    // would push a history entry and yank the window to the top each time.
-    // `sort`/`dir`/`cols` stay on plain `query_signal` — those are deliberate,
-    // discrete actions where a history entry is wanted.
-    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>("profit");
-    let (minimum_profit_per_day, set_minimum_profit_per_day) = filter_query_signal::<i32>("ppd");
-    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>("roi");
-    // Seeded to 1d by AnalyzerWorldView so a first-time visitor isn't shown
-    // items that sell once a month. The field sits in the primary toolbar and
-    // the chip has an X, so the default is visible and one click from gone.
-    let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
-    let (world_filter, set_world_filter) = filter_query_signal::<String>("world");
-    let (datacenter_filter, set_datacenter_filter) = filter_query_signal::<String>("datacenter");
-    let (tax_enabled, set_tax_enabled) = filter_query_signal::<bool>("tax");
-    let (minimum_sales, set_minimum_sales) = filter_query_signal::<usize>("sales");
-    let (min_velocity, set_min_velocity) = filter_query_signal::<f32>("vel");
+    let (max_predicted_time, _set_max_predicted_time) = filter_query_signal::<String>("next-sale");
+    let (world_filter, _set_world_filter) = filter_query_signal::<String>("world");
+    let (datacenter_filter, _set_datacenter_filter) = filter_query_signal::<String>("datacenter");
+    let (tax_enabled, _set_tax_enabled) = filter_query_signal::<bool>("tax");
+    let (minimum_sales, _set_minimum_sales) = filter_query_signal::<usize>("sales");
     // Single normalization point for the floor — the filter, the summary
     // chip and the toolbar input all read this, never `min_velocity` raw.
-    let velocity_floor = Memo::new(move |_| normalize_velocity_floor(min_velocity()));
-    let (category_filter, set_category_filter) = filter_query_signal::<i32>("category");
-    let (max_purchase_price, set_max_purchase_price) = filter_query_signal::<i32>("max-price");
-    let (min_buy_price, set_min_buy_price) = filter_query_signal::<i32>("min-buy");
-    let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
+
+    let (category_filter, _set_category_filter) = filter_query_signal::<i32>("category");
+    let (show_suspicious, _set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
     let (cols_param, set_cols_param) = query_signal_or_default::<String>(
         "cols",
         NavigateOptions {
@@ -1434,14 +1320,11 @@ fn AnalyzerTable(
     // The five column filters use `filter_query_signal` (replace: true,
     // scroll: false) — editing a filter must not push a history entry per
     // keystroke or yank the window back to the top.
-    let (quality_filter, set_quality_filter) = filter_query_signal::<QualityFilter>("quality");
-    let (name_filter, set_name_filter) = filter_query_signal::<String>("name");
-    let (min_drift, set_min_drift) = filter_query_signal::<f32>("drift");
     // Same NaN guard as ?vel= — "NaN".parse::<f32>() succeeds and would
     // silently empty the table (every comparison with NaN is false).
-    let drift_floor = Memo::new(move |_| normalize_velocity_floor(min_drift()));
-    let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
-    let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
+
+    let (min_confidence, _set_min_confidence) =
+        filter_query_signal::<ConfidenceFloor>("confidence");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     // The toolbar picker also lists the shared sale-history columns; their
     // checked state lives in `?cols=` beside the native ids.
@@ -1480,45 +1363,6 @@ fn AnalyzerTable(
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
 
-    let (last_sold_within, set_last_sold_within) = filter_query_signal::<String>("last-sold");
-    let last_sold_duration =
-        Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
-
-    // Filters currently drawn as a chip. Drives the "no active filters"
-    // hint and keeps `+ Filter` from offering a second copy of something
-    // the user can already see.
-    let active_filters = Memo::new(move |_| {
-        let mut active: Vec<&'static str> = Vec::new();
-        let mut push_if = |set: bool, id: &'static str| {
-            if set {
-                active.push(id);
-            }
-        };
-        push_if(minimum_profit().is_some(), FILTER_PROFIT);
-        push_if(minimum_profit_per_day().is_some(), FILTER_PROFIT_PER_DAY);
-        push_if(minimum_roi().is_some(), FILTER_ROI);
-        push_if(minimum_sales().is_some(), FILTER_SALES);
-        push_if(velocity_floor().is_some(), FILTER_VELOCITY);
-        push_if(min_buy_price().is_some(), FILTER_MIN_BUY);
-        push_if(max_purchase_price().is_some(), FILTER_MAX_PRICE);
-        push_if(max_predicted_time().is_some(), FILTER_NEXT_SALE);
-        push_if(last_sold_within().is_some(), FILTER_LAST_SOLD);
-        push_if(tax_enabled() == Some(false), FILTER_PRE_TAX);
-        push_if(show_suspicious_active(), FILTER_SHOW_SUSPICIOUS);
-        push_if(category_filter().is_some(), FILTER_CATEGORY);
-        push_if(world_filter().is_some(), FILTER_WORLD);
-        push_if(datacenter_filter().is_some(), FILTER_DATACENTER);
-        push_if(quality_filter().is_some(), FILTER_QUALITY);
-        push_if(
-            name_filter().is_some() || name_chip_pending.get(),
-            FILTER_NAME,
-        );
-        push_if(drift_floor().is_some(), FILTER_MIN_DRIFT);
-        push_if(min_confidence().is_some(), FILTER_MIN_CONFIDENCE);
-        push_if(min_volume().is_some(), FILTER_MIN_VOLUME);
-        active
-    });
-
     // Menu label for a filter. Reuses the labels the old toolbar fields
     // carried, which are longer and more explanatory than the chip labels —
     // the menu is where a filter has to be recognized, not just recalled.
@@ -1547,18 +1391,6 @@ fn AnalyzerTable(
             _ => String::new(),
         }
     };
-
-    // What the `+ Filter` menu offers: everything addable that is not already
-    // on screen as a chip.
-    let filter_options = Memo::new(move |_| {
-        available_filters(&active_filters())
-            .into_iter()
-            .map(|id| FilterOption {
-                id,
-                label: filter_label(id),
-            })
-            .collect::<Vec<_>>()
-    });
 
     let col_label = move |col: &str| -> String {
         match col {
@@ -1663,6 +1495,19 @@ fn AnalyzerTable(
                                 t_string!(i18n, analyzer_confidence_high).to_string(),
                             ),
                         ];
+                    } else if key == FILTER_CATEGORY {
+                        filter.label = t_string!(i18n, analyzer_filter_category_label).to_string();
+                        filter.choices = tracked_data()
+                            .item_search_categorys
+                            .iter()
+                            .filter(|(_, category)| !category.name.is_empty())
+                            .map(|(id, category)| (id.0.to_string(), category.name.clone()))
+                            .collect();
+                        filter.choices.sort_by(|a, b| a.1.cmp(&b.1));
+                    } else if key == FILTER_WORLD {
+                        filter.label = t_string!(i18n, analyzer_col_world).to_string();
+                    } else if key == FILTER_DATACENTER {
+                        filter.label = t_string!(i18n, analyzer_col_datacenter).to_string();
                     } else if key == FILTER_QUALITY {
                         filter.options = vec![("hq", "HQ".to_string()), ("nq", "NQ".to_string())];
                     }
@@ -1727,143 +1572,6 @@ fn AnalyzerTable(
         )));
     });
 
-    // Adding a filter seeds it with `default_filter_value` so the chip has
-    // something to show; the user edits it in place from there.
-    let add_filter = move |id: &str| {
-        let value = default_filter_value(id);
-        match id {
-            FILTER_PROFIT => set_minimum_profit(value.parse().ok()),
-            FILTER_PROFIT_PER_DAY => set_minimum_profit_per_day(value.parse().ok()),
-            FILTER_ROI => set_minimum_roi(value.parse().ok()),
-            FILTER_SALES => set_minimum_sales(value.parse().ok()),
-            FILTER_VELOCITY => set_min_velocity(value.parse().ok()),
-            FILTER_MIN_BUY => set_min_buy_price(value.parse().ok()),
-            FILTER_MAX_PRICE => set_max_purchase_price(value.parse().ok()),
-            FILTER_NEXT_SALE => set_max_predicted_time(Some(value.to_string())),
-            FILTER_LAST_SOLD => set_last_sold_within(Some(value.to_string())),
-            FILTER_PRE_TAX => set_tax_enabled(Some(false)),
-            FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
-            FILTER_QUALITY => set_quality_filter(value.parse().ok()),
-            FILTER_NAME => name_chip_pending.set(true),
-            FILTER_MIN_DRIFT => set_min_drift(value.parse().ok()),
-            FILTER_MIN_CONFIDENCE => set_min_confidence(value.parse().ok()),
-            FILTER_MIN_VOLUME => set_min_volume(value.parse().ok()),
-            _ => {}
-        }
-    };
-
-    // --- Filter chip strip: edge fades ---------------------------------------
-    // The strip scrolls but shows no scrollbar (the bar is height-locked, so a
-    // gutter would eat the chips), which left nothing on screen to say there
-    // were more filters off to the right — at 375px with eight filters set the
-    // chips run ~1000px inside a ~240px viewport. `--chip-fade-{start,end}`
-    // drive a mask declared in the stylesheet; both are 0 unless there is
-    // actually something to scroll to on that side.
-    let chip_row = NodeRef::<leptos::html::Div>::new();
-    #[cfg(feature = "hydrate")]
-    {
-        let chip_listeners = StoredValue::new_local(
-            None::<(
-                web_sys::HtmlDivElement,
-                Closure<dyn FnMut()>,
-                Closure<dyn FnMut()>,
-            )>,
-        );
-        on_cleanup(move || {
-            chip_listeners.update_value(|slot| {
-                if let Some((el, scroll_cb, resize_cb)) = slot.take() {
-                    let _ = el.remove_event_listener_with_callback(
-                        "scroll",
-                        scroll_cb.as_ref().unchecked_ref(),
-                    );
-                    if let Some(win) = web_sys::window() {
-                        let _ = win.remove_event_listener_with_callback(
-                            "resize",
-                            resize_cb.as_ref().unchecked_ref(),
-                        );
-                    }
-                }
-            });
-        });
-        // Widest fade we ever draw. Enough to read as "this continues" without
-        // dimming a whole chip.
-        const CHIP_FADE_PX: f64 = 24.0;
-        let apply_fades = |el: &web_sys::HtmlDivElement| {
-            let left = el.scroll_left();
-            // `scroll_width` is an i32 of a value the browser rounds, so the
-            // remaining distance can land a fraction off zero at the far end.
-            // A 1px deadband keeps the trailing fade from lingering once the
-            // strip is scrolled all the way over.
-            let right = (el.scroll_width() as f64 - el.client_width() as f64 - left).max(0.0);
-            let px = |amount: f64| format!("{}px", amount.clamp(0.0, CHIP_FADE_PX).round());
-            // Fully qualified: tachys' `ElementExt::style` is in scope via the
-            // leptos prelude and matches `HtmlDivElement` directly, so it wins
-            // method resolution over the inherent `HtmlElement::style` that
-            // needs a deref step. Bare `el.style()` picks the wrong one.
-            let style = web_sys::HtmlElement::style(el);
-            let _ = style.set_property(
-                "--chip-fade-start",
-                &px(if left > 1.0 { CHIP_FADE_PX } else { 0.0 }),
-            );
-            let _ = style.set_property(
-                "--chip-fade-end",
-                &px(if right > 1.0 { CHIP_FADE_PX } else { 0.0 }),
-            );
-        };
-        Effect::new(move |_| {
-            // Tracked so the fades are re-derived when a chip is added or
-            // removed: that changes `scrollWidth` without firing either
-            // listener below.
-            let _ = active_filters();
-            let Some(el) = chip_row.get() else {
-                return;
-            };
-            if chip_listeners.with_value(|slot| slot.is_none()) {
-                let on_scroll = {
-                    let el = el.clone();
-                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
-                };
-                let on_resize = {
-                    let el = el.clone();
-                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
-                };
-                let _ = el
-                    .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref());
-                if let Some(win) = web_sys::window() {
-                    let _ = win.add_event_listener_with_callback(
-                        "resize",
-                        on_resize.as_ref().unchecked_ref(),
-                    );
-                }
-                chip_listeners.set_value(Some((el.clone(), on_scroll, on_resize)));
-            }
-            apply_fades(&el);
-        });
-    }
-
-    let clear_all_filters = move || {
-        set_minimum_profit(None);
-        set_minimum_profit_per_day(None);
-        set_minimum_roi(None);
-        set_max_predicted_time(None);
-        set_world_filter(None);
-        set_datacenter_filter(None);
-        set_minimum_sales(None);
-        set_min_velocity(None);
-        set_category_filter(None);
-        set_max_purchase_price(None);
-        set_min_buy_price(None);
-        set_last_sold_within(None);
-        set_show_suspicious(None);
-        set_tax_enabled(None);
-        set_quality_filter(None);
-        set_name_filter(None);
-        name_chip_pending.set(false);
-        set_min_drift(None);
-        set_min_confidence(None);
-        set_min_volume(None);
-    };
-
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
     // visible-window fetch below; never wholesale-replaced (except on a world
     // change). Cells + three filter passes read it reactively, by key.
@@ -1871,23 +1579,6 @@ fn AnalyzerTable(
 
     let filtered_rows = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
-        // Normalized (trimmed + lowercased) once per recompute — the rows
-        // loop below runs 20k+ times, and lowercasing the query per row
-        // was an allocation per row. `None` when the filter is off, blank,
-        // or the hydration gate is still down.
-        let name_query: Option<String> = name_filter().and_then(|raw| {
-            // SSR renders an initial grid window with *English* item names;
-            // the client hydrates localized ones. Localized-name matching
-            // therefore must not run until after hydration or an active
-            // ?name= produces different row sets and trips the tachys
-            // hydration panic. Same Effect-driven gate as item_explorer.rs /
-            // job_set_card.rs. Checked only when a name filter is active so
-            // an idle page never subscribes this memo to `hydrated`.
-            if !hydrated.get() {
-                return None;
-            }
-            normalize_name_query(&raw)
-        });
         // See `FilteredRows::rows_lacking_data`. Counted by the combined
         // drift/confidence/volume closure below.
         let mut rows_lacking_data = 0usize;
@@ -1928,45 +1619,9 @@ fn AnalyzerTable(
                 }
             })
             .filter(move |data| {
-                passes_financial_floor(data.profit, minimum_profit(), revenue_pending.get())
-            })
-            .filter(move |data| {
-                passes_financial_floor(
-                    data.profit_per_day,
-                    minimum_profit_per_day(),
-                    rate_pending.get() || revenue_pending.get(),
-                )
-            })
-            .filter(move |data| {
-                passes_financial_floor(
-                    data.return_on_investment,
-                    minimum_roi(),
-                    revenue_pending.get(),
-                )
-            })
-            .filter(move |data| {
                 minimum_sales()
                     .map(|sales| data.inner.sale_summary.num_sold >= sales)
                     .unwrap_or(true)
-            })
-            .filter(move |data| {
-                // Velocity floor. Mirrors the Sales/Day column's preference —
-                // Full-scope seven-day rate first, recent-buffer fallback.
-                // The displayed cadence and profit/day use this same source.
-                rate_pending.get()
-                    || velocity_floor()
-                        .map(|min| {
-                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                            let ch = market
-                                .stats7()
-                                .and_then(|stats| stats.get(&key).map(|s| s.sales_per_day));
-                            passes_velocity_floor(
-                                min,
-                                ch,
-                                velocity_per_day(&data.inner.sale_summary),
-                            )
-                        })
-                        .unwrap_or(true)
             })
             .filter(move |data| {
                 category_filter()
@@ -1978,83 +1633,23 @@ fn AnalyzerTable(
                     })
                     .unwrap_or(true)
             })
-            .filter(move |data| {
-                quality_filter()
-                    .map(|q| passes_quality(q, data.inner.sale_summary.hq))
-                    .unwrap_or(true)
-            })
             .filter(|data| {
-                let Some(query) = name_query.as_deref() else {
+                let Some(floor) = min_confidence() else {
                     return true;
                 };
-                items
-                    .get(&ItemId(data.inner.sale_summary.item_id))
-                    .map(|item| matches_normalized_name(query, &item.name))
-                    .unwrap_or(false)
-            })
-            .filter(|data| {
-                // Drift, confidence and volume floors in one pass: they share
-                // the "row may lack data" problem (drift needs >= 4 buffered
-                // sales; the other two need CH enrichment, ~7% coverage), so
-                // this is where `rows_lacking_data` is counted — and the two
-                // enrichment-backed floors share a single map lookup.
-                //
-                // CH band first, derived fallback — the same preference the
-                // Confidence column renders, so the label shown is the label
-                // filtered. Reading `enrichment` here follows the velocity
-                // filter's pattern; the hook's non-reactive claim set
-                // (`analyzer_kit::enrichment`) keeps recompute -> refetch from looping.
-                let drift_min = drift_floor();
-                let confidence_min = min_confidence();
-                let volume_min = min_volume();
-                if drift_min.is_none() && confidence_min.is_none() && volume_min.is_none() {
-                    return true;
-                }
-                let mut lacks_data = false;
-                let mut pass = true;
-                if let Some(min) = drift_min {
-                    let drift = price_drift_pct(&data.inner.prices);
-                    lacks_data |= drift.is_none();
-                    pass &= passes_drift_floor(min, drift);
-                }
-                if confidence_min.is_some() || volume_min.is_some() {
-                    let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                    // One lookup serves both floors.
-                    let ch = enrichment.with(|store| {
-                        quality_for(store, &key).map(|q| (q.confidence_band, q.sample_size))
-                    });
-                    if let Some(floor) = confidence_min {
-                        let band = ch.map(|(band, _)| band);
-                        // CH `Unknown` is "no deep scan yet": the floor is
-                        // then judged on the derived band, so that row also
-                        // counts as lacking real data.
-                        lacks_data |= matches!(band, None | Some(ConfidenceBand::Unknown));
-                        pass &= passes_confidence_floor(
-                            floor,
-                            band,
-                            derived_confidence(&data.inner.sale_summary),
-                        );
-                    }
-                    if let Some(min) = volume_min {
-                        let volume = ch.map(|(_, sample_size)| sample_size);
-                        lacks_data |= volume.is_none();
-                        pass &= passes_volume_floor(min, volume);
-                    }
-                }
+                let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                let band =
+                    enrichment.with(|store| quality_for(store, &key).map(|q| q.confidence_band));
+                let lacks_data = matches!(band, None | Some(ConfidenceBand::Unknown));
+                let pass = passes_confidence_floor(
+                    floor,
+                    band,
+                    derived_confidence(&data.inner.sale_summary),
+                );
                 if lacks_data {
                     rows_lacking_data += 1;
                 }
                 pass
-            })
-            .filter(move |data| {
-                max_purchase_price()
-                    .map(|max| data.inner.cheapest_price <= max)
-                    .unwrap_or(true)
-            })
-            .filter(move |data| {
-                min_buy_price()
-                    .map(|min| data.inner.cheapest_price >= min)
-                    .unwrap_or(true)
             })
             .filter(move |data| {
                 predicted_time()
@@ -2063,18 +1658,6 @@ fn AnalyzerTable(
                             .sale_summary
                             .avg_sale_duration
                             .map(|dur| dur.to_std().ok().map(|dur| dur < time).unwrap_or(false))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(true)
-            })
-            .filter(move |data| {
-                last_sold_duration()
-                    .map(|max_age| {
-                        data.inner
-                            .sale_summary
-                            .days_since_last_sale
-                            .and_then(|d| d.to_std().ok())
-                            .map(|d| d <= max_age)
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)
@@ -2233,11 +1816,106 @@ fn AnalyzerTable(
         previous.copied().unwrap_or_default().wrapping_add(1)
     });
 
+    let filter_query = crate::components::app_link::use_query_map_or_default();
+    let registry = register_filters(
+        vec![
+            FilterAlias::integer("profit", "profit", FilterOp::Gte),
+            FilterAlias::integer("ppd", COL_PROFIT_PER_DAY, FilterOp::Gte),
+            FilterAlias::integer("roi", COL_ROI, FilterOp::Gte),
+            FilterAlias::integer("min-buy", "buy_price", FilterOp::Gte),
+            FilterAlias::integer("max-price", "buy_price", FilterOp::Lte),
+            FilterAlias::new("name", "item", FilterOp::Contains),
+            FilterAlias {
+                convert: |raw| matches!(raw, "hq" | "nq").then(|| raw.to_string()),
+                ..FilterAlias::new("quality", "hq", FilterOp::Eq)
+            },
+            FilterAlias::decimal("vel", COL_SALES_PER_DAY, FilterOp::Gte),
+            FilterAlias::decimal("drift", COL_DRIFT, FilterOp::Gte),
+            FilterAlias {
+                convert: |raw| raw.parse::<u32>().ok().map(|v| v.to_string()),
+                ..FilterAlias::new("min-volume", COL_VOLUME_30D, FilterOp::Gte)
+            },
+            FilterAlias {
+                convert: |raw| {
+                    parse_duration(raw)
+                        .ok()
+                        .map(|d| d.as_secs_f64().to_string())
+                },
+                ..FilterAlias::new("last-sold", COL_LAST_SOLD, FilterOp::Lte)
+            },
+        ],
+        Signal::derive(move || {
+            let mut controls = vec![
+                price_control(
+                    "revenue",
+                    t_string!(i18n, market_sale_estimate).to_string(),
+                    market.window,
+                    t_string!(i18n, market_conservative_estimate).to_string(),
+                ),
+                toggle_control(FILTER_PRE_TAX, filter_label(FILTER_PRE_TAX)),
+                toggle_control(FILTER_SHOW_SUSPICIOUS, filter_label(FILTER_SHOW_SUSPICIOUS)),
+                {
+                    let mut control = toggle_control(
+                        "cross",
+                        t_string!(i18n, analyzer_cross_region_enabled).to_string(),
+                    );
+                    control.clear_with_filters = false;
+                    control
+                },
+                {
+                    let mut control = toggle_control(
+                        "filter-outliers",
+                        t_string!(i18n, filter_outliers).to_string(),
+                    );
+                    control.clear_with_filters = false;
+                    control
+                },
+            ];
+            if filter_query.with(|q| q.get("cross")).as_deref() == Some("true") {
+                let current = region.get();
+                controls.extend(
+                    CONNECTED_REGIONS
+                        .iter()
+                        .copied()
+                        .filter(|name| current.as_deref() != Some(*name))
+                        .map(|name| {
+                            let mut control = toggle_control(name, name.to_string());
+                            control.default_value = Some("true".into());
+                            control.clear_with_filters = false;
+                            control
+                        }),
+                );
+            }
+            controls
+        }),
+    );
+
+    let filter_location = use_location();
+    let filter_nav = use_navigate();
+    let clear_all_filters = Callback::new(move |_: ()| {
+        let query = registry.clear_all(&filter_location.query.get_untracked());
+        filter_nav(
+            &format!(
+                "{}{}",
+                filter_location.pathname.get_untracked(),
+                query.to_query_string()
+            ),
+            leptos_router::NavigateOptions {
+                replace: true,
+                scroll: false,
+                ..Default::default()
+            },
+        );
+    });
+
     type Row = (usize, CalculatedProfitData);
     let worlds_for_metric = worlds.clone();
     let worlds_for_dc_metric = worlds.clone();
     let native_metrics = vec![
         GridMetric::text("item", move |(_, d): &Row| {
+            if !hydrated.get() {
+                return GridValue::Pending;
+            }
             GridValue::Text(
                 items
                     .get(&ItemId(d.inner.sale_summary.item_id))
@@ -2292,11 +1970,7 @@ fn AnalyzerTable(
                 .unwrap_or(GridValue::Missing)
         }),
         GridMetric::number(COL_LAST_SOLD, |(_, d): &Row| {
-            d.inner
-                .sale_summary
-                .days_since_last_sale
-                .map(|v| GridValue::Number(v.num_seconds() as f64))
-                .unwrap_or(GridValue::Missing)
+            duration_value(d.inner.sale_summary.days_since_last_sale)
         }),
         GridMetric::text(COL_WORLD, move |(_, d): &Row| {
             worlds_for_metric
@@ -2362,12 +2036,11 @@ fn AnalyzerTable(
         <div class="flex flex-col gap-4" data-testid="flip-finder-table">
             <div class="flex flex-wrap items-start gap-3">
                 <MarketWindowControl window=market.window />
-                <MarketPriceControls window=market.window basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string() listing_label=t_string!(i18n, market_conservative_estimate).to_string() show_fallback_note=false/>
+
             </div>
             {move || (revenue_pending.get() || rate_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
             <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_conservative_note)}</p>
             <ControlBar sticky=false
-                chip_row=chip_row
                 summary=move || {
                     view! {
                         <span class="text-sm text-[color:var(--brand-fg)] font-semibold truncate min-w-0">
@@ -2410,471 +2083,12 @@ fn AnalyzerTable(
                 visible_columns=picker_visible
                 on_toggle_column=toggle_column
                 on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
-                columns_extra=move || {
-                    view! {
-                        // Cross-region + outlier filtering, formerly the controls
-                        // panel above the table. `w-full` forces its own row inside
-                        // the wrapping flex container above.
-                        <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
-                            <Toggle
-                                checked=cross_region_enabled
-                                set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                    val.then_some(true),
-                                ))
-                                checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
-                                unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
-                            />
-                            <Toggle
-                                checked=filter_outliers
-                                set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
-                                    val.then_some(true),
-                                ))
-                                checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
-                                unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
-                            />
-                            <div
-                                class="flex flex-wrap gap-2"
-                                class:hidden=move || !cross_region_enabled.get()
-                            >
-                                {
-                                    move || {
-                                        region
-                                            .get()
-                                            .map(|region| {
-                                                CONNECTED_REGIONS
-                                                    .iter()
-                                                    .filter(move |r| **r != region.as_str())
-                                                    .map(|region_name| {
-                                                        let (enabled, set_enabled) = query_signal::<
-                                                            bool,
-                                                        >(region_name.to_string());
-                                                        view! {
-                                                            <Toggle
-                                                                checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                                set_checked=SignalSetter::map(move |checked: bool| {
-                                                                    set_enabled(Some(checked));
-                                                                })
-                                                                checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
-                                                                unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
-                                                            />
-                                                        }
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            })
-                                    }
-                                }
-                            </div>
-                        </div>
-                    }
-                }
-                available_filters=filter_options
-                on_add_filter=Callback::new(move |id: &'static str| add_filter(id))
-                filter_menu_extra=move || {
-                    view! {
-                        // Category is chosen from a list rather than typed, so its
-                        // chip is read-only and this is where it is picked. Hidden
-                        // once a category is set: leaving it up would echo the chip,
-                        // which is the duplication this bar deletes.
-                        {move || category_filter().is_none().then(|| view! {
-                            <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
-                                <span class="text-[color:var(--color-text-muted)]">
-                                    {t!(i18n, analyzer_filter_category_label)}
-                                </span>
-                                <select
-                                    class="input input-sm"
-                                    on:change=move |ev| {
-                                        let val = event_target_value(&ev);
-                                        if let Ok(id) = val.parse::<i32>() {
-                                            set_category_filter(Some(id));
-                                        } else {
-                                            set_category_filter(None);
-                                        }
-                                        popovers.filter_menu.set(false);
-                                    }
-                                    prop:value=move || {
-                                        category_filter().map(|c| c.to_string()).unwrap_or_default()
-                                    }
-                                >
-                                    <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                                    {
-                                        let mut categories = tracked_data()
-                                            .item_search_categorys
-                                            .iter()
-                                            .filter(|(_, cat)| !cat.name.is_empty())
-                                            .map(|(id, cat)| (id.0, cat.name.clone()))
-                                            .collect::<Vec<_>>();
-                                        categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                        categories
-                                            .into_iter()
-                                            .map(|(id, name)| {
-                                                view! {
-                                                    <option
-                                                        value=id.to_string()
-                                                        selected=move || category_filter() == Some(id)
-                                                    >
-                                                        {name}
-                                                    </option>
-                                                }
-                                            })
-                                            .collect_view()
-                                    }
-                                </select>
-                            </label>
-                        })}
-                    }
-                }
-                on_clear_all=Callback::new(move |_| clear_all_filters())
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, analyzer_no_active_filters).to_string()
                 })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-                popovers=popovers
-            >
-                        {move || {
-                            minimum_profit()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_profit_gte).to_string()
-                                            value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
-                                            numeric=true
-                                            min="0"
-                                            step="1000"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_minimum_profit(
-                                                    commit_numeric(minimum_profit.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            minimum_profit_per_day()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_profit_per_day_gte).to_string()
-                                            value=Signal::derive(move || {
-                                                minimum_profit_per_day().map(|v| v.to_string())
-                                            })
-                                            numeric=true
-                                            min="0"
-                                            step="1000"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_minimum_profit_per_day(
-                                                    commit_numeric(minimum_profit_per_day.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            minimum_roi()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_roi_gte).to_string()
-                                            value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
-                                            numeric=true
-                                            min="0"
-                                            step="10"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_minimum_roi(commit_numeric(minimum_roi.get_untracked(), v));
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            minimum_sales()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_sales_gte).to_string()
-                                            value=Signal::derive(move || minimum_sales().map(|v| v.to_string()))
-                                            numeric=true
-                                            min="0"
-                                            max="6"
-                                            step="1"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                // Only 6 sales ship per item, so a larger floor
-                                                // silently empties the table.
-                                                set_minimum_sales(
-                                                    commit_numeric(minimum_sales.get_untracked(), v)
-                                                        .map(|s: usize| s.min(6)),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            velocity_floor()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_velocity_gte).to_string()
-                                            value=Signal::derive(move || {
-                                                velocity_floor().map(format_velocity_floor)
-                                            })
-                                            numeric=true
-                                            min="0"
-                                            step="0.5"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_velocity(
-                                                    commit_numeric(velocity_floor.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            min_buy_price()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_min_buy_gte).to_string()
-                                            value=Signal::derive(move || min_buy_price().map(|v| v.to_string()))
-                                            numeric=true
-                                            min="0"
-                                            step="1000"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_buy_price(
-                                                    commit_numeric(min_buy_price.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            max_purchase_price()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_budget_lte).to_string()
-                                            value=Signal::derive(move || max_purchase_price().map(|v| v.to_string()))
-                                            numeric=true
-                                            min="0"
-                                            step="1000"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_max_purchase_price(
-                                                    commit_numeric(max_purchase_price.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            max_predicted_time()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_next_sale_lte).to_string()
-                                            value=Signal::derive(max_predicted_time)
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_max_predicted_time(v);
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            last_sold_within()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_last_sold_lte).to_string()
-                                            value=Signal::derive(last_sold_within)
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_last_sold_within(v);
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            category_filter()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_category_label).to_string()
-                                            readonly=true
-                                            value=Signal::derive(move || {
-                                                let cat_id = category_filter()?;
-                                                Some(
-                                                    tracked_data()
-                                                        .item_search_categorys
-                                                        .get(&xiv_gen::ItemSearchCategoryId(cat_id))
-                                                        .map(|c| c.name.clone())
-                                                        .unwrap_or_else(|| cat_id.to_string()),
-                                                )
-                                            })
-                                            on_commit=Callback::new(move |_| set_category_filter(None))
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            world_filter()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_world_label).to_string()
-                                            readonly=true
-                                            value=Signal::derive(world_filter)
-                                            on_commit=Callback::new(move |_| set_world_filter(None))
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            datacenter_filter()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_datacenter_label).to_string()
-                                            readonly=true
-                                            value=Signal::derive(datacenter_filter)
-                                            on_commit=Callback::new(move |_| set_datacenter_filter(None))
-                                        />
-                                    }
-                                })
-                        }}
-                        // Post-tax is the default, so only the opt-out is a chip.
-                        {move || {
-                            (tax_enabled() == Some(false))
-                                .then(|| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_pre_tax).to_string()
-                                            readonly=true
-                                            value=Signal::derive(|| None::<String>)
-                                            on_commit=Callback::new(move |_| set_tax_enabled(None))
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            show_suspicious_active()
-                                .then(|| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_show_suspicious).to_string()
-                                            readonly=true
-                                            value=Signal::derive(|| None::<String>)
-                                            on_commit=Callback::new(move |_| set_show_suspicious(None))
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            quality_filter()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_quality_label).to_string()
-                                            value=Signal::derive(move || {
-                                                quality_filter().map(|q| q.to_string())
-                                            })
-                                            options=vec![
-                                                ("hq", t_string!(i18n, analyzer_col_hq).to_string()),
-                                                ("nq", t_string!(i18n, analyzer_quality_nq).to_string()),
-                                            ]
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_quality_filter(v.and_then(|s| s.parse().ok()));
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            (name_filter().is_some() || name_chip_pending.get())
-                                .then(|| {
-                                    // Fresh from the menu (no committed value yet) the
-                                    // chip mounts editing so the user can type at once.
-                                    let start_editing = name_filter().is_none();
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_name_contains).to_string()
-                                            value=Signal::derive(name_filter)
-                                            start_editing=start_editing
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_name_filter(v);
-                                                name_chip_pending.set(false);
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            drift_floor()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_drift_gte).to_string()
-                                            value=Signal::derive(move || {
-                                                drift_floor().map(format_velocity_floor)
-                                            })
-                                            numeric=true
-                                            step="1"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_drift(
-                                                    commit_numeric(drift_floor.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            min_confidence()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_confidence_gte).to_string()
-                                            value=Signal::derive(move || {
-                                                min_confidence().map(|c| c.to_string())
-                                            })
-                                            options=vec![
-                                                ("low", t_string!(i18n, analyzer_confidence_low).to_string()),
-                                                ("medium", t_string!(i18n, analyzer_confidence_medium).to_string()),
-                                                ("high", t_string!(i18n, analyzer_confidence_high).to_string()),
-                                            ]
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_confidence(v.and_then(|s| s.parse().ok()));
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-                        {move || {
-                            min_volume()
-                                .map(|_| {
-                                    view! {
-                                        <FilterChip
-                                            label=t_string!(i18n, analyzer_volume_gte).to_string()
-                                            value=Signal::derive(move || {
-                                                min_volume().map(|v| v.to_string())
-                                            })
-                                            numeric=true
-                                            min="0"
-                                            step="10"
-                                            on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_volume(
-                                                    commit_numeric(min_volume.get_untracked(), v),
-                                                );
-                                            })
-                                        />
-                                    }
-                                })
-                        }}
-            </ControlBar>
 
+                popovers=popovers
+                />
 
             <MarketGrid
                 id="flip-finder-grid"
@@ -3330,19 +2544,19 @@ COL_LAST_SOLD => ({
                 }
             />
             // Empty state remains alongside the grid.
-            // `sorted_data` is computed synchronously from props that only
+            // The registered query is computed synchronously from props that only
             // exist once the route's resources resolved (AnalyzerTable mounts
             // inside `<Suspense>`), so an empty list here really means "every
             // row was filtered out" — there is no pending state to flash
             // through. Both SSR and CSR filter the same serialized data, so
             // the two sides agree on emptiness at hydration time.
             {move || {
-                sorted_data.with(|data| data.is_empty()).then(|| view! {
+                (registry.row_count() == 0).then(|| view! {
                     <ActionableEmptyState
                         title=t_string!(i18n, analyzer_empty_title).to_string()
                         body=t_string!(i18n, analyzer_empty_all_filtered).to_string()
                         action_label=t_string!(i18n, analyzer_clear_all).to_string()
-                        on_action=Callback::new(move |_: ()| clear_all_filters())
+                        on_action=clear_all_filters
                     />
                 })
             }}
@@ -3409,8 +2623,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
 
-    let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
-    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
+    let (cross_region_enabled, _set_cross_region_enabled) = query_signal::<bool>("cross");
+    let (filter_outliers, _set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = CONNECTED_REGIONS;
     let query = use_query_map_or_default();
 
@@ -3629,15 +2843,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     // has to stay callable more than once.
                                     worlds=worlds.clone()
                                     world=world
-                                    filter_outliers=Signal::derive(move || {
-                                        filter_outliers().unwrap_or(false)
-                                    })
                                     region=Signal::derive(move || region().ok())
-                                    cross_region_enabled=Signal::derive(move || {
-                                        cross_region_enabled().unwrap_or_default()
-                                    })
-                                    set_cross_region_enabled=set_cross_region_enabled
-                                    set_filter_outliers=set_filter_outliers
                                     on_market_update=refetch_market_data
                                 />
                             </Show>
@@ -3918,16 +3124,29 @@ mod tests {
     }
 
     #[test]
-    fn test_format_velocity_floor() {
-        assert_eq!(format_velocity_floor(10.0), "10");
-        assert_eq!(format_velocity_floor(10.5), "10.5");
-        assert_eq!(format_velocity_floor(10.55), "10.55");
-        assert_eq!(format_velocity_floor(10.50), "10.5");
-        assert_eq!(format_velocity_floor(0.0), "0");
-        assert_eq!(format_velocity_floor(0.5), "0.5");
-        assert_eq!(format_velocity_floor(0.55), "0.55");
-        assert_eq!(format_velocity_floor(0.50), "0.5");
-        assert_eq!(format_velocity_floor(10.05), "10.05");
+    fn velocity_alias_keeps_the_original_threshold_through_canonical_reload() {
+        use crate::components::virtual_grid::registry::{canonical_query, resolve_filters};
+        let aliases = [FilterAlias::decimal(
+            "vel",
+            COL_SALES_PER_DAY,
+            FilterOp::Gte,
+        )];
+        for raw in ["10", "10.55", "0", "0.5", "0.7", "10.05"] {
+            let mut query = leptos_router::params::ParamsMap::new();
+            query.insert("vel", raw.to_string());
+            let canonical = canonical_query(&query, &aliases);
+            assert!(canonical.get("vel").is_none());
+            let filters = resolve_filters(&canonical, &aliases);
+            let threshold = raw.parse::<f32>().unwrap() as f64;
+            assert_eq!(
+                filters[COL_SALES_PER_DAY].matches(&GridValue::Number(threshold), false),
+                Some(true)
+            );
+            assert_eq!(
+                filters[COL_SALES_PER_DAY].value.parse::<f64>().unwrap(),
+                threshold
+            );
+        }
     }
 
     mod market_scope {
@@ -4840,144 +4059,6 @@ mod tests {
             })
             .sum();
         assert_eq!(optional_column_width_px(&all), summed);
-    }
-
-    #[test]
-    fn a_bad_entry_leaves_the_filter_alone() {
-        // The prod-facing bug this guards: `set(raw.parse().ok())` deletes the
-        // filter the user is editing the moment the target type rejects what
-        // they typed. `-5` is a legal number, so `type=number` hands it over
-        // intact; `usize` then refuses it.
-        assert_eq!(
-            commit_numeric(Some(3usize), Some("-5".to_string())),
-            Some(3)
-        );
-        assert_eq!(
-            commit_numeric(Some(100_000i32), Some("abc".to_string())),
-            Some(100_000)
-        );
-    }
-
-    #[test]
-    fn an_explicit_clear_removes_the_filter() {
-        // `None` is the `x` button, and `committed_value` has already mapped
-        // blank input to `None` by this point.
-        assert_eq!(commit_numeric(Some(3usize), None), None);
-    }
-
-    #[test]
-    fn a_valid_entry_replaces_the_value() {
-        assert_eq!(commit_numeric(Some(3usize), Some("6".to_string())), Some(6));
-        assert_eq!(
-            commit_numeric(None, Some("0.25".to_string())),
-            Some(0.25f32)
-        );
-    }
-
-    #[test]
-    fn a_bad_entry_with_nothing_to_keep_stays_unset() {
-        assert_eq!(commit_numeric(None::<i32>, Some("abc".to_string())), None);
-    }
-
-    #[test]
-    fn velocity_floor_renders_without_float_noise() {
-        // `?vel=0.2` round-trips through f32 as 0.20000000298023224.
-        assert_eq!(format_velocity_floor(0.2), "0.2");
-        assert_eq!(format_velocity_floor(1.0), "1");
-        assert_eq!(format_velocity_floor(2.5), "2.5");
-        // Guards the naive `trim_end_matches('0')`, which reads "10.00" as "1".
-        assert_eq!(format_velocity_floor(10.0), "10");
-    }
-
-    #[test]
-    fn a_rendered_velocity_floor_parses_back_to_itself() {
-        // The chip shows this string *and* edits it, so it has to survive a
-        // round trip or opening the chip would change the filter.
-        for v in [0.2f32, 0.25, 1.0, 10.0, 0.05] {
-            let rendered = format_velocity_floor(v);
-            assert_eq!(
-                rendered.parse::<f32>(),
-                Ok(v),
-                "{v} rendered as {rendered:?} did not parse back"
-            );
-        }
-    }
-
-    #[test]
-    fn filter_menu_omits_filters_that_already_have_a_chip() {
-        // Offering a filter that is already a chip would put two editable
-        // representations of one value back on the page — the exact thing
-        // the sticky bar exists to delete.
-        let available = available_filters(&[FILTER_PROFIT, FILTER_VELOCITY]);
-        assert!(!available.contains(&FILTER_PROFIT));
-        assert!(!available.contains(&FILTER_VELOCITY));
-        let expected = ADDABLE_FILTERS
-            .iter()
-            .copied()
-            .filter(|id| *id != FILTER_PROFIT && *id != FILTER_VELOCITY)
-            .collect::<Vec<_>>();
-        assert_eq!(available, expected, "menu order must be stable");
-    }
-
-    #[test]
-    fn filter_menu_offers_everything_when_nothing_is_set() {
-        assert_eq!(available_filters(&[]), ADDABLE_FILTERS.to_vec());
-    }
-
-    #[test]
-    fn addable_filter_ids_are_unique() {
-        let mut seen = std::collections::HashSet::new();
-        for id in ADDABLE_FILTERS {
-            assert!(seen.insert(*id), "{id} is listed twice in ADDABLE_FILTERS");
-        }
-    }
-
-    #[test]
-    fn every_addable_filter_has_a_starting_value() {
-        for id in ADDABLE_FILTERS {
-            // FILTER_NAME is the deliberate exception: its chip mounts in
-            // edit state instead of seeding a resting value (see
-            // `default_filter_value`'s doc comment).
-            if *id == FILTER_NAME {
-                continue;
-            }
-            assert!(
-                !default_filter_value(id).is_empty(),
-                "{id} has no default, so the + Filter menu would add an empty chip"
-            );
-        }
-    }
-
-    #[test]
-    fn numeric_filter_defaults_are_parseable() {
-        // These feed `"...".parse::<i32/usize/f32>()`; an unparseable default
-        // silently adds nothing at all when picked from the menu.
-        for id in [
-            FILTER_PROFIT,
-            FILTER_PROFIT_PER_DAY,
-            FILTER_ROI,
-            FILTER_SALES,
-            FILTER_VELOCITY,
-            FILTER_MIN_BUY,
-            FILTER_MAX_PRICE,
-        ] {
-            let raw = default_filter_value(id);
-            assert!(
-                raw.parse::<f64>().is_ok(),
-                "{id} default {raw:?} does not parse as a number"
-            );
-        }
-    }
-
-    #[test]
-    fn duration_filter_defaults_parse_as_durations() {
-        for id in [FILTER_NEXT_SALE, FILTER_LAST_SOLD] {
-            let raw = default_filter_value(id);
-            assert!(
-                parse_duration(raw).is_ok(),
-                "{id} default {raw:?} is not a duration humantime accepts"
-            );
-        }
     }
 
     #[test]

@@ -8,6 +8,13 @@ pub struct ColumnFilter {
     pub numeric: bool,
     pub options: Vec<(&'static str, String)>,
     pub metric: Option<super::metrics::ValueKind>,
+    /// Runtime choices, for example localized job categories or worlds.
+    pub choices: Vec<(String, String)>,
+    pub multiple: bool,
+    /// Calculation controls can stay visible at their implicit default.
+    pub default_value: Option<String>,
+    /// False for view-level calculation choices preserved by Clear all.
+    pub clear_with_filters: bool,
 }
 
 impl ColumnFilter {
@@ -18,6 +25,10 @@ impl ColumnFilter {
             numeric,
             options: Vec::new(),
             metric: None,
+            choices: Vec::new(),
+            multiple: false,
+            default_value: None,
+            clear_with_filters: true,
         }
     }
 

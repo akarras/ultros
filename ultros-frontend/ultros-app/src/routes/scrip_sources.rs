@@ -1,18 +1,19 @@
+use crate::analyzer_kit::filters::{price_control, register_filters};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
-    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+    market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
+use crate::components::virtual_grid::{metrics::FilterOp, registry::FilterAlias};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
 use crate::{
     api::get_cheapest_listings,
     components::{
-        control_bar::{ControlBar, FilterOption},
-        filter_chip::FilterChip,
+        control_bar::ControlBar,
         gil::*,
         item_icon::*,
         realtime_status::RealtimeStatus,
@@ -159,6 +160,13 @@ impl ScripType {
     }
 }
 
+fn scrip_alias() -> FilterAlias {
+    FilterAlias {
+        convert: |raw| ScripType::from_filter_key(raw).map(|_| raw.to_string()),
+        ..FilterAlias::new("scrip", "scrip-type", FilterOp::Eq)
+    }
+}
+
 /// Does a row awarding `scrip_type` survive the `?scrip=` filter?
 ///
 /// A row whose currency we don't recognise stays *visible*. Dropping unknown
@@ -166,6 +174,7 @@ impl ScripType {
 /// than a few oddly-labelled rows, and one new expansion adding `Currency = 8`
 /// would do it again. An unrecognised `?scrip=` value is likewise treated as
 /// "no filter" instead of emptying the table.
+#[cfg(test)]
 fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
     match filter.and_then(ScripType::from_filter_key) {
         Some(wanted) => scrip_type == wanted,
@@ -345,7 +354,8 @@ fn scrip_sources_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetV
 
 /// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
 /// order.
-const ADDABLE_FILTERS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
+#[cfg(test)]
+const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
 
 /// Rank the collected rows and collapse repeated items without a result cap.
 ///
@@ -408,7 +418,7 @@ fn ScripSourceTable(
     let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let market = use_market_data(world);
-    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    let (cost_basis, _set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
     market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
     let data = tracked_data();
     let items = &data.items;
@@ -433,18 +443,18 @@ fn ScripSourceTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    // Filter params use `filter_query_signal` (replace: true, scroll: false):
-    // typing into a chip writes the URL on every keystroke, and plain
-    // `query_signal`'s defaults would push a history entry and yank the
-    // window to the top each time.
-    let (scrip_filter, set_scrip_filter) = filter_query_signal::<String>(FILTER_SCRIP);
-    let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
-
-    // A filter picked from the `+ Filter` menu but not yet committed — its
-    // chip mounts in edit state with an empty input (see currency_exchange.rs
-    // for the same pattern). Neither select has an "obviously correct"
-    // default value, so both mount blank rather than seeding one.
-    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
+    let query = crate::components::app_link::use_query_map_or_default();
+    let scrip_filter = Memo::new(move |_| {
+        let filters = crate::components::virtual_grid::registry::resolve_filters(
+            &query.get(),
+            &[scrip_alias()],
+        );
+        filters
+            .get("scrip-type")
+            .filter(|f| f.op == FilterOp::Eq)
+            .map(|f| f.value.clone())
+    });
+    let (job_filter, _set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
 
     // Global websocket health, same wiring as the other sales-driven tools —
     // the prices here come from the realtime-fed cheapest-listings store.
@@ -466,7 +476,6 @@ fn ScripSourceTable(
         let mut results = Vec::new();
         let recipes_lookup = recipes_by_output();
 
-        let scrip_filter_val = scrip_filter();
         let job_filter_val = job_filter();
 
         for turn_in in scrip_turn_ins(data) {
@@ -475,10 +484,6 @@ fn ScripSourceTable(
                 scrip_type,
                 scrip_amount,
             } = turn_in;
-
-            if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
-                continue;
-            }
 
             let item_def = match items.get(&ItemId(item_id)) {
                 Some(i) => i,
@@ -600,8 +605,6 @@ fn ScripSourceTable(
         rank_scrip_sources(results, mode, dir)
     });
 
-    let total_count = Memo::new(move |_| ranked_rows.with(|r| r.len()));
-
     let computed_data = Memo::new(move |_| {
         ranked_rows.with(|rows| {
             rows.iter()
@@ -673,20 +676,6 @@ fn ScripSourceTable(
         ]
     };
 
-    // Filters currently drawn as a chip. Drives the "no active filters" hint
-    // and keeps `+ Filter` from offering a second copy of something the user
-    // can already see.
-    let active_filters = Memo::new(move |_| {
-        let mut active: Vec<&'static str> = Vec::new();
-        if scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP) {
-            active.push(FILTER_SCRIP);
-        }
-        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
-            active.push(FILTER_JOB);
-        }
-        active
-    });
-
     // Menu label for a filter: the long, explanatory label the old toolbar
     // fields carried.
     let filter_label = move |id: &str| -> String {
@@ -697,44 +686,32 @@ fn ScripSourceTable(
         }
     };
 
-    // What the `+ Filter` menu offers: everything addable that is not already
-    // on screen as a chip.
-    let filter_options = Memo::new(move |_| {
-        ADDABLE_FILTERS
-            .iter()
-            .copied()
-            .filter(|id| !active_filters().contains(id))
-            .map(|id| FilterOption {
-                id,
-                label: filter_label(id),
-            })
-            .collect::<Vec<_>>()
-    });
+    let filters = register_filters(
+        vec![scrip_alias()],
+        Signal::derive(move || {
+            vec![
+                price_control(
+                    "cost-basis",
+                    t_string!(i18n, market_ingredient_price).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                {
+                    let mut f = ColumnFilter::new(FILTER_JOB, filter_label(FILTER_JOB), false);
+                    f.options = job_options();
+                    f
+                },
+            ]
+        }),
+    );
 
-    let add_filter = Callback::new(move |id: &'static str| match id {
-        FILTER_SCRIP => pending_filter.set(Some(FILTER_SCRIP)),
-        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
-        _ => {}
-    });
-
-    let clear_all = Callback::new(move |_| {
-        pending_filter.set(None);
-        set_scrip_filter(None);
-        set_job_filter(None);
-    });
-
-    // Built outside `ControlBar`'s `actions` closure: that closure runs
-    // in a render effect and `t_string!` is tracked, so resolving the
-    // labels there would rebuild the whole slot on a language switch.
     let presets = Signal::derive(move || scrip_sources_presets(i18n));
 
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap items-start gap-3">
                     <MarketWindowControl window=market.window />
-                    <MarketPriceControls window=market.window label=t_string!(i18n, market_ingredient_price).to_string()
-                    basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
-                    on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+
                 </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">
                     {t!(i18n, market_collectable_note)}
@@ -744,7 +721,7 @@ fn ScripSourceTable(
                     summary=move || {
                         view! {
                             <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                                {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
+                                {move || t!(i18n, scrip_sources_results_count, n = move || filters.row_count())}
                             </span>
                             <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
                                 {move || t!(i18n, scrip_sources_region_pricing, region = world())}
@@ -759,66 +736,22 @@ fn ScripSourceTable(
                         }
                             .into_any()
                     }
-                    available_filters=Signal::derive(filter_options)
-                    on_add_filter=add_filter
-                    on_clear_all=clear_all
+
                     empty_label=Signal::derive(move || {
                         t_string!(i18n, scrip_sources_no_filters_hint).to_string()
                     })
-                    is_empty=Signal::derive(move || active_filters().is_empty())
-                >
-                    {move || {
-                        (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, scrip_sources_scrip_type).to_string()
-                                        value=Signal::derive(scrip_filter)
-                                        options=scrip_options()
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_scrip_filter(v);
-                                            if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, scrip_sources_job_filter).to_string()
-                                        value=Signal::derive(job_filter)
-                                        options=job_options()
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_job_filter(v);
-                                            if pending_filter.get_untracked() == Some(FILTER_JOB) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                </ControlBar>
+                />
 
                 // Empty states render as *siblings* of the scroller container,
                 // never by unmounting it in a <Show>: the VirtualScroller wires
                 // scroll-sync effects to node refs and remounting breaks them.
-                <Show when=move || gatherer_filter_selected() && total_count() == 0>
+                <Show when=move || gatherer_filter_selected() && filters.row_count() == 0>
                     <ActionableEmptyState
                         title=t_string!(i18n, scrip_sources_gatherers_unsupported_title).to_string()
                         body=t_string!(i18n, scrip_sources_gatherers_unsupported_body).to_string()
                     />
                 </Show>
-                <Show when=move || !gatherer_filter_selected() && total_count() == 0>
+                <Show when=move || !gatherer_filter_selected() && filters.row_count() == 0>
                     <ActionableEmptyState
                         title=t_string!(i18n, scrip_sources_no_results_title).to_string()
                         body=t_string!(i18n, scrip_sources_no_results_body).to_string()
@@ -840,7 +773,7 @@ fn ScripSourceTable(
          GridMetric::number("cost-per-scrip", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost_per_scrip as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::number("scrip-amount", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Number(row.scrip_amount as f64)).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::number("cost", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
-         GridMetric::text("scrip-type", move |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(scrip_label(row.scrip_type))).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
+         GridMetric::text("scrip-type", move |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Set(vec![scrip_label(row.scrip_type), format!("{:?}", row.scrip_type)])).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
      ]
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true),
@@ -887,8 +820,6 @@ fn ScripSourceTable(
     "scrip-type" => (scrip_label(data.scrip_type), 42.0), _ => (String::new(), 0.0)}}
      view=move |(index, data): (usize, Arc<ScripSourceData>), id| {
                             let item_id = data.item_id;
-
-
 
      let _ = index;
      match id {
@@ -1139,7 +1070,7 @@ mod tests {
                             .is_ok(),
                         "{query}"
                     ),
-                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                    other => assert!(LEGACY_PRESET_FILTER_KEYS.contains(&other), "{query}"),
                 }
             }
         }

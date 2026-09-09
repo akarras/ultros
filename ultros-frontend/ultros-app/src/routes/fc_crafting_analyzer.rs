@@ -1,9 +1,10 @@
 use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
+use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
-    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+    market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
     signals::{PriceLookup, SignalView},
 };
 use crate::components::app_link::use_query_map_or_default;
@@ -12,6 +13,8 @@ use crate::components::crafting_cost::{
     compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
+use crate::components::virtual_grid::metrics::FilterOp;
+use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
@@ -24,8 +27,7 @@ use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        control_bar::{ControlBar, FilterOption},
-        filter_chip::FilterChip,
+        control_bar::ControlBar,
         gil::*,
         item_icon::*,
         realtime_status::RealtimeStatus,
@@ -175,8 +177,9 @@ fn fc_crafting_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetVie
     .collect()
 }
 
-/// Filters the `+ Filter` menu can add, in menu order.
-const ADDABLE_FILTERS: &[&str] = &[
+/// Historical preset keys: these must remain readable after migration.
+#[cfg(test)]
+const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[
     FILTER_PROFIT,
     FILTER_ROI,
     FILTER_MIN_SALES,
@@ -315,9 +318,9 @@ fn FCCraftingAnalyzerTable(
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let market = use_market_data(world);
-    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    let (cost_basis, _set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
     market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
-    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    let (revenue_basis, _set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     market.require_price_basis(Signal::derive(move || {
         revenue_basis.get().unwrap_or_default()
     }));
@@ -327,19 +330,9 @@ fn FCCraftingAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    // Filter params use `filter_query_signal` (replace: true, scroll: false):
-    // editing a chip writes the URL on every keystroke, and plain
-    // `query_signal`'s defaults would push a history entry and yank the
-    // window to the top each time.
-    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
-    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>(FILTER_ROI);
-    // Seeded by FCCraftingAnalyzer so a first-time visitor isn't shown recipes
-    // whose output sells once a month. Same velocity floor as the analyzer's
-    // 1d default.
-    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>(FILTER_MIN_SALES);
-    let (exclude_shards_url, set_exclude_shards) =
+    let (exclude_shards_url, _set_exclude_shards) =
         filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
-    let (use_on_hand_url, set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
+    let (use_on_hand_url, _set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
     let cookies = use_context::<Cookies>().unwrap();
     let (craft_options, _) =
         cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
@@ -350,12 +343,6 @@ fn FCCraftingAnalyzerTable(
     let use_on_hand_enabled = move || {
         use_on_hand_url().unwrap_or_else(|| craft_options.get().unwrap_or_default().use_on_hand)
     };
-
-    // A filter picked from the `+ Filter` menu but not yet committed — its
-    // chip mounts in edit state with an empty input (see currency_exchange.rs
-    // for the same pattern). The two on/off toggles commit immediately on add
-    // instead, so this only ever holds a numeric filter id.
-    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let computed_data = Memo::new(move |_| {
         let stats = market.selected_stats();
@@ -511,17 +498,6 @@ fn FCCraftingAnalyzerTable(
             });
         }
 
-        // Filter
-        if let Some(min) = minimum_profit() {
-            results.retain(|d| d.pricing_pending || d.profit >= min);
-        }
-        if let Some(min) = minimum_roi() {
-            results.retain(|d| d.pricing_pending || d.return_on_investment >= min);
-        }
-        if let Some(min_sales) = min_daily_sales() {
-            results.retain(|d| d.daily_sales >= min_sales);
-        }
-
         // Sort
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
@@ -542,32 +518,6 @@ fn FCCraftingAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
-    // Filters currently drawn as a chip. Drives the "no active filters" hint
-    // and keeps `+ Filter` from offering a second copy of something the user
-    // can already see.
-    let active_filters = Memo::new(move |_| {
-        let mut active: Vec<&'static str> = Vec::new();
-        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
-            active.push(FILTER_PROFIT);
-        }
-        if minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI) {
-            active.push(FILTER_ROI);
-        }
-        if min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES) {
-            active.push(FILTER_MIN_SALES);
-        }
-        // These two only show a chip once the URL explicitly overrides the
-        // cookie default — otherwise the page is silently using the user's
-        // saved crafting-cost preference, not filtering anything.
-        if exclude_shards_url().is_some() {
-            active.push(FILTER_EXCLUDE_SHARDS);
-        }
-        if use_on_hand_url().is_some() {
-            active.push(FILTER_USE_ON_HAND);
-        }
-        active
-    });
-
     // Menu label for a filter: the long, explanatory label the old toolbar
     // fields carried.
     let filter_label = move |id: &str| -> String {
@@ -585,20 +535,6 @@ fn FCCraftingAnalyzerTable(
         }
     };
 
-    // What the `+ Filter` menu offers: everything addable that is not already
-    // on screen as a chip.
-    let filter_options = Memo::new(move |_| {
-        ADDABLE_FILTERS
-            .iter()
-            .copied()
-            .filter(|id| !active_filters().contains(id))
-            .map(|id| FilterOption {
-                id,
-                label: filter_label(id),
-            })
-            .collect::<Vec<_>>()
-    });
-
     let on_off_options = move || {
         vec![
             ("true", t_string!(i18n, toolbar_pill_on).to_string()),
@@ -606,29 +542,42 @@ fn FCCraftingAnalyzerTable(
         ]
     };
 
-    let add_filter = Callback::new(move |id: &'static str| match id {
-        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
-        FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
-        FILTER_MIN_SALES => pending_filter.set(Some(FILTER_MIN_SALES)),
-        // On/off toggles: seed to the "On" state, same as the pill's
-        // affirmative side — the user flips or clears it from there.
-        FILTER_EXCLUDE_SHARDS => set_exclude_shards(Some(true)),
-        FILTER_USE_ON_HAND => set_use_on_hand(Some(true)),
-        _ => {}
-    });
+    let filters = register_filters(
+        vec![
+            FilterAlias::integer("profit", "profit", FilterOp::Gte),
+            FilterAlias::integer("roi", "roi", FilterOp::Gte),
+            FilterAlias::decimal("min-sales", "daily-sales", FilterOp::Gte),
+        ],
+        Signal::derive(move || {
+            vec![
+                price_control(
+                    "cost-basis",
+                    t_string!(i18n, market_ingredient_price).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                price_control(
+                    "revenue",
+                    t_string!(i18n, market_completed_price).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                {
+                    let mut f =
+                        toggle_control(FILTER_EXCLUDE_SHARDS, filter_label(FILTER_EXCLUDE_SHARDS));
+                    f.options = on_off_options();
+                    f
+                },
+                {
+                    let mut f =
+                        toggle_control(FILTER_USE_ON_HAND, filter_label(FILTER_USE_ON_HAND));
+                    f.options = on_off_options();
+                    f
+                },
+            ]
+        }),
+    );
 
-    let clear_all = Callback::new(move |_| {
-        pending_filter.set(None);
-        set_minimum_profit(None);
-        set_minimum_roi(None);
-        set_min_daily_sales(None);
-        set_exclude_shards(None);
-        set_use_on_hand(None);
-    });
-
-    // Built outside `ControlBar`'s `actions` closure: that closure runs
-    // in a render effect and `t_string!` is tracked, so resolving the
-    // labels there would rebuild the whole slot on a language switch.
     let presets = Signal::derive(move || fc_crafting_presets(i18n));
 
     view! {
@@ -636,19 +585,14 @@ fn FCCraftingAnalyzerTable(
                 <ActiveListBanner />
                 <div class="flex flex-wrap gap-3">
                     <MarketWindowControl window=market.window />
-                    <MarketPriceControls window=market.window label=t_string!(i18n, market_ingredient_price).to_string()
-                        basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
-                        on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                    <MarketPriceControls window=market.window label=t_string!(i18n, market_completed_price).to_string()
-                        basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
-                        on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+
                 </div>
 
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
                             <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                                {move || t!(i18n, fc_crafting_result_count, n = move || computed_data().len())}
+                                {move || t!(i18n, fc_crafting_result_count, n = move || filters.row_count())}
                             </span>
                         }
                         .into_any()
@@ -660,112 +604,11 @@ fn FCCraftingAnalyzerTable(
                         }
                             .into_any()
                     }
-                    available_filters=Signal::derive(filter_options)
-                    on_add_filter=add_filter
-                    on_clear_all=clear_all
+
                     empty_label=Signal::derive(move || {
                         t_string!(i18n, fc_crafting_no_filters_hint).to_string()
                     })
-                    is_empty=Signal::derive(move || active_filters().is_empty())
-                >
-                    {move || {
-                        (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, fc_crafting_chip_profit_min).to_string()
-                                        value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
-                                        numeric=true
-                                        min="0"
-                                        step="100000"
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_minimum_profit(v.and_then(|v| v.parse().ok()));
-                                            if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        (minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked() == Some(FILTER_ROI);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, fc_crafting_chip_roi_min).to_string()
-                                        value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
-                                        numeric=true
-                                        min="0"
-                                        step="10"
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_minimum_roi(v.and_then(|v| v.parse().ok()));
-                                            if pending_filter.get_untracked() == Some(FILTER_ROI) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        (min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked()
-                                    == Some(FILTER_MIN_SALES);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, fc_crafting_chip_daily_sales_min).to_string()
-                                        value=Signal::derive(move || min_daily_sales().map(|v| v.to_string()))
-                                        numeric=true
-                                        min="0"
-                                        step="0.1"
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_min_daily_sales(v.and_then(|v| v.parse().ok()));
-                                            if pending_filter.get_untracked() == Some(FILTER_MIN_SALES) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        exclude_shards_url()
-                            .map(|current| {
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, fc_crafting_filter_exclude_crystals_label).to_string()
-                                        value=Signal::derive(move || Some(current.to_string()))
-                                        options=on_off_options()
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_exclude_shards(v.and_then(|v| v.parse().ok()));
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        use_on_hand_url()
-                            .map(|current| {
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string()
-                                        value=Signal::derive(move || Some(current.to_string()))
-                                        options=on_off_options()
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_use_on_hand(v.and_then(|v| v.parse().ok()));
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                </ControlBar>
+                />
 
                 <div class=FC_TABLE_CLASS>
                      <MarketGrid show_saved_views=false id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
@@ -860,7 +703,6 @@ fn FCCraftingAnalyzerTable(
                                     )
                                 })
                                 .collect::<Vec<_>>();
-
 
      let _ = index;
      match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
@@ -1213,7 +1055,7 @@ mod test {
                             .is_ok(),
                         "{query}"
                     ),
-                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                    other => assert!(LEGACY_PRESET_FILTER_KEYS.contains(&other), "{query}"),
                 }
             }
         }

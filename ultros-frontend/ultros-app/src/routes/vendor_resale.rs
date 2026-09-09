@@ -1,12 +1,17 @@
 use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
+use crate::analyzer_kit::filters::{
+    duration_value, price_control, register_filters, toggle_control,
+};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
-    market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
+    market::{MarketGrid, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
 use crate::components::app_link::use_query_map_or_default;
+use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::query_signal;
@@ -15,8 +20,7 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::*,
-        control_bar::{ControlBar, FilterOption},
-        filter_chip::FilterChip,
+        control_bar::ControlBar,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -87,6 +91,7 @@ struct VendorProfitData {
 }
 
 /// Loading a selected statistic cannot reject a candidate using a temporary fallback.
+#[cfg(test)]
 fn passes_financial_floor(value: i32, floor: Option<i32>, pending: bool) -> bool {
     pending || floor.is_none_or(|floor| value > floor)
 }
@@ -210,6 +215,21 @@ const SUSPICIOUS_PRICE_MULTIPLE: i64 = 50;
 const FILTER_PROFIT: &str = "profit";
 const FILTER_ROI: &str = "roi";
 const FILTER_SALES: &str = "sales";
+fn vendor_filter_aliases() -> Vec<FilterAlias> {
+    vec![
+        FilterAlias::integer("profit", "profit", FilterOp::Gte),
+        FilterAlias::integer("roi", "roi", FilterOp::Gte),
+        FilterAlias {
+            convert: |raw| {
+                parse_duration(raw)
+                    .ok()
+                    .map(|d| d.as_secs_f64().to_string())
+            },
+            ..FilterAlias::new("next-sale", "sale-time", FilterOp::Lt)
+        },
+    ]
+}
+
 const FILTER_NEXT_SALE: &str = "next-sale";
 const FILTER_CATEGORY: &str = "category";
 const FILTER_TAX: &str = "tax";
@@ -217,7 +237,8 @@ const FILTER_SUSPICIOUS: &str = "show-suspicious";
 
 /// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
 /// order.
-const ADDABLE_FILTERS: &[&str] = &[
+#[cfg(test)]
+const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[
     FILTER_PROFIT,
     FILTER_ROI,
     FILTER_SALES,
@@ -458,7 +479,7 @@ fn VendorResaleTable(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let market = use_market_data(world);
-    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    let (revenue_basis, _set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     market.require_price_basis(Signal::derive(move || {
         revenue_basis.get().unwrap_or_default()
     }));
@@ -481,34 +502,14 @@ fn VendorResaleTable(
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    // Filter params use `filter_query_signal` (replace: true, scroll: false):
-    // typing into a chip writes the URL on every keystroke, and plain
-    // `query_signal`'s defaults would push a history entry and yank the
-    // window to the top each time.
-    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
-    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>(FILTER_ROI);
-    // Seeded to 1d by VendorWorldView so a first-time visitor isn't shown items
-    // that sell once a month. The field sits in the ControlBar and the
-    // chip has an X, so the default is visible and one click from gone.
-    let (max_predicted_time, set_max_predicted_time) =
-        filter_query_signal::<String>(FILTER_NEXT_SALE);
-    let (tax_enabled, set_tax_enabled) = filter_query_signal::<bool>(FILTER_TAX);
-    let (minimum_sales, set_minimum_sales) = filter_query_signal::<usize>(FILTER_SALES);
-    let (category_filter, set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
+    let (tax_enabled, _set_tax_enabled) = filter_query_signal::<bool>(FILTER_TAX);
+    let (minimum_sales, _set_minimum_sales) = filter_query_signal::<usize>(FILTER_SALES);
+    let (category_filter, _set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
     // Hidden by default, like the Flip Finder and Trends toggles of the same
     // name — an unachievable listing is worse than no row at all here, because
     // it inflates ROI and therefore sorts to the top.
-    let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>(FILTER_SUSPICIOUS);
+    let (show_suspicious, _set_show_suspicious) = filter_query_signal::<bool>(FILTER_SUSPICIOUS);
     let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
-
-    // A filter picked from the `+ Filter` menu but not yet committed — its
-    // chip mounts in edit state with an empty input (see currency_exchange.rs
-    // for the same pattern). Booleans and the category select commit a
-    // sensible value immediately instead (see `add_filter` below).
-    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
-
-    let predicted_time =
-        Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
@@ -540,16 +541,6 @@ fn VendorResaleTable(
                 }
             })
             .filter(move |data| {
-                passes_financial_floor(data.profit, minimum_profit(), revenue_pending.get())
-            })
-            .filter(move |data| {
-                passes_financial_floor(
-                    data.return_on_investment,
-                    minimum_roi(),
-                    revenue_pending.get(),
-                )
-            })
-            .filter(move |data| {
                 minimum_sales()
                     .map(|sales| {
                         data.inner
@@ -577,18 +568,6 @@ fn VendorResaleTable(
                         data.inner.market_price,
                         data.inner.sale_summary.as_ref(),
                     )
-            })
-            .filter(move |data| {
-                predicted_time()
-                    .map(|time| {
-                        data.inner
-                            .sale_summary
-                            .as_ref()
-                            .and_then(|s| s.avg_sale_duration)
-                            .map(|dur| dur.to_std().ok().map(|dur| dur < time).unwrap_or(false))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(true)
             })
             .collect::<Vec<_>>();
 
@@ -634,35 +613,6 @@ fn VendorResaleTable(
         ]
     };
 
-    // Filters currently drawn as a chip. Drives the "no active filters" hint
-    // and keeps `+ Filter` from offering a second copy of something the user
-    // can already see.
-    let active_filters = Memo::new(move |_| {
-        let mut active: Vec<&'static str> = Vec::new();
-        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
-            active.push(FILTER_PROFIT);
-        }
-        if minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI) {
-            active.push(FILTER_ROI);
-        }
-        if minimum_sales().is_some() || pending_filter.get() == Some(FILTER_SALES) {
-            active.push(FILTER_SALES);
-        }
-        if max_predicted_time().is_some() || pending_filter.get() == Some(FILTER_NEXT_SALE) {
-            active.push(FILTER_NEXT_SALE);
-        }
-        if category_filter().is_some() || pending_filter.get() == Some(FILTER_CATEGORY) {
-            active.push(FILTER_CATEGORY);
-        }
-        if tax_enabled().is_some() {
-            active.push(FILTER_TAX);
-        }
-        if show_suspicious_active() {
-            active.push(FILTER_SUSPICIOUS);
-        }
-        active
-    });
-
     // Menu label for a filter: the long, explanatory label the old toolbar
     // fields carried.
     let filter_label = move |id: &str| -> String {
@@ -679,50 +629,6 @@ fn VendorResaleTable(
             _ => String::new(),
         }
     };
-
-    // What the `+ Filter` menu offers: everything addable that is not already
-    // on screen as a chip.
-    let filter_options = Memo::new(move |_| {
-        ADDABLE_FILTERS
-            .iter()
-            .copied()
-            .filter(|id| !active_filters().contains(id))
-            .map(|id| FilterOption {
-                id,
-                label: filter_label(id),
-            })
-            .collect::<Vec<_>>()
-    });
-
-    // Adding a filter seeds it with a value the user can see and edit
-    // straight away, rather than mounting a select with nothing chosen —
-    // except `FILTER_CATEGORY`, where there is no "obviously correct"
-    // default. That one mounts blank via `pending_filter`, same as the three
-    // free-typed filters. `FILTER_TAX` seeds `false` (pre-tax) — the
-    // non-default action, since post-tax is already the silent default.
-    let add_filter = Callback::new(move |id: &'static str| match id {
-        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
-        FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
-        FILTER_SALES => pending_filter.set(Some(FILTER_SALES)),
-        FILTER_NEXT_SALE => pending_filter.set(Some(FILTER_NEXT_SALE)),
-        FILTER_CATEGORY => pending_filter.set(Some(FILTER_CATEGORY)),
-        FILTER_TAX => set_tax_enabled(Some(false)),
-        // Boolean toggle: the chip's presence *is* the value, so it commits
-        // straight to `true` rather than mounting an editable chip.
-        FILTER_SUSPICIOUS => set_show_suspicious(Some(true)),
-        _ => {}
-    });
-
-    let clear_all = Callback::new(move |_| {
-        pending_filter.set(None);
-        set_minimum_profit(None);
-        set_minimum_roi(None);
-        set_minimum_sales(None);
-        set_max_predicted_time(None);
-        set_category_filter(None);
-        set_tax_enabled(None);
-        set_show_suspicious(None);
-    });
 
     let queried_count = RwSignal::new(0usize);
     type Row = (usize, CalculatedVendorProfitData);
@@ -761,12 +667,12 @@ fn VendorResaleTable(
             }
         }),
         GridMetric::number("sale-time", |(_, d): &Row| {
-            d.inner
-                .sale_summary
-                .as_ref()
-                .and_then(|s| s.avg_sale_duration)
-                .map(|d| GridValue::Number(d.num_seconds() as f64))
-                .unwrap_or(GridValue::Missing)
+            duration_value(
+                d.inner
+                    .sale_summary
+                    .as_ref()
+                    .and_then(|s| s.avg_sale_duration),
+            )
         }),
     ];
 
@@ -774,13 +680,40 @@ fn VendorResaleTable(
     // runs in a render effect, and `t_string!` is tracked, so resolving the
     // labels there would subscribe the whole slot to the locale and rebuild
     // `RealtimeStatus` and this menu on every language switch.
+    register_filters(
+        vendor_filter_aliases(),
+        Signal::derive(move || {
+            vec![
+                price_control(
+                    "revenue",
+                    t_string!(i18n, market_sale_estimate).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                {
+                    let mut f = toggle_control(FILTER_TAX, filter_label(FILTER_TAX));
+                    f.options = on_off_options();
+                    f
+                },
+                toggle_control(FILTER_SUSPICIOUS, filter_label(FILTER_SUSPICIOUS)),
+                ColumnFilter::new(FILTER_SALES, filter_label(FILTER_SALES), true),
+                {
+                    let mut f =
+                        ColumnFilter::new(FILTER_CATEGORY, filter_label(FILTER_CATEGORY), false);
+                    f.options = category_options();
+                    f
+                },
+            ]
+        }),
+    );
+
     let presets = Signal::derive(move || vendor_resale_presets(i18n));
 
     view! {
         <div class="flex flex-col gap-6">
             <div class="flex flex-wrap items-start gap-3">
                 <MarketWindowControl window=market.window />
-                <MarketPriceControls window=market.window basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string()/>
+
             </div>
             {move || (revenue_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
 
@@ -800,153 +733,11 @@ fn VendorResaleTable(
                         }
                         .into_any()
                 }
-                available_filters=Signal::derive(filter_options)
-                on_add_filter=add_filter
-                on_clear_all=clear_all
+
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, vendor_resale_no_active_filters).to_string()
                 })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-            >
-                {move || {
-                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_filter_profit_min_label).to_string()
-                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    max="100000"
-                                    step="1000"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_ROI);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_filter_roi_min_label).to_string()
-                                    value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    max="100000"
-                                    step="10"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_minimum_roi(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_ROI) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (minimum_sales().is_some() || pending_filter.get() == Some(FILTER_SALES))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_SALES);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_filter_sales_min_label).to_string()
-                                    value=Signal::derive(move || minimum_sales().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    max="6"
-                                    step="1"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_minimum_sales(
-                                            v.and_then(|v| v.parse::<usize>().ok()).map(|s| s.min(6)),
-                                        );
-                                        if pending_filter.get_untracked() == Some(FILTER_SALES) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (max_predicted_time().is_some() || pending_filter.get() == Some(FILTER_NEXT_SALE))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_NEXT_SALE);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()
-                                    value=Signal::derive(max_predicted_time)
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_max_predicted_time(v);
-                                        if pending_filter.get_untracked() == Some(FILTER_NEXT_SALE) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (category_filter().is_some() || pending_filter.get() == Some(FILTER_CATEGORY))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_CATEGORY);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_filter_category_label).to_string()
-                                    value=Signal::derive(move || category_filter().map(|c| category_id_token(c).to_string()))
-                                    options=category_options()
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_category_filter(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_CATEGORY) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    tax_enabled()
-                        .map(|current| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_filter_prices_label).to_string()
-                                    value=Signal::derive(move || Some(current.to_string()))
-                                    options=on_off_options()
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_tax_enabled(v.and_then(|v| v.parse().ok()));
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    show_suspicious_active()
-                        .then(|| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, vendor_resale_suspicious_chip).to_string()
-                                    readonly=true
-                                    value=Signal::derive(|| None::<String>)
-                                    on_commit=Callback::new(move |_| set_show_suspicious(None))
-                                />
-                            }
-                        })
-                }}
-            </ControlBar>
+                />
 
             // Results table
             <div>
@@ -1027,7 +818,6 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
-
 
  let _ = index;
  match id {"hq" => view! {<div  class="flex items-center justify-center w-full min-w-0">
@@ -1301,6 +1091,32 @@ pub fn VendorResale() -> impl IntoView {
 mod tests {
     use super::*;
 
+    #[test]
+    fn duration_bookmarks_keep_strict_bounds_and_canonical_precedence() {
+        use crate::components::virtual_grid::registry::{canonical_query, resolve_filters};
+        let aliases = vendor_filter_aliases();
+        let mut query = leptos_router::params::ParamsMap::new();
+        query.insert("next-sale", "1.5s".into());
+        let filter = resolve_filters(&query, &aliases)
+            .remove("sale-time")
+            .unwrap();
+        assert_eq!(filter.op, FilterOp::Lt);
+        for (seconds, expected) in [(1.49, true), (1.5, false), (1.51, false)] {
+            assert_eq!(
+                filter.matches(&GridValue::Number(seconds), false),
+                Some(expected)
+            );
+        }
+        assert_eq!(filter.matches(&GridValue::Missing, false), Some(false));
+        query.insert("gf", r#"{"sale-time":{"op":"gte","value":"2"}}"#.into());
+        let canonical = canonical_query(&query, &aliases);
+        assert_eq!(canonical.get("next-sale").as_deref(), Some(""));
+        assert_eq!(
+            resolve_filters(&canonical, &aliases)["sale-time"].op,
+            FilterOp::Gte
+        );
+    }
+
     /// A preset is applied by rebuilding the URL from its query, so a stray
     /// separator or an empty pair would ship straight into the address bar.
     #[test]
@@ -1327,7 +1143,7 @@ mod tests {
                 match key {
                     "sort" => assert!(SortMode::from_str(value).is_ok(), "{query}"),
                     "dir" => assert!(SortDir::from_str(value).is_ok(), "{query}"),
-                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                    other => assert!(LEGACY_PRESET_FILTER_KEYS.contains(&other), "{query}"),
                 }
             }
         }
