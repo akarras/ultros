@@ -496,8 +496,9 @@ after, recorded in the PR. Expected increase at most 750 KB compressed.
 - Loro is younger than yrs or automerge and its API moves; the exact pin and
   the convergence suite are the guard.
 - The projection is correct only while nothing writes `list_item` directly.
-  A grep-based test in `ultros` asserts that the only callers of the
-  `ultros-db` row writers are inside `lists/sync.rs`.
+  The old row-writing functions were deleted from `ultros-db/src/lists.rs`
+  in Phase 3, so the compiler enforces this; `docs/lists-sync.md` gives the
+  query that detects a divergence if one ever appears.
 - Base64 inside JSON frames costs a third more bytes than binary frames.
   Updates are tiny, so this is accepted; switching to binary frames is a
   transport change for later.
