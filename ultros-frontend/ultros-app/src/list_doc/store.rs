@@ -27,6 +27,12 @@ pub trait Storage {
 pub struct IndexEntry {
     pub last_used_ms: f64,
     pub permission: i16,
+    /// Whether `ultros.listdoc.v1.{user}.{list}` actually holds a snapshot for
+    /// this entry. `remember_permission` creates permission-only entries with
+    /// this `false`; eviction must never treat those as LRU candidates, since
+    /// there is no stored snapshot to make room for and nothing to remove.
+    #[serde(default)]
+    pub has_snapshot: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -94,12 +100,18 @@ pub fn save(
         IndexEntry {
             last_used_ms: now_ms,
             permission,
+            has_snapshot: true,
         },
     );
-    while index.lists.len() > MAX_LISTS {
+    // Only entries backed by an actual stored snapshot count toward the cap
+    // or are eligible for eviction: a permission-only entry from
+    // `remember_permission` has no `doc_key` to remove and evicting it would
+    // free nothing, so it must never be picked over a real cached list.
+    while index.lists.values().filter(|e| e.has_snapshot).count() > MAX_LISTS {
         let Some((&oldest, _)) = index
             .lists
             .iter()
+            .filter(|(_, e)| e.has_snapshot)
             .min_by(|a, b| a.1.last_used_ms.total_cmp(&b.1.last_used_ms))
         else {
             break;
@@ -120,7 +132,13 @@ pub fn remember_permission(
     let mut index = read_index(storage, user_id);
     let entry = index.lists.entry(list_id).or_default();
     entry.permission = permission;
-    entry.last_used_ms = now_ms;
+    // Do not bump `last_used_ms` on a snapshot-less entry: it must stay out
+    // of eviction's LRU ordering (it is already excluded by `has_snapshot`,
+    // but a stale/zero timestamp keeps the intent clear if that ever
+    // changes) rather than accumulating a real recency the entry never earned.
+    if entry.has_snapshot {
+        entry.last_used_ms = now_ms;
+    }
     write_index(storage, user_id, &index)
 }
 
@@ -301,6 +319,53 @@ mod tests {
         assert!(load(&storage, 1, 8).is_none());
         assert!(read_index(&storage, 1).lists.is_empty());
         assert!(load(&storage, 2, 7).is_some());
+    }
+
+    #[test]
+    fn eviction_skips_permission_only_entries_and_takes_the_oldest_saved_list() {
+        let storage = MemoryStorage::default();
+        for id in 1..=MAX_LISTS as i32 {
+            assert!(save(&storage, 1, id, &[id as u8], 1, id as f64));
+        }
+        assert!(
+            remember_permission(&storage, 1, 21, 1, 9999.0),
+            "a permission-only entry for a list never saved locally"
+        );
+        assert!(save(&storage, 1, 22, &[22], 1, 1000.0), "one past the cap");
+        assert!(
+            load(&storage, 1, 1).is_none(),
+            "list 1 was the oldest SAVED list, not the phantom entry"
+        );
+        assert!(
+            read_index(&storage, 1).lists.contains_key(&21),
+            "the permission-only phantom entry is never evicted in place of a real list"
+        );
+        assert!(load(&storage, 1, 22).is_some());
+        assert_eq!(
+            read_index(&storage, 1)
+                .lists
+                .values()
+                .filter(|e| e.has_snapshot)
+                .count(),
+            MAX_LISTS
+        );
+    }
+
+    #[test]
+    fn remember_permission_does_not_bump_last_used_without_a_snapshot() {
+        let storage = MemoryStorage::default();
+        assert!(remember_permission(&storage, 1, 7, 2, 500.0));
+        let entry = read_index(&storage, 1).lists.get(&7).cloned().unwrap();
+        assert_eq!(entry.last_used_ms, 0.0);
+        assert!(!entry.has_snapshot);
+        assert_eq!(entry.permission, 2);
+    }
+
+    #[test]
+    fn garbage_index_json_degrades_to_empty() {
+        let storage = MemoryStorage::default();
+        storage.set(&index_key(1), "not json");
+        assert!(read_index(&storage, 1).lists.is_empty());
     }
 
     #[test]

@@ -7,4 +7,5 @@
 //! narrow or remove this allow once `store` gains real call sites.
 #![allow(dead_code)]
 
+pub mod adapter;
 pub mod store;
