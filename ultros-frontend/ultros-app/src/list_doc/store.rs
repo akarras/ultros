@@ -107,11 +107,27 @@ pub fn save(
     // or are eligible for eviction: a permission-only entry from
     // `remember_permission` has no `doc_key` to remove and evicting it would
     // free nothing, so it must never be picked over a real cached list.
-    while index.lists.values().filter(|e| e.has_snapshot).count() > MAX_LISTS {
+    //
+    // The flag alone isn't trusted: an index written before `has_snapshot`
+    // existed defaults it to `false` even though the blob is still sitting
+    // under `doc_key`, so a real stored snapshot is confirmed by checking
+    // storage directly when the flag says no. This lets a pre-flag index
+    // self-heal into eviction's LRU ordering instead of being invisible to
+    // it forever.
+    let is_backed = |id: i32, entry: &IndexEntry| {
+        entry.has_snapshot || storage.get(&doc_key(user_id, id)).is_some()
+    };
+    while index
+        .lists
+        .iter()
+        .filter(|(id, e)| is_backed(**id, e))
+        .count()
+        > MAX_LISTS
+    {
         let Some((&oldest, _)) = index
             .lists
             .iter()
-            .filter(|(_, e)| e.has_snapshot)
+            .filter(|(id, e)| is_backed(**id, e))
             .min_by(|a, b| a.1.last_used_ms.total_cmp(&b.1.last_used_ms))
         else {
             break;
@@ -348,6 +364,24 @@ mod tests {
                 .filter(|e| e.has_snapshot)
                 .count(),
             MAX_LISTS
+        );
+    }
+
+    #[test]
+    fn eviction_self_heals_a_pre_flag_index_entry_whose_blob_still_exists() {
+        let storage = MemoryStorage::default();
+        for id in 1..=MAX_LISTS as i32 {
+            assert!(save(&storage, 1, id, &[id as u8], 1, id as f64));
+        }
+        // Simulate an index entry written before `has_snapshot` existed: the
+        // flag defaults to `false`, but the blob under `doc_key` is untouched.
+        let mut index = read_index(&storage, 1);
+        index.lists.get_mut(&1).unwrap().has_snapshot = false;
+        assert!(write_index(&storage, 1, &index));
+        assert!(save(&storage, 1, 99, &[99], 1, 1000.0), "one past the cap");
+        assert!(
+            load(&storage, 1, 1).is_none(),
+            "the pre-flag entry with a real blob was still treated as backed and evicted"
         );
     }
 

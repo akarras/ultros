@@ -8,4 +8,5 @@
 #![allow(dead_code)]
 
 pub mod adapter;
+pub mod handle;
 pub mod store;

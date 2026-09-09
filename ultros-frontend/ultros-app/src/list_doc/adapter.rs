@@ -30,8 +30,14 @@ fn code_quality(code: i32) -> Option<Quality> {
     }
 }
 
-pub fn row_id(key: &RowKey) -> i32 {
-    key.item_id * 4 + quality_code(key.quality)
+/// `None` when `item_id * 4 + code` overflows `i32`. FFXIV item ids sit far
+/// below `2^29` today, so this is not expected to trigger in practice; it
+/// exists so a future id range change fails a row closed rather than
+/// wrapping into another row's id.
+pub fn row_id(key: &RowKey) -> Option<i32> {
+    key.item_id
+        .checked_mul(4)?
+        .checked_add(quality_code(key.quality))
 }
 
 /// Decodes an id produced by `row_id`. `None` for an id whose low two bits
@@ -51,16 +57,18 @@ fn clamp_i32(value: i64) -> i32 {
     value.clamp(0, i32::MAX as i64) as i32
 }
 
-pub fn to_list_item(list_id: i32, row: &RowSnapshot) -> ListItem {
-    ListItem {
-        id: row_id(&row.key),
+/// `None` when `row_id` overflows for this row's key; the row is skipped by
+/// callers rather than rendered under a wrapped, possibly-colliding id.
+pub fn to_list_item(list_id: i32, row: &RowSnapshot) -> Option<ListItem> {
+    Some(ListItem {
+        id: row_id(&row.key)?,
         item_id: row.key.item_id,
         list_id,
         hq: row.key.hq(),
         quantity: Some(clamp_i32(row.need)),
         acquired: Some(clamp_i32(row.acquired)),
         target_price: row.target,
-    }
+    })
 }
 
 /// The row an id decodes to, if the document still has it. Decoding is
@@ -87,14 +95,18 @@ pub fn view_result(
         list.list.wdr_filter = scope;
     }
     let list_id = list.list.id;
+    // `to_list_item` skips a row whose id doesn't fit `i32`; see its doc
+    // comment. Such a row is simply absent from the rendered list rather
+    // than shown under a wrapped id that might collide with another row's.
     let rows = doc
         .rows()
         .iter()
-        .map(|row| {
-            (
-                to_list_item(list_id, row),
+        .filter_map(|row| {
+            let item = to_list_item(list_id, row)?;
+            Some((
+                item,
                 listings.get(&row.key.item_id).cloned().unwrap_or_default(),
-            )
+            ))
         })
         .collect();
     (list, rows)
@@ -109,12 +121,26 @@ pub fn view_result(
 #[derive(Clone, Debug)]
 pub enum Edit {
     Add(ListItem),
+    /// The caller must keep the ORIGINAL `id` on the mutated `ListItem`: ids
+    /// are derived from the row key (see `row_id`/`find_key`), so an id that
+    /// reflects the edit's new `hq`/`item_id` would fail to locate the row
+    /// this edit is meant to apply to.
     Edit(ListItem),
     Remove(i32),
     RemoveMany(Vec<i32>),
     SetQuality(Vec<i32>, Option<bool>),
-    AddAcquired { item_id: i32, delta: i64 },
-    Rename { name: String, scope: AnySelector },
+    /// Prefers the row whose quality matches `hq` (when it has room for
+    /// more); falls back to any row of `item_id` with room. Mirrors the
+    /// legacy auto-mark behaviour of "fill the row you're looking at first."
+    AddAcquired {
+        item_id: i32,
+        hq: Option<bool>,
+        delta: i64,
+    },
+    Rename {
+        name: String,
+        scope: AnySelector,
+    },
 }
 
 /// Applies one full-row edit the same way the server's own PUT handler does
@@ -168,10 +194,10 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
             let before = doc.row(&key).expect("find_key confirmed the row exists");
             undo.group(|| apply_edit(doc, &before, &item))
         }
-        Edit::Remove(id) => match find_key(doc, id) {
+        Edit::Remove(id) => undo.group(|| match find_key(doc, id) {
             Some(key) => doc.remove_row(&key),
             None => Ok(()),
-        },
+        }),
         Edit::RemoveMany(ids) => undo.group(|| {
             for id in ids {
                 if let Some(key) = find_key(doc, id) {
@@ -193,17 +219,21 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                 Ok(())
             })
         }
-        Edit::AddAcquired { item_id, delta } => {
-            // The first row of that item with room, as auto-mark always chose.
-            let Some(row) = doc
-                .rows()
-                .into_iter()
-                .find(|r| r.key.item_id == item_id && r.acquired < r.need)
-            else {
+        Edit::AddAcquired { item_id, hq, delta } => undo.group(|| {
+            let rows = doc.rows();
+            let has_room = |r: &&RowSnapshot| r.key.item_id == item_id && r.acquired < r.need;
+            // The row matching the quality the caller is looking at, if it
+            // has room; otherwise any row of that item with room.
+            let wanted = Quality::from(hq);
+            let row = rows
+                .iter()
+                .find(|r| has_room(r) && r.key.quality == wanted)
+                .or_else(|| rows.iter().find(has_room));
+            let Some(row) = row else {
                 return Ok(());
             };
             doc.add_acquired(&row.key, delta)
-        }
+        }),
         Edit::Rename { name, scope } => undo.group(|| {
             doc.rename(&name)?;
             doc.set_scope(scope)
@@ -249,19 +279,41 @@ mod tests {
     fn row_ids_are_positive_stable_and_distinct_per_quality() {
         // The pair that collided under the old FNV-1a sketch:
         // `21482:any` and `41373:hq` both hashed to 1708812798.
-        let any = row_id(&RowKey::new(21482, None));
-        let hq = row_id(&RowKey::new(41373, Some(true)));
+        let any = row_id(&RowKey::new(21482, None)).unwrap();
+        let hq = row_id(&RowKey::new(41373, Some(true))).unwrap();
         assert!(any > 0 && hq > 0);
         assert_ne!(any, hq);
-        assert_eq!(any, row_id(&RowKey::new(21482, None)));
+        assert_eq!(any, row_id(&RowKey::new(21482, None)).unwrap());
     }
 
     #[test]
     fn row_id_round_trips_through_key_of_for_every_quality() {
         for hq in [None, Some(true), Some(false)] {
             let key = RowKey::new(4567, hq);
-            assert_eq!(key_of(row_id(&key)), Some(key));
+            assert_eq!(key_of(row_id(&key).unwrap()), Some(key));
         }
+    }
+
+    #[test]
+    fn row_id_reports_none_on_overflow_instead_of_wrapping() {
+        // `i32::MAX / 4` is the largest `item_id` that still fits; one past
+        // it must not silently wrap into a small, colliding id.
+        let near_limit = RowKey::new(i32::MAX / 4, None);
+        assert!(row_id(&near_limit).is_some());
+        let overflowing = RowKey::new(i32::MAX, None);
+        assert_eq!(row_id(&overflowing), None);
+        assert!(
+            to_list_item(
+                1,
+                &RowSnapshot {
+                    key: overflowing,
+                    need: 1,
+                    acquired: 0,
+                    target: None,
+                }
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -294,8 +346,8 @@ mod tests {
             ],
         );
         let mut undo = ListUndo::with_merge_interval(&doc, 0);
-        let nq_id = row_id(&RowKey::new(10, Some(false)));
-        let hq_id = row_id(&RowKey::new(10, Some(true)));
+        let nq_id = row_id(&RowKey::new(10, Some(false))).unwrap();
+        let hq_id = row_id(&RowKey::new(10, Some(true))).unwrap();
 
         // Editing the NQ row never touches the HQ row.
         apply(
@@ -341,7 +393,7 @@ mod tests {
         assert_eq!(list.list.wdr_filter, AnySelector::World(79));
         assert_eq!(list.permission, ListPermission::Owner);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, to_list_item(5, &doc.rows()[0]));
+        assert_eq!(rows[0].0, to_list_item(5, &doc.rows()[0]).unwrap());
         assert_eq!(rows[0].0.list_id, 5);
     }
 
@@ -349,7 +401,7 @@ mod tests {
     fn edits_apply_and_each_is_one_undo_step() {
         let doc = doc();
         let mut undo = ListUndo::with_merge_interval(&doc, 0);
-        let existing = to_list_item(5, &doc.rows()[0]);
+        let existing = to_list_item(5, &doc.rows()[0]).unwrap();
 
         apply(
             &doc,
@@ -388,6 +440,7 @@ mod tests {
             &mut undo,
             Edit::AddAcquired {
                 item_id: 10,
+                hq: None,
                 delta: 1,
             },
         )
@@ -406,13 +459,13 @@ mod tests {
         assert!(undo.undo().unwrap());
         assert_eq!(doc.meta().name, "Doc name");
 
-        let id = row_id(&RowKey::new(10, None));
+        let id = row_id(&RowKey::new(10, None)).unwrap();
         apply(&doc, &mut undo, Edit::SetQuality(vec![id], Some(false))).unwrap();
         assert!(doc.row(&RowKey::new(10, Some(false))).is_some());
         apply(
             &doc,
             &mut undo,
-            Edit::RemoveMany(vec![row_id(&RowKey::new(10, Some(false)))]),
+            Edit::RemoveMany(vec![row_id(&RowKey::new(10, Some(false))).unwrap()]),
         )
         .unwrap();
         assert!(doc.rows().is_empty());
@@ -429,7 +482,7 @@ mod tests {
         doc.add_row(RowKey::new(1, Some(true)), 5, None).unwrap();
         let mut undo = ListUndo::with_merge_interval(&doc, 0);
 
-        let nq_id = row_id(&RowKey::new(1, Some(false)));
+        let nq_id = row_id(&RowKey::new(1, Some(false))).unwrap();
         apply(
             &doc,
             &mut undo,
@@ -447,5 +500,60 @@ mod tests {
 
         let row = doc.row(&RowKey::new(1, Some(true))).unwrap();
         assert_eq!(row.need, 7, "merged need must be the sum, not overwritten");
+    }
+
+    #[test]
+    fn add_acquired_prefers_the_row_matching_hq_then_falls_back_to_any_row_with_room() {
+        let doc = ListDocument::from_rows(
+            MetaSnapshot {
+                name: "Doc name".into(),
+                scope: None,
+            },
+            &[
+                RowSnapshot {
+                    key: RowKey::new(10, Some(false)),
+                    need: 2,
+                    acquired: 0,
+                    target: None,
+                },
+                RowSnapshot {
+                    key: RowKey::new(10, Some(true)),
+                    need: 2,
+                    acquired: 0,
+                    target: None,
+                },
+            ],
+        );
+        let mut undo = ListUndo::with_merge_interval(&doc, 0);
+
+        // Asking for HQ fills the HQ row, not the NQ row that happens to sort
+        // first.
+        apply(
+            &doc,
+            &mut undo,
+            Edit::AddAcquired {
+                item_id: 10,
+                hq: Some(true),
+                delta: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(doc.row(&RowKey::new(10, Some(true))).unwrap().acquired, 1);
+        assert_eq!(doc.row(&RowKey::new(10, Some(false))).unwrap().acquired, 0);
+
+        // Once the HQ row has no room left, asking for HQ again falls back to
+        // any row of the item with room.
+        doc.set_need(&RowKey::new(10, Some(true)), 1).unwrap();
+        apply(
+            &doc,
+            &mut undo,
+            Edit::AddAcquired {
+                item_id: 10,
+                hq: Some(true),
+                delta: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(doc.row(&RowKey::new(10, Some(false))).unwrap().acquired, 1);
     }
 }
