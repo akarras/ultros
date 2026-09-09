@@ -28,6 +28,8 @@ pub mod list_shared_group;
 pub mod list_shared_role;
 pub mod list_shared_user;
 pub mod listing_last_updated;
+pub mod market_sweep;
+pub mod market_sweep_world;
 pub mod materia_listing;
 pub mod notification_endpoint;
 pub mod owned_ffxiv_character;
