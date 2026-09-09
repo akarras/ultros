@@ -808,6 +808,56 @@ async fn price_series(
     Ok(cached_json(body, ttl))
 }
 
+/// Last-observed cheapest listing, sampled across every world in scope.
+async fn floor_history(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+) -> Result<axum::response::Response, WebError> {
+    let now = chrono::Utc::now().timestamp();
+    let to = query.to.unwrap_or(now).min(now);
+    let from = query.from.unwrap_or(0);
+    // ClickHouse DateTime uses unsigned 32-bit seconds.
+    if from < 0 || from >= to || to > i64::from(u32::MAX) {
+        return Err(WebError::BadRequest);
+    }
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let ttl = std::time::Duration::from_secs(60);
+    let key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from,
+        to: if query.to.is_some() {
+            to
+        } else {
+            open_window_cache_stamp(to, 60)
+        },
+        bucket: 0,
+        group: "floor",
+        hq: hq.as_str(),
+        bins: 0,
+    };
+    if let Some(hit) = cache.get(&key) {
+        return Ok(cached_json(hit, ttl));
+    }
+    let selected = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+    let payload = ultros_clickhouse::floor_history::history(&ch, item_id, &worlds, hq, from, to)
+        .await
+        .map_err(|e| crate::web::error::ClickHouseQueryError::new("floor_history", e))?;
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
 /// JSON response carrying a `Cache-Control` matching the in-process TTL, so
 /// the browser and any CDN absorb repeats too.
 fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Response {
@@ -3361,6 +3411,7 @@ fn api_router() -> Router<WebState> {
             get(extended_sale_history),
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
+        .route("/api/v1/floor_history/{world}/{itemid}", get(floor_history))
         .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
         .route("/api/v1/game-history", get(game_history))
         .route(

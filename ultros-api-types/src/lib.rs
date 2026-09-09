@@ -3,6 +3,7 @@ pub mod app_version;
 pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
+pub mod floor_history;
 pub mod freshness;
 pub mod game_history;
 pub mod icon_size;

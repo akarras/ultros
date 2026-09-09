@@ -10,16 +10,18 @@ pub enum Section {
     Overview,
     Listings,
     History,
+    SalesChart,
     Sources,
     Related,
 }
 
 impl Section {
     /// Every section, in DOM order.
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Overview,
         Section::Listings,
         Section::History,
+        Section::SalesChart,
         Section::Sources,
         Section::Related,
     ];
@@ -35,6 +37,7 @@ impl Section {
             Section::Overview => "overview",
             Section::Listings => "listings",
             Section::History => "history",
+            Section::SalesChart => "market-history",
             Section::Sources => "sources",
             Section::Related => "related",
         }

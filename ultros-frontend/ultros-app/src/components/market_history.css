@@ -1,0 +1,63 @@
+/* The item page owns the card and heading. These tokens also color the SVG
+   scene, so changing palette or system appearance updates every chart mode. */
+.market-history {
+    --mh-muted: var(--color-text-muted);
+    --mh-floor: #4de0c1;
+    --mh-volume: var(--chart-line);
+    --mh-candle-up: color-mix(in srgb, var(--chart-line) 75%, white);
+    --mh-candle-down: color-mix(in srgb, var(--chart-line) 45%, #28212e);
+    --mh-average: #facc15;
+    --mh-series-strength: 100%;
+    color: var(--color-text);
+    min-width: 0;
+}
+[data-theme="light"] .market-history {
+    --mh-floor: #087b68;
+    --mh-candle-up: color-mix(in srgb, var(--chart-line) 75%, white);
+    --mh-candle-down: color-mix(in srgb, var(--chart-line) 80%, #171321);
+    --mh-average: #976400;
+    --mh-series-strength: 72%;
+}
+.mh-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); padding: 14px 0 16px; border-block: 1px solid var(--color-outline); margin: 2px 0 16px; }
+.mh-stat { padding: 0 20px; border-left: 1px solid var(--color-outline); }
+.mh-stat:first-child { padding-left: 0; border: 0; }
+.mh-stat>span { font-size: 11px; color: var(--mh-muted); }
+.mh-stat>strong { display: block; font-size: 22px; letter-spacing: -.4px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 3px; white-space: nowrap; }
+.mh-stat small { font-size: 11px; letter-spacing: 0; color: var(--mh-muted); font-weight: 400; }
+.mh-stat p { font-size: 10px; color: var(--mh-muted); margin: 3px 0 0; }
+.mh-floor-stat>strong { color: var(--mh-floor); }
+.mh-layer { display: inline-flex; align-items: center; gap: 9px; padding: 7px 10px; font: inherit; font-size: 12px; border: 1px solid color-mix(in srgb,var(--mh-floor) 35%,transparent); border-radius: 7px; background: color-mix(in srgb,var(--mh-floor) 6%,transparent); color: var(--mh-floor); cursor: pointer; }
+.mh-layer i { width: 20px; height: 3px; background: var(--mh-floor); display: inline-block; }
+.mh-layer>span { font-size: 10px; border-left: 1px solid var(--color-outline); padding-left: 9px; }
+.mh-layer[aria-pressed=false] { color: var(--mh-muted); border-color: var(--color-outline); background: transparent; }
+.mh-layer[aria-pressed=false] i { opacity: .35; }
+.mh-layer:disabled { opacity: .65; cursor: default; }
+.mh-listing-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 3px 0; }
+.mh-floor-scope,.mh-floor-reason { font-size: 11px; color: var(--mh-muted); }
+.mh-floor-reason { margin: 0; padding: 8px 12px; border-left: 2px solid var(--color-outline-strong); line-height: 1.6; }
+.market-chart-toolbar { padding-bottom: 12px; border-bottom: 1px solid var(--color-outline); gap: 10px!important; }
+.market-history .mh-mode { padding: 8px 12px; font-size: 12px; }
+.market-history .mh-mode[aria-pressed=true] { background: var(--brand-bg); color: var(--brand-fg); }
+.market-history .price-history-chart { border-radius: 8px; background: linear-gradient(160deg,color-mix(in srgb,var(--mh-floor) 4%,transparent),transparent 65%); padding-top: 8px; }
+.market-history .price-history-chart:focus-visible,.market-history button:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 3px; }
+.market-history .market-chart-tooltip { color: var(--color-text); border: 1px solid var(--color-outline-strong); border-radius: 8px; background: var(--color-background-elevated); padding: 14px; box-shadow: 0 10px 28px #0002; }
+.mh-floor-readout { display: flex; justify-content: space-between; gap: 20px; color: var(--mh-floor); padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--color-outline); }
+.mh-floor-readout strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.mh-footnote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--mh-muted); border-top: 1px solid var(--color-outline); padding-top: 12px; margin-top: 12px; }
+.mh-footnote span:first-child { display: flex; align-items: center; gap: 7px; }
+.mh-floor-dot { display: inline-block; width: 5px; height: 5px; background: var(--mh-floor); border-radius: 50%; }
+.mh-data-note { color: var(--mh-muted); font-size: 10px; line-height: 1.6; margin: 6px 0 0; }
+@media(max-width:640px) {
+    .mh-stats { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px 0; }
+    .mh-stat { padding: 0 14px; }
+    .mh-stat:nth-child(3) { border-left: 0; padding-left: 0; }
+    .mh-stat>strong { font-size: 21px; }
+    .mh-footnote { flex-direction: column; font-size: 10px; }
+    .mh-listing-control { gap: 8px; }
+    .mh-floor-scope { font-size: 10px; }
+    .market-history .price-history-chart { margin-inline: -8px; width: calc(100% + 16px); }
+    .market-chart-toolbar>[role=group]:first-child { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; max-width: 100%; }
+    .market-history .mh-mode { justify-content: center; padding: 8px; font-size: 11px; gap: 5px; }
+    .market-history .mh-mode:nth-child(3) { border-left: 0; }
+    .market-history .mh-mode:nth-child(n+3) { border-top: 1px solid var(--color-outline); }
+}

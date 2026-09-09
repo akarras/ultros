@@ -14,6 +14,7 @@
 //! Analyzer, FC Crafting). CH backs the deeper trend/historical math.
 
 pub mod backfill;
+pub mod floor_history;
 pub mod listing_seed;
 pub mod quality_filter;
 pub mod queries;
