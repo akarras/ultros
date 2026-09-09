@@ -1,4 +1,5 @@
 @import "tailwindcss" source("../ultros-frontend/ultros-app/src");
+@source "../ultros-frontend/ultros-ui/src";
 
 /* Item reference sections share rows without stretching sparse wells. Keep
    the Sources wrapper in flow so its fragment link remains a scroll target. */
