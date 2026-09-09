@@ -168,15 +168,6 @@ pub fn purge(storage: &impl Storage, user_id: i64, list_id: i32) {
     }
 }
 
-/// Drop every cached list for a user, e.g. on logout or account switch.
-pub fn purge_user(storage: &impl Storage, user_id: i64) {
-    let index = read_index(storage, user_id);
-    for &list_id in index.lists.keys() {
-        storage.remove(&doc_key(user_id, list_id));
-    }
-    storage.remove(&index_key(user_id));
-}
-
 pub struct BrowserStorage;
 
 impl Storage for BrowserStorage {
@@ -322,19 +313,6 @@ mod tests {
         purge(&storage, 1, 7);
         assert!(load(&storage, 1, 7).is_none());
         assert!(!read_index(&storage, 1).lists.contains_key(&7));
-    }
-
-    #[test]
-    fn purge_user_removes_all_docs_for_that_user_and_spares_others() {
-        let storage = MemoryStorage::default();
-        assert!(save(&storage, 1, 7, &[1], 1, 1000.0));
-        assert!(save(&storage, 1, 8, &[2], 1, 1001.0));
-        assert!(save(&storage, 2, 7, &[3], 1, 1002.0));
-        purge_user(&storage, 1);
-        assert!(load(&storage, 1, 7).is_none());
-        assert!(load(&storage, 1, 8).is_none());
-        assert!(read_index(&storage, 1).lists.is_empty());
-        assert!(load(&storage, 2, 7).is_some());
     }
 
     #[test]

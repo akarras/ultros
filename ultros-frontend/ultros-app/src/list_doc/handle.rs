@@ -111,17 +111,15 @@ impl ListDocHandle {
         self.with_doc(|doc| doc.meta())
     }
 
-    pub fn version(&self) -> Vec<u8> {
-        self.with_doc(|doc| doc.version())
-    }
-
-    /// `version()` for callers that may outlive the handle's owner: the
-    /// socket's reconnect replay rebuilds a list-doc subscribe message from
-    /// a factory that can still be in the `subscription_messages` map after
-    /// the page (and this handle's `StoredValue`s) were disposed. Reading a
-    /// disposed `StoredValue` panics, so a late replay would abort the wasm
-    /// module; an empty version instead just asks the server for a full
-    /// snapshot, which the (already dead) subscription then ignores.
+    /// The document's version vector, for callers that may outlive the
+    /// handle's owner — which, now that `routes/list_view_sync.rs` is the
+    /// only call site, is all of them. The socket's reconnect replay
+    /// rebuilds a list-doc subscribe message from a factory that can still
+    /// be in the `subscription_messages` map after the page (and this
+    /// handle's `StoredValue`s) were disposed. Reading a disposed
+    /// `StoredValue` panics, so a late replay would abort the wasm module;
+    /// an empty version instead just asks the server for a full snapshot,
+    /// which the (already dead) subscription then ignores.
     pub fn try_version(&self) -> Vec<u8> {
         self.doc
             .try_with_value(|doc| doc.version())

@@ -15,7 +15,7 @@ use leptos_i18n::I18nContext;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::{
     ActiveListing,
-    list::{ListActivity, ListCapabilities, ListItem},
+    list::{ListActivity, ListCapabilities, ListItem, ListWithPermission},
     world_helper::WorldHelper,
 };
 
@@ -52,8 +52,13 @@ use ultros_api_types::websocket::{
 };
 use xiv_gen::ItemId;
 
+/// The `(list, rows with listings)` shape every list surface consumes, named
+/// once so `list_view_sync.rs` can spell it in its own loader's signature.
+pub(crate) type ListViewResult =
+    Result<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>), crate::error::AppError>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum MenuState {
+pub(crate) enum MenuState {
     None,
     // Recipe and item search are now handled by modals
     MakePlace,
@@ -65,7 +70,7 @@ enum MenuState {
 /// output, so a DC exclusion can't be honored by one surface and ignored by
 /// another (the pre-redesign bug: only `BuyingView` and `PriceViewer` looked
 /// at `excluded-datacenters`, so the sort order and row listings never did).
-fn filter_excluded(
+pub(crate) fn filter_excluded(
     items: &[(ListItem, Vec<ActiveListing>)],
     excluded_worlds: &HashSet<i32>,
     excluded_datacenters: &HashSet<String>,
@@ -93,10 +98,10 @@ fn filter_excluded(
 /// Comma-separated list of world ids for a query param. Held sorted and
 /// deduped so encoding is canonical and a URL round-trips exactly.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct IdList(Vec<i32>);
+pub(crate) struct IdList(pub(crate) Vec<i32>);
 
 impl IdList {
-    fn from_set(set: HashSet<i32>) -> Self {
+    pub(crate) fn from_set(set: HashSet<i32>) -> Self {
         let mut ids: Vec<i32> = set.into_iter().collect();
         ids.sort_unstable();
         Self(ids)
@@ -132,10 +137,10 @@ impl fmt::Display for IdList {
 /// Comma-separated list of datacenter names for a query param. Sorted and
 /// deduped for the same canonical-encoding reason as [`IdList`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct NameList(Vec<String>);
+pub(crate) struct NameList(pub(crate) Vec<String>);
 
 impl NameList {
-    fn from_set(set: HashSet<String>) -> Self {
+    pub(crate) fn from_set(set: HashSet<String>) -> Self {
         let mut names: Vec<String> = set.into_iter().collect();
         names.sort_unstable();
         Self(names)
@@ -170,14 +175,14 @@ impl fmt::Display for NameList {
     }
 }
 
-fn remaining_quantity(item: &ListItem) -> i32 {
+pub(crate) fn remaining_quantity(item: &ListItem) -> i32 {
     let quantity = item.quantity.unwrap_or(1).max(1);
     quantity.saturating_sub(item.acquired.unwrap_or(0).clamp(0, quantity))
 }
 
 /// Cheapest per-unit price among the listings that match the item's quality
 /// requirement — mirrors what the price column displays.
-fn cheapest_price_per_unit(item: &ListItem, listings: &[ActiveListing]) -> Option<i32> {
+pub(crate) fn cheapest_price_per_unit(item: &ListItem, listings: &[ActiveListing]) -> Option<i32> {
     listings
         .iter()
         .filter(|listing| item.hq.map(|hq| listing.hq == hq).unwrap_or(true))
@@ -188,7 +193,7 @@ fn cheapest_price_per_unit(item: &ListItem, listings: &[ActiveListing]) -> Optio
 /// Deterministic, total ordering: every comparison falls back to the unique
 /// list-item id, so equal keys can never surface backend (HashMap) order in
 /// the DOM — that would be an SSR/CSR hydration mismatch.
-fn sort_list_items<'a>(
+pub(crate) fn sort_list_items<'a>(
     items: &mut [(ListItem, Vec<ActiveListing>)],
     spec: SortSpec,
     name_of: impl Fn(i32) -> Option<&'a str>,
@@ -219,7 +224,7 @@ fn sort_list_items<'a>(
 /// loading state has the real table's rhythm. The select column is left out:
 /// it only shows in bulk-edit mode, which nobody is in while a list is still
 /// loading.
-fn list_item_table_skeleton_columns() -> Vec<SkeletonColumn> {
+pub(crate) fn list_item_table_skeleton_columns() -> Vec<SkeletonColumn> {
     vec![
         SkeletonColumn::new("w-16 px-3 py-3", SkeletonCell::Badge),
         SkeletonColumn::new("flex-1 min-w-40 px-3 py-3", SkeletonCell::IconText),
@@ -244,7 +249,7 @@ fn list_item_table_skeleton_columns() -> Vec<SkeletonColumn> {
 /// the substrate's own visibility mechanism, which *omits* an invisible
 /// column's cell on the `<table>` substrate) specifically so the header and
 /// body element counts never diverge as `edit_list_mode` flips.
-fn list_item_table_columns(
+pub(crate) fn list_item_table_columns(
     i18n: I18nContext<Locale, I18nKeys>,
     edit_list_mode: RwSignal<bool>,
 ) -> Vec<Column<()>> {
@@ -1380,7 +1385,7 @@ pub fn ListView() -> impl IntoView {
 }
 
 #[component]
-fn ActivityFeed(
+pub(crate) fn ActivityFeed(
     activity: Resource<Result<Vec<ListActivity>, crate::error::AppError>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
