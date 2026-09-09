@@ -39,8 +39,13 @@ where
     let query = location.query;
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let metrics = StoredValue::new(metrics);
+    let registry = use_context::<super::registry::FilterRegistry>();
     let filters = Memo::new(move |_| {
-        let mut filters = parse_filters(query.with(|q| q.get("gf")).as_deref());
+        let mut filters = query.with(|q| {
+            registry
+                .map(|r| r.filters(q))
+                .unwrap_or_else(|| parse_filters(q.get("gf").as_deref()))
+        });
         metrics.with_value(|metrics| {
             filters.retain(|id, f| metrics.iter().any(|m| m.id == id && f.valid(m.kind)))
         });
@@ -73,14 +78,33 @@ where
         let sort = query.with(|q| q.get("sort"));
         let sort = sort.as_deref().and_then(|s| s.strip_prefix("grid:"));
         for col in &mut defs {
+            let alias_choices: Vec<_> = col
+                .filters
+                .iter()
+                .filter(|f| f.metric.is_none() && registry.is_some_and(|r| r.is_alias(f.key)))
+                .flat_map(|f| {
+                    f.choices.iter().cloned().chain(
+                        f.options
+                            .iter()
+                            .map(|(key, label)| (key.to_string(), label.clone())),
+                    )
+                })
+                .collect();
+            if let Some(registry) = registry {
+                col.filters
+                    .retain(|f| f.metric.is_some() || !registry.is_alias(f.key));
+            }
             metrics.with_value(|metrics| {
                 if let Some(metric) = metrics.iter().find(|m| m.id == col.id) {
-                    if !col.filters.iter().any(|filter| filter.key == col.id) {
-                        col.filters.push(super::ColumnFilter::metric(
-                            col.id,
-                            col.label.clone(),
-                            metric.kind,
-                        ));
+                    if !col
+                        .filters
+                        .iter()
+                        .any(|filter| filter.key == col.id && filter.metric.is_some())
+                    {
+                        let mut filter =
+                            super::ColumnFilter::metric(col.id, col.label.clone(), metric.kind);
+                        filter.choices = alias_choices.clone();
+                        col.filters.push(filter);
                     }
                     col.query_sort = !metric.partial;
                     if sort.is_some() {
@@ -106,6 +130,10 @@ where
         }
         defs
     });
+    if let Some(registry) = registry {
+        registry.register(resolved.into());
+        registry.register_count(Signal::derive(move || queried.with(Vec::len)));
+    }
     let reset = Memo::new(move |_| {
         let mut q = query.get();
         for key in ["l", "layout", "cols"] {
@@ -162,7 +190,7 @@ where
     };
     view! {
         {show_saved_views.then(||view! {<div class="flex justify-end px-3 py-2"><super::saved_views::GridSavedViews id=saved_views_id/></div>})}
-        {move || (!filters.with(|f|f.is_empty())).then(||view! {
+        {move || (registry.is_none() && !filters.with(|f|f.is_empty())).then(||view! {
             <div class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-grid-query-summary>
                 <span>{t!(i18n, grid_query_count, count = move || queried.with(Vec::len))}</span>
                 <span>{t!(i18n,grid_query_filters)}</span>
@@ -171,15 +199,7 @@ where
                     let mut q=query.get(); let mut next=filters.get();next.remove(id);q.remove("gf");
                     if !next.is_empty(){q.insert("gf",serde_json::to_string(&next).unwrap_or_default());}
                     let href=format!("{}{}",location.pathname.get(),q.to_query_string());
-                    let operator = match filter.op {
-                        FilterOp::Eq => t_string!(i18n,grid_query_eq).to_string(),
-                        FilterOp::Ne => t_string!(i18n,grid_query_ne).to_string(),
-                        FilterOp::Contains => t_string!(i18n,grid_query_contains).to_string(),
-                        FilterOp::Gte => t_string!(i18n,grid_query_gte).to_string(),
-                        FilterOp::Lte => t_string!(i18n,grid_query_lte).to_string(),
-                        FilterOp::Missing => t_string!(i18n,grid_query_missing).to_string(),
-                        FilterOp::Present => t_string!(i18n,grid_query_present).to_string(),
-                    };
+                    let operator = super::filter::operator_label(filter.op);
                     let value = if matches!(filter.op,FilterOp::Missing|FilterOp::Present) { "" } else { &filter.value };
                     view! {<leptos_router::components::A href scroll=false attr:class="rounded-full border px-2 py-1" attr:title=t_string!(i18n,grid_filter_clear).to_string()>{format!("{label}: {operator} {value} ×")}</leptos_router::components::A>}
                 }).collect_view())}

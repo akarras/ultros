@@ -6,6 +6,7 @@
 pub mod cells;
 pub mod columns;
 pub mod enrichment;
+pub mod filters;
 pub use ultros_calc::formula;
 pub mod grid;
 pub use ultros_crafting::hop;

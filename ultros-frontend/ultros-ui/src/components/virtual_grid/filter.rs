@@ -3,24 +3,6 @@ use crate::{components::app_link::use_location_or_default, i18n::*};
 use leptos::prelude::*;
 use leptos_router::params::ParamsMap;
 
-/// Keys whose landing default means "unlimited", spelled as an explicit empty
-/// value. Removing one outright would let `seed_query_default` put the default
-/// back on the next navigation, so clearing them writes the empty string
-/// instead — which is also why `grid-filter-active` tests for a non-empty
-/// value rather than for the key's presence.
-fn clears_to_empty(key: &str) -> bool {
-    matches!(key, "next-sale" | "last-sold" | "min-sales")
-}
-
-/// Write the packed metric filters back into `gf`, dropping the param once
-/// nothing is left in it.
-fn write_metric_filters(query: &mut ParamsMap, filters: MetricFilters) {
-    query.remove("gf");
-    if !filters.is_empty() {
-        query.insert("gf", serde_json::to_string(&filters).unwrap_or_default());
-    }
-}
-
 /// `query` with every filter on one column cleared: metric filters drop out of
 /// the packed `gf` map, plain filters drop their own key.
 ///
@@ -35,14 +17,11 @@ pub fn cleared_query(query: &ParamsMap, filters: &[ColumnFilter]) -> ParamsMap {
         if filter.metric.is_some() {
             touched_metrics |= metrics.remove(filter.key).is_some();
         } else {
-            query.remove(filter.key);
-            if clears_to_empty(filter.key) {
-                query.insert(filter.key, String::new());
-            }
+            super::registry::clear_key(&mut query, filter.key);
         }
     }
     if touched_metrics {
-        write_metric_filters(&mut query, metrics);
+        super::registry::write_filters(&mut query, &metrics);
     }
     query
 }
@@ -50,24 +29,40 @@ pub fn cleared_query(query: &ParamsMap, filters: &[ColumnFilter]) -> ParamsMap {
 #[component]
 pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
     if let Some(kind) = filter.metric {
-        return view! { <MetricFilterEditor column=filter.key label=filter.label kind/> }
+        let mut choices = filter.choices;
+        choices.extend(
+            filter
+                .options
+                .into_iter()
+                .map(|(key, label)| (key.to_string(), label)),
+        );
+        return view! { <MetricFilterEditor column=filter.key label=filter.label kind choices/> }
             .into_any();
     }
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let location = use_location_or_default();
     let query = location.query;
     let key = filter.key;
-    let value = RwSignal::new(query.with_untracked(|q| q.get(key).unwrap_or_default()));
-    Effect::new(move |_| value.set(query.with(|q| q.get(key).unwrap_or_default())));
+    let registry = use_context::<super::registry::FilterRegistry>();
+    let default_value = StoredValue::new(filter.default_value);
+    let current = move |q: &ParamsMap| {
+        q.get(key)
+            .or_else(|| default_value.get_value())
+            .unwrap_or_default()
+    };
+    let value = RwSignal::new(query.with_untracked(current));
+    Effect::new(move |_| value.set(query.with(current)));
     #[cfg(feature = "hydrate")]
     let navigate = leptos_router::hooks::use_navigate();
     let commit = Callback::new(move |next: Option<String>| {
-        let mut q = query.get_untracked();
-        q.remove(key);
+        let q = query.get_untracked();
+        let mut q = registry.map(|r| r.canonical(&q)).unwrap_or(q);
+        super::registry::clear_key(&mut q, key);
         if let Some(next) = next {
-            q.insert(key, next);
-        } else if clears_to_empty(key) {
-            q.insert(key, String::new());
+            q.replace(key, next);
+        }
+        if let Some(registry) = registry {
+            registry.editing.set(None);
         }
         #[cfg(feature = "hydrate")]
         navigate(
@@ -83,12 +78,20 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
             },
         );
     });
-    let options = filter.options;
+    let multiple = filter.multiple;
+    let mut options = filter.choices;
+    options.extend(
+        filter
+            .options
+            .into_iter()
+            .map(|(key, label)| (key.to_string(), label)),
+    );
     let step = if matches!(key, "min-sales" | "vel") {
         "any"
     } else {
         "1"
     };
+    let min = (key == "sales").then_some("0");
     let max = (key == "sales"
         && location
             .pathname
@@ -100,18 +103,33 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
             e.prevent_default();
             commit.run(crate::components::filter_chip::committed_value(&value.get_untracked()));
         }>
-            <label>
-                <span>{filter.label}</span>
-                {if options.is_empty() {
-                    view! {<input type=if filter.numeric {"number"} else {"text"} step=step max=max
+            <fieldset class="min-w-0">
+                <legend>{filter.label.clone()}</legend>
+                {if multiple {
+                    view! { <div class="flex flex-col gap-2">
+                        {options.into_iter().map(|(token, label)| {
+                            let checked_token = token.clone();
+                            view! { <label class="flex items-center gap-2"><input type="checkbox"
+                                prop:checked=move || value.with(|raw| raw.split(',').any(|v| v == checked_token))
+                                on:change=move |event| {
+                                    value.update(|raw| {
+                                        let mut selected = raw.split(',').filter(|v| !v.is_empty()).map(str::to_string).collect::<std::collections::BTreeSet<_>>();
+                                        if event_target_checked(&event) { selected.insert(token.clone()); } else { selected.remove(&token); }
+                                        *raw = selected.into_iter().collect::<Vec<_>>().join(",");
+                                    });
+                                }/>{label}</label> }
+                        }).collect_view()}
+                    </div> }.into_any()
+                } else if options.is_empty() {
+                    view! {<input aria-label=filter.label.clone() type=if filter.numeric {"number"} else {"text"} step=step min=min max=max
                         prop:value=move || value.get() on:input=move |e| value.set(event_target_value(&e))/>}.into_any()
                 } else {
-                    view! {<select prop:value=move || value.get() on:change=move |e| value.set(event_target_value(&e))>
+                    view! {<select aria-label=filter.label.clone() prop:value=move || value.get() on:change=move |e| value.set(event_target_value(&e))>
                         <option value="">{t!(i18n, grid_filter_any)}</option>
                         {options.into_iter().map(|(value,label)| view! {<option value=value>{label}</option>}).collect_view()}
                     </select>}.into_any()
                 }}
-            </label>
+            </fieldset>
             <div class="grid-menu-actions">
                 <button type="submit">{t!(i18n, grid_filter_apply)}</button>
                 <button type="button" on:click=move |_| commit.run(None)>{t!(i18n, grid_filter_clear)}</button>
@@ -120,7 +138,7 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
     }.into_any()
 }
 
-use super::metrics::{FilterOp, MetricFilter, MetricFilters, ValueKind, parse_filters};
+use super::metrics::{FilterOp, MetricFilter, ValueKind, parse_filters};
 
 #[component]
 pub fn MetricSortControls(column: &'static str) -> impl IntoView {
@@ -141,27 +159,59 @@ pub fn MetricSortControls(column: &'static str) -> impl IntoView {
 }
 
 #[component]
-fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> impl IntoView {
+fn MetricFilterEditor(
+    column: &'static str,
+    label: String,
+    kind: ValueKind,
+    choices: Vec<(String, String)>,
+) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let location = use_location_or_default();
     let query = location.query;
-    let initial = parse_filters(query.with_untracked(|q| q.get("gf")).as_deref())
+    let registry = use_context::<super::registry::FilterRegistry>();
+    let read = move |q: &ParamsMap| {
+        registry
+            .map(|r| r.filters(q))
+            .unwrap_or_else(|| parse_filters(q.get("gf").as_deref()))
+    };
+    let initial = query
+        .with_untracked(read)
         .remove(column)
         .unwrap_or_else(|| MetricFilter {
             op: if kind == ValueKind::Number {
                 FilterOp::Gte
-            } else {
+            } else if choices.is_empty() {
                 FilterOp::Contains
+            } else {
+                FilterOp::Eq
             },
             value: String::new(),
         });
-    let value = RwSignal::new(initial.value);
+    let (lower, upper) = if initial.op == FilterOp::Between {
+        initial
+            .value
+            .split_once(',')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .unwrap_or_default()
+    } else {
+        (initial.value, String::new())
+    };
+    let choices = StoredValue::new(choices);
+    let value = RwSignal::new(lower);
+    let upper = RwSignal::new(upper);
     let op = RwSignal::new(initial.op);
     let invalid = RwSignal::new(false);
     Effect::new(move |_| {
-        let active = parse_filters(query.with(|q| q.get("gf")).as_deref());
+        let active = query.with(read);
         if let Some(filter) = active.get(column) {
-            value.set(filter.value.clone());
+            if filter.op == FilterOp::Between {
+                let (a, b) = filter.value.split_once(',').unwrap_or_default();
+                value.set(a.to_string());
+                upper.set(b.to_string());
+            } else {
+                value.set(filter.value.clone());
+                upper.set(String::new());
+            }
             op.set(filter.op);
         } else {
             value.set(String::new());
@@ -171,22 +221,37 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
     #[cfg(feature = "hydrate")]
     let navigate = leptos_router::hooks::use_navigate();
     let commit = Callback::new(move |clear: bool| {
-        let mut q = query.get_untracked();
+        let q = query.get_untracked();
+        let mut q = registry.map(|r| r.canonical(&q)).unwrap_or(q);
         let mut filters = parse_filters(q.get("gf").as_deref());
         if clear {
             filters.remove(column);
         } else {
             let filter = MetricFilter {
                 op: op.get_untracked(),
-                value: value.get_untracked().trim().to_string(),
+                value: if op.get_untracked() == FilterOp::Between {
+                    format!(
+                        "{},{}",
+                        value.get_untracked().trim(),
+                        upper.get_untracked().trim()
+                    )
+                } else {
+                    value.get_untracked().trim().to_string()
+                },
             };
-            if !filter.valid(kind) {
+            if !filter.valid(kind)
+                || (filter.op == FilterOp::Between
+                    && filter.bounds().is_some_and(|(low, high)| low > high))
+            {
                 invalid.set(true);
                 return;
             }
             filters.insert(column.to_string(), filter);
         }
-        write_metric_filters(&mut q, filters);
+        super::registry::write_filters(&mut q, &filters);
+        if let Some(registry) = registry {
+            registry.editing.set(None);
+        }
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
@@ -202,6 +267,10 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
         );
     });
     let options = [
+        (
+            FilterOp::Between,
+            t_string!(i18n, grid_query_between).to_string(),
+        ),
         (FilterOp::Eq, t_string!(i18n, grid_query_eq).to_string()),
         (FilterOp::Ne, t_string!(i18n, grid_query_ne).to_string()),
         (
@@ -210,6 +279,7 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
         ),
         (FilterOp::Gte, t_string!(i18n, grid_query_gte).to_string()),
         (FilterOp::Lte, t_string!(i18n, grid_query_lte).to_string()),
+        (FilterOp::Lt, t_string!(i18n, grid_query_lt).to_string()),
         (
             FilterOp::Missing,
             t_string!(i18n, grid_query_missing).to_string(),
@@ -233,21 +303,47 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
                     on:change=move |e| {if let Ok(next)=serde_json::from_value(serde_json::Value::String(event_target_value(&e))) {op.set(next);}}>
                     {options.into_iter().filter(|(op,_)| match kind {
                         ValueKind::Number => *op != FilterOp::Contains,
-                        ValueKind::Text => !matches!(op,FilterOp::Gte|FilterOp::Lte),
+                        ValueKind::Text => !matches!(op,FilterOp::Gte|FilterOp::Lte|FilterOp::Lt|FilterOp::Between),
                         ValueKind::Mixed => true,
                     }).map(|(op,label)|view! {<option value=token(op)>{label}</option>}).collect_view()}
                 </select>
             </label>
-            <input aria-label=t_string!(i18n,grid_query_value).to_string()
-                type=if kind==ValueKind::Number {"number"} else {"text"} step="any"
-                disabled=move || matches!(op.get(),FilterOp::Missing|FilterOp::Present)
-                prop:value=move || value.get() on:input=move |e|value.set(event_target_value(&e))/>
+            {move || if matches!(op.get(), FilterOp::Eq | FilterOp::Ne) && !choices.with_value(Vec::is_empty) {
+                view! { <select aria-label=t_string!(i18n, grid_query_value).to_string() prop:value=move || value.get() on:change=move |e| value.set(event_target_value(&e))>
+                    <option value="">{t!(i18n, grid_filter_any)}</option>
+                    {choices.get_value().into_iter().map(|(key,label)| view! { <option value=key>{label}</option> }).collect_view()}
+                </select> }.into_any()
+            } else {
+                view! { <input aria-label=t_string!(i18n,grid_query_value).to_string()
+                    type=if kind==ValueKind::Number {"number"} else {"text"} step="any"
+                    disabled=move || matches!(op.get(),FilterOp::Missing|FilterOp::Present)
+                    prop:value=move || value.get() on:input=move |e|value.set(event_target_value(&e))/> }.into_any()
+            }}
+            {move || (op.get() == FilterOp::Between).then(|| view! {
+                <input aria-label=t_string!(i18n, grid_query_upper_bound).to_string() type="number" step="any" prop:value=move || upper.get() on:input=move |e| upper.set(event_target_value(&e))/>
+            })}
             {move || invalid.get().then(||view! {<span role="alert">{t!(i18n,grid_query_invalid)}</span>})}
             <div class="grid-menu-actions">
                 <button type="submit">{t!(i18n,grid_filter_apply)}</button>
                 <button type="button" on:click=move |_|commit.run(true)>{t!(i18n,grid_filter_clear)}</button>
             </div>
         </form>
+    }
+}
+
+/// One operator label used by menu editors and toolbar chips.
+pub fn operator_label(op: FilterOp) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    match op {
+        FilterOp::Eq => t_string!(i18n, grid_query_eq).to_string(),
+        FilterOp::Ne => t_string!(i18n, grid_query_ne).to_string(),
+        FilterOp::Contains => t_string!(i18n, grid_query_contains).to_string(),
+        FilterOp::Gte => t_string!(i18n, grid_query_gte).to_string(),
+        FilterOp::Lte => t_string!(i18n, grid_query_lte).to_string(),
+        FilterOp::Lt => t_string!(i18n, grid_query_lt).to_string(),
+        FilterOp::Between => t_string!(i18n, grid_query_between).to_string(),
+        FilterOp::Missing => t_string!(i18n, grid_query_missing).to_string(),
+        FilterOp::Present => t_string!(i18n, grid_query_present).to_string(),
     }
 }
 

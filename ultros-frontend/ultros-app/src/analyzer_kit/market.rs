@@ -700,8 +700,14 @@ where
         }
         result
     });
+    let filter_registry =
+        use_context::<crate::components::virtual_grid::registry::FilterRegistry>();
     let needs = Memo::new(move |_| {
-        let mut wanted = query.with(|q| active_metric_columns(q.get("gf").as_deref()));
+        let mut wanted = query.with(|q| {
+            filter_registry
+                .map(|r| r.filters(q).into_keys().collect())
+                .unwrap_or_else(|| active_metric_columns(q.get("gf").as_deref()))
+        });
         query.with(|q| {
             if let Some(cols) = q.get("cols") {
                 wanted.extend(cols.split(',').map(str::to_owned));
@@ -863,6 +869,26 @@ where
 mod tests {
     use super::*;
     use ultros_api_types::cheapest_listings::CheapestListingData;
+
+    #[test]
+    fn hidden_legacy_filters_request_their_window_before_any_edit() {
+        use crate::components::virtual_grid::{
+            metrics::FilterOp,
+            registry::{FilterAlias, resolve_filters},
+        };
+        let mut query = leptos_router::params::ParamsMap::new();
+        query.insert("legacy-median", "100".into());
+        let aliases = [FilterAlias::integer(
+            "legacy-median",
+            "market-sale-median-30",
+            FilterOp::Gte,
+        )];
+        let needs = resolve_filters(&query, &aliases).into_keys().collect();
+        assert_eq!(
+            required_windows(&needs, Window::D7, false),
+            vec![Window::D30]
+        );
+    }
 
     #[test]
     fn selected_prices_and_columns_follow_window_without_reusing_other_scope_data() {

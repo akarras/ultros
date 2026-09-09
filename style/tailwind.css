@@ -3111,3 +3111,18 @@ dialog.panel { color: var(--color-text); margin: auto; }
         width: 100%;
     }
 }
+
+/* Grid toolbars grow with their chips; the grid has its own scrollport. */
+.registered-filter-bar .filter-chip {
+    max-width: 100%;
+    min-width: 0;
+}
+.registered-filter-bar .filter-chip-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    text-align: left;
+}
+.registered-filter-bar .filter-chip-x {
+    flex-shrink: 0;
+}

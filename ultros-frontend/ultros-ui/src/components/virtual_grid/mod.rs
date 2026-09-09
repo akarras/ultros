@@ -1,5 +1,6 @@
 //! A single native scrollport with independently virtualized rows and columns.
-mod filter;
+pub mod filter;
+pub mod registry;
 pub use ultros_grid_core::{layout, metrics};
 pub mod query_grid;
 pub mod row_source;
@@ -170,6 +171,7 @@ where
     let i18n = use_i18n();
     let location = crate::components::app_link::use_location_or_default();
     let filter_query = location.query;
+    let filter_registry = use_context::<registry::FilterRegistry>();
     // Whether a column has anything to clear. Metric filters live in the
     // packed `gf` map; a plain filter is live only when its key carries a
     // value, because the "unlimited" landing defaults clear to an empty one.
@@ -178,7 +180,9 @@ where
             defs.iter().find(|c| c.id == id).is_some_and(|c| {
                 c.filters.iter().any(|f| {
                     filter_query.with(|q| {
-                        if f.metric.is_some() {
+                        if let Some(registry) = filter_registry {
+                            registry.active(f, q)
+                        } else if f.metric.is_some() {
                             metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
                         } else {
                             q.get(f.key).is_some_and(|v| !v.is_empty())
@@ -199,7 +203,11 @@ where
                 .map(|c| c.filters.clone())
                 .unwrap_or_default()
         });
-        let next = filter::cleared_query(&filter_query.get_untracked(), &filters);
+        let query = filter_query.get_untracked();
+        let query = filter_registry
+            .map(|r| r.canonical(&query))
+            .unwrap_or(query);
+        let next = filter::cleared_query(&query, &filters);
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
