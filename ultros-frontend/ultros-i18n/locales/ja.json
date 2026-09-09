@@ -949,6 +949,7 @@
     "search_hint_title": "こんな検索ができます",
     "search_hint_jobs": "ジョブ略称で装備セット:",
     "search_hint_items": "アイテム、通貨、カテゴリ",
+    "search_hint_recipes": "製作レシピ（取引不可の品も）",
     "search_hint_tools": "ツールやページ（Flip Finder など）",
     "search_box_aria_label": "アイテムを検索",
     "search_box_clear_tooltip": "検索をクリア",

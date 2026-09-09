@@ -952,6 +952,7 @@
     "search_hint_title": "Try searching for",
     "search_hint_jobs": "Gear sets by job abbreviation:",
     "search_hint_items": "Items, currencies, and categories",
+    "search_hint_recipes": "Crafting recipes, even untradeable ones",
     "search_hint_tools": "Tools and pages, like Flip Finder",
     "search_box_aria_label": "Search items",
     "search_box_clear_tooltip": "Clear search",

@@ -949,6 +949,7 @@
     "search_hint_title": "Essayez de rechercher",
     "search_hint_jobs": "Des ensembles d'équipement par abréviation de job :",
     "search_hint_items": "Des objets, des devises et des catégories",
+    "search_hint_recipes": "Des recettes d'artisanat, même aux résultats non échangeables",
     "search_hint_tools": "Des outils et des pages, comme Flip Finder",
     "search_box_aria_label": "Rechercher des objets",
     "search_box_clear_tooltip": "Effacer la recherche",
