@@ -204,9 +204,12 @@ untouched, an adapter produces today's shapes from the document:
   to identify the target of an edit or deletion. This id
   exists only for `<For>` keys and row callbacks on the Labs page; the Labs
   page never sends it to a REST endpoint.
-- The `Action`s the rows and modals dispatch (`add_item`, `edit_item`,
-  `delete_item`, `delete_items`, `edit_items_hq`, `edit_list_action`) are
-  replaced by actions of the same signatures whose bodies mutate the document.
+- The Labs page keeps a `Resource` of today's result type, built from the
+  document plus a per-list listings cache, so `AutoMarkPurchases` and the
+  page body are untouched; only the actions' bodies and the realtime effects
+  differ. The `Action`s the rows and modals dispatch (`add_item`, `edit_item`,
+  `delete_item`, `delete_items`, `edit_items_hq`, `edit_list_action`) keep
+  their signatures and mutate the document instead of calling REST.
   A quantity edit becomes `set_need`, an acquired edit `set_acquired`, HQ
   `set_quality`, target price `set_target`, rename `rename`, and world change
   `set_scope`. Bulk HQ and bulk delete wrap their loop in an undo group.
@@ -215,8 +218,9 @@ untouched, an adapter produces today's shapes from the document:
   document through the server merge path and arrive on the socket as a delta,
   so the Labs page still updates live. Converting those modals to write the
   document directly is left to the redesign spec.
-- `AutoMarkPurchases` keeps its sale-history subscription and calls
-  `add_acquired(key, 1)` instead of mutating the resource.
+- `AutoMarkPurchases` gains an optional `on_purchase` callback; the Labs
+  page passes one that adds one acquired unit to the first row of that item
+  with room (preferring the sale's quality), through the document.
 - `BuyingView`'s "Mark purchased" calls `add_acquired`.
 
 The non-Labs page is byte-for-byte unchanged.
