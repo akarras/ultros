@@ -12,6 +12,8 @@ pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
 pub(crate) mod stats_cache;
+#[cfg(feature = "test-auth")]
+pub(crate) mod test_fixtures;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
@@ -3267,7 +3269,11 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
 /// an empty router otherwise. Compile-time gated so prod binaries are clean.
 #[cfg(feature = "test-auth")]
 fn test_auth_routes() -> Router<WebState> {
-    Router::new().route("/test/login", get(self::oauth::test_auth::test_login))
+    Router::new()
+        .route("/test/login", get(self::oauth::test_auth::test_login))
+        // Group states that only Discord can otherwise produce, so the E2E
+        // harness can drive `/groups/:id` in all three of them.
+        .merge(self::test_fixtures::routes())
 }
 
 #[cfg(not(feature = "test-auth"))]
