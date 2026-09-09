@@ -127,16 +127,47 @@ pub fn MetricSortControls(column: &'static str) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let location = use_location_or_default();
     let href = move |dir: &str| {
-        let mut q = location.query.get();
-        q.insert("sort", format!("grid:{column}"));
-        q.insert("dir", dir.to_string());
-        format!("{}{}", location.pathname.get(), q.to_query_string())
+        metric_sort_href(&location.pathname.get(), location.query.get(), column, dir)
     };
     view! {
         <div class="grid-menu-actions">
             <leptos_router::components::A href=move || href("asc") scroll=false>{t!(i18n,grid_query_ascending)}</leptos_router::components::A>
             <leptos_router::components::A href=move || href("desc") scroll=false>{t!(i18n,grid_query_descending)}</leptos_router::components::A>
         </div>
+    }
+}
+
+fn metric_sort_href(path: &str, mut query: ParamsMap, column: &str, dir: &str) -> String {
+    query.replace("sort", format!("grid:{column}"));
+    query.replace("dir", dir.to_string());
+    format!("{path}{}", query.to_query_string())
+}
+
+/// Header action for a complete metric. The caller must exclude partial feeds;
+/// QueryGrid owns the column's aria-sort and pending-result behavior.
+#[component]
+pub fn MetricSortHeader(
+    column: &'static str,
+    #[prop(into)] label: Signal<String>,
+) -> impl IntoView {
+    let location = use_location_or_default();
+    let active = move || location.query.with(|q| q.get("sort")) == Some(format!("grid:{column}"));
+    let ascending = move || location.query.with(|q| q.get("dir")).as_deref() == Some("asc");
+    view! {
+        <a
+            href=move || metric_sort_href(
+                &location.pathname.get(), location.query.get(), column,
+                if active() && !ascending() { "asc" } else { "desc" },
+            )
+            data-noscroll=true
+            data-metric-sort=column
+            class="flex min-h-11 min-w-0 items-center gap-2 px-1 !text-brand-300 hover:text-brand-200 focus-visible:outline focus-visible:outline-2"
+        >
+            <span class="truncate min-w-0">{move || label.get()}</span>
+            {move || active().then(|| view! {
+                <span aria-hidden="true" class="shrink-0">{if ascending() { "↑" } else { "↓" }}</span>
+            })}
+        </a>
     }
 }
 
@@ -255,6 +286,49 @@ fn MetricFilterEditor(column: &'static str, label: String, kind: ValueKind) -> i
 mod tests {
     use super::super::metrics::ValueKind;
     use super::*;
+
+    #[test]
+    fn metric_sort_replaces_native_sort_and_preserves_the_rest_of_the_url() {
+        let query = params(&[
+            ("sort", "profit"),
+            ("dir", "asc"),
+            ("window", "30"),
+            ("cols", "market-sale-median-7,market-world"),
+            ("gf", r#"{"market-quality":{"op":"eq","value":"HQ"}}"#),
+            ("l", "saved-layout"),
+            ("world", "Gilgamesh"),
+        ]);
+        for dir in ["desc", "asc"] {
+            let href = metric_sort_href(
+                "/venture-analyzer",
+                query.clone(),
+                "market-sale-median-7",
+                dir,
+            );
+            let expected_sort = params(&[("sort", "grid:market-sale-median-7")]).to_query_string();
+            assert!(href.contains(&expected_sort[1..]), "{href}");
+            assert!(href.contains(&format!("dir={dir}")), "{href}");
+            assert_eq!(href.matches("sort=").count(), 1);
+            assert_eq!(href.matches("dir=").count(), 1);
+            for key in ["window", "cols", "gf", "l", "world"] {
+                let expected = params(&[(key, &query.get(key).unwrap())]).to_query_string();
+                assert!(href.contains(&expected[1..]), "{href}");
+            }
+        }
+    }
+
+    #[test]
+    fn metric_header_renders_a_sort_link_during_ssr() {
+        Owner::new().with(|| {
+            let html = view! {
+                <MetricSortHeader column="market-sale-median-7" label=Signal::derive(|| "7d median".to_string()) />
+            }.to_html();
+            assert!(html.contains("href=\"?sort=grid"), "{html}");
+            assert!(html.contains("market-sale-median-7"), "{html}");
+            assert!(html.contains("dir=desc"), "{html}");
+            assert!(html.contains("7d median"), "{html}");
+        });
+    }
 
     fn params(pairs: &[(&'static str, &str)]) -> ParamsMap {
         let mut q = ParamsMap::new();

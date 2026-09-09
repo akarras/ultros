@@ -189,7 +189,9 @@ mod development {
         let rows = Memo::new(|_| vec![42, 43, 44]);
         let columns = Signal::derive(|| {
             vec![
-                GridColumn::new("item", "Item".into(), 100.0, false, true),
+                // The source rows are natively ordered by ID. This column has
+                // no grid metric, so shared sorting must clear its aria-sort too.
+                GridColumn::new("item", "Item".into(), 100.0, false, true).sorted(true, true),
                 GridColumn::new("price", "Price".into(), 100.0, false, true),
             ]
         });
