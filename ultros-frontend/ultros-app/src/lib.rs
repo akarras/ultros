@@ -3,7 +3,7 @@ pub(crate) mod analysis;
 pub(crate) mod analyzer_kit;
 pub(crate) mod api;
 pub(crate) mod components;
-pub(crate) mod error;
+pub(crate) use ultros_api_client::error;
 pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) use ultros_i18n::fallback as i18n_fallback;
@@ -17,7 +17,7 @@ pub(crate) mod sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;
 #[cfg(feature = "ssr")]
-pub mod ssr_api;
+pub use ultros_api_client::ssr_api;
 pub(crate) mod ws;
 
 // Keep existing imports stable while the generated translations compile separately.

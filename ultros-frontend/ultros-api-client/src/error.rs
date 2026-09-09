@@ -56,13 +56,13 @@ impl AppError {
     /// Everything else — a transport failure, a malformed body on a 2xx, a
     /// missing route parameter — is our own side breaking, is reported nowhere
     /// else, and stays at error level.
-    pub(crate) fn is_api_response(&self) -> bool {
+    pub fn is_api_response(&self) -> bool {
         matches!(self, AppError::ApiError(_))
     }
 
     /// A busy backend can still exceed the SSR deadline without a network hop.
     /// Keep these transient failures out of duplicate error-level reporting.
-    pub(crate) fn is_transient_transport(&self) -> bool {
+    pub fn is_transient_transport(&self) -> bool {
         matches!(self, Self::InternalApiTimeout)
     }
 }
@@ -177,7 +177,7 @@ impl<'de> Deserialize<'de> for SystemError {
     }
 }
 
-pub(crate) type AppResult<T> = Result<T, AppError>;
+pub type AppResult<T> = Result<T, AppError>;
 
 #[cfg(test)]
 mod test {

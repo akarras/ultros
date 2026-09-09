@@ -12,6 +12,7 @@ members = [
     "xiv-gen",
     "xiv-gen-db",
     "ultros-frontend/ultros-client",
+    "ultros-frontend/ultros-api-client",
     "ultros-frontend/ultros-app",
     "ultros-frontend/ultros-calc",
     "ultros-frontend/ultros-grid-core",
