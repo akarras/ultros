@@ -36,7 +36,7 @@ use ultros_api_types::{
             AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
             DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult,
             GroupRole, GroupSyncResponse, ImportDiscordRole, RenameGroupRole, UserGroup,
-            UserGroupDetail, UserGroupMember,
+            UserGroupDetail, UserGroupMember, UserGroupSummary,
         },
     },
 };
@@ -566,7 +566,9 @@ pub(crate) async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppRe
     post_api("/api/v1/list/item/hq", BulkHqUpdate { ids, hq }).await
 }
 
-pub(crate) async fn get_groups() -> AppResult<Vec<UserGroup>> {
+/// Every group the user belongs to, each with the member and role counts its
+/// card needs — one request for the whole grid.
+pub(crate) async fn get_groups() -> AppResult<Vec<UserGroupSummary>> {
     fetch_api("/api/v1/group").await
 }
 

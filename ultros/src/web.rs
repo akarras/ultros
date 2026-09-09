@@ -52,7 +52,7 @@ use ultros_api_types::user::group::{
     AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
     DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
     GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
-    UserGroupDetail, UserGroupMember,
+    UserGroupDetail, UserGroupMember, UserGroupSummary,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -2010,12 +2010,17 @@ async fn unclaim_character(
 
 // --- Group management ---
 
+/// Every group the user belongs to, each with the member and role counts its
+/// card shows. The counts ride along so the groups grid is one request rather
+/// than a `get_group_detail` per card.
 pub(crate) async fn get_groups(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<Vec<UserGroup>>, ApiError> {
-    let groups = db.get_groups_for_user(user.id as i64).await?;
-    Ok(Json(groups.into_iter().map(UserGroup::from).collect()))
+) -> Result<Json<Vec<UserGroupSummary>>, ApiError> {
+    let groups = db.get_group_summaries_for_user(user.id as i64).await?;
+    Ok(Json(
+        groups.into_iter().map(UserGroupSummary::from).collect(),
+    ))
 }
 
 pub(crate) async fn create_group(

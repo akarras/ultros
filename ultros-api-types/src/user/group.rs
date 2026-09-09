@@ -104,6 +104,16 @@ pub struct GroupRole {
     pub member_count: i64,
 }
 
+/// A group plus the two counts its card on the groups grid shows. Returned by
+/// the group list so the grid costs one request instead of a detail fetch per
+/// card.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserGroupSummary {
+    pub group: UserGroup,
+    pub member_count: i64,
+    pub role_count: i64,
+}
+
 /// Everything the group page needs in one round trip.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserGroupDetail {
