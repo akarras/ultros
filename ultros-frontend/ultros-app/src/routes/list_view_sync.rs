@@ -113,18 +113,82 @@ type RevalidateTimer = ();
 
 /// Ask for a revalidation `REVALIDATE_DEBOUNCE_MS` from now, replacing any
 /// request already pending. Dropping the previous `Timeout` cancels it, so
-/// N broadcasts inside the window cost exactly one fetch, fired after the
+/// N broadcasts inside the window cost exactly one probe, fired after the
 /// last of them.
 #[cfg(feature = "hydrate")]
-fn schedule_revalidate(slot: &Rc<RefCell<Option<RevalidateTimer>>>, bump: WriteSignal<u32>) {
-    let timer = gloo_timers::callback::Timeout::new(REVALIDATE_DEBOUNCE_MS, move || {
-        bump.update(|v| *v += 1);
-    });
+fn schedule_revalidate(slot: &Rc<RefCell<Option<RevalidateTimer>>>, probe: impl Fn() + 'static) {
+    let timer = gloo_timers::callback::Timeout::new(REVALIDATE_DEBOUNCE_MS, probe);
     *slot.borrow_mut() = Some(timer);
 }
 
 #[cfg(not(feature = "hydrate"))]
-fn schedule_revalidate(_slot: &Rc<RefCell<Option<RevalidateTimer>>>, _bump: WriteSignal<u32>) {}
+fn schedule_revalidate(_slot: &Rc<RefCell<Option<RevalidateTimer>>>, _probe: impl Fn() + 'static) {}
+
+/// The revalidation itself: a silent permission probe. It re-fetches the
+/// list over REST and touches the page only when the answer changes what
+/// the page may do — a denial purges the local copy and re-runs the
+/// resource so the error state renders; a changed permission re-runs it so
+/// the write controls follow; anything else refreshes the listings cache
+/// in place and leaves the rendered page alone, so a collaborator's edit
+/// never re-renders an open drawer or modal under the user's cursor.
+#[cfg(feature = "hydrate")]
+fn revalidate(
+    list_id: i32,
+    handle: RwSignal<Option<ListDocHandle>>,
+    cache: StoredValue<Option<ListingsCache>>,
+    bump: WriteSignal<u32>,
+) {
+    leptos::task::spawn_local(async move {
+        match get_list_items_with_listings(list_id).await {
+            Ok((list, items)) => {
+                let permission = list.permission;
+                if let Some(doc_handle) = handle.get_untracked() {
+                    doc_handle.remember_permission(permission as i16);
+                }
+                let changed = cache.with_value(|cached| {
+                    cached
+                        .as_ref()
+                        .filter(|c| c.list_id == list_id)
+                        .is_none_or(|c| c.list.permission != permission)
+                });
+                let covered = covered_ids(&items);
+                cache.update_value(|cached| {
+                    if let Some(c) = cached.as_mut().filter(|c| c.list_id == list_id) {
+                        c.list = list;
+                        c.listings = items
+                            .into_iter()
+                            .map(|(item, listings)| (item.item_id, listings))
+                            .collect();
+                        c.covered.extend(covered);
+                    }
+                });
+                if changed {
+                    bump.update(|v| *v += 1);
+                }
+            }
+            Err(error) if is_denial(&error) => {
+                if let Some(doc_handle) = handle.get_untracked() {
+                    doc_handle.purge();
+                }
+                cache.set_value(None);
+                handle.set(None);
+                bump.update(|v| *v += 1);
+            }
+            // Transport or server trouble says nothing about permission;
+            // the next broadcast tries again.
+            Err(_) => {}
+        }
+    });
+}
+
+#[cfg(not(feature = "hydrate"))]
+fn revalidate(
+    _list_id: i32,
+    _handle: RwSignal<Option<ListDocHandle>>,
+    _cache: StoredValue<Option<ListingsCache>>,
+    _bump: WriteSignal<u32>,
+) {
+}
 
 /// A failure that means the browser must stop keeping a local copy of this
 /// list (Global Constraint 2): the server says the list is gone, or that
@@ -449,7 +513,9 @@ pub fn ListViewSync() -> impl IntoView {
                 // revocation from a rename by the payload (an unshare
                 // broadcasts an ordinary `List` update), so it revalidates
                 // on all of them and lets the REST answer decide.
-                schedule_revalidate(&revalidate_timer, set_revalidate_version);
+                schedule_revalidate(&revalidate_timer, move || {
+                    revalidate(id, handle, listings_cache, set_revalidate_version)
+                });
             });
             activity_subscription.set_value(Some(sub));
         }
