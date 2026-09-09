@@ -485,3 +485,36 @@ mod tests {
         assert_eq!(FloorChangeRow::TABLE, "floor_changes");
     }
 }
+
+/// Receipt evidence exists only for newly inserted websocket sales. Backfill
+/// must never populate this table: insertion time is not original receipt time.
+#[derive(Row, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SaleReceiptRow {
+    pub pg_id: i32,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub received_at: DateTime<Utc>,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub sold_at: DateTime<Utc>,
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    pub price_per_unit: u32,
+    pub quantity: u16,
+}
+impl SaleReceiptRow {
+    pub fn from_sale(s: &ultros_api_types::SaleHistory, received_at: DateTime<Utc>) -> Self {
+        Self {
+            pg_id: s.id,
+            received_at,
+            sold_at: DateTime::from_naive_utc_and_offset(s.sold_date, Utc),
+            item_id: s.sold_item_id,
+            hq: s.hq as u8,
+            world_id: s.world_id,
+            price_per_unit: clamp_price(s.price_per_item),
+            quantity: clamp_qty(s.quantity),
+        }
+    }
+}
+impl TableRow for SaleReceiptRow {
+    const TABLE: &'static str = "sale_receipts";
+}

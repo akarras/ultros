@@ -547,4 +547,37 @@ mod tests {
         assert!(cache.inner.retained_bytes.load(Ordering::Acquire) <= 6);
         assert_eq!(cache.inner.slots.lock().unwrap().len(), 1);
     }
+    #[tokio::test]
+    async fn listing_windows_scopes_and_sale_cache_are_isolated() {
+        let listing = ListingStatsCache::new(16, 1);
+        let sales = SaleStatsCache::new(16, 1);
+        for selector in [
+            AnySelector::World(1),
+            AnySelector::Datacenter(1),
+            AnySelector::Region(1),
+        ] {
+            for days in [0, 1, 7, 30, 90] {
+                let key = CacheKey {
+                    selector,
+                    window_days: days,
+                };
+                let body = Bytes::from(format!("{selector:?}:{days}"));
+                let expected = body.clone();
+                listing
+                    .get_or_load(key, move || async move { Ok(body) })
+                    .await
+                    .unwrap();
+                let hit = listing
+                    .get_or_load(key, || async { panic!("wrong cache slot") })
+                    .await
+                    .unwrap();
+                assert_eq!(hit.body, expected);
+                let sale = sales
+                    .get_or_load(key, || async { Ok(Bytes::from_static(b"sale")) })
+                    .await
+                    .unwrap();
+                assert_eq!(sale.body, Bytes::from_static(b"sale"));
+            }
+        }
+    }
 }
