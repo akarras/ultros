@@ -1,0 +1,76 @@
+[package]
+name = "ultros-ui-grid"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+codee = { version = "0.3.5", features = [
+    "json_serde",
+] }
+gloo-timers = { version = "0.4.0", features = [
+    "futures",
+] }
+icondata = { workspace = true }
+js-sys = { version = "0.3" }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos-use = { workspace = true }
+leptos_i18n = { workspace = true }
+leptos_router = { workspace = true }
+log = "0.4.29"
+serde = { workspace = true, features = [
+    "rc",
+] }
+serde_json = { workspace = true }
+time = "0.3.47"
+ultros-grid-core = { path = "../ultros-grid-core" }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = { version = "0.4" }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlDivElement",
+    "HtmlInputElement",
+    "HtmlSelectElement",
+    "ValidityState",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "TextMetrics",
+    "CssStyleDeclaration",
+    "DomRect",
+    "DomTokenList",
+    "NodeList",
+    "MouseEvent",
+    "PointerEvent",
+    "KeyboardEvent",
+    "ResizeObserver",
+] }
+
+[features]
+test-support = []
+default = []
+ssr = [
+    "leptos/ssr",
+    "leptos-use/ssr",
+    "leptos_router/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

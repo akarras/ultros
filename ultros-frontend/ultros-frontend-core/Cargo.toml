@@ -1,0 +1,84 @@
+[package]
+name = "ultros-frontend-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true, optional = true }
+chrono = { workspace = true }
+cookie = { version = "0.18.1", features = [
+    "percent-encode",
+] }
+flume = { version = "0.12.0", features = [
+    "async",
+] }
+futures = "0.3.32"
+gloo-net = { workspace = true }
+gloo-timers = { version = "0.4.0", features = [
+    "futures",
+] }
+itertools = { workspace = true }
+js-sys = { version = "0.3" }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos_i18n = { workspace = true }
+log = "0.4.29"
+percent-encoding = "2.3.2"
+send_wrapper = "0.6"
+serde = { workspace = true, features = [
+    "rc",
+] }
+serde_json = { workspace = true }
+time = "0.3.47"
+tracing = "0.1"
+ultros-api-client = { path = "../ultros-api-client", default-features = false }
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-calc = { path = "../ultros-calc" }
+ultros-changelog = { path = "../../ultros-changelog" }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+wasm-bindgen = { version = "0.2" }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Location",
+    "Navigator",
+    "HtmlDocument",
+    "Document",
+    "WebSocket",
+    "MessageEvent",
+    "CloseEvent",
+    "Event",
+    "Storage",
+] }
+xiv-gen = { workspace = true }
+xiv-gen-db = { path = "../../xiv-gen-db" }
+
+[features]
+default = []
+ssr = [
+    "dep:axum",
+    "leptos/ssr",
+    "ultros-api-client/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+    "xiv-gen-db/embed",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-api-client/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }
+tokio = { workspace = true, features = [
+    "test-util",
+] }
