@@ -10,6 +10,10 @@
 //! page — it answers "what's hot right now" at a glance; the table below
 //! is the deep-dive.
 
+use crate::analyzer_kit::{
+    stat_columns::Window,
+    window::{MarketWindow, MarketWindowControl},
+};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::filter_query_signal;
@@ -43,8 +47,6 @@ use crate::{
     global_state::LocalWorldData,
     routes::world_nav::world_nav_url,
 };
-
-const DEFAULT_WINDOW: u16 = 30;
 
 // --- Filter registry -------------------------------------------------------
 // Each id is the `filter_query_signal` key it drives, so the list doubles as
@@ -460,7 +462,7 @@ pub fn Trends() -> impl IntoView {
     // `filter_query_signal` (replace: true, scroll: false) so typing into a
     // chip writes the URL on every keystroke without pushing a history entry
     // or yanking the window to the top.
-    let (window_param, set_window_param) = query_signal::<u16>("window");
+    let window = MarketWindow::new(Window::D30, &[Window::D7, Window::D30, Window::D90]);
     let (suspicious, set_suspicious) = filter_query_signal::<bool>(FILTER_SUSPICIOUS);
     let (category_filter, set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
     let (min_sales, set_min_sales) = filter_query_signal::<u32>(FILTER_MIN_SALES);
@@ -474,14 +476,7 @@ pub fn Trends() -> impl IntoView {
     // default, so it mounts blank too.
     let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
-    let window_days = Memo::new(move |_| {
-        window_param()
-            .map(|w| match w {
-                7 | 30 | 90 => w,
-                _ => DEFAULT_WINDOW,
-            })
-            .unwrap_or(DEFAULT_WINDOW)
-    });
+    let window_days = Memo::new(move |_| window.selected.get().days());
     let show_suspicious = Signal::derive(move || suspicious().unwrap_or(false));
 
     let trends = ArcResource::new(
@@ -537,9 +532,6 @@ pub fn Trends() -> impl IntoView {
         });
         items
     });
-
-    let pill_active_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
-    let pill_inactive_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
 
     let category_options = move || {
         let mut categories = tracked_data()
@@ -637,32 +629,7 @@ pub fn Trends() -> impl IntoView {
                 </ToolHeader>
 
                 <div class="flex flex-col md:flex-row md:items-center gap-3">
-                    <div class="flex flex-col gap-1">
-                        <span class="toolbar-field-label">{t!(i18n, trends_window_label)}</span>
-                        <div class="toolbar-pills">
-                            <button
-                                aria-pressed=move || (window_days() == 7).to_string()
-                                class=move || if window_days() == 7 { pill_active_combined_class } else { pill_inactive_combined_class }
-                                on:click=move |_| set_window_param.set(Some(7))
-                            >
-                                {t!(i18n, trends_window_7d)}
-                            </button>
-                            <button
-                                aria-pressed=move || (window_days() == 30).to_string()
-                                class=move || if window_days() == 30 { pill_active_combined_class } else { pill_inactive_combined_class }
-                                on:click=move |_| set_window_param.set(Some(30))
-                            >
-                                {t!(i18n, trends_window_30d)}
-                            </button>
-                            <button
-                                aria-pressed=move || (window_days() == 90).to_string()
-                                class=move || if window_days() == 90 { pill_active_combined_class } else { pill_inactive_combined_class }
-                                on:click=move |_| set_window_param.set(Some(90))
-                            >
-                                {t!(i18n, trends_window_90d)}
-                            </button>
-                        </div>
-                    </div>
+                    <MarketWindowControl window />
                 </div>
 
                 // Market Heat band (gated on a selected world). Gives a
@@ -679,7 +646,7 @@ pub fn Trends() -> impl IntoView {
                                 {move || t!(i18n, trends_summary_results_count, n = move || displayed().len())}
                             </span>
                             <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
-                                {move || format!("{}d window", window_days())}
+                                {move || format!("{}: {}", t_string!(i18n, trends_window_label), crate::analyzer_kit::stat_columns::window_label(window.selected.get()))}
                             </span>
                         }
                         .into_any()

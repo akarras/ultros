@@ -1,3 +1,4 @@
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
@@ -408,6 +409,7 @@ fn ScripSourceTable(
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let market = use_market_data(world);
     let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
     let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
@@ -458,7 +460,7 @@ fn ScripSourceTable(
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
 
     let ranked_rows = Memo::new(move |_| {
-        let stats = market.stats7();
+        let stats = market.selected_stats();
         let basis = cost_basis.get().unwrap_or_default();
         let pricing_pending = stats.is_none() && basis.sale_stat().is_some();
         let mut results = Vec::new();
@@ -728,9 +730,12 @@ fn ScripSourceTable(
 
     view! {
             <div class="flex flex-col gap-6">
-                <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                <div class="flex flex-wrap items-start gap-3">
+                    <MarketWindowControl window=market.window />
+                    <MarketPriceControls window=market.window label=t_string!(i18n, market_ingredient_price).to_string()
                     basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
                     on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
+                </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">
                     {t!(i18n, market_collectable_note)}
                 </p>

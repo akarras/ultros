@@ -1,3 +1,4 @@
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
@@ -251,7 +252,11 @@ fn LeveAnalyzerTable(
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let market = use_market_data(world);
     let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
     let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    market.require_price_basis(Signal::derive(move || {
+        revenue_basis.get().unwrap_or_default()
+    }));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -280,7 +285,7 @@ fn LeveAnalyzerTable(
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
-        let stats = market.stats7();
+        let stats = market.selected_stats();
         let cost_pending =
             stats.is_none() && cost_basis.get().unwrap_or_default().sale_stat().is_some();
         let reward_signal_pending = stats.is_none()
@@ -628,10 +633,11 @@ fn LeveAnalyzerTable(
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap gap-3">
-                    <MarketPriceControls label=t_string!(i18n, market_turn_in_cost).to_string()
+                    <MarketWindowControl window=market.window />
+                    <MarketPriceControls window=market.window label=t_string!(i18n, market_turn_in_cost).to_string()
                         basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
                         on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                    <MarketPriceControls label=t_string!(i18n, market_reward_value).to_string()
+                    <MarketPriceControls window=market.window label=t_string!(i18n, market_reward_value).to_string()
                         basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
                         on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
                 </div>

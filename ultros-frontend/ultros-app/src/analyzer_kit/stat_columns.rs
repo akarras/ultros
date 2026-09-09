@@ -96,6 +96,53 @@ macro_rules! window_columns {
 /// Window-major, kind order as declared: this is also the picker order.
 pub static STAT_COLUMNS: [StatColumn; 36] = window_columns!(1 => D1, 7 => D7, 30 => D30, 90 => D90);
 
+/// Follow-window IDs never acquire a numeric suffix; saved explicit IDs stay fixed.
+pub static FOLLOW_COLUMNS: [(StatKind, &str); 9] = [
+    (StatKind::Min, "market-sale-min"),
+    (StatKind::Median, "market-sale-median"),
+    (StatKind::Average, "market-sale-avg"),
+    (StatKind::SalesPerDay, "market-sales-per-day"),
+    (StatKind::Cadence, "market-cadence"),
+    (StatKind::Units, "market-units"),
+    (StatKind::Sales, "market-sales"),
+    (StatKind::Vwap, "market-vwap"),
+    (StatKind::GilVolume, "market-gil"),
+];
+
+pub fn follow_id(kind: StatKind) -> &'static str {
+    FOLLOW_COLUMNS.iter().find(|(k, _)| *k == kind).unwrap().1
+}
+
+pub fn shared_cols_in(raw: Option<&str>) -> HashSet<&'static str> {
+    let selected: HashSet<_> = raw.unwrap_or("").split(',').collect();
+    FOLLOW_COLUMNS
+        .iter()
+        .map(|(_, id)| *id)
+        .chain(STAT_COLUMNS.iter().map(|c| c.id))
+        .filter(|id| selected.contains(id))
+        .collect()
+}
+
+/// Toggle one picker entry while preserving columns owned by other providers.
+pub fn toggle_shared_col(previous: Option<&str>, defaults: &str, id: &str) -> String {
+    let mut ids: Vec<_> = previous
+        .unwrap_or(defaults)
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .collect();
+    if ids.contains(&id) {
+        ids.retain(|t| *t != id);
+    } else {
+        ids.push(id);
+    }
+    ids.join(",")
+}
+
+pub fn window_label(window: Window) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    t_string!(i18n, market_window_days, days = window.days().to_string()).to_string()
+}
+
 pub fn stat_column(kind: StatKind, window: Window) -> &'static StatColumn {
     STAT_COLUMNS
         .iter()
@@ -143,23 +190,61 @@ pub fn window_wanted(needs: &HashSet<String>, window: Window) -> bool {
         .any(|c| c.window == window && needs.contains(c.id))
 }
 
+/// Deduplicated bulk bodies for visible columns, hidden query columns and prices.
+pub fn required_windows(
+    needs: &HashSet<String>,
+    selected: Window,
+    sale_basis: bool,
+) -> Vec<Window> {
+    Window::ALL
+        .into_iter()
+        .filter(|&window| {
+            window_wanted(needs, window)
+                || (window == selected
+                    && (sale_basis || FOLLOW_COLUMNS.iter().any(|(_, id)| needs.contains(*id))))
+                || (window == Window::D7
+                    && (needs.contains("market-last-sold") || needs.contains("market-confidence")))
+        })
+        .collect()
+}
+
+/// Shared grouping for the toolbar and the grid's insert-column picker.
+pub fn market_picker_group(window: Option<Window>) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    match window {
+        Some(window) => with_window(
+            t_string!(i18n, market_picker_group_history).to_string(),
+            window,
+        ),
+        None => t_string!(i18n, market_picker_group_selected).to_string(),
+    }
+}
+
 /// Every stat column as a toolbar-picker option, grouped under one
 /// "Sale history (Nd)" heading per window.
-pub fn market_picker_options() -> Vec<ColumnOption> {
-    let i18n = crate::i18n_fallback::use_i18n_or_default();
-    let history = t_string!(i18n, market_picker_group_history).to_string();
-    STAT_COLUMNS
+pub fn market_picker_options(window: Window) -> Vec<ColumnOption> {
+    FOLLOW_COLUMNS
         .iter()
-        .map(|c| ColumnOption {
-            id: c.id,
-            label: stat_label(c.kind, c.window),
+        .map(|(kind, id)| ColumnOption {
+            id,
+            label: stat_label(*kind, window),
             group: Some(PickerHeading {
-                label: with_window(history.clone(), c.window),
+                label: market_picker_group(None),
                 title: None,
             }),
             disabled: false,
             hint: None,
         })
+        .chain(STAT_COLUMNS.iter().map(|c| ColumnOption {
+            id: c.id,
+            label: stat_label(c.kind, c.window),
+            group: Some(PickerHeading {
+                label: market_picker_group(Some(c.window)),
+                title: None,
+            }),
+            disabled: false,
+            hint: None,
+        }))
         .collect()
 }
 
@@ -168,6 +253,49 @@ mod tests {
     use super::*;
     use leptos::prelude::*;
     use leptos_i18n::context::init_i18n_context;
+
+    #[test]
+    fn follow_window_and_hidden_fixed_requirements_are_deduplicated() {
+        // The same set comes from visible defs, hidden sort and hidden filters.
+        let needs = [
+            "market-sale-median",
+            "market-units",
+            "market-sale-min-7",
+            "market-sale-median-30",
+        ]
+        .map(str::to_owned)
+        .into();
+        assert_eq!(
+            required_windows(&needs, Window::D30, true),
+            vec![Window::D7, Window::D30]
+        );
+        assert_eq!(
+            required_windows(&HashSet::new(), Window::D30, true),
+            vec![Window::D30]
+        );
+        assert!(required_windows(&HashSet::new(), Window::D30, false).is_empty());
+        let hidden = ["market-sale-median-90"].map(str::to_owned).into();
+        assert_eq!(
+            required_windows(&hidden, Window::D30, false),
+            vec![Window::D90]
+        );
+    }
+
+    #[test]
+    fn shared_picker_keeps_follow_fixed_and_foreign_columns() {
+        let original = "profit,market-sale-median,market-sale-median-7,market-world";
+        let selected = shared_cols_in(Some(original));
+        assert_eq!(
+            selected,
+            HashSet::from(["market-sale-median", "market-sale-median-7"])
+        );
+        let toggled = toggle_shared_col(Some(original), "", "market-sale-median");
+        assert_eq!(toggled, "profit,market-sale-median-7,market-world");
+        assert_eq!(
+            toggle_shared_col(None, "sale_estimate", "market-sale-median"),
+            "sale_estimate,market-sale-median"
+        );
+    }
 
     #[test]
     fn legacy_ids_are_preserved_and_all_ids_are_unique() {
@@ -218,8 +346,8 @@ mod tests {
                 stat_label(StatKind::GilVolume, Window::D90),
                 "Gil traded (90d)"
             );
-            let options = market_picker_options();
-            assert_eq!(options.len(), STAT_COLUMNS.len());
+            let options = market_picker_options(Window::D7);
+            assert_eq!(options.len(), STAT_COLUMNS.len() + FOLLOW_COLUMNS.len());
             let median = options
                 .iter()
                 .find(|o| o.id == "market-sale-median-7")
@@ -229,7 +357,11 @@ mod tests {
                 median.group.as_ref().map(|g| g.label.as_str()),
                 Some("Sale history (7d)")
             );
-            assert_eq!(options[0].id, "market-sale-min-1");
+            assert_eq!(options[0].id, "market-sale-min");
+            assert_eq!(
+                options[0].group.as_ref().unwrap().label,
+                "Sale history (selected window)"
+            );
         });
     }
 }

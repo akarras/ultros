@@ -359,7 +359,9 @@ mod tests {
             ("lang", "ja"),
             ("gf", "{\"median\":{\"op\":\"gte\",\"value\":\"100\"}}"),
             ("l", "median:180,profit:120"),
-            ("price", "median"),
+            ("revenue", "sale-median"),
+            ("cost-basis", "sale-min"),
+            ("window", "30"),
             ("sort", "grid:median"),
             ("cols", "median,trend"),
         ]);

@@ -1,5 +1,6 @@
 use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
@@ -315,7 +316,11 @@ fn FCCraftingAnalyzerTable(
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let market = use_market_data(world);
     let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
     let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    market.require_price_basis(Signal::derive(move || {
+        revenue_basis.get().unwrap_or_default()
+    }));
     let data = tracked_data();
     let items = &data.items;
     let sequences = &data.company_craft_sequences;
@@ -353,7 +358,7 @@ fn FCCraftingAnalyzerTable(
     let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let computed_data = Memo::new(move |_| {
-        let stats = market.stats7();
+        let stats = market.selected_stats();
         let cost_signal = cost_basis.get().unwrap_or_default();
         let revenue_signal = revenue_basis.get().unwrap_or_default();
         let pricing_pending = stats.is_none()
@@ -630,10 +635,11 @@ fn FCCraftingAnalyzerTable(
             <div class="flex flex-col gap-6">
                 <ActiveListBanner />
                 <div class="flex flex-wrap gap-3">
-                    <MarketPriceControls label=t_string!(i18n, market_ingredient_price).to_string()
+                    <MarketWindowControl window=market.window />
+                    <MarketPriceControls window=market.window label=t_string!(i18n, market_ingredient_price).to_string()
                         basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
                         on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                    <MarketPriceControls label=t_string!(i18n, market_completed_price).to_string()
+                    <MarketPriceControls window=market.window label=t_string!(i18n, market_completed_price).to_string()
                         basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
                         on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
                 </div>
