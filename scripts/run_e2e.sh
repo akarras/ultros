@@ -188,6 +188,15 @@ if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then
     fi
 fi
 
+if [ "${RUN_FC_CRAFTING_WORLD:-1}" != "0" ]; then
+    log "running FC crafting world consistency E2E"
+    fc_world_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:fc-crafting-world ) || fc_world_exit=$?
+    if [ "$fc_world_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$fc_world_exit"
+    fi
+fi
+
 if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
     log "running analyzer grid and last-view E2E"
     analyzer_grids_exit=0
@@ -204,6 +213,7 @@ if [ "${E2E_RELEASE:-0}" != "1" ] && [ "${RUN_SHARED_ANALYZER_DATA:-1}" != "0" ]
     log "running deterministic shared analyzer data E2E"
     shared_analyzer_data_exit=0
     ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-analyzer-data ) || shared_analyzer_data_exit=$?
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:market-window ) || shared_analyzer_data_exit=$?
     if [ "$shared_analyzer_data_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$shared_analyzer_data_exit"
     fi
@@ -236,6 +246,11 @@ case " ${LEPTOS_FEATURES:-} " in
             test_exit="$shared_list_exit"
         fi
         log "running group-shared-list flow (test-auth feature detected)"
+        groups_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:groups ) || groups_exit=$?
+        if [ "$groups_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$groups_exit"
+        fi
         group_shared_list_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:group-shared-list ) || group_shared_list_exit=$?
         if [ "$group_shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then

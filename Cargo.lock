@@ -10743,6 +10743,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultros-api-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures",
+ "gloo-net 0.7.0",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tower",
+ "tracing",
+ "ultros-api-types",
+]
+
+[[package]]
 name = "ultros-api-types"
 version = "0.1.0"
 dependencies = [
@@ -10794,12 +10812,13 @@ dependencies = [
  "time",
  "timeago",
  "tokio",
- "tower",
  "tracing",
+ "ultros-api-client",
  "ultros-api-types",
  "ultros-calc",
  "ultros-changelog",
  "ultros-charts",
+ "ultros-crafting",
  "ultros-db",
  "ultros-i18n",
  "ultros-ui",
@@ -10888,6 +10907,15 @@ dependencies = [
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-crafting"
+version = "0.1.0"
+dependencies = [
+ "ultros-api-types",
+ "ultros-calc",
+ "xiv-gen",
 ]
 
 [[package]]

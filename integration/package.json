@@ -7,6 +7,7 @@
   "scripts": {
     "test:virtual-grid": "node ./virtual-grid.cjs",
     "test:analyzer-grids": "node ./analyzer-grids.cjs",
+    "test:market-window": "node ./market-window.cjs",
     "test:shared-analyzer-data": "node ./shared-analyzer-data.cjs",
     "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",
     "run": "node ./runner.cjs",
@@ -28,6 +29,7 @@
     "test:list-card-edit": "node ./list-card-edit.cjs",
     "test:list-view-rename": "node ./list-view-rename.cjs",
     "test:list-bulk-edit": "node ./list-bulk-edit.cjs",
+    "test:fc-crafting-world": "node ./fc-crafting-world.cjs",
     "test:fc-crafting-breakdown": "node ./fc-crafting-breakdown.cjs",
     "test:dashboard": "node ./dashboard.cjs",
     "test:jobset-card-hydration": "node ./jobset-card-hydration.cjs",
@@ -35,6 +37,7 @@
     "test:flip-finder-mobile-bar": "node ./flip-finder-mobile-bar.cjs",
     "test:flip-finder-hydration": "node ./flip-finder-hydration.cjs",
     "test:group-shared-list": "node ./group-shared-list.cjs",
+    "test:groups": "node ./groups.cjs",
     "test:group-shared-list-fixture": "node --test ./group-shared-list.test.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs",
     "test:capture": "node --test ./capture.test.cjs",

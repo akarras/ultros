@@ -33,7 +33,7 @@ impl SsrApi {
         Self(router)
     }
 
-    pub(crate) async fn request(
+    pub async fn request(
         &self,
         method: Method,
         path: &str,

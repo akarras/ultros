@@ -37,17 +37,23 @@ use super::{
     },
     formula::PriceSignal,
     signals::{StatsIndex, stat_only, stats_index},
-    stat_columns::{STAT_COLUMNS, StatKind, Window, stat_column, stat_label, window_wanted},
+    stat_columns::{
+        FOLLOW_COLUMNS, STAT_COLUMNS, StatKind, Window, follow_id, market_picker_group,
+        required_windows, stat_column, stat_label,
+    },
+    window::MarketWindow,
 };
 
 type ScopedStats = Option<(String, Arc<StatsIndex>, bool)>;
 
 /// A cheap reactive handle; the payloads are cloned only by Arc. One slot
-/// per server window, indexed by `Window::index()`. The seven-day body is
-/// always fetched; the others only once a column of theirs is wanted.
+/// per server window, indexed by `Window::index()`. The seven-day body keeps
+/// native cadence consumers compatible; other windows load when a visible or
+/// hidden query column, or a registered price input, needs them.
 #[derive(Clone, Copy)]
 pub struct MarketData {
     pub scope: Signal<String>,
+    pub window: MarketWindow,
     stats: [RwSignal<ScopedStats>; Window::ALL.len()],
     wanted: [RwSignal<bool>; Window::ALL.len()],
 }
@@ -70,8 +76,23 @@ impl MarketData {
         })
     }
 
+    /// Statistics for sale-based prices and follow-window columns.
+    pub fn selected_stats(self) -> Option<Arc<StatsIndex>> {
+        self.stats(self.window.selected.get())
+    }
+
     pub fn stats7(self) -> Option<Arc<StatsIndex>> {
         self.stats(Window::D7)
+    }
+
+    /// Register a price input once at setup. Its sale basis follows the page window;
+    /// concurrent columns/inputs share the same request slot.
+    pub fn require_price_basis(self, basis: Signal<PriceSignal>) {
+        Effect::new(move |_| {
+            if basis.get().sale_stat().is_some() {
+                self.want(self.window.selected.get());
+            }
+        });
     }
 
     /// Ask for a window's body. Idempotent; never un-wants.
@@ -90,14 +111,18 @@ impl MarketData {
     }
 }
 
-/// Both SSR and the initial hydrated render use listing fallbacks. The
-/// client fills the shared seven-day body after mounting; the other windows
-/// never delay the first table. Failed requests settle to empty.
+/// Both SSR and the initial hydrated render use listing fallbacks. Register
+/// each price input with `require_price_basis` and resolve it against
+/// `selected_stats`; pass `window` to the page control and price controls.
+/// `MarketGrid` registers visible and hidden query requirements itself.
+/// Failed requests settle with an explicit failure flag and an empty index,
+/// preserving price fallbacks while grid queries remain unavailable.
 pub fn use_market_data(scope: Signal<String>) -> MarketData {
     // `RwSignal` is `Copy`: a `[RwSignal::new(None); 4]` literal would be one
     // signal four times over.
     let market = MarketData {
         scope,
+        window: MarketWindow::new(Window::D7, &Window::ALL),
         stats: std::array::from_fn(|_| RwSignal::new(None)),
         wanted: std::array::from_fn(|i| RwSignal::new(i == Window::D7.index())),
     };
@@ -193,6 +218,7 @@ pub fn resolve_price(
 
 #[component]
 pub fn MarketPriceControls(
+    window: MarketWindow,
     #[prop(into)] basis: Signal<PriceSignal>,
     on_change: Callback<PriceSignal>,
     #[prop(into)] label: String,
@@ -205,21 +231,23 @@ pub fn MarketPriceControls(
     } else {
         listing_label
     };
-    let options = [
-        (PriceSignal::ListingMin, listing_label),
-        (
-            PriceSignal::SaleMin,
-            t_string!(i18n, market_sale_min_7).to_string(),
-        ),
-        (
-            PriceSignal::SaleMedian,
-            t_string!(i18n, market_sale_median_7).to_string(),
-        ),
-        (
-            PriceSignal::SaleAvg,
-            t_string!(i18n, market_sale_avg_7).to_string(),
-        ),
-    ];
+    let options = move || {
+        [
+            (PriceSignal::ListingMin, listing_label.clone()),
+            (
+                PriceSignal::SaleMin,
+                stat_label(StatKind::Min, window.selected.get()),
+            ),
+            (
+                PriceSignal::SaleMedian,
+                stat_label(StatKind::Median, window.selected.get()),
+            ),
+            (
+                PriceSignal::SaleAvg,
+                stat_label(StatKind::Average, window.selected.get()),
+            ),
+        ]
+    };
     view! {
         <div class="flex flex-col gap-1">
             <label class="filter-chip">
@@ -228,7 +256,7 @@ pub fn MarketPriceControls(
                     on:change=move |ev| {
                         if let Ok(value) = event_target_value(&ev).parse() { on_change.run(value); }
                     }>
-                    {options.into_iter().map(|(value, label)| view! {
+                    {move || options().into_iter().map(|(value, label)| view! {
                         <option value=value.to_string() selected=move || basis.get() == value>{label}</option>
                     }).collect_view()}
                 </select>
@@ -274,6 +302,7 @@ enum MarketMetric {
     Listing,
     /// One statistic of one window; ids and labels come from `STAT_COLUMNS`.
     Stat(StatKind, Window),
+    Follow(StatKind),
     LastSold,
     Confidence,
     TrendWorld,
@@ -291,6 +320,7 @@ impl MarketMetric {
             Self::Datacenter => "market-datacenter",
             Self::Listing => "market-listing",
             Self::Stat(kind, window) => stat_column(kind, window).id,
+            Self::Follow(kind) => follow_id(kind),
             Self::LastSold => "market-last-sold",
             Self::Confidence => "market-confidence",
             Self::TrendWorld => "market-trend-world",
@@ -319,9 +349,10 @@ impl MarketMetric {
 
     /// The bulk body this metric reads. Last-sold and confidence are
     /// seven-day facts, as before.
-    fn window(self) -> Option<Window> {
+    fn window(self, selected: Window) -> Option<Window> {
         match self {
             Self::Stat(_, window) => Some(window),
+            Self::Follow(_) => Some(selected),
             Self::LastSold | Self::Confidence => Some(Window::D7),
             _ => None,
         }
@@ -351,6 +382,11 @@ fn market_metrics() -> impl Iterator<Item = MarketMetric> {
     LEADING_METRICS
         .into_iter()
         .chain(
+            FOLLOW_COLUMNS
+                .iter()
+                .map(|(kind, _)| MarketMetric::Follow(*kind)),
+        )
+        .chain(
             STAT_COLUMNS
                 .iter()
                 .map(|c| MarketMetric::Stat(c.kind, c.window)),
@@ -362,7 +398,7 @@ fn metric_by_id(id: &str) -> Option<MarketMetric> {
     market_metrics().find(|m| m.id() == id)
 }
 
-fn metric_label(metric: MarketMetric) -> String {
+fn metric_label(metric: MarketMetric, selected: Window) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     match metric {
         MarketMetric::Subject => t_string!(i18n, market_subject),
@@ -372,6 +408,7 @@ fn metric_label(metric: MarketMetric) -> String {
         MarketMetric::Datacenter => t_string!(i18n, market_datacenter),
         MarketMetric::Listing => t_string!(i18n, market_listing),
         MarketMetric::Stat(kind, window) => return stat_label(kind, window),
+        MarketMetric::Follow(kind) => return stat_label(kind, selected),
         MarketMetric::LastSold => t_string!(i18n, market_last_sold),
         MarketMetric::Confidence => t_string!(i18n, market_confidence),
         MarketMetric::TrendWorld => t_string!(i18n, market_trend_world),
@@ -402,7 +439,7 @@ fn stats_value(metric: MarketMetric, stats: Option<ItemSaleStats>) -> GridValue 
             .map_or(GridValue::Missing, |time| {
                 GridValue::Text(time.format("%Y-%m-%d %H:%M UTC").to_string())
             }),
-        MarketMetric::Stat(kind, _) => number(match kind {
+        MarketMetric::Stat(kind, _) | MarketMetric::Follow(kind) => number(match kind {
             StatKind::Min => positive(s.min_price),
             StatKind::Median => positive(s.median_price),
             StatKind::Average => positive(s.avg_price),
@@ -512,7 +549,7 @@ fn market_value(
             spark_metric_value(store, &key)
         }),
         _ => {
-            let Some(window) = metric.window() else {
+            let Some(window) = metric.window(market.window.selected.get()) else {
                 return GridValue::Missing;
             };
             if market.stats_failed(window) {
@@ -545,6 +582,7 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
             if matches!(
                 metric,
                 MarketMetric::Stat(StatKind::SalesPerDay | StatKind::Cadence, _)
+                    | MarketMetric::Follow(StatKind::SalesPerDay | StatKind::Cadence)
             ) =>
         {
             format!("{n:.2}")
@@ -627,6 +665,7 @@ where
     let sizing_version = Memo::new(move |previous: Option<&u64>| {
         measure_version.get();
         market.scope.with(|_| ());
+        market.window.selected.get();
         market.track_all();
         sparks.with(|_| ());
         previous.copied().unwrap_or_default().wrapping_add(1)
@@ -644,13 +683,19 @@ where
         let mut result = columns.get();
         for metric in market_metrics() {
             if !result.iter().any(|col| col.id == metric.id()) {
-                result.push(GridColumn::new(
+                let mut column = GridColumn::new(
                     metric.id(),
-                    metric_label(metric),
+                    metric_label(metric, market.window.selected.get()),
                     160.0,
                     true,
                     false,
-                ));
+                );
+                column.picker_group = match metric {
+                    MarketMetric::Follow(_) => Some(market_picker_group(None)),
+                    MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
+                    _ => None,
+                };
+                result.push(column);
             }
         }
         result
@@ -675,10 +720,8 @@ where
     });
     Effect::new(move |_| {
         needs.with(|n| {
-            for window in Window::ALL {
-                if window != Window::D7 && window_wanted(n, window) {
-                    market.want(window);
-                }
+            for window in required_windows(n, market.window.selected.get(), false) {
+                market.want(window);
             }
         });
     });
@@ -774,7 +817,7 @@ where
     view! {
         <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| match metric_by_id(id) {
-                Some(metric) => metric_label(metric).into_any(),
+                Some(metric) => (move || metric_label(metric, market.window.selected.get())).into_any(),
                 None => native_header.with_value(|header| header(id)),
             }
             view=move |row: T, id| {
@@ -789,7 +832,7 @@ where
                     if metric.partial() {
                         let world = title_worlds.get(&spark_key(&title_subject, scope_world.get()).2)
                             .map(|v| v.0.clone()).unwrap_or_else(|| "—".into());
-                        format!("{}: {world}", metric_label(MarketMetric::TrendWorld))
+                        format!("{}: {world}", metric_label(MarketMetric::TrendWorld, market.window.selected.get()))
                     } else { String::new() }
                 }>{move || {
                     if matches!(metric, MarketMetric::Trend7)
@@ -820,6 +863,110 @@ where
 mod tests {
     use super::*;
     use ultros_api_types::cheapest_listings::CheapestListingData;
+
+    #[test]
+    fn selected_prices_and_columns_follow_window_without_reusing_other_scope_data() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let scope = RwSignal::new("Gilgamesh".to_owned());
+            let selected = RwSignal::new(Window::D7);
+            let mut market = use_market_data(scope.into());
+            market.window.selected = Memo::new(move |_| selected.get());
+            let make_stats = |price| {
+                Arc::new(
+                    [(
+                        (42, false),
+                        ItemSaleStats {
+                            item_id: 42,
+                            min_price: price - 10,
+                            median_price: price,
+                            avg_price: price + 10,
+                            ..Default::default()
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                )
+            };
+            market.stats[Window::D7.index()].set(Some(("Gilgamesh".into(), make_stats(70), false)));
+            market.stats[Window::D30.index()].set(Some((
+                "Gilgamesh".into(),
+                make_stats(300),
+                false,
+            )));
+            let price = |basis| {
+                resolve_price(
+                    &listing(),
+                    market.selected_stats().as_deref(),
+                    42,
+                    Some(false),
+                    basis,
+                )
+                .unwrap()
+            };
+            assert_eq!(price(PriceSignal::SaleMedian).price, 70);
+            selected.set(Window::D30);
+            assert_eq!(price(PriceSignal::SaleMin).price, 290);
+            assert_eq!(price(PriceSignal::SaleMedian).price, 300);
+            assert_eq!(price(PriceSignal::SaleAvg).price, 310);
+            assert_eq!(price(PriceSignal::ListingMin).price, 100);
+            assert_eq!(market.stats7().unwrap()[&(42, false)].median_price, 70);
+            assert_eq!(
+                metric_by_id("market-sale-median")
+                    .unwrap()
+                    .window(selected.get()),
+                Some(Window::D30)
+            );
+            assert_eq!(
+                metric_by_id("market-sale-median-7")
+                    .unwrap()
+                    .window(selected.get()),
+                Some(Window::D7)
+            );
+
+            let sparks = RwSignal::new(MarketSparkStore::default());
+            let scope_world = Memo::new(|_| None);
+            let subject = MarketSubject::new(42, false, 7);
+            let worlds = Arc::new(HashMap::new());
+            let value = || {
+                market_value(
+                    MarketMetric::Follow(StatKind::Median),
+                    &subject,
+                    market,
+                    sparks,
+                    scope_world,
+                    &worlds,
+                )
+            };
+            assert_eq!(value(), GridValue::Number(300.0));
+            scope.set("Cactuar".into());
+            assert!(market.selected_stats().is_none());
+            assert_eq!(value(), GridValue::Pending);
+            // An old scope completing late cannot supply either prices or cells.
+            market.stats[Window::D30.index()].set(Some((
+                "Gilgamesh".into(),
+                make_stats(999),
+                false,
+            )));
+            assert_eq!(value(), GridValue::Pending);
+            assert!(price(PriceSignal::SaleMedian).fallback);
+            market.stats[Window::D30.index()].set(Some((
+                "Cactuar".into(),
+                Arc::new(StatsIndex::new()),
+                false,
+            )));
+            assert_eq!(value(), GridValue::Missing);
+            assert_eq!(price(PriceSignal::SaleMedian).price, 100);
+            market.stats[Window::D30.index()].set(Some((
+                "Cactuar".into(),
+                Arc::new(StatsIndex::new()),
+                true,
+            )));
+            assert_eq!(value(), GridValue::Unavailable);
+            assert!(market.stats_failed(Window::D30));
+        });
+    }
 
     #[test]
     fn failed_hourly_requests_remain_unknown_while_empty_success_is_missing() {

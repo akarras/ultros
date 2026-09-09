@@ -1,4 +1,5 @@
 use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketPriceControls, MarketSubject, use_market_data},
@@ -448,9 +449,12 @@ fn VendorResaleTable(
     let i18n = use_i18n();
     let market = use_market_data(world);
     let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    market.require_price_basis(Signal::derive(move || {
+        revenue_basis.get().unwrap_or_default()
+    }));
     let selected_revenue = Signal::derive(move || revenue_basis().unwrap_or_default());
     let revenue_pending = Signal::derive(move || {
-        selected_revenue.get().sale_stat().is_some() && market.stats7().is_none()
+        selected_revenue.get().sale_stat().is_some() && market.selected_stats().is_none()
     });
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -499,11 +503,14 @@ fn VendorResaleTable(
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
         let mut sorted_data = profits
-            .candidates(selected_revenue.get(), market.stats7().as_deref())
+            .candidates(selected_revenue.get(), market.selected_stats().as_deref())
             .iter()
             .map(|data| {
-                let (data, price_fallback) =
-                    with_revenue_basis(data, selected_revenue.get(), market.stats7().as_deref());
+                let (data, price_fallback) = with_revenue_basis(
+                    data,
+                    selected_revenue.get(),
+                    market.selected_stats().as_deref(),
+                );
                 let estimated_revenue = if include_tax {
                     (data.market_price as f32 * 0.95) as i32
                 } else {
@@ -761,7 +768,10 @@ fn VendorResaleTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <MarketPriceControls basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string()/>
+            <div class="flex flex-wrap items-start gap-3">
+                <MarketWindowControl window=market.window />
+                <MarketPriceControls window=market.window basis=selected_revenue on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) label=t_string!(i18n, market_sale_estimate).to_string()/>
+            </div>
             {move || (revenue_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
 
             <ControlBar sticky=false

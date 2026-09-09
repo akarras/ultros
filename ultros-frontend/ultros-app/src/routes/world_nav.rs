@@ -27,6 +27,7 @@ pub fn world_nav_url(
     current_path: &str,
     query: &ParamsMap,
 ) -> Option<String> {
+    let world = leptos_router::location::Url::escape(world);
     let path = format!("{base}/{world}");
     if path == current_path {
         return None;
@@ -37,6 +38,29 @@ pub fn world_nav_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoded_world_and_query_values_survive_navigation() {
+        let mut query = ParamsMap::new();
+        query.insert("filter", "ore & crystals=1 + HQ/材料".into());
+        let url = world_nav_url(
+            "/fc-crafting-analyzer",
+            "陆行鸟",
+            "/fc-crafting-analyzer/Goblin",
+            &query,
+        )
+        .unwrap();
+        let (path, search) = url.split_once('?').unwrap();
+        assert_eq!(path, "/fc-crafting-analyzer/%E9%99%86%E8%A1%8C%E9%B8%9F");
+        assert_eq!(
+            leptos_router::location::Url::unescape(search),
+            "filter=ore & crystals=1 + HQ/材料"
+        );
+        assert_eq!(
+            world_nav_url("/fc-crafting-analyzer", "陆行鸟", path, &query),
+            None
+        );
+    }
 
     #[test]
     fn switching_world_keeps_a_bare_path_when_there_are_no_filters() {

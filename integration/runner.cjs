@@ -124,7 +124,7 @@ const ROUTE_ASSERTS = {
   "/list": { titleIncludes: "Ultros" },
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
-  "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
+  "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipes" },
   // Formula inputs and price-signal columns are available by default. The
   // Profit header carries an "after 5% tax" subtitle at every viewport width;
   // the inline strip itself is md+ only. Exercise the optional market and
@@ -144,7 +144,7 @@ const ROUTE_ASSERTS = {
   // Drop `cost-sale-median` from this URL and the sweep starts issuing a
   // `sale_stats?window=7` for the datacenter.
   "/recipe-analyzer?world=Gilgamesh&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
-    titleIncludes: "Recipe Analyzer",
+    titleIncludes: "Recipes",
     bodyIncludesAny: ["after 5% tax"],
   },
   "/history": { titleIncludes: "Ultros" },

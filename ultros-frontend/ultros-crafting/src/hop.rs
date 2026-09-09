@@ -3,9 +3,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::components::crafting_cost::{CostBreakdown, PriceSource};
+use crate::cost::{CostBreakdown, PriceSource};
 
-use super::formula::per_unit_cost;
+use ultros_calc::formula::per_unit_cost;
 
 /// Home cost minus buy-scope cost per unit: signed, never clamped.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -81,7 +81,7 @@ pub fn worlds_to_visit<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::crafting_cost::IngredientLine;
+    use crate::cost::IngredientLine;
     use xiv_gen::ItemId;
 
     fn breakdown(cost: i32, unpriced: u16, lines: Vec<IngredientLine>) -> CostBreakdown {

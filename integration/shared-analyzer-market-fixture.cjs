@@ -35,7 +35,11 @@ function marketFixture() {
     let body;
     if (kind === 'cheapest') body = listings(decodeURIComponent(world));
     if (kind === 'recentSales') body = recent;
-    if (kind === 'sale_stats') body = stats;
+    if (kind === 'sale_stats') {
+      const multiplier = url.searchParams.get('window') === '30' ? 2 : 1;
+      body = { stats: stats.stats.map(row => ({ ...row, min_price: row.min_price * multiplier,
+        median_price: row.median_price * multiplier, avg_price: row.avg_price * multiplier })) };
+    }
     if (kind === 'sparklines') {
       const items = JSON.parse(request.postData() || '{}').items || [];
       body = { world_id: worldId, series: items.map(([item_id, hq]) => ({

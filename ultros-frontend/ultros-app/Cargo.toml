@@ -7,17 +7,17 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ultros-crafting = { path = "../ultros-crafting" }
 ultros-calc = { path = "../ultros-calc" }
 ultros-ui = { path = "../ultros-ui", default-features = false }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-changelog = { path = "../../ultros-changelog" }
+ultros-api-client = { path = "../ultros-api-client", default-features = false }
 leptos = { workspace = true, features = ["nightly"] }
 leptos_meta = { workspace = true }
 leptos_router = { workspace = true }
 leptos_axum = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-tower = { version = "0.5.3", features = ["util"], optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen.workspace = true
@@ -117,12 +117,11 @@ hydrate = [
     "time/wasm-bindgen",
     "js-sys",
     "leptos_i18n/hydrate",
+    "ultros-api-client/hydrate",
 ]
 ssr = [
     "ultros-ui/ssr",
     "ultros-i18n/ssr",
-    "dep:tokio",
-    "dep:tower",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
@@ -134,6 +133,7 @@ ssr = [
     "axum",
     "leptos_hotkeys/ssr",
     "leptos_i18n/axum",
+    "ultros-api-client/ssr",
 ]
 
 [dev-dependencies]

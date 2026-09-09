@@ -101,6 +101,9 @@ mod development {
     /// Exercises filtering independently of market services and live data.
     #[component]
     pub fn QueryFixture() -> impl IntoView {
+        if use_query_map().with_untracked(|q| q.get("market-window-test").is_some()) {
+            return view! { <MarketWindowFixture /> }.into_any();
+        }
         let loaded = RwSignal::new(0usize);
         let rows = Memo::new(move |_| {
             (0..250)
@@ -133,6 +136,82 @@ mod development {
                 header=|id| view! { <span>{id}</span> }.into_any()
                 view=|row, id| view! { <span data-fixture-id=row.id>{query_text(&row, id)}</span> }.into_any()
                 measure=|row, id| (query_text(row, id), 24.0)
+            />
+        }.into_any()
+    }
+
+    #[component]
+    fn MarketWindowFixture() -> impl IntoView {
+        use crate::analyzer_kit::{
+            formula::PriceSignal,
+            market::{
+                MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data,
+            },
+            window::MarketWindowControl,
+        };
+        use ultros_api_types::cheapest_listings::{
+            CheapestListingData, CheapestListingMapKey, CheapestListingsMap,
+        };
+        let (scope, set_scope) = crate::query_defaults::query_signal::<String>("scope");
+        let market = use_market_data(Signal::derive(move || {
+            scope.get().unwrap_or_else(|| "Gilgamesh".into())
+        }));
+        let (basis, set_basis) = crate::query_defaults::query_signal::<PriceSignal>("revenue");
+        let selected_basis = Signal::derive(move || basis.get().unwrap_or_default());
+        market.require_price_basis(selected_basis);
+        let listings = StoredValue::new(CheapestListingsMap {
+            map: [42, 43, 44]
+                .into_iter()
+                .map(|item_id| {
+                    (
+                        CheapestListingMapKey { item_id, hq: false },
+                        CheapestListingData {
+                            price: 100,
+                            world_id: 63,
+                        },
+                    )
+                })
+                .collect(),
+        });
+        let price = move |id| {
+            listings.with_value(|listings| {
+                resolve_price(
+                    listings,
+                    market.selected_stats().as_deref(),
+                    id,
+                    Some(false),
+                    selected_basis.get(),
+                )
+                .unwrap()
+                .price
+            })
+        };
+        let rows = Memo::new(|_| vec![42, 43, 44]);
+        let columns = Signal::derive(|| {
+            vec![
+                GridColumn::new("item", "Item".into(), 100.0, false, true),
+                GridColumn::new("price", "Price".into(), 100.0, false, true),
+            ]
+        });
+        let metrics = vec![GridMetric::number("price", move |id: &i32| {
+            if selected_basis.get().sale_stat().is_some() && market.selected_stats().is_none() {
+                GridValue::Pending
+            } else {
+                GridValue::Number(price(*id) as f64)
+            }
+        })];
+        view! {
+            <h1>"Market window fixture"</h1>
+            <MarketWindowControl window=market.window />
+            <MarketPriceControls window=market.window basis=selected_basis label="Price basis"
+                on_change=Callback::new(move |basis| set_basis.set(Some(basis))) />
+            <button id="window-scope" on:click=move |_| set_scope.set(Some("Cactuar".into()))>"Cactuar"</button>
+            <MarketGrid id="window-fixture-grid" label="Market window fixture" each=rows columns metrics market
+                subject=std::sync::Arc::new(|id: &i32| MarketSubject::new(*id, false, 63))
+                key=|id: &i32| *id
+                header=|id| id.into_any()
+                view=move |id, column| view! { <span data-window-item=id>{move || if column == "price" { price(id) } else { id }}</span> }.into_any()
+                measure=move |id: &i32, column| ((if column == "price" { price(*id) } else { *id }).to_string(), 24.0)
             />
         }
     }

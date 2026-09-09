@@ -68,7 +68,7 @@ pub fn FormulaStrip(terms: Vec<StripTerm>) -> impl IntoView {
     view! {
         <div class="flex flex-wrap items-center gap-2">
             {terms.into_iter().map(|term| {
-                let chip_class = if term.select.is_some() { "filter-chip" } else { "filter-chip bg-transparent" };
+                let chip_class = if term.select.is_some() { "filter-chip max-w-full flex-wrap" } else { "filter-chip max-w-full flex-wrap bg-transparent" };
                 let degraded = term.degraded;
                 view! {
                     <span class=chip_class>
