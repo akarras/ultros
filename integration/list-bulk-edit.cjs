@@ -110,21 +110,31 @@ async function main() {
     if (worldData.status !== 200) throw new Error(`world_data ${worldData.status}`);
     const worldId = worldData.body.regions[0].datacenters[0].worlds[0].id;
     const listName = `BulkEdit E2E ${Date.now()}`;
-    await api(page, "POST", "/api/v1/list/create", {
+    const created = await api(page, "POST", "/api/v1/list/create", {
       name: listName,
       wdr_filter: { World: worldId },
     });
+    if (created.status < 200 || created.status >= 300) {
+      throw new Error(`create list failed: HTTP ${created.status}`);
+    }
     const all = await api(page, "GET", "/api/v1/list");
+    if (all.status !== 200) throw new Error(`list setup read failed: HTTP ${all.status}`);
     const ourList = (all.body || []).find((e) => e.list.name === listName);
     if (!ourList) throw new Error("created list missing");
     const listId = ourList.list.id;
     // Add a couple of items so the table renders with rows.
     for (const itemId of [5, 6, 7]) {
-      await api(page, "POST", `/api/v1/list/${listId}/add/item`, {
+      const added = await api(page, "POST", `/api/v1/list/${listId}/add/item`, {
+        id: 0,
         item_id: itemId,
         list_id: listId,
+        hq: null,
         quantity: 1,
-      }).catch(() => {});
+        acquired: null,
+      });
+      if (added.status < 200 || added.status >= 300) {
+        throw new Error(`add fixture item ${itemId} failed: HTTP ${added.status}`);
+      }
     }
     pass(`created list "${listName}" (id=${listId})`);
 

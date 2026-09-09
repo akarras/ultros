@@ -8,13 +8,14 @@ pub struct Migration;
 
 /// Duplicate `(list_id, item_id, hq)` rows predate the application-level
 /// dedupe. Fold each group into its lowest id, summing what a merge of adds
-/// would have summed, then drop the rest.
+/// would have summed, then drop the rest. Match the document projection's
+/// 0..=i32::MAX bounds so valid integer rows cannot overflow during migration.
 const FOLD_DUPLICATES: &str = r#"
 WITH dupes AS (
     SELECT list_id, item_id, hq,
            MIN(id) AS keep_id,
-           SUM(COALESCE(quantity, 1)) AS quantity,
-           SUM(COALESCE(acquired, 0)) AS acquired
+           LEAST(2147483647, GREATEST(0, SUM(COALESCE(quantity, 1)))) AS quantity,
+           LEAST(2147483647, GREATEST(0, SUM(COALESCE(acquired, 0)))) AS acquired
     FROM list_item
     GROUP BY list_id, item_id, hq
     HAVING COUNT(*) > 1
@@ -125,12 +126,9 @@ mod tests {
     use super::*;
     use sea_orm_migration::sea_orm::{Database, DbBackend, Statement, TransactionTrait};
 
-    /// Session-local `list` and `list_item` shadow the real tables, so the
-    /// dedupe and the index run against known rows and vanish on commit.
-    /// `Migration.up` also creates the real (non-temporary) `list_doc` table,
-    /// whose FK to the temp `list` is dropped at commit but which itself
-    /// persists in the target database — this test must run against a
-    /// disposable database.
+    /// Run the complete migration inside a unique schema in one transaction.
+    /// Its real tables allow PostgreSQL to validate the foreign key, and
+    /// rollback removes the entire fixture without changing existing schemas.
     #[tokio::test]
     #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
     async fn duplicates_fold_into_the_lowest_id_and_the_index_exists() {
@@ -138,13 +136,22 @@ mod tests {
             .await
             .unwrap();
         let tx = db.begin().await.unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let schema = format!("list_doc_migration_{}_{nonce}", std::process::id());
+        tx.execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+            .await
+            .unwrap();
+        tx.execute_unprepared(&format!("SET LOCAL search_path TO {schema}"))
+            .await
+            .unwrap();
+        tx.execute_unprepared("CREATE TABLE list (id integer PRIMARY KEY)")
+            .await
+            .unwrap();
         tx.execute_unprepared(
-            "CREATE TEMPORARY TABLE list (id integer PRIMARY KEY) ON COMMIT DROP",
-        )
-        .await
-        .unwrap();
-        tx.execute_unprepared(
-            "CREATE TEMPORARY TABLE list_item (id serial PRIMARY KEY, list_id integer, item_id integer, hq boolean, quantity integer, acquired integer, target_price bigint) ON COMMIT DROP",
+            "CREATE TABLE list_item (id serial PRIMARY KEY, list_id integer, item_id integer, hq boolean, quantity integer, acquired integer, target_price bigint)",
         )
         .await
         .unwrap();
@@ -153,7 +160,10 @@ mod tests {
             .unwrap();
         tx.execute_unprepared(
             "INSERT INTO list_item (list_id, item_id, hq, quantity, acquired) VALUES \
-             (1, 5, NULL, 2, 1), (1, 5, NULL, 3, NULL), (1, 5, true, 1, 0), (1, 6, NULL, NULL, 4)",
+             (1, 5, NULL, 2, 1), (1, 5, NULL, 3, NULL), (1, 5, true, 1, 0), (1, 6, NULL, NULL, 4), \
+             (1, 7, NULL, 2147483647, 2147483647), (1, 7, NULL, 1, 1), \
+             (1, 8, NULL, -2147483648, -2147483648), (1, 8, NULL, -1, -1), \
+             (1, 9, NULL, 2147483646, 2147483646), (1, 9, NULL, NULL, 1)",
         )
         .await
         .unwrap();
@@ -162,15 +172,16 @@ mod tests {
         let rows = tx
             .query_all_raw(Statement::from_string(
                 DbBackend::Postgres,
-                "SELECT item_id, hq, quantity, acquired FROM list_item ORDER BY item_id, hq NULLS FIRST",
+                "SELECT id, item_id, hq, quantity, acquired FROM list_item ORDER BY item_id, hq NULLS FIRST",
             ))
             .await
             .unwrap();
-        type Row = (i32, Option<bool>, Option<i32>, Option<i32>);
+        type Row = (i32, i32, Option<bool>, Option<i32>, Option<i32>);
         let values: Vec<Row> = rows
             .iter()
             .map(|row| {
                 (
+                    row.try_get("", "id").unwrap(),
                     row.try_get("", "item_id").unwrap(),
                     row.try_get("", "hq").unwrap(),
                     row.try_get("", "quantity").unwrap(),
@@ -181,9 +192,12 @@ mod tests {
         assert_eq!(
             values,
             vec![
-                (5, None, Some(5), Some(1)),
-                (5, Some(true), Some(1), Some(0)),
-                (6, None, None, Some(4)),
+                (1, 5, None, Some(5), Some(1)),
+                (3, 5, Some(true), Some(1), Some(0)),
+                (4, 6, None, None, Some(4)),
+                (5, 7, None, Some(i32::MAX), Some(i32::MAX)),
+                (7, 8, None, Some(0), Some(0)),
+                (9, 9, None, Some(i32::MAX), Some(i32::MAX)),
             ]
         );
         let indexes = tx
@@ -191,11 +205,11 @@ mod tests {
                 DbBackend::Postgres,
                 "SELECT indexname FROM pg_indexes \
                  WHERE indexname = 'idx_list_item_natural_key' \
-                   AND schemaname = (SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema())",
+                   AND schemaname = current_schema()",
             ))
             .await
             .unwrap();
         assert_eq!(indexes.len(), 1);
-        tx.commit().await.unwrap();
+        tx.rollback().await.unwrap();
     }
 }

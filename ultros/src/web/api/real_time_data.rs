@@ -359,9 +359,11 @@ async fn handle_socket(
                                             db.get_permission(list_id, user_id).await?;
                                         if permission >= ListPermission::Read {
                                             let active = active_subscriptions.clone();
+                                            let relay_db = db.clone();
                                             let stream = BroadcastStream::new(lists.resubscribe())
                                                 .filter_map(move |l| {
                                                     let active = active.clone();
+                                                    let db = relay_db.clone();
                                                     async move {
                                                         if !is_subscription_active(
                                                             &active,
@@ -406,12 +408,15 @@ async fn handle_socket(
                                                                     WEvent::Updated((*u).clone())
                                                                 }
                                                             };
-                                                            wrap_subscription_event(
+                                                            authorize_list_event(
+                                                                &db,
+                                                                &active,
                                                                 subscription_id,
-                                                                Some(ServerClient::ListUpdate(
-                                                                    event,
-                                                                )),
+                                                                list_id,
+                                                                user_id,
+                                                                ServerClient::ListUpdate(event),
                                                             )
+                                                            .await
                                                         } else {
                                                             None
                                                         }
@@ -495,9 +500,11 @@ async fn handle_socket(
                                                 list_doc_subscriptions
                                                     .insert(list_id, subscription_id);
                                                 let active = active_subscriptions.clone();
+                                                let relay_db = db.clone();
                                                 let stream = BroadcastStream::new(doc_relay)
                                                     .filter_map(move |event| {
                                                         let active = active.clone();
+                                                        let db = relay_db.clone();
                                                         async move {
                                                             if !is_subscription_active(
                                                                 &active,
@@ -520,13 +527,18 @@ async fn handle_socket(
                                                                 list_id,
                                                                 socket_id,
                                                             )?;
-                                                            wrap_subscription_event(
+                                                            authorize_list_event(
+                                                                &db,
+                                                                &active,
                                                                 subscription_id,
-                                                                Some(ServerClient::ListDocUpdate {
+                                                                list_id,
+                                                                user_id,
+                                                                ServerClient::ListDocUpdate {
                                                                     list_id,
                                                                     update,
-                                                                }),
+                                                                },
                                                             )
+                                                            .await
                                                         }
                                                     });
                                                 subscriptions.push(Box::pin(stream));
@@ -763,6 +775,45 @@ fn is_subscription_active(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u
         .unwrap_or(false)
 }
 
+/// A successful handshake is not a permanent grant. Direct shares, group
+/// shares and group membership can all disappear while the socket stays open.
+async fn authorize_list_event(
+    db: &UltrosDb,
+    active: &Arc<Mutex<HashSet<u64>>>,
+    subscription_id: u64,
+    list_id: i32,
+    user_id: i64,
+    event: ServerClient,
+) -> Option<ServerClient> {
+    let permission = db.get_permission(list_id, user_id).await;
+    finish_list_authorization(active, subscription_id, list_id, permission, event)
+}
+
+fn finish_list_authorization(
+    active: &Arc<Mutex<HashSet<u64>>>,
+    subscription_id: u64,
+    list_id: i32,
+    permission: anyhow::Result<ListPermission>,
+    event: ServerClient,
+) -> Option<ServerClient> {
+    // The subscription may have been removed while the database query awaited.
+    if !is_subscription_active(active, subscription_id) {
+        return None;
+    }
+    if matches!(permission, Ok(value) if value >= ListPermission::Read) {
+        return Some(scoped_event(subscription_id, event));
+    }
+    // Fail closed on lookup errors too. Only this subscription is retired;
+    // unrelated lists and public market subscriptions remain live.
+    deactivate_subscription(active, subscription_id);
+    Some(scoped_event(
+        subscription_id,
+        ServerClient::Error {
+            message: format!("forbidden: no verified read access to list {list_id}"),
+        },
+    ))
+}
+
 fn wrap_subscription_event(
     subscription_id: u64,
     event: Option<ServerClient>,
@@ -787,6 +838,53 @@ fn scoped_event(subscription_id: u64, event: ServerClient) -> ServerClient {
 mod tests {
     use super::*;
     use crate::event::ListDocEvent;
+
+    #[test]
+    fn list_relay_denial_and_lookup_failure_retire_only_the_affected_subscription() {
+        for permission in [
+            Ok(ListPermission::None),
+            Err(anyhow::anyhow!("database unavailable")),
+        ] {
+            let active = Arc::new(Mutex::new(HashSet::from([11, 22])));
+            let result = finish_list_authorization(
+                &active,
+                11,
+                7,
+                permission,
+                ServerClient::ListDocUpdate {
+                    list_id: 7,
+                    update: vec![99],
+                },
+            );
+            assert!(matches!(result, Some(ServerClient::SubscriptionEvent {
+                subscription_id: 11, event,
+            }) if matches!(*event, ServerClient::Error { .. })));
+            assert!(!is_subscription_active(&active, 11));
+            assert!(is_subscription_active(&active, 22));
+        }
+    }
+
+    #[test]
+    fn list_relay_allows_current_readers_but_does_not_revive_unsubscribed_ids() {
+        let active = Arc::new(Mutex::new(HashSet::from([11])));
+        let event = || ServerClient::ListDocUpdate {
+            list_id: 7,
+            update: vec![99],
+        };
+        assert!(matches!(
+            finish_list_authorization(&active, 11, 7, Ok(ListPermission::Read), event()),
+            Some(ServerClient::SubscriptionEvent {
+                subscription_id: 11,
+                event,
+            }) if matches!(*event, ServerClient::ListDocUpdate { .. })
+        ));
+        assert!(is_subscription_active(&active, 11));
+        deactivate_subscription(&active, 11);
+        assert!(
+            finish_list_authorization(&active, 11, 7, Ok(ListPermission::Owner), event()).is_none()
+        );
+        assert!(!is_subscription_active(&active, 11));
+    }
 
     #[test]
     fn relay_skips_other_lists_and_the_sending_socket() {

@@ -24,6 +24,7 @@
     "test:push": "node ./push.cjs",
     "test:app-update": "node ./app-update.cjs",
     "test:shared-list": "node ./shared-list.cjs",
+    "test:list-socket-revocation": "node ./list-socket-revocation.cjs",
     "test:list-flow": "node ./list-flow.cjs",
     "test:labs": "node ./labs.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",
