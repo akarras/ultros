@@ -2,7 +2,6 @@
     "npc_location_unknown": "Location unavailable",
     "npc_quest_giver": "Quest giver",
     "npc_quest_giver_unknown": "Quest giver unavailable",
-
     "market_history_unavailable": "Sale history could not be loaded.",
     "market_trend_world": "Trend world",
     "grid_saved_views_empty": "No saved views yet.",
@@ -1290,6 +1289,9 @@
     "related_recipe_est_profit": "Est. Profit:",
     "lq": "LQ",
     "related_vendor_sources_title": "Vendor Sources",
+    "vendor_gate_unlockable": "Quest or achievement required",
+    "vendor_gate_seasonal_shop": "Seasonal event vendor",
+    "vendor_gate_seasonal_unlock": "Requires a past seasonal event",
     "related_exchange_costs": "Costs:",
     "related_exchange_sources_title": "Exchange Sources",
     "related_leve_lvl_prefix": "Lvl",

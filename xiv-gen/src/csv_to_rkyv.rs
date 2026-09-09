@@ -22,10 +22,51 @@ pub fn read_data_from(root: &Path, lang: Language) -> Data {
         _ => root.join("csv").join(lang.to_path_part()),
     };
     let base_path = format!("{}/", base_path.display());
+    // Everything feeding `availability` is read from the English tree, whatever
+    // `lang` is: gates are ids (shops, quests, achievements, festivals) and an
+    // id means the same thing in every language, while only names are
+    // translated. That is not just an optimization — the CN/KO/TC forks ship
+    // the SaintCoinach header layout, in which `GilShop.FestivalId` and the
+    // `GilShopItem` gate columns have no names to match, so reading them
+    // per-locale would classify every seasonal shop as `Open` for those three.
+    // It also keeps ~34MB of `Quest.csv` from being parsed six extra times.
+    let en_path = format!("{}/", root.join("csv").join("en").display());
+    let gates = GateIndex {
+        achievement_category: read_csv_vec::<AchievementCategoryOf>(&format!(
+            "{en_path}Achievement.csv"
+        ))
+        .into_iter()
+        .map(|a| (a.key_id, a.achievement_category))
+        .collect(),
+        quest_genre: read_csv_vec::<QuestGenreOf>(&format!("{en_path}Quest.csv"))
+            .into_iter()
+            .map(|q| (q.key_id, q.journal_genre))
+            .collect(),
+    };
+    let shop_gates: HashMap<GilShopId, GilShopGates> =
+        read_csv_vec::<GilShopGates>(&format!("{en_path}GilShop.csv"))
+            .into_iter()
+            .map(|s| (s.key_id, s))
+            .collect();
+    // Keyed by (shop, item) rather than the row's own (shop, subrow): the
+    // subrow index is a position, and the per-language forks are cut from
+    // different game versions, so position N need not be the same product in
+    // each. No (shop, item) pair carries conflicting gates upstream, which
+    // makes the product key both unambiguous and stable across versions.
+    let item_gates: HashMap<(GilShopId, i32), GilShopItemGates> =
+        read_csv_vec::<GilShopItemGates>(&format!("{en_path}GilShopItem.csv"))
+            .into_iter()
+            .map(|i| ((i.key_id.0, i.item), i))
+            .collect();
     let e_npc_residents: HashMap<ENpcResidentId, ENpcResident> =
         read_csv_to_map(&format!("{}ENpcResident.csv", base_path));
-    let gil_shops: HashMap<GilShopId, GilShop> =
+    // Names come from `lang`; the festival id is stamped on from the English
+    // gates, for the header-layout reason above.
+    let mut gil_shops: HashMap<GilShopId, GilShop> =
         read_csv_to_map(&format!("{}GilShop.csv", base_path));
+    for (id, shop) in gil_shops.iter_mut() {
+        shop.festival_id = shop_gates.get(id).map_or(0, |g| g.festival_id);
+    }
     // Read once to build `gil_shop_npcs`, then drop: these three sheets exist
     // only to answer "which NPCs offer this shop?", and `ENpcBase` is by far
     // the largest table in the set.
@@ -50,7 +91,11 @@ pub fn read_data_from(root: &Path, lang: Language) -> Data {
         gil_shops,
         gil_shop_items: read_csv_vec::<GilShopItem>(&format!("{}GilShopItem.csv", base_path))
             .into_iter()
-            .fold(HashMap::new(), |mut map, m| {
+            .fold(HashMap::new(), |mut map, mut m| {
+                if let Some(item) = item_gates.get(&(m.key_id.0, m.item)) {
+                    m.availability =
+                        classify_availability(shop_gates.get(&m.key_id.0), item, &gates);
+                }
                 map.entry(m.key_id.0).or_default().push(m);
                 map
             }),
@@ -151,6 +196,128 @@ fn build_gil_shop_npcs(
     map
 }
 
+/// `AchievementCategory` rows that mean "seasonal event". Two categories share
+/// the name; both are event achievements (`Horsing About`, `Cold as Ice`).
+///
+/// Ids, not names: `AchievementCategory.Name` is localized, and this runs once
+/// per locale. Re-derive with
+/// `grep -n 'Seasonal' csv/en/AchievementCategory.csv`.
+const SEASONAL_ACHIEVEMENT_CATEGORIES: [i32; 2] = [38, 58];
+
+/// `JournalGenre` rows for seasonal events — a contiguous block covering
+/// `Seasonal Events` through `Other Seasonal Events`, taking in Heavensturn,
+/// Valentione's, Little Ladies' Day, Hatching-tide, Moonfire Faire, the Rising,
+/// All Saints' Wake and the Starlight Celebration.
+///
+/// Ids again, for the same reason. Re-derive with
+/// `grep -n 'Event' csv/en/JournalGenre.csv`; a new event genre appended
+/// outside this range will read as [`VendorAvailability::Unlockable`] until the
+/// range is widened, which fails toward showing an item rather than hiding one.
+const SEASONAL_JOURNAL_GENRES: std::ops::RangeInclusive<i32> = 237..=250;
+
+/// Gate columns of `GilShop` that are needed only to classify its rows.
+#[derive(Debug, Clone, FromCsv)]
+#[xiv_gen(sheet = "GilShop")]
+struct GilShopGates {
+    #[xiv_gen(column = "#")]
+    key_id: GilShopId,
+    #[xiv_gen(column = "Quest")]
+    quest: i32,
+    #[xiv_gen(column = "FestivalId")]
+    festival_id: i32,
+}
+
+/// Gate columns of `GilShopItem`, likewise generation-only.
+#[derive(Debug, Clone, FromCsv)]
+#[xiv_gen(sheet = "GilShopItem")]
+struct GilShopItemGates {
+    #[xiv_gen(column = "#")]
+    key_id: crate::subrow_key::SubrowKey<GilShopId>,
+    #[xiv_gen(column = "Item")]
+    item: i32,
+    #[xiv_gen(column = "QuestRequired[{}]", count = 2)]
+    quest_required: [i32; 2],
+    #[xiv_gen(column = "AchievementRequired")]
+    achievement_required: i32,
+}
+
+/// Just enough of `Achievement` to find the category a gate belongs to.
+#[derive(Debug, Clone, FromCsv)]
+#[xiv_gen(sheet = "Achievement")]
+struct AchievementCategoryOf {
+    #[xiv_gen(column = "#")]
+    key_id: i32,
+    #[xiv_gen(column = "AchievementCategory")]
+    achievement_category: i32,
+}
+
+/// Just enough of `Quest` to find the journal genre a gate belongs to.
+#[derive(Debug, Clone, FromCsv)]
+#[xiv_gen(sheet = "Quest")]
+struct QuestGenreOf {
+    #[xiv_gen(column = "#")]
+    key_id: i32,
+    #[xiv_gen(column = "JournalGenre")]
+    journal_genre: i32,
+}
+
+/// Resolved gate categories, read once and reused for every shop row.
+struct GateIndex {
+    /// achievement id -> `AchievementCategory`
+    achievement_category: HashMap<i32, i32>,
+    /// quest id -> `JournalGenre`
+    quest_genre: HashMap<i32, i32>,
+}
+
+impl GateIndex {
+    fn seasonal_achievement(&self, achievement: i32) -> bool {
+        self.achievement_category
+            .get(&achievement)
+            .is_some_and(|c| SEASONAL_ACHIEVEMENT_CATEGORIES.contains(c))
+    }
+
+    fn seasonal_quest(&self, quest: i32) -> bool {
+        self.quest_genre
+            .get(&quest)
+            .is_some_and(|g| SEASONAL_JOURNAL_GENRES.contains(g))
+    }
+}
+
+/// Classify one shop row from its own gates and its shop's.
+///
+/// Which column a gate sits in says nothing about how hard it is — quest gates
+/// are mostly main-scenario progress, and the largest group of achievement
+/// gates is the sightseeing log, both of which any player can still complete.
+/// Only the category of the referenced row separates those from an event that
+/// has been over for a decade.
+fn classify_availability(
+    shop: Option<&GilShopGates>,
+    item: &GilShopItemGates,
+    gates: &GateIndex,
+) -> VendorAvailability {
+    let shop_quest = shop.map_or(0, |s| s.quest);
+    let quest_gates = [shop_quest, item.quest_required[0], item.quest_required[1]];
+
+    // A seasonal quest/achievement outranks a festival shop: it means the
+    // player had to be there at the time, which no future occurrence undoes.
+    if item.achievement_required != 0 && gates.seasonal_achievement(item.achievement_required) {
+        return VendorAvailability::SeasonalUnlock;
+    }
+    if quest_gates
+        .iter()
+        .any(|q| *q != 0 && gates.seasonal_quest(*q))
+    {
+        return VendorAvailability::SeasonalUnlock;
+    }
+    if shop.is_some_and(|s| s.festival_id != 0) {
+        return VendorAvailability::SeasonalShop;
+    }
+    if item.achievement_required != 0 || quest_gates.iter().any(|q| *q != 0) {
+        return VendorAvailability::Unlockable;
+    }
+    VendorAvailability::Open
+}
+
 fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -210,4 +377,167 @@ where
         .into_iter()
         .map(|item| (item.get_id(), item))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Out of Sight`, the sightseeing-log achievement behind the Paintings —
+    /// the largest group of achievement-gated marketable rows, and one any
+    /// player can still earn.
+    const SIGHTSEEING_CATEGORY: i32 = 12;
+    /// `Main Quests`, the largest quest-gate genre.
+    const MAIN_QUEST_GENRE: i32 = 1;
+
+    fn gates() -> GateIndex {
+        GateIndex {
+            achievement_category: HashMap::from([
+                (875, SEASONAL_ACHIEVEMENT_CATEGORIES[0]), // Horsing About
+                (700, SIGHTSEEING_CATEGORY),               // Out of Sight
+            ]),
+            quest_genre: HashMap::from([
+                (66832, 238),              // Thank Heavensturn for You
+                (66754, MAIN_QUEST_GENRE), // Brotherhood of Ash
+            ]),
+        }
+    }
+
+    fn shop(quest: i32, festival_id: i32) -> GilShopGates {
+        GilShopGates {
+            key_id: GilShopId(262630),
+            quest,
+            festival_id,
+        }
+    }
+
+    fn row(quest_required: [i32; 2], achievement_required: i32) -> GilShopItemGates {
+        GilShopItemGates {
+            key_id: crate::subrow_key::SubrowKey(GilShopId(262630), 0),
+            item: 2644,
+            quest_required,
+            achievement_required,
+        }
+    }
+
+    fn classify(shop: Option<&GilShopGates>, item: &GilShopItemGates) -> VendorAvailability {
+        classify_availability(shop, item, &gates())
+    }
+
+    #[test]
+    fn ungated_row_in_an_ungated_shop_is_open() {
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([0, 0], 0)),
+            VendorAvailability::Open
+        );
+    }
+
+    #[test]
+    fn a_missing_shop_row_still_classifies_from_the_item_gates() {
+        assert_eq!(classify(None, &row([0, 0], 0)), VendorAvailability::Open);
+        assert_eq!(
+            classify(None, &row([0, 0], 875)),
+            VendorAvailability::SeasonalUnlock
+        );
+    }
+
+    /// The guard against the naive "any gate means unavailable" rule: story
+    /// progress and the sightseeing log are gates a player can simply go do.
+    #[test]
+    fn story_and_sightseeing_gates_are_merely_unlockable() {
+        assert_eq!(
+            classify(Some(&shop(66754, 0)), &row([0, 0], 0)),
+            VendorAvailability::Unlockable
+        );
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([0, 0], 700)),
+            VendorAvailability::Unlockable
+        );
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([66754, 0], 0)),
+            VendorAvailability::Unlockable
+        );
+    }
+
+    /// Usagi Kabuto's Calamity Salvager row: a year-round vendor that only
+    /// sells to players who earned a 2013 event achievement.
+    #[test]
+    fn seasonal_event_achievement_is_a_seasonal_unlock() {
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([0, 0], 875)),
+            VendorAvailability::SeasonalUnlock
+        );
+    }
+
+    #[test]
+    fn seasonal_event_quest_is_a_seasonal_unlock_from_either_slot() {
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([66832, 0], 0)),
+            VendorAvailability::SeasonalUnlock
+        );
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([0, 66832], 0)),
+            VendorAvailability::SeasonalUnlock
+        );
+        assert_eq!(
+            classify(Some(&shop(66832, 0)), &row([0, 0], 0)),
+            VendorAvailability::SeasonalUnlock
+        );
+    }
+
+    /// Usagi Kabuto's other row: the festival vendor that only exists while
+    /// that Heavensturn occurrence is live.
+    #[test]
+    fn festival_shop_without_a_personal_gate_is_a_seasonal_shop() {
+        assert_eq!(
+            classify(Some(&shop(0, 5)), &row([0, 0], 0)),
+            VendorAvailability::SeasonalShop
+        );
+    }
+
+    /// Needing to have taken part outranks the shop's own schedule: a future
+    /// occurrence reopens the shop but never re-awards the old achievement.
+    #[test]
+    fn a_seasonal_unlock_outranks_a_festival_shop() {
+        assert_eq!(
+            classify(Some(&shop(0, 5)), &row([0, 0], 875)),
+            VendorAvailability::SeasonalUnlock
+        );
+    }
+
+    /// An unknown gate id (a quest or achievement missing from the sheet) must
+    /// not silently read as ungated.
+    #[test]
+    fn unrecognized_gate_ids_are_unlockable_not_open() {
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([0, 0], i32::MAX)),
+            VendorAvailability::Unlockable
+        );
+        assert_eq!(
+            classify(Some(&shop(0, 0)), &row([i32::MAX, 0], 0)),
+            VendorAvailability::Unlockable
+        );
+    }
+
+    #[test]
+    fn ordering_runs_least_to_most_restricted() {
+        use VendorAvailability::*;
+        let mut all = [SeasonalUnlock, Open, SeasonalShop, Unlockable];
+        all.sort();
+        assert_eq!(all, [Open, Unlockable, SeasonalShop, SeasonalUnlock]);
+        // An item sold by several shops is as reachable as its easiest row.
+        assert_eq!(
+            [SeasonalUnlock, Unlockable].into_iter().min(),
+            Some(Unlockable)
+        );
+    }
+
+    #[test]
+    fn only_the_seasonal_states_are_unobtainable() {
+        use VendorAvailability::*;
+        assert!(Open.is_obtainable());
+        assert!(Unlockable.is_obtainable());
+        assert!(!SeasonalShop.is_obtainable());
+        assert!(!SeasonalUnlock.is_obtainable());
+    }
 }

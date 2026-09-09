@@ -2,7 +2,6 @@
     "npc_location_unknown": "場所不明",
     "npc_quest_giver": "依頼NPC",
     "npc_quest_giver_unknown": "依頼NPC不明",
-
     "market_history_unavailable": "販売履歴を読み込めませんでした。",
     "market_trend_world": "トレンドの対象ワールド",
     "grid_saved_views_empty": "保存済みのビューはまだありません。",
@@ -1287,6 +1286,9 @@
     "related_recipe_est_profit": "想定利益:",
     "lq": "LQ",
     "related_vendor_sources_title": "NPC販売元",
+    "vendor_gate_unlockable": "クエストまたはアチーブメントが必要",
+    "vendor_gate_seasonal_shop": "季節イベント限定NPC",
+    "vendor_gate_seasonal_unlock": "過去の季節イベントへの参加が必要",
     "related_exchange_costs": "コスト:",
     "related_exchange_sources_title": "交換元",
     "related_leve_lvl_prefix": "Lv",

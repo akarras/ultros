@@ -2,7 +2,6 @@
     "npc_location_unknown": "Emplacement indisponible",
     "npc_quest_giver": "Donneur de quête",
     "npc_quest_giver_unknown": "Donneur de quête inconnu",
-
     "market_history_unavailable": "L’historique des ventes n’a pas pu être chargé.",
     "market_trend_world": "Monde de la tendance",
     "grid_saved_views_empty": "Aucune vue enregistrée pour le moment.",
@@ -1287,6 +1286,9 @@
     "related_recipe_est_profit": "Profit est. :",
     "lq": "LQ",
     "related_vendor_sources_title": "Sources vendeurs",
+    "vendor_gate_unlockable": "Quête ou haut fait requis",
+    "vendor_gate_seasonal_shop": "Marchand d'événement saisonnier",
+    "vendor_gate_seasonal_unlock": "Nécessite un événement saisonnier passé",
     "related_exchange_costs": "Coûts :",
     "related_exchange_sources_title": "Sources d'échange",
     "related_leve_lvl_prefix": "Nv",

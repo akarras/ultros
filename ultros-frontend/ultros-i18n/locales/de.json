@@ -2,7 +2,6 @@
     "npc_location_unknown": "Standort nicht verfügbar",
     "npc_quest_giver": "Auftraggeber",
     "npc_quest_giver_unknown": "Auftraggeber unbekannt",
-
     "market_history_unavailable": "Der Verkaufsverlauf konnte nicht geladen werden.",
     "market_trend_world": "Trend-Welt",
     "grid_saved_views_empty": "Noch keine gespeicherten Ansichten.",
@@ -1287,6 +1286,9 @@
     "related_recipe_est_profit": "Gesch. Gewinn:",
     "lq": "LQ",
     "related_vendor_sources_title": "Händler-Quellen",
+    "vendor_gate_unlockable": "Quest oder Erfolg erforderlich",
+    "vendor_gate_seasonal_shop": "Händler eines saisonalen Events",
+    "vendor_gate_seasonal_unlock": "Erfordert ein vergangenes saisonales Event",
     "related_exchange_costs": "Kosten:",
     "related_exchange_sources_title": "Tausch-Quellen",
     "related_leve_lvl_prefix": "Lvl",
