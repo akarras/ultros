@@ -617,11 +617,25 @@ mod tests {
     fn a_recipe_result_carries_the_crafter_as_its_category() {
         let data = xiv_gen_db::data();
         let carpenter = carpenter_row(data);
+        // Placeholder recipes can have no level. Pick a real, leveled craft
+        // deterministically instead of relying on HashMap iteration order.
         let recipe = data
             .recipes
-            .values()
-            .find(|r| r.craft_type == 0)
-            .expect("game data has a carpenter recipe");
+            .iter()
+            .filter(|(_, recipe)| {
+                recipe.craft_type == 0
+                    && data
+                        .items
+                        .get(&ItemId(recipe.item_result))
+                        .is_some_and(|item| !item.name.is_empty())
+                    && data
+                        .recipe_level_tables
+                        .get(&RecipeLevelTableId(recipe.recipe_level_table))
+                        .is_some_and(|level| level.class_job_level > 0)
+            })
+            .min_by_key(|(id, _)| id.0)
+            .map(|(_, recipe)| recipe)
+            .expect("game data has a carpenter recipe with a positive level");
         assert!(
             recipe_label(data, carpenter, recipe).starts_with("CRP Lv. "),
             "unexpected label {:?}",
