@@ -6,8 +6,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
 use xiv_gen::{
-    ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup,
-    Recipe, SpecialShop,
+    GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup, Recipe, SpecialShop,
 };
 
 use crate::{
@@ -526,80 +525,39 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     }.into_any())
 }
 
-fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
-    npc.e_npc_data.iter().copied()
-}
-
-fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
-    let data = tracked_data();
-
-    data.e_npc_bases
-        .values()
-        .flat_map(|npc: &'static ENpcBase| {
-            npc_rows(npc).flat_map(move |row| {
-                let mut shops = Vec::new();
-                let row_as_i32 = row as i32;
-                if gil_shops.contains(&GilShopId(row_as_i32)) {
-                    shops.push(GilShopId(row_as_i32));
-                }
-
-                if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(row_as_i32)) {
-                    for shop in ts.shop {
-                        let shop_id = GilShopId(shop);
-                        if gil_shops.contains(&shop_id) {
-                            shops.push(shop_id);
-                        }
-                    }
-                }
-
-                #[allow(clippy::collapsible_if)]
-                if let Some(ph) = data.pre_handlers.get(&xiv_gen::PreHandlerId(row_as_i32)) {
-                    if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(ph.target)) {
-                        for shop in ts.shop {
-                            let shop_id = GilShopId(shop);
-                            if gil_shops.contains(&shop_id) {
-                                shops.push(shop_id);
-                            }
-                        }
-                    }
-                }
-
-                shops.into_iter().map(move |gil_shop| (gil_shop, npc))
-            })
-        })
-        // `e_npc_bases` is a std HashMap whose iteration order is randomized
-        // per process (RandomState). Without a stable sort the SSR server and
-        // the hydrating wasm client emit the vendor rows in different orders,
-        // desyncing the DOM and tripping tachys' hydration walker (#6831).
-        // Sort by stable ids so both sides render the same sequence.
-        .sorted_by_key(|(gil_shop, npc)| (npc.key_id.0, gil_shop.0))
-        .collect()
-}
-
 /// Resolved shop/NPC pairs, shared by the source panel and its navigation count.
+///
+/// The shop -> NPC direction is precomputed in the game-data pack
+/// (`Data::gil_shop_npcs`); this used to scan every `ENpcBase` row's 32 data
+/// slots on each call.
 fn vendor_sources_for_item(item_id: i32) -> Vec<(GilShopId, &'static xiv_gen::ENpcResident)> {
     let data = tracked_data();
     if !data.items.contains_key(&ItemId(item_id)) {
         return Vec::new();
     }
-    let shop_ids = data
+    let mut sources: Vec<_> = data
         .gil_shop_items
         .iter()
         .filter(|(_, items)| items.iter().any(|item| item.item == item_id))
         .filter_map(|(shop_id, _)| data.gil_shops.get(shop_id))
-        .map(|shop| shop.key_id)
-        .collect::<Vec<_>>();
-    if shop_ids.is_empty() {
-        return Vec::new();
-    }
-    gil_shop_to_npc(&shop_ids)
-        .into_iter()
-        .filter_map(|(shop_id, npc)| {
-            data.e_npc_residents
-                .get(&ENpcResidentId(npc.key_id.0))
-                .map(|resident| (shop_id, resident))
+        .flat_map(|shop| {
+            data.gil_shop_npcs
+                .get(&shop.key_id)
+                .into_iter()
+                .flatten()
+                .filter_map(|npc| {
+                    data.e_npc_residents
+                        .get(npc)
+                        .map(|resident| (shop.key_id, resident))
+                })
         })
-        .collect()
+        .collect();
+    // `gil_shop_items` is a std HashMap whose iteration order is randomized per
+    // process (RandomState). Without a stable sort the SSR server and the
+    // hydrating wasm client emit the vendor rows in different orders, desyncing
+    // the DOM and tripping tachys' hydration walker (#6831).
+    sources.sort_unstable_by_key(|(shop, resident)| (resident.key_id.0, shop.0));
+    sources
 }
 
 #[component]
@@ -857,6 +815,93 @@ mod tests {
                 "{name} should not count as a shard"
             );
         }
+    }
+
+    /// The pack ships `gil_shop_npcs` instead of the `ENpcBase` /
+    /// `TopicSelect` / `PreHandler` sheets the mapping was derived from, so
+    /// nothing at runtime can re-derive it. These invariants are what the
+    /// vendor panel relies on.
+    #[test]
+    fn gil_shop_npc_index_is_sorted_and_names_displayable_npcs() {
+        let data = tracked_data();
+        assert!(
+            !data.gil_shop_npcs.is_empty(),
+            "pack carries no shop -> NPC index"
+        );
+        for (shop, npcs) in &data.gil_shop_npcs {
+            assert!(
+                npcs.windows(2).all(|w| w[0].0 <= w[1].0),
+                "shop {shop:?} lists NPCs out of order; render order would differ \
+                 between SSR and hydration"
+            );
+            for npc in npcs {
+                assert!(
+                    data.e_npc_residents.contains_key(npc),
+                    "shop {shop:?} names {npc:?}, which has no resident row to render"
+                );
+            }
+        }
+    }
+
+    /// Usagi Kabuto is stocked by two shops that are reached by different
+    /// routes through the NPC data (a festival vendor and the Calamity
+    /// Salvager's Heavensturn menu), so it exercises both the direct and the
+    /// `TopicSelect`/`PreHandler` paths that fed the index.
+    #[test]
+    fn vendor_sources_resolve_every_stocking_shop() {
+        let data = tracked_data();
+        let item_id = data
+            .items
+            .values()
+            .find(|i| i.name == "Usagi Kabuto")
+            .expect("Usagi Kabuto missing from game data")
+            .key_id;
+
+        let sources = vendor_sources_for_item(item_id.0);
+        assert!(!sources.is_empty(), "expected vendor sources");
+        assert!(
+            sources.iter().all(|(_, npc)| !npc.singular.is_empty()),
+            "every resolved vendor should have a name to display"
+        );
+
+        let stocking: HashSet<_> = data
+            .gil_shop_items
+            .iter()
+            .filter(|(_, items)| items.iter().any(|i| i.item == item_id.0))
+            .map(|(shop, _)| *shop)
+            .collect();
+        let resolved: HashSet<_> = sources.iter().map(|(shop, _)| *shop).collect();
+        assert_eq!(resolved, stocking, "a stocking shop resolved to no NPC");
+    }
+
+    #[test]
+    fn vendor_sources_are_sorted_by_npc_then_shop() {
+        let data = tracked_data();
+        // Any item sold by more than one shop exercises the cross-shop sort.
+        let item_id = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .map(|i| i.item)
+            .sorted()
+            .dedup()
+            .find(|id| {
+                *id > 0
+                    && data
+                        .gil_shop_items
+                        .values()
+                        .filter(|items| items.iter().any(|i| i.item == *id))
+                        .count()
+                        > 1
+            })
+            .expect("game data has multi-shop items");
+
+        let sources = vendor_sources_for_item(item_id);
+        let keys: Vec<_> = sources
+            .iter()
+            .map(|(shop, npc)| (npc.key_id.0, shop.0))
+            .collect();
+        assert!(keys.windows(2).all(|w| w[0] <= w[1]), "unsorted: {keys:?}");
     }
 
     #[test]

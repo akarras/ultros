@@ -1070,12 +1070,24 @@ pub struct Data {
     pub leves: HashMap<LeveId, Leve>,
     pub leve_reward_items: HashMap<LeveRewardItemId, LeveRewardItem>,
     pub leve_reward_item_groups: HashMap<LeveRewardItemGroupId, LeveRewardItemGroup>,
-    pub e_npc_bases: HashMap<ENpcBaseId, ENpcBase>,
     pub e_npc_residents: HashMap<ENpcResidentId, ENpcResident>,
     pub gil_shops: HashMap<GilShopId, GilShop>,
     pub gil_shop_items: HashMap<GilShopId, Vec<GilShopItem>>,
-    pub topic_selects: HashMap<TopicSelectId, TopicSelect>,
-    pub pre_handlers: HashMap<PreHandlerId, PreHandler>,
+    /// Which NPCs offer each gil shop, resolved at pack-generation time.
+    ///
+    /// The game models this the other way round: `ENpcBase.ENpcData` lists the
+    /// things an NPC offers, and a shop is reachable from that list directly,
+    /// through a `TopicSelect` menu, or through a `PreHandler` that points at
+    /// one. Answering "who sells this?" from the raw sheets therefore means
+    /// scanning all ~60k NPCs' 32-slot data arrays on every lookup, and it
+    /// forced `ENpcBase`, `TopicSelect` and `PreHandler` into the shipped pack
+    /// — `ENpcBase` alone was ~34% of its decoded size, for this one query.
+    ///
+    /// The reverse index is built once in `csv_to_rkyv` and the three source
+    /// sheets are dropped. Values are the ids of NPCs that have an
+    /// `ENpcResident` row (the ones that can actually be displayed), sorted
+    /// ascending so render order is stable between SSR and hydration.
+    pub gil_shop_npcs: HashMap<GilShopId, Vec<ENpcResidentId>>,
     pub item_search_categorys: HashMap<ItemSearchCategoryId, ItemSearchCategory>,
     pub item_ui_categorys: HashMap<ItemUiCategoryId, ItemUiCategory>,
     pub item_sort_categorys: HashMap<ItemSortCategoryId, ItemSortCategory>,
