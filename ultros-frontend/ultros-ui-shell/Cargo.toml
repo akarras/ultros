@@ -1,0 +1,71 @@
+[package]
+name = "ultros-ui-shell"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+cookie = { version = "0.18.1", features = [
+    "percent-encode",
+] }
+gloo-timers = { version = "0.4.0", features = [
+    "futures",
+] }
+icondata = { workspace = true }
+js-sys = { version = "0.3" }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos-use = { workspace = true }
+leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
+leptos_i18n = { workspace = true }
+leptos_router = { workspace = true }
+log = "0.4.29"
+time = "0.3.47"
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
+ultros-ui-grid = { path = "../ultros-ui-grid", default-features = false }
+wasm-bindgen = { version = "0.2" }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "HtmlDocument",
+    "Location",
+    "Storage",
+    "HtmlInputElement",
+    "Element",
+    "KeyboardEvent",
+    "Navigator",
+] }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "leptos-use/ssr",
+    "leptos_hotkeys/ssr",
+    "leptos_router/ssr",
+    "ultros-frontend-core/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+    "ultros-ui-game/ssr",
+    "ultros-ui-grid/ssr",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-frontend-core/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+    "ultros-ui-game/hydrate",
+    "ultros-ui-grid/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

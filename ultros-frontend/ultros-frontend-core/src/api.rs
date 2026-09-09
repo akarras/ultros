@@ -1,0 +1,1341 @@
+use futures::future::try_join_all;
+use itertools::Itertools;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::HashMap;
+use tracing::error;
+use tracing::instrument;
+use ultros_api_types::{
+    ActiveListing, CurrentlyShownItem, FfxivCharacter,
+    alert::{
+        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
+        CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
+        ResendResult, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
+    },
+    cheapest_listings::{CheapestListings, CheapestListingsMap},
+    item_stats::ItemStatsResponse,
+    list::{
+        CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
+        ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup, ShareListRole,
+        ShareListUser,
+    },
+    market_heat::MarketHeatResponse,
+    market_pulse::MarketPulseDto,
+    price_density::PriceDensity,
+    price_series::{HqFilter, PriceSeries, SeriesGroup},
+    recent_sales::RecentSales,
+    resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
+    result::JsonErrorWrapper,
+    retainer::{Retainer, RetainerListings},
+    sale_stats::BulkSaleStats,
+    search::SearchResult,
+    sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
+    trends::TrendsData,
+    user::{
+        AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+        group::{
+            AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
+            DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult,
+            GroupRole, GroupSyncResponse, ImportDiscordRole, RenameGroupRole, UserGroup,
+            UserGroupDetail, UserGroupMember, UserGroupSummary,
+        },
+    },
+};
+
+use crate::error::{AppError, AppResult};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+
+pub async fn search(query: &str) -> AppResult<Vec<SearchResult>> {
+    let encoded_query = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
+    fetch_api(&format!("/api/v1/search?q={encoded_query}")).await
+}
+
+pub async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
+}
+
+/// Pre-bucketed price series for the item chart. The payload size tracks the
+/// requested window rather than the item's sale count, so this is safe at
+/// full history. (The raw-sales client wrapper for `/api/v1/extended_history`
+/// was removed when the chart moved to this endpoint — the HTTP route is
+/// still registered server-side, just no longer called from here.)
+pub async fn get_price_series(
+    item_id: i32,
+    world: &str,
+    group: SeriesGroup,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+) -> AppResult<PriceSeries> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    let mut url = format!(
+        "/api/v1/price_series/{world}/{item_id}?group={}&hq={}",
+        group.as_str(),
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
+/// Listing-floor history uses the same scope, quality and time bounds as sales.
+pub async fn get_floor_history(
+    item_id: i32,
+    world: &str,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+) -> AppResult<ultros_api_types::floor_history::FloorHistory> {
+    let mut url = format!("/api/v1/floor_history/{world}/{item_id}?hq={}", hq.as_str());
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
+/// Time × price sale-count grid for the chart's density mode. Fetched only
+/// while density mode is active — see the gated LocalResource in item_view.
+pub async fn get_price_density(
+    item_id: i32,
+    world: &str,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+    price_bins: u16,
+) -> AppResult<PriceDensity> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    let mut url = format!(
+        "/api/v1/price_density/{world}/{item_id}?hq={}&price_bins={price_bins}",
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
+/// This is okay because the client will send our login cookie.
+///
+/// Before falling back to the network, consult `BootstrapUser` — the SSR
+/// handler resolves the user from the auth cookie on every page render, and
+/// the client mirrors that into context on hydration from the bootstrap
+/// script. When the context is present we never have to hit
+/// `/api/v1/current_user`.
+pub async fn get_login() -> AppResult<UserData> {
+    use leptos::prelude::use_context;
+    if let Some(crate::global_state::BootstrapUser(user)) =
+        use_context::<crate::global_state::BootstrapUser>()
+    {
+        return user.ok_or(AppError::ApiError(
+            ultros_api_types::result::ApiError::NotAuthenticated,
+        ));
+    }
+    fetch_api("/api/v1/current_user").await
+}
+
+pub async fn delete_user() -> AppResult<()> {
+    delete_api("/api/v1/current_user").await
+}
+
+/// Get analyzer data
+pub async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
+    fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
+}
+
+pub async fn get_cheapest_listings_live(
+    world_name: &str,
+    refresh_version: u64,
+) -> AppResult<CheapestListings> {
+    if refresh_version == 0 {
+        get_cheapest_listings(world_name).await
+    } else {
+        fetch_api(&format!(
+            "/api/v1/cheapest/{world_name}?rt={refresh_version}"
+        ))
+        .await
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResaleStatsDto {
+    pub profit: i32,
+    pub item_id: i32,
+    #[serde(default)]
+    pub hq: bool,
+    pub sold_within: String,
+    pub return_on_investment: f32,
+    /// Gil paid. `profit` is post-tax, so `buy_price + profit` is the take,
+    /// not the list price — use `est_sale_price` for the latter.
+    #[serde(default)]
+    pub buy_price: i32,
+    /// Pre-tax gil to list at.
+    #[serde(default)]
+    pub est_sale_price: i32,
+    pub world_id: i32,
+    // Phase 2 deep-scan enrichment from the server. Defaulted so older
+    // backends (or CH-degraded responses) still deserialize cleanly.
+    #[serde(default)]
+    pub confidence_band: ultros_api_types::trends::ConfidenceBand,
+    #[serde(default)]
+    pub vwap_30d: i32,
+    #[serde(default)]
+    pub sample_size_30d: u32,
+    #[serde(default)]
+    pub launder_suspicion: f32,
+    // Buffer-derived stats. Present on every row, unlike the deep-scan
+    // fields above — which is why the card's credibility signals use these.
+    #[serde(default)]
+    pub velocity_per_day: Option<f32>,
+    #[serde(default)]
+    pub buffer_sale_count: u8,
+    #[serde(default)]
+    pub recent_price_low: i32,
+    #[serde(default)]
+    pub recent_price_high: i32,
+}
+
+/// Query parameters for [`get_best_deals`]. All optional — server applies
+/// sensible defaults (min_profit=None, filter_sale=None, limit=50,
+/// show_suspicious=false).
+#[derive(Debug, Clone, Default)]
+pub struct BestDealsParams {
+    pub min_profit: Option<i32>,
+    /// "Day" | "Week" | "Month".
+    pub filter_sale: Option<&'static str>,
+    pub limit: Option<u32>,
+    pub show_suspicious: Option<bool>,
+    /// Reject rows selling slower than this many per day.
+    pub min_velocity: Option<f32>,
+    /// Reject rows with fewer than this many sales in the recent buffer.
+    pub min_buffer_sales: Option<u8>,
+    /// Reject rows above this ROI percentage.
+    pub max_roi: Option<f32>,
+}
+
+pub async fn get_best_deals(
+    world_name: &str,
+    params: BestDealsParams,
+) -> AppResult<Vec<ResaleStatsDto>> {
+    let mut qs: Vec<String> = Vec::with_capacity(7);
+    if let Some(p) = params.min_profit {
+        qs.push(format!("min_profit={p}"));
+    }
+    if let Some(s) = params.filter_sale {
+        qs.push(format!("filter_sale={s}"));
+    }
+    if let Some(l) = params.limit {
+        qs.push(format!("limit={l}"));
+    }
+    if let Some(b) = params.show_suspicious {
+        qs.push(format!("show_suspicious={}", if b { 1 } else { 0 }));
+    }
+    if let Some(v) = params.min_velocity {
+        qs.push(format!("min_velocity={v}"));
+    }
+    if let Some(n) = params.min_buffer_sales {
+        qs.push(format!("min_buffer_sales={n}"));
+    }
+    if let Some(r) = params.max_roi {
+        qs.push(format!("max_roi={r}"));
+    }
+    let query = if qs.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", qs.join("&"))
+    };
+    fetch_api(&format!("/api/v1/best_deals/{world_name}{query}")).await
+}
+
+#[allow(dead_code)]
+pub async fn get_bulk_listings(
+    world: &str,
+    item_ids: impl Iterator<Item = i32>,
+) -> AppResult<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
+    if world.is_empty() {
+        return Err(AppError::NoItem);
+    }
+    let ids = item_ids.format(",");
+    fetch_api(&format!("/api/v1/bulkListings/{world}/{ids}")).await
+}
+
+/// Bulk sale-history statistics (min/median/avg per item) for a world,
+/// datacenter, or region — the recipe analyzer's selectable cost basis.
+pub async fn get_sale_stats(scope_name: &str, window_days: u16) -> AppResult<BulkSaleStats> {
+    fetch_api(&format!(
+        "/api/v1/sale_stats/{scope_name}?window={window_days}"
+    ))
+    .await
+}
+
+/// Get most expensive
+pub async fn get_recent_sales_for_world(region_name: &str) -> AppResult<RecentSales> {
+    fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
+}
+
+/// Legacy v1 trends fetch — pre-bucketed `high_velocity / rising_price /
+/// falling_price` lists. The new Trends page uses [`get_trends_v2`] and
+/// reads `items` instead. Kept around for parity with the server
+/// endpoint's no-query-arg behavior and any external consumer.
+#[allow(dead_code)]
+pub async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
+    fetch_api(&format!("/api/v1/trends/{world_name}")).await
+}
+
+/// Batch deep-scan enrichment for the Flip Finder. Returns per-row
+/// confidence band, VWAP, sample size, and laundering suspicion for the
+/// given `(item_id, hq)` tuples on `world_name`. `window_days` should be
+/// 7, 30, or 90 (clamped server-side).
+#[allow(dead_code)]
+pub async fn get_resale_quality(
+    world_name: &str,
+    items: Vec<(i32, bool)>,
+    window_days: u16,
+) -> AppResult<ResaleQualityResponse> {
+    let req = ResaleQualityRequest {
+        items,
+        window_days: Some(window_days),
+    };
+    post_api(&format!("/api/v1/resale_quality/{world_name}"), req).await
+}
+
+/// V2 trends fetch — flat `items` list backed by ClickHouse window
+/// aggregates. `window_days` should be 7, 30, or 90 (other values are
+/// clamped server-side to 30).
+pub async fn get_trends_v2(
+    world_name: &str,
+    window_days: u16,
+    show_suspicious: bool,
+) -> AppResult<TrendsData> {
+    fetch_api(&format!(
+        "/api/v1/trends/{world_name}?window={window_days}&show_suspicious={}",
+        if show_suspicious { 1 } else { 0 }
+    ))
+    .await
+}
+
+pub async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseDto> {
+    fetch_api(&format!("/api/v1/market_pulse/{}", world_name)).await
+}
+
+pub async fn get_market_heat(world_name: &str) -> AppResult<MarketHeatResponse> {
+    fetch_api(&format!("/api/v1/market_heat/{}", world_name)).await
+}
+
+pub async fn get_item_stats(world_name: &str, item_id: i32) -> AppResult<ItemStatsResponse> {
+    fetch_api(&format!("/api/v1/item_stats/{}/{}", world_name, item_id)).await
+}
+
+/// `direction` is one of `rising` / `falling` / `volume`.
+pub async fn get_movers(
+    world_name: &str,
+    direction: &str,
+    limit: u32,
+) -> AppResult<MoversResponse> {
+    fetch_api(&format!(
+        "/api/v1/movers/{}?direction={}&limit={}",
+        world_name, direction, limit
+    ))
+    .await
+}
+
+#[allow(dead_code)]
+pub async fn post_sparklines(
+    world_name: &str,
+    req: SparklinesRequest,
+) -> AppResult<SparklinesResponse> {
+    post_api(&format!("/api/v1/sparklines/{}", world_name), req).await
+}
+
+/// Returns a list of the logged in user's retainers
+pub async fn get_retainers() -> AppResult<UserRetainers> {
+    fetch_api("/api/v1/user/retainer").await
+}
+
+pub async fn get_retainer_listings(retainer_id: i32) -> AppResult<RetainerListings> {
+    fetch_api(&format!("/api/v1/retainer/listings/{retainer_id}")).await
+}
+
+pub async fn get_user_retainer_listings() -> AppResult<UserRetainerListings> {
+    fetch_api("/api/v1/user/retainer/listings").await
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct UndercutData {
+    pub current: ActiveListing,
+    pub cheapest: i32,
+}
+
+pub type Undercuts = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<UndercutData>)>)>;
+
+/// What the undercuts page needs: the undercut rows to show, plus every
+/// `(world_id, item_id)` the user's retainers list at all — including the
+/// ones that are currently cheapest. The live subscription has to watch the
+/// full set, otherwise an item that is cheapest now and gets undercut later
+/// would never trigger a refetch.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct UndercutReport {
+    pub undercuts: Undercuts,
+    pub listed: Vec<(i32, i32)>,
+}
+
+pub async fn get_retainer_undercuts() -> AppResult<UndercutReport> {
+    // get our retainer data
+    let retainer_data = get_user_retainer_listings().await?;
+    let listed: Vec<(i32, i32)> = retainer_data
+        .retainers
+        .iter()
+        .flat_map(|(_, retainers)| retainers.iter())
+        .flat_map(|(_, listings)| listings.iter())
+        .map(|listing| (listing.world_id, listing.item_id))
+        .collect();
+    // build a unique list of worlds and item ids so we can fetch additional info about them
+    // optimized: use cheapest listings for each world & avoid looking up literally every retainer
+    let worlds: Vec<i32> = retainer_data
+        .retainers
+        .iter()
+        .flat_map(|(_, r)| r.iter().flat_map(|(_, l)| l.iter().map(|l| l.world_id)))
+        .unique()
+        .collect();
+    let listings = try_join_all(worlds.into_iter().map(|world| async move {
+        get_cheapest_listings(&world.to_string())
+            .await
+            // include the world id in the returned value
+            .map(|listings| (world, listings))
+    }))
+    .await?;
+    // flatten the listings down so it's more usable
+    let listings_map: HashMap<i32, CheapestListingsMap> =
+        listings
+            .into_iter()
+            .fold(HashMap::new(), |mut world_map, (world_id, item_data)| {
+                if world_map.insert(world_id, item_data.into()).is_some() {
+                    unreachable!("Should only be one world id from the set above.");
+                }
+                world_map
+            });
+    // Now remove every listing from the user retainer listings that is already the cheapest listing per world
+    let retainer_data = retainer_data
+        .retainers
+        .into_iter()
+        .map(|(c, retainers)| {
+            (
+                c,
+                retainers
+                    .into_iter()
+                    .map(|(r, listings)| {
+                        let new_listings = listings
+                            .iter()
+                            .filter_map(|listing| {
+                                // use the world/item_id as keys to lookup the rest of the listings that match this retainer
+                                listings_map
+                                    .get(&listing.world_id)
+                                    .and_then(|world_map| {
+                                        let summary =
+                                            world_map.find_matching_listings(listing.item_id);
+                                        if listing.hq {
+                                            summary.hq.map(|l| l.price)
+                                        } else {
+                                            summary.lowest_gil()
+                                        }
+                                    })
+                                    .and_then(|cheapest| {
+                                        (listing.price_per_unit > cheapest).then(|| UndercutData {
+                                            current: listing.clone(),
+                                            cheapest,
+                                        })
+                                    })
+                            })
+                            .collect();
+                        (r, new_listings)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Ok(UndercutReport {
+        undercuts: retainer_data,
+        listed,
+    })
+}
+
+/// Searches retainers based on their name
+pub async fn search_retainers(name: String) -> AppResult<Vec<Retainer>> {
+    if name.is_empty() {
+        return Err(AppError::EmptyString);
+    }
+    fetch_api(&format!("/api/v1/retainer/search/{name}")).await
+}
+
+/// Claims the given retainer based on their id
+pub async fn claim_retainer(retainer_id: i32) -> AppResult<()> {
+    fetch_api(&format!("/api/v1/retainer/claim/{retainer_id}")).await
+}
+
+/// Unclaims the retainer based on the owned retainer id
+pub async fn unclaim_retainer(owned_retainer_id: i32) -> AppResult<()> {
+    fetch_api(&format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
+}
+
+/// Gets the characters for this user
+pub async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
+    fetch_api("/api/v1/characters").await
+}
+
+/// Claims the given character for the logged-in user.
+///
+/// Claims aren't verified — they only group the user's retainers — so this
+/// takes effect immediately and returns the claimed character.
+pub async fn claim_character(id: i32) -> AppResult<FfxivCharacter> {
+    fetch_api(&format!("/api/v1/characters/claim/{id}")).await
+}
+
+pub async fn unclaim_character(id: i32) -> AppResult<(i32, String)> {
+    fetch_api(&format!("/api/v1/characters/unclaim/{id}")).await
+}
+
+/// Searches for the given character with the given lodestone ID.
+pub async fn search_characters(character: String) -> AppResult<Vec<FfxivCharacter>> {
+    fetch_api(&format!("/api/v1/characters/search/{character}")).await
+}
+
+pub async fn get_lists_with_permissions() -> AppResult<Vec<ListWithPermission>> {
+    fetch_api("/api/v1/list").await
+}
+
+pub async fn get_lists() -> AppResult<Vec<List>> {
+    Ok(get_lists_with_permissions()
+        .await?
+        .into_iter()
+        .map(|entry| entry.list)
+        .collect())
+}
+
+pub async fn get_list_items_with_listings(
+    list_id: i32,
+) -> AppResult<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)> {
+    if list_id == 0 {
+        return Err(AppError::BadList);
+    }
+    fetch_api(&format!("/api/v1/list/{list_id}/listings")).await
+}
+
+pub async fn get_list_activity(list_id: i32) -> AppResult<Vec<ListActivity>> {
+    if list_id == 0 {
+        return Err(AppError::BadList);
+    }
+    fetch_api(&format!("/api/v1/list/{list_id}/activity?limit=50")).await
+}
+
+pub async fn delete_list(list_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/delete")).await
+}
+
+pub async fn leave_list(list_id: i32, self_user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{self_user_id}")).await
+}
+
+pub async fn create_list(list: CreateList) -> AppResult<()> {
+    post_api("/api/v1/list/create", list).await
+}
+
+pub async fn edit_list(list: List) -> AppResult<()> {
+    post_api("/api/v1/list/edit", list).await
+}
+
+pub async fn bulk_add_item_to_list(list_id: i32, list_items: Vec<ListItem>) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/add/items"), list_items).await
+}
+
+pub async fn add_item_to_list(list_id: i32, list_item: ListItem) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/add/item"), list_item).await
+}
+
+pub async fn edit_list_item(list_item: ListItem) -> AppResult<()> {
+    post_api("/api/v1/list/item/edit", list_item).await
+}
+
+pub async fn delete_list_item(list_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/item/{list_id}/delete")).await
+}
+
+pub async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
+    post_api("/api/v1/list/item/delete", list_items).await
+}
+
+#[derive(Serialize)]
+pub struct BulkHqUpdate {
+    pub ids: Vec<i32>,
+    pub hq: Option<bool>,
+}
+
+pub async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppResult<()> {
+    post_api("/api/v1/list/item/hq", BulkHqUpdate { ids, hq }).await
+}
+
+/// Every group the user belongs to, each with the member and role counts its
+/// card needs — one request for the whole grid.
+pub async fn get_groups() -> AppResult<Vec<UserGroupSummary>> {
+    fetch_api("/api/v1/group").await
+}
+
+pub async fn create_group(group: CreateGroup) -> AppResult<()> {
+    post_api("/api/v1/group/create", group).await
+}
+
+pub async fn delete_group(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{id}")).await
+}
+
+/// Discord servers the logged-in user could turn into a group. Hits Discord on
+/// the server side, so only call this when the guild picker is actually open.
+pub async fn list_manageable_discord_guilds() -> AppResult<Vec<DiscordManageableGuild>> {
+    fetch_api("/api/v1/group/discord-guilds").await
+}
+
+pub async fn create_group_from_guild(guild_id: i64) -> AppResult<UserGroup> {
+    post_api(
+        "/api/v1/group/create-from-guild",
+        CreateGroupFromGuild { guild_id },
+    )
+    .await
+}
+
+pub async fn get_group_members(id: i32) -> AppResult<Vec<UserGroupMember>> {
+    fetch_api(&format!("/api/v1/group/{id}/members")).await
+}
+
+/// Group, roles with member counts, and the member count, in one round trip.
+pub async fn get_group_detail(id: i32) -> AppResult<UserGroupDetail> {
+    fetch_api(&format!("/api/v1/group/{id}")).await
+}
+
+/// `display_name` is what lets the server create a `discord_user` row for
+/// somebody who has never logged into Ultros — without it, adding a member
+/// picked out of Discord fails on the foreign key.
+pub async fn add_group_member(
+    group_id: i32,
+    user_id: u64,
+    display_name: Option<String>,
+) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/member/add/{user_id}"),
+        AddGroupMember { display_name },
+    )
+    .await
+}
+
+/// Owner-only search-as-you-type candidates. Hits Discord for a guild-linked
+/// group, so only call this behind a debounce.
+pub async fn search_group_member_candidates(
+    group_id: i32,
+    query: &str,
+) -> AppResult<Vec<GroupMemberSearchResult>> {
+    let encoded = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
+    fetch_api(&format!(
+        "/api/v1/group/{group_id}/member-search?q={encoded}"
+    ))
+    .await
+}
+
+/// The linked guild's importable roles. Live Discord call server-side, so this
+/// belongs behind the import picker being open, never on page load.
+pub async fn get_group_discord_roles(group_id: i32) -> AppResult<Vec<DiscordGuildRole>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/discord-roles")).await
+}
+
+pub async fn create_group_role(group_id: i32, name: String) -> AppResult<GroupRole> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/roles"),
+        CreateGroupRole { name },
+    )
+    .await
+}
+
+/// Returns as soon as the role row exists; membership arrives from the
+/// reconcile the server kicks off, which the page watches by polling
+/// `last_synced_at`.
+pub async fn import_group_discord_role(
+    group_id: i32,
+    discord_role_id: i64,
+) -> AppResult<GroupRole> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/roles/import"),
+        ImportDiscordRole { discord_role_id },
+    )
+    .await
+}
+
+pub async fn rename_group_role(group_id: i32, role_id: i32, name: String) -> AppResult<GroupRole> {
+    patch_api(
+        &format!("/api/v1/group/{group_id}/roles/{role_id}"),
+        RenameGroupRole { name },
+    )
+    .await
+}
+
+pub async fn delete_group_role(group_id: i32, role_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{group_id}/roles/{role_id}")).await
+}
+
+pub async fn get_group_role_members(
+    group_id: i32,
+    role_id: i32,
+) -> AppResult<Vec<UserGroupMember>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/roles/{role_id}/members")).await
+}
+
+/// Manual roles only — a synced role's membership belongs to Discord and the
+/// server answers 400.
+pub async fn add_group_role_member(
+    group_id: i32,
+    role_id: i32,
+    user_id: i64,
+    display_name: String,
+) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/roles/{role_id}/members/{user_id}"),
+        AddGroupMember {
+            display_name: Some(display_name),
+        },
+    )
+    .await
+}
+
+pub async fn remove_group_role_member(group_id: i32, role_id: i32, user_id: i64) -> AppResult<()> {
+    delete_api(&format!(
+        "/api/v1/group/{group_id}/roles/{role_id}/members/{user_id}"
+    ))
+    .await
+}
+
+/// Reconcile now. `Ran` only means "started" — the walk happens off the
+/// request path, so the caller polls `last_synced_at`.
+pub async fn sync_group(group_id: i32) -> AppResult<GroupSyncResponse> {
+    post_api(&format!("/api/v1/group/{group_id}/sync"), ()).await
+}
+
+pub async fn remove_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{group_id}/member/remove/{user_id}")).await
+}
+
+pub async fn get_group_invites(group_id: i32) -> AppResult<Vec<GroupInvite>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/invites")).await
+}
+
+pub async fn create_group_invite(
+    group_id: i32,
+    invite: CreateGroupInvite,
+) -> AppResult<GroupInvite> {
+    post_api(&format!("/api/v1/group/{group_id}/invite/create"), invite).await
+}
+
+/// Returns the id of the group joined, so the caller can navigate to it.
+pub async fn use_group_invite(invite_id: String) -> AppResult<i32> {
+    post_api(&format!("/api/v1/group-invite/{invite_id}/use"), ()).await
+}
+
+pub async fn delete_group_invite(invite_id: String) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group-invite/{invite_id}")).await
+}
+
+/// Users, groups, and roles the list is shared with, in that order.
+pub async fn get_list_shares(
+    list_id: i32,
+) -> AppResult<(
+    Vec<ListSharedUser>,
+    Vec<ListSharedGroup>,
+    Vec<ListSharedRole>,
+)> {
+    fetch_api(&format!("/api/v1/list/{list_id}/shares")).await
+}
+
+pub async fn share_list_with_user(list_id: i32, share: ShareListUser) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/user"), share).await
+}
+
+pub async fn share_list_with_group(list_id: i32, share: ShareListGroup) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/group"), share).await
+}
+
+pub async fn share_list_with_role(list_id: i32, share: ShareListRole) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/role"), share).await
+}
+
+pub async fn unshare_list_from_role(list_id: i32, role_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/role/{role_id}")).await
+}
+
+pub async fn unshare_list_from_user(list_id: i32, user_id: i64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{user_id}")).await
+}
+
+pub async fn unshare_list_from_group(list_id: i32, group_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/group/{group_id}")).await
+}
+
+pub async fn get_list_invites(list_id: i32) -> AppResult<Vec<ListInvite>> {
+    fetch_api(&format!("/api/v1/list/{list_id}/invites")).await
+}
+
+pub async fn create_list_invite(list_id: i32, invite: CreateInvite) -> AppResult<ListInvite> {
+    post_api(&format!("/api/v1/list/{list_id}/invite/create"), invite).await
+}
+
+pub async fn use_list_invite(invite_id: String) -> AppResult<i32> {
+    post_api(&format!("/api/v1/invite/{invite_id}/use"), ()).await
+}
+
+pub async fn delete_list_invite(invite_id: String) -> AppResult<()> {
+    delete_api(&format!("/api/v1/invite/{invite_id}")).await
+}
+
+pub async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
+    post_api("/api/v1/retainer/reorder", retainers).await
+}
+
+pub async fn assign_retainer_character(
+    owned_retainer_id: i32,
+    character_id: Option<i32>,
+) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/retainer/{owned_retainer_id}/character"),
+        AssignRetainerCharacter { character_id },
+    )
+    .await
+}
+
+pub async fn get_alerts() -> AppResult<Vec<Alert>> {
+    fetch_api("/api/v1/alerts").await
+}
+
+pub async fn create_alert(req: CreateAlertRequest) -> AppResult<Alert> {
+    post_api("/api/v1/alerts", req).await
+}
+
+pub async fn patch_alert(id: i32, req: UpdateAlertRequest) -> AppResult<()> {
+    patch_api(&format!("/api/v1/alerts/{id}"), req).await
+}
+
+pub async fn delete_alert(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/alerts/{id}")).await
+}
+
+pub async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
+    fetch_api("/api/v1/alerts/events").await
+}
+
+pub async fn list_endpoints() -> AppResult<Vec<Endpoint>> {
+    fetch_api("/api/v1/endpoints").await
+}
+
+pub async fn list_discord_writable_guilds() -> AppResult<Vec<DiscordWritableGuild>> {
+    fetch_api("/api/v1/endpoints/discord-guilds").await
+}
+
+pub async fn create_endpoint(req: CreateEndpointRequest) -> AppResult<Endpoint> {
+    post_api("/api/v1/endpoints", req).await
+}
+
+#[allow(dead_code)]
+pub async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppResult<()> {
+    patch_api(&format!("/api/v1/endpoints/{id}"), req).await
+}
+
+pub async fn delete_endpoint(id: i32) -> AppResult<DeleteEndpointResponse> {
+    delete_api(&format!("/api/v1/endpoints/{id}")).await
+}
+
+pub async fn test_endpoint(id: i32) -> AppResult<ResendResult> {
+    post_api(&format!("/api/v1/endpoints/{id}/test"), ()).await
+}
+
+pub async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult> {
+    post_api(&format!("/api/v1/alerts/events/{event_id}/resend"), ()).await
+}
+
+/// Fetch the server's VAPID public key. Used by the browser to call
+/// `pushManager.subscribe({applicationServerKey})`.
+///
+/// SSR builds never invoke this — the browser-side subscribe flow lives behind
+/// `cfg(all(feature = "hydrate", target_arch = "wasm32"))` — so this is "dead"
+/// on the server. The allow is targeted, not a `#[allow]` smell.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub async fn get_vapid_public_key() -> AppResult<VapidPublicKey> {
+    fetch_api("/api/v1/push/vapid-public-key").await
+}
+
+/// Persist the browser's PushSubscription on the server and create a matching
+/// notification endpoint of method=WebPush. SSR-dead, same reasoning as
+/// [`get_vapid_public_key`].
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub async fn create_push_subscription(req: CreatePushSubscriptionRequest) -> AppResult<Endpoint> {
+    post_api("/api/v1/push/subscribe", req).await
+}
+
+/// Return the T, or try and return an AppError
+#[instrument]
+fn deserialize<T>(json: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    let data = serde_json::from_str(json);
+    match data {
+        Ok(d) => Ok(d),
+        // try to deserialize as SystemError, if that fails then return this error
+        Err(e) => {
+            if let Ok(d) = serde_json::from_str::<JsonErrorWrapper>(json) {
+                match d {
+                    JsonErrorWrapper::ApiError(api) => Err(api.into()),
+                }
+            } else if let Ok(d) = serde_json::from_str::<JsonErrorWrapper>(json) {
+                Err(match d {
+                    JsonErrorWrapper::ApiError(api) => AppError::ApiError(api),
+                })
+            } else {
+                Err(AppError::Json(e.to_string()))
+            }
+        }
+    }
+}
+
+/// Classify an internal-API response (HTTP status + body) into our
+/// [`AppResult`]. Split out of the SSR fetch helpers so the status check can't
+/// be skipped again — and so it's unit-testable without a live server.
+///
+/// * **Success status** — the body is the JSON-encoded `T`. (A handful of
+///   endpoints answer `200` with a [`JsonErrorWrapper`] instead; [`deserialize`]
+///   already unwraps those into the matching [`AppError`].)
+/// * **Non-success status** — the body is *never* a `T`. It's either the API's
+///   structured [`JsonErrorWrapper`] or a plain-text message — most commonly the
+///   analyzer's `503 "Still warming up with data, unable to serve requests."`
+///   during its post-deploy warm-up. Feeding that body to `serde_json` produces
+///   a misleading `expected value at line 1 column 1` error reported at error
+///   level — the noise behind GlitchTip issue 2218. We map the status
+///   explicitly instead, mirroring the server side (`ultros/src/web/error.rs`).
+#[cfg(feature = "ssr")]
+fn parse_internal_api_response<T>(status: axum::http::StatusCode, body: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    if status.is_success() {
+        return deserialize(body);
+    }
+    // Preserve the API's structured error when it sent one...
+    if let Ok(JsonErrorWrapper::ApiError(api)) = serde_json::from_str::<JsonErrorWrapper>(body) {
+        return Err(AppError::ApiError(api));
+    }
+    // ...otherwise fall back to the plain-text body (e.g. the analyzer warm-up
+    // message). This is an error *response*, not malformed JSON.
+    Err(AppError::ApiError(
+        ultros_api_types::result::ApiError::Message(body.trim().to_string()),
+    ))
+}
+
+/// Feed the server's `x-ultros-commit` header to the update detector. Runs on
+/// error statuses too: a 500 from a newer server still carries the header.
+#[cfg(not(feature = "ssr"))]
+fn report_server_commit(response: &gloo_net::http::Response) {
+    let header = response
+        .headers()
+        .get(ultros_api_types::app_version::APP_COMMIT_HEADER);
+    crate::global_state::app_update::observe_server_commit(header.as_deref());
+}
+
+#[cfg(not(feature = "ssr"))]
+#[instrument(skip())]
+pub async fn delete_api<T>(path: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    use leptos::task::spawn_local;
+    let (tx, rx) = flume::unbounded();
+    let path = path.to_string();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            let response = gloo_net::http::Request::delete(&path)
+                .credentials(web_sys::RequestCredentials::Include)
+                .send()
+                .await
+                .inspect_err(|e| {
+                    error!("{}", e);
+                })?;
+            report_server_commit(&response);
+            let json: String = response.text().await?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        tx.send(result).unwrap();
+    });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
+    deserialize(&json)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn delete_api<T: DeserializeOwned>(path: &str) -> AppResult<T> {
+    request_api(axum::http::Method::DELETE, path, None).await
+}
+
+#[cfg(not(feature = "ssr"))]
+#[instrument(skip())]
+pub async fn fetch_api<T>(path: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    use leptos::task::spawn_local;
+    let (tx, rx) = flume::unbounded();
+
+    spawn_local({
+        let path = path.to_string();
+        async move {
+            let inner_impl = async move || -> AppResult<String> {
+                let response = gloo_net::http::Request::get(&path)
+                    // .abort_signal(abort_signal.as_ref())
+                    .send()
+                    .await
+                    .inspect_err(|e| error!(error = %e, path, "Error making http request"))?;
+                report_server_commit(&response);
+                let json: String = response.text().await?;
+                Ok(json)
+            };
+            let result = inner_impl().await;
+            let _ = tx.send(result);
+        }
+    });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
+    deserialize(&json).inspect_err(|e| {
+        error!(error = ?e, path, "Error deserializing");
+    })
+}
+
+#[cfg(feature = "ssr")]
+pub async fn fetch_api<T: DeserializeOwned>(path: &str) -> AppResult<T> {
+    request_api(axum::http::Method::GET, path, None).await
+}
+
+/// The endpoint facade is shared by SSR and hydration. Only this transport
+/// boundary differs: SSR invokes the injected API router directly.
+#[cfg(feature = "ssr")]
+async fn request_api<T: DeserializeOwned>(
+    method: axum::http::Method,
+    path: &str,
+    json: Option<String>,
+) -> AppResult<T> {
+    use axum::http::{StatusCode, request::Parts};
+    use leptos::prelude::use_context;
+
+    let api = use_context::<crate::ssr_api::SsrApi>().ok_or(AppError::ParamMissing)?;
+    let headers = use_context::<Parts>()
+        .ok_or(AppError::ParamMissing)?
+        .headers;
+    let (status, body) = api
+        .request(method, path, headers, json)
+        .await
+        .inspect_err(|e| {
+            if e.is_transient_transport() {
+                tracing::warn!(error = ?e, path, "Internal API timed out");
+            } else {
+                error!(error = ?e, path, "Error invoking internal API");
+            }
+        })?;
+    let body = std::str::from_utf8(&body).map_err(|e| AppError::Json(e.to_string()))?;
+    parse_internal_api_response(status, body).inspect_err(|e| {
+        if status.is_success() {
+            error!(error = ?e, path, "Error deserializing internal API response");
+        } else if status == StatusCode::SERVICE_UNAVAILABLE {
+            tracing::debug!(error = ?e, %status, path, "Internal API warming up");
+        } else {
+            tracing::warn!(error = ?e, %status, path, "Internal API error response");
+        }
+    })
+}
+
+#[cfg(not(feature = "ssr"))]
+#[instrument(skip(json))]
+pub async fn post_api<Y, T>(path: &str, json: Y) -> AppResult<T>
+where
+    Y: serde::Serialize + 'static,
+    T: serde::de::DeserializeOwned,
+{
+    use leptos::task::spawn_local;
+
+    let path = path.to_string();
+    log::info!("making post request: {path}");
+    let (tx, rx) = flume::unbounded::<AppResult<String>>();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            tracing::info!("{}", &path);
+            let body = serde_json::to_string(&json)
+                .map_err(|e| anyhow::anyhow!("failed to serialize json body: {:?}", e))?;
+            let response = gloo_net::http::Request::post(&path)
+                .header("Content-Type", "application/json")
+                .credentials(web_sys::RequestCredentials::Include)
+                .body(body)
+                .map_err(|e| anyhow::anyhow!("failed to set json body: {:?}", e))?
+                .send()
+                .await
+                .inspect_err(|e| {
+                    log::error!("{e}");
+                })?;
+            report_server_commit(&response);
+            let json: String = response.text().await.inspect_err(|e| log::error!("{e}"))?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        log::info!("sent result! {result:?}");
+        tx.send(result).unwrap();
+    });
+    log::info!("spawn local rx");
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
+    deserialize(&json)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn post_api<Y: Serialize, T: DeserializeOwned>(path: &str, json: Y) -> AppResult<T> {
+    let json = serde_json::to_string(&json).map_err(|e| AppError::Json(e.to_string()))?;
+    request_api(axum::http::Method::POST, path, Some(json)).await
+}
+
+#[cfg(not(feature = "ssr"))]
+#[instrument(skip(json))]
+pub async fn patch_api<Y, T>(path: &str, json: Y) -> AppResult<T>
+where
+    Y: serde::Serialize + 'static,
+    T: serde::de::DeserializeOwned,
+{
+    use leptos::task::spawn_local;
+
+    let path = path.to_string();
+    let (tx, rx) = flume::unbounded::<AppResult<String>>();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            let body = serde_json::to_string(&json)
+                .map_err(|e| anyhow::anyhow!("failed to serialize json body: {:?}", e))?;
+            let response = gloo_net::http::Request::patch(&path)
+                .header("Content-Type", "application/json")
+                .credentials(web_sys::RequestCredentials::Include)
+                .body(body)
+                .map_err(|e| anyhow::anyhow!("failed to set json body: {:?}", e))?
+                .send()
+                .await
+                .inspect_err(|e| {
+                    log::error!("{e}");
+                })?;
+            report_server_commit(&response);
+            let json: String = response.text().await.inspect_err(|e| log::error!("{e}"))?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        tx.send(result).unwrap();
+    });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
+    deserialize(&json)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn patch_api<Y: Serialize, T: DeserializeOwned>(path: &str, json: Y) -> AppResult<T> {
+    let json = serde_json::to_string(&json).map_err(|e| AppError::Json(e.to_string()))?;
+    request_api(axum::http::Method::PATCH, path, Some(json)).await
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod ssr_response_tests {
+    use super::parse_internal_api_response;
+    use crate::error::AppError;
+    use axum::http::StatusCode;
+    use ultros_api_types::result::{ApiError, JsonErrorWrapper};
+
+    #[test]
+    fn all_transport_helpers_use_the_request_context_and_shared_router() {
+        use crate::ssr_api::SsrApi;
+        use axum::{
+            Json, Router,
+            body::Body,
+            http::{HeaderMap, Request},
+            routing::get,
+        };
+        use leptos::prelude::{Owner, provide_context};
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let router = Router::new().route(
+            "/api/v1/value",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers["cookie"], "session=alice");
+                Json(42)
+            })
+            .post(|Json(value): Json<u32>| async move { Json(value + 1) })
+            .patch(|Json(value): Json<u32>| async move { Json(value + 2) })
+            .delete(|| async { Json(()) }),
+        );
+        let (parts, _) = Request::builder()
+            .uri("/page/old-path")
+            .header("cookie", "session=alice")
+            .body(Body::empty())
+            .unwrap()
+            .into_parts();
+        Owner::new().with(|| {
+            provide_context(SsrApi::new(router));
+            provide_context(parts);
+            runtime.block_on(async {
+                assert_eq!(super::fetch_api::<u32>("/api/v1/value").await.unwrap(), 42);
+                assert_eq!(
+                    super::post_api::<_, u32>("/api/v1/value", 42)
+                        .await
+                        .unwrap(),
+                    43
+                );
+                assert_eq!(
+                    super::patch_api::<_, u32>("/api/v1/value", 42)
+                        .await
+                        .unwrap(),
+                    44
+                );
+                super::delete_api::<()>("/api/v1/value").await.unwrap();
+                let error = super::fetch_api::<u32>("/missing").await.unwrap_err();
+                assert!(error.is_api_response());
+            });
+        });
+    }
+
+    /// Regression for GlitchTip issue 2218. The analyzer answers
+    /// `503 + "Still warming up with data, unable to serve requests."` (plain
+    /// text) during its post-deploy warm-up. The SSR fetch helper used to feed
+    /// that body straight into `serde_json`, producing a misleading
+    /// `AppError::Json("expected value at line 1 column 1")` logged at error
+    /// level. A non-success status must yield a real API error and must never
+    /// be classified as a JSON-deserialize failure.
+    #[test]
+    fn warmup_503_plaintext_is_not_a_json_error() {
+        let body = "Analyzer Error: Still warming up with data, unable to serve requests.";
+        let err = parse_internal_api_response::<i32>(StatusCode::SERVICE_UNAVAILABLE, body)
+            .expect_err("a 503 body must not parse as a value");
+        assert!(
+            !matches!(err, AppError::Json(_)),
+            "503 warm-up body must not be treated as malformed JSON, got {err:?}",
+        );
+        match err {
+            AppError::ApiError(ApiError::Message(msg)) => {
+                assert!(
+                    msg.contains("warming up"),
+                    "message should carry the body: {msg}"
+                );
+            }
+            other => panic!("expected ApiError::Message, got {other:?}"),
+        }
+    }
+
+    /// A structured error body (the API's `JsonErrorWrapper`) on a non-success
+    /// status must round-trip to the matching typed error, not a generic string.
+    #[test]
+    fn structured_error_body_is_preserved() {
+        let body = serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotFound)).unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::NOT_FOUND, &body)
+            .expect_err("a 404 must be an error");
+        assert_eq!(err, AppError::ApiError(ApiError::NotFound));
+    }
+
+    /// The happy path still deserializes the body into `T` on a 2xx.
+    #[test]
+    fn success_body_deserializes_value() {
+        let value = parse_internal_api_response::<i32>(StatusCode::OK, "42").unwrap();
+        assert_eq!(value, 42);
+    }
+
+    /// A 2xx whose body fails to deserialize is the one case that *is* a real
+    /// bug — it must still surface as an error (so the caller error-logs it).
+    #[test]
+    fn success_body_with_garbage_is_an_error() {
+        let err = parse_internal_api_response::<i32>(StatusCode::OK, "not json")
+            .expect_err("garbage on a 200 is an error");
+        assert!(matches!(err, AppError::Json(_)), "got {err:?}");
+    }
+
+    /// An unauthenticated response must surface as `NotAuthenticated` so
+    /// callers can act on it — e.g. the list-invite login redirect in
+    /// `routes/lists.rs` matches this exact variant.
+    #[test]
+    fn unauthenticated_401_maps_to_not_authenticated() {
+        let body =
+            serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotAuthenticated)).unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::UNAUTHORIZED, &body)
+            .expect_err("a 401 must be an error");
+        assert_eq!(err, AppError::ApiError(ApiError::NotAuthenticated));
+    }
+
+    /// Safety proof for moving `ApiError::NoAuthCookie` from `200` to `401`
+    /// server-side (`ultros/src/web/error.rs`): callers see the *same*
+    /// `AppError` either way, because the 200 path recovers the wrapper through
+    /// `deserialize`'s fallback and the 401 path maps the status explicitly.
+    ///
+    /// The difference is only in how it gets *reported*: on a 200 the SSR fetch
+    /// helper takes its `status.is_success()` branch and logs
+    /// "Error deserializing text" at error level (GlitchTip noise), while a 401
+    /// is a plain expected error response.
+    #[test]
+    fn unauthenticated_200_and_401_produce_the_same_app_error() {
+        let body =
+            serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotAuthenticated)).unwrap();
+        let legacy_200 = parse_internal_api_response::<i32>(StatusCode::OK, &body)
+            .expect_err("an auth failure is always an error");
+        let fixed_401 = parse_internal_api_response::<i32>(StatusCode::UNAUTHORIZED, &body)
+            .expect_err("an auth failure is always an error");
+        assert_eq!(
+            legacy_200, fixed_401,
+            "changing the status must not change what callers observe"
+        );
+        assert_eq!(fixed_401, AppError::ApiError(ApiError::NotAuthenticated));
+    }
+
+    /// Regression for GlitchTip issue 2210 ("Error getting value"), 6584 events.
+    ///
+    /// A world segment the API cannot resolve — in production, mojibake where
+    /// the world name belongs, e.g.
+    /// `/api/v1/listings/綛糸襲臂ゅ甥/42525` — comes back as a 404
+    /// carrying `WorldCacheError`'s message. This helper already logs it at
+    /// warn, so whatever awaits the resource must be able to tell that the API
+    /// *answered* and skip a second, error-level report.
+    #[test]
+    fn unresolvable_world_404_is_an_api_response() {
+        let body = serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::Message(
+            "Name lookup error 綛糸襲臂ゅ甥".to_string(),
+        )))
+        .unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::NOT_FOUND, &body)
+            .expect_err("a 404 must be an error");
+        assert!(
+            err.is_api_response(),
+            "a 404 for a bad world name is the API answering, got {err:?}"
+        );
+    }
+
+    /// The counterpart that must keep error-level reporting: a 2xx whose body
+    /// will not deserialize is a real bug and is logged nowhere else.
+    #[test]
+    fn malformed_success_body_is_not_an_api_response() {
+        let err = parse_internal_api_response::<i32>(StatusCode::OK, "not json")
+            .expect_err("garbage on a 200 is an error");
+        assert!(
+            !err.is_api_response(),
+            "a malformed 200 body is our own failure, got {err:?}"
+        );
+    }
+}

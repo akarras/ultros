@@ -6,7 +6,7 @@ const { runInNewContext } = require('node:vm');
 
 const app = join(__dirname, '../ultros-frontend/ultros-app/src');
 const script = readFileSync(join(app, 'theme-bootstrap.js'), 'utf8');
-const rust = readFileSync(join(app, 'global_state/theme.rs'), 'utf8');
+const rust = readFileSync(join(__dirname, '../ultros-frontend/ultros-frontend-core/src/global_state/theme.rs'), 'utf8');
 
 function bootstrap({ storage = {}, cookie = '', blocked = false, dark = false } = {}) {
   const attributes = {};

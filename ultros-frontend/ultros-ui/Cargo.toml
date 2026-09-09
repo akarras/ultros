@@ -5,22 +5,22 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-ultros-grid-core = { path = "../ultros-grid-core" }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
-leptos.workspace = true
-leptos_router.workspace = true
-leptos-use.workspace = true
-leptos_i18n.workspace = true
-icondata.workspace = true
-icondata_core.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-codee = { version = "0.3.5", features = ["json_serde"] }
-gloo-timers = { version = "0.4.0", features = ["futures"], optional = true }
+leptos = { workspace = true }
+leptos_router = { workspace = true }
+leptos-use = { workspace = true }
+leptos_i18n = { workspace = true }
+icondata = { workspace = true }
+icondata_core = { workspace = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = [
     "Window",
+    "Clipboard",
+    "Navigator",
+    "Location",
+    "HtmlDocument",
+    "Storage",
     "Document",
     "Element",
     "HtmlElement",
@@ -28,34 +28,47 @@ web-sys = { version = "0.3", features = [
     "HtmlInputElement",
     "HtmlSelectElement",
     "ValidityState",
-    "HtmlCanvasElement",
-    "CanvasRenderingContext2d",
-    "TextMetrics",
     "CssStyleDeclaration",
     "DomRect",
-    "DomTokenList",
-    "NodeList",
     "MouseEvent",
     "PointerEvent",
     "KeyboardEvent",
     "ResizeObserver",
+    "NodeList",
+    "DomTokenList",
 ] }
+chrono = { workspace = true }
+thousands = "0.2.0"
+timeago = "0.6.0"
+ultros-api-types = { path = "../../ultros-api-types" }
+uuid = { version = "1.23.1", features = [
+    "v4",
+    "js",
+] }
+wasm-bindgen = { version = "0.2" }
+time = "0.3.47"
+cfg-if = { workspace = true }
+leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
 
 [features]
 default = []
 ssr = [
+    "leptos_hotkeys/ssr",
     "leptos/ssr",
     "leptos_router/ssr",
     "leptos-use/ssr",
     "ultros-i18n/ssr",
 ]
 hydrate = [
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
     "leptos/hydrate",
     "ultros-i18n/hydrate",
-    "dep:gloo-timers",
     "dep:js-sys",
     "dep:wasm-bindgen-futures",
 ]
 
 [dev-dependencies]
-any_spawner = { version = "0.3", features = ["futures-executor"] }
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

@@ -1,24 +1,24 @@
 #![recursion_limit = "256"]
-pub(crate) mod analysis;
+pub use ultros_ui_market::analysis;
 pub(crate) mod analyzer_kit;
-pub(crate) mod api;
+pub use ultros_frontend_core::api;
 pub(crate) mod components;
 pub(crate) use ultros_api_client::error;
-pub(crate) mod freshness;
+pub use ultros_ui_market::freshness;
 pub(crate) mod global_state;
-pub(crate) use ultros_i18n::fallback as i18n_fallback;
-pub mod last_view;
 pub(crate) use ultros_calc::math;
+pub(crate) use ultros_i18n::fallback as i18n_fallback;
+pub use ultros_ui_query::last_view;
 pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
 pub(crate) use ultros_calc::recipe_planner;
 pub(crate) mod routes;
-pub(crate) mod sales_cadence;
+pub use ultros_ui_market::sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;
 #[cfg(feature = "ssr")]
 pub use ultros_api_client::ssr_api;
-pub(crate) mod ws;
+pub use ultros_frontend_core::ws;
 
 // Keep existing imports stable while the generated translations compile separately.
 pub use ultros_i18n::i18n;

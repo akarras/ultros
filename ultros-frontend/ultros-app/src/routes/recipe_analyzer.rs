@@ -9539,6 +9539,19 @@ mod test {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
             &mut out,
         );
+        // Components moved into crates must remain covered by this invariant.
+        let frontend = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        for entry in std::fs::read_dir(frontend).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if (name.starts_with("ultros-ui") || name == "ultros-frontend-core")
+                && path.join("src").is_dir()
+            {
+                walk(&path.join("src"), &mut out);
+            }
+        }
         assert!(
             out.len() > 100,
             "the walk must reach the whole crate, not one directory"
