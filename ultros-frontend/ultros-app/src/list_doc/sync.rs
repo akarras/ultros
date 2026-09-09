@@ -5,6 +5,9 @@
 //! with a superset of what the client has, so the client sends whatever the
 //! server is still missing.
 
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
+
 use leptos::prelude::*;
 use ultros_api_types::websocket::{ListDocPayload, ServerClient};
 
@@ -67,7 +70,11 @@ pub fn classify_error(message: &str) -> ErrorKind {
 /// drops this (closing the old handle+subscription) on account switch or
 /// when the page navigates away from the list.
 pub struct SyncSubscription {
-    _subscription: RealtimeSubscription,
+    /// The socket subscription lives behind an `Rc` because the message
+    /// handler needs a `Weak` back to it in order to re-handshake
+    /// (`Stale`, `MetaForbidden`). This is the only strong reference, so
+    /// dropping `SyncSubscription` still unsubscribes immediately.
+    _subscription: Rc<RefCell<Option<RealtimeSubscription>>>,
     drain: Option<Effect<LocalStorage>>,
 }
 
@@ -79,71 +86,215 @@ impl Drop for SyncSubscription {
     }
 }
 
+/// Run `task` after the current dispatch returns.
+///
+/// `RealtimeClient::dispatch_message` invokes a handler while
+/// `inner.handlers.borrow()` is live, so anything that touches the
+/// subscription table from inside a handler double-borrows: dropping a
+/// `RealtimeSubscription` takes `handlers.borrow_mut()`, which would panic
+/// and abort the wasm module. Every caller callback and every resubscribe
+/// therefore runs from a deferred task instead, where no borrow is held.
+fn defer(task: impl FnOnce() + 'static) {
+    leptos::task::spawn_local(async move {
+        task();
+    });
+}
+
 /// Subscribe with the local version, apply what the server sends, send what
 /// it lacks, then relay local commits and import remote ones. Every
 /// `ListDocSubscribed` reply is treated as a (re)handshake, not only the
 /// first: the server also sends one after a `MissingHistory` resync on the
 /// update path, reusing the same subscription id (spec section 5;
-/// `ultros/src/web/api/real_time_data.rs`). `on_denied` fires, after status
-/// is set to `"offline"`, for a scoped error that means this client should
-/// stop trying to sync this document (`ErrorKind::Denied` /
-/// `ErrorKind::NotFound`); Task 8 wires it to `handle.purge()` plus dropping
-/// this subscription. Every other error kind only logs and leaves the local
-/// document as is.
+/// `ultros/src/web/api/real_time_data.rs`).
+///
+/// # The handshake state machine
+///
+/// Per `ListDocSubscribed { version: V, payload }`, after importing the
+/// payload (a failed import is fatal for this reply: status `"offline"`,
+/// logged, nothing sent):
+///
+/// - not ahead of `V` — converged; both guards below are cleared.
+/// - ahead of `V`, and `V` is not the version we last diffed against — send
+///   `export_since(V)` and remember `last_diff_version = V`.
+/// - ahead of `V`, `V` *is* `last_diff_version`, and the payload was a
+///   `Snapshot` — the server rejected our diff for exactly this version and
+///   answered with a fresh snapshot, so resending the same bytes would loop
+///   forever, each cycle costing the server a whole snapshot. Rebase the
+///   local rows onto that snapshot (`ListDocHandle::rebase_onto_snapshot`),
+///   dropping a local meta change if a `MetaForbidden` was seen since the
+///   last successful handshake, send `export_since(V)` once more, and
+///   remember `rebased_for = V`.
+/// - ahead of `V` and `rebased_for == V` — the rebased operations were
+///   rejected too. Give up: status `"offline"`, logged, nothing sent. This
+///   bounds the exchange at two rounds per server version.
+///
+/// A `ListDocSubscribed` for a different version clears `rebased_for`, so a
+/// document that recovers is not stuck in the give-up state.
+///
+/// `on_denied` fires, after status is set to `"offline"`, for a scoped
+/// error that means this client should stop trying to sync this document
+/// (`ErrorKind::Denied` / `ErrorKind::NotFound`); Task 8 wires it to
+/// `handle.purge()` plus dropping this subscription. **All three callbacks
+/// run after `dispatch_message` has returned**, so dropping the
+/// `SyncSubscription` from inside one of them is safe.
 pub fn start(
     handle: ListDocHandle,
     realtime: RealtimeClient,
-    on_stale: impl Fn() + Clone + 'static,
-    on_remote_change: impl Fn() + Clone + 'static,
-    on_denied: impl Fn(ErrorKind) + Clone + 'static,
+    on_stale: impl Fn() + 'static,
+    on_remote_change: impl Fn() + 'static,
+    on_denied: impl Fn(ErrorKind) + 'static,
 ) -> SyncSubscription {
     handle.set_status("connecting");
     let list_id = handle.list_id;
+    let on_stale: Rc<dyn Fn()> = Rc::new(on_stale);
+    let on_remote_change: Rc<dyn Fn()> = Rc::new(on_remote_change);
+    let on_denied: Rc<dyn Fn(ErrorKind)> = Rc::new(on_denied);
+
+    // Filled in right after `subscribe_list_doc` returns; the handler only
+    // ever sees it through a `Weak`, so the `Rc` in `SyncSubscription` stays
+    // the sole owner and dropping that really does unsubscribe.
+    let slot: Rc<RefCell<Option<RealtimeSubscription>>> = Rc::new(RefCell::new(None));
+    let weak_slot = Rc::downgrade(&slot);
+
+    // The last server version we answered with a diff, and the version we
+    // already rebased for: see the state machine above.
+    let last_diff_version: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+    let rebased_for: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+    // Set when the server refuses a non-owner's meta change; cleared by the
+    // rebase that drops that change.
+    let meta_forbidden = Rc::new(Cell::new(false));
+    // Makes the next handshake message claim an empty version, which forces
+    // the server to answer with a `Snapshot` rather than a diff.
+    let force_empty_version = Rc::new(Cell::new(false));
+
     let sender = realtime.clone();
+    let version_flag = force_empty_version.clone();
     let subscription = realtime.subscribe_list_doc(
         list_id,
-        move || handle.version(),
+        move || {
+            if version_flag.replace(false) {
+                Vec::new()
+            } else {
+                // Never `version()`: this factory outlives the page on a
+                // reconnect replay, and reading a disposed `StoredValue`
+                // would abort the module (M10).
+                handle.try_version()
+            }
+        },
         move |message| match message {
             ServerClient::ListDocSubscribed {
                 version, payload, ..
             } => {
-                let imported = match payload {
-                    ListDocPayload::Snapshot(bytes) | ListDocPayload::Updates(bytes) => {
-                        handle.import(&bytes).is_ok()
+                let snapshot = match payload {
+                    ListDocPayload::Snapshot(bytes) => {
+                        if let Err(error) = handle.import(&bytes) {
+                            handle.set_status("offline");
+                            log::error!("list {list_id}: server snapshot did not import: {error}");
+                            return;
+                        }
+                        Some(bytes)
                     }
-                    ListDocPayload::UpToDate => true,
+                    ListDocPayload::Updates(bytes) => {
+                        if let Err(error) = handle.import(&bytes) {
+                            handle.set_status("offline");
+                            log::error!("list {list_id}: server updates did not import: {error}");
+                            return;
+                        }
+                        None
+                    }
+                    ListDocPayload::UpToDate => None,
                 };
-                if imported && handle.is_ahead_of(&version) {
-                    // The handshake diff covers everything the outbox held
-                    // up to this point; anything committed locally after
-                    // this reply started will still push through the
-                    // drain Effect below.
-                    handle.outbox.set(Vec::new());
-                    if let Ok(diff) = handle.export_since(&version) {
-                        sender.send_list_doc_update(list_id, diff);
+
+                if handle.is_ahead_of(&version) {
+                    let same_version =
+                        last_diff_version.borrow().as_deref() == Some(version.as_slice());
+                    if !same_version {
+                        // A different server version is a fresh start.
+                        *rebased_for.borrow_mut() = None;
                     }
+                    if rebased_for.borrow().as_deref() == Some(version.as_slice()) {
+                        handle.set_status("offline");
+                        log::error!("list {list_id}: server keeps rejecting local history");
+                        return;
+                    }
+                    match (same_version, snapshot) {
+                        (true, Some(bytes)) => {
+                            let keep_meta = !meta_forbidden.get();
+                            if let Err(error) = handle.rebase_onto_snapshot(&bytes, keep_meta) {
+                                handle.set_status("offline");
+                                log::error!("list {list_id}: rebase onto snapshot failed: {error}");
+                                return;
+                            }
+                            meta_forbidden.set(false);
+                            *rebased_for.borrow_mut() = Some(version.clone());
+                            if let Ok(diff) = handle.export_since(&version) {
+                                sender.send_list_doc_update(list_id, diff);
+                            }
+                            // That diff covers every re-applied operation.
+                            handle.outbox.set(Vec::new());
+                        }
+                        _ => {
+                            // The handshake diff covers everything the outbox
+                            // held up to this point; anything committed
+                            // locally after this reply started will still push
+                            // through the drain Effect below.
+                            handle.outbox.set(Vec::new());
+                            if let Ok(diff) = handle.export_since(&version) {
+                                sender.send_list_doc_update(list_id, diff);
+                            }
+                            *last_diff_version.borrow_mut() = Some(version.clone());
+                        }
+                    }
+                } else {
+                    *last_diff_version.borrow_mut() = None;
+                    *rebased_for.borrow_mut() = None;
                 }
                 handle.set_status("live");
                 handle.save_now();
             }
             ServerClient::ListDocUpdate { update, .. } => {
-                if handle.import(&update).is_ok() {
-                    on_remote_change();
+                if let Err(error) = handle.import(&update) {
+                    handle.set_status("offline");
+                    log::error!("list {list_id}: relayed update did not import: {error}");
+                    return;
                 }
+                let on_remote_change = on_remote_change.clone();
+                defer(move || on_remote_change());
                 handle.set_status("live");
             }
             ServerClient::Stale { .. } => {
                 handle.set_status("reconnecting");
-                on_stale();
+                // Spec section 5: a stale subscription is re-handshaked, not
+                // merely reported.
+                let slot = weak_slot.clone();
+                let on_stale = on_stale.clone();
+                defer(move || {
+                    resubscribe(&slot);
+                    on_stale();
+                });
             }
             ServerClient::Error { message } => {
                 let kind = classify_error(&message);
                 match kind {
                     ErrorKind::Denied | ErrorKind::NotFound => {
                         handle.set_status("offline");
-                        on_denied(kind);
+                        let on_denied = on_denied.clone();
+                        defer(move || on_denied(kind));
                     }
-                    ErrorKind::MetaForbidden | ErrorKind::MissingHistory | ErrorKind::Transient => {
+                    ErrorKind::MetaForbidden => {
+                        log::warn!("list {list_id} sync: {message}");
+                        // The rejected meta operation is still in the
+                        // document, and every later `export_since` blob would
+                        // carry it, so the row edits riding along with it
+                        // would be rejected too. Force a snapshot handshake;
+                        // the second identical reply rebases the rows onto it
+                        // *without* the meta change.
+                        meta_forbidden.set(true);
+                        force_empty_version.set(true);
+                        let slot = weak_slot.clone();
+                        defer(move || resubscribe(&slot));
+                    }
+                    ErrorKind::MissingHistory | ErrorKind::Transient => {
                         log::warn!("list {list_id} sync: {message}");
                     }
                 }
@@ -151,6 +302,7 @@ pub fn start(
             _ => {}
         },
     );
+    *slot.borrow_mut() = Some(subscription);
 
     let sender = realtime;
     let drain = Effect::new(move |_| {
@@ -173,8 +325,18 @@ pub fn start(
     });
 
     SyncSubscription {
-        _subscription: subscription,
+        _subscription: slot,
         drain: Some(drain),
+    }
+}
+
+/// Re-send the handshake for a subscription that may already have been
+/// dropped (the page navigated away while a deferred task was queued).
+fn resubscribe(slot: &Weak<RefCell<Option<RealtimeSubscription>>>) {
+    if let Some(slot) = slot.upgrade()
+        && let Some(subscription) = slot.borrow().as_ref()
+    {
+        subscription.resubscribe();
     }
 }
 

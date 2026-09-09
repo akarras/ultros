@@ -346,6 +346,45 @@ mod client {
         }
     }
 
+    impl RealtimeSubscription {
+        /// Re-send this subscription's message, rebuilding a dynamic one
+        /// from its factory (so a list-doc handshake goes out with the
+        /// *current* local version). Used when the server says the
+        /// subscription went `Stale`: spec section 5 wants a fresh
+        /// handshake, not just a status change.
+        ///
+        /// Takes only `subscription_messages.borrow()`, and drops it before
+        /// running the factory or touching the socket, so this is safe to
+        /// call from anywhere a handler's own callbacks run — but not from
+        /// inside `dispatch_message` itself, which holds
+        /// `handlers.borrow()` (callers defer it; see `list_doc::sync`).
+        pub(crate) fn resubscribe(&self) {
+            let entry = self
+                .client
+                .inner
+                .subscription_messages
+                .borrow()
+                .get(&self.subscription_id)
+                .map(|entry| match entry {
+                    SubscriptionEntry::Static(text) => Ok(text.clone()),
+                    SubscriptionEntry::Dynamic(factory) => Err(factory.clone()),
+                });
+            let text = match entry {
+                Some(Ok(text)) => text,
+                Some(Err(factory)) => {
+                    let Ok(text) = serde_json::to_string(&factory()) else {
+                        return;
+                    };
+                    text
+                }
+                None => return,
+            };
+            if !self.client.send_text(&text) {
+                self.client.connect();
+            }
+        }
+    }
+
     impl Drop for RealtimeSubscription {
         fn drop(&mut self) {
             self.client.unsubscribe(self.subscription_id);
@@ -479,6 +518,11 @@ mod client {
     }
 
     pub(crate) struct RealtimeSubscription;
+
+    impl RealtimeSubscription {
+        /// No socket on this half, so nothing to re-send.
+        pub(crate) fn resubscribe(&self) {}
+    }
 
     impl RealtimeClient {
         pub(crate) fn new() -> Self {

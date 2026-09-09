@@ -113,6 +113,19 @@ impl ListDocHandle {
         self.with_doc(|doc| doc.version())
     }
 
+    /// `version()` for callers that may outlive the handle's owner: the
+    /// socket's reconnect replay rebuilds a list-doc subscribe message from
+    /// a factory that can still be in the `subscription_messages` map after
+    /// the page (and this handle's `StoredValue`s) were disposed. Reading a
+    /// disposed `StoredValue` panics, so a late replay would abort the wasm
+    /// module; an empty version instead just asks the server for a full
+    /// snapshot, which the (already dead) subscription then ignores.
+    pub fn try_version(&self) -> Vec<u8> {
+        self.doc
+            .try_with_value(|doc| doc.version())
+            .unwrap_or_default()
+    }
+
     /// One user action, one undo step. The document commits inside, which
     /// bumps `revision` and pushes the update onto `outbox`.
     pub fn apply(&self, edit: Edit) -> Result<(), DocError> {
@@ -214,6 +227,67 @@ impl ListDocHandle {
         self.subscriptions.set_value(vec![on_change, on_local]);
         self.permission.set(0);
         self.revision.update(|r| *r += 1);
+    }
+
+    /// Replace the document with `snapshot` (the server's truth) and re-apply
+    /// the local rows on top as NEW operations, so edits the server could not
+    /// accept (history it compacted, or a forbidden meta change) are
+    /// re-expressed against the server's history. `keep_local_meta = false`
+    /// drops a local name/scope change. Returns whether anything local had to
+    /// be re-applied.
+    ///
+    /// This is the escape from the resync loop: after a rebase the local
+    /// document descends only from history the server has, so the next
+    /// `export_since(server_version)` is something it can actually merge.
+    /// Undo history restarts — the operations the stack pointed at no longer
+    /// exist — and the local rows survive as ordinary new edits.
+    pub fn rebase_onto_snapshot(
+        &self,
+        snapshot: &[u8],
+        keep_local_meta: bool,
+    ) -> Result<bool, DocError> {
+        let local_rows = self.rows();
+        let local_meta = self.meta();
+        let fresh = ListDocument::from_snapshot(snapshot)?;
+        let undo = ListUndo::new(&fresh);
+        let revision = self.revision;
+        let outbox = self.outbox;
+        let on_change = fresh.on_change(move || revision.update(|r| *r += 1));
+        let on_local = fresh.on_local_update(move |bytes| {
+            let bytes = bytes.to_vec();
+            outbox.update(|queue| queue.push(bytes));
+        });
+        // Cleared before the swap, like `purge`: whatever the abandoned
+        // document had queued depends on history the server rejected, and
+        // the re-applied mutations below refill the outbox with operations
+        // it can accept.
+        self.outbox.set(Vec::new());
+        self.doc.set_value(fresh);
+        self.undo.set_value(undo);
+        self.subscriptions.set_value(vec![on_change, on_local]);
+
+        let mut reapplied = self.with_doc(|doc| ultros_list_doc::rebase_rows(doc, &local_rows))?;
+        if keep_local_meta {
+            let applied_meta = self.with_doc(|doc| -> Result<bool, DocError> {
+                let server_meta = doc.meta();
+                let mut applied = false;
+                if server_meta.name != local_meta.name {
+                    doc.rename(&local_meta.name)?;
+                    applied = true;
+                }
+                if let Some(scope) = local_meta.scope
+                    && server_meta.scope != Some(scope)
+                {
+                    doc.set_scope(scope)?;
+                    applied = true;
+                }
+                Ok(applied)
+            })?;
+            reapplied |= applied_meta;
+        }
+        self.revision.update(|r| *r += 1);
+        self.save_now();
+        Ok(reapplied)
     }
 
     /// Stop this handle from doing any more background work: flushes any
