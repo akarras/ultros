@@ -91,13 +91,20 @@ pub(crate) fn db_to_method(method: &str, config: &JsonValue) -> anyhow::Result<E
 }
 
 #[allow(clippy::result_large_err)]
-pub(crate) fn validate_endpoint_method(m: &EndpointMethod) -> Result<(), ApiError> {
+pub(crate) fn validate_endpoint_method(m: &EndpointMethod, owner_id: i64) -> Result<(), ApiError> {
     match m {
         EndpointMethod::Webhook { url } => validate_discord_webhook_url(url),
         EndpointMethod::DiscordChannel { channel_id, .. } => {
             validate_discord_channel_id(*channel_id)
         }
-        EndpointMethod::DiscordDm { .. } => Ok(()),
+        EndpointMethod::DiscordDm { user_id } => {
+            if *user_id != owner_id {
+                return Err(ApiError::AnyhowError(anyhow::anyhow!(
+                    "DiscordDm user_id must match the authenticated user"
+                )));
+            }
+            Ok(())
+        }
         EndpointMethod::WebPush { subscription_id } => {
             // WebPush endpoints are created via POST /api/v1/push/subscribe, never
             // through the generic CRUD — the row is meaningless without a real
@@ -173,7 +180,7 @@ pub(crate) async fn create_endpoint(
         },
         other => other,
     };
-    validate_endpoint_method(&method)?;
+    validate_endpoint_method(&method, user.id as i64)?;
 
     // The display name we will store. Defaults to whatever the client sent; for a
     // freshly resolved DiscordChannel we replace it with the real channel name so
@@ -229,11 +236,18 @@ pub(crate) async fn update_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-    Json(req): Json<UpdateEndpointRequest>,
+    Json(mut req): Json<UpdateEndpointRequest>,
 ) -> Result<Json<()>, ApiError> {
+    // Frontend hack: DiscordDm with user_id=0 means "use the authenticated user's id".
+    if let Some(EndpointMethod::DiscordDm { user_id: 0 }) = req.method {
+        req.method = Some(EndpointMethod::DiscordDm {
+            user_id: user.id as i64,
+        });
+    }
+
     let method_and_config = match &req.method {
         Some(m) => {
-            validate_endpoint_method(m)?;
+            validate_endpoint_method(m, user.id as i64)?;
             let (method, config) = method_to_db(m);
             Some((method.to_string(), config))
         }
@@ -499,7 +513,7 @@ mod tests {
         let m = EndpointMethod::Webhook {
             url: "http://evil.example/api/webhooks/1/x".into(),
         };
-        assert!(validate_endpoint_method(&m).is_err());
+        assert!(validate_endpoint_method(&m, 1).is_err());
     }
 
     #[test]
@@ -510,6 +524,14 @@ mod tests {
             guild_id: None,
             guild_name: None,
         };
-        assert!(validate_endpoint_method(&m).is_err());
+        assert!(validate_endpoint_method(&m, 1).is_err());
+    }
+
+    #[test]
+    fn validate_method_rejects_mismatched_discord_dm_user_id() {
+        let m = EndpointMethod::DiscordDm { user_id: 2 };
+        assert!(validate_endpoint_method(&m, 1).is_err());
+        let m_valid = EndpointMethod::DiscordDm { user_id: 1 };
+        assert!(validate_endpoint_method(&m_valid, 1).is_ok());
     }
 }
