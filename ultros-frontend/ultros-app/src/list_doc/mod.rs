@@ -11,3 +11,4 @@ pub mod adapter;
 pub mod handle;
 pub mod store;
 pub mod sync;
+pub mod undo;
