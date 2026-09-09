@@ -43,3 +43,114 @@ cargo test -p ultros-clickhouse --test listing_history_smoke --test floor_histor
 ```
 
 Production coverage has **not** been measured. The schema proposes 365-day listing/receipt retention and no floor TTL, but CREATE IF NOT EXISTS does not alter existing deployed retention. Before release, verify at least seven days of retained listing history, actual coverage of each requested window, writer/drop rates including receipt evidence, seed continuity, floor consistency, query latency/resource usage for world/DC/region windows, and deployed retention. Missing receipt history cannot be recovered from sale timestamps. Do not close #1342 or describe production history as mature without that evidence. No production reads, writes, deployment, or retention alteration are part of this task.
+
+## Release-evidence inventory (2026-09-09)
+
+| Evidence | What can establish it | Current access or history blocker |
+| --- | --- | --- |
+| Deployed listing/floor retention and seed completion | Read-only `SHOW CREATE TABLE`, `system.parts` metadata, and the small `_listing_events_seed` marker | This task has no configured production ClickHouse URL/user, workspace `.env`, ClickHouse client configuration, or monitoring connector. Repository schema is intended DDL, not deployed evidence. An SSH session environment does not identify or authorize a database target. |
+| Existing listing/floor writer health | Already-collected monitoring rates for `ultros_clickhouse_writer_written_rows_total`, `dropped_rows_total`, `flush_failures_total`, plus seed/bus-lag metrics | No configured production Prometheus/Grafana URL or read-only access. A current counter snapshot cannot establish historical absence of drops or restarts. |
+| Existing floor consistency | A bounded, explicitly selected item/world comparison between retained floor transitions and the alive snapshot at a common observation time | No configured production database access. Local exact-floor fixtures passed; that does not prove live ingest consistency. |
+| Durable receipt writer health and receipt coverage | Deployment containing the `sale_receipts` writer, followed by observed receipts and its `table="sale_receipts"` writer metrics | This PR has not been deployed by this task. Old sales/backfill have no durable receipt evidence. Creating a table or inserting synthetic old timestamps cannot establish historical receipt coverage. |
+| Seven-day listing continuity and 30/90-day maturity | Retained observations plus monitoring/log history covering the interval and seed/restart boundaries | First/last observations only establish a span. Quiet intervals, losses before metrics existed, and missing receipts remain unknown. Elapsed live history is necessary; a nominal request window is insufficient. |
+| Whole-market world/DC/region capacity | Owned synthetic workloads first; later an approved representative production-volume replica or existing bounded query telemetry | Synthetic scale can measure resource limits and correctness, but actual deployed volumes, hardware, and concurrency are not available here. Do not run uncached whole-market 30/90-day production queries to fill this gap. |
+
+The local workload harness is an ignored test, so ordinary CI does **not** claim to exercise it. It refuses non-loopback endpoints, requires a fresh `ultros_t12_workload_*` database, and accepts only its two bounded fixture sizes. It invokes the real alive/history/stock query functions and asserts removal classification, 30/90-day turnover counts, complete floor baselines, and stock availability on successful responses. Resource-limit errors remain failures to provide history, not passing market-data results.
+
+To reproduce on a **dedicated disposable** ClickHouse server, enable `query_log` and the user's `log_queries=1`; use `max_threads=1`, a 1-GiB default query ceiling and a 16-GiB server ceiling to match this run. Historical SQL retains its own stricter 512-MiB/10-second/2-million-result-row settings. Give the owned native client the same local credentials as the HTTP client. The harness performs `CREATE TABLE`/inserts and `SYSTEM FLUSH LOGS` only in this disposable environment; never point it at a tunnel to a deployment. It does not start the app, ingest, or rollup workers.
+
+```sh
+export CH_WORKLOAD_BIN=/path/to/owned/clickhouse
+flock /tmp/ultros-analyzer-heavy-checks.lock bash <<'WORKLOAD'
+set -euo pipefail
+export CLICKHOUSE_URL=http://127.0.0.1:28412 CLICKHOUSE_USER=default CLICKHOUSE_PASSWORD=
+export CARGO_BUILD_JOBS=8 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+for build_profile in test server-release; do
+ for fixture_rows in 24000 240000; do
+  export CLICKHOUSE_DATABASE="ultros_t12_workload_$(date +%s%N)_${fixture_rows}"
+  "$CH_WORKLOAD_BIN" client --host 127.0.0.1 --port 29412 \
+    --query "CREATE DATABASE $CLICKHOUSE_DATABASE"
+  T12_ROWS_PER_WORLD="$fixture_rows" cargo test -p ultros-clickhouse \
+    --test listing_history_workload --profile "$build_profile" -- --ignored --nocapture \
+    >"/tmp/${CLICKHOUSE_DATABASE}.log" 2>&1
+ done
+done
+WORKLOAD
+```
+
+Each dataset has 32 synthetic worlds, 1,000 item IDs, both qualities, 2,000 output keys, 64,000 alive boards, and two sale-stat snapshots per board. Listing triplets (add/update/remove) span 90 days; 20% of cycles concentrate on one hot item, 10% lack receipt evidence, and a small receipt retry population exercises deduplication. Per-cycle retainer IDs prevent unrelated cycles from masquerading as same-retainer reprices. Floor transitions include explicit empties and a complete 91-day baseline. A synthetic baseline proves fixture semantics, not historical ingest maturity.
+
+For each tier, the 1-world, 8-world DC and 32-world region queries run for 30 and 90 days, three times each. `CASE` lines report full Rust alive/history/stock duration and success or explicit resource-limit error; `QUERY` lines report server duration, scanned/result rows, peak query memory, and exception code from the owned server's query log. `PROCESS` records Linux process high-water RSS cumulatively, not per-query allocation. The first run follows insertion and is **not** a cold-disk benchmark; no shared caches are flushed. The final harness applies the same 12-second deadline as `StatsCache` and fails if local processing delays an error beyond 14 seconds. Both debug and `server-release` runs represent serial cache misses, excluding HTTP serialization and cache hits, not production p95 or concurrency evidence.
+
+## Initial workload evidence
+
+Measured on 2026-09-09 with ClickHouse **25.4.13.22**, an AMD Ryzen Threadripper 3970X shared host, one ClickHouse query thread, and unoptimized Rust test code. Each row below represents three serial runs. These initial measurements apply the production **SQL** limits but time the complete loader without the cache deadline; they identify which cases need the separate 12-second cancellation check. They are not successful HTTP response times.
+
+| Events per world over 90 days | Scope | Window | Full loader seconds (min–max) | Largest query peak MiB | Observed result |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 24,000 | World (1) | 30d | 0.147–0.155 | 4.77 | Complete, counts verified |
+| 24,000 | World (1) | 90d | 0.304–0.362 | 6.67 | Complete, counts verified |
+| 24,000 | DC (8) | 30d | 0.650–0.667 | 16.64 | Complete, counts verified |
+| 24,000 | DC (8) | 90d | 1.706–1.736 | 26.27 | Complete, counts verified |
+| 24,000 | Region (32) | 30d | 2.372–2.402 | 76.72 | Complete, counts verified |
+| 24,000 | Region (32) | 90d | 6.581–6.646 | 104.25 | Complete, counts verified |
+| 240,000 | World (1) | 30d | 0.831–0.877 | 16.31 | Complete, counts verified |
+| 240,000 | World (1) | 90d | 2.198–2.255 | 40.89 | Complete, counts verified |
+| 240,000 | DC (8) | 30d | 5.412–5.475 | 105.10 | Complete, counts verified |
+| 240,000 | DC (8) | 90d | 15.713–15.896 | 358.74 | Correct full load, **over cache deadline** |
+| 240,000 | Region (32) | 30d | 7.829–7.867 | 10.90 | **Unavailable**, result limit (396) |
+| 240,000 | Region (32) | 90d | 7.813–7.830 | 10.83 | **Unavailable**, result limit (396) |
+
+The smaller dataset has 768,000 listing events, 232,681 receipt rows, 256,000 sales and 320,000 floor rows; the larger has 7,680,000 / 2,326,812 / 2,560,000 / 2,624,000 respectively. Both have the same 64,000 alive boards and 128,000 sale-stat snapshots. The larger DC/90-day request returned 1,920,000 event rows; its first event query scanned 6,639,616 rows in 4,455 ms, and its floor query returned 656,000 rows at a 376,169,054-byte peak. Thus SQL duration/memory alone does not measure application readiness. The process high-water RSS reached 478,080 KiB during the larger matrix, separate from ClickHouse's query memory cap.
+
+The larger region/30-day interval contains approximately 2.56 million event rows and the 90-day interval 7.68 million. All six regional attempts raised `TOO_MANY_ROWS_OR_BYTES` (code 396) at the two-million-result-row limit. The Rust loader returned an error and no history map; it did not return truncated statistics. The existing web error mapping produces HTTP 500 for the initial ClickHouse error or `StatsCache` deadline; coalesced/follow-up cold requests during the cache failure backoff receive HTTP 503. A previously cached response may instead be served with the explicit stale disposition. Those status mappings are established by code/unit tests; this matrix invokes query functions and does not itself issue HTTP requests.
+
+This is evidence of a real capacity limitation at the stated synthetic volume, **not** proof that deployed regional traffic fits. The next capacity step is a concurrency and production-volume/skew run on a representative isolated host, followed by reducing whole-market raw transfer/computation or providing an appropriately indexed aggregation strategy if representative traffic exceeds these bounds. Do not raise the limits or describe 30/90-day region support as production-ready from these results.
+
+The first deadline-aware run exposed a separate implementation problem: the large DC/90-day load returned its 12-second timeout after **15.959 seconds**, failing the harness's 14-second responsiveness assertion. Synchronous receipt deduplication, grouping and per-item calculations prevented the runtime from polling the deadline. `listing_history::window` now yields every 4,096 rows during deduplication/grouping and between item calculations. It preserves the same matching and floor semantics; it does not turn a timed-out partial result into successful history or raise a resource limit. The failed run remains recorded at `/tmp/ultros-t12-workload-starved-deadline.log` on the validation host.
+
+## Verified deadline and optimized-profile results
+
+The final harness passed both fixture tiers in both profiles with the SQL limits, 12-second loader deadline, count/coverage assertions, and responsiveness assertions unchanged. These are 72 measured calls: complete history and explicit unavailable outcomes are distinguished below. Each range is three serial runs; query memory is the maximum individual query peak, not application RSS.
+
+| Profile | Events/world/90d | Scope | Window | Seconds (min–max) | Outcome | Query peak MiB | Max rows read by one query |
+| --- | ---: | --- | ---: | ---: | --- | ---: | ---: |
+| test | 24,000 | world (1) | 30d | 0.164–0.172 | complete | 4.77 | 408,256 |
+| test | 24,000 | world (1) | 90d | 0.312–0.369 | complete | 6.64 | 686,080 |
+| test | 24,000 | dc (8) | 30d | 0.672–0.685 | complete | 16.64 | 408,256 |
+| test | 24,000 | dc (8) | 90d | 1.745–1.778 | complete | 26.26 | 702,464 |
+| test | 24,000 | region (32) | 30d | 2.497–2.517 | complete | 76.72 | 408,256 |
+| test | 24,000 | region (32) | 90d | 6.663–6.753 | complete | 102.64 | 768,000 |
+| test | 240,000 | world (1) | 30d | 0.878–0.918 | complete | 16.33 | 3,056,032 |
+| test | 240,000 | world (1) | 90d | 2.286–2.347 | complete | 40.92 | 6,311,936 |
+| test | 240,000 | dc (8) | 30d | 5.552–5.669 | complete | 105.89 | 3,170,720 |
+| test | 240,000 | dc (8) | 90d | 12.465–12.650 | deadline | 358.20 | 6,639,616 |
+| test | 240,000 | region (32) | 30d | 8.012–8.038 | result_limit_396 | 11.20 | 2,795,232 |
+| test | 240,000 | region (32) | 90d | 7.840–7.951 | result_limit_396 | 11.63 | 2,027,680 |
+| server-release | 24,000 | world (1) | 30d | 0.067–0.077 | complete | 6.68 | 408,288 |
+| server-release | 24,000 | world (1) | 90d | 0.106–0.159 | complete | 6.64 | 686,080 |
+| server-release | 24,000 | dc (8) | 30d | 0.174–0.184 | complete | 16.64 | 408,288 |
+| server-release | 24,000 | dc (8) | 90d | 0.362–0.370 | complete | 26.26 | 702,464 |
+| server-release | 24,000 | region (32) | 30d | 0.528–0.543 | complete | 76.72 | 408,288 |
+| server-release | 24,000 | region (32) | 90d | 1.204–1.237 | complete | 103.76 | 768,000 |
+| server-release | 240,000 | world (1) | 30d | 0.285–0.315 | complete | 16.34 | 3,056,032 |
+| server-release | 240,000 | world (1) | 90d | 0.610–0.632 | complete | 40.93 | 6,311,936 |
+| server-release | 240,000 | dc (8) | 30d | 1.105–1.121 | complete | 107.43 | 3,170,720 |
+| server-release | 240,000 | dc (8) | 90d | 2.901–2.956 | complete | 357.26 | 6,639,616 |
+| server-release | 240,000 | region (32) | 30d | 1.058–1.087 | result_limit_396 | 11.20 | 2,795,264 |
+| server-release | 240,000 | region (32) | 90d | 1.068–1.083 | result_limit_396 | 11.62 | 2,027,424 |
+
+The cooperative-yield change was verified by the same deadline regression that failed at 15.959 seconds before the fix. This is cooperative cancellation evidence for the measured workload, not a hard CPU-preemption guarantee for arbitrary single-item skew. The optimized run uses the repository `server-release` profile; the test binary uses the default allocator, while the web server enables jemalloc. Concurrent requests, a cold disk, actual deployed data skew, and the deployed server configuration still require an approved isolated representative environment.
+
+Machine-readable fixtures, all three timings, outcomes, memory and scanned-row figures are checked in at [windowed-listing-workload-2026-09-09.json](windowed-listing-workload-2026-09-09.json). Process high-water RSS (KiB): `test/24000` = 210,656, `test/240000` = 479,272, `server-release/24000` = 216,908, `server-release/240000` = 473,276.
+
+## Bounded release-validation procedure
+
+An operator with an already-authorized read-only target should record the deployment revision, database identifier, server version, observation time, and scope/item IDs alongside every result. Do not run the application, migrations, backfill, seed helpers, refreshes, or sweeps as an inspection tool. Do not change TTLs. A timeout or row-read limit is an **incomplete check**, not a reason to remove its bound.
+
+1. Inspect metadata only: `SHOW CREATE TABLE <db>.listing_events`, `<db>.floor_changes`, and (if present) `<db>.sale_receipts`. Record actual TTL expressions and engines. Inspect `system.parts` for only these tables and `active=1`, grouped by table/partition, with `max_execution_time=2`, `max_rows_to_read=100000`, `read_overflow_mode='throw'`, and `max_memory_usage=67108864`. Partition names/row totals establish coarse retained volume, not exact scope coverage or continuity. Read `SELECT seeded_at, rows_streamed FROM <db>._listing_events_seed ORDER BY seeded_at DESC LIMIT 1` with the same bounds. A completion marker does not rule out later gaps.
+2. From existing monitoring history, inspect `increase(ultros_clickhouse_writer_written_rows_total{table=~"listing_events|floor_changes|sale_receipts"}[1h])`, equivalent drop/flush-failure increases, and `max_over_time(ultros_clickhouse_writer_queued_rows[1h])`, split by instance/table. Also inspect seed failures, analyzer bus lag, and per-world ingest staleness. Record scrape gaps and process resets; absent series are unknown, not zero. Review existing seven-day history before claiming seven-day health. The receipt label requires the new writer to have actually run.
+3. Choose at most two item IDs and one world already identified in existing telemetry. On each relevant raw table, read `count()`, `min(timestamp)`, and `max(timestamp)` for that exact item/world and a one-hour interval, with `max_execution_time=2`, `max_rows_to_read=250000`, `read_overflow_mode='throw'`, `max_result_rows=100`, `result_overflow_mode='throw'`, and `max_memory_usage=67108864`. Timestamp columns are `event_time` for listing/floor events and `received_at` for receipts. Stop on a limit error. These are samples, not proof of whole-world coverage. Do not infer receipt time from `sold_date` or `inserted_at`.
+4. For those same item/world/HQ keys, capture `computed_at` and `floor_alive` from `listing_alive FINAL`. Using that timestamp as the common upper bound, inspect the corresponding `floor_changes` last state with the same two-second/250,000-row bounds and the shared conservative tie rule `argMax(price_per_unit, tuple(event_time, -toInt64(price_per_unit)))`. Record explicit empty states and unknown baselines, plus rollup lag and non-atomic read timing. A mismatch needs investigation; do not refresh either source to make it disappear.
+5. Establish receipt deployment time and the earliest retained **actual** receipt observation from existing telemetry or bounded item/world reads. Report unsupported portions of each requested window. Wait for the required live interval; no reconstruction procedure can fill absent receipt evidence.
+6. For capacity, reproduce the owned-fixture checks below on a representative isolated host. Obtain actual volume/skew and concurrency estimates from existing partition/query metadata or approved exports, then use an isolated replica or synthetic equivalent. Record cold-cache and repeated latency separately, scanned/result rows, ClickHouse peak memory, application RSS, timeout/limit errors, and concurrent scope requests. Whole-market production scans and production cache misses remain outside this procedure. Keep #1342 open and this PR draft until substantive coverage and capacity requirements are met.

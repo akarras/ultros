@@ -49,7 +49,10 @@ pub async fn window(
     // observation. An old sale replay cannot acquire a fresh matching timestamp.
     let receipts = ch.client().query(&format!("SELECT ?fields FROM sale_receipts WHERE world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}){LIMITS}", from-600)).fetch_all::<SaleReceiptRow>().await?;
     let mut unique = BTreeMap::<(i32, i32), SaleReceiptRow>::new();
-    for receipt in receipts {
+    for (index, receipt) in receipts.into_iter().enumerate() {
+        if index.is_multiple_of(4096) {
+            tokio::task::yield_now().await;
+        }
         unique
             .entry((receipt.world_id, receipt.pg_id))
             .and_modify(|old| {
@@ -64,19 +67,30 @@ pub async fn window(
     let mut grouped_events: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let mut grouped_receipts: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let mut grouped_floors: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    for event in events {
+    // A bounded SQL result can still take seconds to process locally. Let the
+    // enclosing StatsCache deadline and other requests run during large loads.
+    for (index, event) in events.into_iter().enumerate() {
+        if index.is_multiple_of(4096) {
+            tokio::task::yield_now().await;
+        }
         grouped_events
             .entry((event.item_id, event.hq != 0))
             .or_default()
             .push(event);
     }
-    for receipt in receipts {
+    for (index, receipt) in receipts.into_iter().enumerate() {
+        if index.is_multiple_of(4096) {
+            tokio::task::yield_now().await;
+        }
         grouped_receipts
             .entry((receipt.item_id, receipt.hq != 0))
             .or_default()
             .push(receipt);
     }
-    for floor in floors {
+    for (index, floor) in floors.into_iter().enumerate() {
+        if index.is_multiple_of(4096) {
+            tokio::task::yield_now().await;
+        }
         grouped_floors
             .entry((floor.item_id, floor.hq != 0))
             .or_default()
@@ -90,6 +104,7 @@ pub async fn window(
         .collect::<std::collections::BTreeSet<_>>();
     let mut output = BTreeMap::new();
     for key in keys {
+        tokio::task::yield_now().await;
         let events = grouped_events.remove(&key).unwrap_or_default();
         let receipts = grouped_receipts.remove(&key).unwrap_or_default();
         let floors = grouped_floors.remove(&key).unwrap_or_default();

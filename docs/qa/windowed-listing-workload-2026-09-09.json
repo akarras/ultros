@@ -1,0 +1,531 @@
+{
+  "measured_date": "2026-09-09",
+  "clickhouse_version": "25.4.13.22",
+  "hardware": "AMD Ryzen Threadripper 3970X shared host",
+  "query_threads": 1,
+  "query_limits": {
+    "seconds": 10,
+    "memory_bytes": 536870912,
+    "result_rows": 2000000
+  },
+  "cache_deadline_seconds": 12,
+  "method": "Three serial uncached loader calls per case; pages warmed by insertion; no HTTP serialization, shared-cache flush or concurrency claim. Test binary uses default allocator rather than the web server jemalloc feature. RSS is cumulative within each fixture process.",
+  "fixtures": [
+    {
+      "profile": "test",
+      "database": "ultros_t12_workload_1788939091_24000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "768000",
+      "receipt_rows": "232681",
+      "sales": "256000",
+      "floor_rows": "320000",
+      "seed_seconds": "0.608",
+      "to": "1788938981"
+    },
+    {
+      "profile": "test",
+      "database": "ultros_t12_workload_1788939091_240000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "7680000",
+      "receipt_rows": "2326812",
+      "sales": "2560000",
+      "floor_rows": "2624000",
+      "seed_seconds": "3.412",
+      "to": "1788939021"
+    },
+    {
+      "profile": "server-release",
+      "database": "ultros_t12_workload_1788939261_24000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "768000",
+      "receipt_rows": "232681",
+      "sales": "256000",
+      "floor_rows": "320000",
+      "seed_seconds": "0.575",
+      "to": "1788939272"
+    },
+    {
+      "profile": "server-release",
+      "database": "ultros_t12_workload_1788939261_240000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "7680000",
+      "receipt_rows": "2326812",
+      "sales": "2560000",
+      "floor_rows": "2624000",
+      "seed_seconds": "3.525",
+      "to": "1788939282"
+    }
+  ],
+  "process_peak_rss_kib": {
+    "test/24000": 210656,
+    "test/240000": 479272,
+    "server-release/24000": 216908,
+    "server-release/240000": 473276
+  },
+  "cases": [
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.166,
+        0.164,
+        0.172
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 4999934,
+      "max_single_query_read_rows": 408256
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        0.369,
+        0.318,
+        0.312
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 6958459,
+      "max_single_query_read_rows": 686080
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        0.685,
+        0.672,
+        0.678
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 17449443,
+      "max_single_query_read_rows": 408256
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        1.778,
+        1.745,
+        1.77
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 27538832,
+      "max_single_query_read_rows": 702464
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        2.517,
+        2.509,
+        2.497
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 80445051,
+      "max_single_query_read_rows": 408256
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        6.679,
+        6.753,
+        6.663
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 107629807,
+      "max_single_query_read_rows": 768000
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.918,
+        0.878,
+        0.891
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 17125864,
+      "max_single_query_read_rows": 3056032
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        2.286,
+        2.347,
+        2.311
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 42909764,
+      "max_single_query_read_rows": 6311936
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        5.669,
+        5.552,
+        5.607
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 111034292,
+      "max_single_query_read_rows": 3170720
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        12.65,
+        12.59,
+        12.465
+      ],
+      "outcomes": [
+        "deadline",
+        "deadline",
+        "deadline"
+      ],
+      "max_query_peak_bytes": 375595988,
+      "max_single_query_read_rows": 6639616
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        8.038,
+        8.014,
+        8.012
+      ],
+      "outcomes": [
+        "result_limit_396",
+        "result_limit_396",
+        "result_limit_396"
+      ],
+      "max_query_peak_bytes": 11745111,
+      "max_single_query_read_rows": 2795232
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        7.875,
+        7.84,
+        7.951
+      ],
+      "outcomes": [
+        "result_limit_396",
+        "result_limit_396",
+        "result_limit_396"
+      ],
+      "max_query_peak_bytes": 12193626,
+      "max_single_query_read_rows": 2027680
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.072,
+        0.067,
+        0.077
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 7001443,
+      "max_single_query_read_rows": 408288
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        0.159,
+        0.106,
+        0.114
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 6958377,
+      "max_single_query_read_rows": 686080
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        0.174,
+        0.18,
+        0.184
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 17449443,
+      "max_single_query_read_rows": 408288
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        0.37,
+        0.363,
+        0.362
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 27538696,
+      "max_single_query_read_rows": 702464
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        0.543,
+        0.528,
+        0.53
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 80445051,
+      "max_single_query_read_rows": 408288
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        1.237,
+        1.224,
+        1.204
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 108804620,
+      "max_single_query_read_rows": 768000
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.315,
+        0.295,
+        0.285
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 17128623,
+      "max_single_query_read_rows": 3056032
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        0.632,
+        0.627,
+        0.61
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 42920442,
+      "max_single_query_read_rows": 6311936
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        1.118,
+        1.121,
+        1.105
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 112652679,
+      "max_single_query_read_rows": 3170720
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        2.956,
+        2.919,
+        2.901
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 374611705,
+      "max_single_query_read_rows": 6639616
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        1.087,
+        1.058,
+        1.073
+      ],
+      "outcomes": [
+        "result_limit_396",
+        "result_limit_396",
+        "result_limit_396"
+      ],
+      "max_query_peak_bytes": 11744463,
+      "max_single_query_read_rows": 2795264
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        1.083,
+        1.068,
+        1.07
+      ],
+      "outcomes": [
+        "result_limit_396",
+        "result_limit_396",
+        "result_limit_396"
+      ],
+      "max_query_peak_bytes": 12188137,
+      "max_single_query_read_rows": 2027424
+    }
+  ]
+}
