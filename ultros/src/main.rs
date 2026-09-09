@@ -716,8 +716,17 @@ async fn main() -> Result<()> {
         full_sweep_cooldowns: Default::default(),
         uncovered_worlds: Default::default(),
         sweep_lock: Default::default(),
+        shutdown: token.clone(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
+    // A full sweep runs for hours, so a deploy lands in the middle of nearly
+    // every one. Its progress is persisted per chunk; this picks up whatever
+    // the last process left unfinished instead of waiting for an operator to
+    // notice and re-issue `/rescan_market`.
+    crate::discord::ffxiv::admin::spawn_interrupted_sweep_resume(
+        update_service.clone(),
+        token.clone(),
+    );
     // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
     // failure looks like a healthy process serving frozen numbers, so this gauge
     // is the only thing that makes one visible from outside.

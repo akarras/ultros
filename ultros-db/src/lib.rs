@@ -7,6 +7,7 @@ mod ffxiv_character;
 pub mod group_roles;
 pub mod listings;
 pub mod lists;
+pub mod market_sweep;
 pub mod recently_updated;
 pub mod retainers;
 pub mod sales;
