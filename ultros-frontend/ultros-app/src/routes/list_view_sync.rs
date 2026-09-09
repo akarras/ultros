@@ -161,7 +161,9 @@ fn apply_edit(handle: RwSignal<Option<ListDocHandle>>, edit: Edit) -> Result<(),
         Some(handle) if handle.is_closed_or_disposed() => {
             Err(AppError::ListDoc("document is closed".to_string()))
         }
-        Some(handle) => handle.apply(edit).map_err(AppError::from),
+        Some(handle) => handle
+            .apply(edit)
+            .map_err(|error| AppError::ListDoc(error.to_string())),
         None => Err(AppError::ListDoc("document is not open yet".to_string())),
     }
 }

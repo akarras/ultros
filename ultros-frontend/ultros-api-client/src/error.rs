@@ -38,12 +38,6 @@ pub enum AppError {
     ListDoc(String),
 }
 
-impl From<ultros_list_doc::DocError> for AppError {
-    fn from(error: ultros_list_doc::DocError) -> Self {
-        AppError::ListDoc(error.to_string())
-    }
-}
-
 impl AppError {
     /// Whether this is the API *answering* with an error, as opposed to the
     /// call to it failing.
