@@ -1195,6 +1195,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
 }
 
+/* Item-page content wells share a flat surface in every theme. */
+@utility item-surface {
+    @apply rounded-lg border;
+    border-color: var(--color-outline);
+    background-color: var(--color-background-panel);
+    color: var(--color-text);
+}
+
 /* Light mode panels: keep clean, high-contrast surfaces */
 [data-theme="light"] .panel {
     background-image: none;
@@ -3077,5 +3085,28 @@ dialog.panel { color: var(--color-text); margin: auto; }
         top: 0.3rem;
         right: 0.35rem;
         margin-left: 0;
+    }
+}
+
+/* Market-chart controls use the same semantic colors as the item page.
+   This also covers the original timeline and popovers in light palettes. */
+.market-history button[aria-pressed="true"]:not(.mh-layer) {
+    background: var(--brand-bg);
+    color: var(--color-text);
+}
+.market-chart-toolbar [class~="bg-violet-950/95"] {
+    background: var(--color-background-elevated);
+    color: var(--color-text);
+}
+.market-history [role="group"][style*="touch-action"] {
+    background: var(--color-background-elevated);
+}
+.market-history [role="group"][style*="touch-action"] span {
+    background: color-mix(in srgb, var(--mh-volume) 45%, transparent);
+}
+@media (max-width: 640px) {
+    .item-market-history .market-history .price-history-chart {
+        margin-inline: 0;
+        width: 100%;
     }
 }

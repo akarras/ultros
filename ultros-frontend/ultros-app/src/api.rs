@@ -79,6 +79,20 @@ pub(crate) async fn get_price_series(
     fetch_api(&url).await
 }
 
+/// Listing-floor history uses the same scope, quality and time bounds as sales.
+pub(crate) async fn get_floor_history(
+    item_id: i32,
+    world: &str,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+) -> AppResult<ultros_api_types::floor_history::FloorHistory> {
+    let mut url = format!("/api/v1/floor_history/{world}/{item_id}?hq={}", hq.as_str());
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
 /// Time × price sale-count grid for the chart's density mode. Fetched only
 /// while density mode is active — see the gated LocalResource in item_view.
 pub(crate) async fn get_price_density(

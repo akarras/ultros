@@ -388,7 +388,7 @@ pub(crate) fn FlipRouteCard(
                                 };
 
                                 view! {
-                                    <div class="flex flex-col gap-3 rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-3 sm:p-4 mb-4">
+                                    <div class="item-surface flex flex-col gap-3 p-3 sm:p-4 mb-4">
                                         <div class="flex items-center justify-between gap-2">
                                             <div class="flex items-center gap-2 flex-wrap">
                                                 <Icon
