@@ -15,6 +15,7 @@ members = [
     "ultros-frontend/ultros-app",
     "ultros-frontend/ultros-calc",
     "ultros-frontend/ultros-grid-core",
+    "ultros-frontend/ultros-ui",
     "ultros-frontend/ultros-i18n",
     "ultros-frontend/ultros-xiv-icons",
     "proc-macros/dumb-csv-macros",

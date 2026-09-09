@@ -52,6 +52,7 @@ mod development {
     use super::super::metrics::{GridMetric, GridValue};
     use super::super::query_grid::QueryGrid;
     use super::super::*;
+    use leptos::prelude::*;
     use leptos_router::hooks::*;
 
     const IDS: &[&str] = &[
