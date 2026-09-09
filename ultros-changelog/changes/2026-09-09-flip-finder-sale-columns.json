@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Compare flip estimates with recent sale prices",
+  "blurb": "Flip Finder now shows Sale median beside Sale estimate, following your selected market window. Add average, minimum, units sold, and gil volume from Columns to compare them nearby.",
+  "link": "/flip-finder"
+}

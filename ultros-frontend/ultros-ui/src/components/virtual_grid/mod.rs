@@ -22,13 +22,13 @@ pub const GRID_HEADER_HEIGHT: f64 = 56.0;
 pub const GRID_OVERSCAN: usize = 4;
 
 /// Space a heading needs around its label: the drag grip (20px) and the
-/// content wrapper's 4px side padding. That padding rule
+/// content wrapper's 4px side padding, plus the 1px right border. That padding rule
 /// (`.grid-heading-content > div`) outranks the `px-3` the analyzers put on
 /// their own heading markup, so it is the whole story. The column menu has
 /// no button of its own — it opens on right-click, press-and-hold, or the
 /// ContextMenu key — so it costs no width.
 #[cfg(feature = "hydrate")]
-const HEADING_CHROME: f64 = 28.0;
+const HEADING_CHROME: f64 = 29.0;
 /// The sort-direction icon (1em at the 12px heading size) and its 8px gap,
 /// present only on the sorted column.
 #[cfg(feature = "hydrate")]

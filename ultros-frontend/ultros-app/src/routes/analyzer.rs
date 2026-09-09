@@ -267,6 +267,19 @@ const DEFAULT_VISIBLE_COLS: &[&str] = &[
     COL_LAST_SOLD,
 ];
 
+// Shared defaults are also used by the picker and both toggle paths. Built-in
+// seeded views omit `cols`, so they inherit this same selection.
+const DEFAULT_SHARED_COLS: &[&str] = &["sale_estimate", "market-sale-median"];
+
+fn default_cols_query() -> String {
+    DEFAULT_VISIBLE_COLS
+        .iter()
+        .chain(DEFAULT_SHARED_COLS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
     crate::components::control_bar::parse_visible_cols(raw, ALL_OPTIONAL_COLS, DEFAULT_VISIBLE_COLS)
 }
@@ -283,8 +296,9 @@ fn serialize_visible_cols_preserving(
 ) -> String {
     let native = serialize_visible_cols(visible);
     let mut ids: Vec<_> = native.split(',').filter(|id| !id.is_empty()).collect();
+    let defaults = default_cols_query();
     for id in previous
-        .unwrap_or("sale_estimate")
+        .unwrap_or(&defaults)
         .split(',')
         .filter(|id| !id.is_empty())
     {
@@ -299,17 +313,16 @@ use crate::components::app_link::use_query_map_or_default;
 use crate::query_defaults::query_signal;
 use crate::query_defaults::query_signal_or_default;
 /// `?cols=` with one shared (non-native) id flipped, everything else kept
-/// in place. Absent param = the default view, whose only shared column is
-/// `sale_estimate` (see `serialize_visible_cols_preserving`).
+/// in place. An absent param starts from the complete default selection.
 fn toggle_shared_col(previous: Option<&str>, id: &str) -> String {
-    crate::analyzer_kit::stat_columns::toggle_shared_col(previous, "sale_estimate", id)
+    crate::analyzer_kit::stat_columns::toggle_shared_col(previous, &default_cols_query(), id)
 }
 
 /// The stat-column ids present in `?cols=`, for the picker's checkboxes.
 /// Native ids stay in `parse_visible_cols`; other shared ids (`market-world`)
 /// are not picker entries and are ignored here.
 fn shared_cols_in(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    crate::analyzer_kit::stat_columns::shared_cols_in(raw)
+    crate::analyzer_kit::stat_columns::shared_cols_in(Some(raw.unwrap_or(&default_cols_query())))
 }
 
 use chrono::{Duration, Utc};
@@ -1603,6 +1616,13 @@ fn AnalyzerTable(
             (COL_CONFIDENCE, 123.0),
             ("buy_price", 131.0),
             ("sale_estimate", 150.0),
+            // Shared widths measured on populated English rows at 30d (the
+            // longer window label); the shared grid fits other content/locales.
+            ("market-sale-median", 135.0),
+            ("market-sale-avg", 138.0),
+            ("market-sale-min", 148.0),
+            ("market-units", 122.0),
+            ("market-gil", 121.0),
             (COL_WORLD, 114.0),
             (COL_DATACENTER, 110.0),
             (COL_TREND, 140.0),
@@ -1612,7 +1632,9 @@ fn AnalyzerTable(
         ]
         .into_iter()
         .map(|(id, width)| {
-            let optional = ALL_OPTIONAL_COLS.contains(&id) || id == "sale_estimate";
+            let optional = ALL_OPTIONAL_COLS.contains(&id)
+                || id == "sale_estimate"
+                || id.starts_with("market-");
             let mut col = GridColumn::new(
                 id,
                 if id == "sale_estimate" {
@@ -1622,7 +1644,7 @@ fn AnalyzerTable(
                 },
                 width,
                 optional,
-                !optional || visible.contains(id) || id == "sale_estimate",
+                !optional || visible.contains(id) || DEFAULT_SHARED_COLS.contains(&id),
             );
             if id == "item" {
                 col = col.fixed_width();
@@ -3865,12 +3887,11 @@ mod tests {
 
     #[test]
     fn shared_column_toggle_adds_then_removes_the_id() {
-        // No `?cols=` means the default view, whose only shared column is
-        // the sale estimate; ticking a stat column must keep it.
+        // Ticking a comparison column must keep every default column.
         let on = toggle_shared_col(None, "market-sale-median-7");
-        assert_eq!(on, "sale_estimate,market-sale-median-7");
+        assert_eq!(on, format!("{},market-sale-median-7", default_cols_query()));
         let off = toggle_shared_col(Some(&on), "market-sale-median-7");
-        assert_eq!(off, "sale_estimate");
+        assert_eq!(off, default_cols_query());
         // A later native toggle keeps the shared id (the preserving path).
         let visible = parse_visible_cols(Some(&on));
         let serialized = serialize_visible_cols_preserving(&visible, Some(&on));
@@ -3889,7 +3910,20 @@ mod tests {
             set,
             std::collections::HashSet::from(["market-sale-median-7", "market-gil-30"])
         );
-        assert!(shared_cols_in(None).is_empty());
+        assert_eq!(
+            shared_cols_in(None),
+            std::collections::HashSet::from(["market-sale-median"])
+        );
+        assert!(shared_cols_in(Some("")).is_empty());
+        assert_eq!(
+            toggle_shared_col(Some(""), "market-sale-avg"),
+            "market-sale-avg"
+        );
+        assert!(
+            !toggle_shared_col(None, "market-sale-median")
+                .split(',')
+                .any(|id| id == "market-sale-median")
+        );
     }
 
     #[test]
