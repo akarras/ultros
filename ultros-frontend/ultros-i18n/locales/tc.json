@@ -2,6 +2,7 @@
     "npc_location_unknown": "位置未知",
     "npc_quest_giver": "任務發布人",
     "npc_quest_giver_unknown": "任務發布人未知",
+
     "market_history_unavailable": "無法載入成交紀錄。",
     "market_trend_world": "趨勢資料伺服器",
     "grid_saved_views_empty": "尚無已儲存的檢視。",

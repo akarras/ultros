@@ -2,6 +2,7 @@
     "npc_location_unknown": "位置未知",
     "npc_quest_giver": "任务发布人",
     "npc_quest_giver_unknown": "任务发布人未知",
+
     "market_history_unavailable": "无法加载成交记录。",
     "market_trend_world": "趋势数据服务器",
     "grid_saved_views_empty": "暂无已保存的视图。",

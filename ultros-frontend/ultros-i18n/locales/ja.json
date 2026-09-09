@@ -2,6 +2,7 @@
     "npc_location_unknown": "場所不明",
     "npc_quest_giver": "依頼NPC",
     "npc_quest_giver_unknown": "依頼NPC不明",
+
     "market_history_unavailable": "販売履歴を読み込めませんでした。",
     "market_trend_world": "トレンドの対象ワールド",
     "grid_saved_views_empty": "保存済みのビューはまだありません。",
