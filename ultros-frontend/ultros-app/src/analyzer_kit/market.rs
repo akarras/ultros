@@ -682,21 +682,27 @@ where
     let all_columns = Memo::new(move |_| {
         let mut result = columns.get();
         for metric in market_metrics() {
-            if !result.iter().any(|col| col.id == metric.id()) {
-                let mut column = GridColumn::new(
+            let position = result.iter().position(|col| col.id == metric.id());
+            let column = if let Some(position) = position {
+                &mut result[position]
+            } else {
+                result.push(GridColumn::new(
                     metric.id(),
-                    metric_label(metric, market.window.selected.get()),
+                    String::new(),
                     160.0,
                     true,
                     false,
-                );
-                column.picker_group = match metric {
-                    MarketMetric::Follow(_) => Some(market_picker_group(None)),
-                    MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
-                    _ => None,
-                };
-                result.push(column);
-            }
+                ));
+                result.last_mut().unwrap()
+            };
+            // Pages own placement, initial width and default visibility, while
+            // shared columns retain the same labels and picker groups everywhere.
+            column.label = metric_label(metric, market.window.selected.get());
+            column.picker_group = match metric {
+                MarketMetric::Follow(_) => Some(market_picker_group(None)),
+                MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
+                _ => None,
+            };
         }
         result
     });

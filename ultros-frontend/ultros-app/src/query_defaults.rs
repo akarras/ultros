@@ -416,6 +416,10 @@ mod test {
     #[test]
     fn the_realistic_preset_splits_into_its_filters() {
         let pairs = parse_query_pairs(&fallback_default_query());
+        assert!(
+            pairs.iter().all(|(key, _)| key != "cols"),
+            "seeded views inherit Flip Finder's column defaults"
+        );
         assert_eq!(
             pairs,
             vec![

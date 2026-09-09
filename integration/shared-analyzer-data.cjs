@@ -382,6 +382,9 @@ async function main() {
         const required = tool === 'recipe-analyzer'
           ? ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'listing-world', 'listing-dc', 'daily-sales', 'trend']
           : shared;
+        if (tool === 'flip-finder' && fixture) {
+          await require('./flip-finder-sale-columns.cjs')({ page, base: BASE, route, openFixture: open, artifacts });
+        }
         const medianColumn = required[0];
         const query = new URLSearchParams({ v: '1', lang: 'en', world, 'min-sales': '0',
           profit: '-1000000000', roi: '-1000000000', 'next-sale': '1M', sort: 'grid:item', dir: 'asc',

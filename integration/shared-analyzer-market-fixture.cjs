@@ -21,7 +21,7 @@ function marketFixture() {
   const stats = { stats: ids.flatMap(item_id => [false, true].map(hq => ({
     item_id, hq, min_price: [9462, 9463].includes(item_id) ? 600000 : (hq ? 1200 : 600), median_price: [9462, 9463].includes(item_id) ? 900000 : (hq ? 1500 : 900),
     avg_price: hq ? 1700 : 1000, num_sold: 70, last_sold_unix: Math.floor(now / 1000),
-    units_sold: 210, vwap: hq ? 1600 : 950, sales_per_day: 10, confidence: 'high',
+    units_sold: 210, gil_volume: hq ? 336000 : 199500, vwap: hq ? 1600 : 950, sales_per_day: 10, confidence: 'high',
   }))) };
   const listings = world => ({ cheapest_listings: ids.map(item_id => ({
     item_id, hq: false, cheapest_price: [9462, 9463].includes(item_id) ? 1000000 : (world === 'Gilgamesh' ? 400 : 100),
