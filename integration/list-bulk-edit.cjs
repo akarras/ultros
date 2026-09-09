@@ -67,7 +67,7 @@ async function inEditMode(page) {
 async function clickBulkEdit(page) {
   return page.evaluate(() => {
     const btn = Array.from(document.querySelectorAll("button")).find(
-      (b) => /bulk\s*edit/i.test((b.innerText || "").trim()),
+      (b) => /^bulk\s+edit$/i.test((b.innerText || "").trim()),
     );
     if (!btn) return false;
     btn.click();
@@ -149,7 +149,7 @@ async function main() {
     await page.waitForFunction(
       () =>
         Array.from(document.querySelectorAll("button")).some(
-          (b) => /bulk\s*edit/i.test((b.innerText || "").trim()),
+          (b) => /^bulk\s+edit$/i.test((b.innerText || "").trim()),
         ),
       { timeout: TIMEOUT_MS },
     );
