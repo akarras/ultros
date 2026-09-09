@@ -4895,7 +4895,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let raw_sales_for_header = raw_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <MetaTitle title="Recipe Analyzer - Ultros" />
+            <MetaTitle title=move || t_string!(i18n, recipe_analyzer_title).to_string() />
             <MetaDescription text=t_string!(i18n, recipe_analyzer_meta_desc) />
 
             <div class="flex flex-col gap-4">
