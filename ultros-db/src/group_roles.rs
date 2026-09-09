@@ -7,7 +7,7 @@
 
 use crate::{
     UltrosDb,
-    common_type_conversions::GroupRoleReturn,
+    common_type_conversions::{GroupRoleReturn, UserGroupSummaryReturn},
     entity::{discord_user, group_role, group_role_member, user_group, user_group_member},
 };
 use anyhow::Result;
@@ -974,6 +974,48 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
         Ok(rows.into_iter().collect())
+    }
+
+    /// Role counts for a batch of groups, the other half of a group card.
+    /// Separate from `get_group_roles` because the grid needs one number per
+    /// group, not every role of every group with its own member count.
+    pub async fn group_role_counts(&self, group_ids: &[i32]) -> Result<HashMap<i32, i64>> {
+        if group_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(i32, i64)> = group_role::Entity::find()
+            .select_only()
+            .column(group_role::Column::GroupId)
+            .column_as(group_role::Column::Id.count(), "role_count")
+            .filter(group_role::Column::GroupId.is_in(group_ids.iter().copied()))
+            .group_by(group_role::Column::GroupId)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// The user's groups with the counts their cards show, in three queries
+    /// total rather than a `get_group_detail` round trip per group.
+    ///
+    /// Membership is already implied by `get_groups_for_user`, so the counts
+    /// need no further permission check.
+    pub async fn get_group_summaries_for_user(
+        &self,
+        user_id: i64,
+    ) -> Result<Vec<UserGroupSummaryReturn>> {
+        let groups = self.get_groups_for_user(user_id).await?;
+        let group_ids: Vec<i32> = groups.iter().map(|group| group.id).collect();
+        let member_counts = self.group_member_counts(&group_ids).await?;
+        let role_counts = self.group_role_counts(&group_ids).await?;
+        Ok(groups
+            .into_iter()
+            .map(|group| {
+                let members = member_counts.get(&group.id).copied().unwrap_or(0);
+                let roles = role_counts.get(&group.id).copied().unwrap_or(0);
+                UserGroupSummaryReturn(group, members, roles)
+            })
+            .collect())
     }
 
     /// The bot left the guild. Unlink the group, keep every member, turn
@@ -2288,6 +2330,54 @@ pub(crate) mod tests {
         let counts = db.group_member_counts(&[group.id]).await.unwrap();
         assert_eq!(counts.get(&group.id), Some(&2));
         assert!(db.group_member_counts(&[]).await.unwrap().is_empty());
+    }
+
+    /// The groups grid renders straight off this list, so the counts have to
+    /// match what `get_group_detail` would have reported per card — including
+    /// the zero for a group with no roles at all, which the aggregate returns
+    /// no row for.
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn group_summaries_carry_member_and_role_counts() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let roleless = db
+            .create_group("Roleless group".to_string(), owner.id)
+            .await
+            .unwrap();
+        let member = fresh_user(&db, "member").await;
+        let role = db
+            .create_group_role(group.id, owner.id, "Officers".to_string())
+            .await
+            .unwrap();
+        db.add_group_role_member(group.id, owner.id, role.id, member.id)
+            .await
+            .unwrap();
+        db.create_group_role(group.id, owner.id, "Crafters".to_string())
+            .await
+            .unwrap();
+
+        let summaries = db.get_group_summaries_for_user(owner.id).await.unwrap();
+        let counted = summaries
+            .iter()
+            .find(|UserGroupSummaryReturn(g, ..)| g.id == group.id)
+            .expect("the owner's group is listed");
+        assert_eq!(counted.1, 2, "owner plus one member");
+        assert_eq!(counted.2, 2);
+
+        // No `group_role` rows at all, so that aggregate returns nothing for
+        // this group and the card has to fall back to zero rather than drop it.
+        let bare = summaries
+            .iter()
+            .find(|UserGroupSummaryReturn(g, ..)| g.id == roleless.id)
+            .expect("a group with no roles is still listed");
+        assert_eq!(
+            (bare.1, bare.2),
+            (1, 0),
+            "the owner is a member of their own group"
+        );
+
+        assert!(db.group_role_counts(&[]).await.unwrap().is_empty());
     }
 
     /// A `%` typed into the member-search box has to match a literal `%`. Left

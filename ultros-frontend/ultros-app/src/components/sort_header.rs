@@ -306,7 +306,12 @@ where
     let Location {
         pathname, query, ..
     } = use_location_or_default();
-    let is_active = Signal::derive(move || sort_mode.get().unwrap_or_else(M::fallback) == mode);
+    let is_active = Signal::derive(move || {
+        // A shared metric replaces native sorting. Route enums cannot parse
+        // grid:<id>; their fallback must not paint a second active arrow.
+        !query.with(|q| q.get("sort").is_some_and(|sort| sort.starts_with("grid:")))
+            && sort_mode.get().unwrap_or_else(M::fallback) == mode
+    });
     let dir = Signal::derive(move || {
         sort_dir
             .get()

@@ -21,6 +21,7 @@ use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::tool_help::ToolHeader;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -492,41 +493,48 @@ pub fn JobSetDetail() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, job_set_detail_desc).to_string().replace("%set%", &set_stem()) />
 
         <div class="flex flex-col gap-4">
-            <div class="flex flex-row items-center gap-3 flex-wrap">
-                <AppLink
-                    href=back_href
-                    attr:class="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg \
-                               bg-white/5 hover:bg-white/10 text-[color:var(--color-text-muted)] \
-                               border border-white/5 transition-colors"
-                >
+            <div>
+                <AppLink href=back_href attr:class="btn-ghost inline-flex text-sm">
                     {move || t_string!(i18n, job_set_detail_back).to_string().replace("%job%", &job_name())}
                 </AppLink>
-                <Show when=move || !set_entries.get().is_empty()>
-                    <AddSetToList
-                        button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
-                        tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_tooltip).to_string())
-                        modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_modal_title).to_string())
-                        subject=Signal::derive(move || set_stem.get())
-                        entries=set_entries
-                    />
-                </Show>
-                <Show when=move || has_materials.get()>
-                    <AddSetToList
-                        button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_button).to_string())
-                        tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_tooltip).to_string())
-                        modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_modal_title).to_string())
-                        subject=Signal::derive(move || set_stem.get())
-                        entries=material_entries
-                    />
-                </Show>
             </div>
-
-            <div class="flex flex-row items-baseline gap-3 flex-wrap">
-                <h3 class="text-2xl font-bold">{set_stem}</h3>
-                <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                    {t!(i18n, item_explorer_ilvl_prefix)} " " {move || target_ilvl.get()}
-                </span>
-            </div>
+            // Keep the header outside price boundaries, and refresh its static
+            // text props when client navigation changes the set or locale.
+            {move || {
+                let stem = set_stem.get();
+                let title = format!(
+                    "{} · {} {}",
+                    if stem.is_empty() { t_string!(i18n, job_set_default).to_string() } else { stem },
+                    t_string!(i18n, item_explorer_ilvl_prefix),
+                    target_ilvl.get(),
+                );
+                view! {
+                    <ToolHeader
+                        title=title
+                        summary=t_string!(i18n, job_set_detail_tool_summary).to_string()
+                        context=t_string!(i18n, job_set_detail_tool_context).to_string()
+                    >
+                        <Show when=move || !set_entries.get().is_empty()>
+                            <AddSetToList
+                                button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
+                                tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_tooltip).to_string())
+                                modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_modal_title).to_string())
+                                subject=Signal::derive(move || set_stem.get())
+                                entries=set_entries
+                            />
+                        </Show>
+                        <Show when=move || has_materials.get()>
+                            <AddSetToList
+                                button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_button).to_string())
+                                tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_tooltip).to_string())
+                                modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_modal_title).to_string())
+                                subject=Signal::derive(move || set_stem.get())
+                                entries=material_entries
+                            />
+                        </Show>
+                    </ToolHeader>
+                }
+            }}
 
             // Per-slot grid, every piece in the set with its NQ/HQ
             // cheapest from the user's active price zone.

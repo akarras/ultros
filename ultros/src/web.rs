@@ -12,6 +12,8 @@ pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
 pub(crate) mod stats_cache;
+#[cfg(feature = "test-auth")]
+pub(crate) mod test_fixtures;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
@@ -52,7 +54,7 @@ use ultros_api_types::user::group::{
     AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
     DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
     GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
-    UserGroupDetail, UserGroupMember,
+    UserGroupDetail, UserGroupMember, UserGroupSummary,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -1977,12 +1979,17 @@ async fn unclaim_character(
 
 // --- Group management ---
 
+/// Every group the user belongs to, each with the member and role counts its
+/// card shows. The counts ride along so the groups grid is one request rather
+/// than a `get_group_detail` per card.
 pub(crate) async fn get_groups(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<Vec<UserGroup>>, ApiError> {
-    let groups = db.get_groups_for_user(user.id as i64).await?;
-    Ok(Json(groups.into_iter().map(UserGroup::from).collect()))
+) -> Result<Json<Vec<UserGroupSummary>>, ApiError> {
+    let groups = db.get_group_summaries_for_user(user.id as i64).await?;
+    Ok(Json(
+        groups.into_iter().map(UserGroupSummary::from).collect(),
+    ))
 }
 
 pub(crate) async fn create_group(
@@ -3262,7 +3269,11 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
 /// an empty router otherwise. Compile-time gated so prod binaries are clean.
 #[cfg(feature = "test-auth")]
 fn test_auth_routes() -> Router<WebState> {
-    Router::new().route("/test/login", get(self::oauth::test_auth::test_login))
+    Router::new()
+        .route("/test/login", get(self::oauth::test_auth::test_login))
+        // Group states that only Discord can otherwise produce, so the E2E
+        // harness can drive `/groups/:id` in all three of them.
+        .merge(self::test_fixtures::routes())
 }
 
 #[cfg(not(feature = "test-auth"))]

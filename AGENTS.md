@@ -86,6 +86,16 @@ To exercise login flow locally:
 LEPTOS_FEATURES=test-auth ./scripts/run_e2e.sh
 ```
 
+The same feature gate carries `POST /test/group/fixture`
+([ultros/src/web/test_fixtures.rs](ultros/src/web/test_fixtures.rs)), which builds a
+group in a state a browser test could not otherwise reach. Two of the three states
+`/groups/:id` renders differently — Discord-mirrored and frozen — exist only behind a
+live guild and the gateway's guild-removal handler, so without it the group page could
+only ever be driven in its manual state. The route takes a group name and, optionally,
+a `guild_id`, `discord_roles` (each with the members reconciliation should be pretended
+to have found), and a `frozen_reason`; it reaches each state through the same `UltrosDb`
+calls the Discord paths use, so the browser sees rows the real code would have written.
+
 ### Targeted probes
 
 The runner only asserts on titles and body substrings, which can't see values that
@@ -97,6 +107,20 @@ passes rather than failing when there is none, so it's safe against an empty dev
 
 ```bash
 BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:jobset-card-hydration
+```
+
+[integration/group-detail.cjs](integration/group-detail.cjs) covers `/groups/:id` in all
+three of its states, using the fixture route above for the two that need Discord. It
+screenshots each into `integration/artifacts/group-detail/` and drives the suspense
+boundaries the SSR tests cannot see: a role's member list, and the share modal's role
+`<select>`, which re-suspends on its own whenever the chosen group changes. Positive SSR
+assertions go against the response body; every "this control is not offered" assertion
+goes against the hydrated DOM, because owner-only controls hang off the viewer resource
+and are absent from the server's HTML either way. Needs `test-auth`, and runs from
+`scripts/run_e2e.sh` alongside `groups.cjs` when that feature is on.
+
+```bash
+BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:group-detail
 ```
 
 `JOBSET` (default `SAM`) and `WORLD` (default `Gilgamesh`) pick the route.

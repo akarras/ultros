@@ -23,7 +23,7 @@ use crate::{
         virtual_grid::{
             GridColumn,
             metrics::{GridMetric, GridValue, active_metric_columns},
-            query_grid::QueryGrid,
+            query_grid::{MetricSortHeader, QueryGrid},
         },
     },
     global_state::LocalWorldData,
@@ -807,6 +807,13 @@ where
         };
         all_metrics.push(if metric.partial() { def.partial() } else { def });
     }
+    let sortable = StoredValue::new(
+        all_metrics
+            .iter()
+            .filter(|m| !m.partial)
+            .map(|m| m.id)
+            .collect::<Vec<_>>(),
+    );
     let native_header = StoredValue::new(header);
     let native_view = StoredValue::new(view);
     let native_measure = StoredValue::new(measure);
@@ -823,6 +830,9 @@ where
     view! {
         <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| match metric_by_id(id) {
+                Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {
+                    <MetricSortHeader column=id label=Signal::derive(move || metric_label(metric, market.window.selected.get())) />
+                }.into_any(),
                 Some(metric) => (move || metric_label(metric, market.window.selected.get())).into_any(),
                 None => native_header.with_value(|header| header(id)),
             }

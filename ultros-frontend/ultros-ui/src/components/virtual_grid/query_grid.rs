@@ -1,5 +1,6 @@
 //! URL persistence shared by all analyzer tables. Existing `cols` and JSON
 //! `layout` links remain readable; new layouts use a small `l` delta.
+pub use super::filter::MetricSortHeader;
 use super::metrics::{FilterOp, GridMetric, parse_filters, query_rows};
 use super::row_source::RowSource;
 use super::{GridChange, GridColumn, VirtualGrid};
@@ -94,6 +95,9 @@ where
                 col.filters
                     .retain(|f| f.metric.is_some() || !registry.is_alias(f.key));
             }
+            if sort.is_some() {
+                col.aria_sort = "none";
+            }
             metrics.with_value(|metrics| {
                 if let Some(metric) = metrics.iter().find(|m| m.id == col.id) {
                     if !col
@@ -107,9 +111,6 @@ where
                         col.filters.push(filter);
                     }
                     col.query_sort = !metric.partial;
-                    if sort.is_some() {
-                        col.aria_sort = "none";
-                    }
                     if sort == Some(col.id) && !metric.partial {
                         col.aria_sort = if query.with(|q| q.get("dir")).as_deref() == Some("asc") {
                             "ascending"
