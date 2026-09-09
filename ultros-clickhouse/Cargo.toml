@@ -22,4 +22,7 @@ xiv-gen = { workspace = true }
 
 [dev-dependencies]
 dotenvy = { workspace = true }
+# `start_paused` runtimes: the shutdown-drain budget test would otherwise
+# spend its budget in real seconds.
+tokio = { workspace = true, features = ["test-util"] }
 sea-orm = { workspace = true }

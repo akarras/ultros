@@ -853,8 +853,10 @@ async fn main() -> Result<()> {
             if let Err(e) = analyzer_shutdown.await {
                 error!("Analyzer shutdown failed: {e:?}");
             }
-            ch_writer.shutdown().await;
-            floor_writer.shutdown().await;
+            // Independent tables, independent tasks. Draining them in sequence
+            // spent two drain budgets back to back against the one 30 second
+            // budget below (GlitchTip #7310).
+            tokio::join!(ch_writer.shutdown(), floor_writer.shutdown());
         };
         let drain_web = async {
             if !web_finished && let Err(e) = web_task.await {
