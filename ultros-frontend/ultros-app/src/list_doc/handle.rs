@@ -37,7 +37,6 @@ pub struct ListDocHandle {
     doc: StoredValue<ListDocument, LocalStorage>,
     undo: StoredValue<ListUndo, LocalStorage>,
     // Held so the document keeps notifying; dropping unsubscribes.
-    #[allow(dead_code)]
     subscriptions: StoredValue<Vec<Subscription>, LocalStorage>,
     save_timer: StoredValue<Option<SaveTimer>, LocalStorage>,
     /// Bumped on every change, local or remote.
@@ -48,6 +47,11 @@ pub struct ListDocHandle {
     pub status: RwSignal<String>,
     /// Last known `ListPermission` as `i16`, cached beside the snapshot.
     pub permission: RwSignal<i16>,
+    /// Set by `purge`. Once true, this handle is inert for persistence: no
+    /// more debounced or immediate saves happen for this user+list, since
+    /// the local copy has been explicitly discarded. The page constructs a
+    /// fresh handle if it re-opens the list.
+    purged: RwSignal<bool>,
 }
 
 impl ListDocHandle {
@@ -58,8 +62,15 @@ impl ListDocHandle {
         let loaded = store::load(&BrowserStorage, user_id, list_id);
         let doc = loaded
             .as_ref()
-            .and_then(|l| ListDocument::from_snapshot(&l.snapshot).ok())
-            .unwrap_or_default();
+            .and_then(|l| match ListDocument::from_snapshot(&l.snapshot) {
+                Ok(doc) => Some(doc),
+                Err(_) => {
+                    tracing::warn!(user_id, list_id, "corrupt list snapshot; purging");
+                    store::purge(&BrowserStorage, user_id, list_id);
+                    None
+                }
+            });
+        let doc = doc.unwrap_or_default();
         let permission = loaded.map(|l| l.permission).unwrap_or(0);
         let undo = ListUndo::new(&doc);
         let revision = RwSignal::new(0u64);
@@ -80,6 +91,7 @@ impl ListDocHandle {
             outbox,
             status: RwSignal::new("connecting".to_string()),
             permission: RwSignal::new(permission),
+            purged: RwSignal::new(false),
         };
         handle.install_persistence();
         handle
@@ -154,6 +166,9 @@ impl ListDocHandle {
     }
 
     pub fn save_now(&self) {
+        if self.purged.get_untracked() {
+            return;
+        }
         let snapshot = self.with_doc(|doc| doc.export_snapshot());
         if let Ok(snapshot) = snapshot {
             let _ = store::save(
@@ -171,8 +186,20 @@ impl ListDocHandle {
     /// reset the in-memory document to empty. For the "forbidden / deleted"
     /// path: the server has said this list is no longer readable, so the
     /// stale local copy must not resurface on a later `open`.
+    ///
+    /// Marks the handle `purged`, which makes it inert for persistence:
+    /// `save_now` and the debounced-save `Effect` both return early from
+    /// this point on, so the revision bump below does not resurrect the
+    /// snapshot or index entry that were just removed. The handle stays
+    /// inert until it is dropped; the page opens a fresh `ListDocHandle` if
+    /// it re-opens the list.
     pub fn purge(&self) {
+        self.purged.set(true);
         store::purge(&BrowserStorage, self.user_id, self.list_id);
+        // Clear the outbox before swapping documents so a subscription
+        // firing mid-swap cannot re-add anything from the discarded
+        // document; commits from it must never reach the socket.
+        self.outbox.set(Vec::new());
         let fresh = ListDocument::new();
         let undo = ListUndo::new(&fresh);
         let revision = self.revision;
@@ -189,10 +216,14 @@ impl ListDocHandle {
         self.revision.update(|r| *r += 1);
     }
 
-    /// Stop this handle from doing any more background work: cancels the
-    /// pending save timer and drops the document subscriptions. Call when a
-    /// page navigates away from this list.
+    /// Stop this handle from doing any more background work: flushes any
+    /// pending save, cancels the timer, and drops the document
+    /// subscriptions. Call when a page navigates away from this list. A
+    /// purged handle has nothing worth saving, so the flush is skipped.
     pub fn close(&self) {
+        if !self.purged.get_untracked() {
+            self.save_now();
+        }
         self.save_timer.update_value(|timer| *timer = None);
         self.subscriptions.update_value(|subs| subs.clear());
     }
@@ -206,6 +237,9 @@ impl ListDocHandle {
             let _ = handle.revision.get();
             // Dropping the previous timeout cancels it.
             handle.save_timer.update_value(|timer| *timer = None);
+            if handle.purged.get_untracked() {
+                return;
+            }
             let timeout = gloo_timers::callback::Timeout::new(SAVE_DEBOUNCE_MS, move || {
                 handle.save_now();
             });

@@ -773,6 +773,36 @@ mod tests {
     }
 
     #[test]
+    fn undo_fires_a_local_update_that_round_trips() {
+        use crate::undo::ListUndo;
+        use std::sync::{Arc, Mutex};
+
+        let a = ListDocument::from_rows(meta(), &[]);
+        let seen: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let _sub = a.on_local_update(move |bytes| sink.lock().unwrap().push(bytes.to_vec()));
+        let mut undo = ListUndo::with_merge_interval(&a, 0);
+
+        a.add_row(RowKey::new(1, None), 2, None).unwrap();
+        assert!(undo.undo().unwrap());
+
+        let updates = seen.lock().unwrap();
+        assert_eq!(
+            updates.len(),
+            2,
+            "one local update for the add, one for the undo"
+        );
+
+        // Importing both into a fresh document round-trips to no rows: the
+        // undo's ops apply cleanly on top of the add.
+        let fresh = ListDocument::new();
+        for update in updates.iter() {
+            fresh.import(update).unwrap();
+        }
+        assert!(fresh.rows().is_empty());
+    }
+
+    #[test]
     fn on_change_fires_for_local_and_remote_changes() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
