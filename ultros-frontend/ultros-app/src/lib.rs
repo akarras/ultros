@@ -8,6 +8,7 @@ pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) use ultros_i18n::fallback as i18n_fallback;
 pub mod last_view;
+pub(crate) mod list_doc;
 pub(crate) use ultros_calc::math;
 pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
