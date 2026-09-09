@@ -11,6 +11,7 @@ async function request(path, options) {
   const route = `/api/v1/listing_stats/${world}`;
   const current = await request(route);
   assert.equal(current.response.status, 200);
+  assert(current.data.stats.length > 0, 'current-only compatibility must use a populated fixture');
   assert(current.data.stats.every(row => !Object.hasOwn(row, 'window')), 'current-only wire stays unchanged');
   for (const days of [1, 7, 30, 90]) {
     const first = await request(`${route}?window=${days}`);
@@ -31,6 +32,7 @@ async function request(path, options) {
   });
   const hourly = await post(body);
   assert.equal(hourly.response.status, 200, hourly.text);
+  assert.equal(hourly.response.headers.get('cache-control'), 'no-store', 'POST bodies must not share an HTTP cache entry');
   assert.equal(hourly.data.series.length, 1);
   assert.equal(hourly.data.series[0].history.points.length, 25);
   assert(hourly.data.series[0].bounds.min > 0, 'seeded floor must carry into window');

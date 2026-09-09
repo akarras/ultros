@@ -930,10 +930,17 @@ async fn floor_history_batch(
         }
         batch
     };
-    Ok(cached_json(
+    let mut response = cached_json(
         serde_json::to_string(&payload).map_err(anyhow::Error::from)?,
         ttl,
-    ))
+    );
+    // HTTP caches key by URL, not by this POST's items/range. Only the
+    // explicit body-aware in-process cache above may reuse batch responses.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }
 
 /// JSON response carrying a `Cache-Control` matching the in-process TTL, so
