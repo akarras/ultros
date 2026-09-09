@@ -5185,6 +5185,7 @@ dependencies = [
  "icu_provider_source",
  "leptos_i18n_codegen",
  "leptos_i18n_parser",
+ "prettyplease 0.2.37",
  "proc-macro2",
  "syn 2.0.119",
 ]
@@ -10734,6 +10735,7 @@ dependencies = [
  "ultros-clickhouse",
  "ultros-db",
  "ultros-item-card",
+ "ultros-list-doc",
  "ultros-xiv-icons",
  "universalis",
  "url",
@@ -10764,6 +10766,7 @@ dependencies = [
 name = "ultros-api-types"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "rkyv",
  "serde",
@@ -10820,8 +10823,8 @@ dependencies = [
  "ultros-charts",
  "ultros-crafting",
  "ultros-db",
- "ultros-grid-core",
  "ultros-i18n",
+ "ultros-ui",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -10939,6 +10942,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ultros-api-types",
+ "ultros-list-doc",
  "universalis",
  "yoke",
 ]
@@ -10988,6 +10992,28 @@ dependencies = [
  "loro",
  "thiserror 2.0.20",
  "ultros-api-types",
+]
+
+[[package]]
+name = "ultros-ui"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "codee",
+ "gloo-timers 0.4.0",
+ "icondata",
+ "icondata_core",
+ "js-sys",
+ "leptos",
+ "leptos-use",
+ "leptos_i18n",
+ "leptos_router",
+ "serde",
+ "serde_json",
+ "ultros-grid-core",
+ "ultros-i18n",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

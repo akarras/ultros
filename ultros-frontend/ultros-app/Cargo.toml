@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 ultros-crafting = { path = "../ultros-crafting" }
 ultros-calc = { path = "../ultros-calc" }
-ultros-grid-core = { path = "../ultros-grid-core" }
+ultros-ui = { path = "../ultros-ui", default-features = false }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-changelog = { path = "../../ultros-changelog" }
 ultros-api-client = { path = "../ultros-api-client", default-features = false }
@@ -107,6 +107,7 @@ default = [
     "ssr",
 ] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = [
+    "ultros-ui/hydrate",
     "ultros-i18n/hydrate",
     "leptos/hydrate",
     "gloo-net",
@@ -119,6 +120,7 @@ hydrate = [
     "ultros-api-client/hydrate",
 ]
 ssr = [
+    "ultros-ui/ssr",
     "ultros-i18n/ssr",
     "leptos/ssr",
     "leptos_meta/ssr",

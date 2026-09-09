@@ -133,3 +133,112 @@ impl UltrosDb {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+
+    /// Exercises the actual migration and typed helpers in a disposable
+    /// namespace, never the default schema or a real unfinished sweep.
+    #[tokio::test]
+    #[ignore = "requires MIGRATION_TEST_DATABASE_URL"]
+    async fn sweep_migration_and_restart_checkpoint_round_trip() {
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL")
+            .expect("set MIGRATION_TEST_DATABASE_URL for isolated database tests");
+        let schema = format!(
+            "sweep_test_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_micros().unsigned_abs()
+        );
+        let mut admin_options = ConnectOptions::new(url.clone());
+        admin_options.max_connections(1).min_connections(1);
+        let admin = Database::connect(admin_options).await.unwrap();
+        admin
+            .execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+            .await
+            .unwrap();
+        let mut options = ConnectOptions::new(url);
+        options
+            .max_connections(1)
+            .min_connections(1)
+            .set_schema_search_path(schema.clone());
+        let connection = Database::connect(options.clone()).await.unwrap();
+        let migration = Migrator::migrations()
+            .into_iter()
+            .find(|migration| migration.name() == "m20260908_000003_market_sweep")
+            .expect("market sweep migration is registered");
+        migration
+            .up(&migration::SchemaManager::new(&connection))
+            .await
+            .unwrap();
+        let db = UltrosDb::from_connection(connection.clone());
+        let (run, resumed) = db.begin_or_resume_market_sweep(Some(123)).await.unwrap();
+        assert!(!resumed);
+        assert!(db.market_sweep_progress(run.id).await.unwrap().is_empty());
+
+        // A second raw insertion must fail even without application locking.
+        assert!(
+            connection
+                .execute_unprepared(
+                    "INSERT INTO market_sweep (started_at) VALUES (CURRENT_TIMESTAMP)"
+                )
+                .await
+                .is_err()
+        );
+        let mut progress = market_sweep_world::Model {
+            sweep_id: run.id,
+            world_id: 79,
+            next_item_id: 101,
+            completed_at: None,
+            changed: 12,
+            noop: 3,
+            failed: 1,
+            chunks_failed: 2,
+            elapsed_ms: 5000,
+        };
+        db.record_market_sweep_progress(&progress).await.unwrap();
+        progress.next_item_id = 201;
+        progress.changed = 20;
+        db.record_market_sweep_progress(&progress).await.unwrap();
+        drop(db);
+        connection.close().await.unwrap();
+
+        // Reconnect to model a process restart, not an in-memory reload.
+        let connection = Database::connect(options).await.unwrap();
+        let db = UltrosDb::from_connection(connection.clone());
+        let (restored, resumed) = db.begin_or_resume_market_sweep(Some(456)).await.unwrap();
+        assert!(resumed);
+        assert_eq!(restored.id, run.id);
+        assert_eq!(restored.discord_channel_id, Some(456));
+        assert_eq!(
+            db.market_sweep_progress(run.id).await.unwrap(),
+            vec![progress.clone()]
+        );
+        progress.completed_at = Some(chrono::Utc::now().fixed_offset());
+        db.record_market_sweep_progress(&progress).await.unwrap();
+        db.finish_market_sweep(run.id).await.unwrap();
+        assert!(db.active_market_sweep().await.unwrap().is_none());
+        let (next, resumed) = db.begin_or_resume_market_sweep(None).await.unwrap();
+        assert!(!resumed);
+        assert_ne!(next.id, run.id);
+        migration
+            .down(&migration::SchemaManager::new(&connection))
+            .await
+            .unwrap();
+        assert!(
+            connection
+                .execute_unprepared("SELECT 1 FROM market_sweep_world")
+                .await
+                .is_err()
+        );
+        drop(db);
+        connection.close().await.unwrap();
+        admin
+            .execute_unprepared(&format!("DROP SCHEMA {schema}"))
+            .await
+            .unwrap();
+        admin.close().await.unwrap();
+    }
+}

@@ -11,7 +11,7 @@ use ultros_charts::charts::price_density::{
 use ultros_charts::charts::price_history::{
     PriceChartModel, PriceChartOptions, build_price_history_chart,
 };
-use ultros_charts::components::{color_attr, scene_view};
+use ultros_charts::components::scene_view_with_colors;
 use ultros_charts::data::grouping::{GroupLevel, available_group_levels};
 use ultros_charts::scale::short_number;
 use ultros_charts::theme::Theme;
@@ -25,6 +25,56 @@ use crate::components::chart_toolbar::{ChartToolbar, ChartView};
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::query_defaults::filter_query_signal;
+
+/// Match the market card while keeping every mode's existing geometry.
+fn market_theme() -> Theme {
+    let mut theme = Theme::site();
+    theme.palette[0] = ultros_charts::scene::Color::hex("#b6a2ff");
+    theme.volume = ultros_charts::scene::Color::hex("#9683dd");
+    theme.candle_up = ultros_charts::scene::Color::hex("#c4b5fd");
+    theme.candle_down = ultros_charts::scene::Color::hex("#795070");
+    theme.grid = ultros_charts::scene::Color::hex("#a29cb8").with_alpha(0.12);
+    theme
+}
+
+/// Semantic browser colors follow the page palette instantly, including system
+/// light-mode changes, without rebuilding geometry or changing exported images.
+fn color_attr(color: &ultros_charts::scene::Color) -> String {
+    let token = match (color.r, color.g, color.b) {
+        (182, 162, 255) => "var(--chart-line)",
+        (150, 131, 221) => "var(--mh-volume)",
+        (196, 181, 253) => "var(--mh-candle-up)",
+        (121, 80, 112) => "var(--mh-candle-down)",
+        (77, 224, 193) => "var(--mh-floor)",
+        (229, 231, 235) => "var(--color-text)",
+        (156, 163, 175) => "var(--color-text-muted)",
+        (162, 156, 184) => "var(--color-text-muted)",
+        (250, 204, 21) => "var(--mh-average)",
+        _ => {
+            let opaque = ultros_charts::scene::Color { a: 1.0, ..*color };
+            let hex = ultros_charts::components::color_attr(&opaque);
+            if ultros_charts::theme::CATEGORY_PALETTE.contains(&hex.as_str()) {
+                return format!(
+                    "color-mix(in srgb, color-mix(in srgb, {hex} var(--mh-series-strength), black) {:.1}%, transparent)",
+                    color.a * 100.0
+                );
+            }
+            return ultros_charts::components::color_attr(color);
+        }
+    };
+    if color.a >= 1.0 {
+        token.into()
+    } else {
+        format!(
+            "color-mix(in srgb, {token} {:.1}%, transparent)",
+            color.a * 100.0
+        )
+    }
+}
+
+fn scene_view(scene: &ultros_charts::scene::Scene) -> impl IntoView + use<> {
+    scene_view_with_colors(scene, color_attr)
+}
 
 fn px(v: f32) -> String {
     format!("{v:.1}")
@@ -733,7 +783,7 @@ fn HoverLayer(model: Memo<PriceChartModel>, hover_index: RwSignal<Option<usize>>
                                 cy=px(y)
                                 r="4"
                                 fill=color_attr(&color)
-                                stroke="#16131f"
+                                stroke="var(--color-background-panel)"
                                 stroke-width="1.5"
                             />
                         })
@@ -810,6 +860,7 @@ fn HoverTooltip(
     model: Memo<PriceChartModel>,
     hover_index: RwSignal<Option<usize>>,
     #[prop(into)] show_quantity: Signal<bool>,
+    #[prop(into)] show_listing_floor: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     move || {
@@ -820,12 +871,15 @@ fn HoverTooltip(
                 let style = tooltip_offset_style(bucket.x, m.scene.width);
                 Some(view! {
                     <div
-                        class="pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg"
+                        class="market-chart-tooltip pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg"
                         style=style
                     >
                         <div class="mb-1 font-semibold text-[color:var(--color-text)]">
                             {bucket.label.clone()}
                         </div>
+                        {move || show_listing_floor.get().then(|| view! {
+                            <div class="mh-floor-readout"><span>"Lowest listing"</span><strong>{bucket.listing_floor.map(|p| format!("{} gil", short_number(p as i32))).unwrap_or_else(|| "No tracked listing".into())}</strong></div>
+                        })}
                         {series
                             .iter()
                             .enumerate()
@@ -876,6 +930,7 @@ fn HoverTooltip(
 #[component]
 pub fn PriceHistoryChart(
     #[prop(into)] series: Signal<Option<PriceSeries>>,
+    #[prop(into)] floor: Signal<Option<ultros_api_types::floor_history::FloorHistory>>,
     #[prop(into)] density: Signal<Option<PriceDensity>>,
     #[prop(into)] scope_name: Signal<String>,
     #[prop(into)] mode: Signal<ChartMode>,
@@ -923,6 +978,31 @@ pub fn PriceHistoryChart(
     let (view_param, set_view_param) = filter_query_signal::<ChartView>("view");
     let view = Signal::derive(move || view_param.get().unwrap_or_default());
     let set_view = SignalSetter::map(move |next: ChartView| set_view_param.set(Some(next)));
+
+    let (floor_param, set_floor_param) = filter_query_signal::<bool>("floor");
+    let show_listing_floor = Signal::derive(move || floor_param.get().unwrap_or(true));
+    let floor_reason = Signal::derive(move || {
+        if mode.get() == ChartMode::Density {
+            Some(
+                "Density shows completed-sale concentration. Switch to Price, Candles, or Range to compare listing prices.",
+            )
+        } else if view.get() == ChartView::Grid {
+            Some(
+                "The listing floor covers the whole selected market. Switch to Overlay to compare it with individual series.",
+            )
+        } else if percent_change.get() && mode.get() == ChartMode::Price {
+            Some("Listing prices are in gil. Turn off % change to compare them on the price axis.")
+        } else {
+            None
+        }
+    });
+    let active_floor = Signal::derive(move || {
+        if show_listing_floor.get() && floor_reason.get().is_none() {
+            floor.get()
+        } else {
+            None
+        }
+    });
 
     let (sort_param, set_sort_param) = filter_query_signal::<GridSort>("sort");
     let grid_sort = Signal::derive(move || sort_param.get().unwrap_or(GridSort::Name));
@@ -992,10 +1072,21 @@ pub fn PriceHistoryChart(
     // so the chart renders its own empty state instead of unmounting.
     let resolved_series = Signal::derive(move || series.get().unwrap_or_else(empty_price_series));
 
-    let available_domain = Memo::new(move |_| {
+    let sales_domain = Memo::new(move |_| {
         series
             .get()
+            .filter(|s| !s.is_empty())
             .map(|s| (s.from.and_utc().timestamp(), s.to.and_utc().timestamp()))
+    });
+    let available_domain = Memo::new(move |_| {
+        let floor_domain = floor
+            .get()
+            .filter(|f| !f.points.is_empty())
+            .map(|f| (f.from, f.to));
+        match (sales_domain.get(), floor_domain) {
+            (Some((a, b)), Some((c, d))) => Some((a.min(c), b.max(d))),
+            (domain, None) | (None, domain) => domain,
+        }
     });
     // A domain nested inside the active selection is the echo of our own
     // zoom request (the server may report a slightly narrower "actual data"
@@ -1004,7 +1095,10 @@ pub fn PriceHistoryChart(
     // active selection, so snap back to full range. See `range_is_stale` for
     // why "fits" is measured with a bucket's worth of slack.
     Effect::new(move |_| {
-        let Some(domain) = available_domain.get() else {
+        // Only a completed sales response can invalidate its prior range.
+        // The independent floor resource can finish first; combining new
+        // floor bounds with stale sale bounds would falsely reset the URL.
+        let Some(domain) = sales_domain.get() else {
             return;
         };
         let bucket_seconds = resolved_series.with_untracked(|s| s.bucket_seconds);
@@ -1161,7 +1255,9 @@ pub fn PriceHistoryChart(
                 index_to_percent: percent_change.get()
                     && mode.get() == ChartMode::Price
                     && view.get() == ChartView::Overlay,
-                theme: Theme::site(),
+                listing_floor: active_floor.get(),
+                time_range: selected_range.get(),
+                theme: market_theme(),
             },
         )
     });
@@ -1296,7 +1392,7 @@ pub fn PriceHistoryChart(
                 shared_y: !grid_per_cell_scale.get(),
                 sort: grid_sort.get(),
                 hidden_series: hidden_series.get(),
-                theme: Theme::site(),
+                theme: market_theme(),
                 ..Default::default()
             },
         )
@@ -1316,7 +1412,7 @@ pub fn PriceHistoryChart(
                     height,
                     utc_offset_minutes: utc_offset.get(),
                     milestones: milestones.get(),
-                    theme: Theme::site(),
+                    theme: market_theme(),
                 },
             )
         })
@@ -1442,7 +1538,7 @@ pub fn PriceHistoryChart(
     }
 
     view! {
-        <div class="flex flex-col gap-3">
+        <div class="market-chart-system flex flex-col gap-3">
             <ChartToolbar
                 mode=mode
                 set_mode=set_mode
@@ -1470,6 +1566,17 @@ pub fn PriceHistoryChart(
                     !(mode.get() == ChartMode::Price && view.get() == ChartView::Overlay)
                 })
             />
+            <div class="mh-listing-control">
+                <button type="button" class="mh-layer mh-ask"
+                    aria-pressed=move || show_listing_floor.get().to_string()
+                    disabled=move || floor_reason.get().is_some()
+                    on:click=move |_| set_floor_param.set(Some(!show_listing_floor.get_untracked()))>
+                    <i></i>"Lowest listing"
+                    <span>{move || if show_listing_floor.get() { "On" } else { "Off" }}</span>
+                </button>
+                <span class="mh-floor-scope">{move || format!("Whole {} market · same quality filter", scope_name.get())}</span>
+            </div>
+            {move || floor_reason.get().map(|reason| view! { <p class="mh-floor-reason" role="status">{reason}</p> })}
             // Mode-cap hint: modes that draw fewer series than are visible
             // say so instead of silently dropping data.
             {move || {
@@ -1566,6 +1673,18 @@ pub fn PriceHistoryChart(
                         .replace("{to}", &to)
                 }
                 class="price-history-chart relative w-full overflow-visible"
+                tabindex="0"
+                on:keydown=move |event| {
+                    if view.get() != ChartView::Overlay || mode.get() == ChartMode::Density { return; }
+                    let len = model.with(|m| m.hover.buckets.len());
+                    if len == 0 { return; }
+                    match event.key().as_str() {
+                        "ArrowRight" => { event.prevent_default(); hover_index.update(|i| *i = Some(i.map_or(0, |i| (i + 1).min(len - 1)))); }
+                        "ArrowLeft" => { event.prevent_default(); hover_index.update(|i| *i = Some(i.unwrap_or(1).saturating_sub(1))); }
+                        "Escape" => hover_index.set(None),
+                        _ => {}
+                    }
+                }
                 // `pan-y` keeps vertical page scrolling but hands sideways
                 // gestures to us, so scrubbing the chart doesn't get stolen
                 // by the scroller and cancelled. `touch-action` restrictions
@@ -1867,7 +1986,7 @@ pub fn PriceHistoryChart(
                 <Show when=move || {
                     view.get() == ChartView::Overlay && mode.get() != ChartMode::Density
                 }>
-                    <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                    <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity show_listing_floor=Signal::derive(move || active_floor.get().is_some()) />
                 </Show>
                 <Show when=move || mode.get() == ChartMode::Density>
                     <DensityTooltip density_model=density_model hover_index=hover_index />
@@ -2020,7 +2139,7 @@ pub fn PriceHistoryChart(
                                     .then(|| {
                                         view! {
                                             <span class="inline-flex items-center gap-1.5">
-                                                <span class="h-0.5 w-5 bg-[#facc15]"></span>
+                                                <span class="h-0.5 w-5 bg-[color:var(--mh-average)]"></span>
                                                 {t!(i18n, chart_legend_market_avg)}
                                             </span>
                                         }
@@ -2040,7 +2159,7 @@ pub fn PriceHistoryChart(
                                     .then(|| {
                                         view! {
                                             <span class="inline-flex items-center gap-1.5">
-                                                <span class="h-2.5 w-3 rounded-sm bg-[#22c55e]"></span>
+                                                <span class="h-2.5 w-3 rounded-sm bg-[color:var(--mh-volume)]"></span>
                                                 {t!(i18n, chart_legend_quantity)}
                                             </span>
                                         }
@@ -2050,5 +2169,5 @@ pub fn PriceHistoryChart(
                     })
             }}
         </div>
-    }
+    }.into_any()
 }

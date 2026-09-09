@@ -5,6 +5,7 @@ mod discord;
 pub mod entity;
 mod ffxiv_character;
 pub mod group_roles;
+pub mod list_doc;
 pub mod listings;
 pub mod lists;
 pub mod market_sweep;

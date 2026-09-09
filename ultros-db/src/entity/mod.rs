@@ -21,6 +21,7 @@ pub mod group_role;
 pub mod group_role_member;
 pub mod list;
 pub mod list_activity;
+pub mod list_doc;
 pub mod list_invite;
 pub mod list_item;
 pub mod list_shared_group;

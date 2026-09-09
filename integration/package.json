@@ -24,6 +24,7 @@
     "test:push": "node ./push.cjs",
     "test:app-update": "node ./app-update.cjs",
     "test:shared-list": "node ./shared-list.cjs",
+    "test:list-socket-revocation": "node ./list-socket-revocation.cjs",
     "test:list-flow": "node ./list-flow.cjs",
     "test:labs": "node ./labs.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",
@@ -44,7 +45,9 @@
     "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs",
     "diag:locale-hydration": "node ./locale-hydration.cjs",
     "diag:hydrate-timing": "node ./hydrate-timing.cjs",
-    "diag:truncation-proxy": "node ./truncation-proxy.mjs"
+    "diag:truncation-proxy": "node ./truncation-proxy.mjs",
+    "test:market-history": "node ./market-history.cjs",
+    "test:market-history-themes": "node ./market-history-themes.cjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

@@ -12,6 +12,7 @@ const ROUTES = (process.env.ITEM_ROUTES ||
   '/item/Gilgamesh/5364,/item/Gilgamesh/23892,/item/Gilgamesh/13709,/item/Gilgamesh/39643,/item/Gilgamesh/2').split(',');
 const OUTPUT = path.join(__dirname, 'artifacts', 'item-source-nav');
 const NAV = '[data-item-section-nav]';
+const MARKET_ANCHORS = ['#history', '#market-history'];
 const SOURCE_ANCHORS = ['#crafting-recipes', '#exchange-sources', '#leve-sources', '#vendor-sources'];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -63,7 +64,12 @@ async function main() {
       await page.goto(`${BASE_URL}${route}`, { waitUntil: 'networkidle2' });
       const ssr = await readLinks(page);
       const ssrNpcs = await readNpcDetails(page);
-      assert.ok(ssr.length >= 5, `${route}: SSR navigation missing`);
+      for (const href of MARKET_ANCHORS) {
+        assert.equal(ssr.filter(link => link.href === href).length, 1, `${route}: unique ${href} link`);
+        assert.equal(await page.$$eval(href, nodes => nodes.length), 1,
+          `${route}: ${href} target must exist before hydration, including while loading`);
+      }
+      assert.ok(ssr.length >= 6, `${route}: SSR navigation missing`);
       await page.setJavaScriptEnabled(true);
       await page.reload({ waitUntil: 'networkidle2' });
       await page.waitForFunction(() => window.__sourceNavHydrated === true);
@@ -74,10 +80,10 @@ async function main() {
       assert.ok(ssrNpcs.every(row => row.text.length > 0), `${route}: empty NPC details`);
       const sources = ssr.filter(link => SOURCE_ANCHORS.includes(link.href));
       sources.forEach(link => coverage.add(link.href));
-      const accents = await page.$$eval(`${NAV} a`, links => ({
+      const accents = await page.$$eval(`${NAV} a`, (links, anchors) => ({
         ordinary: getComputedStyle(links[0]).color,
-        sources: links.slice(5).map(link => getComputedStyle(link).color),
-      }));
+        sources: links.filter(link => anchors.includes(link.getAttribute('href'))).map(link => getComputedStyle(link).color),
+      }), SOURCE_ANCHORS);
       assert.ok(accents.sources.every(color => color !== accents.ordinary),
         `${route}: source accents were overridden by ordinary link styles`);
 
@@ -117,7 +123,7 @@ async function main() {
         }
         await bar.screenshot({ path: path.join(OUTPUT, `${prefix}-nav-sources.png`) });
 
-        for (const source of sources) {
+        for (const source of [...ssr.filter(link => MARKET_ANCHORS.includes(link.href)), ...sources]) {
           const link = await page.$(`${NAV} a[href="${source.href}"]`);
           await link.click();
           await page.waitForFunction(hash => location.hash === hash, {}, source.href);

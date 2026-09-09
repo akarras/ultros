@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use chrono::{NaiveDateTime, TimeDelta};
 use itertools::Itertools;
+use ultros_api_types::floor_history::FloorHistory;
 use ultros_api_types::price_series::{PriceBucket, PriceSeries, SeriesGroup};
 use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
@@ -70,6 +71,11 @@ pub struct PriceChartOptions {
     /// becomes percent and gil-valued overlays (market average, trendline,
     /// raw dots) are suppressed as meaningless on that axis.
     pub index_to_percent: bool,
+    /// Scope-wide observed listing state, drawn on the same gil axis as sales.
+    /// Not applied to percent-indexed charts or density/grid layouts.
+    pub listing_floor: Option<FloorHistory>,
+    /// Exact requested window, shared by sales and listing observations.
+    pub time_range: Option<(i64, i64)>,
     pub theme: Theme,
 }
 
@@ -91,6 +97,8 @@ impl Default for PriceChartOptions {
             mode: crate::charts::ChartMode::Price,
             milestones: Vec::new(),
             index_to_percent: false,
+            listing_floor: None,
+            time_range: None,
             theme: Theme::dark_card(),
         }
     }
@@ -146,6 +154,7 @@ pub struct HoverBucket {
     pub label: String,
     pub series_values: Vec<Option<(f32, f64)>>,
     pub volume: i64,
+    pub listing_floor: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -221,6 +230,69 @@ fn series_id_for_world(
             Some(datacenter.region_id)
         }
     }
+}
+
+/// Resolve the last observed listing state at a time, preserving empty boards
+/// and refusing to extrapolate beyond the response's observation window.
+fn listing_at(floor: &FloorHistory, timestamp: i64) -> Option<u32> {
+    if timestamp < floor.from || timestamp > floor.to {
+        return None;
+    }
+    floor
+        .points
+        .iter()
+        .rev()
+        .find(|p| p.timestamp <= timestamp)
+        .and_then(|p| p.price)
+        .filter(|p| *p > 0)
+}
+
+fn listing_paths(
+    floor: &FloorHistory,
+    time: &TimeScale,
+    price: &LinearScale,
+    from: NaiveDateTime,
+    to: NaiveDateTime,
+) -> Vec<String> {
+    let mut points = BTreeMap::new();
+    points.insert(from, listing_at(floor, from.and_utc().timestamp()));
+    for p in &floor.points {
+        if let Some(ts) = chrono::DateTime::from_timestamp(p.timestamp, 0).map(|t| t.naive_utc())
+            && ts >= from
+            && ts <= to
+        {
+            points.insert(ts, p.price.filter(|p| *p > 0));
+        }
+    }
+    // Stop exactly at the source window; do not draw a stale price to the
+    // end of a longer sales window.
+    let end = chrono::DateTime::from_timestamp(floor.to, 0)
+        .map(|t| t.naive_utc())
+        .unwrap_or(to)
+        .min(to);
+    if end >= from {
+        points.insert(end, listing_at(floor, end.and_utc().timestamp()));
+    }
+    let mut paths = Vec::new();
+    let mut path = String::new();
+    for (ts, value) in points {
+        let x = time.scale(ts);
+        if let Some(value) = value {
+            let y = price.scale(f64::from(value));
+            if path.is_empty() {
+                path = format!("M{x:.2},{y:.2}");
+            } else {
+                path.push_str(&format!(" H{x:.2} V{y:.2}"));
+            }
+        } else if !path.is_empty() {
+            path.push_str(&format!(" H{x:.2}"));
+            paths.push(std::mem::take(&mut path));
+        }
+    }
+    if !path.is_empty() {
+        paths.push(path);
+    }
+    paths
 }
 
 pub fn build_price_history_chart(
@@ -322,7 +394,20 @@ pub fn build_price_history_chart(
         }
     };
 
-    let Some((first_ts, last_ts)) = all_visible_buckets().map(|b| b.ts).minmax().into_option()
+    let floor = options
+        .listing_floor
+        .as_ref()
+        .filter(|_| !percent && options.mode != ChartMode::Density);
+    let floor_times = floor
+        .into_iter()
+        .flat_map(|f| &f.points)
+        .filter(|p| p.price.is_some_and(|price| price > 0))
+        .filter_map(|p| chrono::DateTime::from_timestamp(p.timestamp, 0).map(|t| t.naive_utc()));
+    let Some((mut first_ts, mut last_ts)) = all_visible_buckets()
+        .map(|b| b.ts)
+        .chain(floor_times)
+        .minmax()
+        .into_option()
     else {
         scene.nodes.push(Node::Text {
             x: options.width / 2.0,
@@ -345,11 +430,20 @@ pub fn build_price_history_chart(
             group_level,
         };
     };
+    if let Some((from, to)) = options.time_range.filter(|(from, to)| from < to)
+        && let (Some(from), Some(to)) = (
+            chrono::DateTime::from_timestamp(from, 0),
+            chrono::DateTime::from_timestamp(to, 0),
+        )
+    {
+        first_ts = from.naive_utc();
+        last_ts = to.naive_utc();
+    }
     let (min_price, max_price) = all_visible_buckets()
         .flat_map(|b| [b.low, b.high])
         .minmax()
         .into_option()
-        .expect("non-empty by the timestamp check above");
+        .unwrap_or((0, 0));
 
     let stats = {
         let n: usize = all_visible_buckets().map(|b| b.sales as usize).sum();
@@ -357,7 +451,7 @@ pub fn build_price_history_chart(
         let total_units: i64 = all_visible_buckets().map(|b| b.units).sum();
         let market_average = (total_units > 0).then(|| (total_gil / total_units) as i32);
         let p50s: Vec<i32> = all_visible_buckets().map(|b| b.p50).collect();
-        Some(ChartStats {
+        (n > 0).then_some(ChartStats {
             n,
             market_average,
             median: median(&p50s),
@@ -394,7 +488,7 @@ pub fn build_price_history_chart(
     // land outside the lane, so everything below clips to `plot_top..
     // price_bottom`. In % mode the domain comes from the rebased values
     // instead, and may go negative.
-    let price_domain = if percent {
+    let mut price_domain = if percent {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
         for (index, s) in resolved.iter().enumerate() {
@@ -418,6 +512,32 @@ pub fn build_price_history_chart(
     } else {
         robust_price_domain(all_visible_buckets()).unwrap_or((0.0, 1.0))
     };
+    if let Some(floor) = floor {
+        let mut prices: Vec<f64> = floor
+            .points
+            .iter()
+            .filter(|p| {
+                p.timestamp >= first_ts.and_utc().timestamp()
+                    && p.timestamp <= last_ts.and_utc().timestamp()
+            })
+            .filter_map(|p| p.price.filter(|price| *price > 0).map(f64::from))
+            .collect();
+        if let Some(seed) = listing_at(floor, first_ts.and_utc().timestamp()) {
+            prices.push(f64::from(seed));
+        }
+        if let Some((lo, hi)) = prices.into_iter().minmax().into_option() {
+            let pad = ((hi - lo) * 0.05).max(hi * 0.02).max(1.0);
+            let floor_domain = ((lo - pad).max(0.0), hi + pad);
+            price_domain = if stats.is_none() {
+                floor_domain
+            } else {
+                (
+                    price_domain.0.min(floor_domain.0),
+                    price_domain.1.max(floor_domain.1),
+                )
+            };
+        }
+    }
     let price = LinearScale::new(price_domain, (price_bottom, plot_top));
 
     // ── Patch milestone bands (behind everything, spec 4) ───────────────
@@ -896,6 +1016,44 @@ pub fn build_price_history_chart(
         }
     }
 
+    // Draw the scope-wide floor above the sale marks, with exact steps and
+    // independent empty-board gaps. Never add it to sale counts or volume.
+    if let Some(floor) = floor {
+        for d in listing_paths(floor, &time, &price, first_ts, last_ts) {
+            scene.nodes.push(Node::Path {
+                d,
+                fill: None,
+                stroke: Some(Stroke {
+                    color: Color::hex("#4de0c1"),
+                    width: 2.5,
+                    dash: None,
+                }),
+            });
+        }
+        let sale_hover_span = hover_map
+            .keys()
+            .map(|start| *start + TimeDelta::seconds(bucket_secs / 2))
+            .minmax()
+            .into_option();
+        for p in &floor.points {
+            if let Some(ts) =
+                chrono::DateTime::from_timestamp(p.timestamp, 0).map(|t| t.naive_utc())
+                && ts >= first_ts
+                && ts <= last_ts
+                // Preserve the original sales inspection targets. Hundreds
+                // of listing samples must not crowd out a candle's tooltip.
+                // Extend inspection only beyond sales, or for floor-only data.
+                && sale_hover_span.is_none_or(|(from, to)| ts < from || ts > to)
+            {
+                // Existing sale hover keys are bucket starts; shift synthetic
+                // listing anchors back half a bucket so the common center
+                // calculation places them at their actual observation time.
+                hover_map
+                    .entry(ts - TimeDelta::seconds(bucket_secs / 2))
+                    .or_insert_with(|| vec![None; resolved.len()]);
+            }
+        }
+    }
     let label_format = if bucket_secs < 86_400 {
         "%m-%d %H:%M"
     } else {
@@ -911,6 +1069,7 @@ pub fn build_price_history_chart(
                 label: display.format(label_format).to_string(),
                 series_values,
                 volume: volume_by_bucket.get(&start).copied().unwrap_or(0),
+                listing_floor: floor.and_then(|f| listing_at(f, center.and_utc().timestamp())),
             }
         })
         .collect();
@@ -1756,6 +1915,7 @@ mod tests {
                     label: String::new(),
                     series_values: Vec::new(),
                     volume: 0,
+                    listing_floor: None,
                 })
                 .collect(),
         };
@@ -1928,5 +2088,155 @@ mod tests {
             },
         );
         assert_eq!(model.group_level, GroupLevel::Datacenter);
+    }
+    #[test]
+    fn listing_steps_preserve_gaps_and_stop_at_the_observed_window() {
+        use ultros_api_types::floor_history::FloorPoint;
+        let dt = |ts| chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc();
+        let floor = FloorHistory {
+            from: 0,
+            to: 30,
+            bucket_seconds: 10,
+            points: vec![
+                FloorPoint {
+                    timestamp: 0,
+                    price: Some(100),
+                },
+                FloorPoint {
+                    timestamp: 10,
+                    price: None,
+                },
+                FloorPoint {
+                    timestamp: 20,
+                    price: Some(200),
+                },
+                FloorPoint {
+                    timestamp: 30,
+                    price: Some(200),
+                },
+            ],
+        };
+        let time = TimeScale::new(dt(0), dt(40), (0.0, 400.0));
+        let price = LinearScale::new((0.0, 200.0), (200.0, 0.0));
+        assert_eq!(
+            listing_paths(&floor, &time, &price, dt(0), dt(40)),
+            vec!["M0.00,100.00 H100.00", "M200.00,0.00 H300.00 V0.00"]
+        );
+        assert_eq!(listing_at(&floor, 15), None);
+        assert_eq!(listing_at(&floor, 35), None);
+    }
+
+    #[test]
+    fn listing_overlay_keeps_real_candles_and_sale_totals_in_each_price_mode() {
+        use ultros_api_types::floor_history::FloorPoint;
+        let sales = one_world_series(20, 5);
+        let from = sales.from.and_utc().timestamp();
+        let to = sales.to.and_utc().timestamp() + sales.bucket_seconds;
+        let floor = FloorHistory {
+            from,
+            to,
+            bucket_seconds: sales.bucket_seconds / 2,
+            points: (0..=40)
+                .map(|i| FloorPoint {
+                    timestamp: from + (to - from) * i / 40,
+                    price: Some(if i == 40 { 150 } else { 100 }),
+                })
+                .collect(),
+        };
+        for mode in [ChartMode::Price, ChartMode::Candles, ChartMode::Range] {
+            let mut options = PriceChartOptions {
+                mode,
+                show_market_average: false,
+                ..Default::default()
+            };
+            let original = build_price_history_chart(&world_helper(), &sales, &options);
+            options.listing_floor = Some(floor.clone());
+            options.time_range = Some((from, to));
+            let combined = build_price_history_chart(&world_helper(), &sales, &options);
+            assert_eq!(
+                combined.stats, original.stats,
+                "listing observations are never sales"
+            );
+            assert!(combined.scene.nodes.iter().any(|node| matches!(node, Node::Path {stroke:Some(stroke), ..} if stroke.color == Color::hex("#4de0c1"))));
+            let bodies = |model: &PriceChartModel| {
+                model
+                    .scene
+                    .nodes
+                    .iter()
+                    .filter(|node| matches!(node, Node::Path { fill: Some(_), .. }))
+                    .count()
+            };
+            if mode == ChartMode::Candles {
+                assert!(bodies(&combined) > 0);
+                assert_eq!(bodies(&combined), bodies(&original));
+            }
+            assert!(
+                combined
+                    .hover
+                    .buckets
+                    .iter()
+                    .any(|b| b.listing_floor == Some(150))
+            );
+            let sale_count = combined
+                .hover
+                .buckets
+                .iter()
+                .filter(|b| b.series_values.iter().any(Option::is_some))
+                .count();
+            assert!(
+                combined.hover.buckets.len() <= original.hover.buckets.len() + 4,
+                "listing samples must not crowd out sale hover targets"
+            );
+            assert_eq!(
+                sale_count,
+                original.hover.buckets.len(),
+                "every original candle remains inspectable"
+            );
+            assert_eq!(
+                combined.hover.buckets.iter().map(|b| b.volume).sum::<i64>(),
+                original.hover.buckets.iter().map(|b| b.volume).sum::<i64>()
+            );
+        }
+    }
+
+    #[test]
+    fn listing_only_market_has_a_chart_and_no_invented_sales() {
+        use ultros_api_types::floor_history::FloorPoint;
+        let mut sales = one_world_series(1, 5);
+        sales.series.clear();
+        let from = sales.from.and_utc().timestamp();
+        let to = from + 3600;
+        let model = build_price_history_chart(
+            &world_helper(),
+            &sales,
+            &PriceChartOptions {
+                listing_floor: Some(FloorHistory {
+                    from,
+                    to,
+                    bucket_seconds: 3600,
+                    points: vec![
+                        FloorPoint {
+                            timestamp: from,
+                            price: Some(500),
+                        },
+                        FloorPoint {
+                            timestamp: to,
+                            price: Some(600),
+                        },
+                    ],
+                }),
+                time_range: Some((from, to)),
+                ..Default::default()
+            },
+        );
+        assert_eq!(model.stats, None);
+        assert_eq!(model.hover.buckets.len(), 2);
+        assert!(
+            model
+                .hover
+                .buckets
+                .iter()
+                .all(|b| b.volume == 0 && b.series_values.is_empty())
+        );
     }
 }

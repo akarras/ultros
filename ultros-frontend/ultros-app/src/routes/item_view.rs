@@ -1,4 +1,6 @@
-use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
+use crate::api::{
+    get_floor_history, get_item_stats, get_listings, get_price_density, get_price_series,
+};
 use crate::components::app_link::AppLink;
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::chart_query::{
@@ -9,6 +11,7 @@ use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::listing_filters::filter_listing_rows;
+use crate::components::market_history::MarketHistory;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
@@ -721,7 +724,7 @@ fn WorldMarketShare(
                 });
                 view! {
                     <div
-                        class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
+                        class="item-surface p-3 sm:p-4"
                         class:hidden=move || shares.with(|s| s.is_empty())
                     >
                         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
@@ -771,14 +774,13 @@ fn WorldMarketShare(
 /// The sale-history panel's loading state: a placeholder title/badge row, a
 /// toggle+button row, and a large block standing in for the price chart.
 ///
-/// Mirrors the panel `ChartWrapper` renders once its data arrives — same
-/// `panel h-[26rem]` frame — so the swap from loading to loaded is a content
-/// change, not a layout jump.
+/// Lives inside the permanent chart panel so its jump-link target exists
+/// during loading as well as after the chart arrives.
 #[component]
 fn ChartWrapperSkeleton() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
-        <div class="panel h-[26rem] flex flex-col gap-3 p-3 sm:p-4" role="status">
+        <div class="h-[26rem] flex flex-col gap-3" role="status">
             <div class="skeleton-shimmer flex flex-col gap-3 h-full flex-1 min-h-0" aria-hidden="true">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="flex flex-col gap-2">
@@ -1038,6 +1040,23 @@ pub fn ChartWrapper(
         }
     });
     let series = Signal::derive(move || series_resource.get().flatten().and_then(|r| r.ok()));
+    let floor_resource = LocalResource::new(move || {
+        let id = item_id.get();
+        let world_name = world.get();
+        let quality = hq.get();
+        let decision = debounced_decision.get();
+        async move {
+            match decision {
+                RangeDecision::Pending => None,
+                RangeDecision::Resolved(range) => {
+                    Some(get_floor_history(id, &world_name, quality, range).await)
+                }
+            }
+        }
+    });
+    let floor = Signal::derive(move || floor_resource.get().flatten().and_then(|r| r.ok()));
+    let floor_error =
+        Signal::derive(move || floor_resource.get().flatten().is_some_and(|r| r.is_err()));
 
     // Fetched only while density mode is active — the mode is the gate, so
     // flipping to Density triggers the fetch and every other mode costs
@@ -1094,12 +1113,12 @@ pub fn ChartWrapper(
                     }.into_any()
                 } else {
                     view! {
-                        <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 text-[color:var(--color-text)] h-full">
+                        <div class="h-full">
                             <div class="flex flex-col gap-3">
                                 <div class="flex flex-wrap items-start justify-between gap-3">
                                     <div>
                                         <div class="flex items-center gap-2 flex-wrap">
-                                            <h2 class="text-xl font-bold leading-tight">{move || t_string!(i18n, sale_history).to_string()}</h2>
+                                            <h2 class="text-xl font-bold leading-tight">{move || t_string!(i18n, sales_chart).to_string()}</h2>
                                             // Analyzer confidence chip — reflects ClickHouse-rolled
                                             // sample size + launder suspicion over 30 days.
                                             // Picks HQ or NQ variant based on the current toggle so
@@ -1149,7 +1168,7 @@ pub fn ChartWrapper(
                                                 Some(&world()),
                                             )
                                         >
-                                            {move || t_string!(i18n, download_png).to_string()}
+                                            "Download sales PNG"
                                         </a>
                                     </div>
                                 </div>
@@ -1175,8 +1194,10 @@ pub fn ChartWrapper(
                                     })
                                 }}
 
+                                <MarketHistory sales=series floor=floor floor_error=floor_error scope=world>
                                 <PriceHistoryChart
                                     series=series
+                                    floor=floor
                                     density=density
                                     scope_name=world
                                     mode=mode
@@ -1188,6 +1209,7 @@ pub fn ChartWrapper(
                                     range_preset=chart_preset
                                     set_range_preset=set_range_preset
                                 />
+                                </MarketHistory>
 
                                 {move || {
                                     let no_listings = with_or(
@@ -1228,7 +1250,7 @@ fn SalesDetails(
                     sales.with(|sales| recent_sale_summary(sales.iter().map(|sale| sale.price_per_item)))
                 });
                 view! {
-                    <div class="flex h-full flex-col gap-3 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
+                    <div class="item-surface flex h-full flex-col gap-3 p-3 sm:p-4">
                         <div class="flex min-h-8 flex-wrap items-center gap-3">
                             <h2 class="text-xl font-bold text-brand-200">{t!(i18n, sale_history)}</h2>
                             <span class="text-sm text-[color:var(--color-text-muted)]">
@@ -1440,13 +1462,13 @@ fn ListingsContent(
                             item_id
                         />
                     </div>
-                    <div id="history" class="scroll-mt-16 min-w-0">
+                    <div id=super::item_view_sections::Section::History.id() class="scroll-mt-16 min-w-0">
                         <SalesDetails listing_resource />
                     </div>
                 </div>
             </div>
 
-            <div class="mt-6">
+            <div id=super::item_view_sections::Section::SalesChart.id() class="item-market-history item-surface mt-6 p-3 sm:p-4 scroll-mt-16">
                 <ChartWrapper listing_resource filtered_listings item_id world />
             </div>
 
@@ -1647,7 +1669,7 @@ fn ItemViewContent() -> impl IntoView {
         <script type="application/ld+json" inner_html=json_ld />
         <div class="min-h-screen">
             <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
-                <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
+                <div class="item-surface flex flex-col gap-4 p-3 sm:p-4">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
                             <ItemTooltip item_id=item_id>

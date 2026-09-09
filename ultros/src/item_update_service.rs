@@ -143,6 +143,9 @@ impl Drop for SweepLockGuard {
     fn drop(&mut self) {
         self.lock.0.store(false, Ordering::SeqCst);
         if let Some(mut connection) = self.lease.take() {
+            // Never return a possibly locked session to the pool, including
+            // cancellation while the asynchronous unlock is in flight.
+            connection.close_on_drop();
             // A session advisory lock outlives the connection's return to the
             // pool, and `Drop` cannot await, so the unlock is handed to a
             // task. A process that dies before it runs is still fine:
@@ -158,6 +161,43 @@ impl Drop for SweepLockGuard {
                 }
             });
         }
+    }
+}
+
+impl SweepLockGuard {
+    /// Stop polling the worker as soon as its session lease is lost. The
+    /// worker uses other pool connections, so those recovering cannot be
+    /// mistaken for continued ownership of this dedicated session.
+    pub(crate) async fn run<F: std::future::Future>(&mut self, work: F) -> Option<F::Output> {
+        let Some(connection) = self.lease.as_mut() else {
+            return Some(work.await);
+        };
+        let lost = async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                let alive = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    sea_orm::sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&mut **connection),
+                )
+                .await;
+                if !matches!(alive, Ok(Ok(_))) {
+                    warn!("lost full market sweep lease; stopping the worker");
+                    return;
+                }
+            }
+        };
+        run_until_lease_lost(work, lost).await
+    }
+}
+
+async fn run_until_lease_lost<F: std::future::Future>(
+    work: F,
+    lost: impl std::future::Future<Output = ()>,
+) -> Option<F::Output> {
+    tokio::select! {
+        biased;
+        _ = lost => None,
+        result = work => Some(result),
     }
 }
 
@@ -621,6 +661,9 @@ impl UpdateService {
                 return None;
             }
         };
+        // Cancellation can happen after Postgres grants the lock but before
+        // the query result is delivered. Such a session must not be pooled.
+        connection.close_on_drop();
         match sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
             .bind(FULL_SWEEP_LOCK_KEY)
             .fetch_one(&mut *connection)
@@ -899,9 +942,13 @@ impl UpdateService {
                 // overlapping a manual /rescan_market sweep. If it's busy,
                 // hand the world slot back unstamped so the next saturated
                 // cycle retries.
-                if let Some(_guard) = self.try_begin_full_sweep().await {
+                if let Some(mut guard) = self.try_begin_full_sweep().await {
                     warn!(world = %world.name, "recency window saturated, running full item sweep");
-                    let tally = self.check_items(world, &Self::all_marketable_items()).await;
+                    let items = Self::all_marketable_items();
+                    let Some(tally) = guard.run(self.check_items(world, &items)).await else {
+                        self.release_full_sweep_slot(world.id);
+                        return Ok(());
+                    };
                     tally.record(&world.name);
                     // Same rule as `do_full_world_sweep`: a world with no
                     // progress at all must not burn its cooldown for a sweep
@@ -1248,6 +1295,120 @@ fn missed_updates(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn losing_the_lease_drops_the_in_flight_sweep() {
+        struct OnDrop(Arc<AtomicBool>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (started, running) = tokio::sync::oneshot::channel();
+        let work = async {
+            let _guard = OnDrop(dropped.clone());
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        };
+        let lost = async {
+            running.await.unwrap();
+        };
+        assert_eq!(run_until_lease_lost(work, lost).await, None);
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_completed_sweep_keeps_its_result_while_the_lease_is_alive() {
+        assert_eq!(
+            run_until_lease_lost(async { 42 }, std::future::pending()).await,
+            Some(42)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_known_lost_lease_never_polls_the_worker() {
+        let polled = AtomicBool::new(false);
+        let work = async { polled.store(true, Ordering::SeqCst) };
+        assert_eq!(run_until_lease_lost(work, async {}).await, None);
+        assert!(!polled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MIGRATION_TEST_DATABASE_URL"]
+    async fn sweep_lease_excludes_another_session_and_releases_when_closed() {
+        use sea_orm::sqlx::{postgres::PgPoolOptions, query_scalar};
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut owner = pool.acquire().await.unwrap();
+        let mut contender = pool.acquire().await.unwrap();
+        // Never contend with a real sweep sharing this development database.
+        let key = chrono::Utc::now().timestamp_micros() ^ i64::from(std::process::id());
+        let acquired: bool = query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *owner)
+            .await
+            .unwrap();
+        assert!(acquired);
+        let acquired: bool = query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *contender)
+            .await
+            .unwrap();
+        assert!(!acquired);
+        owner.close().await.unwrap();
+        let acquired: bool = query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *contender)
+            .await
+            .unwrap();
+        assert!(
+            acquired,
+            "a replacement session can take over after the owner exits"
+        );
+        contender.close().await.unwrap();
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MIGRATION_TEST_DATABASE_URL and permission to terminate its own test session"]
+    async fn sweep_worker_stops_when_its_lease_session_is_terminated() {
+        use sea_orm::sqlx::{postgres::PgPoolOptions, query_scalar};
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut owner = pool.acquire().await.unwrap();
+        owner.close_on_drop();
+        let own_pid: i32 = query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *owner)
+            .await
+            .unwrap();
+        let mut guard = Arc::new(SweepLock::default()).try_claim().unwrap();
+        guard.lease = Some(owner);
+        // Only this test's freshly acquired connection is terminated.
+        let terminated: bool = query_scalar("SELECT pg_terminate_backend($1)")
+            .bind(own_pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(terminated);
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(25),
+            guard.run(std::future::pending::<()>()),
+        )
+        .await
+        .expect("lease heartbeat must stop the worker");
+        assert_eq!(stopped, None);
+        drop(guard);
+        pool.close().await;
+    }
     use chrono::{DateTime, Local};
 
     const WORLD_ID: i32 = 34;

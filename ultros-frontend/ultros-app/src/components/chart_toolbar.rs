@@ -1,7 +1,7 @@
 //! One-row control surface for the price chart (spec 2 of the chart
-//! revamp): icon-only mode group, group-by dropdown chip, overlays popover
+//! revamp): labeled mode group, group-by dropdown chip, overlays popover
 //! with a count badge. The resolved state is spelled out by the caption
-//! line under the chart, which is what makes an icon-only toolbar viable —
+//! line under the chart, which keeps the toolbar compact —
 //! every icon button still carries an aria-label.
 //!
 //! Slots are deliberately left between the groups for spec 3's view toggle
@@ -153,8 +153,8 @@ pub fn ChartToolbar(
         // `overflow-y: auto` too, which clips the absolutely-positioned
         // popovers below into the toolbar's own one-line-high scroll area —
         // every popover (group-by, world filter, overlays) opened invisibly.
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-            // ── Mode: icon-only segmented group ──
+        <div class="market-chart-toolbar flex flex-wrap items-center gap-2 text-xs">
+            // ── Mode: labeled segmented group ──
             <div
                 role="group"
                 aria-label=move || t_string!(i18n, chart_toolbar_mode_group).to_string()
@@ -176,7 +176,7 @@ pub fn ChartToolbar(
                                 class=move || {
                                     let active = mode.get() == m;
                                     [
-                                        "border-l border-[color:var(--color-outline)] px-2.5 py-1.5 transition-colors first:border-l-0",
+                                        "mh-mode inline-flex items-center gap-1.5 border-l border-[color:var(--color-outline)] px-2.5 py-1.5 transition-colors first:border-l-0",
                                         if active {
                                             "bg-brand-600/30 text-brand-100"
                                         } else {
@@ -188,6 +188,7 @@ pub fn ChartToolbar(
                                 on:click=move |_| set_mode.set(m)
                             >
                                 <Icon height="1.1em" width="1.1em" icon=mode_icon(m) />
+                                <span>{move || mode_name(m)}</span>
                             </button>
                         }
                     })

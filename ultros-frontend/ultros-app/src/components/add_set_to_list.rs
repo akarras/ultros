@@ -47,9 +47,18 @@ pub fn AddSetToList(
     #[prop(into)] entries: Signal<Vec<(ItemId, i32)>>,
 ) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
+    // The trigger can retain focus beneath the modal. Hide its floating
+    // tooltip while the dialog is open so it cannot cover dialog controls.
+    let active_tooltip = Signal::derive(move || {
+        if modal_visible.get() {
+            String::new()
+        } else {
+            tooltip.get()
+        }
+    });
     view! {
         <div class="inline-block">
-            <Tooltip tooltip_text=tooltip>
+            <Tooltip tooltip_text=active_tooltip>
                 <button
                     type="button"
                     class="btn-primary"

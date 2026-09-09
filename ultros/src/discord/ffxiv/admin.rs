@@ -22,6 +22,41 @@ const RESUME_GATEWAY_WAIT: Duration = Duration::from_secs(60);
 /// Interval between checks for the gateway during [`RESUME_GATEWAY_WAIT`].
 const RESUME_GATEWAY_POLL: Duration = Duration::from_secs(2);
 
+const RESUME_RETRY: Duration = Duration::from_secs(30);
+
+enum ResumeAttempt<T> {
+    Finished,
+    Busy,
+    Acquired(T),
+}
+
+async fn await_resume_claim<T, F, Fut>(
+    token: &CancellationToken,
+    retry: Duration,
+    mut attempt: F,
+) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ResumeAttempt<T>>,
+{
+    loop {
+        let result = tokio::select! {
+            biased;
+            _ = token.cancelled() => return None,
+            result = attempt() => result,
+        };
+        match result {
+            ResumeAttempt::Finished => return None,
+            ResumeAttempt::Acquired(value) => return Some(value),
+            ResumeAttempt::Busy => {}
+        }
+        tokio::select! {
+            _ = token.cancelled() => return None,
+            _ = tokio::time::sleep(retry) => {}
+        }
+    }
+}
+
 // A full sweep walks every marketable item across every world and can run
 // for hours, while a Discord slash-command interaction token is only valid
 // for 15 minutes. Holding the interaction for the whole sweep — the
@@ -118,8 +153,10 @@ pub(crate) fn spawn_interrupted_sweep_resume(
             Ok(None) => return,
             Ok(Some(_)) => {}
             Err(error) => {
-                tracing::error!(?error, "could not check for an interrupted market sweep");
-                return;
+                tracing::warn!(
+                    ?error,
+                    "could not check for an interrupted market sweep; retrying"
+                );
             }
         }
         let reporter = wait_for_gateway(&token).await;
@@ -130,18 +167,33 @@ pub(crate) fn spawn_interrupted_sweep_resume(
         }
         // Claimed after the wait, so a replica that loses the race does not
         // hold the lease for a minute first.
-        let Some(guard) = service.try_begin_full_sweep().await else {
-            tracing::info!("a full market sweep is already running; not resuming");
-            return;
-        };
-        let run = match service.resume_sweep().await {
-            // Finished (or claimed) while we waited for the gateway.
-            Ok(None) => return,
-            Ok(Some(run)) => run,
-            Err(error) => {
-                tracing::error!(?error, "could not load the interrupted market sweep");
-                return;
+        let Some((guard, run)) = await_resume_claim(&token, RESUME_RETRY, || async {
+            // A rolling deploy can start this replica before the old worker
+            // releases its lease. Stay eligible until the sweep is finished,
+            // rather than abandoning its durable cursor after one busy claim.
+            match service.db.active_market_sweep().await {
+                Ok(None) => return ResumeAttempt::Finished,
+                Ok(Some(_)) => {}
+                Err(error) => {
+                    tracing::warn!(?error, "could not check interrupted sweep; retrying");
+                    return ResumeAttempt::Busy;
+                }
             }
+            let Some(guard) = service.try_begin_full_sweep().await else {
+                return ResumeAttempt::Busy;
+            };
+            match service.resume_sweep().await {
+                Ok(None) => ResumeAttempt::Finished,
+                Ok(Some(run)) => ResumeAttempt::Acquired((guard, run)),
+                Err(error) => {
+                    tracing::warn!(?error, "could not load interrupted sweep; retrying");
+                    ResumeAttempt::Busy
+                }
+            }
+        })
+        .await
+        else {
+            return;
         };
         let worlds_total = service.world_cache.get_all_worlds().count();
         let announcement = format!(
@@ -206,7 +258,7 @@ fn spawn_sweep(
         // of the async block, which would release the lock before the sweep
         // even starts and defeat the single-sweep guarantee
         // `try_begin_full_sweep` exists to provide.
-        let _guard = guard;
+        let mut guard = guard;
 
         // The progress callback handed to `do_full_world_sweep` is
         // synchronous (it's called inline between world sweeps), so it can't
@@ -247,10 +299,9 @@ fn spawn_sweep(
                 let _ = progress_tx.send(progress.summary_text());
             }
         }))
-        .catch_unwind()
-        .await;
-        match sweep {
-            Ok(report) => {
+        .catch_unwind();
+        match guard.run(sweep).await {
+            Some(Ok(report)) => {
                 if report.is_complete() {
                     tracing::info!("full market sweep finished");
                 } else {
@@ -260,13 +311,20 @@ fn spawn_sweep(
                 }
                 let _ = tx.send(report.summary_text());
             }
-            Err(_) => {
+            Some(Err(_)) => {
                 // The sweep row is left unfinished, so the next start resumes
                 // it from the last recorded chunk rather than from nothing.
                 tracing::error!("full market sweep panicked");
                 let _ = tx.send(
                     "Full market sweep crashed — check the server logs. It resumes on the next \
                      restart."
+                        .to_string(),
+                );
+            }
+            None => {
+                let _ = tx.send(
+                    "Full market sweep paused because its database lease was lost. \
+                     Its saved progress can be resumed."
                         .to_string(),
                 );
             }
@@ -278,4 +336,52 @@ fn spawn_sweep(
         drop(tx);
         let _ = poster.await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn interrupted_sweep_waits_for_the_old_replica_to_release_its_lease() {
+        let mut attempts = 0;
+        let claimed = await_resume_claim(&CancellationToken::new(), Duration::ZERO, || {
+            attempts += 1;
+            std::future::ready(if attempts < 3 {
+                ResumeAttempt::Busy
+            } else {
+                ResumeAttempt::Acquired(42)
+            })
+        })
+        .await;
+        assert_eq!(claimed, Some(42));
+        assert_eq!(attempts, 3);
+    }
+
+    #[tokio::test]
+    async fn a_sweep_finished_by_the_other_replica_is_not_started_again() {
+        let mut attempts = 0;
+        let claimed = await_resume_claim(&CancellationToken::new(), Duration::ZERO, || {
+            attempts += 1;
+            std::future::ready(if attempts == 1 {
+                ResumeAttempt::<()>::Busy
+            } else {
+                ResumeAttempt::Finished
+            })
+        })
+        .await;
+        assert_eq!(claimed, None);
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn shutdown_interrupts_the_resume_retry_delay() {
+        let token = CancellationToken::new();
+        let claimed = await_resume_claim(&token, Duration::from_secs(3600), || {
+            token.cancel();
+            std::future::ready(ResumeAttempt::<()>::Busy)
+        })
+        .await;
+        assert_eq!(claimed, None);
+    }
 }

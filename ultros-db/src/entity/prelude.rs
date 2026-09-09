@@ -19,6 +19,7 @@ pub use super::group_role::Entity as GroupRole;
 pub use super::group_role_member::Entity as GroupRoleMember;
 pub use super::list::Entity as List;
 pub use super::list_activity::Entity as ListActivity;
+pub use super::list_doc::Entity as ListDoc;
 pub use super::list_invite::Entity as ListInvite;
 pub use super::list_item::Entity as ListItem;
 pub use super::list_shared_group::Entity as ListSharedGroup;

@@ -60,7 +60,7 @@ pub fn ListingsPanel(
                     filter_by_quality(all, quality.get())
                 });
                 view! {
-                    <div class="flex h-full flex-col gap-3 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
+                    <div class="item-surface flex h-full flex-col gap-3 p-3 sm:p-4">
                         <div class="flex min-h-8 flex-wrap items-center gap-3">
                             <h2 class="text-xl font-bold text-brand-200">
                                 {t!(i18n, active_listings)}
