@@ -813,6 +813,20 @@ pub fn ListViewSync() -> impl IntoView {
         }
     });
 
+    // The settings drawer is rebuilt only when the list row it edits actually
+    // changes, not on every document revision or price refresh the page
+    // resource re-runs for; otherwise a collaborator's edit (or a market
+    // update) would recreate an open drawer under the user's cursor.
+    let drawer_key = Memo::new(move |_| {
+        list_view.get().and_then(Result::ok).map(|(l, _)| {
+            (
+                l.list.id,
+                l.list.name.clone(),
+                l.list.wdr_filter,
+                l.permission,
+            )
+        })
+    });
     let view_caps = RwSignal::new(ListCapabilities::default());
     Effect::new(move |_| {
         let next = match list_view.get() {
@@ -1638,7 +1652,10 @@ pub fn ListViewSync() -> impl IntoView {
 
             <Show when=settings_open>
                 {move || {
-                    let Some(Ok((list_with_perm, _))) = list_view.get() else {
+                    if drawer_key.get().is_none() {
+                        return view! { <div></div> }.into_any();
+                    }
+                    let Some(Ok((list_with_perm, _))) = list_view.get_untracked() else {
                         return view! { <div></div> }.into_any();
                     };
                     view! {

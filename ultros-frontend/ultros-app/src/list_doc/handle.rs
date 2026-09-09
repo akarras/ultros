@@ -238,8 +238,17 @@ impl ListDocHandle {
         done
     }
 
+    /// Only a real change notifies: the sync loop reports "live" on every
+    /// relayed update, and re-notifying an unchanged status would re-render
+    /// everything that shows it.
     pub fn set_status(&self, status: &str) {
-        self.status.set(status.to_string());
+        if self
+            .status
+            .try_with_untracked(|s| s != status)
+            .unwrap_or(false)
+        {
+            self.status.set(status.to_string());
+        }
     }
 
     pub fn remember_permission(&self, permission: i16) {
