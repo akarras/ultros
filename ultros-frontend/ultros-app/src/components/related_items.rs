@@ -401,7 +401,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     });
 
     Some(view! {
-        <div class="card p-4 sm:p-5 space-y-4 rounded-lg border border-brand-700/30 hover:shadow-lg hover:border-brand-500/50 transition-all min-w-0">
+        <div class="panel p-4 sm:p-5 space-y-4 min-w-0">
             <div class="flex flex-col gap-3 border-b border-brand-700/30 pb-3 lg:flex-row lg:items-center lg:justify-between">
                 <div class="flex min-w-0 flex-wrap items-center gap-3">
                     <SmallItemDisplay item=target_item />
@@ -618,7 +618,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:bg-[color:var(--color-base)]/50 hover:shadow-md border border-brand-700/30"
+                        class="group flex flex-col gap-2 panel panel-interactive p-3"
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
                             <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
@@ -780,7 +780,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         let trades = get_trade_costs(shop, item_id());
                         trades.into_iter().map(move |costs| {
                             view! {
-                                <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-brand-700/30">
+                                <div class="group flex flex-col gap-2 panel p-3">
                                     <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
                                     <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
                                         <span class="font-semibold text-brand-300">{t!(i18n, related_items_costs_label)}</span>
@@ -1177,7 +1177,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-[color:var(--color-outline)] hover:border-brand-300/60">
+                        <div class="group flex flex-col gap-2 panel p-3">
                              <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2 mt-1">
                                 <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">

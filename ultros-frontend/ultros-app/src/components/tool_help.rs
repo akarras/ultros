@@ -33,7 +33,11 @@ impl ToolCalculation {
 /// any Suspense/Transition boundary so the controls survive loading states.
 #[component]
 pub fn ToolHeader(
-    #[prop(into)] title: Oco<'static, str>,
+    /// A `Signal` so pages whose title comes from loaded data (Job Set
+    /// Detail's set name) update once the resource resolves. A plain
+    /// `String` still converts, so static titles read unchanged.
+    #[prop(into)]
+    title: Signal<String>,
     #[prop(into)] summary: Oco<'static, str>,
     #[prop(optional, into)] context: Option<Oco<'static, str>>,
     /// Link to a full help page. Omit on pages that have no dedicated help
@@ -73,7 +77,7 @@ pub fn ToolHeader(
         <section class="flex flex-col gap-3">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <h1 class="text-lg sm:text-xl font-bold text-[color:var(--brand-fg)]">
-                    {title.clone()}
+                    {move || title.get()}
                 </h1>
                 <button
                     type="button"

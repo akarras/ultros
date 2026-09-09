@@ -1243,7 +1243,7 @@ pub fn VendorResale() -> impl IntoView {
 
                 // Features Grid
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <div class="card p-6 rounded-lg transition-colors duration-200">
+                    <div class="panel p-6">
                         <Icon
                             attr:class="text-brand-300 mb-4"
                             width="2.5em"
@@ -1256,7 +1256,7 @@ pub fn VendorResale() -> impl IntoView {
                         </p>
                     </div>
 
-                    <div class="card p-6 rounded-lg transition-colors duration-200">
+                    <div class="panel p-6">
                         <Icon
                             attr:class="text-brand-300 mb-4"
                             width="2.5em"
@@ -1269,7 +1269,7 @@ pub fn VendorResale() -> impl IntoView {
                         </p>
                     </div>
 
-                    <div class="card p-6 rounded-lg transition-colors duration-200">
+                    <div class="panel p-6">
                         <Icon
                             attr:class="text-brand-300 mb-4"
                             width="2.5em"

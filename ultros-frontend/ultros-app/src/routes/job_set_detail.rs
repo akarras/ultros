@@ -21,6 +21,7 @@ use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::tool_help::ToolHeader;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -501,6 +502,16 @@ pub fn JobSetDetail() -> impl IntoView {
                 >
                     {move || t_string!(i18n, job_set_detail_back).to_string().replace("%job%", &job_name())}
                 </AppLink>
+            </div>
+
+            <ToolHeader
+                title=set_stem
+                summary=t_string!(i18n, job_set_detail_tool_summary).to_string()
+                context=t_string!(i18n, job_set_detail_tool_context).to_string()
+            >
+                <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
+                    {t!(i18n, item_explorer_ilvl_prefix)} " " {move || target_ilvl.get()}
+                </span>
                 <Show when=move || !set_entries.get().is_empty()>
                     <AddSetToList
                         button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
@@ -519,14 +530,7 @@ pub fn JobSetDetail() -> impl IntoView {
                         entries=material_entries
                     />
                 </Show>
-            </div>
-
-            <div class="flex flex-row items-baseline gap-3 flex-wrap">
-                <h3 class="text-2xl font-bold">{set_stem}</h3>
-                <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                    {t!(i18n, item_explorer_ilvl_prefix)} " " {move || target_ilvl.get()}
-                </span>
-            </div>
+            </ToolHeader>
 
             // Per-slot grid, every piece in the set with its NQ/HQ
             // cheapest from the user's active price zone.
