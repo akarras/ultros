@@ -101,6 +101,8 @@ send_wrapper = "0.6"
 flume = { version = "0.12.0", features = ["async"] }
 icondata_core.workspace = true
 leptos_i18n.workspace = true
+ultros-list-doc = { path = "../../ultros-list-doc" }
+base64 = "0.22.1"
 
 [features]
 default = [

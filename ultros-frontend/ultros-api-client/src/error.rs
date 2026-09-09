@@ -33,6 +33,15 @@ pub enum AppError {
     WorldDataUnavailable,
     #[error("The internal API request timed out")]
     InternalApiTimeout,
+    /// The local list document refused an edit (spec section 3.2).
+    #[error("List document: {0}")]
+    ListDoc(String),
+}
+
+impl From<ultros_list_doc::DocError> for AppError {
+    fn from(error: ultros_list_doc::DocError) -> Self {
+        AppError::ListDoc(error.to_string())
+    }
 }
 
 impl AppError {
