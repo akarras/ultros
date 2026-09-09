@@ -229,6 +229,8 @@ pub fn start(
                 // diff" rebase branch below. A pending Snapshot is handled
                 // right here instead (F1) and does not flow into that
                 // branch a second time.
+                // Set when a pending Snapshot import replaced the document (F1).
+                let mut pending_rebased = false;
                 let snapshot = match payload {
                     ListDocPayload::Snapshot(bytes) => {
                         let report = match handle.import(&bytes) {
@@ -261,6 +263,7 @@ pub fn start(
                                 return;
                             }
                             meta_forbidden.set(false);
+                            pending_rebased = true;
                             None
                         } else {
                             Some(bytes)
@@ -284,9 +287,13 @@ pub fn start(
                             // instead, and don't report "live" on a doc that
                             // just silently dropped part of this import.
                             handle.set_status("reconnecting");
-                            let slot = weak_slot.clone();
-                            let flag = force_empty_version.clone();
-                            defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+                            // Already armed means a snapshot resync is in flight;
+                            // a burst of pending imports schedules one, not N.
+                            if !force_empty_version.replace(true) {
+                                let slot = weak_slot.clone();
+                                let flag = force_empty_version.clone();
+                                defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+                            }
                             return;
                         }
                         None
@@ -300,6 +307,12 @@ pub fn start(
                     if !same_version {
                         // A different server version is a fresh start.
                         *rebased_for.borrow_mut() = None;
+                    }
+                    if pending_rebased {
+                        // This handshake already rebased onto `version`, so a
+                        // later rejection at the same version gives up instead
+                        // of rebasing again: two rounds per server version.
+                        *rebased_for.borrow_mut() = Some(version.clone());
                     }
                     // F2: only give up when the server has actually
                     // rejected our history — signalled by answering the
@@ -390,9 +403,12 @@ pub fn start(
                     // or claim "live". Force the next handshake to answer
                     // with a full Snapshot and resubscribe to trigger it.
                     handle.set_status("reconnecting");
-                    let slot = weak_slot.clone();
-                    let flag = force_empty_version.clone();
-                    defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+                    // See the handshake arm: one resync per burst.
+                    if !force_empty_version.replace(true) {
+                        let slot = weak_slot.clone();
+                        let flag = force_empty_version.clone();
+                        defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+                    }
                     return;
                 }
                 let on_remote_change = on_remote_change.clone();
