@@ -43,6 +43,10 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ---- Builder: cook deps first (cached), then compile the project -------------
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
+# leptos_config and leptos embed LEPTOS_OUTPUT_NAME at compile time. Cook with
+# the same value cargo-leptos supplies or Cargo rebuilds their dependency tree.
+ENV LEPTOS_OUTPUT_NAME=ultros \
+    WASM_BINDGEN_WEAKREF=1
 # Warm the dependency cache for BOTH targets cargo-leptos will use.
 # Scoping with `-p` is REQUIRED: without it, `chef cook` tries to build every
 # workspace member for the given target — and the workspace contains both the
@@ -52,28 +56,28 @@ COPY --from=planner /app/recipe.json recipe.json
 #  - bin-package = "ultros"        → server-release profile, native
 #  - lib-package = "ultros-client" → release profile, wasm32-unknown-unknown
 # Edits to source code below this line won't invalidate these layers.
-RUN cargo chef cook --profile server-release -p ultros --recipe-path recipe.json
-RUN cargo chef cook --release --target wasm32-unknown-unknown -p ultros-client --recipe-path recipe.json
+RUN cargo chef cook --locked --profile server-release -p ultros --bin ultros \
+    --no-default-features --features jemalloc --recipe-path recipe.json
+# cargo-leptos isolates its frontend artifacts in target/front. Match that
+# directory and its exact feature selection, not Cargo's default target/.
+RUN cargo chef cook --locked --release --target wasm32-unknown-unknown \
+    --target-dir target/front -p ultros-client --no-default-features \
+    --recipe-path recipe.json
 # Now the actual source.
 COPY . .
-ENV WASM_BINDGEN_WEAKREF=1
-# Limit peak memory usage to prevent OOM errors on resource-constrained CI runners.
-#  - CARGO_BUILD_JOBS=1: Compile one crate at a time.
-#  - CARGO_INCREMENTAL=0: Avoid overhead of maintaining incremental build state.
+# Limit application compilation to one crate at a time on the CI runner;
+# dependency cooking above retains Cargo's normal parallelism.
 ENV CARGO_BUILD_JOBS=1 \
     CARGO_INCREMENTAL=0
-
 # cargo-leptos 0.3 builds the server and client in parallel. Even with
 # CARGO_BUILD_JOBS=1, the two distinct rustc processes (one for native, one
 # for WASM) can overlap and exceed the 7GB runner limit.
 #
-# We force sequential build by compiling the server binary first.
-#  - Cargo will cache the server-release artifacts.
-#  - The subsequent cargo-leptos call will see the server is already built
-#    and spend its memory budget on the WASM client.
-RUN cargo build --profile server-release -p ultros --features jemalloc
-
-RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
+# Use Leptos for both passes so Cargo's environment and target selection stay
+# consistent. The frontend-only pass also generates CSS, JS and optimized WASM;
+# it cannot launch a second server compilation, even if a fingerprint changes.
+RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only -vv
+RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only -vv
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the
