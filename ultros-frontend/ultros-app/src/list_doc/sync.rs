@@ -50,6 +50,15 @@ pub enum ErrorKind {
 ///
 /// Any other text (including future/renamed server errors) classifies as
 /// `Transient` and is logged without disturbing the local document.
+///
+/// Note that `Denied` therefore covers two different situations, and the
+/// page's `on_denied` handler must tell them apart before it destroys
+/// anything: `"Insufficient permissions"` means this user may not have the
+/// list (purge it), while `"sign in to edit lists"` only means the session
+/// lapsed — the snapshot must be kept, or the user loses every edit they
+/// made offline the moment their cookie expires. `routes/list_view_sync.rs`
+/// distinguishes them by whether the login resource still resolved to a
+/// user.
 pub fn classify_error(message: &str) -> ErrorKind {
     if message == "sign in to edit lists" || message.contains("Insufficient permissions") {
         ErrorKind::Denied

@@ -71,6 +71,19 @@ struct ListingsCache {
     version: u32,
     list: ListWithPermission,
     listings: HashMap<i32, Vec<ActiveListing>>,
+    /// The item ids the fetch that filled this cache covered — every row the
+    /// *server* had, including rows whose price lookup came back empty. A
+    /// row added locally is not in here until the socket has delivered the
+    /// add and a later fetch sees it, so `load_view` treats "the document
+    /// has an item this set doesn't" as a miss and refetches once. Caching
+    /// the covered set (rather than the keys of `listings`) is what stops
+    /// that from looping when the server genuinely has no price for the id.
+    covered: HashSet<i32>,
+}
+
+/// The ids a fetch covered, built from the rows the server returned.
+fn covered_ids(items: &[(ListItem, Vec<ActiveListing>)]) -> HashSet<i32> {
+    items.iter().map(|(item, _)| item.item_id).collect()
 }
 
 /// A failure that means the browser must stop keeping a local copy of this
@@ -81,17 +94,17 @@ struct ListingsCache {
 ///
 /// [`AppError::BadList`] is included because it is the client-side stand-in
 /// for "there is no such list" (`api::get_list_items_with_listings` returns
-/// it for a list id of `0`), and `ApiError::NotAuthenticated` because the
-/// sync engine classifies the socket's equivalent ("sign in to edit lists")
-/// as [`crate::list_doc::sync::ErrorKind::Denied`] too — a session that is
-/// no longer signed in has no business holding that user's rows.
+/// it for a list id of `0`).
+///
+/// [`ApiError::NotAuthenticated`] is deliberately **not** a denial: a lapsed
+/// session says nothing about whether this user still owns the list, and
+/// destroying the snapshot would lose edits the user made offline and never
+/// got to sync. It is handled exactly like signing out — close the handle,
+/// keep the local copy — so signing back in resumes where they left off.
 fn is_denial(error: &AppError) -> bool {
     matches!(
         error,
-        AppError::BadList
-            | AppError::ApiError(
-                ApiError::Forbidden | ApiError::NotFound | ApiError::NotAuthenticated
-            )
+        AppError::BadList | AppError::ApiError(ApiError::Forbidden | ApiError::NotFound)
     )
 }
 
@@ -117,16 +130,42 @@ async fn load_view(
     listings_version: u32,
 ) -> ListViewResult {
     let Some(doc_handle) = handle.get_untracked() else {
-        return get_list_items_with_listings(id).await;
+        // No document yet (SSR, the first client paint, an anonymous
+        // visitor). Cache what the REST read already paid for, so the first
+        // handle-backed run below is a cache hit rather than a second fetch
+        // of the same prices.
+        let result = get_list_items_with_listings(id).await;
+        if let Ok((list, items)) = &result {
+            cache.set_value(Some(ListingsCache {
+                list_id: id,
+                version: listings_version,
+                list: list.clone(),
+                listings: items
+                    .iter()
+                    .map(|(item, listings)| (item.item_id, listings.clone()))
+                    .collect(),
+                covered: covered_ids(items),
+            }));
+        }
+        return result;
     };
-    let cached = cache
-        .get_value()
-        .filter(|c| c.list_id == id && c.version == listings_version);
+    // A row added locally is in the document but in no cache entry, so it
+    // would render priceless until an unrelated market event bumped
+    // `listings_version`. Missing coverage is a miss.
+    let wanted_ids: HashSet<i32> = doc_handle
+        .rows()
+        .into_iter()
+        .map(|row| row.key.item_id)
+        .collect();
+    let cached = cache.get_value().filter(|c| {
+        c.list_id == id && c.version == listings_version && wanted_ids.is_subset(&c.covered)
+    });
     let base = match cached {
         Some(cached) => cached,
         None => match get_list_items_with_listings(id).await {
             Ok((list, items)) => {
                 doc_handle.remember_permission(list.permission as i16);
+                let covered = covered_ids(&items);
                 let fresh = ListingsCache {
                     list_id: id,
                     version: listings_version,
@@ -135,6 +174,11 @@ async fn load_view(
                         .into_iter()
                         .map(|(item, listings)| (item.item_id, listings))
                         .collect(),
+                    // Whatever the server had this time. If it hasn't seen
+                    // the new row yet, the id stays uncovered — but the
+                    // cache is only consulted again when the id *set*
+                    // changes, so this refetches once, not in a loop.
+                    covered: covered.union(&wanted_ids).copied().collect(),
                 };
                 cache.set_value(Some(fresh.clone()));
                 fresh
@@ -157,6 +201,7 @@ async fn load_view(
                         version: listings_version,
                         list,
                         listings: HashMap::new(),
+                        covered: wanted_ids.clone(),
                     },
                     None => return Err(error),
                 },
@@ -165,7 +210,11 @@ async fn load_view(
     };
     // `ListDocument` clones share the underlying document, so this hands
     // `view_result` a reference without holding the stored value across it.
-    let doc = doc_handle.with_doc(|doc| doc.clone());
+    let Some(doc) = doc_handle.with_doc(|doc| doc.clone()) else {
+        // The page was torn down while this fetch was in flight; there is no
+        // document left to render and nothing to render it into.
+        return Err(AppError::ListDoc("document is closed".to_string()));
+    };
     Ok(crate::list_doc::adapter::view_result(
         &base.list,
         &doc,
@@ -389,16 +438,37 @@ pub fn ListViewSync() -> impl IntoView {
         // The (user, list) pair the open handle belongs to, so a re-run that
         // changed neither doesn't throw the document away.
         let open_for: StoredValue<Option<(i64, i32)>> = StoredValue::new(None);
+        // The page's owner. An Effect runs its body under a short-lived
+        // child owner that is disposed on every re-run *and* on unmount —
+        // before the page's own `on_cleanup`. `ListDocHandle::open` builds
+        // `StoredValue`s and `RwSignal`s, so opening it inside the Effect
+        // body would hand the handle nodes that are already gone by the time
+        // anything closes it: reading them panics, and on wasm a panic is an
+        // `unreachable` that kills the module. Opening under this owner
+        // instead keeps the handle alive exactly as long as the page.
+        let page_owner = Owner::current();
+        // What the page *should* have open, diffed. The Effect below
+        // registers a cleanup that closes the handle it opened, so it must
+        // only re-run when the answer genuinely changed — a `Resource` that
+        // notifies twice with the same login (hydration, a refetch) would
+        // otherwise close a document the page is still using. `None` means
+        // login hasn't resolved; `Some(None)` means signed out or no list.
+        let doc_target = Memo::new(move |_| {
+            let id = list_id.get();
+            let login = user_resource.get()?;
+            Some(match login {
+                Some(user) if id != 0 => Some((user.id as i64, id)),
+                _ => None,
+            })
+        });
 
         Effect::new(move |_| {
-            let id = list_id.get();
-            let Some(login) = user_resource.get() else {
+            let Some(target) = doc_target.get() else {
                 // Login hasn't resolved yet: nothing to open or close.
                 return;
             };
-            match login {
-                Some(user) if id != 0 => {
-                    let wanted = (user.id as i64, id);
+            match target {
+                Some(wanted) => {
                     if open_for.get_value() == Some(wanted) {
                         return;
                     }
@@ -407,15 +477,28 @@ pub fn ListViewSync() -> impl IntoView {
                     if let Some(previous) = handle.get_untracked() {
                         previous.close();
                     }
-                    let opened = ListDocHandle::open(wanted.0, wanted.1);
+                    let opened = match page_owner.clone() {
+                        Some(owner) => owner.with(|| ListDocHandle::open(wanted.0, wanted.1)),
+                        None => ListDocHandle::open(wanted.0, wanted.1),
+                    };
                     open_for.set_value(Some(wanted));
                     handle.set(Some(opened));
+                    // Flushed and detached here rather than only in the
+                    // page's `on_cleanup`: an owner runs its own cleanups
+                    // before it disposes anything, so this fires while the
+                    // handle (owned by the page) is still readable, on every
+                    // re-run and on unmount. The page-level cleanup calls
+                    // `close` again; it is idempotent.
+                    on_cleanup(move || opened.close());
                     // Re-installed alongside each handle so the keys always
                     // reach the live document. `install` takes the handle by
                     // value, and one window listener per open is cheap:
                     // switching accounts without a page load isn't reachable
                     // (signing in navigates away and back), so in practice
-                    // this runs exactly once per page.
+                    // this runs exactly once per page. Left under the
+                    // Effect's own owner on purpose: it creates no node the
+                    // handle needs, and its listener is then removed when
+                    // this run is superseded, instead of piling up.
                     crate::list_doc::undo::install(opened, modal_open);
                 }
                 _ => {
@@ -450,14 +533,30 @@ pub fn ListViewSync() -> impl IntoView {
                 realtime,
                 move || set_resync.update(|n| *n += 1),
                 move || set_last_update_at.set(Some(chrono::Utc::now())),
-                move |_kind| {
+                move |kind| {
                     // Global Constraint 2: the server says this list is gone
                     // or not ours, so the local copy must not survive it.
                     // Clearing the handle re-runs this Effect, which drops
                     // the subscription. Safe from inside the callback: sync
                     // defers every callback past the socket's dispatch.
+                    //
+                    // `Denied` covers two different things (see
+                    // `sync::classify_error`): "you may not have this list",
+                    // which must purge, and "sign in to edit lists", which
+                    // is a lapsed session and must NOT — the user's offline
+                    // edits have to survive signing back in. Only a
+                    // still-signed-in session can produce the first, so the
+                    // login answer is what tells them apart.
+                    use crate::list_doc::sync::ErrorKind;
+                    let signed_in = user_resource.get_untracked().flatten().is_some();
+                    let purge = matches!(kind, ErrorKind::NotFound)
+                        || (matches!(kind, ErrorKind::Denied) && signed_in);
                     if let Some(denied) = handle.get_untracked() {
-                        denied.purge();
+                        if purge {
+                            denied.purge();
+                        } else {
+                            denied.close();
+                        }
                     }
                     handle.set(None);
                 },
@@ -654,13 +753,17 @@ pub fn ListViewSync() -> impl IntoView {
                                 <AutoMarkPurchases
                                     list_view=list_view
                                     on_purchase=Callback::new(move |(item_id, hq): (i32, bool)| {
-                                        if let Some(handle) = handle.get_untracked() {
-                                            let _ = handle
+                                        if let Some(handle) = handle.get_untracked()
+                                            && let Err(error) = handle
                                                 .apply(Edit::AddAcquired {
                                                     item_id,
                                                     hq: Some(hq),
                                                     delta: 1,
-                                                });
+                                                })
+                                        {
+                                            log::warn!(
+                                                "auto-mark failed for item {item_id}: {error}"
+                                            );
                                         }
                                     })
                                 />
@@ -1425,10 +1528,16 @@ mod tests {
             AppError::BadList,
             AppError::ApiError(ApiError::Forbidden),
             AppError::ApiError(ApiError::NotFound),
-            AppError::ApiError(ApiError::NotAuthenticated),
         ] {
             assert!(is_denial(&error), "{error:?} must discard the local copy");
         }
+    }
+
+    /// A lapsed session is not a denial: the handle closes and the snapshot
+    /// stays, so signing back in resumes the user's offline edits.
+    #[test]
+    fn a_lapsed_session_keeps_the_local_copy() {
+        assert!(!is_denial(&AppError::ApiError(ApiError::NotAuthenticated)));
     }
 
     /// The complement: a transport failure, a 5xx flattened into a message,

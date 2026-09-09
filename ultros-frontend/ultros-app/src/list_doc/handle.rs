@@ -99,16 +99,42 @@ impl ListDocHandle {
         handle
     }
 
-    pub fn with_doc<R>(&self, f: impl FnOnce(&ListDocument) -> R) -> R {
-        self.doc.with_value(f)
+    /// Whether this handle's stored values are gone because their owner was
+    /// disposed. A `ListDocHandle` is `Copy` and outlives its reactive
+    /// nodes: socket callbacks, save timers and the page's own cleanup can
+    /// all still hold one after the page was torn down. Reading a disposed
+    /// `StoredValue`/signal panics — which on wasm is an `unreachable` that
+    /// takes the whole module down — so every accessor below checks first
+    /// and behaves as though the handle were simply closed.
+    fn is_closed(&self) -> bool {
+        self.doc.try_with_value(|_| ()).is_none()
+    }
+
+    /// Runs `f` against the document, or `None` once this handle is closed
+    /// (see [`Self::is_closed`]).
+    pub fn with_doc<R>(&self, f: impl FnOnce(&ListDocument) -> R) -> Option<R> {
+        match self.doc.try_with_value(f) {
+            Some(value) => Some(value),
+            None => {
+                log::debug!(
+                    "list {}: document accessed after its owner was disposed",
+                    self.list_id
+                );
+                None
+            }
+        }
     }
 
     pub fn rows(&self) -> Vec<RowSnapshot> {
-        self.with_doc(|doc| doc.rows())
+        self.with_doc(|doc| doc.rows()).unwrap_or_default()
     }
 
     pub fn meta(&self) -> MetaSnapshot {
         self.with_doc(|doc| doc.meta())
+            .unwrap_or_else(|| MetaSnapshot {
+                name: String::new(),
+                scope: None,
+            })
     }
 
     /// The document's version vector, for callers that may outlive the
@@ -129,12 +155,20 @@ impl ListDocHandle {
     /// One user action, one undo step. The document commits inside, which
     /// bumps `revision` and pushes the update onto `outbox`.
     pub fn apply(&self, edit: Edit) -> Result<(), DocError> {
-        self.doc.with_value(|doc| {
+        self.with_doc(|doc| {
             let mut result = Ok(());
-            self.undo
-                .update_value(|undo| result = adapter::apply(doc, undo, edit));
+            if self
+                .undo
+                .try_update_value(|undo| result = adapter::apply(doc, undo, edit))
+                .is_none()
+            {
+                log::debug!("list {}: edit dropped, handle closed", self.list_id);
+            }
             result
         })
+        // A closed handle has no document to edit and no page to show the
+        // result: report success rather than panicking on a disposed node.
+        .unwrap_or(Ok(()))
     }
 
     /// Surfaces `ImportReport::pending`: a `true` value means the imported
@@ -143,28 +177,35 @@ impl ListDocHandle {
     /// call. Callers must not treat a pending import as having converged
     /// the document (F1) — see `list_doc::sync`'s handshake arm.
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        // `pending: false` is the neutral answer for a closed handle: the
+        // caller must not schedule a resync for a document that is gone.
         self.with_doc(|doc| doc.import(bytes))
+            .unwrap_or(Ok(ImportReport { pending: false }))
     }
 
     pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
         self.with_doc(|doc| doc.export_since(version))
+            .unwrap_or_else(|| Ok(Vec::new()))
     }
 
     pub fn is_ahead_of(&self, version: &[u8]) -> bool {
         self.with_doc(|doc| doc.is_ahead_of(version))
+            .unwrap_or(false)
     }
 
     pub fn undo(&self) -> bool {
         let mut done = false;
-        self.undo
-            .update_value(|undo| done = undo.undo().unwrap_or(false));
+        let _ = self
+            .undo
+            .try_update_value(|undo| done = undo.undo().unwrap_or(false));
         done
     }
 
     pub fn redo(&self) -> bool {
         let mut done = false;
-        self.undo
-            .update_value(|undo| done = undo.redo().unwrap_or(false));
+        let _ = self
+            .undo
+            .try_update_value(|undo| done = undo.redo().unwrap_or(false));
         done
     }
 
@@ -184,10 +225,14 @@ impl ListDocHandle {
     }
 
     pub fn save_now(&self) {
-        if self.purged.get_untracked() {
+        // A disposed `purged` signal reads as `None`; treat that as "nothing
+        // worth saving" rather than panicking (see `is_closed`).
+        if self.purged.try_get_untracked().unwrap_or(true) {
             return;
         }
-        let snapshot = self.with_doc(|doc| doc.export_snapshot());
+        let Some(snapshot) = self.with_doc(|doc| doc.export_snapshot()) else {
+            return;
+        };
         if let Ok(snapshot) = snapshot {
             let _ = store::save(
                 &BrowserStorage,
@@ -212,6 +257,13 @@ impl ListDocHandle {
     /// inert until it is dropped; the page opens a fresh `ListDocHandle` if
     /// it re-opens the list.
     pub fn purge(&self) {
+        // The browser copy still has to go even for a closed handle, but the
+        // in-memory swap below would touch disposed nodes, so stop after the
+        // storage half.
+        if self.is_closed() {
+            store::purge(&BrowserStorage, self.user_id, self.list_id);
+            return;
+        }
         self.purged.set(true);
         store::purge(&BrowserStorage, self.user_id, self.list_id);
         // Clear the outbox before swapping documents so a subscription
@@ -251,6 +303,9 @@ impl ListDocHandle {
         snapshot: &[u8],
         keep_local_meta: bool,
     ) -> Result<bool, DocError> {
+        if self.is_closed() {
+            return Ok(false);
+        }
         let local_rows = self.rows();
         let local_meta = self.meta();
         let fresh = ListDocument::from_snapshot(snapshot)?;
@@ -271,7 +326,11 @@ impl ListDocHandle {
         self.undo.set_value(undo);
         self.subscriptions.set_value(vec![on_change, on_local]);
 
-        let mut reapplied = self.with_doc(|doc| ultros_list_doc::rebase_rows(doc, &local_rows))?;
+        let Some(reapplied) = self.with_doc(|doc| ultros_list_doc::rebase_rows(doc, &local_rows))
+        else {
+            return Ok(false);
+        };
+        let mut reapplied = reapplied?;
         if keep_local_meta {
             let applied_meta = self.with_doc(|doc| -> Result<bool, DocError> {
                 let server_meta = doc.meta();
@@ -287,8 +346,8 @@ impl ListDocHandle {
                     applied = true;
                 }
                 Ok(applied)
-            })?;
-            reapplied |= applied_meta;
+            });
+            reapplied |= applied_meta.unwrap_or(Ok(false))?;
         }
         self.revision.update(|r| *r += 1);
         self.save_now();
@@ -300,11 +359,17 @@ impl ListDocHandle {
     /// subscriptions. Call when a page navigates away from this list. A
     /// purged handle has nothing worth saving, so the flush is skipped.
     pub fn close(&self) {
-        if !self.purged.get_untracked() {
+        // Idempotent, and safe to call after the owner is gone: the page
+        // closes the handle from inside the lifecycle Effect's cleanup and
+        // again from its own `on_cleanup`.
+        if self.is_closed() {
+            return;
+        }
+        if !self.purged.try_get_untracked().unwrap_or(true) {
             self.save_now();
         }
-        self.save_timer.update_value(|timer| *timer = None);
-        self.subscriptions.update_value(|subs| subs.clear());
+        let _ = self.save_timer.try_update_value(|timer| *timer = None);
+        let _ = self.subscriptions.try_update_value(|subs| subs.clear());
     }
 
     /// Save half a second after the last change, and immediately when the
