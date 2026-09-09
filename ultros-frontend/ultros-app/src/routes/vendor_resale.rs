@@ -350,9 +350,19 @@ impl VendorProfitTable {
 
         // Build map of vendor items: ItemId -> VendorPrice
         // We only care about base items, HQ doesn't exist for vendors usually (or is same price)
+        //
+        // Rows behind a seasonal event are skipped. The whole premise of this
+        // page is "buy it from the NPC, sell it on the board", which fails if
+        // the NPC only appears during Heavensturn or only serves players who
+        // did that year's event quest — the item then shows an enormous ROI
+        // against a price nobody can pay (#1362). An item survives as long as
+        // one of its rows is reachable.
         let mut vendor_prices = HashMap::new();
         for items in data.gil_shop_items.values() {
             for shop_item in items {
+                if !shop_item.availability.is_obtainable() {
+                    continue;
+                }
                 if let Some(item_def) = data.items.get(&ItemId(shop_item.item)) {
                     vendor_prices.insert(shop_item.item, item_def.price_mid as i32);
                 }

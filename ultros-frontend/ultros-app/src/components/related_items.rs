@@ -2,12 +2,12 @@ use crate::components::app_link::AppLink;
 use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::prelude::*;
-use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, RwLock};
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
 use xiv_gen::{
-    ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup,
-    Recipe, SpecialShop,
+    GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup, Recipe, SpecialShop,
+    VendorAvailability,
 };
 
 use crate::{
@@ -526,80 +526,93 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     }.into_any())
 }
 
-fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
-    npc.e_npc_data.iter().copied()
-}
-
-fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
-    let data = tracked_data();
-
-    data.e_npc_bases
-        .values()
-        .flat_map(|npc: &'static ENpcBase| {
-            npc_rows(npc).flat_map(move |row| {
-                let mut shops = Vec::new();
-                let row_as_i32 = row as i32;
-                if gil_shops.contains(&GilShopId(row_as_i32)) {
-                    shops.push(GilShopId(row_as_i32));
-                }
-
-                if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(row_as_i32)) {
-                    for shop in ts.shop {
-                        let shop_id = GilShopId(shop);
-                        if gil_shops.contains(&shop_id) {
-                            shops.push(shop_id);
-                        }
-                    }
-                }
-
-                #[allow(clippy::collapsible_if)]
-                if let Some(ph) = data.pre_handlers.get(&xiv_gen::PreHandlerId(row_as_i32)) {
-                    if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(ph.target)) {
-                        for shop in ts.shop {
-                            let shop_id = GilShopId(shop);
-                            if gil_shops.contains(&shop_id) {
-                                shops.push(shop_id);
-                            }
-                        }
-                    }
-                }
-
-                shops.into_iter().map(move |gil_shop| (gil_shop, npc))
-            })
-        })
-        // `e_npc_bases` is a std HashMap whose iteration order is randomized
-        // per process (RandomState). Without a stable sort the SSR server and
-        // the hydrating wasm client emit the vendor rows in different orders,
-        // desyncing the DOM and tripping tachys' hydration walker (#6831).
-        // Sort by stable ids so both sides render the same sequence.
-        .sorted_by_key(|(gil_shop, npc)| (npc.key_id.0, gil_shop.0))
-        .collect()
+/// One NPC that offers one shop stocking the item, with how reachable that
+/// particular row is.
+#[derive(Clone, Copy, PartialEq)]
+struct VendorSource {
+    shop: GilShopId,
+    npc: &'static xiv_gen::ENpcResident,
+    availability: VendorAvailability,
 }
 
 /// Resolved shop/NPC pairs, shared by the source panel and its navigation count.
-fn vendor_sources_for_item(item_id: i32) -> Vec<(GilShopId, &'static xiv_gen::ENpcResident)> {
+///
+/// The shop -> NPC direction is precomputed in the game-data pack
+/// (`Data::gil_shop_npcs`); this used to scan every `ENpcBase` row's 32 data
+/// slots on each call.
+///
+/// Unlike the analyzers, this keeps seasonal rows and labels them instead. The
+/// item page answers "where does this come from?", and "the Heavensturn vendor"
+/// is the true answer — hiding it would leave the panel emptier and no more
+/// honest.
+fn vendor_sources_for_item(item_id: i32) -> Vec<VendorSource> {
     let data = tracked_data();
     if !data.items.contains_key(&ItemId(item_id)) {
         return Vec::new();
     }
-    let shop_ids = data
+    let mut sources: Vec<_> = data
         .gil_shop_items
         .iter()
-        .filter(|(_, items)| items.iter().any(|item| item.item == item_id))
-        .filter_map(|(shop_id, _)| data.gil_shops.get(shop_id))
-        .map(|shop| shop.key_id)
-        .collect::<Vec<_>>();
-    if shop_ids.is_empty() {
-        return Vec::new();
-    }
-    gil_shop_to_npc(&shop_ids)
-        .into_iter()
-        .filter_map(|(shop_id, npc)| {
-            data.e_npc_residents
-                .get(&ENpcResidentId(npc.key_id.0))
-                .map(|resident| (shop_id, resident))
+        .filter_map(|(shop_id, items)| {
+            let row = items.iter().find(|item| item.item == item_id)?;
+            Some((data.gil_shops.get(shop_id)?, row.availability))
         })
-        .collect()
+        .flat_map(|(shop, availability)| {
+            data.gil_shop_npcs
+                .get(&shop.key_id)
+                .into_iter()
+                .flatten()
+                .filter_map(move |npc| {
+                    data.e_npc_residents.get(npc).map(|resident| VendorSource {
+                        shop: shop.key_id,
+                        npc: resident,
+                        availability,
+                    })
+                })
+        })
+        .collect();
+    // `gil_shop_items` is a std HashMap whose iteration order is randomized per
+    // process (RandomState). Without a stable sort the SSR server and the
+    // hydrating wasm client emit the vendor rows in different orders, desyncing
+    // the DOM and tripping tachys' hydration walker (#6831).
+    sources.sort_unstable_by_key(|s| (s.npc.key_id.0, s.shop.0));
+    sources
+}
+
+/// Why a vendor row may not be purchasable, or nothing when it plainly is.
+///
+/// `Unlockable` is called out as well as the seasonal cases: "the Paintings need
+/// the sightseeing log" is the kind of thing a reader wants before walking to
+/// the NPC, and it is not a warning — hence the softer styling.
+#[component]
+fn VendorGateBadge(availability: VendorAvailability) -> impl IntoView {
+    let i18n = use_i18n();
+    if availability == VendorAvailability::Open {
+        return None;
+    }
+    let (label, class) = match availability {
+        VendorAvailability::Open => unreachable!("returned above"),
+        VendorAvailability::Unlockable => (
+            t!(i18n, vendor_gate_unlockable).into_any(),
+            "text-[color:var(--color-text-muted)] border-[color:var(--color-outline)]",
+        ),
+        VendorAvailability::SeasonalShop => (
+            t!(i18n, vendor_gate_seasonal_shop).into_any(),
+            "vendor-gate-seasonal text-amber-300 border-amber-500/40",
+        ),
+        VendorAvailability::SeasonalUnlock => (
+            t!(i18n, vendor_gate_seasonal_unlock).into_any(),
+            "vendor-gate-seasonal text-amber-300 border-amber-500/40",
+        ),
+    };
+    Some(view! {
+        <div class=format!(
+            "inline-flex w-fit items-center gap-1 rounded border px-1.5 py-0.5 text-xs {class}",
+        )>
+            <Icon icon=icondata::FaLockSolid attr:class="text-[0.65rem] opacity-70" />
+            <span>{label}</span>
+        </div>
+    })
 }
 
 #[component]
@@ -612,8 +625,9 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         let item = data.items.get(&ItemId(item_id()))?;
         Some(
             items.into_iter()
-            .filter_map(|(shop, resident)| {
-                let shop = data.gil_shops.get(&shop)?;
+            .filter_map(|source| {
+                let resident = source.npc;
+                let shop = data.gil_shops.get(&source.shop)?;
                 let price = item.price_mid as i32;
                 Some(view! {
                     <a
@@ -628,6 +642,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                             <Icon icon=icondata::FaStoreSolid attr:class="text-xs opacity-70" />
                             <span class="truncate">{shop.name.as_str()}</span>
                         </div>
+                        <VendorGateBadge availability=source.availability />
                         <super::npc_locations::NpcLocations npc_id=resident.key_id.0 />
                     </a>
                 })
@@ -649,19 +664,43 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
-static VENDOR_ITEM_IDS: LazyLock<HashSet<i32>> = LazyLock::new(|| {
-    let data = tracked_data();
-    let mut set = HashSet::new();
-    for items in data.gil_shop_items.values() {
-        for shop_item in items {
-            set.insert(shop_item.item);
-        }
+/// Items a player can actually buy from a gil shop.
+///
+/// Rows behind a seasonal event are left out: an item whose only vendors are a
+/// Heavensturn stall and a Calamity Salvager gated on a 2013 achievement has no
+/// vendor price any reader of this could act on (#1362). An item keeps its
+/// place here as long as *one* row is reachable, so a seasonal duplicate of an
+/// ordinary vendor item changes nothing.
+// Availability can differ between the independently versioned locale packs.
+// Cache each immutable data instance, rather than the first request's locale.
+// xiv-gen-db leaks these instances (both data_for and client locale reloads),
+// so their addresses are stable and cannot be reused by another dataset.
+type VendorItemsByData = HashMap<usize, HashSet<i32>>;
+static VENDOR_ITEM_IDS: LazyLock<RwLock<VendorItemsByData>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn is_vendor_item_in(data: &'static xiv_gen::Data, item_id: i32) -> bool {
+    let key = std::ptr::from_ref(data).addr();
+    if let Some(items) = VENDOR_ITEM_IDS.read().unwrap().get(&key) {
+        return items.contains(&item_id);
     }
-    set
-});
+    VENDOR_ITEM_IDS
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_insert_with(|| {
+            data.gil_shop_items
+                .values()
+                .flatten()
+                .filter(|row| row.availability.is_obtainable())
+                .map(|row| row.item)
+                .collect()
+        })
+        .contains(&item_id)
+}
 
 pub(crate) fn is_vendor_item(item_id: i32) -> bool {
-    VENDOR_ITEM_IDS.contains(&item_id)
+    is_vendor_item_in(tracked_data(), item_id)
 }
 
 pub(crate) fn get_vendor_price(item_id: i32) -> Option<u32> {
@@ -857,6 +896,211 @@ mod tests {
                 "{name} should not count as a shard"
             );
         }
+    }
+
+    /// The pack ships `gil_shop_npcs` instead of the `ENpcBase` /
+    /// `TopicSelect` / `PreHandler` sheets the mapping was derived from, so
+    /// nothing at runtime can re-derive it. These invariants are what the
+    /// vendor panel relies on.
+    #[test]
+    fn gil_shop_npc_index_is_sorted_and_names_displayable_npcs() {
+        let data = tracked_data();
+        assert!(
+            !data.gil_shop_npcs.is_empty(),
+            "pack carries no shop -> NPC index"
+        );
+        for (shop, npcs) in &data.gil_shop_npcs {
+            assert!(
+                npcs.windows(2).all(|w| w[0].0 <= w[1].0),
+                "shop {shop:?} lists NPCs out of order; render order would differ \
+                 between SSR and hydration"
+            );
+            for npc in npcs {
+                assert!(
+                    data.e_npc_residents.contains_key(npc),
+                    "shop {shop:?} names {npc:?}, which has no resident row to render"
+                );
+            }
+        }
+    }
+
+    /// Usagi Kabuto is stocked by two shops that are reached by different
+    /// routes through the NPC data (a festival vendor and the Calamity
+    /// Salvager's Heavensturn menu), so it exercises both the direct and the
+    /// `TopicSelect`/`PreHandler` paths that fed the index.
+    #[test]
+    fn vendor_sources_resolve_every_stocking_shop() {
+        let data = tracked_data();
+        let item_id = data
+            .items
+            .values()
+            .find(|i| i.name == "Usagi Kabuto")
+            .expect("Usagi Kabuto missing from game data")
+            .key_id;
+
+        let sources = vendor_sources_for_item(item_id.0);
+        assert!(!sources.is_empty(), "expected vendor sources");
+        assert!(
+            sources.iter().all(|s| !s.npc.singular.is_empty()),
+            "every resolved vendor should have a name to display"
+        );
+
+        let stocking: HashSet<_> = data
+            .gil_shop_items
+            .iter()
+            .filter(|(_, items)| items.iter().any(|i| i.item == item_id.0))
+            .map(|(shop, _)| *shop)
+            .collect();
+        let resolved: HashSet<_> = sources.iter().map(|s| s.shop).collect();
+        assert_eq!(resolved, stocking, "a stocking shop resolved to no NPC");
+    }
+
+    /// #1362: Usagi Kabuto was offered as a vendor-resale flip even though its
+    /// only vendors are a Heavensturn stall and a Calamity Salvager gated on a
+    /// 2013 achievement. It must carry no vendor price for the analyzers, while
+    /// ordinary vendor stock is untouched.
+    #[test]
+    fn seasonal_only_items_have_no_vendor_price() {
+        let data = tracked_data();
+        let by_name = |name: &str| {
+            data.items
+                .values()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from game data"))
+                .key_id
+                .0
+        };
+
+        for name in ["Usagi Kabuto", "Black Usagi Kabuto", "Dream Hat"] {
+            let id = by_name(name);
+            assert!(
+                !is_vendor_item(id),
+                "{name} should not count as vendor-sold"
+            );
+            assert_eq!(get_vendor_price(id), None, "{name} should have no price");
+        }
+
+        // Everyday vendor stock stays priced — over-filtering would gut the
+        // very page this protects.
+        for name in ["Maple Log", "Copper Ore", "Distilled Water"] {
+            let id = by_name(name);
+            assert!(is_vendor_item(id), "{name} should still be vendor-sold");
+            assert!(get_vendor_price(id).is_some(), "{name} lost its price");
+        }
+    }
+
+    /// Gated-but-reachable stock must survive. Ruling out every gated row was
+    /// the tempting wrong answer here: the biggest group of achievement-gated
+    /// items is the sightseeing-log Paintings, and the biggest group of
+    /// quest-gated ones is main-scenario progress. Both are things a player can
+    /// simply go and do.
+    #[test]
+    fn quest_and_achievement_gated_items_are_still_vendor_items() {
+        let data = tracked_data();
+        let gated: Vec<_> = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .filter(|r| r.availability == VendorAvailability::Unlockable)
+            .map(|r| r.item)
+            .filter(|i| *i > 0)
+            .sorted()
+            .dedup()
+            .collect();
+        assert!(
+            gated.len() > 100,
+            "expected a substantial unlockable tier, got {}",
+            gated.len()
+        );
+        for id in &gated {
+            assert!(
+                is_vendor_item(*id),
+                "item {id} is merely unlockable and should stay vendor-sold"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_availability_follows_locale_data_in_both_lookup_orders() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let tc = xiv_gen_db::data_for(xiv_gen::Language::Tc);
+        // Lord's Yukata (Blue) has only seasonal English rows. The older TC
+        // fork has an unmatched shop row that intentionally defaults to Open.
+        // Neither locale may inherit the other one's first cached verdict.
+        for (data, expected) in [(tc, true), (en, false), (en, false), (tc, true)] {
+            assert_eq!(is_vendor_item_in(data, 2967), expected);
+            assert!(
+                is_vendor_item_in(data, 5364),
+                "ordinary Maple Log stays sold"
+            );
+        }
+    }
+
+    /// The filter must reject only the seasonal tail. If it ever starts
+    /// rejecting a large slice, Vendor Resale silently empties out.
+    #[test]
+    fn seasonal_filtering_removes_only_a_small_tail() {
+        let data = tracked_data();
+        let all: HashSet<i32> = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .map(|i| i.item)
+            .filter(|i| *i > 0)
+            .collect();
+        let dropped = all.iter().filter(|id| !is_vendor_item(**id)).count();
+        assert!(dropped > 0, "no seasonal vendor items were filtered at all");
+        // Measured at 450 of 6743 (~6.7%) when this landed. The bound is a
+        // blast-radius guard, not a pin — game-data updates move the exact
+        // number, but an order-of-magnitude jump means the rule broke.
+        assert!(
+            dropped * 5 < all.len(),
+            "filtered {dropped} of {} vendor items — far more than the seasonal tail",
+            all.len()
+        );
+
+        // Marketable items are the ones the analyzers price, so scope the tight
+        // bound there: 52 of ~4900 when this landed.
+        let marketable_dropped = all
+            .iter()
+            .filter(|id| {
+                data.items
+                    .get(&ItemId(**id))
+                    .is_some_and(|i| i.item_search_category != 0)
+            })
+            .filter(|id| !is_vendor_item(**id))
+            .count();
+        assert!(
+            marketable_dropped > 0 && marketable_dropped < 400,
+            "dropped {marketable_dropped} marketable vendor items"
+        );
+    }
+
+    #[test]
+    fn vendor_sources_are_sorted_by_npc_then_shop() {
+        let data = tracked_data();
+        // Any item sold by more than one shop exercises the cross-shop sort.
+        let item_id = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .map(|i| i.item)
+            .sorted()
+            .dedup()
+            .find(|id| {
+                *id > 0
+                    && data
+                        .gil_shop_items
+                        .values()
+                        .filter(|items| items.iter().any(|i| i.item == *id))
+                        .count()
+                        > 1
+            })
+            .expect("game data has multi-shop items");
+
+        let sources = vendor_sources_for_item(item_id);
+        let keys: Vec<_> = sources.iter().map(|s| (s.npc.key_id.0, s.shop.0)).collect();
+        assert!(keys.windows(2).all(|w| w[0] <= w[1]), "unsorted: {keys:?}");
     }
 
     #[test]

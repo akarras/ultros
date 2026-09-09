@@ -1117,6 +1117,9 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 [data-theme="light"] [data-item-section-nav] a[href="#vendor-sources"] {
     @apply text-amber-800;
 }
+[data-theme="light"] .vendor-gate-seasonal {
+    @apply text-amber-800;
+}
 
 /* Light-mode text utility fixes for contrast */
 [data-theme="light"] .text-gray-300,

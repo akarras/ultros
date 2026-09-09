@@ -35,6 +35,12 @@ struct FromCsvFieldReceiver {
     count: Option<usize>,
     #[darling(default)]
     default_if_missing: Option<String>,
+    /// Field is not read from the CSV at all — it holds a value derived after
+    /// parsing, and starts at `Default::default()`. Lets a sheet struct carry
+    /// data resolved from other sheets during pack generation without that
+    /// data having to exist as a column.
+    #[darling(default)]
+    skip: bool,
 }
 
 impl ToTokens for FromCsvReceiver {
@@ -50,6 +56,9 @@ impl ToTokens for FromCsvReceiver {
         let field_parsers = fields.iter().map(|f| {
             let field_ident = f.ident.as_ref().unwrap();
             let ty = &f.ty;
+            if f.skip {
+                return quote! { #field_ident: Default::default() };
+            }
             let col_name = f
                 .column
                 .as_ref()

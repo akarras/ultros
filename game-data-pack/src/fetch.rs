@@ -16,7 +16,15 @@ pub const DATAMINING_LANGS: [&str; 4] = ["en", "ja", "de", "fr"];
 
 /// Every sheet `xiv_gen::csv_to_rkyv::read_data_from` reads. Adding a sheet
 /// there means adding it here, or the sparse checkout will not contain it.
-pub const SHEETS: [&str; 32] = [
+///
+/// Several of these are read only to compute a derived field and are never
+/// stored in the pack — `ENpcBase`/`TopicSelect`/`PreHandler` collapse into
+/// `Data::gil_shop_npcs`, and `Achievement`/`Quest` into each shop item's
+/// `availability`. A sheet costs checkout time here but zero pack bytes, so
+/// prefer resolving upstream data at generation time over shipping it.
+pub const SHEETS: [&str; 34] = [
+    "Achievement",
+    "Quest",
     "Item",
     "Recipe",
     "ClassJob",
@@ -240,7 +248,7 @@ mod tests {
 
     #[test]
     fn sheets_list_covers_every_read_sheet() {
-        assert_eq!(SHEETS.len(), 32);
+        assert_eq!(SHEETS.len(), 34);
         let mut sorted = SHEETS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -250,6 +258,16 @@ mod tests {
         // Omitting this one leaves the sparse checkout without the sheet that
         // separates scrip turn-ins from material exchanges.
         assert!(SHEETS.contains(&"CollectablesShop"));
+        // Read only to classify shop rows, and never stored. Dropping either
+        // one leaves every seasonal vendor looking like ordinary stock, which
+        // is #1362 all over again — and the generator would panic on the
+        // missing CSV long before that, which is the point of listing them.
+        assert!(SHEETS.contains(&"Achievement"));
+        assert!(SHEETS.contains(&"Quest"));
+        // Likewise read-and-dropped, for `Data::gil_shop_npcs`.
+        for sheet in ["ENpcBase", "TopicSelect", "PreHandler"] {
+            assert!(SHEETS.contains(&sheet), "{sheet} missing from SHEETS");
+        }
     }
 
     #[test]
