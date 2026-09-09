@@ -166,10 +166,6 @@ async fn listing_history_scope_workload() {
                             elapsed < 12.5,
                             "successful history must also meet the cache deadline"
                         );
-                        assert!(
-                            rows != 240000 || n != 32,
-                            "over-cap region must fail, never truncate"
-                        );
                         assert_eq!(history.len(), 2000);
                         assert!(history.values().all(|r| r.floor_unknown_secs == 0));
                         assert!(history.values().all(|r| r.days_of_stock.is_some()));
@@ -212,6 +208,10 @@ async fn listing_history_scope_workload() {
                             "CASE rows_per_world={rows} scope={scope} worlds={n} days={days} repeat={repeat} seconds={elapsed:.3} status=unavailable error={error}"
                         );
                         assert!(limit_error(&error), "unexpected query failure");
+                        assert!(
+                            cfg!(debug_assertions) && error.kind() == ClickHouseErrorKind::Timeout,
+                            "all supported fixture scopes must complete in the optimized profile"
+                        );
                         assert!(rows == 240000 && n >= 8, "small fixtures must succeed");
                         assert!(
                             elapsed < 14.0,
@@ -229,7 +229,9 @@ async fn listing_history_scope_workload() {
                     AND query_kind='Select' AND NOT has(tables,'system.query_log') ORDER BY event_time_microseconds")).fetch_all::<QueryEvidence>().await.unwrap();
                 assert!(!evidence.is_empty(), "enable query_log on the owned server");
                 for q in evidence {
-                    let stage = if q.query.contains("FROM listing_events") {
+                    let stage = if q.query.contains("/* listing_history_items */") {
+                        "item_keys"
+                    } else if q.query.contains("FROM listing_events") {
                         "events"
                     } else if q.query.contains("FROM floor_changes") {
                         "floors"
@@ -253,5 +255,22 @@ async fn listing_history_scope_workload() {
                 }
             }
         }
+    }
+    if rows == 240000 {
+        sql(&ch, &format!("INSERT INTO listing_events SELECT toDateTime({to}-2000),'updated','websocket',toInt32(900000),toUInt8(0),toInt32(1),toString(number),toInt32(number),toInt32(number),toUInt32(100),toUInt16(2),toUInt32(100),toUInt16(2),toDateTime({to}-3600) FROM numbers(2000001)")).await;
+        let start = Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(12),
+            listing_history::window(&ch, &[1], 90, to),
+        )
+        .await;
+        let error = result
+            .expect("oversized-item guard must return within the cache deadline")
+            .expect_err("a failed later item batch must not return earlier partial history");
+        assert!(error.to_string().contains("TOO_MANY_ROWS_OR_BYTES"));
+        println!(
+            "CAP_GUARD item=900000 rows=2000001 status=unavailable seconds={:.3} error={error}",
+            start.elapsed().as_secs_f64()
+        );
     }
 }

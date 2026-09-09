@@ -82,7 +82,46 @@ Each dataset has 32 synthetic worlds, 1,000 item IDs, both qualities, 2,000 outp
 
 For each tier, the 1-world, 8-world DC and 32-world region queries run for 30 and 90 days, three times each. `CASE` lines report full Rust alive/history/stock duration and success or explicit resource-limit error; `QUERY` lines report server duration, scanned/result rows, peak query memory, and exception code from the owned server's query log. `PROCESS` records Linux process high-water RSS cumulatively, not per-query allocation. The first run follows insertion and is **not** a cold-disk benchmark; no shared caches are flushed. The final harness applies the same 12-second deadline as `StatsCache` and fails if local processing delays an error beyond 14 seconds. Both debug and `server-release` runs represent serial cache misses, excluding HTTP serialization and cache hits, not production p95 or concurrency evidence.
 
-## Initial workload evidence
+## Regional capacity fix and current measurements
+
+The regional row-limit failure below is resolved at the measured fixture volume. The loader first reads scoped per-item row counts, then fetches bounded item batches instead of whole-region raw results. Each item retains **all selected worlds**, both qualities, the full matching context, and every floor transition plus its pre-window baselines. Exact scope floors and pooled age medians are calculated once per item; per-world summaries are never combined. The count query also discovers baseline-only keys, and the final missing-receipt aggregation retains sales-only keys.
+
+Batches target at most 500,000 rows per raw query and 128 items, with at most two batches in flight. A hot item stays whole and isolated even when it exceeds the target. Counts guide planning only: concurrent inserts cannot bypass the unchanged SQL limit. Every query still throws at 2,000,000 result rows, 512 MiB, or 10 seconds; the full cache loader retains its 12-second deadline. A failed batch discards the entire load, including earlier completed items. Compact event projections avoid unused identity strings, and hash-based receipt deduplication preserves the earliest actual receipt. Cooperative yields and dropping the bounded future stream preserve deadline cancellation without detached batch tasks. This changes no schema, retention, response semantics, or cache policy.
+
+All **36 optimized workload calls** now return complete history, with exact turnover counts, all 2,000 item/quality keys, complete fixture floor coverage and stock estimates. The same matrix also runs in debug mode to check cancellation; an explicit debug timeout is unavailable and is not counted as successful history. Each range below is three serial calls. Query peak is an individual query, not the combined memory of two in-flight queries.
+
+| Profile | Events/world/90d | Scope | Window | Seconds (min–max) | Outcome | Query peak MiB | Max rows returned by one query |
+| --- | ---: | --- | ---: | ---: | --- | ---: | ---: |
+| test | 24,000 | world (1) | 30d | 0.202–0.216 | complete | 4.34 | 2,210 |
+| test | 24,000 | world (1) | 90d | 0.327–0.385 | complete | 4.68 | 7,248 |
+| test | 24,000 | dc (8) | 30d | 0.625–0.651 | complete | 6.94 | 17,680 |
+| test | 24,000 | dc (8) | 90d | 1.607–1.621 | complete | 8.38 | 57,984 |
+| test | 24,000 | region (32) | 30d | 2.157–2.189 | complete | 12.79 | 70,720 |
+| test | 24,000 | region (32) | 90d | 5.787–5.857 | complete | 38.56 | 231,936 |
+| test | 240,000 | world (1) | 30d | 0.786–0.834 | complete | 16.34 | 23,947 |
+| test | 240,000 | world (1) | 90d | 2.127–2.145 | complete | 40.95 | 72,480 |
+| test | 240,000 | dc (8) | 30d | 4.796–4.875 | complete | 25.80 | 191,576 |
+| test | 240,000 | dc (8) | 90d | 12.135–12.175 | deadline | 128.08 | 499,200 |
+| test | 240,000 | region (32) | 30d | 12.005–12.008 | deadline | 92.71 | 511,712 |
+| test | 240,000 | region (32) | 90d | 12.068–12.147 | deadline | 163.45 | 1,536,000 |
+| server-release | 24,000 | world (1) | 30d | 0.119–0.148 | complete | 4.33 | 2,210 |
+| server-release | 24,000 | world (1) | 90d | 0.152–0.213 | complete | 4.68 | 7,248 |
+| server-release | 24,000 | dc (8) | 30d | 0.184–0.192 | complete | 6.94 | 17,680 |
+| server-release | 24,000 | dc (8) | 90d | 0.330–0.344 | complete | 8.38 | 57,984 |
+| server-release | 24,000 | region (32) | 30d | 0.441–0.465 | complete | 12.79 | 70,720 |
+| server-release | 24,000 | region (32) | 90d | 1.023–1.046 | complete | 38.56 | 231,936 |
+| server-release | 240,000 | world (1) | 30d | 0.282–0.299 | complete | 16.34 | 23,947 |
+| server-release | 240,000 | world (1) | 90d | 0.533–0.565 | complete | 40.94 | 72,480 |
+| server-release | 240,000 | dc (8) | 30d | 0.988–1.039 | complete | 25.80 | 191,576 |
+| server-release | 240,000 | dc (8) | 90d | 2.373–2.489 | complete | 128.08 | 499,200 |
+| server-release | 240,000 | region (32) | 30d | 3.064–3.536 | complete | 92.71 | 511,712 |
+| server-release | 240,000 | region (32) | 90d | 9.171–9.421 | complete | 175.41 | 1,536,000 |
+
+A separate probe inserts 2,000,001 events for one later item after the successful workload matrix. Both profiles return code 396 without returning a partial map: test 8.300s, server-release 1.122s. This intentional single-item safety failure is separate from the regional capacity results. A 270-item database regression spans multiple batches and verifies a pooled median of 20 seconds from world ages [10,20] and [100], plus exact scope extrema that exclude a 999-gil world spike hidden by a cheaper world. Existing matching, reprice, pending, coverage and boundary tests still apply.
+
+Current machine-readable evidence is [windowed-listing-capacity-2026-09-09.json](windowed-listing-capacity-2026-09-09.json), including all timings, scanned/result rows, query memory and safety probes. Cumulative application peak RSS (KiB): `test/24000` = 56,796, `test/240000` = 274,080, `server-release/24000` = 60,008, `server-release/240000` = 322,228. This resolves the demonstrated implementation gap without raising limits or narrowing scope. It does not establish production maturity, deployed scale/skew, cold-disk behavior or concurrent-request capacity; the release-evidence inventory remains applicable.
+
+## Historical baseline: initial whole-scope workload
 
 Measured on 2026-09-09 with ClickHouse **25.4.13.22**, an AMD Ryzen Threadripper 3970X shared host, one ClickHouse query thread, and unoptimized Rust test code. Each row below represents three serial runs. These initial measurements apply the production **SQL** limits but time the complete loader without the cache deadline; they identify which cases need the separate 12-second cancellation check. They are not successful HTTP response times.
 
@@ -105,13 +144,13 @@ The smaller dataset has 768,000 listing events, 232,681 receipt rows, 256,000 sa
 
 The larger region/30-day interval contains approximately 2.56 million event rows and the 90-day interval 7.68 million. All six regional attempts raised `TOO_MANY_ROWS_OR_BYTES` (code 396) at the two-million-result-row limit. The Rust loader returned an error and no history map; it did not return truncated statistics. The existing web error mapping produces HTTP 500 for the initial ClickHouse error or `StatsCache` deadline; coalesced/follow-up cold requests during the cache failure backoff receive HTTP 503. A previously cached response may instead be served with the explicit stale disposition. Those status mappings are established by code/unit tests; this matrix invokes query functions and does not itself issue HTTP requests.
 
-This is evidence of a real capacity limitation at the stated synthetic volume, **not** proof that deployed regional traffic fits. The next capacity step is a concurrency and production-volume/skew run on a representative isolated host, followed by reducing whole-market raw transfer/computation or providing an appropriately indexed aggregation strategy if representative traffic exceeds these bounds. Do not raise the limits or describe 30/90-day region support as production-ready from these results.
+This historical result established the implementation capacity gap addressed by the item partitioning measured above. It remains recorded as the before-change baseline, not as a current regional failure or successful historical data response. Production-volume/skew and concurrency evidence still requires a representative isolated host.
 
 The first deadline-aware run exposed a separate implementation problem: the large DC/90-day load returned its 12-second timeout after **15.959 seconds**, failing the harness's 14-second responsiveness assertion. Synchronous receipt deduplication, grouping and per-item calculations prevented the runtime from polling the deadline. `listing_history::window` now yields every 4,096 rows during deduplication/grouping and between item calculations. It preserves the same matching and floor semantics; it does not turn a timed-out partial result into successful history or raise a resource limit. The failed run remains recorded at `/tmp/ultros-t12-workload-starved-deadline.log` on the validation host.
 
-## Verified deadline and optimized-profile results
+## Historical baseline: whole-scope deadline and optimized-profile results
 
-The final harness passed both fixture tiers in both profiles with the SQL limits, 12-second loader deadline, count/coverage assertions, and responsiveness assertions unchanged. These are 72 measured calls: complete history and explicit unavailable outcomes are distinguished below. Each range is three serial runs; query memory is the maximum individual query peak, not application RSS.
+At commit `12a3160`, before item partitioning, the harness passed its safety assertions for both fixture tiers in both profiles with the SQL limits, 12-second loader deadline, count/coverage assertions, and responsiveness assertions unchanged. These are 72 measured calls: complete history and explicit unavailable outcomes are distinguished below. Each range is three serial runs; query memory is the maximum individual query peak, not application RSS.
 
 | Profile | Events/world/90d | Scope | Window | Seconds (min–max) | Outcome | Query peak MiB | Max rows read by one query |
 | --- | ---: | --- | ---: | ---: | --- | ---: | ---: |
@@ -142,7 +181,7 @@ The final harness passed both fixture tiers in both profiles with the SQL limits
 
 The cooperative-yield change was verified by the same deadline regression that failed at 15.959 seconds before the fix. This is cooperative cancellation evidence for the measured workload, not a hard CPU-preemption guarantee for arbitrary single-item skew. The optimized run uses the repository `server-release` profile; the test binary uses the default allocator, while the web server enables jemalloc. Concurrent requests, a cold disk, actual deployed data skew, and the deployed server configuration still require an approved isolated representative environment.
 
-Machine-readable fixtures, all three timings, outcomes, memory and scanned-row figures are checked in at [windowed-listing-workload-2026-09-09.json](windowed-listing-workload-2026-09-09.json). Process high-water RSS (KiB): `test/24000` = 210,656, `test/240000` = 479,272, `server-release/24000` = 216,908, `server-release/240000` = 473,276.
+Historical machine-readable fixtures, all three timings, outcomes, memory and scanned-row figures are checked in at [windowed-listing-workload-2026-09-09.json](windowed-listing-workload-2026-09-09.json). Process high-water RSS (KiB): `test/24000` = 210,656, `test/240000` = 479,272, `server-release/24000` = 216,908, `server-release/240000` = 473,276.
 
 ## Bounded release-validation procedure
 

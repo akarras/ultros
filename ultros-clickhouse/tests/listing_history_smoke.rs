@@ -174,3 +174,56 @@ async fn window_history_receipts_floors_stock_and_bounds() {
         None
     );
 }
+
+/// Item partitioning must not partition worlds or average per-world medians.
+#[tokio::test]
+async fn item_batches_keep_pooled_ages_and_exact_scope_floors() {
+    if std::env::var("ULTROS_CH_INTEGRATION").is_err() {
+        return;
+    }
+    let url = std::env::var("CLICKHOUSE_URL").unwrap();
+    assert!(url.starts_with("http://127.0.0.1:"));
+    assert!(
+        std::env::var("CLICKHOUSE_DATABASE")
+            .unwrap()
+            .starts_with("ultros_t12_")
+    );
+    let ch = ClickHouseClient::from_env();
+    ch.migrate().await.unwrap();
+    let to = chrono::Utc::now().timestamp();
+    let from = to - 86400;
+    let removed = to - 2000;
+    let first_item = 1_500_000 + (std::process::id() % 100000) as i32;
+    // More than two item batches; each item has ages [10,20] in world 1 and
+    // [100] in world 2. The scope median is 20, not the mean of 15 and 100.
+    let source = format!(
+        "SELECT toInt32({first_item}+intDiv(number,3)) AS item,
+        number%3 AS k,toInt32(if(k=2,2,1)) AS world,
+        toInt32(800000000+number) AS id,toUInt32(100*(k+1)) AS price,
+        toUInt32(multiIf(k=0,10,k=1,20,100)) AS age FROM numbers(810)"
+    );
+    ch.client().query(&format!("INSERT INTO listing_events SELECT toDateTime({removed}),'removed','websocket',item,toUInt8(0),world,toString(id),id,id,price,toUInt16(2),toUInt32(0),toUInt16(0),toDateTime({removed}-age) FROM ({source})")).execute().await.unwrap();
+    ch.client().query(&format!("INSERT INTO sale_receipts SELECT id,toDateTime({removed}+1),toDateTime({removed}),item,toUInt8(0),world,price,toUInt16(2) FROM ({source})")).execute().await.unwrap();
+    for (offset, world, price) in [
+        (-100, 1, 100),
+        (-100, 2, 80),
+        (50, 1, 999), // hidden by world 2's cheaper floor
+        (90, 1, 100),
+        (100, 2, 0),
+        (200, 1, 120),
+        (300, 1, 0),
+    ] {
+        ch.client().query(&format!("INSERT INTO floor_changes SELECT toDateTime({from}+({offset})),toInt32({first_item}+number),toUInt8(0),toInt32({world}),toUInt32({price}),'listing' FROM numbers(270)")).execute().await.unwrap();
+    }
+    let result = listing_history::window(&ch, &[1, 2], 1, to).await.unwrap();
+    for item in first_item..first_item + 270 {
+        let stats = &result[&(item, false)];
+        assert_eq!(stats.removals, 3);
+        assert_eq!(stats.matches.matched, 3);
+        assert_eq!(stats.matches.median_time_to_sell_secs, Some(20));
+        assert_eq!((stats.floor_min, stats.floor_max), (Some(80), Some(120)));
+        assert_eq!(stats.floor_empty_secs, 86400 - 300);
+        assert_eq!(stats.floor_unknown_secs, 0);
+        assert!(!stats.listing_coverage.continuity_verified);
+    }
+}

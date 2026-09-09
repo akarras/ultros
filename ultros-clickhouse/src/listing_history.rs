@@ -4,6 +4,7 @@ use crate::{
     rows::{ListingEventKind, ListingEventRow, ListingEventSource, SaleReceiptRow},
 };
 use clickhouse::Row;
+use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use ultros_api_types::listing_stats::{HistoryCoverage, ListingWindowStats, MatchedSalesStats};
@@ -24,8 +25,9 @@ pub fn coverage(times: impl Iterator<Item = i64>, from: i64, to: i64) -> History
     result
 }
 
-/// Whole-scope queries remain bounded and fail as unavailable on resource limits;
-/// never silently truncate a window. Current-only clients do not run this path.
+/// Discover item keys, then retain all worlds for each bounded item batch.
+/// No per-world medians or floor extrema are merged: each item is reduced once
+/// with its complete scope and matching context. Any failed batch fails the load.
 pub async fn window(
     ch: &ClickHouseClient,
     worlds: &[i32],
@@ -44,11 +46,111 @@ pub async fn window(
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let events = ch.client().query(&format!("SELECT ?fields FROM listing_events WHERE world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to}){LIMITS}", from-600)).fetch_all::<ListingEventRow>().await?;
+    let items = ch.client().query(&format!("/* listing_history_items */ SELECT item_id,sum(event_rows) AS events,sum(receipt_rows) AS receipts,sum(floor_rows) AS floors FROM (
+        SELECT item_id,count() AS event_rows,toUInt64(0) AS receipt_rows,toUInt64(0) AS floor_rows FROM listing_events WHERE world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to}) GROUP BY item_id
+        UNION ALL
+        SELECT item_id,toUInt64(0),count(),toUInt64(0) FROM sale_receipts WHERE world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}) GROUP BY item_id
+        UNION ALL
+        SELECT item_id,toUInt64(0),toUInt64(0),countIf(event_time > toDateTime({from})) FROM floor_changes WHERE world_id IN ({world_sql}) AND event_time < toDateTime({to}) GROUP BY item_id
+        ) GROUP BY item_id ORDER BY item_id{LIMITS}", from-600, from-600))
+        .fetch_all::<ItemCounts>().await?;
+    let batches = item_batches(items, worlds.len());
+    // Two in-flight batches overlap SQL with local reduction without spawning
+    // detached work. Dropping this stream cancels both on the cache deadline.
+    let mut pending = futures::stream::iter(batches)
+        .map(|items| async move { window_items(ch, worlds, days, to, &items).await })
+        .buffer_unordered(2);
+    let mut output = BTreeMap::new();
+    while let Some(batch) = pending.try_next().await? {
+        output.extend(batch);
+    }
+    // Sales without receipt evidence are explicitly counted, never guessed from
+    // sold_date or ClickHouse inserted_at (which is also rewritten by backfill).
+    #[derive(Row, Deserialize)]
+    struct Missing {
+        item_id: i32,
+        hq: u8,
+        n: u64,
+    }
+    let missing = ch.client().query(&format!("SELECT item_id, hq, count() AS n FROM sales FINAL
+        WHERE world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to})
+        AND pg_id NOT IN (SELECT pg_id FROM sale_receipts WHERE world_id IN ({world_sql}) AND sold_at >= toDateTime({from}) AND sold_at < toDateTime({to}))
+        GROUP BY item_id, hq{LIMITS}")).fetch_all::<Missing>().await?;
+    for row in missing {
+        output
+            .entry((row.item_id, row.hq != 0))
+            .or_insert_with(|| ListingWindowStats {
+                window_days: days,
+                from,
+                to,
+                floor_unknown_secs: (to - from) as u64,
+                matches: MatchedSalesStats {
+                    settled_through_unix: to - 601,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .matches
+            .sales_without_receipt = row.n;
+    }
+    Ok(output)
+}
+
+#[derive(Row, Deserialize)]
+struct ItemCounts {
+    item_id: i32,
+    events: u64,
+    receipts: u64,
+    floors: u64,
+}
+
+fn item_batches(items: Vec<ItemCounts>, worlds: usize) -> Vec<Vec<i32>> {
+    let mut batches = Vec::new();
+    let mut batch = Vec::new();
+    let mut rows: u64 = 0;
+    for item in items {
+        // A floor query also returns at most one pre-window baseline per world
+        // and quality. Counts only plan batches; actual SQL limits still throw.
+        let size = item
+            .events
+            .max(item.receipts)
+            .max(item.floors.saturating_add(worlds as u64 * 2));
+        if !batch.is_empty() && (batch.len() == 128 || rows.saturating_add(size) > 500_000) {
+            batches.push(std::mem::take(&mut batch));
+            rows = 0;
+        }
+        batch.push(item.item_id);
+        rows = rows.saturating_add(size);
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
+}
+
+async fn window_items(
+    ch: &ClickHouseClient,
+    worlds: &[i32],
+    days: u16,
+    to: i64,
+    items: &[i32],
+) -> Result<BTreeMap<(i32, bool), ListingWindowStats>, ClickHouseError> {
+    let from = to - i64::from(days) * 86400;
+    let world_sql = worlds
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let item_sql = items
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let events = ch.client().query(&format!("SELECT ?fields FROM listing_events WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to}){LIMITS}", from-600)).fetch_all::<WindowEvent>().await?;
     // Deduplicate receipts by stable PG identity, preserving the earliest actual
     // observation. An old sale replay cannot acquire a fresh matching timestamp.
-    let receipts = ch.client().query(&format!("SELECT ?fields FROM sale_receipts WHERE world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}){LIMITS}", from-600)).fetch_all::<SaleReceiptRow>().await?;
-    let mut unique = BTreeMap::<(i32, i32), SaleReceiptRow>::new();
+    let receipts = ch.client().query(&format!("SELECT ?fields FROM sale_receipts WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}){LIMITS}", from-600)).fetch_all::<SaleReceiptRow>().await?;
+    let mut unique = HashMap::<(i32, i32), SaleReceiptRow>::new();
     for (index, receipt) in receipts.into_iter().enumerate() {
         if index.is_multiple_of(4096) {
             tokio::task::yield_now().await;
@@ -63,7 +165,7 @@ pub async fn window(
             .or_insert(receipt);
     }
     let receipts = unique.into_values().collect::<Vec<_>>();
-    let floors = floor_history::window_changes(ch, &[], worlds, from, to).await?;
+    let floors = floor_history::window_changes(ch, items, worlds, from, to).await?;
     let mut grouped_events: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let mut grouped_receipts: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let mut grouped_floors: BTreeMap<_, Vec<_>> = BTreeMap::new();
@@ -109,7 +211,7 @@ pub async fn window(
         let receipts = grouped_receipts.remove(&key).unwrap_or_default();
         let floors = grouped_floors.remove(&key).unwrap_or_default();
         let floor = floor_history::bounds(&floors, worlds, from, to);
-        let relevant = |e: &&ListingEventRow| {
+        let relevant = |e: &&WindowEvent| {
             e.event_time.timestamp() >= from && e.source != ListingEventSource::Snapshot
         };
         output.insert(
@@ -138,46 +240,54 @@ pub async fn window(
                 floor_known_secs: floor.known_secs,
                 floor_empty_secs: floor.empty_secs,
                 floor_unknown_secs: floor.unknown_secs,
-                matches: match_sales(&events, &receipts, from, to),
+                matches: match_observations(&events, &receipts, from, to),
                 ..Default::default()
             },
         );
     }
-    // Sales without receipt evidence are explicitly counted, never guessed from
-    // sold_date or ClickHouse inserted_at (which is also rewritten by backfill).
-    #[derive(Row, Deserialize)]
-    struct Missing {
-        item_id: i32,
-        hq: u8,
-        n: u64,
-    }
-    let missing = ch.client().query(&format!("SELECT item_id, hq, count() AS n FROM sales FINAL
-        WHERE world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to})
-        AND pg_id NOT IN (SELECT pg_id FROM sale_receipts WHERE world_id IN ({world_sql}) AND sold_at >= toDateTime({from}) AND sold_at < toDateTime({to}))
-        GROUP BY item_id, hq{LIMITS}")).fetch_all::<Missing>().await?;
-    for row in missing {
-        output
-            .entry((row.item_id, row.hq != 0))
-            .or_insert_with(|| ListingWindowStats {
-                window_days: days,
-                from,
-                to,
-                floor_unknown_secs: (to - from) as u64,
-                matches: MatchedSalesStats {
-                    settled_through_unix: to - 601,
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .matches
-            .sales_without_receipt = row.n;
-    }
     Ok(output)
+}
+
+/// Only fields used by turnover, coverage and conservative matching. The stored
+/// event identity remains untouched; this read projection avoids unused strings.
+#[derive(Row, Deserialize)]
+struct WindowEvent {
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    event_time: chrono::DateTime<chrono::Utc>,
+    kind: ListingEventKind,
+    source: ListingEventSource,
+    item_id: i32,
+    hq: u8,
+    world_id: i32,
+    retainer_id: i32,
+    price_per_unit: u32,
+    quantity: u16,
+    prev_quantity: u16,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    reviewed_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<&ListingEventRow> for WindowEvent {
+    fn from(row: &ListingEventRow) -> Self {
+        Self {
+            event_time: row.event_time,
+            kind: row.kind,
+            source: row.source,
+            item_id: row.item_id,
+            hq: row.hq,
+            world_id: row.world_id,
+            retainer_id: row.retainer_id,
+            price_per_unit: row.price_per_unit,
+            quantity: row.quantity,
+            prev_quantity: row.prev_quantity,
+            reviewed_at: row.reviewed_at,
+        }
+    }
 }
 
 // Key includes quality and world even though callers group by item/quality.
 type Key = (i32, i32, u8, u32, u16);
-fn event_key(e: &ListingEventRow) -> Key {
+fn event_key(e: &WindowEvent) -> Key {
     (e.world_id, e.item_id, e.hq, e.price_per_unit, e.quantity)
 }
 fn sale_key(s: &SaleReceiptRow) -> Key {
@@ -186,6 +296,16 @@ fn sale_key(s: &SaleReceiptRow) -> Key {
 
 pub fn match_sales(
     events: &[ListingEventRow],
+    receipts: &[SaleReceiptRow],
+    from: i64,
+    to: i64,
+) -> MatchedSalesStats {
+    let events = events.iter().map(WindowEvent::from).collect::<Vec<_>>();
+    match_observations(&events, receipts, from, to)
+}
+
+fn match_observations(
+    events: &[WindowEvent],
     receipts: &[SaleReceiptRow],
     from: i64,
     to: i64,
@@ -200,7 +320,7 @@ pub fn match_sales(
         receipt_coverage: coverage(receipts.iter().map(|s| s.received_at.timestamp()), from, to),
         ..Default::default()
     };
-    let mut removals: HashMap<Key, Vec<&ListingEventRow>> = HashMap::new();
+    let mut removals: HashMap<Key, Vec<&WindowEvent>> = HashMap::new();
     let mut sales: HashMap<Key, Vec<&SaleReceiptRow>> = HashMap::new();
     let mut adds: HashMap<(i32, i32, u8, u16, i32), Vec<i64>> = HashMap::new();
     for event in events
