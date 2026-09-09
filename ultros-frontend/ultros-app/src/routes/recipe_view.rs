@@ -734,6 +734,11 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             .get()
             .and_then(|i| cards.get().plans.get(i).cloned())
     });
+    // Travel metadata changes on a tick even when all purchases stay the same.
+    // Compare just the consistently ordered rows before notifying the itinerary.
+    let stops = Memo::new(move |_| {
+        selected.with(|plan| plan.as_ref().map(planner::itinerary).unwrap_or_default())
+    });
     let finished = Memo::new(move |_| {
         let data = loaded.get()?;
         let item = data.items.get(&recipe.item_result)?;
@@ -958,25 +963,27 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                         {reported.iter().map(|(item,world)|{ let (item,world)=(*item,*world); view!{<button class="btn-secondary text-xs" on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.remove(&(item,world)); set_unavailable.set(write_pair_set(&set)); }>{format!("{} · {} ×",item_name(item),world_name(world))}</button>} }).collect_view()}
                         <button class="text-xs text-brand-300 hover:underline" on:click=move |_|set_unavailable.set(None)>{t!(i18n, recipe_planner_clear_unavailable)}</button></div>})
                 }}
-                {move || {
-                    let Some(plan)=selected.get() else{return view!{<p>"Loading shopping stops…"</p>}.into_any()};
-                    let mut stops:BTreeMap<(String,String,i32),Vec<(i32,Offer)>>=BTreeMap::new();
-                    for (id,p) in &plan.purchases {for o in &p.offers {
-                        stops.entry((dc_name(o.world),world_name(o.world),o.world)).or_default().push((*id,o.clone()));
-                    }}
-                    view!{<div class="grid gap-3 lg:grid-cols-2">{stops.into_iter().map(|((dc,name,_),rows)| {
-                        let total=rows.iter().map(|(_,o)|o.price*o.quantity).sum::<i64>();
-                        view!{<div class="panel rounded-xl p-4 space-y-3"><div class="flex justify-between gap-2"><h3 class="font-semibold">{format!("{dc} · {name}")}</h3><span class="tabular-nums">{gil(total)}</span></div>{rows.into_iter().map(|(id,o)|{
+                <Show when=move ||selected.with(Option::is_some) fallback=||view!{<p>"Loading shopping stops…"</p>}>
+                    <div class="grid gap-3 lg:grid-cols-2">
+                    <For each=move ||stops.with(|stops|{
+                        let mut worlds=stops.keys().copied().collect::<Vec<_>>();
+                        worlds.sort_by_key(|world|(dc_name(*world),world_name(*world),*world));
+                        worlds
+                    }) key=|world|*world children=move |world|{
+                        let rows=Memo::new(move |_|stops.with(|stops|stops.get(&world).cloned().unwrap_or_default()));
+                        view!{<div class="panel rounded-xl p-4 space-y-3"><div class="flex justify-between gap-2"><h3 class="font-semibold">{format!("{} · {}",dc_name(world),world_name(world))}</h3><span class="tabular-nums">{move ||rows.with(|rows|gil(rows.iter().map(|(_,o)|o.price*o.quantity).sum::<i64>()))}</span></div>
+                        <For each=move ||rows.get() key=|(id,o)|(*id,o.id,o.price,o.quantity) children=move |(id,o)|{
                             let key=(id,o.id);
                             let world=o.world;
                             let snapshot=o.clone();
                             let label=format!("{} × {} · {} each · {}",item_name(id),o.quantity,gil(o.price),gil(o.price*o.quantity));
-                            view!{<div class="flex items-start gap-2 text-sm" data-testid=format!("stop-{id}-{world}")><label class="flex items-start gap-2 flex-1"><input type="checkbox" class="mt-1" prop:checked=move ||locks.with(|s|s.contains_key(&key)) on:change=move |e|locks.update(|s|{if event_target_checked(&e){s.insert(key,snapshot.clone());}else{s.remove(&key);}}) /><span>{label}</span></label>
+                            view!{<div class="flex items-start gap-2 text-sm" data-testid=format!("stop-{id}-{world}") data-listing-id=o.id><label class="flex items-start gap-2 flex-1"><input type="checkbox" class="mt-1" prop:checked=move ||locks.with(|s|s.contains_key(&key)) on:change=move |e|locks.update(|s|{if event_target_checked(&e){s.insert(key,snapshot.clone());}else{s.remove(&key);}}) /><span>{label}</span></label>
                                 <button class="btn-secondary text-xs shrink-0" disabled=move ||locks.with(|s|s.contains_key(&key)) on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.insert((id,world)); set_unavailable.set(write_pair_set(&set)); locks.update(|s|s.retain(|(item,_),o|!(*item==id && o.world==world))); }>{t!(i18n, recipe_planner_not_here)}</button></div>}
-                        }).collect_view()}</div>}
-                    }).collect_view()}
-                    {plan.purchases.into_iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(id)}</strong><p>{vendor_summary(p.vendor_quantity,p.missing())}</p></div>}).collect_view()}</div>}.into_any()
-                }}
+                        } /></div>}
+                    } />
+                    {move ||selected.with(|plan|plan.as_ref().map(|plan|plan.purchases.iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(*id)}</strong><p>{vendor_summary(p.vendor_quantity,p.missing())}</p></div>}).collect_view()))}
+                    </div>
+                </Show>
             </section>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
             <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left. Each card to the right completes more of the recipe or, when equally complete, costs less gil; the last card is the most complete plan found and, among equally complete plans, the cheapest. The full scope is always evaluated, so the frontier keeps the best plan found. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
