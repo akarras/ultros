@@ -38,7 +38,7 @@ async function main() {
       last_sold_unix: 1788900000, confidence: 'high',
     })) };
     const respond = () => request.respond({ status: days === 1 ? 503 : 200,
-      contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
+      contentType: 'application/json', body: JSON.stringify(days === 1 ? { error: 'Sale statistics temporarily unavailable' } : body) }).catch(() => {});
     if (hold.has(key)) held.set(key, respond); else return respond();
   });
   await page.evaluateOnNewDocument(() => {
@@ -90,6 +90,16 @@ async function main() {
     assert(groups.includes('Sale history (selected window)'));
     assert(groups.includes('Sale history (7d)'));
     await page.keyboard.press('Escape');
+    // Follow-window columns request their own body even with listing pricing.
+    hold.add('Gilgamesh/30');
+    await Promise.all([
+      page.waitForRequest(request => request.url().includes('sale_stats/Gilgamesh?window=30')),
+      page.select('[data-market-window]', '30'),
+    ]);
+    await heading('market-sale-median', '(30d)');
+    await cell('price', '100');
+    await page.select('[data-market-window]', '7');
+    await heading('market-sale-median', '(7d)');
     await page.select('select:has(option[value="sale-median"])', 'sale-median');
     await cell('price', '70');
 
@@ -128,9 +138,14 @@ async function main() {
     await page.type('[data-grid-saved-views] form input', 'Thirty days');
     await page.click('[data-grid-saved-views] form button[type="submit"]');
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('ultros.grid.window-fixture-grid.views') || '[]').some(view => view.name === 'Thirty days'));
-    await page.keyboard.press('Escape');
+    // Saving disables the cleared form's submit button, which releases focus.
+    // Dismiss by clicking outside instead of sending Escape to the page body.
+    await page.click('h1');
+    await page.waitForSelector('[data-grid-saved-views] form', { hidden: true });
     await page.select('[data-market-window]', '7');
+    await heading('market-sale-median', '(7d)');
     await page.click('[data-grid-saved-views] > button');
+    await page.waitForSelector('[data-grid-saved-views] a', { visible: true });
     await page.click('[data-grid-saved-views] a');
     await heading('market-sale-median', '(30d)');
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -168,6 +183,7 @@ async function main() {
     await page.select('[data-market-window]', '30');
     await cell('market-sale-median', '900');
     await rows(3); // fixture row 44 has missing stats and keeps its listing
+    assert.equal(await page.$eval(`${selector('price')} [data-window-item="44"]`, el => el.textContent.trim()), '100');
     // Trends shares the control while keeping its narrower choices and 30d default.
     await page.goto(`${BASE}/trends/Gilgamesh?v=1&lang=en`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__windowHydrated);
