@@ -1,0 +1,658 @@
+use crate::components::icon::Icon;
+use crate::components::loading::Loading;
+use crate::components::tooltip::Tooltip;
+use crate::components::virtual_scroller::*;
+use crate::global_state::platform::use_platform_hotkeys;
+use crate::i18n::*;
+use gloo_timers::future::TimeoutFuture;
+use icondata as i;
+use leptos::{html::Input, prelude::*, task::spawn_local};
+use leptos_router::{NavigateOptions, hooks::use_navigate};
+use std::sync::Arc;
+use std::sync::LazyLock;
+use ultros_api_types::search::SearchResult;
+use web_sys::KeyboardEvent;
+
+static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
+    vec![
+        SearchResult {
+            score: 100.0,
+            title: "Flip Finder".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/analyzer".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Recipe Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/recipe-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Crafting".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Leve Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/leve-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Leveling".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Currency Exchange".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/currency-exchange".to_string(),
+            icon_id: None,
+            category: Some("Currencies".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "My Lists".to_string(),
+            result_type: "Page".to_string(),
+            url: "/list".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Retainers".to_string(),
+            result_type: "Page".to_string(),
+            url: "/retainers".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Settings".to_string(),
+            result_type: "Page".to_string(),
+            url: "/settings".to_string(),
+            icon_id: None,
+            category: Some("System".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Help".to_string(),
+            result_type: "Page".to_string(),
+            url: "/help".to_string(),
+            icon_id: None,
+            category: Some("System".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Flip Finder Help".to_string(),
+            result_type: "Help".to_string(),
+            url: "/help/flip-finder".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Recipe Analyzer Help".to_string(),
+            result_type: "Help".to_string(),
+            url: "/help/recipe-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Crafting".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Venture Analyzer Help".to_string(),
+            result_type: "Help".to_string(),
+            url: "/help/venture-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Retainers".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "History".to_string(),
+            result_type: "Page".to_string(),
+            url: "/history".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Alerts".to_string(),
+            result_type: "Page".to_string(),
+            url: "/alerts".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+    ]
+});
+
+/// Job abbreviations offered as one-click examples in the empty-state hints.
+/// These match the `job equipment` documents the backend indexes as
+/// `"<name> (<abbreviation>)"`, so clicking one lands on that job's gear.
+const JOB_EXAMPLES: [&str; 3] = ["SAM", "WHM", "BLM"];
+
+fn get_static_pages() -> &'static [SearchResult] {
+    &STATIC_PAGES
+}
+
+/// What an in-flight search should do once its request comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchOutcome {
+    /// Still the newest search — commit its results.
+    Commit,
+    /// A newer keystroke started another search — drop these results.
+    Superseded,
+    /// The search box was unmounted while the request was in flight.
+    Cancelled,
+}
+
+/// Decide the fate of the search that started as `started_id`.
+///
+/// Reading through `try_get_untracked` rather than `get_untracked` is
+/// load-bearing. [`SearchOverlay`](crate::components::search_overlay) closes
+/// itself on every navigation, and its `<Show>` disposes this component's
+/// signals when it does — so selecting a search result routes away and drops
+/// `search_id` while the `/api/v1/search` request it started is still in
+/// flight. `get_untracked` panics on a disposed signal, which took the whole
+/// wasm bundle down on search-then-navigate (GlitchTip #6874).
+fn search_outcome(search_id: ReadSignal<usize>, started_id: usize) -> SearchOutcome {
+    match search_id.try_get_untracked() {
+        None => SearchOutcome::Cancelled,
+        Some(id) if id == started_id => SearchOutcome::Commit,
+        Some(_) => SearchOutcome::Superseded,
+    }
+}
+
+#[component]
+pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
+    let i18n = use_i18n();
+    let apple_hotkeys = use_platform_hotkeys().apple;
+    let text_input = NodeRef::<Input>::new();
+    let (search, set_search) = signal(String::new());
+    let navigate = use_navigate();
+    let (active, set_active) = signal(false);
+    let (loading, set_loading) = signal(false);
+
+    use crate::api::search as api_search;
+
+    // Search results and request tracking
+    let (search_results, set_search_results) = signal::<Vec<Arc<SearchResult>>>(Vec::new());
+    let (search_id, set_search_id) = signal(0usize);
+
+    // Keyboard navigation focus handling
+    let (focused_index, set_focused_index) = signal::<Option<usize>>(None);
+
+    // Currently-focused result's URL for highlight/selection
+    let focused_url: Signal<Option<String>> = Signal::derive(move || {
+        focused_index.get().and_then(|idx| {
+            search_results.with(|v: &Vec<Arc<SearchResult>>| {
+                v.get(idx).map(|r: &Arc<SearchResult>| r.url.clone())
+            })
+        })
+    });
+
+    // Helper to generate a safe DOM ID from a URL
+    let get_id_from_url =
+        |url: &str| format!("search-result-{}", url.replace(['/', ':', '.'], "-"));
+
+    // When results change, reset the focused index to the first item (if any)
+    Effect::new(move |_| {
+        let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
+        if len > 0 {
+            set_focused_index.set(Some(0));
+        } else {
+            set_focused_index.set(None);
+        }
+    });
+
+    // Debounced search effect with cancellation via serial search_id
+    Effect::new(move |_| {
+        let s = search.get();
+        set_search_id.update(|n| *n += 1);
+        let current_id = search_id.get_untracked();
+
+        spawn_local(async move {
+            TimeoutFuture::new(300).await;
+
+            if search_outcome(search_id, current_id) != SearchOutcome::Commit {
+                return;
+            }
+
+            if s.trim().is_empty() {
+                set_search_results.set(vec![]);
+                return;
+            }
+
+            let s_lower = s.to_lowercase();
+            let mut matched_pages: Vec<SearchResult> = get_static_pages()
+                .iter()
+                .filter(|p| p.title.to_lowercase().contains(&s_lower))
+                .cloned()
+                .collect();
+
+            // Sort matched pages so exact matches or starts_with come first
+            matched_pages.sort_by(|a, b| {
+                let a_starts = a.title.to_lowercase().starts_with(&s_lower);
+                let b_starts = b.title.to_lowercase().starts_with(&s_lower);
+                b_starts.cmp(&a_starts) // true (starts with) comes first
+            });
+
+            set_loading.set(true);
+            match api_search(&s).await {
+                Ok(mut results) => {
+                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
+                        // Prepend static pages to the backend results
+                        let mut final_results = matched_pages;
+                        final_results.append(&mut results);
+
+                        let results = final_results.into_iter().map(Arc::new).collect();
+                        set_search_results.set(results);
+                        set_loading.set(false);
+                    }
+                }
+                Err(e) => {
+                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
+                        log::error!("Search failed: {}", e);
+                        // Even if backend fails, show matched static pages
+                        let results = matched_pages.into_iter().map(Arc::new).collect();
+                        set_search_results.set(results);
+                        set_loading.set(false);
+                    }
+                }
+            }
+        });
+    });
+
+    // Escape binding on the input (kept as-is)
+    leptos_hotkeys::use_hotkeys_ref(
+        text_input,
+        "Escape".to_string(),
+        Callback::new(move |_| {}),
+        vec!["*".to_string()],
+    );
+
+    let on_input = move |ev| {
+        set_search(event_target_value(&ev));
+    };
+    let focus_in = move |_| set_active(true);
+    let focus_out = move |_| {
+        spawn_local(async move {
+            TimeoutFuture::new(250).await;
+            set_active(false);
+        })
+    };
+
+    let navigate_keydown = navigate.clone();
+
+    // Keyboard navigation for Up/Down; Enter uses focused item
+    let keydown = move |e: KeyboardEvent| {
+        let key = e.key();
+
+        if key == "Escape" {
+            if search.get_untracked().is_empty() {
+                if let Some(input) = text_input.get() {
+                    let _ = input.blur();
+                }
+                set_active(false);
+            } else {
+                set_search("".to_string());
+            }
+        } else if key == "ArrowDown" {
+            e.prevent_default();
+            let len = search_results.with_untracked(|v: &Vec<Arc<SearchResult>>| v.len());
+            if len > 0 {
+                let next = focused_index
+                    .get_untracked()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .min(len.saturating_sub(1));
+                set_focused_index.set(Some(next));
+            }
+        } else if key == "ArrowUp" {
+            e.prevent_default();
+            let len = search_results.with_untracked(|v: &Vec<Arc<SearchResult>>| v.len());
+            if len > 0 {
+                let current = focused_index.get_untracked().unwrap_or(0);
+                let next = current.saturating_sub(1);
+                set_focused_index.set(Some(next));
+            }
+        } else if key == "Enter" {
+            if let Some(url) = focused_url.get_untracked() {
+                navigate_keydown(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
+                set_search("".to_string());
+                set_active(false);
+                if let Some(input) = text_input.get() {
+                    let _ = input.blur();
+                }
+            } else {
+                let first_url = search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
+                if let Some(url) = first_url {
+                    navigate_keydown(
+                        &url,
+                        NavigateOptions {
+                            scroll: false,
+                            ..Default::default()
+                        },
+                    );
+                    set_search("".to_string());
+                    set_active(false);
+                    if let Some(input) = text_input.get() {
+                        let _ = input.blur();
+                    }
+                }
+            }
+        }
+    };
+
+    // When mounted inside the overlay we want the caret in the field
+    // immediately — the user pressed a key to get here. Effect, not a
+    // render-time call: the input doesn't exist until after mount.
+    if autofocus {
+        Effect::new(move |_| {
+            if let Some(input) = text_input.get() {
+                let _ = input.focus();
+                set_active(true);
+            }
+        });
+    }
+
+    view! {
+        <div class="relative w-full">
+            <div class="relative">
+                <input
+                    node_ref=text_input
+                    on:keydown=keydown
+                    on:input=on_input
+                    on:focusin=focus_in
+                    on:focusout=focus_out
+                    placeholder=move || {
+                        let hotkey = if apple_hotkeys.get() {
+                            "⌘K".to_string()
+                        } else {
+                            t_string!(i18n, hotkey_ctrl_k).to_string()
+                        };
+                        t_string!(i18n, search_box_placeholder).replace("%hotkey%", &hotkey)
+                    }
+                    class="input w-full pl-10 pr-10"
+                    type="text"
+                    prop:value=search
+                    aria-label=t_string!(i18n, search_box_aria_label)
+                    aria-keyshortcuts="Meta+K Control+K"
+                    aria-busy=move || loading().to_string()
+                    aria-controls="search-results"
+                    // Only the results listbox counts as the combobox popup —
+                    // the empty-state hint panel isn't one.
+                    aria-expanded=move || (active() && !search().is_empty()).to_string()
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-activedescendant=move || {
+                        focused_url
+                            .get()
+                            .map(|url| get_id_from_url(&url))
+                            .unwrap_or_default()
+                    }
+                />
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
+                    <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined aria_hidden=true /> }>
+                        <Loading />
+                    </Show>
+                </div>
+                <div class="absolute right-3 top-1/2 -translate-y-1/2">
+                    <Show when=move || !search.get().is_empty()>
+                        <Tooltip tooltip_text=t_string!(i18n, search_box_clear_tooltip)>
+                            <button
+                                type="button"
+                                class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none rounded-full"
+                                // Keep focus on the input so the focusout timer
+                                // never fires and collapses the panel mid-click.
+                                on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
+                                on:click=move |_| {
+                                    set_search("".to_string());
+                                    if let Some(input) = text_input.get() {
+                                        let _ = input.focus();
+                                    }
+                                    set_active(true);
+                                }
+                                aria-label=t_string!(i18n, search_box_clear_tooltip)
+                            >
+                                <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
+                            </button>
+                        </Tooltip>
+                    </Show>
+                </div>
+            </div>
+
+            // Empty-state hints: shown while the box is focused but nothing has
+            // been typed, so people discover the less obvious things the index
+            // covers (job gear sets, currencies, tool pages).
+            <div
+                class="absolute w-full mt-2 z-50 p-3 flex flex-col gap-2 bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg"
+                class:hidden=move || !active() || !search().is_empty()
+            >
+                <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                    {t!(i18n, search_hint_title)}
+                </span>
+                <div class="flex items-center gap-2 text-sm flex-wrap">
+                    <Icon icon=i::FaUserSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_jobs)}</span>
+                    {JOB_EXAMPLES
+                        .iter()
+                        .map(|job| {
+                            view! {
+                                <button
+                                    type="button"
+                                    class="px-2 py-0.5 rounded-full text-xs border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] hover:border-[color:var(--brand-ring)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none"
+                                    on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
+                                    on:click=move |_| {
+                                        set_search(job.to_string());
+                                        if let Some(input) = text_input.get() {
+                                            let _ = input.focus();
+                                        }
+                                        set_active(true);
+                                    }
+                                >
+                                    {*job}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaBoxOpenSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_items)}</span>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaHammerSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_recipes)}</span>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaWrenchSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_tools)}</span>
+                </div>
+            </div>
+
+            // Search Results
+            <div
+                id="search-results"
+                role=move || {
+                    if !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty() {
+                        "status"
+                    } else {
+                        "listbox"
+                    }
+                }
+                class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
+                class:hidden=move || !active() || search().is_empty()
+            >
+                <Show when=move || !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty()>
+                    <div class="p-8 text-center text-[color:var(--color-text-muted)] flex flex-col items-center gap-2 bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg">
+                        <Icon icon=i::AiSearchOutlined attr:class="w-8 h-8 opacity-50" />
+                        <span>{t!(i18n, search_no_results)}</span>
+                    </div>
+                </Show>
+
+                <div
+                    class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42"
+                    class:hidden=move || search_results.with(|v| v.is_empty())
+                >
+                    <VirtualScroller
+                        each=search_results.into()
+                        key={move |result: &Arc<SearchResult>| result.url.clone()}
+                        view={move |result: Arc<SearchResult>| {
+                            let navigate = navigate.clone();
+
+                            // Clone Arc for different closures to satisfy borrow checker
+                            let res_for_aria = result.clone();
+                            let res_for_class = result.clone();
+                            let res_for_click = result.clone();
+
+                            view! {
+                                <div
+                                    id=get_id_from_url(&result.url)
+                                    role="option"
+                                    aria-selected=move || {
+                                        match focused_url.get() {
+                                            Some(f) if f == res_for_aria.url => "true",
+                                            _ => "false",
+                                        }
+                                    }
+                                    class=move || {
+                                        let hl = match focused_url.get() {
+                                            Some(f) if f == res_for_class.url => " bg-[color:var(--color-background-elevated)]",
+                                            _ => "",
+                                        };
+                                        format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
+                                    }
+                                    on:click=move |_| {
+                                        navigate(
+                                            &res_for_click.url,
+                                            NavigateOptions {
+                                                scroll: false,
+                                                ..Default::default()
+                                            },
+                                        );
+                                        set_search("".to_string());
+                                        set_active(false);
+                                        if let Some(input) = text_input.get() {
+                                            let _ = input.blur();
+                                        }
+                                    }
+                                >
+                                    {
+                                        if let Some(icon_id) = result.icon_id {
+                                            if icon_id > 0 {
+                                                let (failed, set_failed) = signal(false);
+                                                let result_title = result.title.clone();
+                                                view! {
+                                                    <div class="w-8 h-8 flex-shrink-0">
+                                                        <img
+                                                            src=move || {
+                                                                if failed.get() {
+                                                                    "/static/itemicon/fallback".to_string()
+                                                                } else {
+                                                                    format!("/static/itemicon/{}?size=Small", icon_id)
+                                                                }
+                                                            }
+                                                            alt=move || format!("Icon for {}", result_title)
+                                                            class="w-full h-full object-contain"
+                                                            loading="lazy"
+                                                            on:error=move |_| set_failed.set(true)
+                                                        />
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                match result.result_type.as_str() {
+                                                    "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
+                                                    "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
+                                                    "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
+                                                    "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                    "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
+                                                    "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
+                                                    "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
+                                                    _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
+                                                }
+                                            }
+                                        } else {
+                                            match result.result_type.as_str() {
+                                                "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
+                                                "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
+                                                "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
+                                                "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
+                                                "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
+                                                "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
+                                                _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
+                                            }
+                                        }
+                                    }
+                                    <div class="flex flex-col">
+                                        <span class="font-medium">{result.title.clone()}</span>
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {
+                                                if let Some(cat) = &result.category {
+                                                    if !cat.is_empty() {
+                                                        format!("{} - {}", result.result_type, cat)
+                                                    } else {
+                                                        result.result_type.clone()
+                                                    }
+                                                } else {
+                                                    result.result_type.clone()
+                                                }
+                                            }
+                                        </span>
+                                    </div>
+                                </div>
+                            }
+                        }}
+                        viewport_height=528.0
+                        row_height=60.0
+                        overscan=10
+                        header_height=0.0
+                        variable_height=false
+                        scroll_to_index=Signal::derive(move || focused_index.get())
+
+                    />
+                // The empty-results message lives above, outside this wrapper —
+                // this wrapper is itself hidden whenever the result list is
+                // empty, so a nested no-results branch could never render.
+                </div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commits_the_newest_search() {
+        let owner = Owner::new();
+        let (search_id, _set) = owner.with(|| signal(7usize));
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Commit);
+    }
+
+    #[test]
+    fn drops_a_search_a_later_keystroke_superseded() {
+        let owner = Owner::new();
+        let (search_id, set_search_id) = owner.with(|| signal(7usize));
+        set_search_id.set(8);
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Superseded);
+    }
+
+    /// Selecting a result navigates, `SearchOverlay`'s location effect closes
+    /// the overlay, and its `<Show>` disposes the search box — all while the
+    /// request is still in flight. Reading `search_id` here used to panic
+    /// ("Tried to access a reactive value that has already been disposed"),
+    /// killing the wasm bundle on the page just navigated to (#6874).
+    #[test]
+    fn cancels_a_search_whose_component_was_disposed_mid_flight() {
+        let owner = Owner::new();
+        let (search_id, _set) = owner.with(|| signal(7usize));
+        owner.cleanup();
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Cancelled);
+    }
+}

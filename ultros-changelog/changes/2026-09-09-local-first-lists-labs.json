@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Try offline list editing in Labs",
+  "blurb": "Enable Lists sync in Labs to edit shopping lists offline, sync changes with collaborators when you reconnect, and undo or redo your edits.",
+  "link": "/labs"
+}

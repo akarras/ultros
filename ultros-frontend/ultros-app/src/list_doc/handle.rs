@@ -247,12 +247,15 @@ impl ListDocHandle {
             .try_with_untracked(|s| s != status)
             .unwrap_or(false)
         {
-            self.status.set(status.to_string());
+            let _ = self.status.try_set(status.to_string());
         }
     }
 
     pub fn remember_permission(&self, permission: i16) {
-        self.permission.set(permission);
+        if self.is_closed_or_disposed() {
+            return;
+        }
+        let _ = self.permission.try_set(permission);
         let _ = store::remember_permission(
             &BrowserStorage,
             self.user_id,

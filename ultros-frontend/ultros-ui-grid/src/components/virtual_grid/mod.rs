@@ -1,0 +1,1308 @@
+//! A single native scrollport with independently virtualized rows and columns.
+pub mod filter;
+pub mod registry;
+pub use ultros_grid_core::{layout, metrics};
+pub mod query_grid;
+pub mod row_source;
+pub mod saved_views;
+use crate::components::icon::Icon;
+use crate::i18n::*;
+use layout::column_range;
+pub use layout::row_range;
+pub use layout::{ColumnFilter, GridColumn, GridLayout};
+use leptos::leptos_dom::helpers::{
+    AnimationFrameRequestHandle, request_animation_frame_with_handle,
+};
+#[cfg(feature = "hydrate")]
+use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
+use leptos::{portal::Portal, prelude::*};
+use std::hash::Hash;
+use web_sys::wasm_bindgen::JsCast;
+
+pub const GRID_HEADER_HEIGHT: f64 = 56.0;
+pub const GRID_OVERSCAN: usize = 4;
+
+/// Space a heading needs around its label: the drag grip (20px) and the
+/// content wrapper's 4px side padding, plus the 1px right border. That padding rule
+/// (`.grid-heading-content > div`) outranks the `px-3` the analyzers put on
+/// their own heading markup, so it is the whole story. The column menu has
+/// no button of its own — it opens on right-click, press-and-hold, or the
+/// ContextMenu key — so it costs no width.
+#[cfg(feature = "hydrate")]
+const HEADING_CHROME: f64 = 29.0;
+/// The sort-direction icon (1em at the 12px heading size) and its 8px gap,
+/// present only on the sorted column.
+#[cfg(feature = "hydrate")]
+const HEADING_SORT_ICON: f64 = 20.0;
+/// The clear-filter button, present only while the column has a live filter.
+/// Same 20px slot as the menu button it sits beside.
+#[cfg(feature = "hydrate")]
+const HEADING_FILTER_CLEAR: f64 = 20.0;
+/// Chunk of rows measured between yields to the event loop.
+#[cfg(feature = "hydrate")]
+const FIT_CHUNK_ROWS: usize = 512;
+/// Distinct texts per column that get a real `measureText`, taken from the
+/// head of a longest-first estimate. Only the longest few can decide a
+/// column's width; measuring every distinct gil value was a third of the
+/// auto-fit pass in the 2026-09 profile.
+#[cfg(feature = "hydrate")]
+const FIT_MEASURE_CANDIDATES: usize = 64;
+/// Average glyph advance assumed when ranking candidates before measuring.
+#[cfg(feature = "hydrate")]
+const FIT_ESTIMATE_CHAR_PX: f64 = 8.0;
+/// Debounce for the automatic pass: live updates and lazy enrichment can
+/// change `each` several times a second, and one measurement after the burst
+/// is enough.
+#[cfg(feature = "hydrate")]
+const AUTO_FIT_DEBOUNCE_MS: u32 = 150;
+
+/// The visible columns the automatic pass measures. Read the row source,
+/// rather than merely subscribing to its memo: memo dependencies must be
+/// evaluated even when the current result is empty. Otherwise a dirty memo
+/// can stop notifying the sizing effect on restore. A column that opted out
+/// (`auto_fit == false`) is skipped here and keeps its declared width; the
+/// menu's explicit "Auto fit" still measures it on demand.
+#[cfg(any(feature = "hydrate", test))]
+fn auto_fit_columns<T: Send + Sync + 'static>(
+    each: row_source::RowSource<T>,
+    columns: Signal<Vec<GridColumn>>,
+    measure_version: Signal<u64>,
+) -> Vec<&'static str> {
+    each.with(|_| ());
+    measure_version.get();
+    columns.with(|defs| {
+        defs.iter()
+            .filter(|c| c.visible && c.auto_fit)
+            .map(|c| c.id)
+            .collect()
+    })
+}
+
+/// Column geometry as custom properties on the canvas, one pair per
+/// position: `--gc{i}l` (left) and `--gc{i}w` (width). Headings and cells
+/// reference their position's pair statically (`column_style`), so a drag
+/// or an auto-fit pass updates one attribute on the canvas instead of
+/// running a reactive style closure — each a linear search of `placed` —
+/// for every cell on screen.
+fn column_vars(placed: &[layout::PlacedColumn]) -> String {
+    use std::fmt::Write;
+    let mut vars = String::with_capacity(placed.len() * 40);
+    for (i, c) in placed.iter().enumerate() {
+        let _ = write!(vars, "--gc{i}l:{}px;--gc{i}w:{}px;", c.left, c.width);
+    }
+    vars
+}
+
+/// The static style of a heading or cell at `position`; see `column_vars`.
+fn column_style(position: usize) -> String {
+    format!("left:var(--gc{position}l);width:var(--gc{position}w);")
+}
+
+/// The body cell a click landed in, for the one delegated listener on the
+/// canvas that replaces a listener per cell.
+fn clicked_cell(e: &web_sys::MouseEvent) -> Option<(usize, usize)> {
+    let target = e.target()?.dyn_into::<web_sys::Element>().ok()?;
+    let cell = target.closest(".virtual-grid-cell").ok()??;
+    let r = cell.get_attribute("data-grid-row")?.parse().ok()?;
+    let c = cell.get_attribute("data-grid-col")?.parse().ok()?;
+    Some((r, c))
+}
+
+#[derive(Clone, Debug)]
+pub struct GridChange {
+    pub layout: Option<String>,
+    pub visibility: Option<(&'static str, bool)>,
+    pub reset: bool,
+}
+
+#[derive(Clone)]
+struct Drag {
+    id: &'static str,
+    x: f64,
+    width: f64,
+    resize: bool,
+    original: GridLayout,
+    target: Option<(&'static str, bool)>,
+}
+
+#[derive(Clone, Copy)]
+struct Menu {
+    id: &'static str,
+    x: f64,
+    y: f64,
+}
+
+#[cfg(any(feature = "hydrate", test))]
+fn auto_fit_paused(menu: RwSignal<Option<Menu>>, drag: RwSignal<Option<Drag>>) -> Memo<bool> {
+    Memo::new(move |_| {
+        let menu_open = menu.with(Option::is_some);
+        let dragging = drag.with(Option::is_some);
+        menu_open || dragging
+    })
+}
+
+#[component]
+pub fn VirtualGrid<T, K, KF, H, F, M>(
+    each: row_source::RowSource<T>,
+    #[prop(into)] columns: Signal<Vec<GridColumn>>,
+    #[prop(into)] layout: Signal<Option<String>>,
+    on_change: Callback<GridChange>,
+    #[prop(into)] reset_scroll: Signal<String>,
+    #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
+    #[prop(default = 40.0)] row_height: f64,
+    key: KF,
+    header: H,
+    view: F,
+    measure: M,
+    /// Invalidates measurements when cached cell data changes without a row change.
+    #[prop(optional, into)]
+    measure_version: Signal<u64>,
+    #[prop(into)] label: String,
+    #[prop(into)] id: String,
+) -> impl IntoView
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    K: Clone + Eq + Hash + Send + Sync + 'static,
+    KF: Fn(&T) -> K + Send + Sync + 'static,
+    H: Fn(&'static str) -> AnyView + Send + Sync + 'static,
+    F: Fn(T, &'static str) -> AnyView + Send + Sync + 'static,
+    M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
+{
+    let i18n = use_i18n();
+    let location = crate::components::app_link::use_location_or_default();
+    let filter_query = location.query;
+    let filter_registry = use_context::<registry::FilterRegistry>();
+    // Whether a column has anything to clear. Metric filters live in the
+    // packed `gf` map; a plain filter is live only when its key carries a
+    // value, because the "unlimited" landing defaults clear to an empty one.
+    let column_filtered = move |id: &'static str| {
+        columns.with(|defs| {
+            defs.iter().find(|c| c.id == id).is_some_and(|c| {
+                c.filters.iter().any(|f| {
+                    filter_query.with(|q| {
+                        if let Some(registry) = filter_registry {
+                            registry.active(f, q)
+                        } else if f.metric.is_some() {
+                            metrics::parse_filters(q.get("gf").as_deref()).contains_key(f.key)
+                        } else {
+                            q.get(f.key).is_some_and(|v| !v.is_empty())
+                        }
+                    })
+                })
+            })
+        })
+    };
+    #[cfg(feature = "hydrate")]
+    let navigate = leptos_router::hooks::use_navigate();
+    // One click takes a column's whole filter set off, however many separate
+    // filters it carries — the popover only offers them one at a time.
+    let clear_column = Callback::new(move |id: &'static str| {
+        let filters = columns.with_untracked(|defs| {
+            defs.iter()
+                .find(|c| c.id == id)
+                .map(|c| c.filters.clone())
+                .unwrap_or_default()
+        });
+        let query = filter_query.get_untracked();
+        let query = filter_registry
+            .map(|r| r.canonical(&query))
+            .unwrap_or(query);
+        let next = filter::cleared_query(&query, &filters);
+        #[cfg(feature = "hydrate")]
+        navigate(
+            &format!(
+                "{}{}",
+                location.pathname.get_untracked(),
+                next.to_query_string()
+            ),
+            leptos_router::NavigateOptions {
+                replace: true,
+                scroll: false,
+                ..Default::default()
+            },
+        );
+        // SSR renders the button but never navigates.
+        #[cfg(not(feature = "hydrate"))]
+        let _ = next;
+    });
+    let grid_id = StoredValue::new(id);
+    let key = StoredValue::new(key);
+    let header = StoredValue::new(header);
+    let view = StoredValue::new(view);
+    let measure = StoredValue::new(measure);
+    let port = NodeRef::<leptos::html::Div>::new();
+    let menu_ref = NodeRef::<leptos::html::Div>::new();
+    let state = RwSignal::new(GridLayout::parse(
+        layout.get_untracked().as_deref(),
+        &columns.get_untracked(),
+    ));
+    let drag = RwSignal::new(None::<Drag>);
+    let menu = RwSignal::new(None::<Menu>);
+    // Press-and-hold on a heading opens the column menu, the touch
+    // equivalent of the right-click a mouse gets. Holds the pending timer
+    // and the press origin, so finger jitter does not cancel the hold but a
+    // scroll does.
+    #[cfg(feature = "hydrate")]
+    let press = StoredValue::new_local(None::<(TimeoutHandle, f64, f64)>);
+    // Reduce pointer movement to a boolean transition so automatic sizing
+    // pauses once per gesture and resumes only after interaction finishes.
+    #[cfg(feature = "hydrate")]
+    let auto_paused = auto_fit_paused(menu, drag);
+    let insert_side = RwSignal::new(None::<bool>);
+    let search = RwSignal::new(String::new());
+    let width_input = RwSignal::new(String::new());
+    // Identical on the server and the first client render.
+    let viewport = RwSignal::new((0.0f64, 0.0f64, 800.0f64, 600.0f64));
+    let active = RwSignal::new((0usize, 0usize)); // row 0 is the heading
+    let active_key = StoredValue::new(None::<K>);
+    let active_column = StoredValue::new(None::<&'static str>);
+    let interacting = RwSignal::new(false);
+    let fit_generation = RwSignal::new(0usize);
+    // Widths measured from content for columns the user has not sized.
+    // Client-only and never serialized: the server and the first client
+    // render use each definition's fallback width, and the automatic pass
+    // below fills these in once rows exist. Kept apart from `state` so a
+    // re-measure (new rows, new locale) never shows up as a layout change.
+    let auto_widths = RwSignal::new(std::collections::BTreeMap::<String, f64>::new());
+    let auto_generation = RwSignal::new(0usize);
+    // How many automatic passes have applied, exposed as `data-auto-fitted`
+    // so a test can wait for the widths it is about to measure.
+    let auto_applied = RwSignal::new(0usize);
+    on_cleanup(move || {
+        fit_generation.update(|n| *n += 1);
+        auto_generation.update(|n| *n += 1);
+    });
+
+    Effect::new(move |_| {
+        let raw = layout.get();
+        let defs = columns.get();
+        if drag.get_untracked().is_none() {
+            state.set(GridLayout::parse(raw.as_deref(), &defs));
+        }
+    });
+    let placed = Memo::new(move |_| {
+        state.with(|s| auto_widths.with(|fitted| s.columns_with(&columns.get(), fitted)))
+    });
+    let total_width = Memo::new(move |_| {
+        placed.with(|cols| cols.last().map(|c| c.left + c.width).unwrap_or(0.0))
+    });
+    let count = Memo::new(move |_| each.with(Vec::len));
+    let rows = Memo::new(move |_| {
+        let (_, y, _, h) = viewport.get();
+        row_range(
+            y,
+            (h - GRID_HEADER_HEIGHT).max(0.0),
+            row_height,
+            count.get(),
+            GRID_OVERSCAN,
+        )
+    });
+    let cols = Memo::new(move |_| {
+        let (x, _, w, _) = viewport.get();
+        placed.with(|p| column_range(p, x, w))
+    });
+    if let Some(range) = visible_range {
+        Effect::new(move |_| range.set(rows.get()));
+    }
+    let commit = move |visibility| {
+        on_change.run(GridChange {
+            layout: state.with_untracked(|s| s.compact(&columns.get_untracked())),
+            visibility,
+            reset: false,
+        })
+    };
+    let sync = move || {
+        if let Some(el) = port.get_untracked() {
+            if let Some(height) = web_sys::window()
+                .and_then(|w| w.inner_height().ok())
+                .and_then(|v| v.as_f64())
+            {
+                let available =
+                    (height - el.get_bounding_client_rect().top().max(0.0) - 16.0).max(240.0);
+                let _ = web_sys::HtmlElement::style(&el)
+                    .set_property("--grid-available-height", &format!("{available}px"));
+            }
+            viewport.set((
+                el.scroll_left(),
+                el.scroll_top(),
+                el.client_width() as f64,
+                el.client_height() as f64,
+            ));
+        }
+    };
+    let frame = StoredValue::new(None::<AnimationFrameRequestHandle>);
+    let schedule = move || {
+        if frame.with_value(Option::is_none) {
+            frame.set_value(
+                request_animation_frame_with_handle(move || {
+                    frame.set_value(None);
+                    sync();
+                })
+                .ok(),
+            );
+        }
+    };
+    on_cleanup(move || {
+        if let Some(frame) = frame.get_value() {
+            frame.cancel();
+        }
+    });
+    Effect::new(move |_| {
+        if menu.get().is_some()
+            && let Some(el) = menu_ref.get()
+        {
+            let _ = el.focus();
+        }
+    });
+    #[cfg(feature = "hydrate")]
+    {
+        use web_sys::wasm_bindgen::closure::Closure;
+        let observer =
+            StoredValue::new_local(None::<(web_sys::ResizeObserver, Closure<dyn FnMut()>)>);
+        Effect::new(move |_| {
+            if observer.with_value(Option::is_some) {
+                return;
+            }
+            let Some(el) = port.get() else {
+                return;
+            };
+            let cb = Closure::wrap(Box::new(schedule) as Box<dyn FnMut()>);
+            if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+                ro.observe(&el);
+                if let Some(win) = web_sys::window() {
+                    let _ =
+                        win.add_event_listener_with_callback("resize", cb.as_ref().unchecked_ref());
+                }
+                observer.set_value(Some((ro, cb)));
+            }
+            sync();
+        });
+        on_cleanup(move || {
+            observer.update_value(|slot| {
+                if let Some((observer, callback)) = slot.take() {
+                    observer.disconnect();
+                    if let Some(win) = web_sys::window() {
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            callback.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            })
+        });
+    }
+    Effect::new(move |_| {
+        let _ = reset_scroll.get();
+        if let Some(el) = port.get() {
+            el.set_scroll_top(0.0);
+            sync();
+        }
+        active.set((0, 0));
+        active_key.set_value(None);
+    });
+    // Preserve identity across live updates; filtering may remove the active row.
+    Effect::new(move |_| {
+        each.with(|data| {
+            let mut position = active.get_untracked();
+            if let Some(wanted) = active_key.get_value() {
+                position.0 = data
+                    .iter()
+                    .position(|r| key.with_value(|k| k(r)) == wanted)
+                    .map(|i| i + 1)
+                    .unwrap_or(position.0.min(data.len()));
+            }
+            if active.get_untracked() != position {
+                active.set(position);
+            }
+            active_key.set_value(
+                position
+                    .0
+                    .checked_sub(1)
+                    .and_then(|i| data.get(i))
+                    .map(|r| key.with_value(|k| k(r))),
+            );
+        });
+    });
+    Effect::new(move |_| {
+        let definitions = placed.get();
+        let mut position = active.get_untracked();
+        position.1 = active_column
+            .get_value()
+            .and_then(|id| definitions.iter().position(|c| c.column.id == id))
+            .unwrap_or(position.1.min(definitions.len().saturating_sub(1)));
+        if active.get_untracked() != position {
+            active.set(position);
+        }
+        active_column.set_value(definitions.get(position.1).map(|c| c.column.id));
+    });
+    let activate = move |r: usize, c: usize| {
+        let c = c.min(placed.with_untracked(Vec::len).saturating_sub(1));
+        let r = r.min(count.get_untracked());
+        active.set((r, c));
+        active_key.set_value(each.with_untracked(|data| {
+            r.checked_sub(1)
+                .and_then(|i| data.get(i))
+                .map(|row| key.with_value(|f| f(row)))
+        }));
+        active_column.set_value(placed.with_untracked(|p| p.get(c).map(|c| c.column.id)));
+    };
+    let reveal = move |r: usize, c: usize| {
+        activate(r, c);
+        if let Some(el) = port.get_untracked() {
+            if let Some(col) = placed.with_untracked(|p| p.get(c).cloned()) {
+                let x = el.scroll_left();
+                let width = el.client_width() as f64;
+                if col.left < x {
+                    el.set_scroll_left(col.left);
+                } else if col.left + col.width > x + width {
+                    el.set_scroll_left(col.left + col.width - width);
+                }
+            }
+            if r > 0 {
+                let y = (r - 1) as f64 * row_height;
+                let height = (el.client_height() as f64 - GRID_HEADER_HEIGHT).max(row_height);
+                if y < el.scroll_top() {
+                    el.set_scroll_top(y);
+                } else if y + row_height > el.scroll_top() + height {
+                    el.set_scroll_top(y + row_height - height);
+                }
+            } else {
+                el.set_scroll_top(0.0);
+            }
+            sync();
+            let _ = el.focus();
+        }
+    };
+    let close_menu = move || {
+        menu.set(None);
+        insert_side.set(None);
+        search.set(String::new());
+        if let Some(el) = port.get_untracked() {
+            let _ = el.focus();
+        }
+    };
+    let open_menu = move |id: &'static str, x: f64, y: f64| {
+        width_input.set(placed.with_untracked(|p| {
+            p.iter()
+                .find(|c| c.column.id == id)
+                .map(|c| c.width.round().to_string())
+                .unwrap_or_default()
+        }));
+        insert_side.set(None);
+        search.set(String::new());
+        menu.set(Some(Menu { id, x, y }));
+    };
+    // How long a finger has to rest on a heading before its menu opens, and
+    // how far it may wander first. Below the drag threshold the grid itself
+    // uses, so a hold never doubles as the start of a column move.
+    #[cfg(feature = "hydrate")]
+    const HOLD_MS: u64 = 500;
+    #[cfg(feature = "hydrate")]
+    const HOLD_SLOP: f64 = 10.0;
+    #[cfg(feature = "hydrate")]
+    let cancel_hold = move || {
+        press.update_value(|p| {
+            if let Some((handle, _, _)) = p.take() {
+                handle.clear();
+            }
+        });
+    };
+    // Arms the hold. Mouse users have right-click, and the grip, resize
+    // handle and clear button own their own gestures, so neither arms it.
+    #[cfg(feature = "hydrate")]
+    let begin_hold = move |e: &web_sys::PointerEvent, id: &'static str, ci: usize| {
+        if e.pointer_type() == "mouse" {
+            return;
+        }
+        if e.target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|t| t.closest("button,.grid-resize-handle").ok().flatten())
+            .is_some()
+        {
+            return;
+        }
+        cancel_hold();
+        let (x, y) = (e.client_x(), e.client_y());
+        let handle = set_timeout_with_handle(
+            move || {
+                activate(0, ci);
+                open_menu(id, x, y);
+            },
+            std::time::Duration::from_millis(HOLD_MS),
+        );
+        if let Ok(handle) = handle {
+            press.set_value(Some((handle, x, y)));
+        }
+    };
+    #[cfg(feature = "hydrate")]
+    let hold_moved = move |e: &web_sys::PointerEvent| {
+        let wandered = press.with_value(|p| {
+            p.as_ref().is_some_and(|(_, x, y)| {
+                (e.client_x() - *x).abs() > HOLD_SLOP || (e.client_y() - *y).abs() > HOLD_SLOP
+            })
+        });
+        if wandered {
+            cancel_hold();
+        }
+    };
+    // Measures `ids` against their heading labels and every current row with
+    // the grid's real fonts, then hands the clamped widths to `apply`. Rows
+    // are formatted in chunks with a yield between them; only the longest
+    // distinct texts per column are then measured. A bump of `generation`
+    // (a newer request, cleanup) drops the pass on the floor.
+    // Values that are not cached yet measure as whatever the row's `measure`
+    // returns for them; nothing is fetched to size a column.
+    #[cfg(feature = "hydrate")]
+    let measure_columns =
+        move |ids: Vec<&'static str>,
+              generation: RwSignal<usize>,
+              delay_ms: u32,
+              apply: Box<dyn FnOnce(std::collections::BTreeMap<String, f64>)>| {
+            generation.update(|n| *n += 1);
+            let expected = generation.get_untracked();
+            leptos::task::spawn_local(async move {
+                if delay_ms > 0 {
+                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+                }
+                await_fonts().await;
+                if generation.try_get_untracked() != Some(expected) {
+                    return;
+                }
+                let defs = columns.with_untracked(|defs| {
+                    defs.iter()
+                        .filter(|c| ids.contains(&c.id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+                let Some(port_el) = port.get_untracked() else {
+                    return;
+                };
+                if defs.is_empty() {
+                    return;
+                }
+                let cell_font = computed_font(&port_el).unwrap_or_else(|| "14px sans-serif".into());
+                let heading_font = port_el
+                    .query_selector(".virtual-grid-heading")
+                    .ok()
+                    .flatten()
+                    .and_then(|h| computed_font(&h))
+                    .unwrap_or_else(|| "600 12px sans-serif".into());
+                let Some(ctx) = canvas_context() else {
+                    return;
+                };
+                ctx.set_font(&heading_font);
+                let mut widths = defs
+                    .iter()
+                    .map(|def| {
+                        let icon = if def.aria_sort == "none" {
+                            0.0
+                        } else {
+                            HEADING_SORT_ICON
+                        }
+                        // The clear-filter button only exists while the column
+                        // is filtered, so a fit that ignored it would clip the
+                        // title of exactly the columns a user is working in.
+                        + if column_filtered(def.id) {
+                            HEADING_FILTER_CLEAR
+                        } else {
+                            0.0
+                        };
+                        let title = ctx
+                            .measure_text(&def.label)
+                            .map(|m| m.width())
+                            .unwrap_or(0.0)
+                            + def.heading_adornments
+                            + icon;
+                        // Use the heading font as a conservative bound for
+                        // smaller subtitles, so fitting never clips their text.
+                        def.heading_lines
+                            .iter()
+                            .fold(title, |width, (text, extra)| {
+                                width.max(
+                                    ctx.measure_text(text).map(|m| m.width()).unwrap_or(0.0)
+                                        + extra,
+                                )
+                            })
+                            + HEADING_CHROME
+                    })
+                    .collect::<Vec<_>>();
+                ctx.set_font(&cell_font);
+                let data = each.get_untracked();
+                // Every distinct text per column, with the widest adornment
+                // it was seen with. Formatting each cell is what yields the
+                // text; measuring waits for the few candidates that can
+                // actually decide the width.
+                let mut candidates: Vec<std::collections::HashMap<String, f64>> = defs
+                    .iter()
+                    .map(|_| std::collections::HashMap::new())
+                    .collect();
+                for chunk in data.chunks(FIT_CHUNK_ROWS) {
+                    if generation.try_get_untracked() != Some(expected) {
+                        return;
+                    }
+                    for row in chunk {
+                        for (texts, def) in candidates.iter_mut().zip(&defs) {
+                            let (text, adornments) = measure.with_value(|m| m(row, def.id));
+                            let widest = texts.entry(text).or_insert(0.0);
+                            *widest = widest.max(adornments);
+                        }
+                    }
+                    gloo_timers::future::TimeoutFuture::new(0).await;
+                }
+                if generation.try_get_untracked() != Some(expected) {
+                    return;
+                }
+                let estimate = |text: &str, adornments: f64| {
+                    text.chars().count() as f64 * FIT_ESTIMATE_CHAR_PX + adornments
+                };
+                for (width, texts) in widths.iter_mut().zip(candidates) {
+                    let mut texts: Vec<(String, f64)> = texts.into_iter().collect();
+                    texts.sort_by(|a, b| estimate(&b.0, b.1).total_cmp(&estimate(&a.0, a.1)));
+                    for (text, adornments) in texts.into_iter().take(FIT_MEASURE_CANDIDATES) {
+                        let text_width = ctx.measure_text(&text).map(|m| m.width()).unwrap_or(0.0);
+                        *width = width.max(text_width + adornments);
+                    }
+                }
+                apply(
+                    defs.iter()
+                        .zip(widths)
+                        .map(|(def, width)| (def.id.to_string(), def.clamp(width.ceil())))
+                        .collect(),
+                );
+            });
+        };
+    // The explicit action: pin the fitted width in the layout, so it survives
+    // new rows and lands in the URL like a drag would.
+    let fit = move |id: &'static str| {
+        #[cfg(feature = "hydrate")]
+        measure_columns(
+            vec![id],
+            fit_generation,
+            0,
+            Box::new(move |widths| {
+                state.update(|s| s.widths.extend(widths));
+                commit(None);
+            }),
+        );
+        #[cfg(not(feature = "hydrate"))]
+        let _ = (id, measure, measure_version);
+    };
+    // The default: every visible column fits its content unless the user has
+    // sized it. Re-runs when the rows change (filters, live updates) and when
+    // the definitions change (a column shown, the locale switched — labels
+    // are part of the definition), so a longer translation gets the room it
+    // needs instead of a truncated heading.
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        // Evaluate every dependency before scheduling the asynchronous pass.
+        // Empty rows still measure headings and remain subscribed for restore;
+        // cached enrichment invalidates through measure_version.
+        let ids = auto_fit_columns(each, columns, measure_version);
+        if auto_paused.get() {
+            // Resizing can clamp scrollLeft and emit a scroll event, which
+            // dismisses the menu. Keep its active form and drag geometry stable.
+            auto_generation.update(|generation| *generation += 1);
+            return;
+        }
+        measure_columns(
+            ids,
+            auto_generation,
+            AUTO_FIT_DEBOUNCE_MS,
+            Box::new(move |widths| {
+                // Check again at application time in case interaction began
+                // before the reactive cancellation effect had a chance to run.
+                if auto_paused.get_untracked() {
+                    return;
+                }
+                auto_widths.set(widths);
+                auto_applied.update(|n| *n += 1);
+            }),
+        );
+    });
+    let render_cols = Memo::new(move |_| {
+        let (start, end) = cols.get();
+        let focus_col = active.get().1;
+        placed.with(|p| {
+            p.iter()
+                .cloned()
+                .enumerate()
+                .filter(|(i, _)| (*i >= start && *i < end) || *i == focus_col)
+                .collect::<Vec<_>>()
+        })
+    });
+    let render_rows = Memo::new(move |_| {
+        let (start, end) = rows.get();
+        let focus_row = active.get().0.checked_sub(1);
+        each.with(|data| {
+            let mut visible = data[start.min(data.len())..end.min(data.len())]
+                .iter()
+                .enumerate()
+                .map(|(i, row)| (start + i, row.clone()))
+                .collect::<Vec<_>>();
+            if let Some(i) = focus_row.filter(|i| *i < start || *i >= end)
+                && let Some(row) = data.get(i)
+            {
+                visible.push((i, row.clone()));
+                visible.sort_by_key(|(i, _)| *i);
+            }
+            visible
+        })
+    });
+    // Tab enters the grid once; Enter/F2 opts into controls in the active cell.
+    // The same pass paints the active body cell: cells carry no reactive
+    // class of their own (see the cell markup), so after every render and
+    // every move the outline is re-applied here, once, by position.
+    Effect::new(move |_| {
+        let _ = render_rows.get();
+        let _ = render_cols.get();
+        let (r, c) = active.get();
+        let Some(el) = port.get() else {
+            return;
+        };
+        if let Ok(nodes) = el.query_selector_all("a,button,input,select,[tabindex]") {
+            for i in 0..nodes.length() {
+                if let Some(node) = nodes
+                    .item(i)
+                    .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+                {
+                    let _ = node.set_attribute("tabindex", "-1");
+                }
+            }
+        }
+        if let Ok(nodes) = el.query_selector_all(".virtual-grid-cell.grid-active") {
+            for i in 0..nodes.length() {
+                if let Some(node) = nodes
+                    .item(i)
+                    .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+                {
+                    let _ = node.class_list().remove_1("grid-active");
+                }
+            }
+        }
+        if r > 0
+            && let Ok(Some(cell)) =
+                el.query_selector(&format!("[data-grid-row='{r}'][data-grid-col='{c}']"))
+        {
+            let _ = cell.class_list().add_1("grid-active");
+        }
+    });
+    let on_key = move |e: web_sys::KeyboardEvent| {
+        let (r, c) = active.get_untracked();
+        if e.key() == "Escape" {
+            if let Some(d) = drag.get_untracked() {
+                state.set(d.original);
+                drag.set(None);
+            }
+            interacting.set(false);
+            close_menu();
+            e.prevent_default();
+            return;
+        }
+        if interacting.get_untracked() {
+            if e.key() == "Tab"
+                && let Some(el) = port.get_untracked()
+            {
+                let selector = format!("[data-grid-row='{r}'][data-grid-col='{c}']");
+                if let Ok(Some(cell)) = el.query_selector(&selector) {
+                    cycle_focus(&e, &cell);
+                }
+            }
+            return;
+        }
+        if e.key() == "ContextMenu" || (e.shift_key() && e.key() == "F10") {
+            if let Some(col) = placed.with_untracked(|p| p.get(c).cloned())
+                && let Some(el) = port.get_untracked()
+            {
+                let rect = el.get_bounding_client_rect();
+                open_menu(
+                    col.column.id,
+                    rect.left() + col.left - el.scroll_left(),
+                    rect.top() + GRID_HEADER_HEIGHT,
+                );
+            }
+            e.prevent_default();
+            return;
+        }
+        if e.key() == "Enter" || e.key() == "F2" {
+            if let Some(el) = port.get_untracked() {
+                let selector = format!(
+                    "[data-grid-row='{r}'][data-grid-col='{c}'] a,[data-grid-row='{r}'][data-grid-col='{c}'] button"
+                );
+                if let Ok(Some(target)) = el.query_selector(&selector)
+                    && let Ok(target) = target.dyn_into::<web_sys::HtmlElement>()
+                {
+                    interacting.set(true);
+                    let _ = target.focus();
+                }
+            }
+            e.prevent_default();
+            return;
+        }
+        let page =
+            ((viewport.get_untracked().3 - GRID_HEADER_HEIGHT) / row_height).max(1.0) as usize;
+        let next = match e.key().as_str() {
+            "ArrowDown" => (r + 1, c),
+            "ArrowUp" => (r.saturating_sub(1), c),
+            "ArrowRight" => (r, c + 1),
+            "ArrowLeft" => (r, c.saturating_sub(1)),
+            "Home" => (if e.ctrl_key() { 0 } else { r }, 0),
+            "End" => (
+                if e.ctrl_key() {
+                    count.get_untracked()
+                } else {
+                    r
+                },
+                placed.with_untracked(Vec::len).saturating_sub(1),
+            ),
+            "PageDown" => (r.saturating_add(page), c),
+            "PageUp" => (r.saturating_sub(page), c),
+            _ => return,
+        };
+        e.prevent_default();
+        reveal(
+            next.0.min(count.get_untracked()),
+            next.1
+                .min(placed.with_untracked(Vec::len).saturating_sub(1)),
+        );
+    };
+    view! {
+        <div class="virtual-grid-shell">
+            <div class="virtual-grid" node_ref=port role="grid" tabindex="0" aria-label=label
+                data-auto-fitted=move || auto_applied.get()
+                aria-activedescendant=move || { let (r,c)=active.get(); format!("{}-r{r}-c{c}",grid_id.get_value()) }
+                aria-rowcount=move || count.get() + 1 aria-colcount=move || placed.with(Vec::len)
+                on:keydown=on_key
+                on:scroll=move |_| { schedule(); menu.set(None); }
+                on:pointermove=move |e: web_sys::PointerEvent| {
+                    let Some(mut d) = drag.get_untracked() else { return; };
+                    if d.resize {
+                        if let Some(def) = columns.with_untracked(|p| p.iter().find(|c| c.id == d.id).cloned()) {
+                            state.update(|s| { s.widths.insert(d.id.into(), def.clamp(d.width + e.client_x() - d.x)); });
+                        }
+                    } else if (e.client_x() - d.x).abs() > 5.0 && let Some(el) = port.get_untracked() {
+                            let rect = el.get_bounding_client_rect();
+                            if e.client_x() > rect.right() - 40.0 { el.set_scroll_left(el.scroll_left() + 24.0); }
+                            if e.client_x() < rect.left() + 40.0 { el.set_scroll_left(el.scroll_left() - 24.0); }
+                            let x = e.client_x() - rect.left() + el.scroll_left();
+                            d.target = placed.with_untracked(|p| p.iter().find(|c| x >= c.left && x < c.left + c.width)
+                                .map(|c| (c.column.id, x > c.left + c.width / 2.0)));
+                    }
+                    drag.set(Some(d));
+                }
+                on:pointerup=move |e: web_sys::PointerEvent| {
+                    if let Some(d) = drag.get_untracked() {
+                        if !d.resize && let Some((target, after)) = d.target { state.update(|s| s.move_to(d.id, target, after)); }
+                        drag.set(None); if state.get_untracked()!=d.original {commit(None);}
+                        if let Some(el) = port.get_untracked() { let _ = el.release_pointer_capture(e.pointer_id()); }
+                    }
+                }
+                on:pointercancel=move |_| { if let Some(d) = drag.get_untracked() { state.set(d.original); drag.set(None); } }
+                style=move || format!("--grid-content-height: {}px;", GRID_HEADER_HEIGHT + count.get() as f64 * row_height + 18.0)
+            >
+                <div class="virtual-grid-canvas"
+                    style=move || format!("width:{}px;min-width:100%;height:{}px;{}", total_width.get(), GRID_HEADER_HEIGHT + count.get() as f64 * row_height, placed.with(|p| column_vars(p)))
+                    on:click=move |e: web_sys::MouseEvent| { if let Some((r, c)) = clicked_cell(&e) { activate(r, c); } }
+                >
+                    <div class="virtual-grid-header" role="row" aria-rowindex="1" style=format!("height:{GRID_HEADER_HEIGHT}px;")>
+                        <For each=move || render_cols.get() key=|(i,c)| (*i,c.column.id) children=move |(ci,c)| {
+                            let id = c.column.id;
+                            let title = c.column.label.clone();
+                            view! {
+                                <div class="virtual-grid-heading" role="columnheader" aria-colindex=ci + 1 aria-sort=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|c.column.aria_sort).unwrap_or("none"))
+                                    title=t_string!(i18n, grid_column_menu_hint).to_string()
+                                    id=format!("{}-r0-c{ci}",grid_id.get_value()) data-column=id data-grid-row="0" data-grid-col=ci
+                                    class:grid-active=move || active.get() == (0,ci)
+                                    class:grid-filter-active=move || column_filtered(id)
+                                    class:grid-insert-before=move || drag.get().is_some_and(|d| d.target == Some((id,false)))
+                                    class:grid-insert-after=move || drag.get().is_some_and(|d| d.target == Some((id,true)))
+                                    style=column_style(ci)
+                                    on:contextmenu=move |e| { e.prevent_default(); activate(0,ci); open_menu(id,e.client_x(),e.client_y()); }
+                                    on:click=move |_| activate(0,ci)
+                                    on:pointerdown=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] begin_hold(&e, id, ci); }
+                                    on:pointermove=move |e: web_sys::PointerEvent| { let _ = &e; #[cfg(feature = "hydrate")] hold_moved(&e); }
+                                    on:pointerup=move |_| { #[cfg(feature = "hydrate")] cancel_hold(); }
+                                    on:pointercancel=move |_| { #[cfg(feature = "hydrate")] cancel_hold(); }
+                                >
+                                    <button type="button" class="grid-drag-handle" aria-label=t_string!(i18n, grid_move_column).to_string() title=t_string!(i18n, grid_move_column).to_string()
+                                        on:pointerdown=move |e: web_sys::PointerEvent| {
+                                            if e.button()!=0 { return; } e.prevent_default();
+                                            activate(0,ci);
+                                            drag.set(Some(Drag { id,x:e.client_x(),width:c.width,resize:false,original:state.get_untracked(),target:None }));
+                                            capture_pointer(&e);
+                                            if let Some(el)=port.get_untracked(){ let _=el.focus(); }
+                                        }
+                                    >"⠿"</button>
+                                    <div class="grid-heading-content">{header.with_value(|f| f(id))}</div>
+                                    // The only button a heading carries besides the grip: the
+                                    // off switch for the column's filters, the affordance Flip
+                                    // Finder's World/Datacenter columns used to have on their
+                                    // own. It costs width only while a filter is on, and its
+                                    // presence is what makes a filtered column legible at a
+                                    // glance — the tinted cell behind it is the second cue.
+                                    {
+                                        let filtered_title = title.clone();
+                                        view! {
+                                            <Show when=move || column_filtered(id)>
+                                                <button type="button" class="grid-filter-clear"
+                                                    aria-label=format!("{}: {filtered_title}",t_string!(i18n, aria_remove_filter))
+                                                    title=t_string!(i18n, grid_filter_clear).to_string()
+                                                    on:click=move |e| { e.stop_propagation(); activate(0,ci); clear_column.run(id); }
+                                                ><Icon icon=icondata::MdiFilterRemove /></button>
+                                            </Show>
+                                        }
+                                    }
+                                    <div class="grid-resize-handle" title=t_string!(i18n, grid_resize_hint).to_string()
+                                        on:dblclick=move |e| { e.prevent_default(); e.stop_propagation(); fit(id); }
+                                        on:pointerdown=move |e: web_sys::PointerEvent| {
+                                            if e.button()!=0 { return; } e.prevent_default(); e.stop_propagation();
+                                            activate(0,ci);
+                                            fit_generation.update(|n| *n += 1);
+                                            let width=placed.with_untracked(|p|p.iter().find(|c|c.column.id==id).map(|c|c.width).unwrap_or(c.width));
+                                            drag.set(Some(Drag {id,x:e.client_x(),width,resize:true,original:state.get_untracked(),target:None}));
+                                            capture_pointer(&e);
+                                            if let Some(el)=port.get_untracked(){ let _=el.focus(); }
+                                        }
+                                    ></div>
+                                </div>
+                            }
+                        }/>
+                    </div>
+                    <For each=move || render_rows.get() key=move |(ri,r)| (*ri,key.with_value(|k|k(r))) children=move |(ri,_)| {
+                        let row=Memo::new(move |_| each.with(|data| data.get(ri).cloned()));
+                        view! {
+                            <div role="row" class="virtual-grid-row" data-even=ri % 2 == 0 aria-rowindex=ri + 2 style=format!("top:{}px;height:{row_height}px;",GRID_HEADER_HEIGHT + ri as f64*row_height)>
+                                // Deliberately inert per cell: geometry comes from the canvas's
+                                // custom properties, the active outline from one effect on the
+                                // grid, and clicks from one delegated listener on the canvas.
+                                // Anything reactive or listening here is multiplied by every
+                                // cell on screen, and rows are built while the user scrolls.
+                                <For each=move || render_cols.get() key=|(i,c)|(*i,c.column.id) children=move |(ci,c)| {
+                                    let id=c.column.id;
+                                    view! {
+                                        <div class="virtual-grid-cell" role="gridcell" aria-colindex=ci + 1 id=format!("{}-r{}-c{ci}",grid_id.get_value(),ri+1) data-column=id data-grid-row=ri + 1 data-grid-col=ci
+                                            style=column_style(ci)
+                                        >{move || view.with_value(|v| row.with(|row|row.as_ref().map(|row|v(row.clone(),id)).into_any()))}</div>
+                                    }
+                                }/>
+                            </div>
+                        }
+                    }/>
+                </div>
+            </div>
+            {move || menu.get().map(move |m| view! {
+                <Portal>
+                    <div class="grid-menu-backdrop" on:pointerdown=move |_| close_menu()></div>
+                    <div class="grid-menu-panel" node_ref=menu_ref tabindex="-1" role="dialog" aria-modal="true" aria-label=t_string!(i18n, grid_column_menu).to_string()
+                        style=format!("left:clamp(8px,{}px,calc(100vw - 280px));top:clamp(8px,{}px,calc(100dvh - 430px));",m.x,m.y)
+                        on:keydown=move |e| {
+                            if e.key()=="Escape"{e.prevent_default();close_menu();}
+                            else if let Some(el)=menu_ref.get_untracked(){cycle_focus(&e,&el);}
+                        }
+                    >
+                        <strong>{columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.label.clone()).unwrap_or_default())}</strong>
+                        {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.query_sort)).then(||view! {<filter::MetricSortControls column=m.id/>})}
+                        {columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.filters.clone()).unwrap_or_default()).into_iter()
+                            .map(|filter|view! {<filter::ColumnFilterEditor filter/>}).collect_view()}
+                        <button type="button" on:click=move |_| {fit(m.id);close_menu();}>{t!(i18n,grid_auto_fit)}</button>
+                        <label>{t!(i18n,grid_width)}<input type="number" min="60" max="800" prop:value=move || width_input.get() on:input=move |e|width_input.set(event_target_value(&e))/></label>
+                        <button type="button" on:click=move |_| {
+                            if let Ok(width)=width_input.get_untracked().parse::<f64>()
+                                && let Some(def)=columns.with_untracked(|defs|defs.iter().find(|c|c.id==m.id).cloned()) {
+                                    fit_generation.update(|n| *n += 1);
+                                    state.update(|s|{s.widths.insert(m.id.into(),def.clamp(width));}); commit(None);close_menu();
+                            }
+                        }>{t!(i18n,grid_set_width)}</button>
+                        <button type="button" on:click=move |_| {fit_generation.update(|n| *n += 1);state.update(|s|{s.widths.remove(m.id);});commit(None);close_menu();}>{t!(i18n,grid_reset_width)}</button>
+                        <div class="grid-menu-actions">
+                            <button type="button" on:click=move |_| {
+                                let p=placed.get_untracked(); if let Some(i)=p.iter().position(|c|c.column.id==m.id) && i>0 {state.update(|s|s.move_to(m.id,p[i-1].column.id,false));commit(None);} close_menu();
+                            }>{t!(i18n,grid_move_left)}</button>
+                            <button type="button" on:click=move |_| {
+                                let p=placed.get_untracked();if let Some(i)=p.iter().position(|c|c.column.id==m.id) && i+1<p.len(){state.update(|s|s.move_to(m.id,p[i+1].column.id,true));commit(None);} close_menu();
+                            }>{t!(i18n,grid_move_right)}</button>
+                        </div>
+                        <button type="button" on:click=move |_| insert_side.set(Some(false))>{t!(i18n,grid_insert_before)}</button>
+                        <button type="button" on:click=move |_| insert_side.set(Some(true))>{t!(i18n,grid_insert_after)}</button>
+                        {move || insert_side.get().map(move |after| view! {
+                            <input type="search" aria-label=t_string!(i18n,grid_search_columns).to_string() placeholder=t_string!(i18n,grid_search_columns).to_string() on:input=move |e|search.set(event_target_value(&e))/>
+                            <div class="grid-insert-options">{move || {
+                                let mut previous_group = None;
+                                columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).map(|c| {
+                                    let group = if previous_group != c.picker_group { c.picker_group.clone() } else { None };
+                                    previous_group = c.picker_group;
+                                    view! {
+                                        {group.map(|label| view! { <span class="block px-2 pt-3 text-xs font-semibold text-[color:var(--color-text-muted)]" data-column-picker-group>{label}</span> })}
+                                        <button type="button" on:click=move |_| {state.update(|s|s.move_to(c.id,m.id,after));commit(Some((c.id,true)));close_menu();}>{c.label}</button>
+                                    }
+                                }).collect_view()
+                            }}</div>
+                        })}
+                        {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.optional)).then(||view! {
+                            <button type="button" on:click=move |_| {commit(Some((m.id,false)));close_menu();}>{t!(i18n,grid_hide_column)}</button>
+                        })}
+                        <button type="button" on:click=move |_| {fit_generation.update(|n| *n += 1);on_change.run(GridChange{layout:None,visibility:None,reset:true});close_menu();}>{t!(i18n,grid_reset_layout)}</button>
+                        <button type="button" on:click=move |_|close_menu()>{t!(i18n,grid_close)}</button>
+                    </div>
+                </Portal>
+            })}
+        </div>
+    }
+}
+
+/// The element's resolved `font` shorthand, assembled from its parts where a
+/// browser leaves the shorthand empty.
+#[cfg(feature = "hydrate")]
+fn computed_font(el: &web_sys::Element) -> Option<String> {
+    let style = web_sys::window()?.get_computed_style(el).ok()??;
+    let part = |name: &str| style.get_property_value(name).unwrap_or_default();
+    let font = part("font");
+    if !font.is_empty() {
+        return Some(font);
+    }
+    let (weight, size, family) = (part("font-weight"), part("font-size"), part("font-family"));
+    (!size.is_empty() && !family.is_empty())
+        .then(|| format!("{weight} {size} {family}").trim().to_string())
+}
+
+#[cfg(feature = "hydrate")]
+fn canvas_context() -> Option<web_sys::CanvasRenderingContext2d> {
+    web_sys::window()?
+        .document()?
+        .create_element("canvas")
+        .ok()?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .ok()?
+        .get_context("2d")
+        .ok()??
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .ok()
+}
+
+/// Resolves once the page's web fonts have loaded, so a measurement never
+/// uses the fallback face's metrics for text the real face will draw.
+/// Resolves immediately where `document.fonts` is unavailable.
+#[cfg(feature = "hydrate")]
+async fn await_fonts() {
+    use web_sys::wasm_bindgen::JsValue;
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let ready = js_sys::Reflect::get(&document, &JsValue::from_str("fonts"))
+        .ok()
+        .filter(|fonts| !fonts.is_undefined())
+        .and_then(|fonts| js_sys::Reflect::get(&fonts, &JsValue::from_str("ready")).ok())
+        .and_then(|ready| ready.dyn_into::<js_sys::Promise>().ok());
+    if let Some(ready) = ready {
+        let _ = wasm_bindgen_futures::JsFuture::from(ready).await;
+    }
+}
+
+// Keep click/double-click targeting on the handle while captured movements
+// bubble to the grid. Capturing on the grid itself retargets border clicks.
+fn capture_pointer(event: &web_sys::PointerEvent) {
+    if let Some(target) = event
+        .current_target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+    {
+        let _ = target.set_pointer_capture(event.pointer_id());
+    }
+}
+
+/// Keyboard alternatives remain usable inside a clipped, virtualized grid.
+fn cycle_focus(event: &web_sys::KeyboardEvent, root: &web_sys::Element) {
+    if event.key() != "Tab" {
+        return;
+    }
+    let Ok(nodes) = root.query_selector_all("a[href],button:not([disabled]),input,select") else {
+        return;
+    };
+    let targets: Vec<_> = (0..nodes.length())
+        .filter_map(|i| {
+            nodes
+                .item(i)
+                .and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
+        })
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+    let active = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element());
+    let index = targets
+        .iter()
+        .position(|el| active.as_ref().is_some_and(|a| a == el.as_ref()));
+    let next = if event.shift_key() {
+        index
+            .filter(|i| *i > 0)
+            .map(|i| i - 1)
+            .unwrap_or(targets.len() - 1)
+    } else {
+        index.map(|i| (i + 1) % targets.len()).unwrap_or(0)
+    };
+    event.prevent_default();
+    let _ = targets[next].focus();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    #[test]
+    fn cells_take_their_geometry_from_the_canvas_custom_properties() {
+        let layout = GridLayout::parse(None, &[]);
+        let columns = vec![
+            GridColumn::new("a", "A".into(), 100.0, false, true),
+            GridColumn::new("b", "B".into(), 80.0, false, true),
+        ];
+        let layout = GridLayout {
+            order: columns.iter().map(|c| c.id.to_string()).collect(),
+            ..layout
+        };
+        let placed = layout.columns_with(&columns, &BTreeMap::new());
+        assert_eq!(
+            column_vars(&placed),
+            "--gc0l:0px;--gc0w:100px;--gc1l:100px;--gc1w:80px;"
+        );
+        // A heading and a cell at the same position reference the same pair,
+        // which is what keeps them aligned after a resize or an auto-fit.
+        assert_eq!(column_style(1), "left:var(--gc1l);width:var(--gc1w);");
+    }
+
+    #[test]
+    fn automatic_sizing_pauses_until_menu_and_drag_both_finish_without_pointer_churn() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let menu = RwSignal::new(None::<Menu>);
+            let drag = RwSignal::new(None::<Drag>);
+            let paused = auto_fit_paused(menu, drag);
+            let evaluations = Arc::new(AtomicUsize::new(0));
+            let observed = evaluations.clone();
+            let sizing = Memo::new(move |_| {
+                observed.fetch_add(1, Ordering::Relaxed);
+                paused.get()
+            });
+            assert!(!sizing.get());
+            menu.set(Some(Menu {
+                id: "item",
+                x: 0.0,
+                y: 0.0,
+            }));
+            assert!(sizing.get());
+            drag.set(Some(Drag {
+                id: "item",
+                x: 0.0,
+                width: 100.0,
+                resize: true,
+                original: GridLayout::parse(None, &[]),
+                target: None,
+            }));
+            assert!(sizing.get());
+            for _ in 0..10 {
+                drag.update(|drag| drag.as_mut().unwrap().x += 1.0);
+                assert!(sizing.get());
+            }
+            menu.set(None);
+            assert!(sizing.get(), "an active drag still keeps sizing paused");
+            assert_eq!(evaluations.load(Ordering::Relaxed), 2);
+            drag.set(None);
+            assert!(!sizing.get());
+            assert_eq!(evaluations.load(Ordering::Relaxed), 3);
+        });
+    }
+
+    #[test]
+    fn columns_that_opt_out_are_left_out_of_the_automatic_pass() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let rows = RwSignal::new(vec!["a name".to_string()]);
+            let result = Memo::new(move |_| {
+                rows.with(|rows| {
+                    let metrics = [metrics::GridMetric::text("item", |row: &String| {
+                        metrics::GridValue::Text(row.clone())
+                    })];
+                    metrics::query_rows(rows, &metrics, &BTreeMap::new(), None, true)
+                })
+            });
+            let source = row_source::RowSource::new(rows.into(), result);
+            let definitions = RwSignal::new(vec![
+                GridColumn::new("item", "Item".into(), 380.0, false, true).fixed_width(),
+                GridColumn::new("profit", "Profit".into(), 120.0, false, true),
+            ]);
+            let revision = RwSignal::new(0u64);
+            let wanted =
+                Memo::new(move |_| auto_fit_columns(source, definitions.into(), revision.into()));
+
+            assert_eq!(wanted.get(), ["profit"], "the opted-out column is skipped");
+            definitions.update(|defs| defs[0].auto_fit = true);
+            assert_eq!(
+                wanted.get(),
+                ["item", "profit"],
+                "opting back in restores the column to the pass"
+            );
+        });
+    }
+
+    #[test]
+    fn automatic_sizing_tracks_empty_restore_updates_and_cached_measurements() {
+        for queried in [false, true] {
+            let owner = Owner::new();
+            owner.with(|| {
+                let original = RwSignal::new(vec!["initial".to_string()]);
+                let result = Memo::new(move |_| {
+                    original.with(|rows| {
+                        let metrics = [metrics::GridMetric::text("item", |row: &String| {
+                            metrics::GridValue::Text(row.clone())
+                        })];
+                        metrics::query_rows(
+                            rows,
+                            &metrics,
+                            &BTreeMap::new(),
+                            queried.then_some("item"),
+                            true,
+                        )
+                    })
+                });
+                let source = row_source::RowSource::new(original.into(), result);
+                let definitions = RwSignal::new(vec![GridColumn::new(
+                    "item",
+                    "Item".into(),
+                    100.0,
+                    true,
+                    true,
+                )]);
+                let revision = RwSignal::new(0u64);
+                let passes = Arc::new(AtomicUsize::new(0));
+                let observed_passes = passes.clone();
+                let wanted = Memo::new(move |_| {
+                    observed_passes.fetch_add(1, Ordering::Relaxed);
+                    auto_fit_columns(source, definitions.into(), revision.into())
+                });
+
+                assert_eq!(wanted.get(), ["item"]);
+                original.set(Vec::new());
+                assert_eq!(wanted.get(), ["item"]);
+                original.set(vec!["restored".to_string()]);
+                assert_eq!(wanted.get(), ["item"]);
+                original.update(|rows| rows[0] = "a longer refreshed item name".to_string());
+                assert_eq!(wanted.get(), ["item"]);
+                assert_eq!(passes.load(Ordering::Relaxed), 4, "queried={queried}");
+
+                revision.update(|version| *version += 1);
+                assert_eq!(wanted.get(), ["item"]);
+                definitions.update(|defs| defs[0].visible = false);
+                assert!(wanted.get().is_empty());
+                definitions.update(|defs| defs[0].visible = true);
+                assert_eq!(wanted.get(), ["item"]);
+                assert_eq!(passes.load(Ordering::Relaxed), 7, "queried={queried}");
+            });
+        }
+    }
+}

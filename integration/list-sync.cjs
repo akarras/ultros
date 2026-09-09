@@ -610,6 +610,12 @@ async function main() {
     } else {
       pass("D: user A's cached snapshot survives the account switch");
     }
+    console.log("[scenario E] delayed responses across client navigation");
+    await require("./list-sync-navigation.cjs")({
+      page: ownerPage, baseUrl: BASE_URL, userId: USERS.owner.id, worldId,
+      createList, addItem, api, createdLists, waitForState, waitForDocKey,
+      timeout: TIMEOUT_MS,
+    });
   } catch (e) {
     fail(failures, `uncaught: ${e && e.stack ? e.stack : e}`);
   } finally {

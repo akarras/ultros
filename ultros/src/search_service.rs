@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Query, QueryParser};
@@ -5,7 +6,10 @@ use tantivy::schema::{STORED, Schema, TextOptions, Value};
 use tantivy::{Index, IndexReader, ReloadPolicy, doc};
 use tracing::{error, info, warn};
 use ultros_api_types::search::SearchResult;
-use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
+use xiv_gen::{
+    ClassJobId, Data, ItemId, ItemSearchCategoryId, ItemUiCategoryId, Recipe, RecipeId,
+    RecipeLevelTableId,
+};
 
 #[derive(Clone)]
 pub struct SearchService {
@@ -16,6 +20,88 @@ pub struct SearchService {
     url_field: tantivy::schema::Field,
     icon_id_field: tantivy::schema::Field,
     category_field: tantivy::schema::Field,
+    display_category_field: tantivy::schema::Field,
+}
+
+/// Documents scored before weighting. The user sees the best
+/// [`SEARCH_RESULTS`] of the weighted list, so this has to be wide enough that
+/// an item demoted below a recipe by the raw scores can still climb back.
+const SEARCH_CANDIDATES: usize = 30;
+
+/// Results returned to the search box.
+const SEARCH_RESULTS: usize = 10;
+
+/// Score multiplier applied to a result by its type.
+///
+/// Every craftable item is indexed twice: once as its item page, once as its
+/// recipe (issue #1384). For a marketable item the item page is what people
+/// mean, so a recipe never outranks an equally good item match — the two
+/// documents share a title and therefore score alike, and any multiplier below
+/// 1.0 settles the tie in the item's favour.
+///
+/// How far below 1.0 is a real trade-off, measured against the embedded game
+/// data: the demotion has to be gentle enough that a recipe still survives the
+/// ten-row list when its result has no item page at all. At 0.8 every one of
+/// the 1851 untradeable craft results is reachable by typing its name, while a
+/// generic one-word query ("ingot", "ring") still fills ~93% of its rows with
+/// items. Demoting harder buries the untradeable crafts this exists for: at
+/// 0.5, 36 of them fell off the list entirely.
+fn type_weight(result_type: &str) -> f32 {
+    match result_type {
+        "recipe" => 0.8,
+        _ => 1.0,
+    }
+}
+
+/// Applies [`type_weight`] to raw tantivy scores and keeps the best
+/// [`SEARCH_RESULTS`].
+///
+/// The sort is stable, so results that weigh the same stay in the order
+/// tantivy ranked them.
+fn rank(mut results: Vec<SearchResult>) -> Vec<SearchResult> {
+    for result in &mut results {
+        result.score *= type_weight(&result.result_type);
+    }
+    results.sort_by(|a, b| b.score.total_cmp(&a.score));
+    results.truncate(SEARCH_RESULTS);
+    results
+}
+
+/// Row id of the carpenter `ClassJob`, the first of the eight Disciples of the
+/// Hand.
+fn carpenter_row(data: &Data) -> Option<i32> {
+    data.class_jobs
+        .iter()
+        .find(|(_, job)| job.abbreviation == "CRP")
+        .map(|(id, _)| id.0)
+}
+
+/// Crafter and level shown under a recipe result, e.g. `CRP Lv. 60` — the
+/// shape the recipe planner puts under its own title. The abbreviation rather
+/// than `ClassJob::name`, which the game data stores lowercase ("carpenter").
+///
+/// `Recipe::craft_type` is a row index into the `CraftType` sheet, which
+/// xiv-gen doesn't load. The eight crafter `ClassJob` rows are consecutive
+/// from carpenter in the same order, which the recipe analyzer pins against
+/// real game data in `craft_type_acronyms_match_the_crafter_class_jobs`.
+fn recipe_label(data: &Data, carpenter: Option<i32>, recipe: &Recipe) -> String {
+    let job = carpenter
+        .filter(|_| (0..8).contains(&recipe.craft_type))
+        .and_then(|carpenter| {
+            data.class_jobs
+                .get(&ClassJobId(carpenter + recipe.craft_type))
+        })
+        .map(|job| job.abbreviation.as_str())
+        .filter(|abbreviation| !abbreviation.is_empty())
+        .unwrap_or("Recipe");
+    match data
+        .recipe_level_tables
+        .get(&RecipeLevelTableId(recipe.recipe_level_table))
+        .map(|level| level.class_job_level)
+    {
+        Some(level) if level > 0 => format!("{job} Lv. {level}"),
+        _ => job.to_string(),
+    }
 }
 
 /// Reduces what the user typed to the plain text the index was built from.
@@ -58,6 +144,10 @@ impl SearchService {
         let icon_id_field = schema_builder.add_i64_field("icon_id", STORED);
         // Category field uses same options as title for searchability
         let category_field = schema_builder.add_text_field("category", title_options);
+        // Shown under the title, never searched. A recipe's crafter lives here
+        // rather than in `category` so that "carpenter" keeps returning the
+        // carpenter gear page instead of a thousand carpenter recipes.
+        let display_category_field = schema_builder.add_text_field("display_category", STORED);
 
         let schema = schema_builder.build();
 
@@ -81,6 +171,7 @@ impl SearchService {
                     url_field => format!("/item/{}", id.0),
                     icon_id_field => id.0 as i64, // Use Item ID for image lookup
                     category_field => category_name,
+                    display_category_field => category_name,
                 ))?;
             }
         }
@@ -98,6 +189,7 @@ impl SearchService {
                 // Categories don't have a direct icon, maybe use a default or 0
                 icon_id_field => 0i64,
                 category_field => "",
+                display_category_field => "",
             ))?;
         }
 
@@ -115,6 +207,7 @@ impl SearchService {
                     url_field => format!("/items/jobset/{}", job.name),
                     icon_id_field => 0i64, // Jobs don't have a simple icon ID in this context easily accessible or needed?
                     category_field => "",
+                    display_category_field => "",
                 ))?;
             }
         }
@@ -174,8 +267,56 @@ impl SearchService {
                     url_field => format!("/currency-exchange/{}", id.0),
                     icon_id_field => id.0 as i64, // Use Item ID for image lookup
                     category_field => "",
+                    display_category_field => "",
                 ))?;
             }
+        }
+
+        // Index Recipes
+        //
+        // The item index only covers marketable items, so a craft whose result
+        // is untradeable — rarefied collectables, quest turn-ins — had no way
+        // into the search box even when every ingredient is bought on the
+        // market (issue #1384). Recipes are indexed for every craftable item,
+        // untradeable or not, since the planner is worth reaching directly;
+        // `type_weight` keeps them under the item page.
+        //
+        // Several recipes can share a result item (cross-class crafts). Index
+        // the lowest recipe id of each so the list holds one row per craftable
+        // item rather than the same name repeated per job.
+        let mut recipe_by_result: BTreeMap<i32, RecipeId> = BTreeMap::new();
+        for (id, recipe) in &data.recipes {
+            if recipe.item_result == 0 {
+                continue;
+            }
+            let first = recipe_by_result.entry(recipe.item_result).or_insert(*id);
+            if id.0 < first.0 {
+                *first = *id;
+            }
+        }
+
+        let carpenter = carpenter_row(data);
+        for (item_id, recipe_id) in recipe_by_result {
+            let (Some(item), Some(recipe)) = (
+                data.items.get(&ItemId(item_id)),
+                data.recipes.get(&recipe_id),
+            ) else {
+                continue;
+            };
+            if item.name.is_empty() {
+                continue;
+            }
+
+            index_writer.add_document(doc!(
+                title_field => item.name.as_str(),
+                type_field => "recipe",
+                url_field => format!("/recipe/{}", recipe_id.0),
+                icon_id_field => item_id as i64, // Use Item ID for image lookup
+                // Left unsearchable on purpose: the recipe is found by the name
+                // of what it makes, the same string the item document holds.
+                category_field => "",
+                display_category_field => recipe_label(data, carpenter, recipe),
+            ))?;
         }
 
         index_writer.commit()?;
@@ -194,6 +335,7 @@ impl SearchService {
             url_field,
             icon_id_field,
             category_field,
+            display_category_field,
         })
     }
 
@@ -229,7 +371,9 @@ impl SearchService {
 
         // tantivy 0.26: `TopDocs` itself no longer implements `Collector`; chain
         // `.order_by_score()` to get a score-ordered collector (the previous default).
-        let collector = TopDocs::with_limit(10).order_by_score();
+        // More candidates than the box shows: `rank` reweights by result type
+        // afterwards, so the final ten aren't tantivy's top ten.
+        let collector = TopDocs::with_limit(SEARCH_CANDIDATES).order_by_score();
         let top_docs = match searcher.search(&query, &collector) {
             Ok(docs) => docs,
             Err(e) => {
@@ -238,7 +382,7 @@ impl SearchService {
             }
         };
 
-        top_docs
+        let results = top_docs
             .into_iter()
             .map(|(score, doc_address)| {
                 let retrieved_doc: tantivy::schema::TantivyDocument =
@@ -263,7 +407,7 @@ impl SearchService {
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
                 let category = retrieved_doc
-                    .get_first(self.category_field)
+                    .get_first(self.display_category_field)
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -276,7 +420,9 @@ impl SearchService {
                     category,
                 }
             })
-            .collect()
+            .collect();
+
+        rank(results)
     }
 }
 
@@ -327,6 +473,173 @@ mod tests {
             "searching {query:?} did not return {:?}, got {:?}",
             item.name,
             results.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
+    }
+
+    fn result(result_type: &str, score: f32) -> SearchResult {
+        SearchResult {
+            score,
+            title: "Iron Ingot".to_string(),
+            result_type: result_type.to_string(),
+            url: format!("/{result_type}"),
+            icon_id: None,
+            category: None,
+        }
+    }
+
+    #[test]
+    fn a_recipe_never_outranks_an_equally_good_item_match() {
+        // Both documents hold the same title, so tantivy scores them alike;
+        // the type weight is what decides the order.
+        let ranked = rank(vec![result("recipe", 10.0), result("item", 10.0)]);
+        assert_eq!(
+            ranked.iter().map(|r| &r.result_type).collect::<Vec<_>>(),
+            ["item", "recipe"]
+        );
+    }
+
+    #[test]
+    fn a_much_better_recipe_match_still_ranks_first() {
+        let ranked = rank(vec![result("item", 10.0), result("recipe", 30.0)]);
+        assert_eq!(
+            ranked.first().map(|r| r.result_type.as_str()),
+            Some("recipe")
+        );
+    }
+
+    #[test]
+    fn rank_returns_at_most_a_boxful() {
+        let ranked = rank((0..50).map(|i| result("item", i as f32)).collect());
+        assert_eq!(ranked.len(), SEARCH_RESULTS);
+        assert_eq!(ranked.first().map(|r| r.score), Some(49.0));
+    }
+
+    /// Names of every craftable item whose result is (or isn't) marketable,
+    /// ordered by item id. The game data lives in hash maps, so the order has
+    /// to be pinned for a sample to mean the same thing on every run.
+    fn craftable_item_names(marketable: bool) -> Vec<&'static str> {
+        let data = xiv_gen_db::data();
+        let mut names: Vec<(i32, &str)> = data
+            .recipes
+            .values()
+            .filter_map(|recipe| {
+                let item = data.items.get(&ItemId(recipe.item_result))?;
+                (((item.item_search_category > 0) == marketable) && !item.name.is_empty())
+                    .then_some((recipe.item_result, item.name.as_str()))
+            })
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names.into_iter().map(|(_, name)| name).collect()
+    }
+
+    /// A spread of `count` names taken across the whole population rather than
+    /// its first rows, which are all starter-tier crafts.
+    fn spread(names: &[&'static str], count: usize) -> Vec<&'static str> {
+        names
+            .iter()
+            .step_by((names.len() / count).max(1))
+            .take(count)
+            .copied()
+            .collect()
+    }
+
+    /// Issue #1384: a craft whose result can't be sold has no item page in the
+    /// index, so before recipes were indexed there was no way to search for it
+    /// even though its ingredients are bought on the market.
+    ///
+    /// This is what [`type_weight`] is calibrated against — a heavier demotion
+    /// pushes these off the ten-row list, because nothing else in the index
+    /// carries their name.
+    #[test]
+    fn finds_a_craft_whose_result_is_not_marketable() {
+        let service = SearchService::new().expect("index builds from embedded data");
+        let names = craftable_item_names(false);
+        assert!(
+            !names.is_empty(),
+            "game data should have untradeable craft results"
+        );
+
+        // A spread rather than all 1851 of them: each one runs a real query
+        // against a real index.
+        for name in spread(&names, 40) {
+            let results = service.search(name);
+            assert!(
+                results
+                    .iter()
+                    .any(|r| r.result_type == "recipe" && r.title == name),
+                "searching {name:?} returned no recipe, got {:?}",
+                results
+                    .iter()
+                    .map(|r| (&r.title, &r.result_type))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The ordering half of [`type_weight`]: when a craftable item is
+    /// marketable it has both documents, and the item page always comes first.
+    #[test]
+    fn a_recipe_never_outranks_its_own_item_page() {
+        let service = SearchService::new().expect("index builds from embedded data");
+        let names = craftable_item_names(true);
+        assert!(!names.is_empty(), "game data should have marketable crafts");
+
+        let mut paired = 0;
+        for name in spread(&names, 40) {
+            let results = service.search(name);
+            let position = |result_type: &str| {
+                results
+                    .iter()
+                    .position(|r| r.title == name && r.result_type == result_type)
+            };
+            // A recipe can be crowded out of the ten rows by other items whose
+            // names share a word — that's the demotion working. Reaching the
+            // list without its own item page above it is what must not happen.
+            if let Some(recipe_at) = position("recipe") {
+                let item_at = position("item").unwrap_or_else(|| {
+                    panic!("{name:?} listed its recipe with no item page in the results")
+                });
+                assert!(
+                    item_at < recipe_at,
+                    "{name:?} listed its recipe ({recipe_at}) above its item page ({item_at})"
+                );
+                paired += 1;
+            }
+        }
+        assert!(
+            paired > 0,
+            "no marketable craft in the sample surfaced its recipe at all -- the recipe weight is burying them"
+        );
+    }
+
+    #[test]
+    fn a_recipe_result_carries_the_crafter_as_its_category() {
+        let data = xiv_gen_db::data();
+        let carpenter = carpenter_row(data);
+        // Placeholder recipes can have no level. Pick a real, leveled craft
+        // deterministically instead of relying on HashMap iteration order.
+        let recipe = data
+            .recipes
+            .iter()
+            .filter(|(_, recipe)| {
+                recipe.craft_type == 0
+                    && data
+                        .items
+                        .get(&ItemId(recipe.item_result))
+                        .is_some_and(|item| !item.name.is_empty())
+                    && data
+                        .recipe_level_tables
+                        .get(&RecipeLevelTableId(recipe.recipe_level_table))
+                        .is_some_and(|level| level.class_job_level > 0)
+            })
+            .min_by_key(|(id, _)| id.0)
+            .map(|(_, recipe)| recipe)
+            .expect("game data has a carpenter recipe with a positive level");
+        assert!(
+            recipe_label(data, carpenter, recipe).starts_with("CRP Lv. "),
+            "unexpected label {:?}",
+            recipe_label(data, carpenter, recipe)
         );
     }
 

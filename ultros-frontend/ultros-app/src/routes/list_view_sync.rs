@@ -133,13 +133,22 @@ fn schedule_revalidate(_slot: &Rc<RefCell<Option<RevalidateTimer>>>, _probe: imp
 /// never re-renders an open drawer or modal under the user's cursor.
 #[cfg(feature = "hydrate")]
 fn revalidate(
+    active_list: Memo<i32>,
     list_id: i32,
     handle: RwSignal<Option<ListDocHandle>>,
     cache: StoredValue<Option<ListingsCache>>,
     bump: WriteSignal<u32>,
 ) {
+    let expected = handle.try_get_untracked().flatten().map(|h| h.revision);
+    if !request_is_current(active_list, list_id, handle, expected) {
+        return;
+    }
     leptos::task::spawn_local(async move {
-        match get_list_items_with_listings(list_id).await {
+        let result = get_list_items_with_listings(list_id).await;
+        if !request_is_current(active_list, list_id, handle, expected) {
+            return;
+        }
+        match result {
             Ok((list, items)) => {
                 let permission = list.permission;
                 if let Some(doc_handle) = handle.get_untracked() {
@@ -183,6 +192,7 @@ fn revalidate(
 
 #[cfg(not(feature = "hydrate"))]
 fn revalidate(
+    _active_list: Memo<i32>,
     _list_id: i32,
     _handle: RwSignal<Option<ListDocHandle>>,
     _cache: StoredValue<Option<ListingsCache>>,
@@ -237,19 +247,45 @@ fn apply_edit(handle: RwSignal<Option<ListDocHandle>>, edit: Edit) -> Result<(),
 /// one open, the listings come from the (cached) endpoint and the rows from
 /// the document, so an offline edit renders immediately and a server that is
 /// merely unreachable still leaves a usable page.
+// A Resource does not cancel an in-flight fetch when its source changes.
+// Guard side effects as well as the rendered result: the old handle may have
+// been disposed, or a successor list may now own the shared signals.
+fn request_is_current(
+    list_id: Memo<i32>,
+    id: i32,
+    handle: RwSignal<Option<ListDocHandle>>,
+    expected: Option<RwSignal<u64>>,
+) -> bool {
+    list_id.try_get_untracked() == Some(id)
+        && handle.try_get_untracked().is_some_and(|current| {
+            current.map(|h| h.revision) == expected
+                && current.is_none_or(|h| !h.is_closed_or_disposed())
+        })
+}
+
 async fn load_view(
+    list_id: Memo<i32>,
     id: i32,
     handle: RwSignal<Option<ListDocHandle>>,
     cache: StoredValue<Option<ListingsCache>>,
     listings_version: u32,
     revalidate_version: u32,
 ) -> ListViewResult {
-    let Some(doc_handle) = handle.get_untracked() else {
+    let current = handle.try_get_untracked().flatten();
+    let expected = current.map(|h| h.revision);
+    let stale = || AppError::ListDoc("document is no longer active".to_string());
+    if !request_is_current(list_id, id, handle, expected) {
+        return Err(stale());
+    }
+    let Some(doc_handle) = current else {
         // No document yet (SSR, the first client paint, an anonymous
         // visitor). Cache what the REST read already paid for, so the first
         // handle-backed run below is a cache hit rather than a second fetch
         // of the same prices.
         let result = get_list_items_with_listings(id).await;
+        if !request_is_current(list_id, id, handle, expected) {
+            return Err(stale());
+        }
         if let Ok((list, items)) = &result {
             cache.set_value(Some(ListingsCache {
                 list_id: id,
@@ -281,53 +317,59 @@ async fn load_view(
     });
     let base = match cached {
         Some(cached) => cached,
-        None => match get_list_items_with_listings(id).await {
-            Ok((list, items)) => {
-                doc_handle.remember_permission(list.permission as i16);
-                let covered = covered_ids(&items);
-                let fresh = ListingsCache {
-                    list_id: id,
-                    version: listings_version,
-                    revalidate: revalidate_version,
-                    list,
-                    listings: items
-                        .into_iter()
-                        .map(|(item, listings)| (item.item_id, listings))
-                        .collect(),
-                    // Whatever the server had this time. If it hasn't seen
-                    // the new row yet, the id stays uncovered — but the
-                    // cache is only consulted again when the id *set*
-                    // changes, so this refetches once, not in a loop.
-                    covered: covered.union(&wanted_ids).copied().collect(),
-                };
-                cache.set_value(Some(fresh.clone()));
-                fresh
+        None => {
+            let result = get_list_items_with_listings(id).await;
+            if !request_is_current(list_id, id, handle, expected) {
+                return Err(stale());
             }
-            // Forbidden or deleted: the local copy must not outlive the
-            // server's answer. Clearing the handle also drops the sync
-            // subscription (the Effect that owns it reads this signal).
-            Err(error) if is_denial(&error) => {
-                doc_handle.purge();
-                cache.set_value(None);
-                handle.set(None);
-                return Err(error);
-            }
-            Err(error) => match cache.get_value().filter(|c| c.list_id == id) {
-                // Stale prices beat no page.
-                Some(stale) => stale,
-                None => match offline_list(id, doc_handle) {
-                    Some(list) => ListingsCache {
+            match result {
+                Ok((list, items)) => {
+                    doc_handle.remember_permission(list.permission as i16);
+                    let covered = covered_ids(&items);
+                    let fresh = ListingsCache {
                         list_id: id,
                         version: listings_version,
                         revalidate: revalidate_version,
                         list,
-                        listings: HashMap::new(),
-                        covered: wanted_ids.clone(),
+                        listings: items
+                            .into_iter()
+                            .map(|(item, listings)| (item.item_id, listings))
+                            .collect(),
+                        // Whatever the server had this time. If it hasn't seen
+                        // the new row yet, the id stays uncovered — but the
+                        // cache is only consulted again when the id *set*
+                        // changes, so this refetches once, not in a loop.
+                        covered: covered.union(&wanted_ids).copied().collect(),
+                    };
+                    cache.set_value(Some(fresh.clone()));
+                    fresh
+                }
+                // Forbidden or deleted: the local copy must not outlive the
+                // server's answer. Clearing the handle also drops the sync
+                // subscription (the Effect that owns it reads this signal).
+                Err(error) if is_denial(&error) => {
+                    doc_handle.purge();
+                    cache.set_value(None);
+                    handle.set(None);
+                    return Err(error);
+                }
+                Err(error) => match cache.get_value().filter(|c| c.list_id == id) {
+                    // Stale prices beat no page.
+                    Some(stale) => stale,
+                    None => match offline_list(id, doc_handle) {
+                        Some(list) => ListingsCache {
+                            list_id: id,
+                            version: listings_version,
+                            revalidate: revalidate_version,
+                            list,
+                            listings: HashMap::new(),
+                            covered: wanted_ids.clone(),
+                        },
+                        None => return Err(error),
                     },
-                    None => return Err(error),
                 },
-            },
-        },
+            }
+        }
     };
     // `ListDocument` clones share the underlying document, so this hands
     // `view_result` a reference without holding the stored value across it.
@@ -460,7 +502,14 @@ pub fn ListViewSync() -> impl IntoView {
             )
         },
         move |(id, _, listings_v, _, revalidate_v)| {
-            load_view(id, handle, listings_cache, listings_v, revalidate_v)
+            load_view(
+                list_id,
+                id,
+                handle,
+                listings_cache,
+                listings_v,
+                revalidate_v,
+            )
         },
     );
     let user_resource = Resource::new(|| {}, |_| async move { crate::api::get_login().await.ok() });
@@ -514,7 +563,7 @@ pub fn ListViewSync() -> impl IntoView {
                 // broadcasts an ordinary `List` update), so it revalidates
                 // on all of them and lets the REST answer decide.
                 schedule_revalidate(&revalidate_timer, move || {
-                    revalidate(id, handle, listings_cache, set_revalidate_version)
+                    revalidate(list_id, id, handle, listings_cache, set_revalidate_version)
                 });
             });
             activity_subscription.set_value(Some(sub));
@@ -711,12 +760,16 @@ pub fn ListViewSync() -> impl IntoView {
                     // for exactly the cookie that just expired).
                     use crate::list_doc::sync::ErrorKind;
                     let purge = matches!(kind, ErrorKind::Denied | ErrorKind::NotFound);
-                    if let Some(denied) = handle.get_untracked() {
-                        if purge {
-                            denied.purge();
-                        } else {
-                            denied.close();
-                        }
+                    let Some(denied) = handle.try_get_untracked().flatten() else {
+                        return;
+                    };
+                    if denied.revision != open.revision || denied.is_closed_or_disposed() {
+                        return;
+                    }
+                    if purge {
+                        denied.purge();
+                    } else {
+                        denied.close();
                     }
                     handle.set(None);
                 },

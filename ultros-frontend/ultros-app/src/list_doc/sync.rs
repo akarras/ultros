@@ -236,7 +236,11 @@ pub fn start(
                 handle.try_version()
             }
         },
-        move |message| match message {
+        move |message| {
+            if handle.is_closed_or_disposed() {
+                return;
+            }
+            match message {
             ServerClient::ListDocSubscribed {
                 version, payload, ..
             } => {
@@ -429,7 +433,11 @@ pub fn start(
                     return;
                 }
                 let on_remote_change = on_remote_change.clone();
-                defer(move || on_remote_change());
+                defer(move || {
+                    if !handle.is_closed_or_disposed() {
+                        on_remote_change();
+                    }
+                });
                 handle.set_status("live");
             }
             ServerClient::Stale { .. } => {
@@ -439,6 +447,9 @@ pub fn start(
                 let slot = weak_slot.clone();
                 let on_stale = on_stale.clone();
                 defer(move || {
+                    if handle.is_closed_or_disposed() {
+                        return;
+                    }
                     resubscribe(&slot);
                     on_stale();
                 });
@@ -449,7 +460,11 @@ pub fn start(
                     ErrorKind::Denied | ErrorKind::NotFound | ErrorKind::NotSignedIn => {
                         handle.set_status("offline");
                         let on_denied = on_denied.clone();
-                        defer(move || on_denied(kind));
+                        defer(move || {
+                            if !handle.is_closed_or_disposed() {
+                                on_denied(kind);
+                            }
+                        });
                     }
                     ErrorKind::MetaForbidden => {
                         log::warn!("list {list_id} sync: {message}");
@@ -471,6 +486,7 @@ pub fn start(
                 }
             }
             _ => {}
+            }
         },
     );
     *slot.borrow_mut() = Some(subscription);

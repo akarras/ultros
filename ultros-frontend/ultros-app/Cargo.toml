@@ -7,6 +7,16 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ultros-ui-shell = { path = "../ultros-ui-shell", default-features = false }
+ultros-ui-crafting = { path = "../ultros-ui-crafting", default-features = false }
+ultros-ui-lists = { path = "../ultros-ui-lists", default-features = false }
+ultros-ui-alerts = { path = "../ultros-ui-alerts", default-features = false }
+ultros-ui-market = { path = "../ultros-ui-market", default-features = false }
+ultros-ui-charts = { path = "../ultros-ui-charts", default-features = false }
+ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
+ultros-ui-query = { path = "../ultros-ui-query", default-features = false }
+ultros-ui-grid = { path = "../ultros-ui-grid", default-features = false }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
 ultros-crafting = { path = "../ultros-crafting" }
 ultros-calc = { path = "../ultros-calc" }
 ultros-ui = { path = "../ultros-ui", default-features = false }
@@ -21,9 +31,6 @@ axum = { workspace = true, optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen.workspace = true
-uuid = { version = "1.23.1", features = ["v4", "js"] }
-
-gloo-net = { workspace = true, optional = true }
 web-sys = { version = "0.3", optional = true, features = [
     "AbortController",
     "Clipboard",
@@ -68,37 +75,27 @@ web-sys = { version = "0.3", optional = true, features = [
     "NotificationPermission",
 ] }
 ultros-api-types = { path = "../../ultros-api-types" }
-ultros-db = { path = "../../ultros-db", optional = true }
 serde = { workspace = true, features = ["rc"] }
 thousands = "0.2.0"
-timeago = "0.6.0"
 chrono.workspace = true
 itertools.workspace = true
 futures = "0.3.32"
 humantime = "2.3"
-colorsys = "0.7.3"
-thiserror = { workspace = true }
 log = "0.4.29"
-anyhow = { workspace = true }
 cookie = { version = "0.18.1", features = ["percent-encode"] }
 wasm-bindgen = { version = "0.2", optional = true }
 time = "0.3.47"
 js-sys = { version = "0.3", optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
 tracing = "0.1"
 serde_json = { workspace = true }
 ultros-charts = { path = "../ultros-charts", features = ["leptos"] }
 icondata.workspace = true
 gloo-timers = { version = "0.4.0", features = ["futures"] }
-cfg-if.workspace = true
 paginate = "1.1.11"
 percent-encoding = "2.3.2"
-field-iterator = { path = "../../field-iterator" }
 # leptos_animation = "0.5.0"
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
-codee = {version = "0.3.5", features = ["json_serde"]}
 send_wrapper = "0.6"
-flume = { version = "0.12.0", features = ["async"] }
 icondata_core.workspace = true
 leptos_i18n.workspace = true
 ultros-list-doc = { path = "../../ultros-list-doc" }
@@ -109,19 +106,37 @@ default = [
     "ssr",
 ] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = [
+    "ultros-ui-shell/hydrate",
+    "ultros-ui-crafting/hydrate",
+    "ultros-ui-lists/hydrate",
+    "ultros-ui-alerts/hydrate",
+    "ultros-ui-market/hydrate",
+    "ultros-ui-charts/hydrate",
+    "ultros-ui-game/hydrate",
+    "ultros-ui-query/hydrate",
+    "ultros-ui-grid/hydrate",
+    "ultros-frontend-core/hydrate",
     "ultros-ui/hydrate",
     "ultros-i18n/hydrate",
     "leptos/hydrate",
-    "gloo-net",
     "web-sys",
     "wasm-bindgen",
-    "wasm-bindgen-futures",
     "time/wasm-bindgen",
     "js-sys",
     "leptos_i18n/hydrate",
     "ultros-api-client/hydrate",
 ]
 ssr = [
+    "ultros-ui-shell/ssr",
+    "ultros-ui-crafting/ssr",
+    "ultros-ui-lists/ssr",
+    "ultros-ui-alerts/ssr",
+    "ultros-ui-market/ssr",
+    "ultros-ui-charts/ssr",
+    "ultros-ui-game/ssr",
+    "ultros-ui-query/ssr",
+    "ultros-ui-grid/ssr",
+    "ultros-frontend-core/ssr",
     "ultros-ui/ssr",
     "ultros-i18n/ssr",
     "leptos/ssr",
@@ -129,7 +144,6 @@ ssr = [
     "leptos_router/ssr",
     "leptos_axum",
     "web-sys",
-    "ultros-db",
     "xiv-gen-db/embed",
     "leptos-use/ssr",
     "axum",
@@ -139,9 +153,9 @@ ssr = [
 ]
 
 [dev-dependencies]
+# Share layout assertions with route tests without shipping them in the app.
+ultros-ui-grid = { path = "../ultros-ui-grid", default-features = false, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 # Standing up a global executor is a prerequisite for building any reactive
 # effect outside of a running app, including SSR component tests.
 any_spawner = { version = "0.3", features = ["futures-executor"] }
-# SSR render-to-string snapshots (list filter row, auto-mark modal).
-insta = "1"

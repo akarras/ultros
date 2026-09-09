@@ -10779,23 +10779,15 @@ name = "ultros-app"
 version = "0.1.0"
 dependencies = [
  "any_spawner",
- "anyhow",
  "axum",
  "base64 0.22.1",
- "cfg-if",
  "chrono",
- "codee",
- "colorsys",
  "cookie",
- "field-iterator",
- "flume",
  "futures",
- "gloo-net 0.7.0",
  "gloo-timers 0.4.0",
  "humantime",
  "icondata",
  "icondata_core",
- "insta",
  "itertools 0.14.0",
  "js-sys",
  "leptos",
@@ -10811,10 +10803,8 @@ dependencies = [
  "send_wrapper",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
  "thousands",
  "time",
- "timeago",
  "tokio",
  "tracing",
  "ultros-api-client",
@@ -10823,13 +10813,20 @@ dependencies = [
  "ultros-changelog",
  "ultros-charts",
  "ultros-crafting",
- "ultros-db",
+ "ultros-frontend-core",
  "ultros-i18n",
  "ultros-list-doc",
  "ultros-ui",
- "uuid",
+ "ultros-ui-alerts",
+ "ultros-ui-charts",
+ "ultros-ui-crafting",
+ "ultros-ui-game",
+ "ultros-ui-grid",
+ "ultros-ui-lists",
+ "ultros-ui-market",
+ "ultros-ui-query",
+ "ultros-ui-shell",
  "wasm-bindgen",
- "wasm-bindgen-futures",
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",
@@ -10950,6 +10947,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultros-frontend-core"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "anyhow",
+ "axum",
+ "chrono",
+ "cookie",
+ "flume",
+ "futures",
+ "gloo-net 0.7.0",
+ "gloo-timers 0.4.0",
+ "itertools 0.14.0",
+ "js-sys",
+ "leptos",
+ "leptos_i18n",
+ "log",
+ "percent-encoding",
+ "send_wrapper",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tracing",
+ "ultros-api-client",
+ "ultros-api-types",
+ "ultros-calc",
+ "ultros-changelog",
+ "ultros-i18n",
+ "ultros-ui",
+ "wasm-bindgen",
+ "web-sys",
+ "xiv-gen",
+ "xiv-gen-db",
+]
+
+[[package]]
 name = "ultros-grid-core"
 version = "0.1.0"
 dependencies = [
@@ -11001,20 +11035,246 @@ name = "ultros-ui"
 version = "0.1.0"
 dependencies = [
  "any_spawner",
- "codee",
- "gloo-timers 0.4.0",
+ "cfg-if",
+ "chrono",
  "icondata",
  "icondata_core",
  "js-sys",
+ "leptos",
+ "leptos-use",
+ "leptos_hotkeys",
+ "leptos_i18n",
+ "leptos_router",
+ "thousands",
+ "time",
+ "timeago",
+ "ultros-api-types",
+ "ultros-i18n",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "ultros-ui-alerts"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "icondata",
+ "js-sys",
+ "leptos",
+ "leptos_i18n",
+ "log",
+ "time",
+ "ultros-api-types",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "ultros-ui-game",
+ "ultros-ui-grid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "xiv-gen",
+]
+
+[[package]]
+name = "ultros-ui-charts"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "chrono",
+ "icondata",
+ "icondata_core",
+ "leptos",
+ "leptos-use",
+ "leptos_i18n",
+ "leptos_router",
+ "thousands",
+ "time",
+ "ultros-api-types",
+ "ultros-charts",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "ultros-ui-query",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "ultros-ui-crafting"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "cookie",
+ "futures",
+ "icondata",
+ "itertools 0.14.0",
+ "leptos",
+ "leptos_i18n",
+ "leptos_router",
+ "log",
+ "percent-encoding",
+ "serde_json",
+ "time",
+ "ultros-api-types",
+ "ultros-crafting",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "ultros-ui-game",
+ "web-sys",
+ "xiv-gen",
+ "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-ui-game"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "colorsys",
+ "futures",
+ "icondata",
+ "leptos",
+ "leptos_i18n",
+ "serde",
+ "serde_json",
+ "time",
+ "ultros-api-types",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "web-sys",
+ "xiv-gen",
+]
+
+[[package]]
+name = "ultros-ui-grid"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "codee",
+ "gloo-timers 0.4.0",
+ "icondata",
+ "js-sys",
+ "leptos",
+ "leptos-use",
+ "leptos_i18n",
+ "leptos_router",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+ "ultros-grid-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "ultros-ui-lists"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "chrono",
+ "icondata",
+ "icondata_core",
+ "insta",
+ "leptos",
+ "leptos_i18n",
+ "leptos_router",
+ "log",
+ "thiserror 2.0.20",
+ "time",
+ "ultros-api-types",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "ultros-ui-alerts",
+ "ultros-ui-game",
+ "ultros-ui-market",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "xiv-gen",
+]
+
+[[package]]
+name = "ultros-ui-market"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "chrono",
+ "codee",
+ "gloo-timers 0.4.0",
+ "icondata",
+ "leptos",
+ "leptos-use",
+ "leptos_i18n",
+ "log",
+ "thousands",
+ "time",
+ "ultros-api-types",
+ "ultros-calc",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "ultros-ui-charts",
+ "ultros-ui-game",
+ "xiv-gen",
+]
+
+[[package]]
+name = "ultros-ui-query"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "codee",
+ "cookie",
+ "humantime",
+ "icondata",
  "leptos",
  "leptos-use",
  "leptos_i18n",
  "leptos_router",
  "serde",
  "serde_json",
+ "time",
  "ultros-grid-core",
  "ultros-i18n",
- "wasm-bindgen-futures",
+ "ultros-ui",
+ "ultros-ui-grid",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "ultros-ui-shell"
+version = "0.1.0"
+dependencies = [
+ "any_spawner",
+ "cookie",
+ "gloo-timers 0.4.0",
+ "icondata",
+ "js-sys",
+ "leptos",
+ "leptos-use",
+ "leptos_hotkeys",
+ "leptos_i18n",
+ "leptos_router",
+ "log",
+ "time",
+ "ultros-api-types",
+ "ultros-frontend-core",
+ "ultros-i18n",
+ "ultros-ui",
+ "ultros-ui-game",
+ "ultros-ui-grid",
+ "wasm-bindgen",
  "web-sys",
 ]
 

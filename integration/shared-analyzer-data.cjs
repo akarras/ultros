@@ -176,6 +176,74 @@ async function main() {
     await count(1);
     await first(249);
     await page.screenshot({ path: path.join(artifacts, 'missing-mobile.png'), fullPage: true });
+    // Shared registry: toolbar/menu/header edits are the same query, including
+    // legacy bounds and inputs that run before metric evaluation.
+    await page.setViewport({ width: 1200, height: 900 });
+    await open({ 'registry-test': '1', 'min-amount': '10', 'max-amount': '20' });
+    await count(11);
+    assert.equal(await page.$$eval('[data-registered-filter="amount"]', chips => chips.length), 1);
+    assert.equal(await page.$('[data-grid-query-summary]'), null, 'one filter surface');
+    await page.click('[data-registered-filter="amount"] .filter-chip-value');
+    await page.waitForSelector('[data-registered-editor]');
+    assert.equal(await page.$eval('[data-registered-editor] select', el => el.value), 'between');
+    assert.equal(await page.$eval('[data-registered-editor] input[aria-label="Upper bound"]', el => el.value), '20');
+    await page.click('[data-registered-editor] input[aria-label="Upper bound"]', { count: 3 });
+    await page.type('[data-registered-editor] input[aria-label="Upper bound"]', '25');
+    await page.click('[data-registered-editor] button[type="submit"]');
+    await count(16);
+    assert.equal(new URL(page.url()).searchParams.has('min-amount'), false);
+    assert.equal(new URL(page.url()).searchParams.has('max-amount'), false);
+    await filter('amount', 'gte', '240');
+    await count(9);
+    assert.match(await page.$eval('[data-registered-filter="amount"]', el => el.textContent), /At least 240/);
+    await page.click('[data-registered-filter="amount"] .filter-chip-x');
+    await count(250);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__queryHydrated);
+    await count(250);
+    const addMenu = async () => {
+      await page.click('.registered-filter-bar [data-add-filter-menu]');
+    };
+    await addMenu();
+    await page.click('[data-add-filter="amount"]');
+    await page.waitForSelector('[data-registered-editor]');
+    assert.equal(new URL(page.url()).searchParams.has('gf'), false, 'adding does not invent a threshold');
+    await count(250);
+    await page.click('[data-registered-editor] button[type="submit"]');
+    assert.equal(new URL(page.url()).searchParams.has('gf'), false, 'blank numeric input cannot apply');
+    await page.select('[data-registered-editor] select', 'between');
+    await page.type('[data-registered-editor] input[aria-label="Value"]', '20');
+    await page.type('[data-registered-editor] input[aria-label="Upper bound"]', '40');
+    await page.click('[data-registered-editor] button[type="submit"]');
+    await count(21);
+    await addMenu();
+    await page.click('[data-add-filter="multiplier"]');
+    await page.type('[data-registered-editor] input', '2');
+    await page.click('[data-registered-editor] button[type="submit"]');
+    await count(11);
+    await first(10);
+    await menu('amount');
+    await menuAction('Hide column');
+    await count(11);
+    await page.setViewport({ width: 375, height: 812 });
+    // Let the existing desktop sidebar's mobile slide-out transition finish
+    // before capturing the filter row beneath it.
+    await page.waitForFunction(() => {
+      const nav = document.querySelector('.app-shell > .side-nav');
+      return !nav || nav.getBoundingClientRect().right <= 1;
+    });
+    await page.screenshot({ path: path.join(artifacts, 'registered-filters-mobile.png'), fullPage: true });
+    assert(await page.$$eval('.registered-filter-bar .filter-chip', chips => chips.every(chip => {
+      const rect = chip.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth;
+    })), 'registered chips wrap within mobile viewport');
+    await page.click('[aria-label="Clear all filters"]');
+    await count(250);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__queryHydrated);
+    await count(250);
+    assert.equal(new URL(page.url()).searchParams.has('multiplier'), false);
+    console.log('PASS shared registry: editable chips, menu/header equivalence, simultaneous bounds, legacy clear/reload, pre-calculation inputs and mobile wrapping');
+
     // The real MarketGrid wrapper, including a delayed complete statistics body.
     await page.setViewport({ width: 1280, height: 900 });
     let releaseStats;
@@ -314,6 +382,9 @@ async function main() {
         const required = tool === 'recipe-analyzer'
           ? ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'listing-world', 'listing-dc', 'daily-sales', 'trend']
           : shared;
+        if (tool === 'flip-finder' && fixture) {
+          await require('./flip-finder-sale-columns.cjs')({ page, base: BASE, route, openFixture: open, artifacts });
+        }
         const medianColumn = required[0];
         const query = new URLSearchParams({ v: '1', lang: 'en', world, 'min-sales': '0',
           profit: '-1000000000', roi: '-1000000000', 'next-sale': '1M', sort: 'grid:item', dir: 'asc',
@@ -364,6 +435,11 @@ async function main() {
           const calculated = `.virtual-grid-cell[data-column="${tool === 'scrip-sources' ? 'cost' : 'profit'}"]`;
           await page.waitForSelector(calculated);
           const before = await page.$eval(calculated, cell => cell.textContent);
+          const basisKey = ['leve-analyzer', 'fc-crafting-analyzer', 'scrip-sources'].includes(tool) ? 'cost-basis' : 'revenue';
+          if (tool !== 'recipe-analyzer') {
+            await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
+            await page.waitForSelector('[data-registered-editor]');
+          }
           const controls = await page.$$('select');
           let basis;
           for (const select of controls) {
@@ -373,6 +449,7 @@ async function main() {
           }
           assert(basis, `${tool} exposes selectable median pricing`);
           await basis.select('sale-median');
+          if (tool !== 'recipe-analyzer') await page.click('[data-registered-editor] button[type="submit"]');
           await page.waitForFunction(() => [...new URL(location.href).searchParams.values()].includes('sale-median'));
           await page.waitForFunction((selector, before) => {
             const cell = document.querySelector(selector);
@@ -384,7 +461,10 @@ async function main() {
             await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
               {}, calculated, sevenDayPrice);
             assert.equal(new URL(page.url()).searchParams.get('window'), '30');
-            assert.match(await basis.evaluate(el => el.querySelector('option[value="sale-median"]').textContent), /30d/);
+            await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
+            await page.waitForSelector('[data-registered-editor]');
+            assert.match(await page.$eval('[data-registered-editor] option[value="sale-median"]', el => el.textContent), /30d/);
+            await page.keyboard.press('Escape');
           }
           await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
           await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
@@ -423,7 +503,9 @@ async function main() {
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: hidden filter survives`);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
-        await page.waitForSelector('[data-grid-query-summary]');
+        await page.waitForSelector(tool === 'recipe-analyzer'
+          ? '[data-grid-query-summary]' : `[data-registered-filter="${medianColumn}"]`);
+        if (tool !== 'recipe-analyzer') assert.equal(await page.$('[data-grid-query-summary]'), null, `${tool}: shared bar owns the only filter summary`);
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: filter reload survives`);
         if (fixture) assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: selected pricing basis reload survives`);
         if (fixture && tool !== 'recipe-analyzer') {

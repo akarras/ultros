@@ -1,0 +1,64 @@
+[package]
+name = "ultros-ui-crafting"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+cookie = { version = "0.18.1", features = [
+    "percent-encode",
+] }
+futures = "0.3.32"
+icondata = { workspace = true }
+itertools = { workspace = true }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos_i18n = { workspace = true }
+leptos_router = { workspace = true }
+log = "0.4.29"
+percent-encoding = "2.3.2"
+serde_json = { workspace = true }
+time = "0.3.47"
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-crafting = { path = "../ultros-crafting" }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "HtmlElement",
+    "HtmlInputElement",
+    "KeyboardEvent",
+    "Storage",
+] }
+xiv-gen = { workspace = true }
+xiv-gen-db = { path = "../../xiv-gen-db" }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "leptos_router/ssr",
+    "ultros-frontend-core/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+    "ultros-ui-game/ssr",
+    "xiv-gen-db/embed",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-frontend-core/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+    "ultros-ui-game/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

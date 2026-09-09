@@ -604,6 +604,18 @@ pub struct GilShop {
     pub key_id: GilShopId,
     #[xiv_gen(column = "Name")]
     pub name: String,
+    /// The seasonal-event occurrence this shop belongs to, or 0 for a shop
+    /// that stands year-round.
+    ///
+    /// Kept as the raw id rather than folded away entirely: naming an event
+    /// needs a hand-kept table (`Festival.Name` is blank for all 262 rows) and
+    /// shipping the id means that table can be added without regenerating the
+    /// packs. [`GilShopItem::availability`] already carries the derived verdict.
+    ///
+    /// Filled in after parsing, from the English sheet — the CN/KO/TC forks use
+    /// the SaintCoinach header layout, where this column has no name to match.
+    #[xiv_gen(skip)]
+    pub festival_id: i32,
 }
 
 #[derive(
@@ -624,6 +636,79 @@ pub struct GilShopItem {
     pub key_id: crate::subrow_key::SubrowKey<GilShopId>,
     #[xiv_gen(column = "Item")]
     pub item: i32,
+    /// Whether a player can actually walk up and buy this row today.
+    ///
+    /// Resolved at pack-generation time from the row's own `QuestRequired` /
+    /// `AchievementRequired` and its shop's `FestivalId` / `Quest`, plus the
+    /// category of whatever quest or achievement those name. Not a CSV column
+    /// — see [`VendorAvailability`].
+    #[xiv_gen(skip)]
+    pub availability: VendorAvailability,
+}
+
+/// How reachable a gil-shop row is, ordered from least to most restricted.
+///
+/// The game gates shop rows in two places — `GilShop` carries `FestivalId` and
+/// `Quest`, `GilShopItem` carries `QuestRequired` and `AchievementRequired` —
+/// and neither column says how hard the gate is. A row gated on an achievement
+/// may be a sightseeing-log entry anyone can still earn, or a 2013 seasonal
+/// quest that will never be offered again; the difference is only visible in
+/// the *category* of the referenced row. That resolution happens once during
+/// pack generation (see `csv_to_rkyv::classify_availability`), because the
+/// sheets it needs are far too large to ship.
+///
+/// `Ord` runs least- to most-restricted, so the easiest way to obtain an item
+/// sold by several shops is the `min` over its rows.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
+#[archive(check_bytes)]
+#[repr(u8)]
+pub enum VendorAvailability {
+    /// No gate: any character can buy it right now.
+    #[default]
+    Open,
+    /// Behind a quest or achievement that is still obtainable — main-scenario
+    /// progress, a guild supplier unlock, a sightseeing-log entry. Restricted,
+    /// but not a dead end: a player who wants the item can go get access.
+    Unlockable,
+    /// The shop itself is bound to a seasonal event (`GilShop.FestivalId`), so
+    /// the vendor is only present while that event runs.
+    ///
+    /// Note `FestivalId` identifies an *occurrence*, not an event: the fireworks
+    /// vendor has a different id for each year's Rising. So a row marked here is
+    /// buyable only if this particular occurrence is the live one, which for the
+    /// overwhelming majority of ids means never again. Whether an id maps to a
+    /// recurring event is not in the sheets and would need a hand-kept table.
+    SeasonalShop,
+    /// Gated on a quest or achievement belonging to a seasonal event, i.e. the
+    /// player had to take part while it was running. The vendor may stand there
+    /// year-round — the Calamity Salvager does — but only ever sells to those
+    /// who already qualified.
+    SeasonalUnlock,
+}
+
+impl VendorAvailability {
+    /// Whether a player who does not already have access can go and buy this.
+    ///
+    /// False for both seasonal cases, which is what resale and crafting-cost
+    /// surfaces should key on: pricing a flip against a vendor the buyer cannot
+    /// reach is the bug in <https://github.com/akarras/ultros/issues/1362>.
+    pub fn is_obtainable(self) -> bool {
+        matches!(self, Self::Open | Self::Unlockable)
+    }
 }
 
 #[derive(
@@ -1070,12 +1155,24 @@ pub struct Data {
     pub leves: HashMap<LeveId, Leve>,
     pub leve_reward_items: HashMap<LeveRewardItemId, LeveRewardItem>,
     pub leve_reward_item_groups: HashMap<LeveRewardItemGroupId, LeveRewardItemGroup>,
-    pub e_npc_bases: HashMap<ENpcBaseId, ENpcBase>,
     pub e_npc_residents: HashMap<ENpcResidentId, ENpcResident>,
     pub gil_shops: HashMap<GilShopId, GilShop>,
     pub gil_shop_items: HashMap<GilShopId, Vec<GilShopItem>>,
-    pub topic_selects: HashMap<TopicSelectId, TopicSelect>,
-    pub pre_handlers: HashMap<PreHandlerId, PreHandler>,
+    /// Which NPCs offer each gil shop, resolved at pack-generation time.
+    ///
+    /// The game models this the other way round: `ENpcBase.ENpcData` lists the
+    /// things an NPC offers, and a shop is reachable from that list directly,
+    /// through a `TopicSelect` menu, or through a `PreHandler` that points at
+    /// one. Answering "who sells this?" from the raw sheets therefore means
+    /// scanning all ~60k NPCs' 32-slot data arrays on every lookup, and it
+    /// forced `ENpcBase`, `TopicSelect` and `PreHandler` into the shipped pack
+    /// — `ENpcBase` alone was ~34% of its decoded size, for this one query.
+    ///
+    /// The reverse index is built once in `csv_to_rkyv` and the three source
+    /// sheets are dropped. Values are the ids of NPCs that have an
+    /// `ENpcResident` row (the ones that can actually be displayed), sorted
+    /// ascending so render order is stable between SSR and hydration.
+    pub gil_shop_npcs: HashMap<GilShopId, Vec<ENpcResidentId>>,
     pub item_search_categorys: HashMap<ItemSearchCategoryId, ItemSearchCategory>,
     pub item_ui_categorys: HashMap<ItemUiCategoryId, ItemUiCategory>,
     pub item_sort_categorys: HashMap<ItemSortCategoryId, ItemSortCategory>,
