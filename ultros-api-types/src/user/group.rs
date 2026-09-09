@@ -294,3 +294,48 @@ pub struct DiscordManageableGuild {
     /// it as taken instead of failing the create.
     pub existing_group_id: Option<i32>,
 }
+
+/// A candidate member for the owner's search-as-you-type picker. Backed by
+/// Discord's guild member search for a linked group, or by a `discord_user`
+/// prefix match for a manual one.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct GroupMemberSearchResult {
+    pub user_id: i64,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    /// False when the user has never logged into Ultros. Adding them still
+    /// works — the server creates their row from `display_name` — so this
+    /// drives a hint, not a disabled state.
+    pub on_ultros: bool,
+}
+
+/// A role in a group's linked guild, for the import picker. Managed and bot
+/// roles are filtered out server-side.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DiscordGuildRole {
+    pub id: i64,
+    pub name: String,
+    /// Discord's own ordering, highest first once sorted descending.
+    pub position: i32,
+    /// `#rrggbb`, or `None` when Discord leaves the role uncoloured.
+    pub color: Option<String>,
+    /// Set when this role is already imported, so the picker can show it as
+    /// taken instead of failing the import with a 400.
+    pub existing_role_id: Option<i32>,
+}
+
+/// Outcome of `POST /group/{id}/sync`. Reconciliation runs off the request
+/// path, so `Ran` means "started", and the page polls `last_synced_at`.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum GroupSyncStatus {
+    Ran,
+    /// The per-guild rate-limit window has not elapsed; nothing was done.
+    RecentlySynced,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct GroupSyncResponse {
+    pub status: GroupSyncStatus,
+    /// The most recent successful sync across the group's synced roles.
+    pub last_synced_at: Option<DateTime<Utc>>,
+}

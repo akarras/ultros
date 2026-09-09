@@ -6,6 +6,7 @@ pub mod changelog;
 pub mod currency_exchange;
 pub mod edit_retainers;
 pub mod fc_crafting_analyzer;
+pub mod group_detail;
 pub mod groups;
 pub mod help;
 pub mod history;

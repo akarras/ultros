@@ -35,6 +35,7 @@
     "test:flip-finder-mobile-bar": "node ./flip-finder-mobile-bar.cjs",
     "test:flip-finder-hydration": "node ./flip-finder-hydration.cjs",
     "test:group-shared-list": "node ./group-shared-list.cjs",
+    "test:groups": "node ./groups.cjs",
     "test:group-shared-list-fixture": "node --test ./group-shared-list.test.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs",
     "test:capture": "node --test ./capture.test.cjs",

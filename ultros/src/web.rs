@@ -17,7 +17,7 @@ use anyhow::Error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router, middleware};
 use axum_extra::extract::PrivateCookieJar;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
@@ -41,15 +41,18 @@ use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, warn};
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListActivity, ListActivityKind, ListInvite, ListItem,
-    ListSharedGroup, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
+    ListSharedGroup, ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup,
+    ShareListRole, ShareListUser,
 };
 use ultros_api_types::price_series::{
     HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup,
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
-    AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild,
-    GroupInvite, UserGroup, UserGroupMember,
+    AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
+    DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
+    GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
+    UserGroupDetail, UserGroupMember,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -67,6 +70,7 @@ use ultros_charts::data::buckets::{
 use ultros_clickhouse::ClickHouseClient;
 use ultros_clickhouse::queries::PriceSeriesRow;
 use ultros_db::ActiveValue;
+use ultros_db::common_type_conversions::GroupRoleReturn;
 use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
@@ -2242,6 +2246,621 @@ pub(crate) async fn remove_group_member(
     Ok(Json(()))
 }
 
+// --- Group roles ---
+
+/// What every group endpoint that talks to Discord says when the gateway is
+/// down, so an offline bot reads the same way everywhere instead of surfacing
+/// as an opaque 500.
+///
+/// A shared constant rather than a `fn` returning `Result<_, ApiError>`:
+/// `ApiError` is a large error type, and a *non-async* function handing one
+/// back beside a pointer-sized `Ok` trips `clippy::result_large_err`.
+const DISCORD_BOT_OFFLINE: &str =
+    "The Ultros Discord bot is not connected right now; try again in a moment";
+
+/// Owner-only access to a group's *live* Discord guild: proves the caller owns
+/// the group, that it is still linked (a frozen group has no guild to ask),
+/// and that the bot is connected.
+async fn owned_guild(
+    db: &UltrosDb,
+    group_id: i32,
+    user_id: i64,
+) -> Result<(i64, Arc<poise::serenity_prelude::Context>), ApiError> {
+    let group = db.get_owned_group(group_id, user_id).await?;
+    let guild_id = group
+        .guild_id
+        .filter(|_| group.frozen_reason.is_none())
+        .ok_or(ApiError::BadRequest(
+            "That group is not linked to a Discord server",
+        ))?;
+    let ctx = crate::alerts::delivery::get_serenity_ctx()
+        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
+    Ok((guild_id, ctx))
+}
+
+/// Re-read one role together with its member count.
+///
+/// The DB's mutating role calls hand back the bare row, which has no count on
+/// it; returning a `member_count` of zero would blank the number in the UI
+/// after a rename, so the count is fetched rather than invented.
+async fn role_with_member_count(
+    db: &UltrosDb,
+    group_id: i32,
+    user_id: i64,
+    role_id: i32,
+) -> Result<GroupRole, ApiError> {
+    db.get_group_roles(group_id, user_id)
+        .await?
+        .into_iter()
+        .map(GroupRole::from)
+        .find(|role| role.id == role_id)
+        .ok_or_else(|| anyhow::Error::from(ultros_db::group_roles::GroupError::RoleNotFound).into())
+}
+
+/// Everything the group detail page needs in one round trip. Members only.
+pub(crate) async fn get_group_detail(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<UserGroupDetail>, ApiError> {
+    let (group, roles, member_count) = db.get_group_detail(id, user.id as i64).await?;
+    Ok(Json(UserGroupDetail {
+        group: UserGroup::from(group),
+        roles: roles.into_iter().map(GroupRole::from).collect(),
+        member_count,
+    }))
+}
+
+/// The linked guild's roles, for the import picker. Already-imported roles
+/// carry `existing_role_id` so the picker shows them as taken instead of
+/// letting the owner walk into a 400.
+pub(crate) async fn get_group_discord_roles(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<DiscordGuildRole>>, ApiError> {
+    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let imported: HashMap<i64, i32> = db
+        .get_group_roles(id, user.id as i64)
+        .await?
+        .into_iter()
+        .map(GroupRole::from)
+        .filter_map(|role| role.discord_role_id.map(|discord| (discord, role.id)))
+        .collect();
+    let roles = crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id).await?;
+    Ok(Json(
+        roles
+            .into_iter()
+            .map(
+                |(discord_role_id, name, position, color)| DiscordGuildRole {
+                    id: discord_role_id,
+                    name,
+                    position,
+                    color,
+                    existing_role_id: imported.get(&discord_role_id).copied(),
+                },
+            )
+            .collect(),
+    ))
+}
+
+pub(crate) async fn create_group_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(CreateGroupRole { name }): Json<CreateGroupRole>,
+) -> Result<Json<GroupRole>, ApiError> {
+    let role = db.create_group_role(id, user.id as i64, name).await?;
+    // A role created a statement ago has no members, so this count is exact
+    // rather than a placeholder.
+    Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
+}
+
+/// Import a Discord role into the group. Membership arrives from
+/// reconciliation: this returns as soon as the role row exists, with
+/// `last_synced_at` still null for the page to poll on, and kicks off a
+/// reconcile for the guild in the background. Waiting for that here would put
+/// a whole-guild member walk on a request path, which for `@everyone` on a
+/// large server is not a request anybody would sit through.
+pub(crate) async fn import_group_discord_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(ImportDiscordRole { discord_role_id }): Json<ImportDiscordRole>,
+) -> Result<Json<GroupRole>, ApiError> {
+    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    // Re-read from Discord rather than trusting the picker's payload: the name
+    // and position are Discord's to supply, and going through the same
+    // importable filter is what refuses a managed or bot role here too.
+    let (_, name, position, _) =
+        crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id)
+            .await?
+            .into_iter()
+            .find(|(role_id, ..)| *role_id == discord_role_id)
+            .ok_or(ApiError::BadRequest(
+                "That role no longer exists in the Discord server, or cannot be imported",
+            ))?;
+    let role = db
+        .import_discord_role(id, user.id as i64, discord_role_id, name, position)
+        .await?;
+    // The role exists but has nobody in it until a reconcile runs, which
+    // without this would be up to six hours of the feature looking broken.
+    // Recorded against the rate limiter too, so pressing "Sync now" on the
+    // page that just imported does not walk the same guild a second time.
+    // `spawn_reconcile` gives the window back if that reconcile does not
+    // actually run, so a bot that is offline does not leave the owner told
+    // "recently synced" over a `last_synced_at` that never moved.
+    crate::group_sync::sync_rate_limiter().record(guild_id, std::time::Instant::now());
+    crate::group_sync::spawn_reconcile(db, guild_id);
+    Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
+}
+
+/// Reconcile this group's Discord membership now.
+///
+/// `Ran` means "started": the walk happens off the request path, and the page
+/// polls `last_synced_at` to see it finish. Rate limited per guild, because
+/// the work is a full member listing and the trigger is a button.
+///
+/// The window has to be claimed here, before the walk is spawned, so this
+/// request can answer. `spawn_reconcile` releases it again whenever the walk
+/// did not actually sync anything — the bot is offline, Discord refused, a
+/// reconcile of the guild was already running — because otherwise a failed
+/// press would answer `RecentlySynced` for five minutes over a
+/// `last_synced_at` that is null or days old.
+pub(crate) async fn sync_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<GroupSyncResponse>, ApiError> {
+    // Also proves ownership, that the group is still linked to a guild, and
+    // that the bot is connected to answer for it.
+    let (guild_id, _ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let last_synced_at = db
+        .get_group_roles(id, user.id as i64)
+        .await?
+        .into_iter()
+        .filter_map(|GroupRoleReturn(role, _)| role.last_synced_at)
+        .max();
+    if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, std::time::Instant::now()) {
+        return Ok(Json(GroupSyncResponse {
+            status: GroupSyncStatus::RecentlySynced,
+            last_synced_at,
+        }));
+    }
+    crate::group_sync::spawn_reconcile(db, guild_id);
+    Ok(Json(GroupSyncResponse {
+        status: GroupSyncStatus::Ran,
+        last_synced_at,
+    }))
+}
+
+pub(crate) async fn rename_group_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id)): Path<(i32, i32)>,
+    Json(RenameGroupRole { name }): Json<RenameGroupRole>,
+) -> Result<Json<GroupRole>, ApiError> {
+    db.rename_group_role(group_id, user.id as i64, role_id, name)
+        .await?;
+    Ok(Json(
+        role_with_member_count(&db, group_id, user.id as i64, role_id).await?,
+    ))
+}
+
+/// Delete a role. Group members are untouched — only the role goes.
+pub(crate) async fn delete_group_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id)): Path<(i32, i32)>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_group_role(group_id, user.id as i64, role_id)
+        .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn get_group_role_members(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id)): Path<(i32, i32)>,
+) -> Result<Json<Vec<UserGroupMember>>, ApiError> {
+    let members = db
+        .get_group_role_members(group_id, user.id as i64, role_id)
+        .await?;
+    Ok(Json(
+        members.into_iter().map(UserGroupMember::from).collect(),
+    ))
+}
+
+/// Manual roles only. A synced role's membership belongs to Discord, so this
+/// answers 400 rather than making a change reconciliation would undo.
+pub(crate) async fn add_group_role_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+    body: Option<Json<Option<AddGroupMember>>>,
+) -> Result<Json<()>, ApiError> {
+    let display_name = body
+        .and_then(|Json(body)| body)
+        .and_then(|body| body.display_name);
+    db.add_group_role_member_with_name(group_id, user.id as i64, role_id, member_id, display_name)
+        .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn remove_group_role_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+) -> Result<Json<()>, ApiError> {
+    db.remove_group_role_member(group_id, user.id as i64, role_id, member_id)
+        .await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MemberSearchQuery {
+    /// Defaulted rather than required: the picker fires on every keystroke and
+    /// an empty box is an empty result, not a 400.
+    #[serde(default)]
+    q: String,
+}
+
+/// Owner's search-as-you-type picker. A guild-linked group searches Discord
+/// (prefix match on username and nickname); a manual or frozen group searches
+/// the people who have logged into Ultros.
+pub(crate) async fn search_group_member_candidates(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Query(MemberSearchQuery { q }): Query<MemberSearchQuery>,
+) -> Result<Json<Vec<GroupMemberSearchResult>>, ApiError> {
+    let group = db.get_owned_group(id, user.id as i64).await?;
+    let query = q.trim();
+    if query.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    let Some(guild_id) = group.guild_id.filter(|_| group.frozen_reason.is_none()) else {
+        // Everyone this path can offer is by definition already on Ultros —
+        // they are rows in `discord_user`.
+        return Ok(Json(
+            db.search_group_member_candidates(id, user.id as i64, query)
+                .await?
+                .into_iter()
+                .map(|candidate| GroupMemberSearchResult {
+                    user_id: candidate.id,
+                    display_name: candidate.username,
+                    avatar_url: None,
+                    on_ultros: true,
+                })
+                .collect(),
+        ));
+    };
+    let ctx = crate::alerts::delivery::get_serenity_ctx()
+        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
+    let members = crate::web::api::discord_lookup::search_guild_members(
+        &ctx,
+        guild_id,
+        query,
+        ultros_db::group_roles::MEMBER_SEARCH_LIMIT,
+    )
+    .await?;
+    let ids: Vec<i64> = members.iter().map(|m| m.user.id.get() as i64).collect();
+    let on_ultros = db.discord_users_present(&ids).await?;
+    Ok(Json(
+        members
+            .iter()
+            .map(|member| {
+                let user_id = member.user.id.get() as i64;
+                GroupMemberSearchResult {
+                    user_id,
+                    // Discord matched on nickname *and* username, but the name
+                    // shown here is the one the picker posts back to
+                    // `add_group_member`, which upserts it into the global
+                    // `discord_user` row. A nickname must never get that far:
+                    // it would rename the person everywhere on Ultros. See
+                    // `group_sync::global_display_name`.
+                    display_name: crate::group_sync::global_display_name(&member.user),
+                    avatar_url: Some(member.face()),
+                    on_ultros: on_ultros.contains(&user_id),
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// Router-level tests for the group-role and role-share endpoints: what the
+/// path table resolves to, and what each handler's extractors accept.
+///
+/// The handlers here are stubs carrying the *same* extractor signatures as the
+/// real ones, because the real ones need a `UltrosDb` and this repo has no
+/// database in test. Authorization itself lives in `ultros-db` and is covered
+/// by the live-DB tests there; what these pin is the layer above it — that a
+/// request even reaches the right handler with the right ids parsed out.
+#[cfg(test)]
+mod group_role_route_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn create_stub(
+        Path(id): Path<i32>,
+        Json(CreateGroupRole { name }): Json<CreateGroupRole>,
+    ) -> String {
+        format!("create:{id}:{name}")
+    }
+
+    async fn import_stub(
+        Path(id): Path<i32>,
+        Json(ImportDiscordRole { discord_role_id }): Json<ImportDiscordRole>,
+    ) -> String {
+        format!("import:{id}:{discord_role_id}")
+    }
+
+    async fn rename_stub(
+        Path((group_id, role_id)): Path<(i32, i32)>,
+        Json(RenameGroupRole { name }): Json<RenameGroupRole>,
+    ) -> String {
+        format!("rename:{group_id}:{role_id}:{name}")
+    }
+
+    async fn delete_role_stub(Path((group_id, role_id)): Path<(i32, i32)>) -> String {
+        format!("delete:{group_id}:{role_id}")
+    }
+
+    async fn role_members_stub(Path((group_id, role_id)): Path<(i32, i32)>) -> String {
+        format!("members:{group_id}:{role_id}")
+    }
+
+    async fn add_role_member_stub(
+        Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+        body: Option<Json<Option<AddGroupMember>>>,
+    ) -> String {
+        let name = body
+            .and_then(|Json(body)| body)
+            .and_then(|body| body.display_name);
+        format!(
+            "add:{group_id}:{role_id}:{member_id}{}",
+            name.map(|name| format!(":{name}")).unwrap_or_default()
+        )
+    }
+
+    async fn remove_role_member_stub(
+        Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+    ) -> String {
+        format!("remove:{group_id}:{role_id}:{member_id}")
+    }
+
+    async fn member_search_stub(
+        Path(id): Path<i32>,
+        Query(MemberSearchQuery { q }): Query<MemberSearchQuery>,
+    ) -> String {
+        format!("search:{id}:[{q}]")
+    }
+
+    async fn sync_stub(Path(id): Path<i32>) -> Json<GroupSyncResponse> {
+        Json(GroupSyncResponse {
+            status: if id == 7 {
+                GroupSyncStatus::Ran
+            } else {
+                GroupSyncStatus::RecentlySynced
+            },
+            last_synced_at: None,
+        })
+    }
+
+    async fn share_role_stub(Path(id): Path<i32>, Json(share): Json<ShareListRole>) -> String {
+        format!("share:{id}:{}:{}", share.role_id, share.permission as i16)
+    }
+
+    async fn unshare_role_stub(Path((id, role_id)): Path<(i32, i32)>) -> String {
+        format!("unshare:{id}:{role_id}")
+    }
+
+    /// The path strings mirror `api_router` exactly; if one moves there it has
+    /// to move here, which is the point.
+    fn router() -> Router {
+        Router::new()
+            .route("/api/v1/group/{id}/roles", post(create_stub))
+            .route("/api/v1/group/{id}/roles/import", post(import_stub))
+            .route(
+                "/api/v1/group/{group_id}/roles/{role_id}",
+                patch(rename_stub).delete(delete_role_stub),
+            )
+            .route(
+                "/api/v1/group/{group_id}/roles/{role_id}/members",
+                get(role_members_stub),
+            )
+            .route(
+                "/api/v1/group/{group_id}/roles/{role_id}/members/{member_id}",
+                post(add_role_member_stub).delete(remove_role_member_stub),
+            )
+            .route("/api/v1/group/{id}/member-search", get(member_search_stub))
+            .route("/api/v1/group/{id}/sync", post(sync_stub))
+            .route("/api/v1/list/{id}/share/role", post(share_role_stub))
+            .route(
+                "/api/v1/list/{id}/share/role/{role_id}",
+                delete(unshare_role_stub),
+            )
+    }
+
+    async fn call(method: &str, uri: &str, body: Option<&str>) -> (StatusCode, String) {
+        let builder = Request::builder().method(method).uri(uri);
+        let request = match body {
+            Some(json) => builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        };
+        let response = router().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    /// `roles/import` sits beside `roles/{role_id}`, where `{role_id}` is an
+    /// `i32`. A router that preferred the parameter would answer 400 on every
+    /// import instead of importing anything.
+    #[tokio::test]
+    async fn import_wins_over_the_role_id_parameter() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/import",
+            Some(r#"{"discord_role_id":1234567890123456789}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "import:7:1234567890123456789");
+    }
+
+    /// Discord snowflakes exceed `i32`, so the role id has to survive as an
+    /// `i64` all the way through the body.
+    #[tokio::test]
+    async fn creating_a_role_takes_a_name_body() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles",
+            Some(r#"{"name":"Officers"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "create:7:Officers");
+    }
+
+    #[tokio::test]
+    async fn patch_renames_and_delete_removes_the_same_path() {
+        let (status, body) = call(
+            "PATCH",
+            "/api/v1/group/7/roles/12",
+            Some(r#"{"name":"Raiders"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "rename:7:12:Raiders");
+
+        let (status, body) = call("DELETE", "/api/v1/group/7/roles/12", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "delete:7:12");
+    }
+
+    /// A role has no `POST` handler at the collection path, and answering 405
+    /// rather than 404 is what tells a client it used the wrong verb.
+    #[tokio::test]
+    async fn a_role_path_without_that_method_is_method_not_allowed() {
+        let (status, _) = call("GET", "/api/v1/group/7/roles", None).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn role_member_paths_carry_group_role_and_a_snowflake_member() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "add:7:12:1234567890123456789");
+
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            Some(r#"{"display_name":"New Discord member"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "add:7:12:1234567890123456789:New Discord member");
+
+        let (status, body) = call(
+            "DELETE",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "remove:7:12:1234567890123456789");
+
+        let (status, body) = call("GET", "/api/v1/group/7/roles/12/members", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "members:7:12");
+    }
+
+    /// The picker fires on every keystroke, including the one that empties the
+    /// box, so a missing `q` must be an empty search and not a 400.
+    #[tokio::test]
+    async fn member_search_tolerates_a_missing_query() {
+        let (status, body) = call("GET", "/api/v1/group/7/member-search", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "search:7:[]");
+
+        let (status, body) = call("GET", "/api/v1/group/7/member-search?q=bo%20b", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "search:7:[bo b]");
+    }
+
+    /// `sync` is a static segment on the same prefix as `{id}/invites` and
+    /// `{id}/roles`, and its response is the shape the page polls on.
+    #[tokio::test]
+    async fn sync_answers_on_the_group_prefix_with_a_status_and_a_timestamp() {
+        let (status, body) = call("POST", "/api/v1/group/7/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"status":"Ran","last_synced_at":null}"#);
+
+        let (status, body) = call("POST", "/api/v1/group/8/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"status":"RecentlySynced","last_synced_at":null}"#);
+
+        // It is a POST: a GET must not silently do nothing and look fine.
+        let (status, _) = call("GET", "/api/v1/group/7/sync", None).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn role_shares_take_a_role_id_and_permission() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/list/3/share/role",
+            Some(r#"{"role_id":12,"permission":"Write"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "share:3:12:2");
+
+        let (status, body) = call("DELETE", "/api/v1/list/3/share/role/12", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "unshare:3:12");
+    }
+
+    /// The activity feed is prose a person reads, so a role appears by name.
+    /// It used to render as "Bob shared this list with role 12", which names
+    /// a database id at someone who has never seen one.
+    #[test]
+    fn the_activity_feed_names_a_role_rather_than_numbering_it() {
+        assert_eq!(super::role_label(Some("Officers"), 12), "Officers");
+        assert_eq!(
+            format!(
+                "Bob removed role {} from this list",
+                super::role_label(Some("Officers"), 12)
+            ),
+            "Bob removed role Officers from this list"
+        );
+        // A role deleted out from under a dangling share has no name left to
+        // print; the id is the fallback, not the default.
+        assert_eq!(super::role_label(None, 12), "#12");
+    }
+
+    /// The real table, not the stub: `Router::route` panics on a conflicting
+    /// path or a duplicated method, so simply building it is the assertion.
+    #[test]
+    fn the_real_api_router_registers_every_group_role_path() {
+        let _ = api_router();
+    }
+}
+
 pub(crate) async fn get_group_invites(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -2287,15 +2906,24 @@ pub(crate) async fn get_list_shares(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-) -> Result<Json<(Vec<ListSharedUser>, Vec<ListSharedGroup>)>, ApiError> {
-    let (users, groups) = futures::future::try_join(
+) -> Result<
+    Json<(
+        Vec<ListSharedUser>,
+        Vec<ListSharedGroup>,
+        Vec<ListSharedRole>,
+    )>,
+    ApiError,
+> {
+    let (users, groups, roles) = try_join3(
         db.get_list_shared_users(id, user.id as i64),
         db.get_list_shared_groups(id, user.id as i64),
+        db.get_list_shared_roles(id, user.id as i64),
     )
     .await?;
     Ok(Json((
         users.into_iter().map(ListSharedUser::from).collect(),
         groups.into_iter().map(ListSharedGroup::from).collect(),
+        roles.into_iter().map(ListSharedRole::from).collect(),
     )))
 }
 
@@ -2367,6 +2995,83 @@ pub(crate) async fn share_list_with_group(
         format!(
             "{} shared this list with group {}",
             user.name, share.group_id
+        ),
+    )
+    .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+/// How a role is named in an activity-feed line.
+///
+/// The feed is read by people, so it uses the role's name. The id is still the
+/// identifier in the structured payload; it only appears in the prose when the
+/// role row is gone (deleted role, dangling share), where the alternative is
+/// naming nothing at all.
+fn role_label(name: Option<&str>, role_id: i32) -> String {
+    match name {
+        Some(name) => name.to_string(),
+        None => format!("#{role_id}"),
+    }
+}
+
+/// Share a list with one role of a group the caller owns.
+///
+/// The activity feed records this as `SharedGroup`: the feed's kinds are a
+/// frozen wire enum and a role share is the same event to a narrower audience,
+/// so the role id rides in the structured payload while the human-readable
+/// message names the role.
+pub(crate) async fn share_list_with_role(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(share): Json<ShareListRole>,
+) -> Result<Json<()>, ApiError> {
+    let role_name = db
+        .share_list_with_role(id, user.id as i64, share.role_id, share.permission)
+        .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::SharedGroup,
+        None,
+        None,
+        serde_json::json!({
+            "role_id": share.role_id,
+            "permission": share.permission as i16,
+        }),
+        format!("{} shared this list with role {}", user.name, role_name),
+    )
+    .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn unshare_list_from_role(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path((id, role_id)): Path<(i32, i32)>,
+) -> Result<Json<()>, ApiError> {
+    let role_name = db
+        .unshare_list_from_role(id, user.id as i64, role_id)
+        .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::UnsharedGroup,
+        None,
+        None,
+        serde_json::json!({ "role_id": role_id }),
+        format!(
+            "{} removed role {} from this list",
+            user.name,
+            role_label(role_name.as_deref(), role_id)
         ),
     )
     .await?;
@@ -2685,8 +3390,39 @@ fn api_router() -> Router<WebState> {
             "/api/v1/group/create-from-guild",
             post(create_group_from_guild),
         )
-        .route("/api/v1/group/{id}", delete(delete_group))
+        .route(
+            "/api/v1/group/{id}",
+            get(get_group_detail).delete(delete_group),
+        )
         .route("/api/v1/group/{id}/members", get(get_group_members))
+        .route(
+            "/api/v1/group/{id}/member-search",
+            get(search_group_member_candidates),
+        )
+        .route(
+            "/api/v1/group/{id}/discord-roles",
+            get(get_group_discord_roles),
+        )
+        // `roles/import` is static and `roles/{role_id}` takes an i32, so
+        // matchit resolves the static segment first — the same shape as
+        // `/api/v1/list/create` sitting beside `/api/v1/list/{id}`.
+        .route("/api/v1/group/{id}/roles", post(create_group_role))
+        .route(
+            "/api/v1/group/{id}/roles/import",
+            post(import_group_discord_role),
+        )
+        .route(
+            "/api/v1/group/{group_id}/roles/{role_id}",
+            patch(rename_group_role).delete(delete_group_role),
+        )
+        .route(
+            "/api/v1/group/{group_id}/roles/{role_id}/members",
+            get(get_group_role_members),
+        )
+        .route(
+            "/api/v1/group/{group_id}/roles/{role_id}/members/{member_id}",
+            post(add_group_role_member).delete(remove_group_role_member),
+        )
         .route(
             "/api/v1/group/{group_id}/member/add/{member_id}",
             post(add_group_member),
@@ -2695,6 +3431,7 @@ fn api_router() -> Router<WebState> {
             "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/group/{id}/sync", post(sync_group))
         .route("/api/v1/group/{id}/invites", get(get_group_invites))
         .route(
             "/api/v1/group/{id}/invite/create",
@@ -2708,6 +3445,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
+        .route("/api/v1/list/{id}/share/role", post(share_list_with_role))
         .route(
             "/api/v1/list/{id}/share/user/{user_id}",
             delete(unshare_list_from_user),
@@ -2715,6 +3453,10 @@ fn api_router() -> Router<WebState> {
         .route(
             "/api/v1/list/{id}/share/group/{group_id}",
             delete(unshare_list_from_group),
+        )
+        .route(
+            "/api/v1/list/{id}/share/role/{role_id}",
+            delete(unshare_list_from_role),
         )
         .route("/api/v1/list/{id}/invites", get(get_list_invites))
         .route("/api/v1/list/{id}/invite/create", post(create_invite))

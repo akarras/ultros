@@ -16,6 +16,8 @@ pub struct Model {
     pub source: i16,
     /// Set when the bot was removed from the guild; see the API type doc.
     pub frozen_reason: Option<String>,
+    /// Orders Discord snapshots against newer membership events.
+    pub sync_revision: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
