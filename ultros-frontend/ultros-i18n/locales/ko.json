@@ -946,6 +946,7 @@
     "search_hint_title": "이렇게 검색해 보세요",
     "search_hint_jobs": "직업 약어로 장비 세트 찾기:",
     "search_hint_items": "아이템, 화폐, 카테고리",
+    "search_hint_recipes": "제작 레시피, 거래 불가 아이템까지",
     "search_hint_tools": "도구 및 페이지 (예: Flip Finder)",
     "search_box_aria_label": "아이템 검색",
     "search_box_clear_tooltip": "검색 지우기",

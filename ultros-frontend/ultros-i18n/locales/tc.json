@@ -946,6 +946,7 @@
     "search_hint_title": "試試搜尋",
     "search_hint_jobs": "以職業縮寫尋找裝備套組：",
     "search_hint_items": "物品、貨幣和分類",
+    "search_hint_recipes": "製作配方，包括無法交易的成品",
     "search_hint_tools": "工具和頁面，例如 Flip Finder",
     "search_box_aria_label": "搜尋物品",
     "search_box_clear_tooltip": "清除搜尋",
