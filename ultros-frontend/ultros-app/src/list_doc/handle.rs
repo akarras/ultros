@@ -13,7 +13,9 @@
 //! since Task 8's component needs `ListDocHandle` to exist on both halves.
 
 use leptos::prelude::*;
-use ultros_list_doc::{DocError, ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription};
+use ultros_list_doc::{
+    DocError, ImportReport, ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription,
+};
 
 use crate::list_doc::adapter::{self, Edit};
 use crate::list_doc::store::{self, BrowserStorage};
@@ -137,8 +139,13 @@ impl ListDocHandle {
         })
     }
 
-    pub fn import(&self, bytes: &[u8]) -> Result<(), DocError> {
-        self.with_doc(|doc| doc.import(bytes).map(|_| ()))
+    /// Surfaces `ImportReport::pending`: a `true` value means the imported
+    /// bytes were parked because they depend on history this document
+    /// hasn't seen yet, so the document was NOT brought up to date by this
+    /// call. Callers must not treat a pending import as having converged
+    /// the document (F1) — see `list_doc::sync`'s handshake arm.
+    pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        self.with_doc(|doc| doc.import(bytes))
     }
 
     pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {

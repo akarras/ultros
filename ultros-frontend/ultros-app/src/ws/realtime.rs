@@ -358,7 +358,15 @@ mod client {
         /// call from anywhere a handler's own callbacks run — but not from
         /// inside `dispatch_message` itself, which holds
         /// `handlers.borrow()` (callers defer it; see `list_doc::sync`).
-        pub(crate) fn resubscribe(&self) {
+        ///
+        /// Returns whether the message actually went out over an open
+        /// socket. The factory runs (and, for a list-doc subscription,
+        /// consumes any one-shot "ask for a snapshot" flag it reads) even
+        /// when this returns `false` — a caller that armed such a flag
+        /// before calling this needs the return value to know whether to
+        /// re-arm it (M2), since a failed send here means the flag's effect
+        /// never reached the server.
+        pub(crate) fn resubscribe(&self) -> bool {
             let entry = self
                 .client
                 .inner
@@ -373,14 +381,17 @@ mod client {
                 Some(Ok(text)) => text,
                 Some(Err(factory)) => {
                     let Ok(text) = serde_json::to_string(&factory()) else {
-                        return;
+                        return false;
                     };
                     text
                 }
-                None => return,
+                None => return false,
             };
-            if !self.client.send_text(&text) {
+            if self.client.send_text(&text) {
+                true
+            } else {
                 self.client.connect();
+                false
             }
         }
     }
@@ -520,8 +531,12 @@ mod client {
     pub(crate) struct RealtimeSubscription;
 
     impl RealtimeSubscription {
-        /// No socket on this half, so nothing to re-send.
-        pub(crate) fn resubscribe(&self) {}
+        /// No socket on this half, so nothing to re-send. `false` matches
+        /// the client half's "didn't go out" return for a closed socket —
+        /// harmless here since SSR never really drives this state machine.
+        pub(crate) fn resubscribe(&self) -> bool {
+            false
+        }
     }
 
     impl RealtimeClient {

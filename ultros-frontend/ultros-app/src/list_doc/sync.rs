@@ -109,27 +109,53 @@ fn defer(task: impl FnOnce() + 'static) {
 ///
 /// # The handshake state machine
 ///
-/// Per `ListDocSubscribed { version: V, payload }`, after importing the
-/// payload (a failed import is fatal for this reply: status `"offline"`,
-/// logged, nothing sent):
+/// Per `ListDocSubscribed { version: V, payload }`, first import the payload
+/// (a failed import is fatal for this reply: status `"offline"`, logged,
+/// nothing sent). A **pending** import (`ImportReport::pending`, F1) means
+/// the bytes were parked on history this document doesn't have and the doc
+/// was *not* actually brought up to date:
+///
+/// - payload was `Snapshot` and pending — replace the document outright
+///   with that snapshot and re-apply local rows as fresh ops
+///   (`ListDocHandle::rebase_onto_snapshot`), then fall through into the
+///   logic below with the same `V` (the snapshot is treated as consumed, so
+///   the `(same_version, Some(bytes))` branch below cannot fire a second
+///   time for it).
+/// - payload was `Updates` and pending — an `Updates` payload alone can't
+///   rebuild the document. Arm `force_empty_version` and resubscribe
+///   (deferred) so the next handshake asks for a full `Snapshot`; status
+///   `"reconnecting"`, return without reaching "live".
+///
+/// Otherwise (not pending, or `UpToDate`):
 ///
 /// - not ahead of `V` — converged; both guards below are cleared.
 /// - ahead of `V`, and `V` is not the version we last diffed against — send
 ///   `export_since(V)` and remember `last_diff_version = V`.
 /// - ahead of `V`, `V` *is* `last_diff_version`, and the payload was a
-///   `Snapshot` — the server rejected our diff for exactly this version and
-///   answered with a fresh snapshot, so resending the same bytes would loop
-///   forever, each cycle costing the server a whole snapshot. Rebase the
-///   local rows onto that snapshot (`ListDocHandle::rebase_onto_snapshot`),
-///   dropping a local meta change if a `MetaForbidden` was seen since the
-///   last successful handshake, send `export_since(V)` once more, and
-///   remember `rebased_for = V`.
-/// - ahead of `V` and `rebased_for == V` — the rebased operations were
-///   rejected too. Give up: status `"offline"`, logged, nothing sent. This
-///   bounds the exchange at two rounds per server version.
+///   (non-pending) `Snapshot` — the server rejected our diff for exactly
+///   this version and answered with a fresh snapshot, so resending the same
+///   bytes would loop forever, each cycle costing the server a whole
+///   snapshot. Rebase the local rows onto that snapshot
+///   (`ListDocHandle::rebase_onto_snapshot`), dropping a local meta change
+///   if a `MetaForbidden` was seen since the last successful handshake,
+///   send `export_since(V)` once more, and remember `rebased_for = V`.
+/// - ahead of `V`, `rebased_for == V`, **and the payload was a `Snapshot`**
+///   (F2) — the rebased operations were rejected too (a `MissingHistory`
+///   resync always answers with a fresh Snapshot, so this is the only way
+///   to legitimately see the same `V` twice with `rebased_for` already set).
+///   Give up: status `"offline"`, logged, nothing sent. This bounds the
+///   exchange at two rounds per server version. The same `V` arriving again
+///   with `Updates`/`UpToDate` instead — e.g. a lost send followed by a
+///   reconnect replaying the same version — is not a rejection and falls
+///   through to the normal diff-send branch above instead of giving up.
 ///
 /// A `ListDocSubscribed` for a different version clears `rebased_for`, so a
 /// document that recovers is not stuck in the give-up state.
+///
+/// A pending relayed `ListDocUpdate` (outside a handshake) gets the same
+/// F1 treatment: force a snapshot resync instead of calling
+/// `on_remote_change` or reporting "live" on a doc that didn't actually
+/// converge.
 ///
 /// `on_denied` fires, after status is set to `"offline"`, for a scoped
 /// error that means this client should stop trying to sync this document
@@ -158,6 +184,18 @@ pub fn start(
 
     // The last server version we answered with a diff, and the version we
     // already rebased for: see the state machine above.
+    //
+    // M1: comparing `last_diff_version`/`rebased_for` to an incoming
+    // `version` is a byte-equality check on the *encoded* version vector,
+    // not a semantic "same causal version" check. That's sound only because
+    // the server always recomputes the bytes it sends from a freshly
+    // re-serialized stored snapshot/doc state — never replays the bytes it
+    // received — so two handshake replies that are causally the same
+    // version (in particular, the reply to a rejected diff and the reply to
+    // the rebase sent right after) always re-encode to the identical byte
+    // string. If the server ever started caching or forwarding a
+    // client-supplied version's raw bytes, this comparison would need to
+    // become a semantic one instead.
     let last_diff_version: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
     let rebased_for: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
     // Set when the server refuses a non-owner's meta change; cleared by the
@@ -185,19 +223,70 @@ pub fn start(
             ServerClient::ListDocSubscribed {
                 version, payload, ..
             } => {
+                // `snapshot` is `Some(bytes)` only when the reply carried a
+                // Snapshot AND that snapshot fully merged (not pending) —
+                // i.e. it's still available for the "server rejected our
+                // diff" rebase branch below. A pending Snapshot is handled
+                // right here instead (F1) and does not flow into that
+                // branch a second time.
                 let snapshot = match payload {
                     ListDocPayload::Snapshot(bytes) => {
-                        if let Err(error) = handle.import(&bytes) {
-                            handle.set_status("offline");
-                            log::error!("list {list_id}: server snapshot did not import: {error}");
-                            return;
+                        let report = match handle.import(&bytes) {
+                            Ok(report) => report,
+                            Err(error) => {
+                                handle.set_status("offline");
+                                log::error!(
+                                    "list {list_id}: server snapshot did not import: {error}"
+                                );
+                                return;
+                            }
+                        };
+                        if report.pending {
+                            // F1: the merge parked ops because they depend
+                            // on history this document doesn't have (e.g.
+                            // an idle client after a server compaction) —
+                            // the doc was NOT brought up to date by that
+                            // import. Recover the same way a rejected diff
+                            // does: replace the document outright with the
+                            // server's snapshot and re-apply local rows as
+                            // fresh ops, then fall through into the normal
+                            // "am I ahead" logic with this same `version` so
+                            // the freshly rebased rows still get sent.
+                            let keep_meta = !meta_forbidden.get();
+                            if let Err(error) = handle.rebase_onto_snapshot(&bytes, keep_meta) {
+                                handle.set_status("offline");
+                                log::error!(
+                                    "list {list_id}: rebase onto pending snapshot failed: {error}"
+                                );
+                                return;
+                            }
+                            meta_forbidden.set(false);
+                            None
+                        } else {
+                            Some(bytes)
                         }
-                        Some(bytes)
                     }
                     ListDocPayload::Updates(bytes) => {
-                        if let Err(error) = handle.import(&bytes) {
-                            handle.set_status("offline");
-                            log::error!("list {list_id}: server updates did not import: {error}");
+                        let report = match handle.import(&bytes) {
+                            Ok(report) => report,
+                            Err(error) => {
+                                handle.set_status("offline");
+                                log::error!(
+                                    "list {list_id}: server updates did not import: {error}"
+                                );
+                                return;
+                            }
+                        };
+                        if report.pending {
+                            // F1: same recovery, but an `Updates` payload
+                            // alone can't rebuild the document — force the
+                            // next handshake to ask for a full `Snapshot`
+                            // instead, and don't report "live" on a doc that
+                            // just silently dropped part of this import.
+                            handle.set_status("reconnecting");
+                            let slot = weak_slot.clone();
+                            let flag = force_empty_version.clone();
+                            defer(move || resubscribe_forcing_snapshot(&slot, &flag));
                             return;
                         }
                         None
@@ -212,7 +301,18 @@ pub fn start(
                         // A different server version is a fresh start.
                         *rebased_for.borrow_mut() = None;
                     }
-                    if rebased_for.borrow().as_deref() == Some(version.as_slice()) {
+                    // F2: only give up when the server has actually
+                    // rejected our history — signalled by answering the
+                    // same version we already rebased for with a fresh
+                    // `Snapshot` again (a `MissingHistory` resync always
+                    // answers with a Snapshot). A lost send followed by a
+                    // reconnect can also replay the same version, but with
+                    // `Updates`/`UpToDate`, and must fall through to a
+                    // normal diff retry instead of stranding the client
+                    // "offline" over nothing.
+                    if rebased_for.borrow().as_deref() == Some(version.as_slice())
+                        && snapshot.is_some()
+                    {
                         handle.set_status("offline");
                         log::error!("list {list_id}: server keeps rejecting local history");
                         return;
@@ -226,22 +326,44 @@ pub fn start(
                                 return;
                             }
                             meta_forbidden.set(false);
+                            // M4: only record the rebase (and clear the
+                            // outbox) once the diff for it actually went
+                            // out — an export failure here must not make a
+                            // later reply believe this version was already
+                            // answered.
+                            let diff = match handle.export_since(&version) {
+                                Ok(diff) => diff,
+                                Err(error) => {
+                                    handle.set_status("offline");
+                                    log::error!(
+                                        "list {list_id}: export_since after rebase failed: {error}"
+                                    );
+                                    return;
+                                }
+                            };
+                            sender.send_list_doc_update(list_id, diff);
                             *rebased_for.borrow_mut() = Some(version.clone());
-                            if let Ok(diff) = handle.export_since(&version) {
-                                sender.send_list_doc_update(list_id, diff);
-                            }
                             // That diff covers every re-applied operation.
                             handle.outbox.set(Vec::new());
                         }
                         _ => {
+                            // M4: same ordering — don't record
+                            // `last_diff_version` unless the diff was
+                            // actually sent.
+                            let diff = match handle.export_since(&version) {
+                                Ok(diff) => diff,
+                                Err(error) => {
+                                    handle.set_status("offline");
+                                    log::error!("list {list_id}: export_since failed: {error}");
+                                    return;
+                                }
+                            };
+                            sender.send_list_doc_update(list_id, diff);
                             // The handshake diff covers everything the outbox
                             // held up to this point; anything committed
                             // locally after this reply started will still push
                             // through the drain Effect below.
                             handle.outbox.set(Vec::new());
-                            if let Ok(diff) = handle.export_since(&version) {
-                                sender.send_list_doc_update(list_id, diff);
-                            }
                             *last_diff_version.borrow_mut() = Some(version.clone());
                         }
                     }
@@ -253,9 +375,24 @@ pub fn start(
                 handle.save_now();
             }
             ServerClient::ListDocUpdate { update, .. } => {
-                if let Err(error) = handle.import(&update) {
-                    handle.set_status("offline");
-                    log::error!("list {list_id}: relayed update did not import: {error}");
+                let report = match handle.import(&update) {
+                    Ok(report) => report,
+                    Err(error) => {
+                        handle.set_status("offline");
+                        log::error!("list {list_id}: relayed update did not import: {error}");
+                        return;
+                    }
+                };
+                if report.pending {
+                    // F1: this relayed update depended on history we don't
+                    // have — importing it did not actually bring the
+                    // document up to date, so don't run `on_remote_change`
+                    // or claim "live". Force the next handshake to answer
+                    // with a full Snapshot and resubscribe to trigger it.
+                    handle.set_status("reconnecting");
+                    let slot = weak_slot.clone();
+                    let flag = force_empty_version.clone();
+                    defer(move || resubscribe_forcing_snapshot(&slot, &flag));
                     return;
                 }
                 let on_remote_change = on_remote_change.clone();
@@ -292,7 +429,8 @@ pub fn start(
                         meta_forbidden.set(true);
                         force_empty_version.set(true);
                         let slot = weak_slot.clone();
-                        defer(move || resubscribe(&slot));
+                        let flag = force_empty_version.clone();
+                        defer(move || resubscribe_forcing_snapshot(&slot, &flag));
                     }
                     ErrorKind::MissingHistory | ErrorKind::Transient => {
                         log::warn!("list {list_id} sync: {message}");
@@ -332,11 +470,34 @@ pub fn start(
 
 /// Re-send the handshake for a subscription that may already have been
 /// dropped (the page navigated away while a deferred task was queued).
-fn resubscribe(slot: &Weak<RefCell<Option<RealtimeSubscription>>>) {
+/// Returns whether the message actually went out (see
+/// `RealtimeSubscription::resubscribe`); `false` both when there's no
+/// subscription left to resend and when the socket wasn't open to send on.
+fn resubscribe(slot: &Weak<RefCell<Option<RealtimeSubscription>>>) -> bool {
     if let Some(slot) = slot.upgrade()
         && let Some(subscription) = slot.borrow().as_ref()
     {
-        subscription.resubscribe();
+        subscription.resubscribe()
+    } else {
+        false
+    }
+}
+
+/// M2: `resubscribe` after arming `force_empty_version` (the caller must set
+/// the flag to `true` before calling this). The subscription's message
+/// factory reads and consumes that flag (`replace(false)`) every time it
+/// runs — including when `resubscribe` itself fails to actually send,
+/// e.g. because the socket isn't open right now. In that case the flag's
+/// effect never reached the server, so the *next* replay (a later
+/// `resubscribe`, or the reconnect's `onopen` replay) would silently ask for
+/// a normal diff instead of the snapshot this caller needed. Re-arm the flag
+/// whenever the send didn't go through.
+fn resubscribe_forcing_snapshot(
+    slot: &Weak<RefCell<Option<RealtimeSubscription>>>,
+    flag: &Rc<Cell<bool>>,
+) {
+    if !resubscribe(slot) {
+        flag.set(true);
     }
 }
 
