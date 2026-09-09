@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Lists that live in your browser and sync everywhere (Labs)",
+  "blurb": "Turn on \"Lists: local-first sync\" under Settings › Labs. Your lists are kept in the browser and synced through the server: edits apply instantly, keep working when you lose connection, and merge with everyone who shares the list, including purchases ticked at the same time on two devices. The list page also gets undo and redo: Ctrl+Z and Ctrl+Shift+Z, Cmd on a Mac.",
+  "link": "/settings"
+}
