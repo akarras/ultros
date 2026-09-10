@@ -125,6 +125,11 @@ pub fn use_market_data(scope: Signal<String>) -> MarketData {
     )
 }
 
+/// Load statistics only when a visible column or active query requests them.
+pub fn use_market_data_on_demand(scope: Signal<String>) -> MarketData {
+    use_market_data_with_window(scope, MarketWindow::new(Window::D7, &Window::ALL), None)
+}
+
 /// [`use_market_data`] for a page that owns its window choices and default
 /// (Trends: 7/30/90, default 30). `prefetch` names a body every consumer
 /// wants regardless of columns; pass `None` when only the grid's visible or
@@ -903,6 +908,21 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn on_demand_market_data_wants_no_window_until_asked() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let scope = RwSignal::new("Gilgamesh".to_owned());
+            let lazy = use_market_data_on_demand(scope.into());
+            assert!(lazy.wanted.iter().all(|w| !w.get_untracked()));
+            let eager = use_market_data(scope.into());
+            assert!(eager.wanted[Window::D7.index()].get_untracked());
+            lazy.want(Window::D30);
+            assert!(lazy.wanted[Window::D30.index()].get_untracked());
+            assert!(!lazy.wanted[Window::D7.index()].get_untracked());
+        });
+    }
     use super::*;
     use ultros_api_types::cheapest_listings::CheapestListingData;
 
