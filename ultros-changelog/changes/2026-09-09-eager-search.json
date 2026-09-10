@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Search responds as you type",
+  "blurb": "Search starts immediately as you type, keeps results visible while updating, and remembers recent searches for instant backtracking."
+}
