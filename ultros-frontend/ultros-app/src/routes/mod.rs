@@ -8,6 +8,8 @@ pub mod edit_retainers;
 pub mod fc_crafting_analyzer;
 pub mod group_detail;
 pub mod groups;
+pub mod guest_list_adoption;
+pub mod guest_lists;
 pub mod help;
 pub mod history;
 pub mod home_page;

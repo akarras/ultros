@@ -31,6 +31,38 @@ pub struct CreateList {
     pub wdr_filter: AnySelector,
 }
 
+/// A bounded projection import, never untrusted CRDT history.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AdoptGuestList {
+    /// Bind the user's explicit destination to the session receiving the POST.
+    pub expected_owner: i64,
+    pub adoption_key: String,
+    pub device_list_id: String,
+    pub source_revision: String,
+    pub name: String,
+    pub wdr_filter: AnySelector,
+    pub items: Vec<GuestListItem>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GuestListItem {
+    pub item_id: i32,
+    pub hq: Option<bool>,
+    pub quantity: i32,
+    pub acquired: i32,
+    pub target_price: Option<i64>,
+}
+
+/// Retries acknowledge the original revision, not the retry's newer payload.
+/// Clients must retain any local edits newer than this revision.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AdoptGuestListResponse {
+    pub list_id: i32,
+    pub owner: i64,
+    pub device_list_id: String,
+    pub source_revision: String,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct List {
     pub id: i32,

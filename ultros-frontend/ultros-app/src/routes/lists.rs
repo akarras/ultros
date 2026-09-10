@@ -353,6 +353,8 @@ fn ListCard(
 
 #[component]
 pub fn EditLists() -> impl IntoView {
+    let device_lists =
+        crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
     let i18n = crate::i18n::use_i18n();
     let delete_list = Action::new(move |id: &i32| delete_list(*id));
     let edit_list = Action::new(move |list: &List| edit_list(list.clone()));
@@ -400,10 +402,14 @@ pub fn EditLists() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
+            <Show when=move || device_lists.get()><crate::routes::guest_lists::DeviceLists /></Show>
             <Suspense fallback=move || view! { <BoxSkeleton rows=1 /> }>
                 {move || match user_resource.get() {
                     None => view! { <BoxSkeleton rows=1 /> }.into_any(),
                     Some(None) => {
+                        if device_lists.get() {
+                            return view! { <p class="text-sm opacity-70">{t!(i18n, lists_device_other_device)}" "<a class="underline" rel="external" href="/login?next=/list?labs=lists-sync">{t!(i18n, lists_device_sign_in)}</a></p> }.into_any();
+                        }
                         view! {
                             <ActionableEmptyState
                                 title=t_string!(i18n, lists_empty_title).to_string()

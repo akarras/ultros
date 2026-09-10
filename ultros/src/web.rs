@@ -1724,6 +1724,44 @@ pub(crate) async fn create_list(
     Ok(Json(()))
 }
 
+pub(crate) async fn adopt_guest_list(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Json(request): Json<ultros_api_types::list::AdoptGuestList>,
+) -> Result<Json<ultros_api_types::list::AdoptGuestListResponse>, ApiError> {
+    if request.items.iter().any(|row| {
+        !xiv_gen_db::data()
+            .items
+            .contains_key(&xiv_gen::ItemId(row.item_id))
+    }) {
+        return Err(ApiError::BadRequest("guest list contains an unknown item"));
+    }
+    let owner = db
+        .get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
+    let outcome = db.adopt_guest_list_with_outcome(owner.id, request).await?;
+    if let Some((list, items, activity)) = outcome.created {
+        // A new list has no document subscribers yet. Publish the same creation,
+        // projection and activity events as ordinary list mutations, only once.
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::List(List::try_from(list)?)),
+        );
+        for item in items {
+            send_list_event(
+                &senders,
+                EventType::added(ListEventData::ListItem(item.into())),
+            );
+        }
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::Activity(activity.into())),
+        );
+    }
+    Ok(Json(outcome.response))
+}
+
 pub(crate) async fn edit_list(
     State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
@@ -3437,6 +3475,7 @@ fn api_router() -> Router<WebState> {
         )
         .route("/api/v1/list", get(get_lists))
         .route("/api/v1/list/create", post(create_list))
+        .route("/api/v1/list/adopt", post(adopt_guest_list))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
         .route("/api/v1/list/{id}", get(get_list))

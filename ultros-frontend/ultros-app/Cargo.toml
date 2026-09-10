@@ -84,6 +84,7 @@ humantime = "2.3"
 log = "0.4.29"
 cookie = { version = "0.18.1", features = ["percent-encode"] }
 wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
 time = "0.3.47"
 js-sys = { version = "0.3", optional = true }
 tracing = "0.1"
@@ -120,6 +121,7 @@ hydrate = [
     "leptos/hydrate",
     "web-sys",
     "wasm-bindgen",
+    "wasm-bindgen-futures",
     "time/wasm-bindgen",
     "js-sys",
     "leptos_i18n/hydrate",

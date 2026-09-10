@@ -24,6 +24,7 @@
 #                  gated by debug_assertions (default 0)
 #   LEPTOS_FEATURES extra leptos-bin-features (space-separated). Set to an
 #                  explicit empty string to override metadata bin-features.
+#   RUN_LISTS_V2   default 1; guest creation, offline reload and companion
 #
 # Exit code is the npm test exit code (0 on success).
 
@@ -239,11 +240,26 @@ if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
     fi
 fi
 
+if [ "${RUN_LISTS_V2:-1}" != "0" ]; then
+    log "running anonymous Lists 2.0, offline reload and companion E2E"
+    lists_v2_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-v2 ) || lists_v2_exit=$?
+    if [ "$lists_v2_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$lists_v2_exit"
+    fi
+fi
+
 # If we built with test-auth, also exercise the login flow even when the
 # screenshot suite failed — failures may be unrelated and the login signal
 # is independently valuable.
 case " ${LEPTOS_FEATURES:-} " in
     *" test-auth "*)
+        log "running device-list account adoption (test-auth feature detected)"
+        list_adoption_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-adoption ) || list_adoption_exit=$?
+        if [ "$list_adoption_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_adoption_exit"
+        fi
         log "running login flow (test-auth feature detected)"
         login_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:login ) || login_exit=$?

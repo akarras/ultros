@@ -331,6 +331,24 @@ fn dispatch_boot_event(name: &str) {
     }
 }
 
+// The service worker supplies only a generated anonymous shell on guest-list
+// routes. There is no SSR tree in that document, so it must mount rather than
+// hydrate. Keep the ordinary SSR truncation guard intact everywhere else.
+fn is_offline_guest_shell() -> bool {
+    js_sys::Reflect::get(
+        &js_sys::global(),
+        &JsValue::from_str("__ULTROS_OFFLINE_GUEST__"),
+    )
+    .ok()
+    .and_then(|value| value.as_bool())
+    .unwrap_or(false)
+}
+
+#[wasm_bindgen(module = "/../../ultros/static/guest-offline.mjs")]
+extern "C" {
+    fn prepare_guest_offline(catalog_url: &str, lang: &str);
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     set_panic_hook();
@@ -341,6 +359,7 @@ pub fn hydrate() {
     log::info!("hydrate mode - hydrating");
     dispatch_boot_event("ultros:wasm-loaded");
     spawn_local(async move {
+        let offline_guest = is_offline_guest_shell();
         info!("fetching..");
         // Use the SSR-injected bootstrap when available; only fall back to
         // network requests if it's missing (e.g. stale cached HTML).
@@ -415,7 +434,7 @@ pub fn hydrate() {
         // `<body>`, so its absence means the document we were handed is
         // incomplete. There is nothing coherent to hydrate against; keep the
         // partial server-rendered markup rather than panicking on it.
-        if document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
+        if !offline_guest && document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
             error!(
                 "SSR document truncated (missing #{SSR_END_SENTINEL_ID}); \
                  skipping hydration to avoid a tachys hydration panic"
@@ -436,7 +455,7 @@ pub fn hydrate() {
                 LocalWorldData::failed(e.to_string())
             }
         };
-        hydrate_body(move || {
+        let app = move || {
             let world_data = world_data.clone();
             let region = region.clone();
             let current_user = current_user.clone();
@@ -446,7 +465,20 @@ pub fn hydrate() {
                 provide_context(BootstrapUser(current_user));
             }
             view! { <App /> }
-        });
+        };
+        if offline_guest {
+            if let Some(status) = document().get_element_by_id("offline-boot-status") {
+                status.remove();
+            }
+            leptos::mount::mount_to_body(app);
+        } else {
+            hydrate_body(app);
+        }
         dispatch_boot_event("ultros:hydrated");
+        let lang = get_i18n_lang();
+        prepare_guest_offline(
+            &format!("/static/data/{}/{}.rkyv", xiv_gen::data_version(), lang),
+            &lang,
+        );
     });
 }

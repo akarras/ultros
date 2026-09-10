@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Take your shopping list with you",
+  "blurb": "Compare shopping trips in Labs and pop out a compact checklist. Supported browsers can keep it above other windows while you mark purchases and move between worlds.",
+  "link": "/list?labs=lists-sync"
+}

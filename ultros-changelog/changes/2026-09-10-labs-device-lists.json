@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Try lists without signing in",
+  "blurb": "Enable Lists in Labs to create lists saved on your device, keep editing offline after setup, and bring them into your account when you're ready.",
+  "link": "/list?labs=lists-sync"
+}

@@ -91,6 +91,21 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
 
 ## Promotion
 
+Lists 2.0 adds guest Build/Shop and account adoption under the same Labs
+preference; its product contract is in
+[`2026-09-10-lists-2-product-design.md`](superpowers/specs/2026-09-10-lists-2-product-design.md).
+New UI strings, including companion labels and offline boot messages, must
+remain translated in all seven supported locales. Verify keyboard focus
+through a committed row edit on both device and account lists before promotion.
+
+The existing root service worker also serves push notifications. Worker
+activation and control of open tabs are site-wide; only guest offline cache
+preparation is Labs opt-in. Its fetch handler can use an anonymous guest shell
+and public assets only after a cache generation has been prepared. It never
+caches authenticated page HTML, account APIs, or market responses. The guest
+store, offline helper, and companion modules ship with the versioned WASM
+package so an older cached static helper cannot change a deployed module API.
+
 Promotion out of Labs deletes `LAB_LISTS_SYNC`, the `LabsSettings` section
 when the registry is empty, the legacy `ListView`, and the REST-driven
 actions it owns. It requires the soak below to pass. Promotion is blocked
@@ -142,8 +157,9 @@ toggle stays on for the maintainer until the redesign ships on top of it.
 - Broadcast-driven revalidation has no maximum debounce wait (see above).
 - A row added locally shows no price until a market event or an import
   bumps the listings cache.
-- `MakePlaceImporter` and the recipe modal still write over REST; their
-  rows reach the document through the socket.
+- `MakePlaceImporter` still writes over REST; its rows reach the document
+  through the socket. Labs recipe previews now add their rows through the
+  document as one undoable operation.
 - The bulk-edit Puppeteer suite (`integration/list-bulk-edit.cjs`) sends
   add-item bodies without `ListItem.id` and fails on `main` too; it is not
   in the e2e gate.
