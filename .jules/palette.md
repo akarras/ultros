@@ -24,3 +24,6 @@
 ## 2026-08-30 - Always specify type="button" for JS interactive buttons
 **Learning:** By default, HTML `<button>` elements act as `type="submit"`. If a generic interactive component (like a modal close button or a search clear button) is placed inside a form, it will unintentionally trigger a form submission and page reload.
 **Action:** Always add `type="button"` to buttons that are solely meant to trigger client-side JavaScript actions (via `on:click`), ensuring they don't cause side-effects if nested in a form.
+## 2026-09-10 - Missing ARIA Labels in Inline Edit Forms
+**Learning:** Icon-only buttons used in inline editing forms (like renaming a role) often miss `aria-label`s, which can make the UI inaccessible to screen reader users who can't see the visual context of the form.
+**Action:** Always check inline edit forms (like rename inputs) for icon-only buttons (e.g. save or cancel icons) and ensure they have descriptive `aria-label`s.
