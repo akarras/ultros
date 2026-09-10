@@ -1414,7 +1414,9 @@ pub(crate) fn ActivityFeed(
                                         {rows.into_iter().map(|activity| {
                                                 view! {
                                                     <li class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
-                                                        <div class="text-sm font-semibold text-[color:var(--color-text)]">{activity.message}</div>
+                                                        <div class="text-sm font-semibold text-[color:var(--color-text)]">{if activity.kind == ultros_api_types::list::ListActivityKind::ListCreated && activity.payload.get("source").and_then(|v| v.as_str()) == Some("device") {
+                                                            t_string!(i18n, adoption_activity_created, name = activity.actor_username.clone(), list = activity.payload.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string()).to_string()
+                                                        } else { activity.message }}</div>
                                                         <div class="text-xs text-[color:var(--color-text-muted)]">
                                                             {activity.created_at.format("%Y-%m-%d %H:%M UTC").to_string()}
                                                         </div>

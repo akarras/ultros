@@ -1,16 +1,22 @@
 //! Atomic guest projection import with durable account-scoped receipts.
 use crate::{
     UltrosDb,
-    entity::{list, list_doc, list_item},
+    entity::{list, list_activity, list_doc, list_item},
     lists::ListError,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DbBackend, EntityTrait, Statement,
     TransactionTrait,
 };
-use ultros_api_types::list::{AdoptGuestList, AdoptGuestListResponse};
+use ultros_api_types::list::{AdoptGuestList, AdoptGuestListResponse, ListActivityKind};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_list_doc::{ListDocument, MetaSnapshot, RowKey, RowSnapshot};
+
+/// Creation details are absent on replay, so callers never publish duplicate events.
+pub struct AdoptionOutcome {
+    pub response: AdoptGuestListResponse,
+    pub created: Option<(list::Model, Vec<list_item::Model>, list_activity::Model)>,
+}
 
 pub fn validate_adoption(request: &AdoptGuestList) -> Result<(), ListError> {
     let scope_id = match request.wdr_filter {
@@ -60,6 +66,17 @@ impl UltrosDb {
         owner: i64,
         request: AdoptGuestList,
     ) -> anyhow::Result<AdoptGuestListResponse> {
+        Ok(self
+            .adopt_guest_list_with_outcome(owner, request)
+            .await?
+            .response)
+    }
+
+    pub async fn adopt_guest_list_with_outcome(
+        &self,
+        owner: i64,
+        request: AdoptGuestList,
+    ) -> anyhow::Result<AdoptionOutcome> {
         validate_adoption(&request)?;
         if request.expected_owner != owner {
             return Err(ListError::Forbidden(
@@ -73,7 +90,7 @@ impl UltrosDb {
         let account = txn
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id FROM discord_user WHERE id = $1 FOR UPDATE",
+                "SELECT id, username FROM discord_user WHERE id = $1 FOR UPDATE",
                 [owner.into()],
             ))
             .await?;
@@ -108,7 +125,10 @@ impl UltrosDb {
                 source_revision: receipt.try_get("", "source_revision")?,
             };
             txn.commit().await?;
-            return Ok(response);
+            return Ok(AdoptionOutcome {
+                response,
+                created: None,
+            });
         }
         let scope = request.wdr_filter;
         let destination = list::ActiveModel {
@@ -142,24 +162,44 @@ impl UltrosDb {
             .collect();
         let doc = ListDocument::from_rows(
             MetaSnapshot {
-                name: request.name,
+                name: request.name.clone(),
                 scope: Some(scope),
             },
             &rows,
         );
-        for row in request.items {
-            list_item::ActiveModel {
-                list_id: Set(destination.id),
-                item_id: Set(row.item_id),
-                hq: Set(row.hq),
-                quantity: Set(Some(row.quantity)),
-                acquired: Set(Some(row.acquired)),
-                target_price: Set(row.target_price),
-                ..Default::default()
-            }
-            .insert(&txn)
-            .await?;
-        }
+        // Batch the projection while holding the account lock.
+        let inserted = if request.items.is_empty() {
+            Vec::new()
+        } else {
+            list_item::Entity::insert_many(request.items.into_iter().map(|row| {
+                list_item::ActiveModel {
+                    list_id: Set(destination.id),
+                    item_id: Set(row.item_id),
+                    hq: Set(row.hq),
+                    quantity: Set(Some(row.quantity)),
+                    acquired: Set(Some(row.acquired)),
+                    target_price: Set(row.target_price),
+                    ..Default::default()
+                }
+            }))
+            .exec_with_returning(&txn)
+            .await?
+        };
+        // Activity and receipt commit together, preventing duplicate history on retry.
+        let username: String = account
+            .as_ref()
+            .expect("account checked above")
+            .try_get("", "username")?;
+        let activity = list_activity::ActiveModel {
+            list_id: Set(destination.id),
+            actor_user_id: Set(owner),
+            actor_username: Set(username.clone()),
+            kind: Set(ListActivityKind::ListCreated.as_str().to_string()),
+            payload: Set(serde_json::json!({"name": request.name, "source": "device", "item_count": inserted.len()})),
+            message: Set(format!("{username} created list {} from a device list", destination.name)),
+            created_at: Set(chrono::Utc::now().into()),
+            ..Default::default()
+        }.insert(&txn).await?;
         list_doc::ActiveModel {
             list_id: Set(destination.id),
             snapshot: Set(doc.export_snapshot()?),
@@ -173,11 +213,14 @@ impl UltrosDb {
             "INSERT INTO guest_list_adoption (owner, adoption_key, device_list_id, source_revision, list_id) VALUES ($1, $2, $3, $4, $5)",
             [owner.into(), request.adoption_key.into(), request.device_list_id.clone().into(), request.source_revision.clone().into(), destination.id.into()])).await?;
         txn.commit().await?;
-        Ok(AdoptGuestListResponse {
-            list_id: destination.id,
-            owner,
-            device_list_id: request.device_list_id,
-            source_revision: request.source_revision,
+        Ok(AdoptionOutcome {
+            response: AdoptGuestListResponse {
+                list_id: destination.id,
+                owner,
+                device_list_id: request.device_list_id,
+                source_revision: request.source_revision,
+            },
+            created: Some((destination, inserted, activity)),
         })
     }
 }
@@ -260,6 +303,16 @@ mod tests {
         let retry = db.adopt_guest_list(owner.id, value.clone()).await.unwrap();
         assert_eq!(retry.source_revision, "4");
         assert_eq!(retry.list_id, a.list_id);
+        let activity = db
+            .get_list_activity(a.list_id, owner.id, 50, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            activity.len(),
+            1,
+            "retries must not duplicate creation history"
+        );
+        assert_eq!(activity[0].kind, ListActivityKind::ListCreated.as_str());
         let rows = list_item::Entity::find()
             .filter(list_item::Column::ListId.eq(a.list_id))
             .all(db.get_connection())
@@ -274,8 +327,43 @@ mod tests {
         let mut same_name = value.clone();
         same_name.adoption_key.push_str("-new");
         same_name.device_list_id.push_str("-new");
+        same_name
+            .items
+            .extend([2, 3].into_iter().map(|item_id| GuestListItem {
+                item_id,
+                hq: Some(false),
+                quantity: item_id,
+                acquired: 1,
+                target_price: Some(100),
+            }));
         let independent = db
             .adopt_guest_list(owner.id, same_name.clone())
+            .await
+            .unwrap();
+        let imported = list_item::Entity::find()
+            .filter(list_item::Column::ListId.eq(independent.list_id))
+            .all(db.get_connection())
+            .await
+            .unwrap();
+        assert_eq!(
+            imported.len(),
+            3,
+            "batch insert preserves all projected rows"
+        );
+        assert!(imported.iter().any(|row| row.item_id == 3
+            && row.quantity == Some(3)
+            && row.acquired == Some(1)
+            && row.target_price == Some(100)));
+        let mut empty = value.clone();
+        empty.adoption_key.push_str("-empty");
+        empty.device_list_id.push_str("-empty");
+        empty.items.clear();
+        let empty = db
+            .adopt_guest_list_with_outcome(owner.id, empty)
+            .await
+            .unwrap();
+        assert!(empty.created.as_ref().unwrap().1.is_empty());
+        db.delete_list(empty.response.list_id, owner.id)
             .await
             .unwrap();
         assert_ne!(

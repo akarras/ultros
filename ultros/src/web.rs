@@ -1726,6 +1726,7 @@ pub(crate) async fn create_list(
 
 pub(crate) async fn adopt_guest_list(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Json(request): Json<ultros_api_types::list::AdoptGuestList>,
 ) -> Result<Json<ultros_api_types::list::AdoptGuestListResponse>, ApiError> {
@@ -1739,7 +1740,26 @@ pub(crate) async fn adopt_guest_list(
     let owner = db
         .get_or_create_discord_user(user.id, user.name.clone())
         .await?;
-    Ok(Json(db.adopt_guest_list(owner.id, request).await?))
+    let outcome = db.adopt_guest_list_with_outcome(owner.id, request).await?;
+    if let Some((list, items, activity)) = outcome.created {
+        // A new list has no document subscribers yet. Publish the same creation,
+        // projection and activity events as ordinary list mutations, only once.
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::List(List::try_from(list)?)),
+        );
+        for item in items {
+            send_list_event(
+                &senders,
+                EventType::added(ListEventData::ListItem(item.into())),
+            );
+        }
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::Activity(activity.into())),
+        );
+    }
+    Ok(Json(outcome.response))
 }
 
 pub(crate) async fn edit_list(

@@ -10,7 +10,7 @@ const puppeteer = require('puppeteer');
 const staticRoot = path.resolve(__dirname, '../ultros/static');
 const client = `export default async function init() { await (await fetch('/pkg/f4b41bf1/ultros.wasm')).arrayBuffer(); }
 export async function hydrate() {
-  const { openGuestListStore } = await import('/static/guest-list-store.mjs');
+  const { openGuestListStore } = await import('/pkg/f4b41bf1/snippets/guest-list-store.mjs');
   document.body.textContent = 'Offline client opened';
   document.body.dataset.offline = String(window.__ULTROS_OFFLINE_GUEST__ === true);
   document.body.dataset.anonymous = String(window.__ULTROS_BOOTSTRAP__.current_user === null);
@@ -22,10 +22,10 @@ const html = `<!doctype html><html><head><link id="leptos" rel="stylesheet" href
 <script type="module">
 import init from '/pkg/f4b41bf1/ultros.js';
 await init();
-const { openGuestListStore } = await import('/static/guest-list-store.mjs');
+const { openGuestListStore } = await import('/pkg/f4b41bf1/snippets/guest-list-store.mjs');
 const store = await openGuestListStore();
 await store.create({ name: 'Raid supplies', snapshot: new Uint8Array([1,2,3]) });
-const { prepareGuestOffline }=await import('/static/guest-offline.mjs');
+const { prepareGuestOffline }=await import('/pkg/f4b41bf1/snippets/guest-offline.mjs');
 window.prepared=await prepareGuestOffline('/static/data/test/en.rkyv','en');
 </script></body></html>`;
 
@@ -37,7 +37,7 @@ async function main() {
     let body;
     let type = 'text/javascript';
     if (req.url === '/service-worker.js') body = fs.readFileSync(path.join(staticRoot, 'service-worker.js'));
-    else if (['/static/guest-offline.mjs', '/static/guest-list-store.mjs', '/static/list-companion.mjs'].includes(req.url)) body = fs.readFileSync(path.join(staticRoot, path.basename(req.url)));
+    else if (['/pkg/f4b41bf1/snippets/guest-offline.mjs', '/pkg/f4b41bf1/snippets/guest-list-store.mjs', '/pkg/f4b41bf1/snippets/list-companion.mjs'].includes(req.url)) body = fs.readFileSync(path.join(staticRoot, path.basename(req.url)));
     else if (req.url === '/pkg/f4b41bf1/ultros.js') body = client;
     else if (req.url === '/pkg/f4b41bf1/ultros.wasm') { body = 'fixture'; type = 'application/wasm'; }
     else if (req.url === '/pkg/f4b41bf1/ultros.css') { body = 'body { color: white; background: #181020 }'; type = 'text/css'; }

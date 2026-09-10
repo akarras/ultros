@@ -61,7 +61,7 @@ function fixture() {
   const manifest = {
     type: 'ULTROS_PREPARE_GUEST_OFFLINE', js: '/pkg/ultros.123.js',
     wasm: '/pkg/ultros_bg.123.wasm', css: '/pkg/ultros.123.css',
-    assets: ['/static/data/123/en.rkyv', '/pkg/snippets/a/import.js', '/static/guest-offline.mjs'], lang: 'en',
+    assets: ['/static/data/123/en.rkyv', '/pkg/snippets/a/import.js', '/pkg/f4b41bf1/snippets/guest-offline.mjs'], lang: 'en',
   };
   return {
     entries, fetched, listeners, manifest,
@@ -168,4 +168,29 @@ test('without Web Locks preparation fails safely and existing offline generation
   assert.equal((await f.prepare()).ready, false);
   f.offline();
   assert.equal((await f.request('/list')).status, 200);
+});
+
+
+test('offline shell renders every supported language before loading the client', async () => {
+  for (const [lang, opening] of Object.entries({en:'Opening device lists',de:'Gerätelisten werden geöffnet',fr:'Ouverture des listes locales',ja:'端末のリストを開いています',cn:'正在打开设备列表',ko:'기기 목록 여는 중',tc:'正在開啟裝置清單'})) {
+    const f = fixture();
+    assert.equal((await f.prepare({...f.manifest, lang})).ready, true);
+    f.offline();
+    const html = await (await f.request('/list')).text();
+    assert.ok(html.includes(opening));
+    assert.ok(html.includes('lang="'+lang+'"'));
+    if (lang !== 'en') assert.ok(!html.includes('Could not open offline lists'));
+  }
+});
+
+test('bundled module generations stay matched to their client build', async () => {
+  const f = fixture();
+  const oldModule = '/pkg/build-old/ultros/static/guest-list-store.mjs';
+  assert.equal((await f.prepare({...f.manifest, assets:[oldModule]})).ready,true);
+  f.body('new module');
+  f.fail('/pkg/build-new/ultros.js');
+  assert.equal((await f.prepare({...f.manifest, js:'/pkg/build-new/ultros.js',assets:['/pkg/build-new/ultros/static/guest-list-store.mjs']})).ready,false);
+  f.offline();
+  assert.equal(await (await f.request(oldModule,'cors')).text(),'public asset');
+  assert.equal(await f.request('/static/guest-list-store.mjs','cors'),undefined);
 });

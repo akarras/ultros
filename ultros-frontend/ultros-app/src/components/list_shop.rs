@@ -1,4 +1,5 @@
 //! Stable, whole-stack shopping trips shared by account and device lists.
+use crate::i18n::{t_string, use_i18n};
 use crate::recipe_planner::{self as planner, Material, Offer, RouteContext, ShoppingPlan};
 use leptos::prelude::*;
 use serde::Serialize;
@@ -137,6 +138,13 @@ struct CompanionSnapshot {
     rows: Vec<CompanionRow>,
     can_edit: bool,
     has_next: bool,
+    labels: BTreeMap<String, String>,
+    #[serde(skip)]
+    done_count: usize,
+    #[serde(skip)]
+    total: usize,
+    #[serde(skip)]
+    unknown_world: Option<i32>,
 }
 #[derive(Clone, Debug, Serialize)]
 struct CompanionRow {
@@ -148,6 +156,11 @@ struct CompanionRow {
     done: bool,
     #[serde(rename = "canBuy")]
     can_buy: bool,
+    description: String,
+    #[serde(rename = "quantityLabel")]
+    quantity_label: String,
+    #[serde(rename = "invalidQuantity")]
+    invalid_quantity: String,
 }
 
 /// Completed physical listings stay excluded across replans. The acquired
@@ -214,6 +227,9 @@ fn snapshot(trip: &Trip, live: &ShopInput, stop: usize, can_edit: bool) -> Compa
                     cost: offer.quantity * offer.price,
                     done: left == 0,
                     can_buy,
+                    description: String::new(),
+                    quantity_label: String::new(),
+                    invalid_quantity: String::new(),
                 });
             }
         }
@@ -226,13 +242,16 @@ fn snapshot(trip: &Trip, live: &ShopInput, stop: usize, can_edit: bool) -> Compa
                     .world_names
                     .get(world)
                     .cloned()
-                    .unwrap_or_else(|| format!("World {world}"))
+                    .unwrap_or_default()
             })
-            .unwrap_or_else(|| "No available stacks".into()),
-        progress: format!(
-            "{done_count} of {total} stacks recorded · {} missing",
-            trip.plan.missing
-        ),
+            .unwrap_or_default(),
+        progress: String::new(),
+        labels: BTreeMap::new(),
+        done_count,
+        total,
+        unknown_world: current.and_then(|(world, _)| {
+            (!trip.source.world_names.contains_key(world)).then_some(*world)
+        }),
         has_next: stop + 1 < stops.len() && rows.iter().all(|row| row.done),
         rows,
         can_edit,
@@ -242,9 +261,7 @@ fn snapshot(trip: &Trip, live: &ShopInput, stop: usize, can_edit: bool) -> Compa
 #[cfg(feature = "hydrate")]
 mod browser {
     use wasm_bindgen::prelude::*;
-    #[wasm_bindgen(
-        inline_js = "export { openCompanion, updateCompanion, closeCompanion } from '/static/list-companion.mjs';"
-    )]
+    #[wasm_bindgen(module = "/../../ultros/static/list-companion.mjs")]
     extern "C" {
         #[wasm_bindgen(js_name = openCompanion)]
         pub fn open(snapshot: &str, callback: &js_sys::Function) -> js_sys::Promise;
@@ -262,6 +279,7 @@ pub fn ListShop(
     on_undo: Callback<()>,
     can_edit: Signal<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let trip = RwSignal::new(None::<Trip>);
     let unavailable = RwSignal::new(BTreeSet::<i32>::new());
     let consumed = RwSignal::new(BTreeMap::<i32, (String, i64)>::new());
@@ -295,8 +313,110 @@ pub fn ListShop(
         notice.set(String::new());
     });
     let live_snapshot = move || {
-        trip.get()
-            .map(|trip| snapshot(&trip, &input.get(), stop.get(), can_edit.get()))
+        trip.get().map(|trip| {
+            let mut view = snapshot(&trip, &input.get(), stop.get(), can_edit.get());
+            if let Some(world) = view.unknown_world {
+                view.world = t_string!(i18n, list_shop_world, world = world).to_string();
+            } else if view.world.is_empty() {
+                view.world = t_string!(i18n, list_shop_no_stacks).to_string();
+            }
+            view.progress = t_string!(
+                i18n,
+                list_shop_progress,
+                done = view.done_count,
+                total = view.total,
+                missing = trip.plan.missing
+            )
+            .to_string();
+            view.labels = BTreeMap::from([
+                (
+                    "shoppingList".into(),
+                    t_string!(i18n, list_shop_shopping_list).to_string(),
+                ),
+                (
+                    "shoppingCompanion".into(),
+                    t_string!(i18n, list_shop_companion).to_string(),
+                ),
+                (
+                    "keepOpen".into(),
+                    t_string!(i18n, list_shop_keep_open).to_string(),
+                ),
+                (
+                    "anyQuality".into(),
+                    t_string!(i18n, list_shop_any_quality).to_string(),
+                ),
+                (
+                    "copyName".into(),
+                    t_string!(i18n, list_shop_copy_name).to_string(),
+                ),
+                (
+                    "copied".into(),
+                    t_string!(i18n, list_shop_copied).to_string(),
+                ),
+                (
+                    "clipboardUnavailable".into(),
+                    t_string!(i18n, list_shop_clipboard_unavailable).to_string(),
+                ),
+                (
+                    "bought".into(),
+                    t_string!(i18n, list_shop_bought).to_string(),
+                ),
+                ("undo".into(), t_string!(i18n, list_shop_undo).to_string()),
+                (
+                    "nextWorld".into(),
+                    t_string!(i18n, list_shop_next).to_string(),
+                ),
+                (
+                    "earlierStack".into(),
+                    t_string!(i18n, list_shop_earlier_stack).to_string(),
+                ),
+                (
+                    "nothingLeft".into(),
+                    t_string!(i18n, list_shop_nothing_left).to_string(),
+                ),
+                (
+                    "updateFailed".into(),
+                    t_string!(i18n, list_shop_update_failed).to_string(),
+                ),
+                (
+                    "regularWindow".into(),
+                    t_string!(i18n, list_shop_regular_window).to_string(),
+                ),
+                (
+                    "blocked".into(),
+                    t_string!(i18n, list_shop_open_failed).to_string(),
+                ),
+                (
+                    "closed".into(),
+                    t_string!(i18n, list_shop_closed).to_string(),
+                ),
+                (
+                    "invalidData".into(),
+                    t_string!(i18n, list_shop_invalid_data).to_string(),
+                ),
+            ]);
+            for row in &mut view.rows {
+                row.description = t_string!(
+                    i18n,
+                    list_shop_stack,
+                    quality = row.quality.clone(),
+                    quantity = row.quantity,
+                    cost = row.cost
+                )
+                .to_string();
+                if row.done {
+                    row.description.push_str(" · ");
+                    row.description
+                        .push_str(t_string!(i18n, list_shop_recorded));
+                }
+                row.quantity_label =
+                    t_string!(i18n, list_shop_quantity, name = row.name.clone()).to_string();
+                row.invalid_quantity =
+                    t_string!(i18n, list_shop_invalid_quantity, quantity = row.quantity)
+                        .to_string();
+            }
+            view
+        })
     };
     let action = Callback::new(move |(action, key, quantity): (String, String, i32)| {
         if action == "next" {
@@ -393,23 +513,21 @@ pub fn ListShop(
             let promise = browser_callback.with_value(|callback| browser::open(&json, callback));
             leptos::task::spawn_local(async move {
                 if wasm_bindgen_futures::JsFuture::from(promise).await.is_err() {
-                    let _ = notice.try_set(
-                        "Could not open the companion. Allow pop-ups and try again.".into(),
-                    );
+                    let _ = notice.try_set(t_string!(i18n, list_shop_open_failed).to_string());
                 }
             });
         }
     };
     view! {
-        <section class="space-y-4" aria-label="Shopping trip">
+        <section class="space-y-4" aria-label=move || t_string!(i18n, list_shop_trip).to_string()>
             <div class="rounded-xl border border-white/10 p-4 space-y-3">
-                <h2 class="text-xl font-semibold">"Shopping route"</h2>
-                <div class="flex flex-wrap gap-2" role="group" aria-label="Shopping route">
-                    <button class=move || if trip.get().is_some_and(|t| t.mode == 0) { "btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } else { "btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 0).to_string() data-testid="shop-home" disabled=move || input.get().home_world == 0 on:click=move |_| choose.run(0)>"Stay on my world"</button>
-                    <button class=move || if trip.get().is_some_and(|t| t.mode == 1) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 1).to_string() data-testid="shop-fewest" on:click=move |_| choose.run(1)>"Fewest stops"</button>
-                    <button class=move || if trip.get().is_some_and(|t| t.mode == 2) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 2).to_string() data-testid="shop-cheapest" on:click=move |_| choose.run(2)>"Lowest total cost"</button>
+                <h2 class="text-xl font-semibold">{move || t_string!(i18n, list_shop_route)}</h2>
+                <div class="flex flex-wrap gap-2" role="group" aria-label=move || t_string!(i18n, list_shop_route).to_string()>
+                    <button class=move || if trip.get().is_some_and(|t| t.mode == 0) { "btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } else { "btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 0).to_string() data-testid="shop-home" disabled=move || input.get().home_world == 0 on:click=move |_| choose.run(0)>{move || t_string!(i18n, list_shop_home)}</button>
+                    <button class=move || if trip.get().is_some_and(|t| t.mode == 1) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 1).to_string() data-testid="shop-fewest" on:click=move |_| choose.run(1)>{move || t_string!(i18n, list_shop_fewest)}</button>
+                    <button class=move || if trip.get().is_some_and(|t| t.mode == 2) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 2).to_string() data-testid="shop-cheapest" on:click=move |_| choose.run(2)>{move || t_string!(i18n, list_shop_cheapest)}</button>
                 </div>
-                <p class="text-xs text-[color:var(--color-text-muted)]">{move || input.get().observed_at.map(|time| format!("Prices observed {time}")).unwrap_or_else(|| "Price age unavailable".into())}</p>
+                <p class="text-xs text-[color:var(--color-text-muted)]">{move || input.get().observed_at.map(|time| t_string!(i18n, list_shop_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_age_unknown).to_string())}</p>
             </div>
             <p role="status" class:hidden=move || notice.get().is_empty()>{move || notice.get()}</p>
             {move || trip.get().map(|active| {
@@ -418,10 +536,10 @@ pub fn ListShop(
                 let surplus: i64 = active.plan.purchases.values().map(|purchase| (purchase.quantity - purchase.needed).max(0)).sum();
                 view! {
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <strong>{format!("{cost} gil · {surplus} surplus · {missing} missing")}</strong>
+                        <strong>{t_string!(i18n, list_shop_totals, cost = cost, surplus = surplus, missing = missing)}</strong>
                         <div class="flex flex-wrap gap-2">
-                            <button class="btn-secondary min-h-11" data-testid="shop-refresh" on:click=move |_| choose.run(active.mode)>"Replan remaining items"</button>
-                            <button class="btn-primary min-h-11" data-testid="open-shopping-companion" on:click=pop_out>"Pop out shopping companion"</button>
+                            <button class="btn-secondary min-h-11" data-testid="shop-refresh" on:click=move |_| choose.run(active.mode)>{move || t_string!(i18n, list_shop_replan)}</button>
+                            <button class="btn-primary min-h-11" data-testid="open-shopping-companion" on:click=pop_out>{move || t_string!(i18n, list_shop_popout)}</button>
                         </div>
                     </div>
                 }
@@ -440,46 +558,46 @@ pub fn ListShop(
                                     <strong>{row.name.clone()}</strong>
                                     <span class="[&_button]:min-h-11 [&_button]:min-w-11"><crate::components::clipboard::Clipboard clipboard_text=Signal::stored(row.name.clone())/></span>
                                 </div>
-                                <p>{format!("{} · {} remaining in stack · {} gil for whole stack", row.quality, row.quantity, row.cost)}</p>
+                                <p>{row.description.clone()}</p>
                                 <div class="flex flex-wrap gap-2">
-                                    <input class="input max-w-20 min-h-11" type="number" min="1" max=row.quantity aria-label=format!("Purchase quantity for {}", row.name) prop:value=move || amount.get() on:input=move |event| amount.set(event_target_value(&event).parse().unwrap_or(0))/>
-                                    <button class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !row.can_buy || !can_edit.get() on:click=move |_| action.run(("bought".into(),key.clone(),amount.get_untracked()))>{if row.done { "Recorded" } else { "Bought" }}</button>
+                                    <input class="input max-w-20 min-h-11" type="number" min="1" max=row.quantity aria-label=row.quantity_label.clone() prop:value=move || amount.get() on:input=move |event| amount.set(event_target_value(&event).parse().unwrap_or(0))/>
+                                    <button class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !row.can_buy || !can_edit.get() on:click=move |_| action.run(("bought".into(),key.clone(),amount.get_untracked()))>{if row.done { t_string!(i18n, list_shop_recorded).to_string() } else { t_string!(i18n, list_shop_bought).to_string() }}</button>
                                     <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=row.done on:click=move |_| {
                                         if let Ok(id) = gone_key.parse() { unavailable.update(|ids| { ids.insert(id); }); }
-                                        notice.set("Listing excluded. Replan remaining items to review a replacement from loaded prices.".into());
-                                    }>"Listing is gone"</button>
+                                        notice.set(t_string!(i18n, list_shop_excluded).to_string());
+                                    }>{move || t_string!(i18n, list_shop_gone)}</button>
                                 </div>
                             </div>
                         }
                     }).collect_view()}
                     <div class="flex flex-wrap gap-2">
-                        <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !can_edit.get() on:click=move |_| action.run(("undo".into(), String::new(), 0))>"Undo purchase"</button>
-                        <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled= !view.has_next on:click=move |_| action.run(("next".into(), String::new(), 0))>"Next world"</button>
+                        <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !can_edit.get() on:click=move |_| action.run(("undo".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_undo_purchase)}</button>
+                        <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled= !view.has_next on:click=move |_| action.run(("next".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_next)}</button>
                     </div>
                 </div>
             })}
             <details class="rounded-xl border border-white/10 p-4 text-sm">
-                <summary class="cursor-pointer font-medium">"Compare routes and shopping details"</summary>
+                <summary class="cursor-pointer font-medium">{move || t_string!(i18n, list_shop_compare)}</summary>
                 <div class="space-y-3 pt-3">
                     {move || trip.get().map(|active| {
-                        let savings = if active.alternatives[1].missing == active.alternatives[2].missing { format!("Lowest cost saves {} gil versus fewest stops.", (active.alternatives[1].cost - active.alternatives[2].cost).max(0)) } else { "Compare missing supply before comparing costs.".into() };
+                        let savings = if active.alternatives[1].missing == active.alternatives[2].missing { t_string!(i18n, list_shop_savings, amount = (active.alternatives[1].cost - active.alternatives[2].cost).max(0)).to_string() } else { t_string!(i18n, list_shop_compare_missing).to_string() };
                         view! {
                             <div class="grid gap-2 sm:grid-cols-3">
                                 {active.alternatives.iter().enumerate().map(|(mode, plan)| view! {
                                     <div class="rounded-lg border border-white/10 p-3">
-                                        <strong>{["Home world", "Fewest stops", "Lowest cost"][mode]}</strong>
-                                        <p>{format!("{} gil · {} stops", plan.cost, planner::itinerary(plan).len())}</p>
-                                        <p>{format!("{} missing", plan.missing)}</p>
+                                        <strong>{[t_string!(i18n, list_shop_home_label).to_string(), t_string!(i18n, list_shop_fewest).to_string(), t_string!(i18n, list_shop_lowest_label).to_string()][mode].clone()}</strong>
+                                        <p>{t_string!(i18n, list_shop_stops, cost = plan.cost, count = planner::itinerary(plan).len())}</p>
+                                        <p>{t_string!(i18n, list_shop_missing, count = plan.missing)}</p>
                                     </div>
                                 }).collect_view()}
                             </div>
                             <p>{savings}</p>
                         }
                     })}
-                    <p>{move || input.get().observed_at.map(|time| format!("Listings observed {time}. Estimates, not reservations.")).unwrap_or_else(|| "Price observation time unavailable. Look up prices when connected to refresh market data.".into())}</p>
-                    <p>"Prices include whole stacks. Routes use the available listings; check travel availability in game. Travel fees are excluded."</p>
-                    <p>"Record stacks in order for each item. Your trip stays in place as prices update. Replanning uses the latest loaded listings."</p>
-                    <p>"Keep this page open for the companion. Its regular-window fallback is not always on top."</p>
+                    <p>{move || input.get().observed_at.map(|time| t_string!(i18n, list_shop_listings_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_observation_unknown).to_string())}</p>
+                    <p>{move || t_string!(i18n, list_shop_whole_stacks)}</p>
+                    <p>{move || t_string!(i18n, list_shop_stable_trip)}</p>
+                    <p>{move || t_string!(i18n, list_shop_keep_page)}</p>
                 </div>
             </details>
         </section>

@@ -23,6 +23,10 @@ function parse(value) {
   return result;
 }
 
+// The owning Leptos view supplies strings in the active UI locale. English
+// fallbacks support older snapshots during a rolling client update.
+function label(key, fallback) { return snapshot?.labels?.[key] ?? fallback; }
+
 function element(tag, text, className) {
   const node = companion.document.createElement(tag);
   if (text !== undefined) node.textContent = String(text);
@@ -37,14 +41,14 @@ function notice(message) {
 function dispatch(action, key = '', quantity = 0) {
   if (!callback) return;
   try { callback(action, String(key), quantity); }
-  catch { notice('Could not update your list. Try again in the main window.'); }
+  catch { notice(label('updateFailed', 'Could not update your list. Try again in the main window.')); }
 }
 
 function button(label, action, disabled = false) {
   const node = element('button', label);
   node.type = 'button';
   node.disabled = disabled;
-  const testId = { 'Copy name': 'companion-copy', Bought: 'companion-buy', Undo: 'companion-undo', 'Next world': 'companion-next' }[label];
+  const testId = { [snapshot?.labels?.copyName ?? 'Copy name']: 'companion-copy', [snapshot?.labels?.bought ?? 'Bought']: 'companion-buy', [snapshot?.labels?.undo ?? 'Undo']: 'companion-undo', [snapshot?.labels?.nextWorld ?? 'Next world']: 'companion-next' }[label];
   if (testId) node.dataset.testid = testId;
   node.addEventListener('click', action);
   return node;
@@ -53,16 +57,17 @@ function button(label, action, disabled = false) {
 function render() {
   if (!companion || companion.closed || !snapshot) return;
   const doc = companion.document;
+  doc.documentElement.lang = document.documentElement.lang || 'en';
   // Preserve a partially entered purchase quantity across opener updates.
   const active = doc.activeElement;
   const editing = active?.tagName === 'INPUT' ? { key: active.dataset.key, value: active.value } : null;
-  doc.title = `${snapshot.title || 'Shopping list'} · Ultros`;
+  doc.title = `${snapshot.title || label('shoppingList', 'Shopping list')} · Ultros`;
   const main = element('main');
   const header = element('header');
-  header.append(element('h1', snapshot.title || 'Shopping list'));
-  header.append(element('p', snapshot.world || 'Shopping companion'));
+  header.append(element('h1', snapshot.title || label('shoppingList', 'Shopping list')));
+  header.append(element('p', snapshot.world || label('shoppingCompanion', 'Shopping companion')));
   header.append(element('p', snapshot.progress || ''));
-  header.append(element('p', 'Keep the Ultros tab open. Prices reflect the main list’s last update.'));
+  header.append(element('p', label('keepOpen', 'Keep the Ultros tab open. Prices reflect the main list’s last update.')));
   const status = element('p');
   status.id = 'notice';
   status.setAttribute('role', 'status');
@@ -71,13 +76,13 @@ function render() {
   for (const row of snapshot.rows) {
     const article = element('article', undefined, row.done ? 'done' : '');
     article.append(element('h2', row.name));
-    article.append(element('p', `${row.quality || 'Any quality'} · ${row.quantity} remaining${row.cost == null ? '' : ` · ${row.cost} gil expected`}${row.done ? ' · Done' : ''}`));
+    article.append(element('p', row.description ?? `${row.quality || label('anyQuality', 'Any quality')} · ${row.quantity} remaining${row.cost == null ? '' : ` · ${row.cost} gil expected`}${row.done ? ' · Done' : ''}`));
     const actions = element('div', undefined, 'actions');
-    actions.append(button('Copy name', async () => {
+    actions.append(button(label('copyName', 'Copy name'), async () => {
       try {
         await companion.navigator.clipboard.writeText(String(row.name));
-        notice('Item name copied.');
-      } catch { notice('Clipboard unavailable. Select and copy the item name above.'); }
+        notice(label('copied', 'Item name copied.'));
+      } catch { notice(label('clipboardUnavailable', 'Clipboard unavailable. Select and copy the item name above.')); }
     }));
     if (snapshot.canEdit && !row.done && Number(row.quantity) > 0) {
       const quantity = element('input');
@@ -87,11 +92,11 @@ function render() {
       quantity.step = '1';
       quantity.value = String(row.quantity);
       quantity.dataset.key = String(row.key);
-      quantity.setAttribute('aria-label', `Quantity purchased: ${row.name}`);
-      const bought = button('Bought', () => {
+      quantity.setAttribute('aria-label', row.quantityLabel ?? `Quantity purchased: ${row.name}`);
+      const bought = button(label('bought', 'Bought'), () => {
         const amount = Number(quantity.value);
         if (!Number.isSafeInteger(amount) || amount < 1 || amount > Number(row.quantity)) {
-          notice(`Enter a whole quantity from 1 to ${row.quantity}.`);
+          notice(row.invalidQuantity ?? `Enter a whole quantity from 1 to ${row.quantity}.`);
           quantity.focus();
           return;
         }
@@ -101,15 +106,15 @@ function render() {
       bought.disabled = row.canBuy === false;
       quantity.disabled = row.canBuy === false;
       actions.append(quantity, bought);
-      if (row.canBuy === false) actions.append(element('p', 'Record the earlier stack of this item first.'));
+      if (row.canBuy === false) actions.append(element('p', label('earlierStack', 'Record the earlier stack of this item first.')));
     }
     article.append(actions);
     main.append(article);
   }
-  if (!snapshot.rows.length) main.append(element('p', 'Nothing left to buy at this stop.'));
+  if (!snapshot.rows.length) main.append(element('p', label('nothingLeft', 'Nothing left to buy at this stop.')));
   const footer = element('footer');
-  if (snapshot.canEdit) footer.append(button('Undo', () => dispatch('undo')));
-  if (snapshot.hasNext) footer.append(button('Next world', () => dispatch('next')));
+  if (snapshot.canEdit) footer.append(button(label('undo', 'Undo'), () => dispatch('undo')));
+  if (snapshot.hasNext) footer.append(button(label('nextWorld', 'Next world'), () => dispatch('next')));
   main.append(footer);
   doc.body.replaceChildren(main);
   if (editing) {
@@ -135,10 +140,10 @@ export async function openCompanion(initial, onAction) {
       mode = 'window';
       opened = window.open('', 'ultros-shopping-companion', 'popup,width=360,height=480');
     }
-    if (!opened) throw new Error('The browser blocked the companion. Allow pop-ups for Ultros and try again.');
+    if (!opened) throw new Error(label('blocked', 'The browser blocked the companion. Allow pop-ups for Ultros and try again.'));
     if (requestedGeneration !== generation) {
       opened.close();
-      throw new Error('The shopping list was closed while opening its companion.');
+      throw new Error(label('closed', 'The shopping list was closed while opening its companion.'));
     }
     companion = opened;
     opened.__ultrosMode = mode;
@@ -150,7 +155,7 @@ export async function openCompanion(initial, onAction) {
       if (companion === opened) { companion = null; callback = null; }
     }, { once: true });
     render();
-    if (mode === 'window') notice('Regular window mode. Always-on-top is available in browsers with Document Picture-in-Picture.');
+    if (mode === 'window') notice(label('regularWindow', 'Regular window mode. Always-on-top is available in browsers with Document Picture-in-Picture.'));
     return mode;
   })();
   try { return await opening; } finally { opening = null; }

@@ -4,6 +4,9 @@
 // regardless of which page registered it. Backend wires the
 // Service-Worker-Allowed: / response header so this is allowed.
 
+// The push worker has origin-wide scope and claims tabs on activation.
+// Labs gates cache preparation, not registration or interception. Without a
+// prepared generation these fetch handlers remain network-only.
 // Device-list offline support deliberately NEVER stores server-rendered HTML,
 // current_user, account APIs, or market responses. The only navigation fallback
 // is a generated anonymous client-rendered shell, prepared after a successful
@@ -56,9 +59,8 @@ async function prepareGuestOffline(message) {
 function publicGuestAsset(value) {
   const url = new URL(value, self.location.origin);
   if (url.origin !== self.location.origin || url.search || url.hash) return false;
-  return /^\/pkg\/.+\.(?:js|wasm|css)$/.test(url.pathname)
+  return /^\/pkg\/.+\.(?:js|mjs|wasm|css)$/.test(url.pathname)
     || /^\/static\/data\/[^/]+\/(?:en|ja|de|fr|cn|ko|tc)\.rkyv$/.test(url.pathname)
-    || /^\/static\/(?:guest-list-store|list-companion|guest-offline)\.mjs$/.test(url.pathname)
     || url.pathname === '/api/v1/world_data';
 }
 
@@ -70,6 +72,45 @@ function guestNavigation(pathname) {
 function scriptJson(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
+
+// This shell must render before WASM (and leptos-i18n) can load.
+const guestShellLabels = {
+  "en": [
+    "Device lists · Ultros",
+    "Opening device lists…",
+    "Could not open offline lists. Reconnect and reopen Lists to refresh offline support. Your saved lists remain on this device."
+  ],
+  "de": [
+    "Gerätelisten · Ultros",
+    "Gerätelisten werden geöffnet…",
+    "Offline-Listen konnten nicht geöffnet werden. Stelle die Verbindung wieder her und öffne Listen erneut. Deine gespeicherten Listen bleiben auf diesem Gerät."
+  ],
+  "fr": [
+    "Listes locales · Ultros",
+    "Ouverture des listes locales…",
+    "Impossible d’ouvrir les listes hors ligne. Reconnectez-vous et rouvrez Listes pour actualiser le mode hors ligne. Vos listes restent sur cet appareil."
+  ],
+  "ja": [
+    "端末のリスト · Ultros",
+    "端末のリストを開いています…",
+    "オフラインのリストを開けませんでした。接続を回復してリストを開き直してください。保存済みリストはこの端末に残っています。"
+  ],
+  "cn": [
+    "设备列表 · Ultros",
+    "正在打开设备列表…",
+    "无法打开离线列表。请重新联网并打开列表以更新离线支持。已保存的列表仍在此设备上。"
+  ],
+  "ko": [
+    "기기 목록 · Ultros",
+    "기기 목록 여는 중…",
+    "오프라인 목록을 열 수 없습니다. 인터넷에 연결하고 목록을 다시 열어 오프라인 지원을 갱신하세요. 저장된 목록은 이 기기에 남아 있습니다."
+  ],
+  "tc": [
+    "裝置清單 · Ultros",
+    "正在開啟裝置清單…",
+    "無法開啟離線清單。請重新連線並開啟清單以更新離線支援。已儲存的清單仍在此裝置上。"
+  ]
+};
 
 async function stageGuestOffline(message) {
   const { js, wasm, css } = message;
@@ -83,7 +124,7 @@ async function stageGuestOffline(message) {
     throw new Error('Invalid offline asset manifest');
   }
   const paths = [...new Set([...message.assets, js, wasm, css,
-    '/static/guest-list-store.mjs', '/static/list-companion.mjs', '/api/v1/world_data'])];
+    '/api/v1/world_data'])];
   // Fetch without cookies even when preparation starts in a signed-in tab.
   // Do not publish the shell until every required resource has been saved.
   const responses = await Promise.all(paths.map(async path => {
@@ -96,8 +137,9 @@ async function stageGuestOffline(message) {
   const worlds = await responses.find(([path]) => path === '/api/v1/world_data')[1].clone().json();
   const bootstrap = { world_data: worlds, region: '', current_user: null };
   const lang = /^(en|ja|de|fr|cn|ko|tc)$/.test(message.lang) ? message.lang : 'en';
+  const [title, opening, failed] = guestShellLabels[lang];
   // All dynamic HTML attributes are restricted to a locale or emitted by DOM JS.
-  const html = `<!doctype html><html lang="${lang}" translate="no" data-theme="dark" data-palette="ultros"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Device lists · Ultros</title><script>window.__ULTROS_OFFLINE_GUEST__=true;window.__ULTROS_BOOTSTRAP__=${scriptJson(bootstrap)};</script><script type="module">const style=document.createElement('link');style.rel='stylesheet';style.href=${scriptJson(css)};document.head.append(style);try {const app=await import(${scriptJson(js)});await app.default({module_or_path:${scriptJson(wasm)}});app.hydrate();}catch(error){document.body.textContent='Could not open offline lists. Reconnect and reopen Lists to refresh offline support. Your saved lists remain on this device.';}</script></head><body class="notranslate"><p id="offline-boot-status">Opening device lists…</p></body></html>`;
+  const html = `<!doctype html><html lang="${lang}" translate="no" data-theme="dark" data-palette="ultros"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><script>window.__ULTROS_OFFLINE_GUEST__=true;window.__ULTROS_BOOTSTRAP__=${scriptJson(bootstrap)};</script><script type="module">const style=document.createElement('link');style.rel='stylesheet';style.href=${scriptJson(css)};document.head.append(style);try {const app=await import(${scriptJson(js)});await app.default({module_or_path:${scriptJson(wasm)}});app.hydrate();}catch(error){document.body.textContent=${scriptJson(failed)};}</script></head><body class="notranslate"><p id="offline-boot-status">${opening}</p></body></html>`;
   const generation = GUEST_GENERATION_PREFIX + self.crypto.randomUUID();
   const cache = await caches.open(generation);
   let published = false;

@@ -151,7 +151,7 @@ export async function openGuestListStore() {
             validateRecord(record);
             return { id: record.id, name: record.name, revision: record.revision };
           } catch (error) {
-            return { id: record.id, error: error.message };
+            return { id: record.id, error: error.code || "corrupt" };
           }
         }));
       });
@@ -216,4 +216,37 @@ export function decodeGuestListBackup(text) {
   } catch {
     fail("invalid", "This file is not a supported device list backup.");
   }
+}
+
+// Runtime exports are bundled into the versioned wasm-bindgen package.
+
+
+let store;
+async function db() { return store ||= openGuestListStore().catch(e => {store = undefined; throw e;}); }
+function announce(id) {
+  window.dispatchEvent(new CustomEvent('ultros-device-list-change', {detail:id}));
+  if (typeof BroadcastChannel !== 'undefined') { const c = new BroadcastChannel('ultros-device-lists'); c.postMessage(id); c.close(); }
+}
+export async function guestListRecords() { return JSON.stringify(await (await db()).list()); }
+export async function guestLoad(id) { return (await db()).load(id); }
+export async function guestCreate(name, snapshot) { const r = await (await db()).create({name, snapshot}); announce(r.id); return r; }
+export async function guestSave(id, revision, name, snapshot) { const r = await (await db()).save(id, revision, {name, snapshot}); announce(id); return r; }
+export async function guestRemove(id, revision) { await (await db()).remove(id, revision); announce(id); }
+export async function guestEncode(name, snapshot) { return encodeGuestListBackup({name, snapshot}); }
+export async function guestDecode(text) { return decodeGuestListBackup(text); }
+export function guestWatch(id, revision, callback) {
+  const local = e => { if(e.detail === id) callback(); };
+  let checking = false;
+  let active = true;
+  const focus = async () => {
+    if (checking) return;
+    checking = true;
+    try { const record = await (await db()).load(id); if (active && (!record || record.revision !== revision())) callback(); }
+    catch { if (active) callback(); } finally { checking = false; }
+  };
+  const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ultros-device-lists') : null;
+  if(channel) channel.onmessage = e => {if(e.data === id) callback();};
+  window.addEventListener('ultros-device-list-change', local);
+  window.addEventListener('focus', focus);
+  return () => { active = false; channel?.close(); window.removeEventListener('ultros-device-list-change',local); window.removeEventListener('focus',focus); };
 }

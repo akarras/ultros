@@ -186,6 +186,28 @@ guest storage handle. Active shopping trips keep per-offer ordering and
 exclude recorded purchases from replanning. Physical FFXIV window/focus
 testing remains separate from browser automation and is not claimed here.
 
+The shared `ListWorkspaceSource` presentation contract feeds one Build
+workspace: inline item/recipe adding, undo/redo, filtering and the editable
+price grid. Routes retain their storage, authorization and account-only
+activity/settings lifecycles. Rows are keyed by document row ID and cells
+read independent reactive values. Sorting and hiding completed items wait
+until focus leaves the grid; actual deletion and loss of access still take
+effect immediately. Account purchases apply acquired-count deltas so
+concurrent purchases can merge.
+
+Adoption is a one-time copy, not ongoing synchronization of the retained
+device source. An uncertain transfer retry keeps its original snapshot and
+recovers the same receipt. Newer edits remain in the device list; the UI
+links to the account copy and explains how to restore a backup as a separate
+device list when another independent transfer is wanted. Creation activity
+commits with the first import and is not duplicated by retries.
+
+The root push service worker controls tabs site-wide. Labs gates anonymous
+offline cache preparation, not worker activation. The three guest/companion
+JavaScript helpers are packaged with the versioned WASM build. All seven
+locales cover the workspace, adoption, companion, persistence messages and
+offline boot shell.
+
 Run `node --test integration/guest-list-backup.test.cjs` for portable backup
 checks and `node integration/guest-list-store.cjs` for real Chromium
 IndexedDB tests. The latter starts its own loopback fixture and needs no
@@ -242,6 +264,21 @@ bundle comparison, production soak) remain in `docs/lists-sync.md`. New
 features do not imply those gates have passed. Per shipped player-visible
 slice add its own changelog entry and run `check_ci.sh`, a fresh
 `cargo leptos build`, and relevant browser regressions.
+
+PR review validation passed the full `check_ci.sh` gate, fresh native and
+WASM builds, and 95 JavaScript tests. Browser checks passed for guest
+Tab-after-save and preservation of an uncommitted draft during a background
+tab update, disconnected reload/catalog use, backup restore, companion
+cleanup, single/batch adoption, and account Build editing/sharing. All seven
+locales rendered translated Build/Shop labels and persistence status with
+the helpers loaded from the versioned package. The database regression
+covered concurrent receipts, batch/empty imports and nonduplicated creation
+activity. Shared-list convergence, revocation/deletion, account isolation
+and all eight delayed-navigation cases passed. Current-price display and
+Shop purchase/undo were checked visually at desktop/mobile sizes.
+The native Windows build required disabling incremental compilation after
+an unresolved-symbol linker failure. The full-site E2E limitations recorded
+above remain separate from this passing Lists validation.
 
 ## Later
 

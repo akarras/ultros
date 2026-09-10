@@ -7,8 +7,10 @@ mod browser {
     use crate::api::{adopt_guest_list, get_login};
     use crate::components::world_picker::WorldPicker;
     use crate::global_state::home_world::get_price_zone;
+    use crate::i18n::*;
     use crate::list_doc::guest::{GuestListHandle, GuestListSummary};
     use leptos::prelude::*;
+    use leptos_i18n::I18nContext;
     use std::collections::{BTreeMap, BTreeSet};
     use ultros_api_types::list::{AdoptGuestList, AdoptGuestListResponse, GuestListItem};
     use ultros_api_types::world_helper::AnySelector;
@@ -38,15 +40,16 @@ export function deviceAdoptionReceipt(key, receipt) {
     }
 
     async fn transfer(
+        i18n: I18nContext<Locale, I18nKeys>,
         h: &GuestListHandle,
         owner: u64,
         wdr_filter: AnySelector,
     ) -> Result<AdoptGuestListResponse, String> {
-        let expected_owner =
-            i64::try_from(owner).map_err(|_| "Invalid account identity".to_string())?;
+        let expected_owner = i64::try_from(owner)
+            .map_err(|_| t_string!(i18n, adoption_invalid_account).to_string())?;
         let current = get_login().await.map_err(|e| e.to_string())?;
         if current.id != owner {
-            return Err("Your account changed. Reload before adding this list.".into());
+            return Err(t_string!(i18n, adoption_account_changed).to_string());
         }
         h.flush().await?;
         let request = AdoptGuestList {
@@ -64,22 +67,24 @@ export function deviceAdoptionReceipt(key, receipt) {
                         item_id: r.key.item_id,
                         hq: r.key.hq(),
                         quantity: i32::try_from(r.need)
-                            .map_err(|_| "A quantity is too large to transfer".to_string())?,
-                        acquired: i32::try_from(r.acquired).map_err(|_| {
-                            "An owned quantity is too large to transfer".to_string()
-                        })?,
+                            .map_err(|_| t_string!(i18n, adoption_quantity_large).to_string())?,
+                        acquired: i32::try_from(r.acquired)
+                            .map_err(|_| t_string!(i18n, adoption_owned_large).to_string())?,
                         target_price: r.target,
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,
         };
         let proposed = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-        let saved = attempt(&format!("ultros:device-adoption:v1:{}:{}", owner, h.id()), &proposed)
-                        .map_err(|_| "Couldn't save the transfer attempt on this device. Your list is safe; allow browser storage and retry.".to_string())?;
+        let saved = attempt(
+            &format!("ultros:device-adoption:v1:{}:{}", owner, h.id()),
+            &proposed,
+        )
+        .map_err(|_| t_string!(i18n, adoption_attempt_storage).to_string())?;
         let request: AdoptGuestList = serde_json::from_str(&saved)
-                        .map_err(|_| "The saved transfer attempt cannot be read. Export your device list before continuing.".to_string())?;
+            .map_err(|_| t_string!(i18n, adoption_attempt_unreadable).to_string())?;
         if request.expected_owner != expected_owner || request.device_list_id != h.id() {
-            return Err("The saved transfer belongs to a different account or list.".into());
+            return Err(t_string!(i18n, adoption_attempt_mismatch).to_string());
         }
         let response = adopt_guest_list(request).await.map_err(|e| e.to_string())?;
         let current = get_login().await.map_err(|e| e.to_string())?;
@@ -87,11 +92,14 @@ export function deviceAdoptionReceipt(key, receipt) {
             || response.owner != expected_owner
             || response.device_list_id != h.id()
         {
-            return Err("Your account changed during the transfer. Your device list is retained; reload to check your account.".into());
+            return Err(t_string!(i18n, adoption_account_changed_during).to_string());
         }
         let text = serde_json::to_string(&response).map_err(|e| e.to_string())?;
-        receipt(&format!("ultros:device-adoption:v1:{}:{}:receipt", owner, h.id()), &text)
-                        .map_err(|_| "The account copy was created, but its receipt could not be saved here. Retry to recover the same account list.".to_string())?;
+        receipt(
+            &format!("ultros:device-adoption:v1:{}:{}:receipt", owner, h.id()),
+            &text,
+        )
+        .map_err(|_| t_string!(i18n, adoption_receipt_storage).to_string())?;
         // Never delete the source: it may have changed during HTTP,
         // or this may acknowledge an older attempt after a reload.
         Ok(response)
@@ -110,6 +118,7 @@ export function deviceAdoptionReceipt(key, receipt) {
 
     #[component]
     pub fn DeviceListsAdoption(summaries: RwSignal<Vec<GuestListSummary>>) -> impl IntoView {
+        let i18n = use_i18n();
         let login = Resource::new(|| (), |_| get_login());
         let selected = RwSignal::new(BTreeSet::<String>::new());
         let results =
@@ -164,7 +173,7 @@ export function deviceAdoptionReceipt(key, receipt) {
                     let result = match GuestListHandle::open(&id).await {
                         Ok(handle) => {
                             let filter = handle.meta().scope.unwrap_or(fallback_scope);
-                            let result = transfer(&handle, user.id, filter).await;
+                            let result = transfer(i18n, &handle, user.id, filter).await;
                             handle.close();
                             result
                         }
@@ -188,29 +197,31 @@ export function deviceAdoptionReceipt(key, receipt) {
         view! {
             <Show when=move || !summaries.get().is_empty()>
                 <details class="panel rounded-xl p-4 space-y-3" data-testid="device-lists-adoption">
-                    <summary class="cursor-pointer font-semibold">"Add device lists to an account"</summary>
-                    <p class="text-sm">"Choose the lists to add. Existing account lists stay intact, even when names match. Device copies stay here as separate backups."</p>
-                    <Suspense fallback=move || view! { <p>"Checking account…"</p> }>
+                    <summary class="cursor-pointer font-semibold">{t!(i18n, adoption_heading)}</summary>
+                    <p class="text-sm">{t!(i18n, adoption_retry_note)}</p>
+                    <p class="text-sm">{t!(i18n, adoption_intro)}</p>
+                    <Suspense fallback=move || view! { <p>{t!(i18n, adoption_checking)}</p> }>
                         {move || match login.get() {
                             Some(Ok(user)) => view! {
-                                <p>{format!("Add to {}'s account", user.username)}</p>
-                                <p class="text-sm">"Price scope for lists that do not have one yet:"</p>
+                                <p>{t_string!(i18n, adoption_account, name = user.username).to_string()}</p>
+                                <p class="text-sm">{t!(i18n, adoption_scope)}</p>
                                 <WorldPicker current_world=scope.into() set_current_world=set_scope.into() />
                                 <button class="btn-secondary" disabled=move || pending.get() on:click=move |_| {
                                     selected.set(summaries.get_untracked().into_iter()
                                         .filter(|l| l.error.is_none() && !matches!(results.get_untracked().get(&l.id), Some(Ok(_))))
                                         .map(|l| l.id).collect());
-                                }>"Select all available lists"</button>
+                                }>{t!(i18n, adoption_select_all)}</button>
                                 <div class="space-y-2">
                                     <For each=move || summaries.get() key=|l| (l.id.clone(), l.revision) children=move |list| {
                                         let id = StoredValue::new(list.id);
                                         let revision = list.revision.to_string();
                                         let damaged = list.error.is_some();
-                                        let name = if list.name.is_empty() { "Damaged device list".to_string() } else { list.name };
+                                        let name = if list.name.is_empty() { t_string!(i18n, adoption_damaged).to_string() } else { list.name };
+                                        let label_name = name.clone();
                                         view! {
                                             <div class="rounded-lg border p-3 space-y-1">
                                                 <label class="flex items-center gap-2">
-                                                    <input type="checkbox" aria-label=format!("Add {name} to account")
+                                                    <input type="checkbox" aria-label=move || t_string!(i18n, adoption_select_label, name = label_name.clone()).to_string()
                                                         prop:checked=move || selected.with(|s| s.contains(&id.get_value()))
                                                         disabled=move || damaged || pending.get() || matches!(results.get().get(&id.get_value()), Some(Ok(_)))
                                                         on:change=move |ev| selected.update(|selection| {
@@ -222,11 +233,13 @@ export function deviceAdoptionReceipt(key, receipt) {
                                                 {move || results.get().get(&id.get_value()).cloned().map(|result| match result {
                                                     Ok(response) => view! {
                                                         <p role="status">{if response.source_revision != revision {
-                                                            "An earlier version is in your account. Newer device edits have not been transferred."
-                                                        } else { "Added to your account. Continue editing the account copy to sync changes." }}</p>
-                                                        <a class="text-[color:var(--link-color)] underline" href=format!("/list/{}?labs=lists-sync", response.list_id)>"Open account list"</a>
+                                                            t_string!(i18n, adoption_older).to_string()
+                                                        } else { t_string!(i18n, adoption_done).to_string() }}</p>
+                                                        <p class="text-sm">{t!(i18n, adoption_newer_guidance)}</p>
+                                                        <a class="text-[color:var(--link-color)] underline" href=format!("/list/device/{}?labs=lists-sync", id.get_value())>{t!(i18n, adoption_open_device)}</a>
+                                                        <a class="text-[color:var(--link-color)] underline" href=format!("/list/{}?labs=lists-sync", response.list_id)>{t!(i18n, adoption_open_account)}</a>
                                                     }.into_any(),
-                                                    Err(error) => view! { <p role="alert" class="text-red-400">{format!("{error} Select this list and retry; no duplicate will be created.")}</p> }.into_any(),
+                                                    Err(error) => view! { <p role="alert" class="text-red-400">{t_string!(i18n, adoption_retry, error = error).to_string()}</p> }.into_any(),
                                                 })}
                                             </div>
                                         }
@@ -234,11 +247,11 @@ export function deviceAdoptionReceipt(key, receipt) {
                                 </div>
                                 <button class="btn-primary" data-testid="device-lists-adopt-selected" on:click=add_selected
                                     disabled=move || pending.get() || scope.get().is_none() || selected.get().is_empty()>
-                                    {move || if pending.get() { "Adding selected lists…".to_string() } else { format!("Add {} selected lists to my account", selected.get().len()) }}
+                                    {move || if pending.get() { t_string!(i18n, adoption_adding_many).to_string() } else { t_string!(i18n, adoption_add_selected, count = selected.get().len()).to_string() }}
                                 </button>
                             }.into_any(),
                             _ => view! {
-                                <a class="btn-secondary" rel="external" href="/login?next=/list%3Flabs%3Dlists-sync">"Sign in to choose lists to add"</a>
+                                <a class="btn-secondary" rel="external" href="/login?next=/list%3Flabs%3Dlists-sync">{t!(i18n, adoption_sign_in_many)}</a>
                             }.into_any(),
                         }}
                     </Suspense>
@@ -249,6 +262,7 @@ export function deviceAdoptionReceipt(key, receipt) {
 
     #[component]
     pub fn DeviceListAdoption(handle: GuestListHandle) -> impl IntoView {
+        let i18n = use_i18n();
         let handle = StoredValue::new_local(handle);
         let login = Resource::new(|| (), |_| get_login());
         let (global, _) = get_price_zone();
@@ -291,7 +305,7 @@ export function deviceAdoptionReceipt(key, receipt) {
             pending.set(true);
             error.set(String::new());
             leptos::task::spawn_local(async move {
-                let result = transfer(&h, user.id, wdr_filter).await;
+                let result = transfer(i18n, &h, user.id, wdr_filter).await;
                 match result {
                     Ok(response) => {
                         let _ = accepted.try_set(Some(response));
@@ -307,42 +321,44 @@ export function deviceAdoptionReceipt(key, receipt) {
             });
         };
         view! {
-            <section class="panel rounded-xl p-4 space-y-3" aria-label="Add device list to account">
-                <p class="text-sm">"Keep this list across devices by adding it to your account. Your device copy stays here as a backup; the two copies are edited separately."</p>
-                <Suspense fallback=move || view! { <p>"Checking account…"</p> }>
+            <section class="panel rounded-xl p-4 space-y-3" aria-label=move || t_string!(i18n, adoption_section_label).to_string()>
+                <p class="text-sm">{t!(i18n, adoption_intro_one)}</p>
+                <Suspense fallback=move || view! { <p>{t!(i18n, adoption_checking)}</p> }>
                     {move || match login.get() {
                         Some(Ok(user)) => view! {
-                            <p>{format!("Add to {}'s account", user.username)}</p>
+                            <p>{t_string!(i18n, adoption_account, name = user.username).to_string()}</p>
                             <WorldPicker current_world=scope.into() set_current_world=set_scope.into() />
                             <button class="btn-primary" data-testid="device-list-adopt"
                                 disabled=move || pending.get() || scope.get().is_none() || accepted.get().is_some()
                                 on:click=on_adopt>
-                                {move || if pending.get() { "Adding…" } else { "Add this list to my account" }}
+                                {move || if pending.get() { t_string!(i18n, adoption_adding).to_string() } else { t_string!(i18n, adoption_add_one).to_string() }}
                             </button>
                         }.into_any(),
                         _ => view! {
                             <a class="btn-secondary" rel="external"
                                 href=handle.with_value(|h| format!("/login?next=/list/device/{}%3Flabs%3Dlists-sync", h.id()))>
-                                "Sign in to add this list to your account"
+                                {t!(i18n, adoption_sign_in_one)}
                             </a>
                         }.into_any(),
                     }}
                 </Suspense>
+                <p class="text-sm">{t!(i18n, adoption_retry_note)}</p>
                 <p role="alert" class="text-red-400">{move || error.get()}</p>
                 {move || accepted.get().map(|response| {
                     let revision = handle.with_value(|h| h.revision);
-                    let status = handle.with_value(|h| h.status);
+
                     view! {
                         <div role="status" class="space-y-2">
                             <p>{move || {
                                 revision.track();
-                                if status.get() != "Saved on this device" || handle.with_value(|h| h.storage_revision()) != response.source_revision {
-                                    "An earlier version was added to your account. Newer edits remain in this device copy and have not been transferred."
+                                if !handle.with_value(|h| h.is_saved()) || handle.with_value(|h| h.storage_revision()) != response.source_revision {
+                                    t_string!(i18n, adoption_older_one).to_string()
                                 } else {
-                                    "Added to your account. Continue in the account list for changes to sync across devices."
+                                    t_string!(i18n, adoption_done_one).to_string()
                                 }
                             }}</p>
-                            <a class="btn-primary" href=format!("/list/{}?labs=lists-sync", response.list_id)>"Open account list"</a>
+                            <p class="text-sm">{t!(i18n, adoption_newer_guidance)}</p>
+                            <a class="btn-primary" href=format!("/list/{}?labs=lists-sync", response.list_id)>{t!(i18n, adoption_open_account)}</a>
                         </div>
                     }
                 })}

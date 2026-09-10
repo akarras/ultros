@@ -19,7 +19,7 @@ async function prepare(catalogUrl, lang) {
   const collect = value => {
     const url = new URL(value, location.origin);
     if (url.origin === location.origin && !url.search && !url.hash
-      && /^\/pkg\/.+\.(js|wasm|css)$/.test(url.pathname)) paths.add(url.pathname);
+      && /^\/pkg\/.+\.(js|mjs|wasm|css)$/.test(url.pathname)) paths.add(url.pathname);
   };
   performance.getEntriesByType('resource').forEach(entry => collect(entry.name));
   document.querySelectorAll('link[href], script[src]').forEach(node => collect(node.href || node.src));
@@ -33,7 +33,7 @@ async function prepare(catalogUrl, lang) {
   if (!js || !wasm || !css || !catalogUrl) return false;
   // modulepreloads and resource timings include wasm-bindgen's snippet imports.
   // The explicit archive URL is required even when this load used IndexedDB.
-  assets.push(catalogUrl, '/static/guest-offline.mjs');
+  assets.push(catalogUrl);
   const registration = await navigator.serviceWorker.register('/service-worker.js');
   if (registration.installing) {
     const installing = registration.installing;
@@ -73,4 +73,26 @@ async function prepare(catalogUrl, lang) {
     };
     worker.postMessage({ type: 'ULTROS_PREPARE_GUEST_OFFLINE', assets, js, wasm, css, lang }, [channel.port2]);
   });
+}
+
+
+export function prepare_guest_offline(catalogUrl, lang) {
+  const prepare = () => {
+    const path = location.pathname.replace(/\/$/, '');
+    if (path !== '/list' && !path.startsWith('/list/device/')) return;
+    let cookie = '';
+    try {
+        cookie = decodeURIComponent((document.cookie.split(';').map(s => s.trim()).find(s => s.startsWith('LABS=')) || '').slice(5));
+    } catch (_) { /* an invalid cookie cannot enable an experiment */ }
+    const query = new URL(location.href).searchParams.get('labs') || '';
+    const enabled = [cookie, query].some(value => value.split(',').some(token => token.trim() === 'lists-sync'));
+    if (!enabled && !window.__ULTROS_OFFLINE_GUEST__) return;
+    prepareGuestOffline(catalogUrl, lang)
+        .catch(() => { window.__ULTROS_GUEST_OFFLINE_READY__ = false; });
+  };
+  if (!window.__ultrosGuestOfflineListener) {
+    window.__ultrosGuestOfflineListener = prepare;
+    window.addEventListener('ultros:guest-list-opened', prepare);
+  }
+  prepare();
 }

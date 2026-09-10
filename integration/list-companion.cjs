@@ -54,6 +54,21 @@ const http = require('node:http');
     assert.equal(await popup.$eval('[data-testid="companion-buy"]', (node) => node.disabled), true);
     await popup.click('[data-testid="companion-buy"]');
     assert.equal(await page.evaluate(() => events.length), 3);
+    // Locale changes flow through the owning view without changing action IDs.
+    await page.evaluate(() => {
+      data.labels = { bought: 'Acheté', undo: 'Annuler', nextWorld: 'Monde suivant', copyName: 'Copier le nom', keepOpen: 'Gardez cet onglet ouvert.' };
+      data.rows[0].canBuy = true;
+      data.rows[0].description = 'HQ · 3 restants · 100 gils';
+      data.rows[0].quantityLabel = 'Quantité achetée';
+      data.rows[0].invalidQuantity = 'Saisissez un entier de 1 à 3.';
+      api.updateCompanion(JSON.stringify(data));
+    });
+    assert.equal(await popup.$eval('[data-testid="companion-buy"]', (node) => node.textContent), 'Acheté');
+    assert.equal(await popup.$eval('input', (node) => node.getAttribute('aria-label')), 'Quantité achetée');
+    assert.match(await popup.$eval('article', (node) => node.textContent), /100 gils/);
+    await popup.$eval('input', (node) => { node.value = '4'; });
+    await popup.click('[data-testid="companion-buy"]');
+    assert.equal(await popup.$eval('#notice', (node) => node.textContent), 'Saisissez un entier de 1 à 3.');
     await page.evaluate(() => { data.rows[0].done = true; api.updateCompanion(JSON.stringify(data)); });
     assert.equal(await popup.$$eval('[data-testid="companion-buy"]', (nodes) => nodes.length), 0);
     await page.evaluate(() => api.closeCompanion());

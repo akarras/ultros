@@ -167,9 +167,14 @@ async function main() {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Tab");
     await waitValue(needed, 6);
+    await page.$eval(owned, element => { window.__ownedBeforeCommit = element; });
     await replace(needed, 8);
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
     await waitValue(needed, 8);
+    await saved();
+    assert.equal(await page.$eval(owned, element =>
+      element === window.__ownedBeforeCommit && document.activeElement === element), true,
+    "Tab commits Needed and preserves the existing Owned input and keyboard focus");
     await replace(owned, 2);
     await page.keyboard.press("Enter");
     await replace(target, 125);
@@ -180,6 +185,42 @@ async function main() {
     await waitValue(owned, 2);
     await waitValue(target, 125);
     console.log("[ok] inline add, duplicate quantities, focus, Escape and edited values survive reload");
+
+    console.log("[step] opening a second guest editor for the cross-tab focus check");
+    const secondEditor = await browser.newPage();
+    secondEditor.setDefaultTimeout(timeout);
+    try {
+      await secondEditor.goto(deviceUrl, { waitUntil: "domcontentloaded" });
+      await secondEditor.waitForSelector(owned);
+      console.log("[step] second guest editor ready");
+      await page.bringToFront();
+      await replace(needed, 12);
+      // A background writer models an incoming edit without blurring the
+      // primary input: switching tabs itself commits the draft by design.
+      await secondEditor.$eval(owned, input => {
+        input.value = "3";
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await waitValue(owned, 3);
+      assert.equal(await page.$eval(needed, element =>
+        element.value === "12" && document.activeElement === element), true,
+      "another tab's Owned update preserves the active Needed draft and focus");
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Tab");
+      await waitValue(needed, 8);
+      await secondEditor.$eval(owned, input => {
+        input.value = "2";
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await waitValue(owned, 2);
+      await saved();
+      console.log("[ok] remote row updates preserve an uncommitted keyboard draft");
+    } catch (error) {
+      console.error("Cross-tab focus check:", error);
+      throw error;
+    } finally {
+      if (browser.connected) await secondEditor.close();
+    }
 
     await offlineReady();
     disconnected = true;

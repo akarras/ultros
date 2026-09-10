@@ -344,29 +344,7 @@ fn is_offline_guest_shell() -> bool {
     .unwrap_or(false)
 }
 
-#[wasm_bindgen(inline_js = r#"
-export function prepare_guest_offline(catalogUrl, lang) {
-  const prepare = () => {
-    const path = location.pathname.replace(/\/$/, '');
-    if (path !== '/list' && !path.startsWith('/list/device/')) return;
-    let cookie = '';
-    try {
-        cookie = decodeURIComponent((document.cookie.split(';').map(s => s.trim()).find(s => s.startsWith('LABS=')) || '').slice(5));
-    } catch (_) { /* an invalid cookie cannot enable an experiment */ }
-    const query = new URL(location.href).searchParams.get('labs') || '';
-    const enabled = [cookie, query].some(value => value.split(',').some(token => token.trim() === 'lists-sync'));
-    if (!enabled && !window.__ULTROS_OFFLINE_GUEST__) return;
-    import('/static/guest-offline.mjs')
-        .then(module => module.prepareGuestOffline(catalogUrl, lang))
-        .catch(() => { window.__ULTROS_GUEST_OFFLINE_READY__ = false; });
-  };
-  if (!window.__ultrosGuestOfflineListener) {
-    window.__ultrosGuestOfflineListener = prepare;
-    window.addEventListener('ultros:guest-list-opened', prepare);
-  }
-  prepare();
-}
-"#)]
+#[wasm_bindgen(module = "/../../ultros/static/guest-offline.mjs")]
 extern "C" {
     fn prepare_guest_offline(catalog_url: &str, lang: &str);
 }

@@ -47,6 +47,28 @@ async function main() {
       return [record.name, record.revision, [...record.snapshot]];
     }, id), ['Raid', 1, [1, 2, 3]]);
 
+    assert.deepEqual(await first.evaluate(async () => {
+      const observed = await store.create({ name: 'Focus check', snapshot: new Uint8Array([7]) });
+      let callbacks = 0;
+      const stop = api.guestWatch(observed.id, () => observed.revision, () => callbacks++);
+      const focus = async () => { window.dispatchEvent(new Event('focus')); await new Promise(resolve => setTimeout(resolve, 40)); };
+      await focus();
+      const unchanged = callbacks;
+      await store.save(observed.id, observed.revision, {name:'Changed elsewhere', snapshot:new Uint8Array([8])});
+      await focus();
+      const changed = callbacks;
+      stop();
+      await focus();
+      let disposedCalls = 0;
+      const dispose = api.guestWatch(observed.id, () => { disposedCalls++; return 0; }, () => disposedCalls++);
+      window.dispatchEvent(new Event('focus'));
+      dispose(); // focus is suspended on its asynchronous IndexedDB read
+      await new Promise(resolve => setTimeout(resolve, 40));
+      if (disposedCalls) throw new Error('Disposed focus watcher invoked a released Rust closure');
+      await store.remove(observed.id, 2);
+      return [unchanged, changed, callbacks];
+    }), [0, 1, 1], 'focus checks only the watched revision, and teardown removes the listener');
+
     const race = await Promise.all([first, second].map((page, index) => page.evaluate(async ({ id, index }) => {
       try {
         const saved = await store.save(id, 1, { name: 'Raid', snapshot: new Uint8Array([index + 4]) });

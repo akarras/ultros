@@ -173,6 +173,12 @@ async function main() {
     assert.equal(receipt.device_list_id, deviceId);
     await page.waitForFunction(() => document.body.innerText.includes("Newer edits remain in this device copy"));
     await waitValue(needed, 7);
+    assert.ok(await page.$('a[href="/list/' + receipt.list_id + '?labs=lists-sync"]'),
+      "newer-edit warning offers the account copy as a next step");
+    assert.ok(await page.evaluate(() => document.body.innerText.includes("restore the backup as a new device list")),
+      "newer-edit warning explains how to import a separate latest copy");
+    assert.ok(await page.evaluate(() => document.body.innerText.includes("retry checks that same snapshot")),
+      "retry semantics explain that the original snapshot may already be accepted");
 
     const account = await api("GET", `/api/v1/list/${receipt.list_id}/listings`);
     assert.equal(account.status, 200);
@@ -234,7 +240,7 @@ async function main() {
     await page.waitForSelector(batchSection);
     await page.click(`${batchSection} summary`);
     await page.waitForFunction((selector, username) =>
-      document.querySelector(selector)?.innerText.includes(`Add to ${username}'s account`),
+      document.querySelector(selector)?.innerText.includes(`Add to ${username}’s account`),
     {}, batchSection, owner.username);
     const adoptedCheckbox = `${batchSection} input[aria-label="Add ${name} to account"]`;
     assert.equal(await page.$eval(adoptedCheckbox, input => input.disabled), true,

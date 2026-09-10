@@ -494,7 +494,23 @@ async function main() {
     // ===== Step 3: Mark an item acquired via the row toggle =====
     console.log("[step] owner marks an item acquired");
     if (LISTS_V2) {
+      const neededInput = 'input[aria-label="Needed for Maple Log"]';
       const ownedInput = 'input[aria-label="Owned for Maple Log"]';
+      const nextNeeded = await ownerPage.$eval(neededInput, element => Number(element.value) + 1);
+      const editedItem = await ownerPage.$eval(neededInput, element => Number(element.closest('[data-item-id]').dataset.itemId));
+      await ownerPage.$eval(ownedInput, element => { window.__ownedBeforeCommit = element; });
+      await ownerPage.locator(neededInput).fill(String(nextNeeded));
+      await ownerPage.keyboard.press("Tab");
+      await ownerPage.waitForFunction(async ({ id, quantity, itemId }) => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        return response.ok && (await response.json())[1].some(([item]) => item.item_id === itemId && item.quantity === quantity);
+      }, { timeout: TIMEOUT_MS }, { id: listId, quantity: nextNeeded, itemId: editedItem });
+      if (!await ownerPage.$eval(ownedInput, element =>
+        element === window.__ownedBeforeCommit && document.activeElement === element)) {
+        fail(failures, "Tab after Needed commit must retain the Owned input and focus through server acknowledgement");
+      } else {
+        pass("Tab commits Needed without replacing the next editor or dropping focus");
+      }
       await ownerPage.locator(ownedInput).fill("1");
       await ownerPage.keyboard.press("Enter");
       await ownerPage.waitForFunction(async id => {
