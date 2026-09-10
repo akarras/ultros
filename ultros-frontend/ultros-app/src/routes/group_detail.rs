@@ -1368,6 +1368,7 @@ fn GroupRoleRow(
                         type="button"
                         class="btn-secondary btn-sm shrink-0"
                         prop:disabled=move || rename_value.get().trim().is_empty()
+                        aria-label=move || t_string!(i18n, save).to_string()
                         on:click=move |_| {
                             let name = rename_value.get_untracked().trim().to_string();
                             if name.is_empty() {
