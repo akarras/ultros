@@ -377,15 +377,31 @@ async function main() {
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });
       for (const [tool, route] of routes) {
         if (process.env.ANALYZER_TOOLS && !process.env.ANALYZER_TOOLS.split(',').includes(tool)) continue;
-        // Recipe preserves its existing saved column IDs and presents cadence
-        // through its daily-sales column; the other adapters use market-* IDs.
+        // Recipe keeps native IDs and also exposes the shared market columns.
         const required = tool === 'recipe-analyzer'
-          ? ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'listing-world', 'listing-dc', 'daily-sales', 'trend']
+          ? ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'listing-world', 'listing-dc', 'daily-sales', 'trend', 'rev-gil', 'cost-gil', ...shared]
           : shared;
         if (tool === 'flip-finder' && fixture) {
           await require('./flip-finder-sale-columns.cjs')({ page, base: BASE, route, openFixture: open, artifacts });
         }
-        const medianColumn = required[0];
+        // Recipe's rev-sale-median is a native sort; use a shared column
+        // for the native-to-grid sort/filter assertions below.
+        const medianColumn = tool === 'recipe-analyzer' ? 'market-sale-median-7' : required[0];
+        async function revealMedian() {
+          // Native sorting can auto-fit columns again; the previous pixel
+          // offset may now point past this virtualized heading.
+          await page.waitForSelector('.virtual-grid');
+          const width = await page.$eval('.virtual-grid', grid => grid.scrollWidth);
+          for (let left = 0; left <= width; left += 350) {
+            await page.$eval('.virtual-grid', (grid, x) => { grid.scrollLeft = x; }, left);
+            await new Promise(resolve => setTimeout(resolve, 50));
+            if (await page.$(heading(medianColumn))) {
+              await page.$eval(heading(medianColumn), el => el.scrollIntoView({block: 'nearest', inline: 'center'}));
+              return;
+            }
+          }
+          assert.fail(`${tool}: cannot reveal ${medianColumn}`);
+        }
         const query = new URLSearchParams({ v: '1', lang: 'en', 'min-sales': '0',
           profit: '-1000000000', roi: '-1000000000', 'next-sale': '1M', sort: 'grid:item', dir: 'asc',
           cols: ['profit', 'cost', ...required].join(',') });
@@ -414,18 +430,16 @@ async function main() {
         if (rowCount === 0) console.log(`EMPTY DATA ${tool}: validating column/query controls; market result-value assertions skipped`);
         // Virtualized columns mount only as their portion of the grid becomes visible.
         const observed = new Set();
-        let medianPosition = 0;
         const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
         for (let left = 0; left <= width; left += 500) {
           await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);
           await new Promise(resolve => setTimeout(resolve, 100));
           for (const id of await page.$$eval('.virtual-grid-heading', headings => headings.map(element => element.dataset.column))) {
             observed.add(id);
-            if (id === medianColumn) medianPosition = left;
           }
         }
         for (const column of required) assert(observed.has(column), `${tool} registers ${column}`);
-        await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+        await revealMedian();
         await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
         if (fixture) await page.waitForFunction(column => [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
           .some(cell => /900|1[,. ]?500/.test(cell.textContent)), { timeout: 90000 }, medianColumn);
@@ -435,11 +449,11 @@ async function main() {
           await page.waitForSelector(calculated);
           const before = await page.$eval(calculated, cell => cell.textContent);
           const basisKey = ['leve-analyzer', 'fc-crafting-analyzer', 'scrip-sources'].includes(tool) ? 'cost-basis' : 'revenue';
-          if (tool !== 'recipe-analyzer') {
-            await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
-            await page.waitForSelector('[data-registered-editor]');
-          }
-          const controls = await page.$$('select');
+          // A window change can briefly replace the toolbar while rows refresh.
+          await page.waitForSelector(`[data-registered-filter="${basisKey}"] .filter-chip-value`, { visible: true });
+          await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
+          await page.waitForSelector('[data-registered-editor]');
+          const controls = await page.$$('[data-registered-editor] select');
           let basis;
           for (const select of controls) {
             if (await select.evaluate(element => !!element.querySelector('option[value="sale-median"]') && !!element.getClientRects().length)) {
@@ -448,33 +462,55 @@ async function main() {
           }
           assert(basis, `${tool} exposes selectable median pricing`);
           await basis.select('sale-median');
-          if (tool !== 'recipe-analyzer') await page.click('[data-registered-editor] button[type="submit"]');
+          await page.click('[data-registered-editor] button[type="submit"]');
           await page.waitForFunction(() => [...new URL(location.href).searchParams.values()].includes('sale-median'));
           await page.waitForFunction((selector, before) => {
             const cell = document.querySelector(selector);
             return cell && cell.textContent !== before;
           }, { timeout: 90000 }, calculated, before);
-          if (tool !== 'recipe-analyzer') {
-            const sevenDayPrice = await page.$eval(calculated, cell => cell.textContent);
-            await page.select('[data-market-window]', '30');
-            await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
-              {}, calculated, sevenDayPrice);
-            assert.equal(new URL(page.url()).searchParams.get('window'), '30');
-            await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
-            await page.waitForSelector('[data-registered-editor]');
-            assert.match(await page.$eval('[data-registered-editor] option[value="sale-median"]', el => el.textContent), /30d/);
-            await page.keyboard.press('Escape');
+          const sevenDayPrice = await page.$eval(calculated, cell => cell.textContent);
+          await page.select('[data-market-window]', '30');
+          await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
+            {}, calculated, sevenDayPrice);
+          assert.equal(new URL(page.url()).searchParams.get('window'), '30');
+          // A window change can briefly replace the toolbar while rows refresh.
+          await page.waitForSelector(`[data-registered-filter="${basisKey}"] .filter-chip-value`, { visible: true });
+          await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
+          await page.waitForSelector('[data-registered-editor]');
+          assert.match(await page.$eval('[data-registered-editor] option[value="sale-median"]', el => el.textContent), /30d/);
+          await page.keyboard.press('Escape');
+          if (tool === 'recipe-analyzer') {
+            // The fixture doubles 30-day prices. A follow-window shared
+            // column and native revenue signal must use that body, while the
+            // explicitly seven-day column keeps its original values.
+            async function priceColumn(column, expected) {
+              const width = await page.$eval('.virtual-grid', e => e.scrollWidth);
+              for (let left = 0; left <= width; left += 400) {
+                await page.$eval('.virtual-grid', (e, x) => { e.scrollLeft = x; }, left);
+                await new Promise(resolve => setTimeout(resolve, 50));
+                if (await page.$(`.virtual-grid-heading[data-column="${column}"]`)) break;
+              }
+              await page.waitForSelector(`.virtual-grid-heading[data-column="${column}"]`);
+              await page.waitForFunction((column, expected) =>
+                [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
+                  .some(cell => (cell.textContent.match(/[0-9][0-9,]*/g) || [])
+                    .some(value => expected.includes(value.replaceAll(',', '')))),
+                {timeout: 90000}, column, expected);
+            }
+            await priceColumn('rev-sale-median', ['1800', '3000']);
+            await priceColumn('market-sale-median', ['1800', '3000']);
+            await priceColumn('market-sale-median-7', ['900', '1500']);
           }
-          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await revealMedian();
           await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
         }
-        if (tool !== 'recipe-analyzer') {
+        {
           await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
           const native = tool === 'scrip-sources' ? 'cost' : 'profit';
           await page.waitForSelector(`${heading(native)} a`);
           await page.click(`${heading(native)} a`);
           await page.waitForFunction(() => !new URL(location.href).searchParams.get('sort')?.startsWith('grid:'));
-          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await revealMedian();
           await page.waitForSelector(sortLink(medianColumn));
           const beforeSort = new URL(page.url()).searchParams;
           await page.click(sortLink(medianColumn));
@@ -490,7 +526,7 @@ async function main() {
           assert.equal(await page.$('.virtual-grid-heading a[aria-current="true"]'), null, `${tool}: native sort arrow is inactive`);
           await page.click(`${heading(native)} a`);
           await page.waitForFunction(() => !new URL(location.href).searchParams.get('sort')?.startsWith('grid:'));
-          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await revealMedian();
           await page.waitForSelector(sortLink(medianColumn));
           assert.equal(await page.$eval(heading(medianColumn), el => el.getAttribute('aria-sort')), 'none');
           assert.equal(await page.$(`${sortLink(medianColumn)} [aria-hidden]`), null);
@@ -514,6 +550,7 @@ async function main() {
           if (tool !== 'recipe-analyzer') assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
           assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: Clear all preserves price basis`);
         }
+        assert.deepEqual(errors, [], `${tool}: browser errors`);
         console.log(`PASS ${tool}: shared market columns, median calculation, filter, hide and reload (${rowCount} initial rows)`);
         if (tool === 'recipe-analyzer') {
           // Bookmarks carrying the retired experiment flag keep the same columns.
@@ -588,6 +625,7 @@ async function checkTrends({ page, fixture, world, open, heading, sortLink, sort
   };
   // Columns mount only while their portion of the grid is in view.
   const reveal = async column => {
+    await page.waitForSelector('.virtual-grid');
     const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
     for (let left = 0; left <= width; left += 400) {
       await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);

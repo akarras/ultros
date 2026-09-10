@@ -59,6 +59,14 @@ pub struct MarketData {
 }
 
 impl MarketData {
+    /// Hand the loader a body the page already fetched for `scope_name`,
+    /// so a shared or pinned column reads it instead of requesting the
+    /// same window again. Only meaningful for a window named in
+    /// `provided`; a window the loader owns is overwritten on its next run.
+    pub fn supply(self, window: Window, scope_name: String, stats: Arc<StatsIndex>, failed: bool) {
+        self.stats[window.index()].set(Some((scope_name, stats, failed)));
+    }
+
     pub fn stats(self, window: Window) -> Option<Arc<StatsIndex>> {
         let scope = self.scope.get();
         self.stats[window.index()].with(|v| {
@@ -95,8 +103,10 @@ impl MarketData {
         });
     }
 
-    /// Ask for a window's body. Idempotent; never un-wants.
-    fn want(self, window: Window) {
+    /// Ask for a window's body. Idempotent; never un-wants. `MarketGrid`
+    /// calls this for its shared columns; a page calls it for a native
+    /// column that reads a window the page does not fetch itself.
+    pub fn want(self, window: Window) {
         let flag = self.wanted[window.index()];
         if !flag.get_untracked() {
             flag.set(true);
@@ -130,14 +140,29 @@ pub fn use_market_data_on_demand(scope: Signal<String>) -> MarketData {
     use_market_data_with_window(scope, MarketWindow::new(Window::D7, &Window::ALL), None)
 }
 
-/// [`use_market_data`] for a page that owns its window choices and default
-/// (Trends: 7/30/90, default 30). `prefetch` names a body every consumer
-/// wants regardless of columns; pass `None` when only the grid's visible or
-/// hidden query columns should request sale statistics.
+/// A page-owned window with optional prefetch, such as Trends' 30-day default.
 pub fn use_market_data_with_window(
     scope: Signal<String>,
     window: MarketWindow,
     prefetch: Option<Window>,
+) -> MarketData {
+    use_market_data_configured(scope, window, prefetch, Signal::derive(Vec::new))
+}
+
+/// Share windows fetched by the page's SSR gate; remaining windows load on demand.
+pub fn use_market_data_with(
+    scope: Signal<String>,
+    window: MarketWindow,
+    provided: Signal<Vec<Window>>,
+) -> MarketData {
+    use_market_data_configured(scope, window, Some(Window::D7), provided)
+}
+
+fn use_market_data_configured(
+    scope: Signal<String>,
+    window: MarketWindow,
+    prefetch: Option<Window>,
+    provided: Signal<Vec<Window>>,
 ) -> MarketData {
     // `RwSignal` is `Copy`: a `[RwSignal::new(None); 4]` literal would be one
     // signal four times over.
@@ -152,6 +177,7 @@ pub fn use_market_data_with_window(
             scope,
             market.stats[window.index()],
             market.wanted[window.index()].into(),
+            Signal::derive(move || provided.with(|p| p.contains(&window))),
             window.days(),
         );
     }
@@ -162,14 +188,31 @@ fn fetch_stats(
     scope: Signal<String>,
     output: RwSignal<ScopedStats>,
     wanted: Signal<bool>,
+    provided: Signal<bool>,
     days: u16,
 ) {
     let generation = StoredValue::new(0u64);
     Effect::new(move |_| {
         let name = scope.get();
         let wanted = wanted.get();
+        let provided = provided.get();
         generation.update_value(|n| *n = n.wrapping_add(1));
         let epoch = generation.get_value();
+        // The page owns this window: its `supply` fills the slot, and a
+        // scope change is hidden by the scope check every read applies.
+        if provided {
+            return;
+        }
+        // A body the page supplied for this very scope is the body this
+        // request would fetch; keep it when the page stops supplying it.
+        if wanted
+            && output.with_untracked(|v| {
+                v.as_ref()
+                    .is_some_and(|(held, _, failed)| held == &name && !failed)
+            })
+        {
+            return;
+        }
         output.set(None);
         if !wanted {
             return;
