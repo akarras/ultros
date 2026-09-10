@@ -89,7 +89,8 @@ async function main(){
       const menu=`.virtual-grid-heading[data-column="${column}"]`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));
       await page.click(menu,{button:'right'});
-      const registered=tool!=='recipe-analyzer';
+      // Every analyzer edits its thresholds through the shared registry.
+      const registered=true;
       const form=registered?`.grid-column-filter[data-metric-filter="${column}"]`:`.grid-column-filter[data-filter="${filter}"]`;
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';

@@ -9,6 +9,7 @@ use crate::analyzer_kit::enrichment::{
     DEBOUNCE_MS, EnrichmentConfig, PREFETCH_MARGIN, SparkKey, SparkStore, SparkValue, Verdict,
     use_visible_enrichment, verdict,
 };
+use crate::analyzer_kit::filters::{register_filters, toggle_control};
 use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, Scope, SellScope, per_unit_cost, profit_line,
 };
@@ -25,6 +26,7 @@ use crate::analyzer_kit::signals::{
     LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
 };
 use crate::analyzer_kit::strip::{FormulaStrip, StripSelect, StripTerm};
+use crate::components::app_link::use_location_or_default;
 use crate::components::crafting_cost::{
     CostBreakdown, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode, compute_cost,
     vendor_price_map,
@@ -34,7 +36,8 @@ use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap}
 use crate::components::related_items::shard_item_ids;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
-use crate::components::virtual_grid::metrics::{GridValue, active_metric_columns};
+use crate::components::virtual_grid::metrics::{FilterOp, GridValue};
+use crate::components::virtual_grid::registry::{FilterAlias, resolve_filters};
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
@@ -53,9 +56,8 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats, post_sparklines},
     components::{
         add_recipe_to_list::AddRecipeToList,
-        control_bar::{ControlBar, FilterOption, parse_visible_cols, serialize_visible_cols},
+        control_bar::{ControlBar, parse_visible_cols, serialize_visible_cols},
         crafter_settings::CrafterSettings,
-        filter_chip::FilterChip,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -408,8 +410,10 @@ fn RecipePriceControls(terms: Callback<(), Vec<StripTerm>>) -> impl IntoView {
 }
 
 // --- Filter registry -------------------------------------------------------
-// Each id is the `filter_query_signal` key it drives, so the list doubles as
-// the URL contract (mirrors the analyzer/currency-exchange convention).
+// Each id is a URL key. The three row thresholds are legacy aliases of the
+// shared grid's metric filters (`recipe_filter_aliases`); the rest are
+// pre-calculation controls registered with the shared `FilterRegistry`, so
+// the same key still drives the same input it always did.
 const FILTER_PROFIT: &str = "profit";
 const FILTER_ROI: &str = "roi";
 const FILTER_MIN_SALES: &str = "min-sales";
@@ -419,10 +423,9 @@ const FILTER_REVENUE: &str = "revenue";
 const FILTER_BUY_SCOPE: &str = "buy-scope";
 const FILTER_SELL_SCOPE: &str = "sell-scope";
 // Set by clicking a world/DC name in the cheapest-listing columns (same
-// `QueryButton` flow as the flip finder), not from the `+ Filter` menu —
-// hence not in `ADDABLE_FILTERS`. `world`/`datacenter` are taken by the
-// sell-world picker and legacy params on this route, so these get their
-// own keys.
+// `QueryButton` flow as the flip finder) as well as from the `+ Filter`
+// menu. `world`/`datacenter` are taken by the sell-world picker and legacy
+// params on this route, so these get their own keys.
 const FILTER_LISTING_WORLD: &str = "listing-world";
 const FILTER_LISTING_DC: &str = "listing-dc";
 const FILTER_SUBCRAFTS: &str = "subcrafts";
@@ -456,23 +459,30 @@ fn recipe_analyzer_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPrese
     .collect()
 }
 
-/// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
-/// order.
-// The pricing methodology controls (cost basis, revenue metric, scope) are
-// deliberately *not* in this list: they change how every row is priced rather
-// than which rows show, so [`RecipePriceControls`] keeps them visible above
-// the results toolbar.
-const ADDABLE_FILTERS: &[&str] = &[
-    FILTER_PROFIT,
-    FILTER_ROI,
-    FILTER_MIN_SALES,
-    FILTER_JOB,
-    FILTER_SUBCRAFTS,
-    FILTER_REQUIRE_HQ,
-    FILTER_OUTLIERS,
-    FILTER_EXCLUDE_SHARDS,
-    FILTER_USE_ON_HAND,
-];
+/// The old row thresholds, read as aliases of the shared grid's metric
+/// filters on the Profit, ROI and Sales/day columns. An explicit `gf` entry
+/// for a column wins over its alias, and any registry edit rewrites the
+/// aliases into `gf` (see `docs/shared-analyzer-filters.md`).
+///
+/// `min-sales` keeps its old contract: `0` (and the empty value Clear all
+/// writes so the landing default cannot reseed) means "no limit", so it
+/// resolves to no filter rather than to a threshold that would drop recipes
+/// with no recorded sales.
+fn recipe_filter_aliases() -> Vec<FilterAlias> {
+    vec![
+        FilterAlias::integer(FILTER_PROFIT, "profit", FilterOp::Gte),
+        FilterAlias::integer(FILTER_ROI, "roi", FilterOp::Gte),
+        FilterAlias {
+            convert: |raw| {
+                raw.parse::<f32>()
+                    .ok()
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .map(|v| (v as f64).to_string())
+            },
+            ..FilterAlias::new(FILTER_MIN_SALES, "daily-sales", FilterOp::Gte)
+        },
+    ]
+}
 
 /// Keep fetch planning and the pricing pass on the same sale-price market.
 fn seat_sell_scope(f: ProfitFormula, param: Option<SellScope>) -> ProfitFormula {
@@ -2566,9 +2576,6 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
 /// The user's row filters. `None` = not set.
 #[derive(Clone, Debug, PartialEq, Default)]
 struct Thresholds {
-    min_profit: Option<i32>,
-    min_roi: Option<i32>,
-    min_daily_sales: Option<f32>,
     listing_world: Option<String>,
     listing_dc: Option<String>,
 }
@@ -2587,11 +2594,10 @@ fn filter_and_sort(
     // key-id tiebreak in charge, and put the table in recipe-id order.
     let stats_30 = stats_30.filter(|i| !i.is_empty());
     let mode = effective_sort_mode(mode, stats_30.is_some());
+    // Profit, ROI and Sales/day thresholds are metric filters now: the shared
+    // grid evaluates them (with their legacy aliases) after this pass.
     let mut kept: Vec<Arc<RecipeProfitData>> = rows
         .iter()
-        .filter(|d| t.min_profit.is_none_or(|min| d.profit >= min))
-        .filter(|d| t.min_roi.is_none_or(|min| d.return_on_investment >= min))
-        .filter(|d| t.min_daily_sales.is_none_or(|min| d.daily_sales >= min))
         .filter(|d| {
             if t.listing_world.is_none() && t.listing_dc.is_none() {
                 return true;
@@ -2924,31 +2930,22 @@ fn RecipeAnalyzerTable(
         map
     });
 
-    // Filter params use `filter_query_signal` (replace: true, scroll: false):
-    // editing a chip writes the URL on every keystroke, and plain
-    // `query_signal`'s defaults would push a history entry and yank the
-    // window to the top each time.
-    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
-    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>(FILTER_ROI);
+    // Pre-calculation inputs, read from the URL before pricing. They are
+    // edited through the shared `FilterRegistry` (menu, chips and column
+    // menus all write the same keys with `replace: true, scroll: false`);
+    // the Profit / ROI / Sales-per-day thresholds are the grid's own metric
+    // filters now and are not read here at all.
     let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
-    let (use_subcrafts, set_use_subcrafts) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
-    // Seeded by RecipeAnalyzer so a first-time visitor isn't shown recipes
-    // whose output sells once a month. Same velocity floor as the analyzer's
-    // 1d default.
-    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>(FILTER_MIN_SALES);
-    let (require_hq, set_require_hq) = filter_query_signal::<bool>(FILTER_REQUIRE_HQ);
-    let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
-    let (exclude_shards_url, set_exclude_shards) =
-        filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
-    let (use_on_hand_url, set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
-    let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
-    let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
-    let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
-    let (_, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
-    let (listing_world_filter, set_listing_world_filter) =
-        filter_query_signal::<String>(FILTER_LISTING_WORLD);
-    let (listing_dc_filter, set_listing_dc_filter) =
-        filter_query_signal::<String>(FILTER_LISTING_DC);
+    let (use_subcrafts, _) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
+    let (require_hq, _) = filter_query_signal::<bool>(FILTER_REQUIRE_HQ);
+    let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+    let (exclude_shards_url, _) = filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
+    let (use_on_hand_url, _) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
+    let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
+    let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
+    let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
+    let (listing_world_filter, _) = filter_query_signal::<String>(FILTER_LISTING_WORLD);
+    let (listing_dc_filter, _) = filter_query_signal::<String>(FILTER_LISTING_DC);
 
     // `cheapest_world_id` -> (world name, datacenter name), for the
     // cheapest-listing columns and their filters. World data is static for
@@ -2972,12 +2969,6 @@ fn RecipeAnalyzerTable(
                 .collect(),
         )
     };
-
-    // A filter picked from the `+ Filter` menu but not yet committed — its
-    // chip mounts in edit state with an empty input (see currency_exchange.rs
-    // for the same pattern). Only the three free-typed numeric filters use
-    // this; selects and toggles commit a sensible value immediately.
-    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let cookies = use_context::<Cookies>().unwrap();
     let (crafter_levels, _) = cookies.use_cookie_typed::<_, CrafterLevels>("CRAFTER_LEVELS");
@@ -3292,9 +3283,6 @@ fn RecipeAnalyzerTable(
     let world_names_for_rows = world_names.clone();
     let computed_data = Memo::new(move |_| {
         let t = Thresholds {
-            min_profit: minimum_profit(),
-            min_roi: minimum_roi(),
-            min_daily_sales: min_daily_sales(),
             listing_world: listing_world_filter(),
             listing_dc: listing_dc_filter(),
         };
@@ -3316,14 +3304,6 @@ fn RecipeAnalyzerTable(
     // one `Arc` per row and only happens while a lazy column is on.
     let wants_lazy = Memo::new(move |_| query_cols.with(spark_rows_wanted));
 
-    let empty_state = Memo::new(move |_| {
-        empty_reason(
-            computed_data.with(|d| d.is_empty()),
-            &crafter_levels.get().unwrap_or_default(),
-            job_filter().as_deref(),
-        )
-    });
-
     // Localized display name for a job acronym, for the per-job empty state.
     let job_name = move |code: &str| -> String {
         match code {
@@ -3339,68 +3319,7 @@ fn RecipeAnalyzerTable(
         }
     };
 
-    let clear_filters = Callback::new(move |()| {
-        set_minimum_profit(None);
-        set_minimum_roi(None);
-        set_min_daily_sales(None);
-    });
     let clear_job_filter = Callback::new(move |()| set_job_filter(None));
-
-    // Filters currently drawn as a chip. Drives the "no active filters" hint
-    // and keeps `+ Filter` from offering a second copy of something the user
-    // can already see.
-    let active_filters = Memo::new(move |_| {
-        let mut active: Vec<&'static str> = Vec::new();
-        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
-            active.push(FILTER_PROFIT);
-        }
-        if minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI) {
-            active.push(FILTER_ROI);
-        }
-        if min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES) {
-            active.push(FILTER_MIN_SALES);
-        }
-        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
-            active.push(FILTER_JOB);
-        }
-        if cost_basis().is_some() {
-            active.push(FILTER_COST_BASIS);
-        }
-        if revenue_metric().is_some() {
-            active.push(FILTER_REVENUE);
-        }
-        if buy_scope().is_some() {
-            active.push(FILTER_BUY_SCOPE);
-        }
-        if sell_scope.is_some() {
-            active.push(FILTER_SELL_SCOPE);
-        }
-        if listing_world_filter().is_some() {
-            active.push(FILTER_LISTING_WORLD);
-        }
-        if listing_dc_filter().is_some() {
-            active.push(FILTER_LISTING_DC);
-        }
-        if use_subcrafts().unwrap_or(false) {
-            active.push(FILTER_SUBCRAFTS);
-        }
-        if require_hq().unwrap_or(false) {
-            active.push(FILTER_REQUIRE_HQ);
-        }
-        if filter_outliers().unwrap_or(false) {
-            active.push(FILTER_OUTLIERS);
-        }
-        // These two only show a chip once the URL explicitly overrides the
-        // cookie default — otherwise the page is silently using the user's
-        // saved crafting-cost preference, not filtering anything.
-        if exclude_shards_url().is_some() {
-            active.push(FILTER_EXCLUDE_SHARDS);
-        }
-        if use_on_hand_url().is_some() {
-            active.push(FILTER_USE_ON_HAND);
-        }
-        active
-    });
 
     // Menu label for a filter: the long, explanatory label the old toolbar
     // fields carried.
@@ -3433,12 +3352,120 @@ fn RecipeAnalyzerTable(
             .map(|code| (*code, job_name(code)))
             .collect::<Vec<_>>()
     };
-    let on_off_options = move || {
-        vec![
-            ("true", t_string!(i18n, toolbar_pill_on).to_string()),
-            ("false", t_string!(i18n, toolbar_pill_off).to_string()),
-        ]
+
+    // One definition per registered control, shared by the column menus,
+    // the `+ Filter` menu and the chip row, so a chip and its header menu
+    // edit the same key with the same options and the same Clear-all
+    // policy. Pricing inputs (cost basis, revenue metric, buy and sell
+    // scope) change how every row is priced rather than which rows show,
+    // so Clear all leaves them alone, as it leaves the Flip Finder's price
+    // basis alone; clearing one chip restores that input's default.
+    let recipe_control = move |key: &'static str| -> ColumnFilter {
+        match key {
+            FILTER_JOB => {
+                let mut filter = ColumnFilter::new(key, filter_label(key), false);
+                filter.options = job_chip_options();
+                filter
+            }
+            FILTER_SUBCRAFTS
+            | FILTER_REQUIRE_HQ
+            | FILTER_OUTLIERS
+            | FILTER_EXCLUDE_SHARDS
+            | FILTER_USE_ON_HAND => toggle_control(key, filter_label(key)),
+            FILTER_COST_BASIS | FILTER_REVENUE | FILTER_BUY_SCOPE | FILTER_SELL_SCOPE => {
+                let label = match key {
+                    FILTER_COST_BASIS => t_string!(i18n, recipe_analyzer_cost_basis_label),
+                    FILTER_REVENUE => t_string!(i18n, recipe_analyzer_revenue_label),
+                    FILTER_BUY_SCOPE => t_string!(i18n, recipe_analyzer_buy_from_label),
+                    _ => t_string!(i18n, recipe_analyzer_sell_scope_label),
+                }
+                .to_string();
+                let mut filter = ColumnFilter::new(key, label, false);
+                filter.options = match key {
+                    FILTER_COST_BASIS | FILTER_REVENUE => cost_basis_options(i18n),
+                    FILTER_BUY_SCOPE => buy_scope_options(i18n),
+                    _ => sell_scope_options(i18n),
+                };
+                filter.clear_with_filters = false;
+                filter
+            }
+            FILTER_LISTING_WORLD => ColumnFilter::new(
+                key,
+                t_string!(i18n, analyzer_world_label).to_string(),
+                false,
+            ),
+            FILTER_LISTING_DC => ColumnFilter::new(
+                key,
+                t_string!(i18n, analyzer_datacenter_label).to_string(),
+                false,
+            ),
+            _ => ColumnFilter::new(key, filter_label(key), false),
+        }
     };
+
+    // The shared filter registry: the legacy thresholds as metric aliases,
+    // plus every pre-calculation control. `ControlBar` and the grid's
+    // `QueryGrid` discover it from context, so the `+ Filter` menu, the chip
+    // row and the column menus are one surface over one URL state.
+    let filters = register_filters(
+        recipe_filter_aliases(),
+        Signal::derive(move || {
+            [
+                FILTER_JOB,
+                FILTER_SUBCRAFTS,
+                FILTER_REQUIRE_HQ,
+                FILTER_OUTLIERS,
+                FILTER_EXCLUDE_SHARDS,
+                FILTER_USE_ON_HAND,
+                FILTER_COST_BASIS,
+                FILTER_REVENUE,
+                FILTER_BUY_SCOPE,
+                FILTER_SELL_SCOPE,
+                FILTER_LISTING_WORLD,
+                FILTER_LISTING_DC,
+            ]
+            .into_iter()
+            .map(recipe_control)
+            .collect()
+        }),
+    );
+
+    // The empty state reads the *queried* row count: the grid applies the
+    // metric filters after `computed_data`, so an emptied table is only
+    // known once the registry has counted it.
+    let empty_state = Memo::new(move |_| {
+        empty_reason(
+            filters.row_count() == 0,
+            &crafter_levels.get().unwrap_or_default(),
+            job_filter().as_deref(),
+        )
+    });
+
+    // "Clear filters" from the empty state is the toolbar's Clear all:
+    // every alias and metric filter goes, the pricing inputs stay. The
+    // navigator is client-only, as in the registry's own chips: this table
+    // can be rebuilt on the server under an owner that never saw `<Router>`
+    // (GlitchTip #7304), and nothing clicks there anyway.
+    let clear_location = use_location_or_default();
+    #[cfg(feature = "hydrate")]
+    let clear_nav = use_navigate();
+    let clear_filters = Callback::new(move |()| {
+        let _query = filters.clear_all(&clear_location.query.get_untracked());
+        #[cfg(feature = "hydrate")]
+        clear_nav(
+            &format!(
+                "{}{}{}",
+                clear_location.pathname.get_untracked(),
+                _query.to_query_string(),
+                clear_location.hash.get_untracked()
+            ),
+            NavigateOptions {
+                replace: true,
+                scroll: false,
+                ..Default::default()
+            },
+        );
+    });
 
     // Optional-column picker, flip-finder style. Long labels for the picker
     // (recognition, not recall — same rationale as the filter menu), read
@@ -3471,61 +3498,6 @@ fn RecipeAnalyzerTable(
         set_cols_param.set(Some(serialize_visible_cols(&set, &OPTIONAL_COLUMN_ORDER)));
     });
     let reset_columns = Callback::new(move |_| set_cols_param.set(None));
-
-    // What the `+ Filter` menu offers: everything addable that is not already
-    // on screen as a chip.
-    let filter_options = Memo::new(move |_| {
-        ADDABLE_FILTERS
-            .iter()
-            .copied()
-            .filter(|id| !active_filters().contains(id))
-            .map(|id| FilterOption {
-                id,
-                label: filter_label(id),
-            })
-            .collect::<Vec<_>>()
-    });
-
-    // Adding a filter seeds it with a value the user can see and edit
-    // straight away, rather than mounting a select with nothing chosen —
-    // except `FILTER_JOB`, where "seeding" would mean silently narrowing the
-    // whole table to one crafter before the user has picked anything (a
-    // regression vs. the old "All Jobs" default). That one mounts blank via
-    // `pending_filter`, same as the three free-typed numeric filters and
-    // leve_analyzer's identical job filter. Every other select commits a
-    // sensible non-default value immediately, same as the flip finder's
-    // select-type filters.
-    let add_filter = Callback::new(move |id: &'static str| match id {
-        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
-        FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
-        FILTER_MIN_SALES => pending_filter.set(Some(FILTER_MIN_SALES)),
-        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
-        FILTER_SUBCRAFTS => set_use_subcrafts(Some(true)),
-        FILTER_REQUIRE_HQ => set_require_hq(Some(true)),
-        FILTER_OUTLIERS => set_filter_outliers(Some(true)),
-        FILTER_EXCLUDE_SHARDS => set_exclude_shards(Some(true)),
-        FILTER_USE_ON_HAND => set_use_on_hand(Some(true)),
-        _ => {}
-    });
-
-    let clear_all = Callback::new(move |_| {
-        pending_filter.set(None);
-        set_minimum_profit(None);
-        set_minimum_roi(None);
-        set_min_daily_sales(None);
-        set_job_filter(None);
-        set_cost_basis(None);
-        set_revenue_metric(None);
-        set_buy_scope(None);
-        set_sell_scope(None);
-        set_listing_world_filter(None);
-        set_listing_dc_filter(None);
-        set_use_subcrafts(None);
-        set_require_hq(None);
-        set_filter_outliers(None);
-        set_exclude_shards(None);
-        set_use_on_hand(None);
-    });
 
     // The cells the grid hands back to the page: they need context the row
     // does not carry (item names and icons, the world link, the on-hand
@@ -3921,12 +3893,13 @@ fn RecipeAnalyzerTable(
             }}
             <RecipePriceControls terms=strip_terms />
 
-            // Primary filter bar
+            // Primary filter bar: chips, the `+ Filter` menu and Clear all
+            // all come from the shared registry.
             <ControlBar sticky=false
                 summary=move || {
                     view! {
                         <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                            {move || t!(i18n, recipe_analyzer_result_count, n = move || computed_data().len())}
+                            {move || t!(i18n, recipe_analyzer_result_count, n = move || filters.row_count())}
                         </span>
                     }
                     .into_any()
@@ -3942,268 +3915,10 @@ fn RecipeAnalyzerTable(
                 visible_columns=Signal::derive(move || visible_cols.get())
                 on_toggle_column=toggle_column
                 on_reset_columns=reset_columns
-                available_filters=Signal::derive(filter_options)
-                on_add_filter=add_filter
-                on_clear_all=clear_all
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, recipe_analyzer_no_filters_hint).to_string()
                 })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-            >
-                {move || {
-                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_chip_profit_min).to_string()
-                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    step="1000"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_ROI);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_chip_roi_min).to_string()
-                                    value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    step="10"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_minimum_roi(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_ROI) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked()
-                                == Some(FILTER_MIN_SALES);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_chip_daily_sales_min).to_string()
-                                    value=Signal::derive(move || min_daily_sales().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    step="0.1"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_min_daily_sales(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_MIN_SALES) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_filter_job_label).to_string()
-                                    value=Signal::derive(job_filter)
-                                    options=job_chip_options()
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_job_filter(v);
-                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    cost_basis()
-                        .map(|current| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
-                                    value=Signal::derive(move || Some(current.to_string()))
-                                    options=cost_basis_options(i18n)
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        let parsed = v.and_then(|v| v.parse::<CostBasis>().ok());
-                                        set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    revenue_metric()
-                        .map(|current| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
-                                    value=Signal::derive(move || Some(current.to_string()))
-                                    options=cost_basis_options(i18n)
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        let parsed = v.and_then(|v| v.parse::<RevenueMetric>().ok());
-                                        set_revenue_metric(
-                                            parsed.filter(|m| *m != RevenueMetric::default()),
-                                        );
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    let buy = buy_scope()
-                        .map(|current| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
-                                    value=Signal::derive(move || Some(current.to_string()))
-                                    options=buy_scope_options(i18n)
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        let parsed = v.and_then(|v| v.parse::<BuyScope>().ok());
-                                        set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
-                                    })
-                                />
-                            }
-                        });
-                    match sell_scope {
-                        None => buy.into_any(),
-                        Some(current) => view! {
-                            {buy}
-                            <FilterChip
-                                label=t_string!(i18n, recipe_analyzer_sell_scope_label).to_string()
-                                value=Signal::derive(move || Some(current.to_string()))
-                                options=sell_scope_options(i18n)
-                                on_commit=Callback::new(move |v: Option<String>| {
-                                    let parsed = v.and_then(|v| v.parse::<SellScope>().ok());
-                                    // `SellScope::default()` is the WORLD,
-                                    // not `Scope::default()`'s datacenter.
-                                    set_sell_scope(parsed.filter(|s| *s != SellScope::default()));
-                                })
-                            />
-                        }
-                        .into_any(),
-                    }
-                }}
-                {move || {
-                    listing_world_filter()
-                        .map(|_| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, analyzer_world_label).to_string()
-                                    readonly=true
-                                    value=Signal::derive(listing_world_filter)
-                                    on_commit=Callback::new(move |_| set_listing_world_filter(None))
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    listing_dc_filter()
-                        .map(|_| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, analyzer_datacenter_label).to_string()
-                                    readonly=true
-                                    value=Signal::derive(listing_dc_filter)
-                                    on_commit=Callback::new(move |_| set_listing_dc_filter(None))
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    use_subcrafts()
-                        .unwrap_or(false)
-                        .then(|| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_filter_subcrafts_label).to_string()
-                                    readonly=true
-                                    value=Signal::derive(|| None::<String>)
-                                    on_commit=Callback::new(move |_| set_use_subcrafts(None))
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    require_hq()
-                        .unwrap_or(false)
-                        .then(|| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_filter_require_hq_label).to_string()
-                                    readonly=true
-                                    value=Signal::derive(|| None::<String>)
-                                    on_commit=Callback::new(move |_| set_require_hq(None))
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    filter_outliers()
-                        .unwrap_or(false)
-                        .then(|| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, filter_outliers).to_string()
-                                    readonly=true
-                                    value=Signal::derive(|| None::<String>)
-                                    on_commit=Callback::new(move |_| set_filter_outliers(None))
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    exclude_shards_url()
-                        .map(|current| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_filter_exclude_crystals_label).to_string()
-                                    value=Signal::derive(move || Some(current.to_string()))
-                                    options=on_off_options()
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_exclude_shards(v.and_then(|v| v.parse().ok()));
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    use_on_hand_url()
-                        .map(|current| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string()
-                                    value=Signal::derive(move || Some(current.to_string()))
-                                    options=on_off_options()
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_use_on_hand(v.and_then(|v| v.parse().ok()));
-                                    })
-                                />
-                            }
-                        })
-                }}
-            </ControlBar>
+            />
 
             {move || match empty_state.get() {
                 None => ().into_any(),
@@ -4288,36 +4003,21 @@ fn RecipeAnalyzerTable(
                             market.rows.set(rows);
                         }
                     })
+                    // The pre-calculation controls each column's header menu
+                    // offers. Profit, ROI and Sales/day get their metric
+                    // editors from the grid itself.
                     column_filters=Callback::new(move |kind| {
-                        let keys: &[(&str,bool)] = match kind {
-                            ColumnKind::Item => &[(FILTER_JOB,false)],
-                            ColumnKind::Profit => &[(FILTER_PROFIT,true)],
-                            ColumnKind::Roi => &[(FILTER_ROI,true)],
-                            ColumnKind::SalesPerDay7 => &[(FILTER_MIN_SALES,true)],
-                            ColumnKind::CostSlot => &[(FILTER_COST_BASIS,false),(FILTER_SUBCRAFTS,false),(FILTER_EXCLUDE_SHARDS,false),(FILTER_USE_ON_HAND,false)],
-                            ColumnKind::RevenueSlot => &[(FILTER_REVENUE,false)],
-                            ColumnKind::ListingWorld => &[(FILTER_LISTING_WORLD,false)],
-                            ColumnKind::ListingDc => &[(FILTER_LISTING_DC,false)],
+                        let keys: &[&str] = match kind {
+                            ColumnKind::Item => &[FILTER_JOB],
+                            ColumnKind::CostSlot => &[FILTER_COST_BASIS, FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
+                            ColumnKind::RevenueSlot => &[FILTER_REVENUE, FILTER_SELL_SCOPE],
+                            ColumnKind::ListingWorld => &[FILTER_LISTING_WORLD],
+                            ColumnKind::ListingDc => &[FILTER_LISTING_DC],
                             _ => &[],
                         };
-                        keys.iter().map(|&(key,numeric)| {
-                            let label = match key {
-                                FILTER_COST_BASIS => t_string!(i18n,recipe_analyzer_cost_basis_label).to_string(),
-                                FILTER_REVENUE => t_string!(i18n,recipe_analyzer_revenue_label).to_string(),
-                                FILTER_LISTING_WORLD => t_string!(i18n,analyzer_col_world).to_string(),
-                                FILTER_LISTING_DC => t_string!(i18n,analyzer_col_datacenter).to_string(),
-                                _ => filter_label(key),
-                            };
-                            let mut filter = ColumnFilter::new(key,label,numeric);
-                            filter.options = match key {
-                                FILTER_JOB => job_chip_options(),
-                                FILTER_COST_BASIS | FILTER_REVENUE => cost_basis_options(i18n),
-                                FILTER_SUBCRAFTS | FILTER_EXCLUDE_SHARDS | FILTER_USE_ON_HAND => on_off_options(),
-                                _ => vec![],
-                            };
-                            filter
-                        }).collect()
+                        keys.iter().map(|&key| recipe_control(key)).collect()
                     })
+                    picker=column_options
                     custom_measure=Arc::new(move |data: &RecipeRow, kind| {
                         match kind {
                             ColumnKind::Item => (items.get(&ItemId(data.recipe.item_result)).map(|i|i.name.as_str()).unwrap_or_default().to_string(),80.0),
@@ -4410,7 +4110,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         query.with(|q| {
             recipe_query_columns(
                 visible_cols.get(),
-                &active_metric_columns(q.get("gf").as_deref()),
+                &resolve_filters(q, &recipe_filter_aliases())
+                    .into_keys()
+                    .collect(),
                 q.get("sort").as_deref(),
             )
         })
@@ -5070,6 +4772,22 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 mod test {
     use super::*;
 
+    /// The keys the old `+ Filter` menu wrote, in its order. Presets and
+    /// bookmarks still carry them, so every one must stay readable: the
+    /// first three as aliases of the shared metric filters, the rest as
+    /// registered controls.
+    const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[
+        FILTER_PROFIT,
+        FILTER_ROI,
+        FILTER_MIN_SALES,
+        FILTER_JOB,
+        FILTER_SUBCRAFTS,
+        FILTER_REQUIRE_HQ,
+        FILTER_OUTLIERS,
+        FILTER_EXCLUDE_SHARDS,
+        FILTER_USE_ON_HAND,
+    ];
+
     /// A preset is applied by rebuilding the URL from its query, so a stray
     /// separator or an empty pair would ship straight into the address bar.
     #[test]
@@ -5100,7 +4818,7 @@ mod test {
                             .is_ok(),
                         "{query}"
                     ),
-                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                    other => assert!(LEGACY_PRESET_FILTER_KEYS.contains(&other), "{query}"),
                 }
             }
         }
@@ -5153,14 +4871,15 @@ mod test {
             .collect()
     }
 
-    /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
-    /// Toolbar wrote verbatim — a drifted id here silently breaks every
-    /// bookmarked filter deep link (same contract currency_exchange.rs pins
-    /// for its `RANGE_FILTERS`).
+    /// The legacy keys are the `filter_query_signal` keys the old Toolbar
+    /// wrote verbatim — a drifted id here silently breaks every bookmarked
+    /// filter deep link (same contract currency_exchange.rs pins for its
+    /// `RANGE_FILTERS`). The first three now resolve through the shared
+    /// registry's aliases; the rest are registered controls.
     #[test]
     fn filter_registry_keys_are_a_stable_url_contract() {
         assert_eq!(
-            ADDABLE_FILTERS,
+            LEGACY_PRESET_FILTER_KEYS,
             &[
                 FILTER_PROFIT,
                 FILTER_ROI,
@@ -5207,12 +4926,64 @@ mod test {
         // the active-filter list, so its key is pinned here with them.
         assert_eq!(FILTER_SELL_SCOPE, "sell-scope");
         assert!(
-            !ADDABLE_FILTERS.contains(&FILTER_SELL_SCOPE),
+            !LEGACY_PRESET_FILTER_KEYS.contains(&FILTER_SELL_SCOPE),
             "sell-scope is a Market control, not a row filter"
         );
-        // Set by clicking a cheapest-listing world/DC cell, not the menu.
+        // Set by clicking a cheapest-listing world/DC cell, or from the menu.
         assert_eq!(FILTER_LISTING_WORLD, "listing-world");
         assert_eq!(FILTER_LISTING_DC, "listing-dc");
+        // The thresholds alias the grid's metric filters on the columns the
+        // old predicates read, with the old operator and parsing.
+        let aliases = recipe_filter_aliases();
+        let pairs: Vec<(&str, &str, FilterOp)> =
+            aliases.iter().map(|a| (a.key, a.column, a.op)).collect();
+        assert_eq!(
+            pairs,
+            [
+                ("profit", "profit", FilterOp::Gte),
+                ("roi", "roi", FilterOp::Gte),
+                ("min-sales", "daily-sales", FilterOp::Gte),
+            ]
+        );
+        let params = |pairs: &[(&str, &str)]| {
+            let mut query = leptos_router::params::ParamsMap::new();
+            for (key, value) in pairs {
+                query.insert(key.to_string(), value.to_string());
+            }
+            query
+        };
+        let filters = resolve_filters(
+            &params(&[("profit", "200"), ("roi", "30"), ("min-sales", "0.5")]),
+            &aliases,
+        );
+        assert_eq!(filters["profit"].value, "200");
+        assert_eq!(filters["roi"].value, "30");
+        assert_eq!(filters["daily-sales"].value, "0.5");
+        // The old thresholds were integers and a finite f32 rate.
+        for (key, raw) in [("profit", "1.5"), ("roi", "x"), ("min-sales", "NaN")] {
+            assert!(
+                resolve_filters(&params(&[(key, raw)]), &aliases).is_empty(),
+                "{key}={raw}"
+            );
+        }
+        // `min-sales=0` and the cleared `min-sales=` both mean "no limit":
+        // neither becomes a threshold that drops recipes with no sales.
+        for raw in ["0", "", "-1"] {
+            assert!(
+                resolve_filters(&params(&[("min-sales", raw)]), &aliases).is_empty(),
+                "min-sales={raw:?}"
+            );
+        }
+        // An explicit grid filter on the column wins over its alias.
+        let explicit = resolve_filters(
+            &params(&[
+                ("profit", "200"),
+                ("gf", r#"{"profit":{"op":"lte","value":"50"}}"#),
+            ]),
+            &aliases,
+        );
+        assert_eq!(explicit["profit"].op, FilterOp::Lte);
+        assert_eq!(explicit["profit"].value, "50");
     }
 
     #[test]
@@ -5378,19 +5149,31 @@ mod test {
     }
 
     #[test]
-    fn the_sell_scope_is_counted_and_cleared_like_the_other_market_params() {
+    fn the_sell_scope_is_registered_and_preserved_like_the_other_market_params() {
         let production = production_source();
+        // The scope is a registered control: it shows as a chip, it is
+        // offered from `+ Filter` and it sits in the Revenue column's menu,
+        // all through the one `recipe_control` definition.
         assert!(
-            production.contains(&format!("if {}.is_some() {{", "sell_scope")),
-            "active_filters counts the resolved scope prop"
+            production_squeezed().contains("FILTER_BUY_SCOPE,FILTER_SELL_SCOPE,"),
+            "the registry lists the sell scope beside the buy scope"
         );
         assert!(
-            production.contains(&format!("{}(FILTER_SELL_SCOPE)", "active.push")),
-            "…and pushes the same key the URL uses"
+            production_squeezed()
+                .contains("ColumnKind::RevenueSlot=>&[FILTER_REVENUE,FILTER_SELL_SCOPE]"),
+            "…and the Revenue column's menu offers it"
+        );
+        // Clear all keeps every pricing input, so a cleared table is still
+        // priced the way the reader chose (`clear_with_filters = false`).
+        assert!(
+            production_squeezed()
+                .contains("FILTER_COST_BASIS|FILTER_REVENUE|FILTER_BUY_SCOPE|FILTER_SELL_SCOPE=>{"),
+            "the four pricing inputs share one control definition"
         );
         assert!(
-            production.contains(&format!("{}(None);", "set_sell_scope")),
-            "Clear all must reset it"
+            production_squeezed()
+                .contains("_=>sell_scope_options(i18n),};filter.clear_with_filters=false;"),
+            "…which Clear all preserves"
         );
         assert!(
             !production.contains(&format!("{}.get_untracked()", "sell_scope")),
@@ -5430,17 +5213,14 @@ mod test {
             "the sell-scope setter strips the sell side's default, not the buy side's"
         );
         assert!(
-            production_squeezed().contains(
-                "matchsell_scope{None=>buy.into_any(),Some(current)=>view!{{buy}\
-                 <FilterChiplabel=t_string!(i18n,recipe_analyzer_sell_scope_label)"
-            ),
-            "the sell-scope chip renders beside the buy one, inside ONE child"
+            production_squeezed().contains("_=>t_string!(i18n,recipe_analyzer_sell_scope_label),"),
+            "the sell-scope control carries its own label"
         );
         assert!(
-            production_squeezed().contains("options=sell_scope_options(i18n)"),
+            production_squeezed().contains("_=>sell_scope_options(i18n),"),
             "…offering the same three tokens the strip's select does"
         );
-        // The buy chip keeps its own label. The formula strip has its own
+        // The buy control keeps its own label. The formula strip has its own
         // accessible labels for the inline controls.
         assert_eq!(
             production_source()
@@ -5636,8 +5416,8 @@ mod test {
     fn phase_f_adds_exactly_one_key_and_one_column_token() {
         // One selection key, and it is NOT a row filter.
         assert_eq!(FILTER_SELL_SCOPE, "sell-scope");
-        assert_eq!(ADDABLE_FILTERS.len(), 9);
-        assert!(!ADDABLE_FILTERS.contains(&FILTER_SELL_SCOPE));
+        assert_eq!(LEGACY_PRESET_FILTER_KEYS.len(), 9);
+        assert!(!LEGACY_PRESET_FILTER_KEYS.contains(&FILTER_SELL_SCOPE));
         // Its three values are the buy scope's three, and `world` is the
         // default the setter strips.
         assert_eq!(SellScope::default().to_string(), "world");
@@ -7166,24 +6946,29 @@ mod test {
         ]
         .into_iter()
         .collect();
-        let t = Thresholds {
-            min_profit: Some(200),
-            ..Default::default()
-        };
+        // The profit threshold is the grid's metric filter now, so this pass
+        // keeps every row; ties are broken by key id ascending and indexes
+        // are renumbered.
+        let t = Thresholds::default();
         let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc, None);
-        // Inclusive `>=`; ties broken by key id ascending; indexes renumbered.
         let got: Vec<(usize, i32, i32)> = out
             .iter()
             .map(|(i, r)| (*i, r.profit, r.recipe.key_id.0))
             .collect();
         assert_eq!(
             got,
-            vec![(0, 300, keys[1]), (1, 200, keys[2]), (2, 200, keys[3])]
+            vec![
+                (0, 300, keys[1]),
+                (1, 200, keys[2]),
+                (2, 200, keys[3]),
+                (3, 100, keys[0])
+            ]
         );
         // Ascending flips the order but keeps the same tiebreak direction.
         let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Asc, None);
-        assert_eq!(out[0].1.profit, 200);
-        assert_eq!(out[0].1.recipe.key_id.0, keys[2]);
+        assert_eq!(out[0].1.profit, 100);
+        assert_eq!(out[1].1.profit, 200);
+        assert_eq!(out[1].1.recipe.key_id.0, keys[2]);
         // A listing-world filter drops unknown worlds (9 has no name).
         let t = Thresholds {
             listing_world: Some("Gilgamesh".into()),

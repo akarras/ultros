@@ -502,15 +502,16 @@ async function main() {
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: hidden filter survives`);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
-        await page.waitForSelector(tool === 'recipe-analyzer'
-          ? '[data-grid-query-summary]' : `[data-registered-filter="${medianColumn}"]`);
-        if (tool !== 'recipe-analyzer') assert.equal(await page.$('[data-grid-query-summary]'), null, `${tool}: shared bar owns the only filter summary`);
+        await page.waitForSelector(`[data-registered-filter="${medianColumn}"]`);
+        assert.equal(await page.$('[data-grid-query-summary]'), null, `${tool}: shared bar owns the only filter summary`);
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: filter reload survives`);
         if (fixture) assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: selected pricing basis reload survives`);
-        if (fixture && tool !== 'recipe-analyzer') {
+        if (fixture) {
           await page.click('[aria-label="Clear all filters"]');
           await page.waitForFunction(() => !new URL(location.href).searchParams.has('gf'));
-          assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
+          // Recipe has no history-window control; its pricing inputs are
+          // preserved the same way the other tools' price basis is.
+          if (tool !== 'recipe-analyzer') assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
           assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: Clear all preserves price basis`);
         }
         console.log(`PASS ${tool}: shared market columns, median calculation, filter, hide and reload (${rowCount} initial rows)`);

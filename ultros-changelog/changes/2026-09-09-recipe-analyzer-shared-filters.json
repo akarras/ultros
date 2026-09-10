@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Recipe Analyzer filters join the shared bar",
+  "blurb": "Find every Recipe Analyzer column filter in + Filter, edit thresholds from the same chip row or the column menu, and keep old links and presets working. Clear all keeps your pricing choices.",
+  "link": "/recipe-analyzer"
+}
