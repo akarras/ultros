@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "단가",
     "currency_exchange_table_qty_recv": "수령 수량",
     "currency_exchange_table_profit": "수익",
-    "currency_exchange_table_hours_per_sale": "시간/판매",
+    "currency_exchange_table_hours_per_sale": "시간/판매 (최근)",
     "currency_exchange_error_loading": "불러오기 실패, 30초 뒤 다시 시도해 주세요!",
     "currency_exchange_hero_desc": "동맹의 인장이나 늑대 표식 같은 게임 내 재화로 구매해, 마켓 보드에서 길로 되팔 수 있는 아이템을 찾아보세요.",
     "currency_exchange_meta_title_ultros": "재화 교환 - Ultros",

@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "Prix/objet",
     "currency_exchange_table_qty_recv": "Qté reçue",
     "currency_exchange_table_profit": "Bénéfice",
-    "currency_exchange_table_hours_per_sale": "Heures/vente",
+    "currency_exchange_table_hours_per_sale": "Heures/vente (récentes)",
     "currency_exchange_error_loading": "Erreur de chargement, réessayez dans 30 secondes !",
     "currency_exchange_hero_desc": "Trouvez les objets achetables avec des devises in-game, comme les sceaux d’alliance ou les marques des loups, et revendables contre des gils à l’hôtel des ventes.",
     "currency_exchange_meta_title_ultros": "Échange de devises - Ultros",

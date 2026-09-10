@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "Price/item",
     "currency_exchange_table_qty_recv": "Qty recv",
     "currency_exchange_table_profit": "Profit",
-    "currency_exchange_table_hours_per_sale": "Hours/sale",
+    "currency_exchange_table_hours_per_sale": "Hours/sale (recent)",
     "currency_exchange_error_loading": "Error loading, try again in 30 seconds!",
     "currency_exchange_hero_desc": "Find items you can buy with in-game currencies like Allied Seals or Wolf Marks and resell on the marketboard for gil.",
     "currency_exchange_meta_title_ultros": "Currency Exchange - Ultros",

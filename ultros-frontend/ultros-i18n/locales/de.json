@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "Preis/Item",
     "currency_exchange_table_qty_recv": "Erh. Menge",
     "currency_exchange_table_profit": "Gewinn",
-    "currency_exchange_table_hours_per_sale": "Std./Verkauf",
+    "currency_exchange_table_hours_per_sale": "Std./Verkauf (zuletzt)",
     "currency_exchange_error_loading": "Fehler beim Laden — bitte in 30 Sekunden erneut versuchen!",
     "currency_exchange_hero_desc": "Finde Items, die du mit Spielwährungen wie Allianzsiegeln oder Wolfsmarken kaufen und auf dem Marktbrett für Gil weiterverkaufen kannst.",
     "currency_exchange_meta_title_ultros": "Währungstausch — Ultros",

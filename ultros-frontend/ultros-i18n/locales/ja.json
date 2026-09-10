@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "単価",
     "currency_exchange_table_qty_recv": "受取数",
     "currency_exchange_table_profit": "利益",
-    "currency_exchange_table_hours_per_sale": "時間／販売",
+    "currency_exchange_table_hours_per_sale": "時間／販売（直近）",
     "currency_exchange_error_loading": "読み込みに失敗しました。30秒後にもう一度お試しください！",
     "currency_exchange_hero_desc": "アライアンスシールやウルフマークなどのゲーム内通貨で購入でき、マーケットボードでギルに換えられるアイテムを探せます。",
     "currency_exchange_meta_title_ultros": "通貨交換 - Ultros",

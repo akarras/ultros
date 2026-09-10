@@ -171,6 +171,20 @@ Remove-Item -Recurse -Force ultros/integration/artifacts
 
 ## CI notes
 
+### Currency Exchange regression
+
+Against a server built from the current worktree, run:
+
+```bash
+BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:currency-exchange
+```
+
+This probe uses real shop definitions with deterministic browser API fixtures,
+so it does not require populated market history. It checks native estimates
+against actual listing prices, NQ sale statistics, window changes, legacy hidden
+filters, saved column links, quantity restoration, and the mobile layout.
+Screenshots go to `integration/artifacts/currency-exchange/`.
+
 In CI, you can do:
 
 ```bash
