@@ -321,6 +321,7 @@
     "home_world_desc": "Le monde d’origine est utilisé par défaut pour le Chercheur de flips et plusieurs autres pages",
     "welcome_page_title": "Bienvenue sur Ultros",
     "welcome_page_desc": "Configure Ultros en choisissant ton monde d'origine. Ça prend environ dix secondes.",
+    "welcome_optional_preferences": "Facultatif : zone de prix, langue et apparence",
     "welcome_heading": "Bienvenue sur Ultros",
     "welcome_subtitle": "Configurons tout ça. Ça ne prend qu'un instant.",
     "welcome_why_home_world_title": "Pourquoi nous avons besoin de ton monde d'origine",

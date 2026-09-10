@@ -321,6 +321,7 @@
     "home_world_desc": "主服务器将作为倒卖搜索及其他多个页面的默认服务器",
     "welcome_page_title": "欢迎使用 Ultros",
     "welcome_page_desc": "选择您的主服务器以完成 Ultros 的初始设置。大约只需十秒。",
+    "welcome_optional_preferences": "可选：价格区域、语言和外观",
     "welcome_heading": "欢迎使用 Ultros",
     "welcome_subtitle": "让我们来配置一下，只需片刻即可完成。",
     "welcome_why_home_world_title": "为什么我们需要您的主服务器",

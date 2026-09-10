@@ -321,6 +321,7 @@
     "home_world_desc": "主伺服器會作為倒賣搜尋及其他多個頁面的預設伺服器",
     "welcome_page_title": "歡迎使用 Ultros",
     "welcome_page_desc": "選擇你的主要伺服器以開始使用 Ultros。約需十秒鐘。",
+    "welcome_optional_preferences": "選用：價格區域、語言與外觀",
     "welcome_heading": "歡迎使用 Ultros",
     "welcome_subtitle": "讓我們協助你完成設定，只需片刻。",
     "welcome_why_home_world_title": "為什麼需要你的主要伺服器",

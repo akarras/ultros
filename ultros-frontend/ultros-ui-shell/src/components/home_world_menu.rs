@@ -8,6 +8,7 @@
 //! `WorldPicker` — but in `worlds_only` mode: a home world is always a world,
 //! so region/datacenter rows only drill in.
 
+use crate::components::app_link::AppLink;
 use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::components::region_menu::ZoneAccordion;
@@ -81,7 +82,9 @@ pub fn HomeWorldMenu() -> impl IntoView {
     };
 
     view! {
-        <div class="side-nav-region side-nav-home-world" node_ref=root_ref>
+        <div class="side-nav-region side-nav-home-world"
+            class:side-nav-home-world-unset=move || homeworld.get().is_none()
+            node_ref=root_ref>
             <button
                 class="side-nav-account-trigger"
                 aria-haspopup="true"
@@ -132,6 +135,16 @@ pub fn HomeWorldMenu() -> impl IntoView {
                     class="side-nav-account-panel side-nav-region-panel side-nav-home-world-panel"
                     tabindex="-1"
                 >
+                    <Show when=move || homeworld.get().is_none()>
+                        <div class="p-3 space-y-2 border-b border-[color:var(--color-outline)]">
+                            <p class="text-sm text-[color:var(--color-text-muted)]">
+                                {t!(i18n, home_onboarding_banner_body)}
+                            </p>
+                            <AppLink href="/welcome" attr:class="btn-primary w-full justify-center py-2 px-3">
+                                {t!(i18n, home_onboarding_banner_cta)}
+                            </AppLink>
+                        </div>
+                    </Show>
                     {match &panel_body {
                         Either::Left(body) => body().into_any(),
                         Either::Right(body) => body().into_any(),

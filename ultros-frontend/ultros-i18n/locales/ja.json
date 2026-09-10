@@ -321,6 +321,7 @@
     "home_world_desc": "ホームワールドは、フリップファインダーをはじめ各ページのデフォルトとして使用されます",
     "welcome_page_title": "Ultrosへようこそ",
     "welcome_page_desc": "ホームワールドを選んでUltrosのセットアップを完了しましょう。10秒ほどで完了します。",
+    "welcome_optional_preferences": "任意設定：価格エリア・言語・外観",
     "welcome_heading": "Ultrosへようこそ",
     "welcome_subtitle": "セットアップしましょう。ほんの少しの時間で完了します。",
     "welcome_why_home_world_title": "ホームワールドが必要な理由",

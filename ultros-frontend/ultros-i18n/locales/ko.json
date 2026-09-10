@@ -321,6 +321,7 @@
     "home_world_desc": "홈 월드는 플립 파인더 및 여러 페이지의 기본 월드로 사용됩니다",
     "welcome_page_title": "Ultros에 오신 것을 환영합니다",
     "welcome_page_desc": "홈 서버를 선택하여 Ultros를 설정하세요. 약 10초 정도 걸립니다.",
+    "welcome_optional_preferences": "선택 사항: 가격 지역, 언어 및 테마",
     "welcome_heading": "Ultros에 오신 것을 환영합니다",
     "welcome_subtitle": "설정해 봅시다. 잠깐이면 됩니다.",
     "welcome_why_home_world_title": "홈 서버가 필요한 이유",

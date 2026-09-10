@@ -157,7 +157,7 @@ pub fn HomePage() -> impl IntoView {
                     {move || needs_onboarding().then(|| view! {
                         <AppLink
                             href="/welcome"
-                            attr:class="group focus:outline-none rounded-2xl"
+                            attr:class="group focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] rounded-2xl"
                             attr:aria-label=move || t_string!(i18n, home_onboarding_banner_cta).to_string()
                         >
                             <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-col items-start gap-4 hover:border-brand-300 transition-colors sm:flex-row sm:items-center">

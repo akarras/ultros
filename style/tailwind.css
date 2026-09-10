@@ -3171,3 +3171,17 @@ dialog.panel { color: var(--color-text); margin: auto; }
 .registered-filter-bar .filter-chip-x {
     flex-shrink: 0;
 }
+
+/* Keep the missing home world visible, including in the collapsed rail. */
+.side-nav-home-world-unset > .side-nav-account-trigger {
+    background: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+    box-shadow: inset 3px 0 var(--brand-ring);
+}
+.side-nav-home-world-unset .side-nav-zone-value {
+    color: var(--brand-fg);
+    font-weight: 700;
+}
+.side-nav-home-world-unset > .side-nav-account-trigger:focus-visible {
+    outline: 2px solid var(--brand-ring);
+    outline-offset: -2px;
+}

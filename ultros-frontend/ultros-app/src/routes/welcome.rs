@@ -30,12 +30,12 @@ pub fn Welcome() -> impl IntoView {
             <MetaTitle title=move || t_string!(i18n, welcome_page_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, welcome_page_desc).to_string() />
 
-            <div class="container mx-auto max-w-4xl space-y-8">
+            <div class="container mx-auto max-w-3xl space-y-5">
                 // Hero
-                <div class="panel p-6 sm:p-10 rounded-2xl relative overflow-hidden">
+                <div class="panel p-5 sm:p-6 rounded-2xl relative overflow-hidden">
                     <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                         <div class="flex-1 space-y-3 z-10">
-                            <h1 class="text-5xl sm:text-6xl font-extrabold leading-none tracking-tighter">
+                            <h1 class="text-3xl sm:text-4xl font-extrabold leading-none tracking-tighter">
                                 <span class="bg-clip-text text-transparent" style="background-image:linear-gradient(135deg,var(--accent),var(--accent-decor))">
                                     {t!(i18n, welcome_heading)}
                                 </span>
@@ -44,26 +44,7 @@ pub fn Welcome() -> impl IntoView {
                                 {t!(i18n, welcome_subtitle)}
                             </p>
                         </div>
-                        <div class="w-32 md:w-40 aspect-square rounded-2xl elevated surface-blur flex items-center justify-center animate-float">
-                            <Icon
-                                icon=i::FaMapLocationDotSolid
-                                width="4em"
-                                height="4em"
-                                attr:class="text-[color:var(--accent-decor)]"
-                            />
-                        </div>
                     </div>
-                </div>
-
-                // Why
-                <div class="panel p-6 rounded-xl">
-                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2 flex items-center gap-2">
-                        <Icon icon=i::BsInfoCircle />
-                        {t!(i18n, welcome_why_home_world_title)}
-                    </h2>
-                    <p class="text-[color:var(--color-text)] leading-relaxed">
-                        {t!(i18n, welcome_why_home_world_body)}
-                    </p>
                 </div>
 
                 // Step 1: home world
@@ -76,101 +57,108 @@ pub fn Welcome() -> impl IntoView {
                             {t!(i18n, welcome_step_home_world_help)}
                         </p>
                     </div>
+                    <p class="text-sm text-[color:var(--color-text-muted)]">
+                        {t!(i18n, welcome_why_home_world_body)}
+                    </p>
                     <div class="max-w-md">
                         <WorldOnlyPicker
                             current_world=homeworld
                             set_current_world=set_homeworld
                         />
                     </div>
-                    {move || {
-                        if let Some(w) = homeworld.get() {
-                            Either::Left(view! {
-                                <div class="mt-2 p-3 rounded-lg bg-green-900/20 border border-green-700/30 text-green-300 flex items-center gap-2">
-                                    <Icon icon=i::BsCheckCircleFill />
-                                    <span>
-                                        {t!(i18n, welcome_home_world_set_with_name, world = w.name.clone())}
-                                    </span>
-                                </div>
-                            })
-                        } else {
-                            Either::Right(view! {
-                                <div class="mt-2 text-sm italic text-[color:var(--color-text-muted)]">
-                                    {t!(i18n, welcome_pick_world_to_continue)}
-                                </div>
-                            })
-                        }
-                    }}
-                </div>
-
-                // Step 2: price zone
-                <div class="panel p-6 rounded-xl space-y-4">
-                    <div>
-                        <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
-                            {t!(i18n, welcome_step_price_zone_label)}
-                        </h2>
-                        <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
-                            {t!(i18n, welcome_step_price_zone_help)}
-                        </p>
-                    </div>
-                    <div class="max-w-md">
-                        <WorldPicker
-                            current_world=price_region
-                            set_current_world=set_price_region
-                        />
+                    <div role="status" aria-live="polite">
+                        {move || {
+                            if let Some(w) = homeworld.get() {
+                                Either::Left(view! {
+                                    <div class="mt-2 p-3 rounded-lg bg-green-900/20 border border-green-700/30 text-green-300 flex items-center gap-2">
+                                        <Icon icon=i::BsCheckCircleFill />
+                                        <span>
+                                            {t!(i18n, welcome_home_world_set_with_name, world = w.name.clone())}
+                                        </span>
+                                    </div>
+                                })
+                            } else {
+                                Either::Right(view! {
+                                    <div class="mt-2 text-sm italic text-[color:var(--color-text-muted)]">
+                                        {t!(i18n, welcome_pick_world_to_continue)}
+                                    </div>
+                                })
+                            }
+                        }}
                     </div>
                 </div>
 
-                // Step 3: language
-                <div class="panel p-6 rounded-xl space-y-4">
-                    <div>
-                        <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
-                            {t!(i18n, welcome_step_language_label)}
-                        </h2>
-                        <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
-                            {t!(i18n, welcome_step_language_help)}
-                        </p>
-                    </div>
-                    <div class="max-w-md">
-                        <LanguagePicker />
-                    </div>
+                // Finish immediately after the only required choice.
+                <div class="flex flex-wrap items-center gap-4">
+                    <Show when=move || has_homeworld.get() fallback=move || view! {
+                        <button type="button" class="btn-primary py-3 px-6 opacity-50" disabled>
+                            {t!(i18n, welcome_continue_cta)}
+                        </button>
+                    }>
+                        <AppLink href="/" attr:class="btn-primary py-3 px-6">
+                            <span>{t!(i18n, welcome_continue_cta)}</span>
+                            <Icon icon=i::FaArrowRightSolid width="1em" height="1em" />
+                        </AppLink>
+                    </Show>
+                    <Show when=move || !has_homeworld.get()>
+                        <AppLink href="/" attr:class="btn-ghost py-3 px-6">
+                            {t!(i18n, welcome_skip_for_now)}
+                        </AppLink>
+                    </Show>
                 </div>
+                <details class="panel p-5 rounded-xl">
+                    <summary class="cursor-pointer font-semibold text-[color:var(--brand-fg)]">
+                        {t!(i18n, welcome_optional_preferences)}
+                    </summary>
+                    <div class="space-y-4 mt-4">
+                        // Step 2: price zone
+                        <div class="panel p-6 rounded-xl space-y-4">
+                            <div>
+                                <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                                    {t!(i18n, welcome_step_price_zone_label)}
+                                </h2>
+                                <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
+                                    {t!(i18n, welcome_step_price_zone_help)}
+                                </p>
+                            </div>
+                            <div class="max-w-md">
+                                <WorldPicker
+                                    current_world=price_region
+                                    set_current_world=set_price_region
+                                />
+                            </div>
+                        </div>
 
-                // Step 4: color palette
-                <div class="panel p-6 rounded-xl space-y-4">
-                    <div>
-                        <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
-                            {t!(i18n, welcome_step_palette_label)}
-                        </h2>
-                        <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
-                            {t!(i18n, welcome_step_palette_help)}
-                        </p>
-                    </div>
-                    <PalettePicker show_label=false />
-                </div>
+                        // Step 3: language
+                        <div class="panel p-6 rounded-xl space-y-4">
+                            <div>
+                                <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                                    {t!(i18n, welcome_step_language_label)}
+                                </h2>
+                                <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
+                                    {t!(i18n, welcome_step_language_help)}
+                                </p>
+                            </div>
+                            <div class="max-w-md">
+                                <LanguagePicker />
+                            </div>
+                        </div>
 
-                // CTA
-                <div class="flex flex-wrap items-center justify-between gap-4 pt-2">
-                    <AppLink
-                        href="/"
-                        attr:class="btn-ghost py-3 px-6"
-                    >
-                        {t!(i18n, welcome_skip_for_now)}
-                    </AppLink>
-                    {move || {
-                        let enabled = has_homeworld.get();
-                        let class = if enabled {
-                            "btn-primary py-3 px-6 text-lg"
-                        } else {
-                            "btn-primary py-3 px-6 text-lg opacity-50 pointer-events-none"
-                        };
-                        view! {
-                            <AppLink href="/" attr:class=class attr:aria-disabled=move || (!enabled).then_some("true")>
-                                <span>{t!(i18n, welcome_continue_cta)}</span>
-                                <Icon icon=i::FaArrowRightSolid width="1em" height="1em" />
-                            </AppLink>
-                        }
-                    }}
-                </div>
+                        // Step 4: color palette
+                        <div class="panel p-6 rounded-xl space-y-4">
+                            <div>
+                                <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                                    {t!(i18n, welcome_step_palette_label)}
+                                </h2>
+                                <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
+                                    {t!(i18n, welcome_step_palette_help)}
+                                </p>
+                            </div>
+                            <PalettePicker show_label=false />
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
     }
