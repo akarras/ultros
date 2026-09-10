@@ -67,9 +67,10 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 location.pathname.get_untracked(),
-                q.to_query_string()
+                q.to_query_string(),
+                location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,
@@ -286,9 +287,10 @@ fn MetricFilterEditor(
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 location.pathname.get_untracked(),
-                q.to_query_string()
+                q.to_query_string(),
+                location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,

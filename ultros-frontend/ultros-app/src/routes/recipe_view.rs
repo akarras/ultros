@@ -28,7 +28,7 @@ use crate::i18n::*;
 use crate::query_defaults::filter_query_signal;
 use crate::recipe_planner::{self as planner, Material, Offer, Recipe, Travel};
 
-pub(crate) use ultros_ui_crafting::links::{market_query, recipe_href};
+pub(crate) use ultros_ui_crafting::links::recipe_href;
 
 fn resolve_market_query(
     mut query: leptos_router::params::ParamsMap,
@@ -821,7 +821,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         <MetaDescription text="Plan a recipe without signing in. Compare full-stack ingredient costs, craft intermediates, and see what each extra world visit saves." />
         <div class="space-y-5 pb-12" data-testid="recipe-planner">
             <nav aria-label="Recipe navigation" class="flex flex-wrap gap-2 text-sm text-[color:var(--color-text-muted)]">
-                <a class="hover:text-brand-300" href=move || format!("/recipe-analyzer{}",market_query(&selected_world.get(),&resolved_query.get()))>"Recipe Analyzer"</a>
+                <a class="hover:text-brand-300" href=move || ultros_ui_crafting::links::recipe_analyzer_href(&selected_world.get(), &resolved_query.get())>"Recipe Analyzer"</a>
                 <span aria-hidden="true">"/"</span><span>"Recipe planner"</span>
             </nav>
             <header class="panel rounded-xl p-4 sm:p-5 flex flex-wrap items-center gap-4">

@@ -616,13 +616,13 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                         <Route path=path!("vendor-resale") view=VendorResale />
                         <Route path=path!("vendor-resale/:world") view=VendorWorldView />
-                        <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                        <Route path=path!("recipe-analyzer/:world?") view=RecipeAnalyzer />
                         <Route path=path!("recipe/:id") view=RecipeView />
                         <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
                         <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
-                        <Route path=path!("leve-analyzer") view=LeveAnalyzer />
-                        <Route path=path!("scrip-sources") view=ScripSources />
-                        <Route path=path!("venture-analyzer") view=VentureAnalyzer />
+                        <Route path=path!("leve-analyzer/:world?") view=LeveAnalyzer />
+                        <Route path=path!("scrip-sources/:world?") view=ScripSources />
+                        <Route path=path!("venture-analyzer/:world?") view=VentureAnalyzer />
                         <Route path=path!("analyzer/:world") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
                             let params = leptos_router::hooks::use_params_map();

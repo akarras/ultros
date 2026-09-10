@@ -199,6 +199,15 @@ if [ "${RUN_FC_CRAFTING_WORLD:-1}" != "0" ]; then
     fi
 fi
 
+if [ "${RUN_ANALYZER_WORLD_URLS:-1}" != "0" ]; then
+    log "running analyzer world URL compatibility E2E"
+    world_urls_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-world-urls ) || world_urls_exit=$?
+    if [ "$world_urls_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$world_urls_exit"
+    fi
+fi
+
 if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
     log "running analyzer grid and last-view E2E"
     analyzer_grids_exit=0

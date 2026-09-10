@@ -1,3 +1,4 @@
+use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::cells::{CellNote, CellValue, Enrich};
 use crate::analyzer_kit::columns::{
     CellCtx, ColumnKind, ColumnSpec, Layer, LazyFeed, PickerContext, PickerGroup, Sortability,
@@ -34,7 +35,9 @@ use crate::components::related_items::shard_item_ids;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
 use crate::components::virtual_grid::metrics::{GridValue, active_metric_columns};
-use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
+use crate::components::virtual_grid::saved_views::{
+    GridPresetView, GridSavedViews, provide_grid_saved_views,
+};
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
@@ -66,7 +69,7 @@ use crate::{
     },
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels,
-        home_world::use_home_world, region_for_world::use_region_for_world,
+        region_for_world::use_region_for_world,
     },
 };
 use icondata as i;
@@ -75,7 +78,6 @@ use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_i18n::I18nContext;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use leptos_use::{UseIntervalReturn, use_interval};
-use percent_encoding::utf8_percent_encode;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::LazyLock;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
@@ -4356,19 +4358,16 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
+    provide_grid_saved_views("recipe-analyzer-grid");
     let i18n = use_i18n();
     // Seeded here rather than in RecipeAnalyzerTable: that lives inside the
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
     seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let query = use_query_map_or_default();
-    let (home_world, _) = use_home_world();
-    let nav = use_navigate();
-
-    // The route has no `:world` path segment, so shared links carry the world
-    // in the query string (`?world=Gilgamesh`), same as the leve analyzer.
-    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
-    let datacenter = use_datacenter_for_world(move || query.with(|p| p.get("world").clone()));
+    let (selected_world, set_selected_world) = use_analyzer_world("/recipe-analyzer");
+    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
+    let datacenter = use_datacenter_for_world(move || selected_world.get().map(|world| world.name));
 
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
@@ -4439,22 +4438,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     .collect()
             });
             if let Some(migrated) = migrate_legacy_params(&pairs) {
-                // `query` hands back decoded values, so they have to be
-                // re-encoded on the way out - `world` is a bare world name
-                // today, but a raw `format!` here would silently corrupt any
-                // value that ever grows a space, `&`, or `=`.
-                let qs = migrated
-                    .iter()
-                    .map(|(k, v)| {
-                        format!(
-                            "{k}={}",
-                            utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("&");
+                let mut query = leptos_router::params::ParamsMap::new();
+                for (key, value) in migrated {
+                    query.insert(key, value);
+                }
+                let location = leptos_router::hooks::use_location();
                 nav(
-                    &format!("?{qs}"),
+                    &format!(
+                        "{}{}{}",
+                        location.pathname.get_untracked(),
+                        query.to_query_string(),
+                        location.hash.get_untracked()
+                    ),
                     NavigateOptions {
                         replace: true,
                         scroll: false,
@@ -4464,21 +4459,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             }
         });
     }
-
-    let worlds = use_context::<LocalWorldData>()
-        .expect("Should always have local world data")
-        .0
-        .unwrap();
-
-    let initial_world = query.with_untracked(|p| {
-        let binding = p.get("world");
-        let world = binding.as_deref().unwrap_or_default();
-        worlds
-            .lookup_world_by_name(world)
-            .and_then(|w| w.as_world().cloned())
-    });
-
-    let (selected_world, set_selected_world) = signal(initial_world);
 
     // The name fed to ingredient-pricing fetches: the sell world itself,
     // its datacenter (the default), or the whole region. World scope needs
@@ -4646,43 +4626,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             }
         },
     );
-
-    // If no world is selected initially, try to use home world
-    Effect::new(move |_| {
-        if selected_world.get_untracked().is_none()
-            && let Some(home) = home_world.get()
-        {
-            set_selected_world(Some(home));
-        }
-    });
-
-    // When selected world changes, update the URL
-    Effect::new(move |_| {
-        if let Some(world) = selected_world.get() {
-            let world_name = world.name;
-            let current_query = query.get_untracked();
-            let world_matches = current_query
-                .get("world")
-                .map(|s| s == world_name)
-                .unwrap_or(false);
-
-            if !world_matches {
-                let mut query_string = format!("?world={}", world_name);
-                for (k, v) in current_query.into_iter() {
-                    if k != "world" {
-                        query_string.push_str(&format!("&{}={}", k, v));
-                    }
-                }
-                nav(
-                    &query_string,
-                    NavigateOptions {
-                        scroll: false,
-                        ..Default::default()
-                    },
-                );
-            }
-        }
-    });
 
     // Revenue is always the sell world's price now, so its listings are
     // always needed (the old fetch was gated on the world-min metric).
@@ -5012,10 +4955,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 // has neither a home-world cookie nor `?world=` in the URL.
                 <div class="flex flex-col md:flex-row items-center gap-2">
                     <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, recipe_analyzer_sell_world_label)}</label>
-                    <div class="w-full md:w-auto">
+                    <div class="w-full md:w-auto" data-testid="analyzer-world-picker">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
+                            set_current_world=set_selected_world
                         />
                     </div>
                 </div>

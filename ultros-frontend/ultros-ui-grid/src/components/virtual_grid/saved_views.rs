@@ -17,6 +17,32 @@ struct GridSavedView {
     query: String,
 }
 
+#[derive(Clone)]
+struct GridSavedViewsState {
+    id: String,
+    views: Signal<Vec<GridSavedView>>,
+    set_views: WriteSignal<Vec<GridSavedView>>,
+}
+
+fn saved_views_state(id: String) -> GridSavedViewsState {
+    let (views, set_views, _) = use_local_storage_with_options::<Vec<GridSavedView>, JsonSerdeCodec>(
+        format!("ultros.grid.{id}.views"),
+        UseStorageOptions::default().delay_during_hydration(true),
+    );
+    GridSavedViewsState {
+        id,
+        views,
+        set_views,
+    }
+}
+
+/// Keep saved-view storage above a market table's Suspense boundary. A world
+/// switch can remount the table while leptos-use still has a storage-event
+/// microtask queued; page-owned state keeps that callback's signals alive.
+pub fn provide_grid_saved_views(id: &str) {
+    provide_context(saved_views_state(id.to_string()));
+}
+
 /// A built-in view the page offers above the user's own. The label arrives
 /// already localized: `t!` needs a literal key, so a key passed in as data
 /// could not be resolved here.
@@ -31,11 +57,9 @@ pub struct GridPresetView {
 /// stripped when a view is saved and re-applied from the live URL when one is
 /// opened, so a view stays portable across worlds and languages.
 ///
-/// `world` matters because four analyzers (recipe, venture, leve, scrip) carry
-/// the selected world in the query rather than the path. Without this, opening
-/// a view there would drop the world and silently fall back to the home world,
-/// and saving one would bake a world into a list the component documents as
-/// world-independent.
+/// `world` remains context for old query-based links and saved views. New
+/// analyzer URLs keep it in the path; applying an old view must not reintroduce
+/// a stale query world alongside that path.
 const CONTEXT_KEYS: [&str; 2] = ["lang", "world"];
 
 /// Every pair whose key is not context, in order.
@@ -83,7 +107,15 @@ fn parse_query(query: &str) -> ParamsMap {
 /// appending would emit the key twice.
 fn view_href(pathname: &str, query: &str, context: &ParamsMap) -> String {
     let mut params = without_context(parse_query(query));
+    let mut segments = pathname.trim_start_matches('/').split('/');
+    let path_world = matches!(
+        segments.next(),
+        Some("recipe-analyzer" | "venture-analyzer" | "leve-analyzer" | "scrip-sources")
+    ) && segments.next().is_some();
     for key in CONTEXT_KEYS {
+        if key == "world" && path_world {
+            continue;
+        }
         if let Some(value) = context.get(key) {
             params.insert(key, value);
         }
@@ -196,12 +228,10 @@ pub fn GridSavedViews(
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let location = use_location_or_default();
-    let (views, set_views, _) = use_local_storage_with_options::<Vec<GridSavedView>, JsonSerdeCodec>(
-        format!("ultros.grid.{id}.views"),
-        // Keep the initial render identical on SSR and the client. If
-        // storage is disabled, the signal still supports session use.
-        UseStorageOptions::default().delay_during_hydration(true),
-    );
+    let state = use_context::<GridSavedViewsState>()
+        .filter(|state| state.id == id)
+        .unwrap_or_else(|| saved_views_state(id));
+    let (views, set_views) = (state.views, state.set_views);
     let open = RwSignal::new(false);
     let name = RwSignal::new(String::new());
     let container = NodeRef::<Div>::new();
@@ -379,8 +409,7 @@ mod tests {
         );
     }
 
-    /// The world is *where you are*, not a filter. Four analyzers carry it in
-    /// the query, so leaving it in would pin a saved view to one world.
+    /// Legacy query worlds must not pin a saved view to one world.
     #[test]
     fn saving_a_view_drops_the_selected_world() {
         let saved = saved_query(context(&[
@@ -409,8 +438,7 @@ mod tests {
             view_href("/leve/Sargatanas", "", &context(&[("lang", "ja")])),
             "/leve/Sargatanas?lang=ja",
         );
-        // The query-param analyzers: without this the preset would drop the
-        // world and silently fall back to the reader's home world.
+        // Legacy links remain usable before canonicalization.
         assert_eq!(
             view_href(
                 "/venture-analyzer",
@@ -432,6 +460,26 @@ mod tests {
         );
         assert_eq!(href.matches("world=").count(), 1, "{href}");
         assert!(href.contains("world=Gilgamesh"), "{href}");
+    }
+
+    #[test]
+    fn old_saved_views_preserve_the_path_world_and_language() {
+        for tool in [
+            "recipe-analyzer",
+            "venture-analyzer",
+            "leve-analyzer",
+            "scrip-sources",
+        ] {
+            let path = format!("/{tool}/Gilgamesh");
+            assert_eq!(
+                view_href(
+                    &path,
+                    "?world=Sargatanas&profit=50000",
+                    &context(&[("world", "Cerberus"), ("lang", "ja")])
+                ),
+                format!("{path}?profit=50000&lang=ja"),
+            );
+        }
     }
 
     /// A trailing `&` in a hand-written preset query must not survive into an

@@ -28,7 +28,7 @@ fn section_of(path: &str) -> &str {
 /// Deliberately a plain `<a>` rather than `<AppLink>`: the router link it wraps sets
 /// `aria-current` by comparing the whole resolved href against the URL, and
 /// most of these hrefs carry a world (`/flip-finder/{homeworld}`,
-/// `/scrip-sources?world=…`). Viewing a world other than your homeworld — or
+/// `/scrip-sources/{homeworld}`). Viewing a world other than your homeworld — or
 /// any sub-route like `/items/category/5` — would then leave the sidebar with
 /// nothing highlighted. Matching the first path segment is what "which tool am
 /// I in" actually means here. The router intercepts clicks on any same-origin
@@ -108,7 +108,9 @@ pub fn SideNav() -> impl IntoView {
         let path_with_world = path_with_world.to_string();
         let path_no_world = path_no_world.to_string();
         Signal::derive(move || match homeworld.get() {
-            Some(w) => path_with_world.replace("{world}", &w.name),
+            Some(w) => {
+                path_with_world.replace("{world}", &leptos_router::location::Url::escape(&w.name))
+            }
             None => path_no_world.clone(),
         })
     };
@@ -181,7 +183,7 @@ pub fn SideNav() -> impl IntoView {
                     {t!(i18n, vendor_resale)}
                 </SideNavItem>
                 <SideNavItem
-                    href=with_world("/recipe-analyzer?world={world}", "/recipe-analyzer")
+                    href=with_world("/recipe-analyzer/{world}", "/recipe-analyzer")
                     section="recipe-analyzer"
                     icon=i::FaHammerSolid
                 >
@@ -195,7 +197,7 @@ pub fn SideNav() -> impl IntoView {
                     {t!(i18n, fc_crafting)}
                 </SideNavItem>
                 <SideNavItem
-                    href=with_world("/leve-analyzer?world={world}", "/leve-analyzer")
+                    href=with_world("/leve-analyzer/{world}", "/leve-analyzer")
                     section="leve-analyzer"
                     icon=i::FaScrollSolid
                 >
@@ -209,14 +211,14 @@ pub fn SideNav() -> impl IntoView {
                     {t!(i18n, market_trends)}
                 </SideNavItem>
                 <SideNavItem
-                    href=with_world("/scrip-sources?world={world}", "/scrip-sources")
+                    href=with_world("/scrip-sources/{world}", "/scrip-sources")
                     section="scrip-sources"
                     icon=i::FaCoinsSolid
                 >
                     {t!(i18n, scrip_sources)}
                 </SideNavItem>
                 <SideNavItem
-                    href=with_world("/venture-analyzer?world={world}", "/venture-analyzer")
+                    href=with_world("/venture-analyzer/{world}", "/venture-analyzer")
                     section="venture-analyzer"
                     icon=i::FaBriefcaseSolid
                 >
