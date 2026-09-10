@@ -14,4 +14,22 @@ rustflags = ["--cfg=web_sys_unstable_apis"]
 # universal across modern x86 and gives up only minor scheduling hints vs
 # znver2 — set `RUSTFLAGS` locally if you want a hotter target for dev builds.
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["--cfg=web_sys_unstable_apis", "-C", "target-cpu=x86-64-v3"]
+rustflags = [
+    "--cfg=web_sys_unstable_apis",
+    # Makes "Tried to access a reactive value that has already been disposed."
+    # name the signal instead of being anonymous. reactive_graph's
+    # `unwrap_signal!` only prints the signal's `defined_at` and the access site
+    # under `cfg(any(debug_assertions, leptos_debuginfo))`; prod is a release
+    # build, so every one of the 318 GlitchTip #7269 events so far carries the
+    # generic message and an unsymbolized stack, and the panicking site has
+    # stayed unidentified across three triage passes.
+    #
+    # Scoped to the native Linux target on purpose: the WASM build keeps the
+    # `[build]` rustflags above, so the client bundle does not grow a
+    # `&'static Location` per signal and per element. The cfg only adds
+    # metadata fields and `#[track_caller]` — it does not change the SSR HTML,
+    # so server/client hydration parity is unaffected.
+    "--cfg=leptos_debuginfo",
+    "-C",
+    "target-cpu=x86-64-v3",
+]
