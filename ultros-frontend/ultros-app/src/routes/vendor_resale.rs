@@ -57,7 +57,7 @@ use ultros_api_types::{
 use xiv_gen::ItemId;
 
 /// Intern a category id as a `&'static str` token for
-/// [`FilterChip`](crate::components::filter_chip::FilterChip)'s
+/// [`FilterChip`](ultros_ui::components::filter_chip::FilterChip)'s
 /// `(&'static str, String)` options contract.
 ///
 /// `item_search_categorys` is a small, fixed-size table read from the

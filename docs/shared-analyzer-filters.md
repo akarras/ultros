@@ -93,7 +93,7 @@ provider's required-data set; `MarketGrid` uses the registry's effective filters
 including aliases, when requesting windows. Preserve intrinsic `partial` flags:
 filters may evaluate known rows without claiming complete data or a global sort.
 
-## Remaining consumers for issue #1351
+## Consumers for issue #1351
 
 The six MarketGrid tools (Flip Finder, Vendor Resale, Ventures, Leves, FC
 Crafting, Scrip Sources), Trends, Currency Exchange, and the Recipe Analyzer's `AnalyzerGrid` host use
@@ -105,14 +105,7 @@ on-hand, listing world/DC and pricing (`cost-basis`, `revenue`, `buy-scope`,
 `AnalyzerGrid`'s `picker` prop forwards the Columns picker's headings to the
 `+ Filter` menu, which keeps each group together.
 
-Keep #1351 open until the remaining tables adopt it while moving to the
-shared grid, each under its own route migration:
-
-- Item Explorer (#1346).
-
-Those tasks own their route migrations. They should use the current app
-re-exports and preserve existing column IDs, URL presets, and pre-calculation
-inputs rather than copying toolbar or chip implementations.
+Item Explorer also uses the shared grid and registry; all planned consumers have now adopted it.
 
 T09 (Trends, #1344) is done: the page keeps `category` and `show_suspicious`
 as registered controls, aliases `min_sales`/`min_price` onto its `sales` and
@@ -122,6 +115,11 @@ metrics. They are not the `sale_stats` follow-window columns: the deep-scan
 drops noise-filtered sales and its confidence band comes from that scan, while
 `sale_stats` counts every recorded sale and its confidence is a seven-day fact.
 Both sets stay available from the Columns picker under separate headings.
+
+T11 (Item Explorer, #1346) is done: category and job-set lists use the shared
+grid and filter registry, preserving their existing query keys and saved
+column choices. Market statistics load when a selected column, filter, or
+sort needs them.
 
 ## Regression coverage
 

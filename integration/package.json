@@ -10,6 +10,7 @@
     "test:analyzer-grids": "node ./analyzer-grids.cjs",
     "test:listing-history-api": "node ./listing-history-api.cjs",
     "test:market-window": "node ./market-window.cjs",
+    "test:item-explorer-grid": "node ./item-explorer-grid.cjs",
     "test:shared-analyzer-data": "node ./shared-analyzer-data.cjs",
     "test:currency-exchange": "node ./currency-exchange.cjs",
     "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",

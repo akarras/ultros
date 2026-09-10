@@ -111,6 +111,14 @@ const routes = ['/', '/items', '/flip-finder', '/flip-finder/Gilgamesh', '/analy
 
 Edit that array to add/remove pages you care about. Re-run `npm run test:desktop` or `npm run test:mobile` to generate fresh screenshots.
 
+## Focused probes
+
+Single-page regression scripts live beside `runner.cjs` and each has an npm
+script (`npm run test:<name>`). They need a running server on `BASE_URL`.
+`test:item-explorer-grid` covers the Item Explorer on the shared market grid:
+no pagination, legacy `?page=`/filter links, on-demand `sale_stats` requests
+and phone-width scrolling.
+
 ## Horizontal-overflow guard
 
 Every route in both passes asserts that the page itself does not scroll sideways:
