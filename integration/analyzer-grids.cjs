@@ -89,9 +89,10 @@ async function main(){
       const menu=`.virtual-grid-heading[data-column="${column}"]`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));
       await page.click(menu,{button:'right'});
-      // Every analyzer edits its thresholds through the shared registry.
+      // Every tool is a registered host: the recipe's old row-filter keys are
+      // aliases of its grid metrics (#1331), like the other six before it.
       const registered=true;
-      const form=registered?`.grid-column-filter[data-metric-filter="${column}"]`:`.grid-column-filter[data-filter="${filter}"]`;
+      const form=`.grid-column-filter[data-metric-filter="${column}"]`;
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';
       if(filter==='scrip')await page.select(`${form} select[aria-label="Value"]`,selected);

@@ -61,6 +61,12 @@ pub enum ColumnKind {
     RevSignal(PriceSignal),
     /// An alternative cost signal over the buy scope, as a column.
     CostSignal(PriceSignal),
+    /// Gil traded of the output at the revenue place over the page window,
+    /// for the row's priced quality.
+    RevGil,
+    /// The thinnest ingredient market: the smallest gil traded over the
+    /// page window among the ingredient lines bought on the buy scope.
+    CostGil,
     HopGain,
     HopWorlds,
     /// The revenue signal at the sell scope minus the same signal on the

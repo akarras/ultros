@@ -90,6 +90,7 @@ mod tests {
             shard_cost: 0,
             on_hand_savings: 0,
             ingredient_lines: lines,
+            market_purchases: vec![],
             sub_crafts: vec![],
             unpriced_market_lines: unpriced,
         }

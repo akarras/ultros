@@ -12,13 +12,14 @@ use crate::components::icon::Icon;
 use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
-use crate::components::virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid};
+use crate::components::virtual_grid::{ColumnFilter, GridColumn};
 use crate::i18n::*;
 use icondata as i;
 use thousands::Separable;
 
 use super::cells::{CellValue, render_cell};
 use super::columns::{CellCtx, ColumnKind, Sortability, ToolColumnMeta};
+use super::market::{MarketData, MarketGrid, MarketSubject};
 
 /// A row a grid can render: whatever [`QueryGrid`] needs of it,
 /// plus the identity its keyed `<For>` diffs on.
@@ -265,13 +266,20 @@ fn header_cell<T: 'static, M: SortColumn>(
 
 /// One tool's table: a header row and virtualised body rows, both driven
 /// by the same `columns` table so a column can never appear in one and
-/// not the other.
+/// not the other. Hosted on [`MarketGrid`], so every shared `market-*`
+/// column, its header sorting and its window-aware labels come with it.
 ///
 /// Rows retain their stable source index while the grid handles striping.
 #[component]
 pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// The page's whole column table, in DOM order.
     columns: &'static [ToolColumnMeta<T, M>],
+    /// The market the shared columns describe: its scope, window and
+    /// per-window statistics.
+    market: MarketData,
+    /// The item a row's shared columns read, at the quality and place the
+    /// page priced it.
+    subject: Arc<dyn Fn(&T) -> MarketSubject + Send + Sync>,
     /// Rows paired with their position in the unsorted list, so the page
     /// can stripe them and key them independently of the row value.
     #[prop(into)]
@@ -430,8 +438,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
             })
             .collect::<Vec<_>>()
     });
+    let subject_of = Arc::new(move |(_, row): &(usize, T)| subject(row));
     view! {
-        <QueryGrid id label metrics show_saved_views
+        <MarketGrid id label metrics show_saved_views market subject=subject_of
             measure_version=measure_version
             on_rows=on_rows.unwrap_or_else(||Callback::new(|_|{}))
             each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))
@@ -624,6 +633,7 @@ mod tests {
     use crate::analyzer_kit::columns::{
         ColumnKind, ColumnSpec, Layer, LazyFeed, PickerGroup, sortability_for,
     };
+    use crate::analyzer_kit::market::use_market_data;
     use leptos_i18n::context::init_i18n_context;
     use std::fmt;
 
@@ -795,6 +805,8 @@ mod tests {
             let html = view! {
                 <AnalyzerGrid
                     columns=&COLS
+                    market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                    subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                     rows=Signal::derive(|| vec![(0usize, Row(7))])
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
@@ -835,6 +847,8 @@ mod tests {
                     Some(range) => view! {
                         <AnalyzerGrid
                             columns=&COLS
+                    market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                    subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                             rows=Signal::derive(|| vec![(0usize, Row(7))])
                             visible_cols=Signal::derive(HashSet::new)
                             sort_mode=Signal::derive(|| None::<Col>)
@@ -850,6 +864,8 @@ mod tests {
                     None => view! {
                         <AnalyzerGrid
                             columns=&COLS
+                    market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                    subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                             rows=Signal::derive(|| vec![(0usize, Row(7))])
                             visible_cols=Signal::derive(HashSet::new)
                             sort_mode=Signal::derive(|| None::<Col>)
@@ -880,6 +896,8 @@ mod tests {
             let html = view! {
                 <AnalyzerGrid
                     columns=&COLS
+                    market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                    subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                     rows=Signal::derive(|| vec![(0usize, Row(7))])
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
@@ -916,6 +934,8 @@ mod tests {
             let html = view! {
                 <AnalyzerGrid
                     columns=&COLS
+                    market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                    subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                     rows=Signal::derive(|| vec![(0usize, Row(7))])
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
@@ -1227,6 +1247,8 @@ mod tests {
                 view! {
                     <AnalyzerGrid
                         columns=cols
+                        market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                        subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                         rows=Signal::derive(|| vec![(0usize, Row(1))])
                         visible_cols=Signal::derive(move || visible.iter().copied().collect::<HashSet<_>>())
                         sort_mode=Signal::derive(|| None::<Col>)
@@ -1260,6 +1282,8 @@ mod tests {
             let html = view! {
                 <AnalyzerGrid
                     columns=&LAZY_COLS
+                    market=use_market_data(Signal::derive(|| "Gilgamesh".to_string()))
+                    subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                     rows=Signal::derive(|| vec![(0usize, Row(1))])
                     visible_cols=Signal::derive(|| ["extra"].into_iter().collect::<HashSet<_>>())
                     sort_mode=Signal::derive(|| Some(Col::Profit))

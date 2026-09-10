@@ -70,8 +70,26 @@ pub enum BodyRole {
 
 /// Page state that changes which bodies are needed but is not part of
 /// the formula.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipeNeeds {
+    /// The page's selected sale-history window (`?window=`), in days: the
+    /// window every sale *signal* reads on both sides of the ledger. The
+    /// sell world's seven-day context body is fetched whatever this says.
+    pub window: u16,
+    /// Gil traded of the output at the revenue place is visible or the
+    /// sort target: reads the same statistics body a sale revenue signal
+    /// does.
+    pub rev_gil: bool,
+    /// The thinnest-ingredient-market column is visible or the sort
+    /// target: reads the buy scope's statistics body like a sale cost
+    /// signal does.
+    pub cost_gil: bool,
+    /// Hop gain is wanted ([`NeededSignals::hop`]): its home side prices
+    /// the sell world's own market under the selected cost signal.
+    pub hop: bool,
+    /// Scope vs home is wanted ([`NeededSignals::scope_vs_home`]): its home
+    /// side reads the revenue signal on the sell world's own market.
+    pub scope_vs_home: bool,
     /// The opt-in outlier filter reads raw recent sales.
     pub outliers: bool,
     /// Buy from = This world only, and it resolved to the sell world: the
@@ -94,9 +112,41 @@ pub struct RecipeNeeds {
     pub stats_30: bool,
 }
 
+impl Default for RecipeNeeds {
+    /// The seven-day default is the window every existing URL means.
+    fn default() -> Self {
+        Self {
+            window: SALE_STATS_WINDOW_DAYS,
+            rev_gil: false,
+            cost_gil: false,
+            hop: false,
+            scope_vs_home: false,
+            outliers: false,
+            buy_scope_is_sell_world: false,
+            cost_signals: BTreeSet::new(),
+            sell_scope_is_buy_scope: false,
+            rev_signals: BTreeSet::new(),
+            stats_30: false,
+        }
+    }
+}
+
 /// The bodies the recipe analyzer needs for `formula`. The default URL
 /// yields exactly the three bodies the page fetches today.
+///
+/// Every sale signal reads `needs.window`. The sell world's seven-day body
+/// is always in the set (velocity, confidence, last sold, the 7-day volume
+/// and VWAP read it), so at the default window a sale revenue signal on
+/// the sell world needs nothing more; at any other window it needs the
+/// sell world's body at that window too, and so does a buy side that
+/// aliases the sell world.
 pub fn needed_bodies(formula: &ProfitFormula, needs: &RecipeNeeds) -> BTreeSet<BodyRole> {
+    debug_assert!(
+        is_supported_window(needs.window),
+        "a window the server does not serve: {}",
+        needs.window
+    );
+    let window = needs.window;
     let mut set = BTreeSet::from([
         BodyRole::CheapestBuyScope,
         BodyRole::CheapestSellWorld,
@@ -106,9 +156,21 @@ pub fn needed_bodies(formula: &ProfitFormula, needs: &RecipeNeeds) -> BTreeSet<B
     // IS a world and that world resolved to the sell world.
     let aliased = formula.buy_scope() == BuyScope::World && needs.buy_scope_is_sell_world;
     let wants_sale_stats = formula.cost_signal().sale_stat().is_some()
-        || needs.cost_signals.iter().any(|s| s.sale_stat().is_some());
+        || needs.cost_signals.iter().any(|s| s.sale_stat().is_some())
+        || needs.cost_gil;
     if wants_sale_stats && !aliased {
-        set.insert(BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS));
+        set.insert(BodyRole::BuyScopeStats(window));
+    }
+    // An aliased buy side reads the sell world's body at the window; at
+    // the default window that body is the context body already in the set.
+    if wants_sale_stats && aliased && window != SALE_STATS_WINDOW_DAYS {
+        set.insert(BodyRole::SellWorldStats(window));
+    }
+    // So does Hop gain's home side under a sale cost signal: it prices the
+    // sell world's own market under the same signal as the scope side.
+    if needs.hop && formula.cost_signal().sale_stat().is_some() && window != SALE_STATS_WINDOW_DAYS
+    {
+        set.insert(BodyRole::SellWorldStats(window));
     }
     if needs.outliers {
         set.insert(BodyRole::RecentSalesSellWorld);
@@ -116,25 +178,39 @@ pub fn needed_bodies(formula: &ProfitFormula, needs: &RecipeNeeds) -> BTreeSet<B
     if needs.stats_30 {
         set.insert(BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS));
     }
+    let wants_sell_stats = formula.revenue_signal().sale_stat().is_some()
+        || needs.rev_signals.iter().any(|s| s.sale_stat().is_some())
+        || needs.rev_gil;
     // Phase F. The sell scope only ever *adds*: at `Scope::World` — every
-    // pre-Phase-F URL and every flag-off page — this block is skipped
-    // entirely and the set is byte-identical to what it always was.
-    if formula.sell_scope() != Scope::World {
+    // pre-Phase-F URL and every flag-off page — the revenue side reads the
+    // sell world, whose seven-day body is already in the set; only a wider
+    // window adds a body there.
+    if formula.sell_scope() == Scope::World {
+        if wants_sell_stats && window != SALE_STATS_WINDOW_DAYS {
+            set.insert(BodyRole::SellWorldStats(window));
+        }
+    } else {
         // `CheapestBuyScope` is unconditional, so a matching buy scope
         // always covers the cheapest half.
         if !needs.sell_scope_is_buy_scope {
             set.insert(BodyRole::CheapestSellScope);
         }
-        let wants_sell_stats = formula.revenue_signal().sale_stat().is_some()
-            || needs.rev_signals.iter().any(|s| s.sale_stat().is_some());
         // The statistics half dedupes only against a body that is actually
         // in the set: the buy-scope one is itself conditional (and is
         // suppressed outright when it aliases the sell world), and reusing
         // a body nobody fetched leaves the revenue cells permanently "—".
-        let buy_covers = needs.sell_scope_is_buy_scope
-            && set.contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS));
+        let buy_covers =
+            needs.sell_scope_is_buy_scope && set.contains(&BodyRole::BuyScopeStats(window));
         if wants_sell_stats && !buy_covers {
-            set.insert(BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS));
+            set.insert(BodyRole::SellScopeStats(window));
+        }
+        // Scope vs home's home side reads the revenue signal on the sell
+        // world's own market, which at a wider window is its own body.
+        if needs.scope_vs_home
+            && formula.revenue_signal().sale_stat().is_some()
+            && window != SALE_STATS_WINDOW_DAYS
+        {
+            set.insert(BodyRole::SellWorldStats(window));
         }
     }
     set
@@ -250,11 +326,169 @@ mod tests {
         RecipeNeeds {
             outliers,
             buy_scope_is_sell_world: same,
-            cost_signals: BTreeSet::new(),
-            sell_scope_is_buy_scope: false,
-            rev_signals: BTreeSet::new(),
-            stats_30: false,
+            ..RecipeNeeds::default()
         }
+    }
+
+    fn at(window: u16, base: RecipeNeeds) -> RecipeNeeds {
+        RecipeNeeds { window, ..base }
+    }
+
+    /// The default `RecipeNeeds` is the seven-day window, so every body
+    /// set a pre-window URL produced is byte-identical.
+    #[test]
+    fn the_default_window_is_seven_days() {
+        assert_eq!(RecipeNeeds::default().window, SALE_STATS_WINDOW_DAYS);
+        assert!(!RecipeNeeds::default().rev_gil);
+        assert!(!RecipeNeeds::default().cost_gil);
+    }
+
+    /// At a wider window every sale signal reads that window's body: the
+    /// buy scope's and, on the sell world, a second body beside the
+    /// seven-day context one.
+    #[test]
+    fn a_wider_window_moves_every_sale_signal_body() {
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::SaleMedian),
+            Some(PriceSignal::SaleMin),
+            None,
+        );
+        let got = needed_bodies(&f, &at(30, needs(false, false)));
+        assert_eq!(
+            got.into_iter().collect::<Vec<_>>(),
+            vec![
+                BodyRole::CheapestBuyScope,
+                BodyRole::CheapestSellWorld,
+                BodyRole::SellWorldStats(SALE_STATS_WINDOW_DAYS),
+                BodyRole::SellWorldStats(30),
+                BodyRole::BuyScopeStats(30),
+            ]
+        );
+        // Listing bases at a wider window: the window changes nothing.
+        let listing = ProfitFormula::recipe_from_query(None, None, None);
+        assert_eq!(
+            needed_bodies(&listing, &at(90, needs(false, false))),
+            needed_bodies(&listing, &needs(false, false))
+        );
+        // A sale revenue signal at the default window reads the context
+        // body; at 90 days it needs the 90-day sell-world body.
+        let rev = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleAvg), None);
+        assert!(!needed_bodies(&rev, &needs(false, false)).contains(&BodyRole::SellWorldStats(90)));
+        assert!(
+            needed_bodies(&rev, &at(90, needs(false, false)))
+                .contains(&BodyRole::SellWorldStats(90))
+        );
+        // The pinned 30-day pair is its own reason for the 30-day body,
+        // whatever the window says.
+        let pinned = RecipeNeeds {
+            stats_30: true,
+            ..at(90, needs(false, false))
+        };
+        let got = needed_bodies(&listing, &pinned);
+        assert!(got.contains(&BodyRole::SellWorldStats(30)));
+        assert!(!got.contains(&BodyRole::SellWorldStats(90)));
+    }
+
+    /// Buy = This world aliases the sell world per window: at the default
+    /// window the context body covers it, at a wider one the sell world's
+    /// body at that window is needed instead of a buy-scope body.
+    #[test]
+    fn the_buy_alias_holds_per_window() {
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::SaleMedian),
+            None,
+            Some(BuyScope::World),
+        );
+        let seven = needed_bodies(&f, &needs(false, true));
+        assert!(!seven.contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS)));
+        assert!(
+            !seven
+                .iter()
+                .any(|b| matches!(b, BodyRole::SellWorldStats(w) if *w != 7))
+        );
+        let thirty = needed_bodies(&f, &at(30, needs(false, true)));
+        assert!(!thirty.contains(&BodyRole::BuyScopeStats(30)));
+        assert!(thirty.contains(&BodyRole::SellWorldStats(30)));
+        // At a wider sell scope the aliased buy side still reads the sell
+        // WORLD's window body, not the scope's.
+        let scoped = f.with_sell_scope(SellScope(Scope::Region));
+        let got = needed_bodies(&scoped, &at(30, needs(false, true)));
+        assert!(got.contains(&BodyRole::SellWorldStats(30)));
+        assert!(!got.contains(&BodyRole::SellScopeStats(30)));
+    }
+
+    /// The two "home side" columns price the sell world's own market under
+    /// a sale signal: at the default window the context body serves them,
+    /// at any other window they need the sell world's body at that window.
+    #[test]
+    fn home_side_columns_need_the_sell_worlds_window_body() {
+        let sale_cost = ProfitFormula::recipe_from_query(Some(PriceSignal::SaleMedian), None, None);
+        let hop = RecipeNeeds {
+            hop: true,
+            ..needs(false, false)
+        };
+        assert!(
+            !needed_bodies(&sale_cost, &hop)
+                .iter()
+                .any(|b| matches!(b, BodyRole::SellWorldStats(w) if *w != 7))
+        );
+        assert!(
+            needed_bodies(&sale_cost, &at(30, hop.clone())).contains(&BodyRole::SellWorldStats(30))
+        );
+        // Under a listing cost signal hop prices both sides from listings.
+        let listing = ProfitFormula::recipe_from_query(None, None, None);
+        assert!(!needed_bodies(&listing, &at(30, hop)).contains(&BodyRole::SellWorldStats(30)));
+        // Scope vs home: only at a wider scope, only under a sale revenue.
+        let scoped = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMin), None)
+            .with_sell_scope(SellScope(Scope::Datacenter));
+        let home = RecipeNeeds {
+            scope_vs_home: true,
+            ..needs(false, false)
+        };
+        let got = needed_bodies(&scoped, &at(90, home.clone()));
+        assert!(got.contains(&BodyRole::SellWorldStats(90)));
+        assert!(got.contains(&BodyRole::SellScopeStats(90)));
+        assert!(!needed_bodies(&scoped, &home).contains(&BodyRole::SellWorldStats(90)));
+        let world_scope = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMin), None);
+        assert!(
+            !needed_bodies(&world_scope, &at(90, home))
+                .iter()
+                .any(|b| *b == BodyRole::SellScopeStats(90))
+        );
+    }
+
+    /// The two gil columns want the same bodies their sale-signal siblings
+    /// want, on their own side of the ledger.
+    #[test]
+    fn gil_columns_need_their_sides_statistics() {
+        let listing = ProfitFormula::recipe_from_query(None, None, None);
+        let cost = RecipeNeeds {
+            cost_gil: true,
+            ..needs(false, false)
+        };
+        assert!(
+            needed_bodies(&listing, &cost)
+                .contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS))
+        );
+        let rev = RecipeNeeds {
+            rev_gil: true,
+            ..at(30, needs(false, false))
+        };
+        let got = needed_bodies(&listing, &rev);
+        assert!(got.contains(&BodyRole::SellWorldStats(30)));
+        assert!(!got.contains(&BodyRole::BuyScopeStats(30)));
+        let wider = listing.with_sell_scope(SellScope(Scope::Datacenter));
+        assert!(needed_bodies(&wider, &rev).contains(&BodyRole::SellScopeStats(30)));
+        // Revenue-side gil at the default window and sell scope reads the
+        // context body: nothing is added.
+        let rev7 = RecipeNeeds {
+            rev_gil: true,
+            ..needs(false, false)
+        };
+        assert_eq!(
+            needed_bodies(&listing, &rev7),
+            needed_bodies(&listing, &needs(false, false))
+        );
     }
 
     fn set(signals: &[PriceSignal]) -> BTreeSet<PriceSignal> {

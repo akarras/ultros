@@ -100,8 +100,8 @@ Crafting, Scrip Sources), Trends, Currency Exchange, and the Recipe Analyzer's `
 this registry. Recipe keeps its legacy `profit`, `roi` and `min-sales` keys as
 aliases of its `profit`, `roi` and `daily-sales` metrics (`min-sales=0` still
 means "no limit"), and registers its job, sub-craft, HQ, outlier, crystal,
-on-hand, listing world/DC and pricing (`cost-basis`, `revenue`, `buy-scope`,
-`sell-scope`) inputs as controls; Clear all preserves the four pricing inputs.
+on-hand and pricing (`cost-basis`, `revenue`, `buy-scope`,
+`sell-scope`) inputs as controls. Listing world/DC keys are metric aliases. Its MarketGrid host shares the page window, and Clear all preserves that window and the four pricing inputs.
 `AnalyzerGrid`'s `picker` prop forwards the Columns picker's headings to the
 `+ Filter` menu, which keeps each group together.
 
