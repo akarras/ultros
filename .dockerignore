@@ -1,6 +1,9 @@
 # Build artifacts
 /target
 **/target
+# Local exports must not invalidate COPY . . when CI extracts another target.
+/build-timings
+/debug
 
 # Docker
 Dockerfile

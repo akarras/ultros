@@ -65,19 +65,24 @@ RUN cargo chef cook --locked --release --target wasm32-unknown-unknown \
     --recipe-path recipe.json
 # Now the actual source.
 COPY . .
-# Limit application compilation to one crate at a time on the CI runner;
-# dependency cooking above retains Cargo's normal parallelism.
-ENV CARGO_BUILD_JOBS=1 \
+# Keep low-memory local builds conservative; CI overrides this to 2 on its
+# 4-core / 16 GiB runner. Cargo's jobserver also limits LLVM codegen parallelism,
+# so forcing one job leaves cores idle even while compiling one large crate.
+# Declare this AFTER cooking so tuning concurrency preserves the dependency cache.
+ARG APP_BUILD_JOBS=1
+ENV CARGO_BUILD_JOBS=${APP_BUILD_JOBS} \
     CARGO_INCREMENTAL=0
 # cargo-leptos 0.3 builds the server and client in parallel. Even with
 # CARGO_BUILD_JOBS=1, the two distinct rustc processes (one for native, one
-# for WASM) can overlap and exceed the 7GB runner limit.
+# for WASM) can overlap and exceeded the old 7 GiB runner's memory limit.
 #
 # Use Leptos for both passes so Cargo's environment and target selection stay
 # consistent. The frontend-only pass also generates CSS, JS and optimized WASM;
 # it cannot launch a second server compilation, even if a fingerprint changes.
-RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only -vv
-RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only -vv
+RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
+    --bin-cargo-args=--timings -vv
+RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
+    --lib-cargo-args=--timings -vv
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the
@@ -104,6 +109,13 @@ RUN cp /app/target/server-release/ultros /app/target/server-release/ultros.unstr
 # runtime image, not this artifact.
 FROM scratch AS debug-files
 COPY --from=builder /app/target/server-release/ultros.unstripped /ultros.unstripped
+
+# ---- Compiler timings (export-only, including PR builds) ---------------------
+# Cargo records per-crate durations and codegen time. Keep these out of the
+# runtime image, but available to compare CI runs after changing build settings.
+FROM scratch AS build-timings
+COPY --from=builder /app/target/cargo-timings/ /server/
+COPY --from=builder /app/target/front/cargo-timings/ /frontend/
 
 # ---- Runtime image -----------------------------------------------------------
 FROM debian:bookworm-slim AS runner

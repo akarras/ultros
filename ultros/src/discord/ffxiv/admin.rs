@@ -14,16 +14,28 @@ use crate::item_update_service::{SweepLockGuard, SweepRun, UpdateService};
 /// spam the channel into uselessness.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-/// How long a resumed sweep waits for the Discord bot to finish connecting
-/// before it starts anyway. Only the reporting depends on the gateway — the
-/// sweep itself runs either way, logging instead of posting.
-const RESUME_GATEWAY_WAIT: Duration = Duration::from_secs(60);
-
-/// Interval between checks for the gateway during [`RESUME_GATEWAY_WAIT`].
-const RESUME_GATEWAY_POLL: Duration = Duration::from_secs(2);
-
+/// Poll while another replica holds the lease, or the database is unavailable.
 const RESUME_RETRY: Duration = Duration::from_secs(30);
+/// Rest between full coverage passes. Recent-item catch-up continues separately.
+const RECONCILIATION_INTERVAL: chrono::Duration = chrono::Duration::hours(6);
+/// Retry an interrupted/failed pass without spinning against an unhealthy upstream.
+const RECONCILIATION_RETRY: Duration = Duration::from_secs(5 * 60);
 
+/// A resumed pre-boot pass may have scanned early worlds before the outage.
+/// Follow it with a new pass; a pass begun after this boot also satisfies other
+/// replicas that were already alive when it began.
+fn reconciliation_due(
+    last: Option<&ultros_db::entity::market_sweep::Model>,
+    boot: chrono::DateTime<chrono::FixedOffset>,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    last.is_none_or(|last| {
+        last.started_at < boot
+            || last
+                .finished_at
+                .is_none_or(|finished| now - finished >= RECONCILIATION_INTERVAL)
+    })
+}
 enum ResumeAttempt<T> {
     Finished,
     Busy,
@@ -75,7 +87,7 @@ where
 /// [`UpdateService::begin_or_resume_sweep`] — so re-running this after a
 /// deploy costs nothing. (It normally does not need re-running at all: the
 /// next process picks the sweep up on its own, see
-/// [`spawn_interrupted_sweep_resume`].)
+/// [`spawn_market_reconciliation`].)
 #[poise::command(slash_command, prefix_command, owners_only)]
 pub(crate) async fn rescan_market(ctx: Context<'_>) -> Result<(), Error> {
     let service = ctx.data().update_service.clone();
@@ -130,114 +142,84 @@ pub(crate) async fn rescan_market(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Picks up a full sweep that a restart interrupted, if there is one.
-///
-/// A sweep takes hours and deploys land more often than that, so without this
-/// a sweep essentially never finished: every restart threw the run away and an
-/// operator had to notice and re-issue `/rescan_market`. The per-chunk cursor
-/// in `market_sweep_world` is what makes resuming cheap; this is what makes it
-/// automatic.
-///
-/// Reporting waits [`RESUME_GATEWAY_WAIT`] for the bot to connect so progress
-/// lands in the channel the sweep was originally started from. If the gateway
-/// never comes up — a deployment without Discord configured — the sweep still
-/// runs and reports to the log.
-pub(crate) fn spawn_interrupted_sweep_resume(
-    service: Arc<UpdateService>,
-    token: CancellationToken,
-) {
-    tokio::spawn(async move {
-        // Cheap early-out on the overwhelmingly common path: no sweep was in
-        // flight, so nothing here needs a lease or the gateway.
-        match service.db.active_market_sweep().await {
-            Ok(None) => return,
-            Ok(Some(_)) => {}
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "could not check for an interrupted market sweep; retrying"
-                );
-            }
-        }
-        let reporter = wait_for_gateway(&token).await;
-        if token.is_cancelled() {
-            // Shut down before the bot came up. The sweep is on disk; the next
-            // start picks it up.
-            return;
-        }
-        // Claimed after the wait, so a replica that loses the race does not
-        // hold the lease for a minute first.
-        let Some((guard, run)) = await_resume_claim(&token, RESUME_RETRY, || async {
-            // A rolling deploy can start this replica before the old worker
-            // releases its lease. Stay eligible until the sweep is finished,
-            // rather than abandoning its durable cursor after one busy claim.
-            match service.db.active_market_sweep().await {
-                Ok(None) => return ResumeAttempt::Finished,
-                Ok(Some(_)) => {}
-                Err(error) => {
-                    tracing::warn!(?error, "could not check interrupted sweep; retrying");
-                    return ResumeAttempt::Busy;
-                }
-            }
-            let Some(guard) = service.try_begin_full_sweep().await else {
-                return ResumeAttempt::Busy;
-            };
-            match service.resume_sweep().await {
-                Ok(None) => ResumeAttempt::Finished,
-                Ok(Some(run)) => ResumeAttempt::Acquired((guard, run)),
-                Err(error) => {
-                    tracing::warn!(?error, "could not load interrupted sweep; retrying");
-                    ResumeAttempt::Busy
-                }
-            }
-        })
-        .await
-        else {
-            return;
-        };
-        let worlds_total = service.world_cache.get_all_worlds().count();
-        let announcement = format!(
-            "Resuming the market sweep interrupted by a restart: {}/{worlds_total} worlds already done.",
-            run.worlds_done()
-        );
-        let reporter = match (reporter, run.discord_channel_id()) {
-            (Some(http), Some(channel)) => Some((http, ChannelId::new(channel as u64))),
-            _ => None,
-        };
-        match &reporter {
-            Some((http, channel_id)) => {
-                if let Err(error) = channel_id
-                    .send_message(http, CreateMessage::new().content(&announcement))
-                    .await
-                {
-                    tracing::error!(?error, "failed to announce the resumed market sweep");
-                }
-            }
-            None => tracing::info!("{announcement}"),
-        }
-        spawn_sweep(service, guard, run, reporter);
-    });
-}
-
-/// The bot's HTTP client once the gateway is up, or `None` if it has not
-/// connected within [`RESUME_GATEWAY_WAIT`].
-async fn wait_for_gateway(token: &CancellationToken) -> Option<Arc<Http>> {
-    let deadline = Instant::now() + RESUME_GATEWAY_WAIT;
-    loop {
-        if let Some(ctx) = crate::alerts::delivery::get_serenity_ctx() {
-            return Some(ctx.http.clone());
-        }
-        if Instant::now() >= deadline {
-            tracing::warn!(
-                "Discord did not connect in time; the resumed market sweep will report to the log"
-            );
-            return None;
-        }
-        tokio::select! {
-            _ = token.cancelled() => return None,
-            _ = tokio::time::sleep(RESUME_GATEWAY_POLL) => {}
-        }
+/// Start full reconciliation immediately, resume durable progress after failures,
+/// and repeat coverage independently of the bounded recent-update endpoint.
+/// Discord availability never delays the work. The advisory lease serializes
+/// automatic passes with manual sweeps and workers on other replicas.
+pub(crate) fn spawn_market_reconciliation(service: Arc<UpdateService>, token: CancellationToken) {
+    // QA instances can share a database without starting a broad upstream scan.
+    // Manual /rescan_market and the existing recent-item loop remain available.
+    if crate::env_flag_enabled(
+        "ULTROS_DISABLE_AUTOMATIC_RECONCILIATION",
+        std::env::var("ULTROS_DISABLE_AUTOMATIC_RECONCILIATION")
+            .ok()
+            .as_deref(),
+    ) {
+        tracing::warn!("automatic full market reconciliation disabled");
+        return;
     }
+    let boot = chrono::Utc::now().fixed_offset();
+    tokio::spawn(async move {
+        loop {
+            let claimed = await_resume_claim(&token, RESUME_RETRY, || async {
+                let Some(guard) = service.try_begin_full_sweep().await else {
+                    return ResumeAttempt::Busy;
+                };
+                // Recheck durable state under the lease: another replica may
+                // have finished while we waited.
+                let run = match service.resume_sweep().await {
+                    Ok(Some(run)) => run,
+                    Ok(None) => {
+                        let last = match service.db.latest_completed_market_sweep().await {
+                            Ok(last) => last,
+                            Err(error) => {
+                                tracing::warn!(?error, "could not check reconciliation coverage");
+                                return ResumeAttempt::Busy;
+                            }
+                        };
+                        if !reconciliation_due(
+                            last.as_ref(),
+                            boot,
+                            chrono::Utc::now().fixed_offset(),
+                        ) {
+                            return ResumeAttempt::Finished;
+                        }
+                        match service.begin_or_resume_sweep(None).await {
+                            Ok(run) => run,
+                            Err(error) => {
+                                tracing::warn!(?error, "could not record reconciliation pass");
+                                return ResumeAttempt::Busy;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "could not restore reconciliation progress");
+                        return ResumeAttempt::Busy;
+                    }
+                };
+                ResumeAttempt::Acquired((guard, run))
+            })
+            .await;
+            if let Some((guard, run)) = claimed {
+                tracing::info!(
+                    resumed = run.resumed,
+                    worlds_done = run.worlds_done(),
+                    "starting automatic full market reconciliation"
+                );
+                let reporter = run.discord_channel_id().and_then(|channel| {
+                    crate::alerts::delivery::get_serenity_ctx()
+                        .map(|ctx| (ctx.http.clone(), ChannelId::new(channel as u64)))
+                });
+                // The sweep observes cancellation at chunk boundaries and
+                // persists its cursor; do not abort it halfway through a write.
+                let _ = spawn_sweep(service.clone(), guard, run, reporter).await;
+            }
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(RECONCILIATION_RETRY) => {}
+            }
+        }
+    });
 }
 
 /// Runs `run` to completion on a background task, posting throttled progress
@@ -251,7 +233,7 @@ fn spawn_sweep(
     guard: SweepLockGuard,
     run: SweepRun,
     reporter: Option<(Arc<Http>, ChannelId)>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Binding the guard `_guard` (never bare `_`) matters: a bare `_`
         // drops the value immediately at this statement instead of at the end
@@ -306,7 +288,7 @@ fn spawn_sweep(
                     tracing::info!("full market sweep finished");
                 } else {
                     tracing::warn!(
-                        "full market sweep paused for shutdown; the next start resumes it"
+                        "full market sweep incomplete; saved progress will be retried automatically"
                     );
                 }
                 let _ = tx.send(report.summary_text());
@@ -316,8 +298,8 @@ fn spawn_sweep(
                 // it from the last recorded chunk rather than from nothing.
                 tracing::error!("full market sweep panicked");
                 let _ = tx.send(
-                    "Full market sweep crashed — check the server logs. It resumes on the next \
-                     restart."
+                    "Full market sweep crashed — check the server logs. Saved progress will \
+                     be retried automatically."
                         .to_string(),
                 );
             }
@@ -335,12 +317,82 @@ fn spawn_sweep(
         // exits (and the guard drops).
         drop(tx);
         let _ = poster.await;
-    });
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn completed_pass(start: i64, finish: i64) -> ultros_db::entity::market_sweep::Model {
+        ultros_db::entity::market_sweep::Model {
+            id: 1,
+            started_at: chrono::DateTime::from_timestamp(start, 0)
+                .unwrap()
+                .fixed_offset(),
+            finished_at: Some(
+                chrono::DateTime::from_timestamp(finish, 0)
+                    .unwrap()
+                    .fixed_offset(),
+            ),
+            discord_channel_id: None,
+        }
+    }
+
+    #[test]
+    fn startup_requires_coverage_even_when_old_event_markers_look_fresh() {
+        let boot = completed_pass(100, 100).started_at;
+        let now = completed_pass(200, 200).started_at;
+        assert!(reconciliation_due(None, boot, now));
+        // A resumed sweep finishing after boot does not recheck worlds visited
+        // before the downtime. A fresh pass must follow it.
+        assert!(reconciliation_due(
+            Some(&completed_pass(50, 150)),
+            boot,
+            now
+        ));
+        // A manual/other-replica pass started after boot satisfies this process.
+        assert!(!reconciliation_due(
+            Some(&completed_pass(110, 190)),
+            boot,
+            now
+        ));
+    }
+
+    #[test]
+    fn full_coverage_repeats_without_a_restart_or_recent_uploads() {
+        let last = completed_pass(100, 200);
+        let boot = last.started_at;
+        let finished = last.finished_at.unwrap();
+        assert!(!reconciliation_due(
+            Some(&last),
+            boot,
+            finished + RECONCILIATION_INTERVAL - chrono::Duration::seconds(1)
+        ));
+        assert!(reconciliation_due(
+            Some(&last),
+            boot,
+            finished + RECONCILIATION_INTERVAL
+        ));
+        assert!(!reconciliation_due(
+            Some(&last),
+            boot,
+            finished - chrono::Duration::seconds(1)
+        ));
+    }
+
+    #[tokio::test]
+    async fn reconciliation_attempts_before_any_poll_delay() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            await_resume_claim(&CancellationToken::new(), Duration::from_secs(3600), || {
+                std::future::ready(ResumeAttempt::Acquired(42))
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Some(42));
+    }
 
     #[tokio::test]
     async fn interrupted_sweep_waits_for_the_old_replica_to_release_its_lease() {

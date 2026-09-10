@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "Recover market listings after restarts",
+  "blurb": "Market boards are now checked automatically after server restarts and periodically afterward, helping remove stale listings even when live updates were missed. Failed scan chunks stay queued for another attempt."
+}

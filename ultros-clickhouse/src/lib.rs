@@ -15,7 +15,9 @@
 
 pub mod backfill;
 pub mod floor_history;
+pub mod listing_history;
 pub mod listing_seed;
+pub mod listing_snapshots;
 pub mod quality_filter;
 pub mod queries;
 pub mod rollups;
@@ -36,6 +38,8 @@ pub enum ClickHouseError {
     Client(#[from] clickhouse::error::Error),
     #[error("Backfill error: {0}")]
     Backfill(String),
+    #[error("Listing snapshot unavailable: {0}")]
+    SnapshotUnavailable(String),
 }
 
 /// A stable, low-cardinality label for *why* a ClickHouse call failed.
@@ -95,6 +99,7 @@ impl ClickHouseError {
             // Backfill failures wrap a Postgres-side message; there is no
             // ClickHouse status code to read.
             ClickHouseError::Backfill(_) => ClickHouseErrorKind::Other,
+            ClickHouseError::SnapshotUnavailable(_) => ClickHouseErrorKind::Unavailable,
             // The *chain*, not just `to_string()`. `clickhouse`'s `Network`
             // variant renders as `"network error: {hyper_util error}"`, and
             // hyper_util's own `Display` is the useless `"client error
@@ -311,6 +316,7 @@ mod error_kind_tests {
 #[derive(Clone)]
 pub struct ClickHouseClient {
     inner: Arc<Client>,
+    snapshot_queue: Arc<listing_snapshots::Queue>,
 }
 
 impl ClickHouseClient {
@@ -334,6 +340,7 @@ impl ClickHouseClient {
             .with_password(password);
         Self {
             inner: Arc::new(inner),
+            snapshot_queue: Arc::default(),
         }
     }
 

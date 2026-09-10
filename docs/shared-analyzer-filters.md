@@ -69,6 +69,13 @@ empty parameters so their defaults cannot be reseeded. Layout, sorting, world,
 and window parameters are preserved unless they are the control being edited.
 Edits use `replace: true` and `scroll: false`.
 
+`SortAlias` does the same for a retired native `?sort=` token: the registry's
+`register_sort_aliases` maps it to a metric column, so an old
+`?sort=units&dir=asc` link still ranks the grid, lights that header, and
+requests the window a hidden target needs. Nothing rewrites the token in place;
+the first header click writes the canonical `grid:<id>` form. Trends registers
+`units`, `vwap`, `price` (now the shared listing column), `pct`, and `spd`.
+
 Existing `{ "op": "gte", "value": "100" }` metric payloads are unchanged.
 Inclusive simultaneous bounds use
 `{ "op": "between", "value": "100,200" }`. A legacy minimum and maximum on
@@ -86,19 +93,33 @@ provider's required-data set; `MarketGrid` uses the registry's effective filters
 including aliases, when requesting windows. Preserve intrinsic `partial` flags:
 filters may evaluate known rows without claiming complete data or a global sort.
 
-## Remaining consumers for issue #1351
+## Consumers for issue #1351
 
-This change adopts the six existing MarketGrid tools: Flip Finder, Vendor
-Resale, Ventures, Leves, FC Crafting, and Scrip Sources. Keep #1351 open until:
+The six MarketGrid tools (Flip Finder, Vendor Resale, Ventures, Leves, FC
+Crafting, Scrip Sources), Trends, Currency Exchange, and the Recipe Analyzer's `AnalyzerGrid` host use
+this registry. Recipe keeps its legacy `profit`, `roi` and `min-sales` keys as
+aliases of its `profit`, `roi` and `daily-sales` metrics (`min-sales=0` still
+means "no limit"), and registers its job, sub-craft, HQ, outlier, crystal,
+on-hand and pricing (`cost-basis`, `revenue`, `buy-scope`,
+`sell-scope`) inputs as controls. Listing world/DC keys are metric aliases. Its MarketGrid host shares the page window, and Clear all preserves that window and the four pricing inputs.
+`AnalyzerGrid`'s `picker` prop forwards the Columns picker's headings to the
+`+ Filter` menu, which keeps each group together.
 
-- T08 adopts this registry in Recipe Analyzer's common grid host.
-- T09 adopts it while moving Trends to the shared analyzer grid.
-- T10 adopts it while moving Currency Exchange to the shared grid.
-- T11 adopts it while moving Item Explorer to the shared grid.
+Item Explorer also uses the shared grid and registry; all planned consumers have now adopted it.
 
-Those tasks own their route migrations. They should use the current app
-re-exports and preserve existing column IDs, URL presets, and pre-calculation
-inputs rather than copying toolbar or chip implementations.
+T09 (Trends, #1344) is done: the page keeps `category` and `show_suspicious`
+as registered controls, aliases `min_sales`/`min_price` onto its `sales` and
+`market-listing` metrics, and registers its native cleaned-sample statistics
+(`vwap`, `pct`, `sales-per-day`, `units`, `sales`, `confidence`) as their own
+metrics. They are not the `sale_stats` follow-window columns: the deep-scan
+drops noise-filtered sales and its confidence band comes from that scan, while
+`sale_stats` counts every recorded sale and its confidence is a seven-day fact.
+Both sets stay available from the Columns picker under separate headings.
+
+T11 (Item Explorer, #1346) is done: category and job-set lists use the shared
+grid and filter registry, preserving their existing query keys and saved
+column choices. Market statistics load when a selected column, filter, or
+sort needs them.
 
 ## Regression coverage
 
@@ -108,4 +129,7 @@ and reload, default sentinels, hidden definitions, and control deduplication.
 `integration/shared-analyzer-data.cjs` exercises the real SSR/hydrated registry
 fixture (`registry-test=1`), including menu/header/chip edits, blank input,
 calculation inputs, hidden filters, clear/reload, and mobile wrapping, followed
-by the existing seven-tool market probes when `CHECK_ANALYZER_ROUTES=1`.
+by the existing seven-tool market probes and the Trends probe (old sort and
+chip links, header sorting, the Columns picker, window changes, the
+suspicious-sales control, request behavior and reload) when
+`CHECK_ANALYZER_ROUTES=1`.

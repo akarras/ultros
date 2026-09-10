@@ -169,6 +169,8 @@ else
     log "running npm run $test_script in integration/ against $BASE_URL"
     # `|| test_exit=$?` captures the npm exit code without triggering set -e.
     ( cd integration && BASE_URL="$BASE_URL" npm run "$test_script" ) || test_exit=$?
+    log "running eager search and stale-response E2E"
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:search-responsiveness ) || test_exit=$?
 fi
 
 if [ "${RUN_ITEM_VIEW_LAYOUT:-1}" != "0" ]; then
@@ -195,6 +197,15 @@ if [ "${RUN_FC_CRAFTING_WORLD:-1}" != "0" ]; then
     ( cd integration && BASE_URL="$BASE_URL" npm run test:fc-crafting-world ) || fc_world_exit=$?
     if [ "$fc_world_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$fc_world_exit"
+    fi
+fi
+
+if [ "${RUN_ANALYZER_WORLD_URLS:-1}" != "0" ]; then
+    log "running analyzer world URL compatibility E2E"
+    world_urls_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-world-urls ) || world_urls_exit=$?
+    if [ "$world_urls_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$world_urls_exit"
     fi
 fi
 

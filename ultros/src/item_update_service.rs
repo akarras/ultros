@@ -283,9 +283,22 @@ struct CatchupTally {
     failed: u64,
     /// Fetch chunks skipped after retries — see `ultros_sweep_chunks_failed`.
     chunks_failed: u64,
+    /// Earliest failed chunk. Later successful chunks must not erase its retry.
+    retry_from: Option<i32>,
 }
 
 impl CatchupTally {
+    fn retry_chunk(&mut self, items: &[i32]) {
+        if let Some(first) = items.first() {
+            self.retry_from = Some(self.retry_from.map_or(*first, |old| old.min(*first)));
+        }
+    }
+
+    fn next_cursor(&self, items: &[i32], fallback: i32) -> i32 {
+        self.retry_from
+            .unwrap_or_else(|| cursor_past(items, fallback))
+    }
+
     fn add(&mut self, outcome: CatchupOutcome) {
         match outcome {
             CatchupOutcome::Changed => self.changed += 1,
@@ -347,6 +360,7 @@ impl WorldSweepSummary {
                 noop: count(row.noop),
                 failed: count(row.failed),
                 chunks_failed: count(row.chunks_failed),
+                retry_from: row.completed_at.is_none().then_some(row.next_item_id),
             },
             duration: std::time::Duration::from_millis(count(row.elapsed_ms)),
         }
@@ -385,8 +399,7 @@ pub(crate) struct SweepReport {
     /// Wall-clock since the sweep was *started*, which for a resumed sweep
     /// spans every process that has worked on it.
     duration: std::time::Duration,
-    /// True when shutdown stopped the sweep partway. Nothing was lost — the
-    /// cursor is on disk and the next start resumes from it.
+    /// True when shutdown, failures, or a checkpoint error left work to retry.
     interrupted: bool,
 }
 
@@ -403,7 +416,7 @@ impl SweepReport {
         let minutes = self.duration.as_secs() / 60;
         let mut text = if self.interrupted {
             format!(
-                "Full market sweep paused at {}/{} worlds after {minutes} min — the server is restarting and will pick it up where it left off. {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped so far.",
+                "Full market sweep incomplete after visiting {}/{} worlds in {minutes} min — saved progress will be retried automatically. {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped so far.",
                 self.worlds.len(),
                 self.worlds_total
             )
@@ -427,7 +440,7 @@ impl SweepReport {
         let incomplete: Vec<&str> = self
             .worlds
             .iter()
-            .filter(|w| w.tally.chunks_failed > 0)
+            .filter(|w| w.tally.retry_from.is_some())
             .map(|w| w.world_name.as_str())
             .collect();
         if !incomplete.is_empty() {
@@ -437,7 +450,7 @@ impl SweepReport {
             if overflow > 0 {
                 text.push_str(&format!(" (+{overflow} more)"));
             }
-            text.push_str(" — the 5-minute catch-up loop will recover the skipped items.");
+            text.push_str(" — full reconciliation will retry these independently of the recent-update window.");
         }
         text
     }
@@ -521,6 +534,22 @@ fn new_world_progress(sweep_id: i32, world_id: i32) -> market_sweep_world::Model
     }
 }
 
+/// A repeatedly failing world must not prevent successful worlds from getting
+/// periodic coverage while their shared sweep remains active. Retain attempt
+/// counters, but restart an expired completed world's traversal.
+fn refresh_expired_world_progress(
+    mut prior: market_sweep_world::Model,
+    now: DateTimeWithTimeZone,
+) -> market_sweep_world::Model {
+    if prior.completed_at.is_some_and(|completed| {
+        (now - completed).to_std().unwrap_or_default() >= FULL_SWEEP_COOLDOWN
+    }) {
+        prior.completed_at = None;
+        prior.next_item_id = 0;
+    }
+    prior
+}
+
 /// Folds one process's share of a world (`run`, `elapsed`) into the row a
 /// previous process left behind, producing the row to persist.
 fn merged_progress(
@@ -562,12 +591,7 @@ fn resume_offset(items: &[i32], next_item_id: i32) -> usize {
     items.partition_point(|id| *id < next_item_id)
 }
 
-/// Cursor to record once `chunk` has been attempted: the first item id past
-/// it, or `fallback` when there was nothing left to attempt.
-///
-/// Advances over a chunk Universalis refused as well as one it answered — the
-/// skip is already tallied in `chunks_failed` and reported, and rewinding to
-/// it on resume would mean re-fetching every chunk that succeeded after it.
+/// Cursor past a chunk; `CatchupTally::next_cursor` pins failed chunks instead.
 fn cursor_past(chunk: &[i32], fallback: i32) -> i32 {
     chunk.last().map_or(fallback, |id| id.saturating_add(1))
 }
@@ -723,10 +747,9 @@ impl UpdateService {
         })
     }
 
-    /// Sweeps over every single marketable item in the game, ignoring the
-    /// recency cache. Only should be used if data is known to be lost. Never
-    /// aborts: failed chunks are skipped and reported via the returned
-    /// [`SweepReport`]. `progress` fires after each world completes.
+    /// Sweeps every marketable item independently of recency markers. Failed
+    /// chunks remain eligible at their earliest cursor while later worlds still
+    /// get serviced. `progress` fires after each world is visited.
     ///
     /// Resumable: worlds `run` records as already swept are skipped, a world
     /// left partway through restarts at its cursor, and the cursor is written
@@ -765,9 +788,12 @@ impl UpdateService {
         let (mut items_changed, mut chunks_failed) = (0u64, 0u64);
         let mut interrupted = false;
         for world in worlds {
-            let prior = recorded
-                .remove(&world.id)
-                .unwrap_or_else(|| new_world_progress(sweep.id, world.id));
+            let prior = refresh_expired_world_progress(
+                recorded
+                    .remove(&world.id)
+                    .unwrap_or_else(|| new_world_progress(sweep.id, world.id)),
+                Utc::now().fixed_offset(),
+            );
             let row = if prior.completed_at.is_some() {
                 // Swept before the restart. Its totals still belong in the
                 // report, but nothing is re-fetched and no metric is
@@ -816,13 +842,20 @@ impl UpdateService {
                 let completed = merged_progress(
                     &checkpoint.prior,
                     &tally,
-                    cursor_past(remaining, checkpoint.prior.next_item_id),
+                    tally.next_cursor(remaining, checkpoint.prior.next_item_id),
                     world_started.elapsed(),
-                    Some(Utc::now().fixed_offset()),
+                    tally
+                        .retry_from
+                        .is_none()
+                        .then(|| Utc::now().fixed_offset()),
                 );
+                if completed.completed_at.is_none() {
+                    interrupted = true;
+                }
                 if let Err(error) = self.db.record_market_sweep_progress(&completed).await {
                     // The world will simply be swept again after a restart.
                     warn!(?error, world = %world.name, "could not record the completed world");
+                    interrupted = true;
                 }
                 completed
             };
@@ -845,6 +878,7 @@ impl UpdateService {
                 sweep_id = sweep.id,
                 "could not mark the market sweep finished"
             );
+            interrupted = true;
         }
         SweepReport {
             worlds: summaries,
@@ -1131,9 +1165,8 @@ impl UpdateService {
             {
                 Ok(data) => data,
                 Err(e) if e.is_transient() => {
-                    // Universalis kept shedding this chunk through the whole
-                    // backoff schedule. The items' ingest markers are untouched,
-                    // so the five-minute catch-up loop will re-flag them.
+                    // Preserve eligibility even after these items leave the
+                    // 200-item recency window or receive fresh sales markers.
                     warn!(error = ?e, world = %world_name, items = item_ids.len(), "sweep chunk skipped after retries");
                     metrics::counter!(
                         "ultros_sweep_chunks_failed",
@@ -1142,18 +1175,50 @@ impl UpdateService {
                     )
                     .increment(1);
                     tally.chunks_failed += 1;
+                    tally.retry_chunk(item_ids);
                     if let Some(checkpoint) = checkpoint {
-                        checkpoint.record(cursor_past(item_ids, 0), &tally).await;
+                        checkpoint
+                            .record(tally.next_cursor(item_ids, 0), &tally)
+                            .await;
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
                 Err(e) => {
-                    // A non-transient answer (404 world, malformed response) will
+                    let error = anyhow::Error::new(e);
+                    if universalis_not_found(&error) {
+                        // A batch 404 may mean unknown items, not an unknown
+                        // world. Only stop the world if the separate recency
+                        // endpoint has established that it is unsupported.
+                        let world_uncovered = self
+                            .uncovered_worlds
+                            .lock()
+                            .expect("uncovered_worlds poisoned")
+                            .contains(&world.id);
+                        if world_uncovered {
+                            warn!(world = %world_name, "full sweep: world unavailable upstream");
+                            break;
+                        }
+                        // No authoritative board was returned. Leave its data
+                        // untouched and revisit on the next periodic full pass.
+                        warn!(world = %world_name, ?item_ids, "full sweep: item batch unavailable upstream");
+                        tally.chunks_failed += 1;
+                        metrics::counter!("ultros_sweep_chunks_failed",
+                            "world" => world_name.clone(), "kind" => "not_found")
+                        .increment(1);
+                        if let Some(checkpoint) = checkpoint {
+                            checkpoint
+                                .record(tally.next_cursor(item_ids, 0), &tally)
+                                .await;
+                        }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    // A non-transient answer (such as a malformed response) will
                     // repeat for every remaining chunk of this world — one warning
                     // and a bulk count beat ~150 identical ones.
                     let remaining = (total_chunks - chunk_index) as u64;
-                    warn!(error = ?e, world = %world_name, remaining_chunks = remaining, "sweep aborted for world: universalis fetch failed");
+                    warn!(?error, world = %world_name, remaining_chunks = remaining, "sweep aborted for world: universalis fetch failed");
                     metrics::counter!(
                         "ultros_sweep_chunks_failed",
                         "world" => world_name.clone(),
@@ -1161,6 +1226,7 @@ impl UpdateService {
                     )
                     .increment(remaining);
                     tally.chunks_failed += remaining;
+                    tally.retry_chunk(item_ids);
                     break;
                 }
             };
@@ -1229,10 +1295,15 @@ impl UpdateService {
             .collect::<Vec<_>>()
             .await;
             for outcome in outcomes {
+                if outcome == CatchupOutcome::Failed {
+                    tally.retry_chunk(item_ids);
+                }
                 tally.add(outcome);
             }
             if let Some(checkpoint) = checkpoint {
-                checkpoint.record(cursor_past(item_ids, 0), &tally).await;
+                checkpoint
+                    .record(tally.next_cursor(item_ids, 0), &tally)
+                    .await;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -1294,6 +1365,57 @@ fn missed_updates(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_world_cannot_starve_completed_worlds_of_periodic_coverage() {
+        let now = Utc::now().fixed_offset();
+        let recent = market_sweep_world::Model {
+            completed_at: Some(now),
+            next_item_id: 900,
+            changed: 42,
+            ..new_world_progress(1, 40)
+        };
+        assert_eq!(refresh_expired_world_progress(recent.clone(), now), recent);
+        let later = now + chrono::Duration::from_std(FULL_SWEEP_COOLDOWN).unwrap();
+        let expired = refresh_expired_world_progress(recent, later);
+        assert_eq!(expired.next_item_id, 0);
+        assert!(expired.completed_at.is_none());
+        assert_eq!(expired.changed, 42);
+        let partial = market_sweep_world::Model {
+            next_item_id: 500,
+            ..new_world_progress(1, 40)
+        };
+        assert_eq!(
+            refresh_expired_world_progress(partial.clone(), later),
+            partial,
+            "an unfinished world's failed cursor must not be reset"
+        );
+    }
+
+    #[test]
+    fn later_success_does_not_erase_a_failed_chunk_after_restart() {
+        let mut tally = super::CatchupTally::default();
+        assert_eq!(tally.next_cursor(&[10, 20], 0), 21);
+        tally.retry_chunk(&[30, 40]);
+        // Later chunks are still visited, but the durable cursor stays behind
+        // the failure even when the upstream recency window has moved on.
+        assert_eq!(tally.next_cursor(&[50, 60], 0), 30);
+        tally.retry_chunk(&[70, 80]);
+        assert_eq!(tally.next_cursor(&[90, 100], 0), 30);
+        let row = super::merged_progress(
+            &super::new_world_progress(1, 40),
+            &tally,
+            tally.next_cursor(&[90, 100], 0),
+            std::time::Duration::ZERO,
+            None,
+        );
+        let items = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        assert_eq!(
+            &items[super::resume_offset(&items, row.next_item_id)..],
+            &items[2..]
+        );
+        let recovered = super::CatchupTally::default();
+        assert_eq!(recovered.next_cursor(&items[2..], row.next_item_id), 101);
+    }
     use super::*;
 
     #[tokio::test]
@@ -1559,6 +1681,7 @@ mod tests {
             noop: 0,
             failed: 0,
             chunks_failed: 3,
+            retry_from: None,
         };
         assert!(!all_chunks_skipped.made_progress());
         release_slot(&mut slots, WORLD_ID);
@@ -1583,6 +1706,7 @@ mod tests {
             noop: 0,
             failed: 1,
             chunks_failed: 2,
+            retry_from: None,
         };
         assert!(one_failed_write.made_progress());
         confirm_slot(&mut slots, WORLD_ID, t0);
@@ -1753,6 +1877,7 @@ mod tests {
                 noop: 2,
                 failed: 1,
                 chunks_failed: 0,
+                retry_from: None,
             }
         );
     }
@@ -1810,6 +1935,7 @@ mod tests {
                 noop: 0,
                 failed: 0,
                 chunks_failed,
+                retry_from: (chunks_failed > 0).then_some(0),
             },
             duration,
         }
@@ -1889,8 +2015,8 @@ mod tests {
         };
         let text = report.summary_text();
         assert!(!report.is_complete());
-        assert!(text.contains("paused at 1/90 worlds"), "{text}");
-        assert!(text.contains("where it left off"), "{text}");
+        assert!(text.contains("visiting 1/90 worlds"), "{text}");
+        assert!(text.contains("retried automatically"), "{text}");
         assert!(
             !text.contains("finished"),
             "an interrupted sweep is not a finished one: {text}"
@@ -1980,6 +2106,7 @@ mod tests {
             noop: 1,
             failed: 0,
             chunks_failed: 1,
+            retry_from: None,
         };
         let merged = merged_progress(&prior, &run, 900, Duration::from_secs(2), None);
         assert_eq!(merged.sweep_id, 1);
@@ -2008,6 +2135,27 @@ mod tests {
         assert_eq!(summary.tally.changed, 12);
         assert_eq!(summary.tally.chunks_failed, 2);
         assert_eq!(summary.duration, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn recovered_failures_are_not_reported_as_still_waiting_for_retry() {
+        let row = market_sweep_world::Model {
+            completed_at: Some(Utc::now().fixed_offset()),
+            chunks_failed: 2,
+            ..new_world_progress(1, 21)
+        };
+        let report = SweepReport {
+            worlds: vec![WorldSweepSummary::from_progress("Sargatanas", &row)],
+            worlds_total: 1,
+            duration: Duration::ZERO,
+            interrupted: false,
+        };
+        let text = report.summary_text();
+        assert!(
+            text.contains("2 chunks skipped"),
+            "historical attempts remain visible"
+        );
+        assert!(!text.contains("Incomplete worlds"), "{text}");
     }
 
     #[test]

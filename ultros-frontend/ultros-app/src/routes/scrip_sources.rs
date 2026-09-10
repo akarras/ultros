@@ -1,3 +1,4 @@
+use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::filters::{price_control, register_filters};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
@@ -5,7 +6,9 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
-use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
+use crate::components::virtual_grid::saved_views::{
+    GridPresetView, GridSavedViews, provide_grid_saved_views,
+};
 use crate::components::virtual_grid::{metrics::FilterOp, registry::FilterAlias};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
@@ -26,19 +29,15 @@ use crate::{
         },
         world_picker::WorldOnlyPicker,
     },
-    global_state::{
-        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
-    },
+    global_state::region_for_world::use_region_for_world,
 };
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
-use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::{collections::HashSet, sync::Arc};
 use thousands::Separable;
 use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
-use crate::components::app_link::use_query_map_or_default;
 use crate::i18n::*;
 use crate::query_defaults::query_signal;
 
@@ -910,65 +909,13 @@ fn ScripSourceTable(
 
 #[component]
 pub fn ScripSources() -> impl IntoView {
+    provide_grid_saved_views("scrip-sources-grid");
     let i18n = use_i18n();
-    let query = use_query_map_or_default();
-    let (home_world, _) = use_home_world();
-    let nav = use_navigate();
-
-    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
+    let (selected_world, set_selected_world) = use_analyzer_world("/scrip-sources");
+    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
-    });
-
-    let worlds = use_context::<LocalWorldData>()
-        .expect("Should always have local world data")
-        .0
-        .unwrap();
-
-    let initial_world = query.with_untracked(|p| {
-        let binding = p.get("world");
-        let world = binding.as_deref().unwrap_or_default();
-        worlds
-            .lookup_world_by_name(world)
-            .and_then(|w| w.as_world().cloned())
-    });
-
-    let (selected_world, set_selected_world) = signal(initial_world);
-
-    Effect::new(move |_| {
-        if selected_world.get_untracked().is_none()
-            && let Some(home) = home_world.get()
-        {
-            set_selected_world(Some(home));
-        }
-    });
-
-    Effect::new(move |_| {
-        if let Some(world) = selected_world.get() {
-            let world_name = world.name;
-            let current_query = query.get_untracked();
-            let world_matches = current_query
-                .get("world")
-                .map(|s| s == world_name)
-                .unwrap_or(false);
-
-            if !world_matches {
-                let mut query_string = format!("?world={}", world_name);
-                for (k, v) in current_query.into_iter() {
-                    if k != "world" {
-                        query_string.push_str(&format!("&{}={}", k, v));
-                    }
-                }
-                nav(
-                    &query_string,
-                    NavigateOptions {
-                        scroll: false,
-                        ..Default::default()
-                    },
-                );
-            }
-        }
     });
 
     view! {
@@ -997,10 +944,15 @@ pub fn ScripSources() -> impl IntoView {
                     <label class="text-[color:var(--brand-fg)] font-semibold">
                         {t!(i18n, scrip_sources_select_world)}
                     </label>
-                    <WorldOnlyPicker
-                        current_world=selected_world.into()
-                        set_current_world=set_selected_world.into()
-                    />
+                    <div data-testid="analyzer-world-picker">
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world
+                        />
+                    </div>
+                    <span class="text-sm text-[color:var(--color-text-muted)]" data-testid="analyzer-market-scope">
+                        {t!(i18n, market_scope)} ": " {move || region.get()}
+                    </span>
                 </ToolHeader>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">

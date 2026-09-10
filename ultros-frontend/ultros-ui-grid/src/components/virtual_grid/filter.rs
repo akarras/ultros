@@ -67,9 +67,10 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 location.pathname.get_untracked(),
-                q.to_query_string()
+                q.to_query_string(),
+                location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,
@@ -169,7 +170,12 @@ pub fn MetricSortHeader(
     #[prop(into)] label: Signal<String>,
 ) -> impl IntoView {
     let location = use_location_or_default();
-    let active = move || location.query.with(|q| q.get("sort")) == Some(format!("grid:{column}"));
+    // Alias-aware, so a retired native token lights the header it now means.
+    let active = move || {
+        location
+            .query
+            .with(|q| super::registry::effective_sort(q).as_deref() == Some(column))
+    };
     let ascending = move || location.query.with(|q| q.get("dir")).as_deref() == Some("asc");
     view! {
         <a
@@ -286,9 +292,10 @@ fn MetricFilterEditor(
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 location.pathname.get_untracked(),
-                q.to_query_string()
+                q.to_query_string(),
+                location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,

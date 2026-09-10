@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Customize your Market Trends scan",
+  "blurb": "Choose the columns you want in Market Trends, filter and sort its results, and compare sale-history statistics alongside the trend scan. Your choices stay in the link so you can revisit or share the same view.",
+  "link": "/trends",
+  "importance": "medium"
+}

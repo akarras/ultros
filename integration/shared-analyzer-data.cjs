@@ -1,6 +1,6 @@
 // Deterministic shared query behavior against the real SSR + hydrated QueryGrid.
 // Requires a debug build of this worktree; no market history is required.
-// CHECK_ANALYZER_ROUTES=1 also probes all seven tools with deterministic API data.
+// CHECK_ANALYZER_ROUTES=1 also probes all seven tools, then Trends, with deterministic API data.
 // ANALYZER_TOOLS=tool,tool narrows those probes; ANALYZER_MARKET_FIXTURE=0 uses live data.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -335,6 +335,13 @@ async function main() {
     await page.setViewport({ width: 393, height: 844, isMobile: true, hasTouch: true });
     await page.waitForFunction(() => window.__queryHydrated);
     await page.$eval(heading(median), el => el.scrollIntoView({ block: 'nearest', inline: 'center' }));
+    // The viewport change re-fits the columns; a tap that lands mid-shift is lost.
+    await page.waitForFunction(selector => {
+      const rect = JSON.stringify(document.querySelector(selector)?.getBoundingClientRect());
+      const settled = window.__settledRect === rect;
+      window.__settledRect = rect;
+      return settled;
+    }, { polling: 250 }, sortLink(median));
     await page.tap(sortLink(median));
     await sorted(median, 'asc');
     await marketFirst(42);
@@ -363,33 +370,49 @@ async function main() {
       const world = process.env.WORLD || 'Gilgamesh';
       const routes = [
         ['flip-finder', `/flip-finder/${world}`],
-        ['recipe-analyzer', '/recipe-analyzer'],
-        ['venture-analyzer', '/venture-analyzer'],
-        ['leve-analyzer', '/leve-analyzer'],
+        ['recipe-analyzer', `/recipe-analyzer/${world}`],
+        ['venture-analyzer', `/venture-analyzer/${world}`],
+        ['leve-analyzer', `/leve-analyzer/${world}`],
         ['fc-crafting-analyzer', `/fc-crafting-analyzer/${world}`],
         ['vendor-resale', `/vendor-resale/${world}`],
-        ['scrip-sources', '/scrip-sources'],
+        ['scrip-sources', `/scrip-sources/${world}`],
       ];
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',
         'market-sale-median-30', 'market-sale-median', 'market-gil-7',
-        'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7'];
+        'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7',
+        'market-alive', 'market-listing-age'];
       await page.setViewport({ width: 1600, height: 1000 });
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });
       for (const [tool, route] of routes) {
         if (process.env.ANALYZER_TOOLS && !process.env.ANALYZER_TOOLS.split(',').includes(tool)) continue;
-        // Recipe preserves its existing saved column IDs and presents cadence
-        // through its daily-sales column; the other adapters use market-* IDs.
+        // Recipe keeps native IDs and also exposes the shared market columns.
         const required = tool === 'recipe-analyzer'
-          ? ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'listing-world', 'listing-dc', 'daily-sales', 'trend']
+          ? ['rev-sale-median', 'rev-sale-min', 'rev-sale-avg', 'listing-world', 'listing-dc', 'daily-sales', 'trend', 'rev-gil', 'cost-gil', ...shared]
           : shared;
         if (tool === 'flip-finder' && fixture) {
           await require('./flip-finder-sale-columns.cjs')({ page, base: BASE, route, openFixture: open, artifacts });
         }
-        const medianColumn = required[0];
-        const query = new URLSearchParams({ v: '1', lang: 'en', world, 'min-sales': '0',
+        // Recipe's rev-sale-median is a native sort; use a shared column
+        // for the native-to-grid sort/filter assertions below.
+        const medianColumn = tool === 'recipe-analyzer' ? 'market-sale-median-7' : required[0];
+        async function revealMedian() {
+          // Native sorting can auto-fit columns again; the previous pixel
+          // offset may now point past this virtualized heading.
+          await page.waitForSelector('.virtual-grid');
+          const width = await page.$eval('.virtual-grid', grid => grid.scrollWidth);
+          for (let left = 0; left <= width; left += 350) {
+            await page.$eval('.virtual-grid', (grid, x) => { grid.scrollLeft = x; }, left);
+            await new Promise(resolve => setTimeout(resolve, 50));
+            if (await page.$(heading(medianColumn))) {
+              await page.$eval(heading(medianColumn), el => el.scrollIntoView({block: 'nearest', inline: 'center'}));
+              return;
+            }
+          }
+          assert.fail(`${tool}: cannot reveal ${medianColumn}`);
+        }
+        const query = new URLSearchParams({ v: '1', lang: 'en', 'min-sales': '0',
           profit: '-1000000000', roi: '-1000000000', 'next-sale': '1M', sort: 'grid:item', dir: 'asc',
           cols: ['profit', 'cost', ...required].join(',') });
-        if (tool === 'flip-finder' || tool === 'vendor-resale') query.delete('world');
         const target = `${BASE}${route}?${query}`;
         console.log(`CHECK ${tool}: navigating`);
         if (fixture) {
@@ -415,32 +438,39 @@ async function main() {
         if (rowCount === 0) console.log(`EMPTY DATA ${tool}: validating column/query controls; market result-value assertions skipped`);
         // Virtualized columns mount only as their portion of the grid becomes visible.
         const observed = new Set();
-        let medianPosition = 0;
         const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
         for (let left = 0; left <= width; left += 500) {
           await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);
           await new Promise(resolve => setTimeout(resolve, 100));
           for (const id of await page.$$eval('.virtual-grid-heading', headings => headings.map(element => element.dataset.column))) {
             observed.add(id);
-            if (id === medianColumn) medianPosition = left;
           }
         }
         for (const column of required) assert(observed.has(column), `${tool} registers ${column}`);
-        await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+        await revealMedian();
         await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
         if (fixture) await page.waitForFunction(column => [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
           .some(cell => /900|1[,. ]?500/.test(cell.textContent)), { timeout: 90000 }, medianColumn);
+        if (fixture && tool !== 'recipe-analyzer') {
+          // The alive set lands on every MarketGrid consumer together with the sale family.
+          await page.$eval('.virtual-grid', element => { element.scrollLeft = element.scrollWidth; });
+          await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-alive"]')]
+            .some(cell => /^[25]$/.test(cell.textContent.trim())), { timeout: 90000 });
+          await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-listing-age"]')]
+            .some(cell => cell.textContent.trim() === '30m'), { timeout: 90000 });
+          await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+        }
         if (fixture) {
           await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
           const calculated = `.virtual-grid-cell[data-column="${tool === 'scrip-sources' ? 'cost' : 'profit'}"]`;
           await page.waitForSelector(calculated);
           const before = await page.$eval(calculated, cell => cell.textContent);
           const basisKey = ['leve-analyzer', 'fc-crafting-analyzer', 'scrip-sources'].includes(tool) ? 'cost-basis' : 'revenue';
-          if (tool !== 'recipe-analyzer') {
-            await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
-            await page.waitForSelector('[data-registered-editor]');
-          }
-          const controls = await page.$$('select');
+          // A window change can briefly replace the toolbar while rows refresh.
+          await page.waitForSelector(`[data-registered-filter="${basisKey}"] .filter-chip-value`, { visible: true });
+          await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
+          await page.waitForSelector('[data-registered-editor]');
+          const controls = await page.$$('[data-registered-editor] select');
           let basis;
           for (const select of controls) {
             if (await select.evaluate(element => !!element.querySelector('option[value="sale-median"]') && !!element.getClientRects().length)) {
@@ -449,33 +479,55 @@ async function main() {
           }
           assert(basis, `${tool} exposes selectable median pricing`);
           await basis.select('sale-median');
-          if (tool !== 'recipe-analyzer') await page.click('[data-registered-editor] button[type="submit"]');
+          await page.click('[data-registered-editor] button[type="submit"]');
           await page.waitForFunction(() => [...new URL(location.href).searchParams.values()].includes('sale-median'));
           await page.waitForFunction((selector, before) => {
             const cell = document.querySelector(selector);
             return cell && cell.textContent !== before;
           }, { timeout: 90000 }, calculated, before);
-          if (tool !== 'recipe-analyzer') {
-            const sevenDayPrice = await page.$eval(calculated, cell => cell.textContent);
-            await page.select('[data-market-window]', '30');
-            await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
-              {}, calculated, sevenDayPrice);
-            assert.equal(new URL(page.url()).searchParams.get('window'), '30');
-            await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
-            await page.waitForSelector('[data-registered-editor]');
-            assert.match(await page.$eval('[data-registered-editor] option[value="sale-median"]', el => el.textContent), /30d/);
-            await page.keyboard.press('Escape');
+          const sevenDayPrice = await page.$eval(calculated, cell => cell.textContent);
+          await page.select('[data-market-window]', '30');
+          await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
+            {}, calculated, sevenDayPrice);
+          assert.equal(new URL(page.url()).searchParams.get('window'), '30');
+          // A window change can briefly replace the toolbar while rows refresh.
+          await page.waitForSelector(`[data-registered-filter="${basisKey}"] .filter-chip-value`, { visible: true });
+          await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
+          await page.waitForSelector('[data-registered-editor]');
+          assert.match(await page.$eval('[data-registered-editor] option[value="sale-median"]', el => el.textContent), /30d/);
+          await page.keyboard.press('Escape');
+          if (tool === 'recipe-analyzer') {
+            // The fixture doubles 30-day prices. A follow-window shared
+            // column and native revenue signal must use that body, while the
+            // explicitly seven-day column keeps its original values.
+            async function priceColumn(column, expected) {
+              const width = await page.$eval('.virtual-grid', e => e.scrollWidth);
+              for (let left = 0; left <= width; left += 400) {
+                await page.$eval('.virtual-grid', (e, x) => { e.scrollLeft = x; }, left);
+                await new Promise(resolve => setTimeout(resolve, 50));
+                if (await page.$(`.virtual-grid-heading[data-column="${column}"]`)) break;
+              }
+              await page.waitForSelector(`.virtual-grid-heading[data-column="${column}"]`);
+              await page.waitForFunction((column, expected) =>
+                [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
+                  .some(cell => (cell.textContent.match(/[0-9][0-9,]*/g) || [])
+                    .some(value => expected.includes(value.replaceAll(',', '')))),
+                {timeout: 90000}, column, expected);
+            }
+            await priceColumn('rev-sale-median', ['1800', '3000']);
+            await priceColumn('market-sale-median', ['1800', '3000']);
+            await priceColumn('market-sale-median-7', ['900', '1500']);
           }
-          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await revealMedian();
           await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
         }
-        if (tool !== 'recipe-analyzer') {
+        {
           await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
           const native = tool === 'scrip-sources' ? 'cost' : 'profit';
           await page.waitForSelector(`${heading(native)} a`);
           await page.click(`${heading(native)} a`);
           await page.waitForFunction(() => !new URL(location.href).searchParams.get('sort')?.startsWith('grid:'));
-          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await revealMedian();
           await page.waitForSelector(sortLink(medianColumn));
           const beforeSort = new URL(page.url()).searchParams;
           await page.click(sortLink(medianColumn));
@@ -491,7 +543,7 @@ async function main() {
           assert.equal(await page.$('.virtual-grid-heading a[aria-current="true"]'), null, `${tool}: native sort arrow is inactive`);
           await page.click(`${heading(native)} a`);
           await page.waitForFunction(() => !new URL(location.href).searchParams.get('sort')?.startsWith('grid:'));
-          await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, medianPosition);
+          await revealMedian();
           await page.waitForSelector(sortLink(medianColumn));
           assert.equal(await page.$eval(heading(medianColumn), el => el.getAttribute('aria-sort')), 'none');
           assert.equal(await page.$(`${sortLink(medianColumn)} [aria-hidden]`), null);
@@ -503,17 +555,19 @@ async function main() {
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: hidden filter survives`);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
-        await page.waitForSelector(tool === 'recipe-analyzer'
-          ? '[data-grid-query-summary]' : `[data-registered-filter="${medianColumn}"]`);
-        if (tool !== 'recipe-analyzer') assert.equal(await page.$('[data-grid-query-summary]'), null, `${tool}: shared bar owns the only filter summary`);
+        await page.waitForSelector(`[data-registered-filter="${medianColumn}"]`);
+        assert.equal(await page.$('[data-grid-query-summary]'), null, `${tool}: shared bar owns the only filter summary`);
         assert(JSON.parse(new URL(page.url()).searchParams.get('gf'))[medianColumn], `${tool}: filter reload survives`);
         if (fixture) assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: selected pricing basis reload survives`);
-        if (fixture && tool !== 'recipe-analyzer') {
+        if (fixture) {
           await page.click('[aria-label="Clear all filters"]');
           await page.waitForFunction(() => !new URL(location.href).searchParams.has('gf'));
-          assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
+          // Recipe has no history-window control; its pricing inputs are
+          // preserved the same way the other tools' price basis is.
+          if (tool !== 'recipe-analyzer') assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
           assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: Clear all preserves price basis`);
         }
+        assert.deepEqual(errors, [], `${tool}: browser errors`);
         console.log(`PASS ${tool}: shared market columns, median calculation, filter, hide and reload (${rowCount} initial rows)`);
         if (tool === 'recipe-analyzer') {
           // Bookmarks carrying the retired experiment flag keep the same columns.
@@ -541,8 +595,15 @@ async function main() {
           console.log('PASS recipe-analyzer: promoted columns work by default and in old Labs bookmarks');
         }
       }
+      if (!process.env.ANALYZER_TOOLS || process.env.ANALYZER_TOOLS.split(',').includes('trends')) {
+        await checkTrends({ page, fixture, world, open, heading, sortLink, sorted, menu, menuAction });
+      }
       if (fixture) {
-        for (const source of ['cheapest', 'recentSales', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed`);
+        const ran = tool => !process.env.ANALYZER_TOOLS || process.env.ANALYZER_TOOLS.split(',').includes(tool);
+        if (routes.some(([tool]) => ran(tool))) {
+          for (const source of ['cheapest', 'recentSales', 'sale_stats', 'listing_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed`);
+        }
+        if (ran('trends')) for (const source of ['trends', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed by Trends`);
       }
     }
     assert.deepEqual(errors, [], 'no browser or hydration errors');
@@ -555,6 +616,233 @@ async function main() {
   } finally {
     await browser.close();
   }
+}
+
+// Trends on the shared grid (issue #1344): old links, header sorting, the
+// Columns picker, window changes and request behavior over the 500-row
+// candidate set. Value assertions need the deterministic trends fixture.
+async function checkTrends({ page, fixture, world, open, heading, sortLink, sorted, menu, menuAction }) {
+  const requests = [];
+  const recorder = request => {
+    const url = new URL(request.url());
+    if (/^\/api\/v1\/(trends|sale_stats)\//.test(url.pathname)) requests.push(url);
+  };
+  page.on('request', recorder);
+  const requested = (kind, predicate = () => true) => requests.filter(url => url.pathname.startsWith(`/api/v1/${kind}/`) && predicate(url));
+  const firstItem = async expected => {
+    await page.$eval('.virtual-grid', element => { element.scrollTop = 0; element.scrollLeft = 0; });
+    await page.waitForFunction(expected =>
+      document.querySelector('.virtual-grid-cell[data-column="item"] a')?.getAttribute('href')?.endsWith(`/${expected}`),
+    {}, expected);
+  };
+  const rows = async expected => {
+    await page.waitForFunction(expected =>
+      Number(document.querySelector('.virtual-grid')?.getAttribute('aria-rowcount')) - 1 === expected,
+    {}, expected);
+  };
+  // Columns mount only while their portion of the grid is in view.
+  const reveal = async column => {
+    await page.waitForSelector('.virtual-grid');
+    const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
+    for (let left = 0; left <= width; left += 400) {
+      await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (await page.$(heading(column))) return;
+    }
+    assert.fail(`trends: ${column} heading never mounted`);
+  };
+  const cellText = async (column, pattern) => {
+    await reveal(column);
+    await page.waitForFunction((column, pattern) => [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
+      .some(cell => new RegExp(pattern).test(cell.textContent)), { timeout: 90000 }, column, pattern);
+  };
+  const route = `/trends/${world}`;
+  // SSR resources read the server database, outside browser interception, so
+  // with the fixture every visit (including the "reload") navigates in-app.
+  const visit = async href => {
+    if (fixture) {
+      await open();
+      await page.evaluate(href => {
+        const link = document.createElement('a');
+        link.id = 'fixture-navigate'; link.href = href; link.textContent = 'Open trends';
+        document.querySelector('main').prepend(link);
+      }, href);
+      await page.$eval('#fixture-navigate', link => link.click());
+      await page.waitForFunction(pathname => location.pathname === pathname, {}, route);
+    } else {
+      const response = await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      assert(response.ok(), `trends: HTTP ${response.status()}`);
+    }
+    await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
+    await page.waitForSelector('.virtual-grid', { timeout: 90000 });
+  };
+  // An old bookmark: native sort token, legacy chip parameters, explicit window.
+  console.log('CHECK trends: navigating');
+  await visit(`${BASE}${route}?${new URLSearchParams({ v: '1', lang: 'en', window: '90', sort: 'units', dir: 'asc', min_sales: '40' })}`);
+  console.log('CHECK trends: grid ready');
+  // The shared window control keeps Trends' choices and honors the link.
+  assert.deepEqual(await page.$$eval('[data-market-window] option', options => options.map(el => el.value)), ['7', '30', '90']);
+  assert.equal(await page.$eval('[data-market-window]', el => el.value), '90');
+  await page.waitForFunction(() => document.querySelectorAll('[data-metric-sort="units"]').length === 1);
+  // Old sort tokens rank the grid without being rewritten until a header is used.
+  assert.equal(new URL(page.url()).searchParams.get('sort'), 'units');
+  await page.waitForFunction(() => document.querySelector('.virtual-grid-heading[data-column="units"]')?.getAttribute('aria-sort') === 'ascending');
+  assert.equal(await page.$eval(`${sortLink('units')} [aria-hidden]`, el => el.textContent), '↑');
+  // Native columns, the shared identity columns Trends places, and hidden shared history columns are all registered.
+  const observed = new Set();
+  const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
+  for (let left = 0; left <= width; left += 500) {
+    await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    for (const id of await page.$$eval('.virtual-grid-heading', headings => headings.map(element => element.dataset.column))) observed.add(id);
+  }
+  for (const column of ['item', 'market-quality', 'trend', 'market-listing', 'vwap', 'pct', 'sales-per-day', 'units', 'confidence']) {
+    assert(observed.has(column), `trends shows ${column} by default`);
+  }
+  assert(!observed.has('market-sale-median'), 'shared history columns start hidden');
+  await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+  // The legacy Min sales chip is the hidden sales metric's filter.
+  await page.waitForSelector('[data-registered-filter="sales"]');
+  assert.match(await page.$eval('[data-registered-filter="sales"]', el => el.textContent), /At least 40/);
+  if (fixture) {
+    await rows(2); // 30-sale row excluded
+    await firstItem(5); // 900 units before 2,500
+    assert.equal(requested('trends', url => url.searchParams.get('window') === '90' && url.searchParams.get('show_suspicious') === '0').length, 1, 'one 90-day request');
+    assert.equal(requested('sale_stats').length, 0, 'no sale statistics until a shared column asks for them');
+    await cellText('vwap', '2,850'); // 950 × 90/30
+    await cellText('market-listing', '400');
+    await cellText('sales-per-day', '0\\.7'); // 60 / 90
+  }
+  // Header sorting rewrites the old token to the canonical grid sort and preserves the rest.
+  const before = new URL(page.url()).searchParams;
+  await page.click(sortLink('vwap'));
+  await sorted('vwap', 'desc');
+  for (const [key, value] of before) if (!['sort', 'dir'].includes(key)) {
+    assert.equal(new URL(page.url()).searchParams.get(key), value, `trends: ${key} survives header sorting`);
+  }
+  assert.equal(await page.$$eval('.virtual-grid-heading[aria-sort]', headings => headings.filter(el => el.getAttribute('aria-sort') !== 'none').length), 1);
+  if (fixture) await firstItem(5); // VWAP 950 before 120
+  await page.click(sortLink('vwap'));
+  await sorted('vwap', 'asc');
+  if (fixture) await firstItem(7);
+  // `price` sorted the observed listing, which the shared listing column now carries.
+  await page.click(sortLink('market-listing'));
+  await sorted('market-listing', 'desc');
+  if (fixture) await firstItem(5);
+  // The sparkline is display-only: no header sort and no menu sort links.
+  assert.equal(await page.$(sortLink('trend')), null);
+  await menu('trend');
+  assert.equal(await page.$$eval('.grid-menu-panel a', links => links.filter(link => /sort=grid/.test(link.href)).length), 0);
+  await page.keyboard.press('Escape');
+  // The Columns picker adds a shared follow-window column; only then is the 90-day body requested.
+  await page.click('button[aria-label="Columns"]');
+  let median;
+  for (const label of await page.$$('label')) {
+    if (await label.evaluate(el => el.textContent.trim().startsWith('Sale median (90d)') && !!el.querySelector('input[type="checkbox"]'))) { median = label; break; }
+  }
+  assert(median, 'picker offers the follow-window median');
+  assert.equal(await median.$eval('input', el => el.checked), false);
+  await median.click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('cols')?.split(',').includes('market-sale-median'));
+  assert(new URL(page.url()).searchParams.get('cols').split(',').includes('trend'), 'shared toggle keeps native defaults');
+  await page.keyboard.press('Escape');
+  await reveal('market-sale-median');
+  if (fixture) {
+    await cellText('market-sale-median', '900');
+    assert.equal(requested('sale_stats', url => url.searchParams.get('window') === '90').length, 1, 'the selected window body loads once');
+    assert.equal(requested('sale_stats', url => url.searchParams.get('window') !== '90').length, 0, 'no other window is fetched');
+  }
+  // A window change re-requests trends and the follow column together, keeping other URL state.
+  await page.select('[data-market-window]', '7');
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
+  assert.equal(new URL(page.url()).searchParams.get('sort'), 'grid:market-listing', 'window change keeps the sort');
+  assert(new URL(page.url()).searchParams.get('cols').split(',').includes('market-sale-median'), 'window change keeps the columns');
+  if (fixture) {
+    await cellText('vwap', '222'); // 950 × 7/30
+    await cellText('market-sale-median', '900');
+    assert.equal(requested('trends', url => url.searchParams.get('window') === '7').length, 1, 'trends re-requested for 7 days');
+    assert.equal(requested('sale_stats', url => url.searchParams.get('window') === '7').length, 1, 'follow column re-requested for 7 days');
+    await rows(2);
+  }
+  // The suspicious-sales control changes the request, not a post-hoc filter.
+  await page.click('.registered-filter-bar [data-add-filter-menu]');
+  await page.click('[data-add-filter="show_suspicious"]');
+  await page.waitForSelector('[data-registered-editor]');
+  let toggle;
+  for (const select of await page.$$('[data-registered-editor] select')) {
+    if (await select.evaluate(el => !!el.querySelector('option[value="true"]'))) { toggle = select; break; }
+  }
+  assert(toggle, 'suspicious control is a registered toggle');
+  await toggle.select('true');
+  await page.click('[data-registered-editor] button[type="submit"]');
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('show_suspicious') === 'true');
+  await page.waitForSelector('[data-registered-filter="show_suspicious"]');
+  if (fixture) {
+    await rows(3);
+    assert.equal(requested('trends', url => url.searchParams.get('show_suspicious') === '1').length, 1, 'suspicious rows requested from the server');
+    await cellText('confidence', 'Suspicious');
+  }
+  // Everything survives a reload: alias filter, canonical sort, picked column, window and control.
+  const saved = page.url();
+  if (fixture) await visit(saved);
+  else await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
+  await page.waitForSelector('.virtual-grid', { timeout: 90000 });
+  assert.equal(page.url(), saved);
+  await page.waitForSelector('[data-registered-filter="sales"]');
+  await page.waitForSelector('[data-registered-filter="show_suspicious"]');
+  await sorted('market-listing', 'desc');
+  await reveal('market-sale-median');
+  // Evidence: the restored state with its chips, canonical sort, picked column and 7-day window.
+  await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+  await page.evaluate(() => document.querySelector('#fixture-navigate')?.remove());
+  await page.setViewport({ width: 1800, height: 1000 });
+  await page.waitForFunction(() => document.querySelectorAll('.virtual-grid-cell[data-column="confidence"]').length > 0);
+  await page.screenshot({ path: path.join(artifacts, 'trends-market-grid.png'), fullPage: false });
+  await reveal('units');
+  // Hiding a column from its menu keeps its hidden filter, as on every other grid.
+  await menu('units');
+  await menuAction('Hide column');
+  await page.waitForFunction(() => !new URL(location.href).searchParams.get('cols')?.split(',').includes('units'));
+  assert.equal(await page.$(heading('units')), null);
+  await page.click('[aria-label="Clear all filters"]');
+  await page.waitForFunction(() => !new URL(location.href).searchParams.has('min_sales') && !new URL(location.href).searchParams.has('show_suspicious'));
+  assert.equal(new URL(page.url()).searchParams.get('window'), '7', 'Clear all preserves the window');
+  assert.equal(new URL(page.url()).searchParams.get('sort'), 'grid:market-listing', 'Clear all preserves the sort');
+  if (fixture) {
+    // Keep the same page owner: an empty category must not dispose the grid's
+    // registered count and filter providers while the toolbar still reads them.
+    await page.evaluate(() => {
+      const url = new URL(location.href);
+      url.searchParams.set('category', '2147483647');
+      const link = document.createElement('a');
+      link.href = url.href; link.id = 'empty-category-link';
+      document.querySelector('main').prepend(link);
+      link.click();
+    });
+    await page.waitForFunction(() => new URL(location.href).searchParams.has('category'));
+    await rows(0);
+    await page.waitForSelector('[data-registered-filter="category"]');
+    await page.click('[aria-label="Clear all filters"]');
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has('category'));
+    await rows(3);
+    // Missing sort retains the original Units default, including dir-only links.
+    await visit(`${BASE}${route}?dir=asc`);
+    await reveal('units');
+    assert.equal(await page.$eval(heading('units'), el => el.getAttribute('aria-sort')), 'ascending');
+    await firstItem(6);
+    await visit(`${BASE}${route}`);
+    await reveal('units');
+    assert.equal(await page.$eval(heading('units'), el => el.getAttribute('aria-sort')), 'descending');
+    await firstItem(7);
+    await reveal('units');
+    await page.click(sortLink('units'));
+    await sorted('units', 'asc');
+    await firstItem(6);
+  }
+  await page.setViewport({ width: 1600, height: 1000 });
+  page.off('request', recorder);
+  console.log('PASS trends: legacy sort/filter aliases, shared header sorting, columns picker, window changes, suspicious control and reload on the shared grid');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

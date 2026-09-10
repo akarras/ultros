@@ -963,6 +963,58 @@ mod tests {
         assert_eq!((p.vendor_quantity, p.cost), (2, 26));
     }
     #[test]
+    fn vendors_complete_home_plan_while_cheaper_market_remains_an_option() {
+        let materials = [leaf(1, 5)];
+        let market = BTreeMap::from([(1, vec![offer(1, 2, 5, 8)])]);
+        let vendors = BTreeMap::from([(1, 10)]);
+        let context = ctx(1, &[(1, 10), (2, 10)]);
+        let comparison = compare_routes(&materials, &market, &vendors, &context);
+        let home = comparison.baseline().unwrap();
+        assert_eq!(
+            (home.cost, home.missing, home.purchases[&1].vendor_quantity),
+            (50, 0, 5)
+        );
+        assert!(home.worlds.is_empty());
+        assert_eq!(home.travel, Travel::default());
+        assert_eq!(
+            comparison.best_value(),
+            Some(0),
+            "10 gil saved should not justify a hop"
+        );
+        let cheapest = comparison.cheapest().unwrap();
+        assert_eq!(
+            (cheapest.cost, cheapest.purchases[&1].vendor_quantity),
+            (40, 0)
+        );
+        assert_eq!(cheapest.worlds, BTreeSet::from([2]));
+
+        let market_only = compare_routes(&materials, &market, &BTreeMap::new(), &context);
+        assert_eq!(market_only.baseline().unwrap().missing, 5);
+        assert_eq!(
+            market_only.cards[market_only.best_value().unwrap()].worlds,
+            BTreeSet::from([2])
+        );
+    }
+
+    #[test]
+    fn vendor_only_plan_needs_no_market_supply_or_world_visits() {
+        let comparison = compare_routes(
+            &[leaf(1, 5)],
+            &BTreeMap::new(),
+            &BTreeMap::from([(1, 10)]),
+            &ctx(1, &[(1, 10)]),
+        );
+        assert_eq!(comparison.cards.len(), 1);
+        let plan = &comparison.cards[0];
+        assert_eq!(
+            (plan.cost, plan.missing, plan.purchases[&1].vendor_quantity),
+            (50, 0, 5)
+        );
+        assert!(plan.worlds.is_empty());
+        assert!(itinerary(plan).is_empty());
+    }
+
+    #[test]
     fn stacks_are_not_reused_and_missing_supply_is_explicit() {
         let p = purchase(5, &[offer(1, 1, 3, 2), offer(1, 1, 3, 2)], None);
         assert_eq!((p.quantity, p.missing(), p.cost), (3, 2, 6));

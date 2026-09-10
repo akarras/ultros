@@ -211,9 +211,10 @@ where
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 location.pathname.get_untracked(),
-                next.to_query_string()
+                next.to_query_string(),
+                location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,

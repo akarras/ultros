@@ -1,42 +1,190 @@
-//! Filter predicates and column availability for the Item Explorer.
+//! The Item Explorer's row model, its legacy filter contract and column
+//! availability.
 //!
 //! Kept out of [`item_explorer`](super::item_explorer) — and free of every
-//! reactive and context read — so both halves can be unit-tested against the
-//! shipped game-data pack. The page owns the URL plumbing and the chips; this
-//! module owns "does this item match?" and "does this column have anything to
-//! show?".
+//! reactive and context read — so all of it can be unit-tested against the
+//! shipped game-data pack. The page owns the URL plumbing and the grid; this
+//! module owns "what does a row carry?", "which legacy `?` key means which
+//! grid filter?" and "does this column have anything to show?".
 //!
 //! # Why availability is computed from the whole set
 //!
 //! Issue #1296: not one item in a category like Minions has an equip level, an
 //! HQ variant, or a real item level, so three of the table's columns render
 //! 261 dashes, blanks and identical ones. [`column_availability`] scans the
-//! set once and the page hides the columns nothing filled in.
+//! set once and the page leaves those columns out of the grid.
 //!
-//! It has to be a property of the **set**, not of the page of rows currently
-//! on screen: a column that appears and disappears as you page through would
-//! reshuffle the grid template under the reader. Both callers therefore pass
-//! the full, unpaginated, *unfiltered* item list.
+//! It has to be a property of the **set**, not of the rows currently on
+//! screen: a column that appears and disappears as you filter would reshuffle
+//! the grid under the reader. The page therefore passes the full, *unfiltered*
+//! item list.
 
+use ultros_api_types::cheapest_listings::CheapestListingsMap;
 use xiv_gen::Item;
 
-/// Cheapest market price for one item, as far as the filters need to know it.
-///
-/// The three-way split is what keeps the market-price filters out of
-/// hydration's way. `NotLoaded` is what the server and the first client render
-/// both see — the price map is deliberately withheld until after hydration
-/// (see the `hydrated` flag in `item_explorer.rs`), and a price filter that
-/// dropped rows on one side only is exactly the SSR/CSR row-count mismatch
-/// that tachys panics on. `Missing` is a *loaded* price map that has no
-/// listing for this item, which the filters treat as "does not match a price
-/// bound" rather than "unknown".
+use crate::analyzer_kit::market::MarketSubject;
+use crate::components::virtual_grid::metrics::{FilterOp, GridValue};
+use crate::components::virtual_grid::registry::FilterAlias;
+
+/// Grid column and metric ids. `?sort=` tokens and `?cols=` ids are the same
+/// strings (see `ItemSortOption` on the page), so a bookmark that names a
+/// column names it once.
+pub const COL_ITEM: &str = "item";
+pub const COL_ITEM_LEVEL: &str = "ilvl";
+pub const COL_EQUIP_LEVEL: &str = "lv";
+pub const COL_NQ: &str = "price";
+pub const COL_HQ: &str = "hq";
+pub const COL_VENDOR: &str = "vendor";
+pub const COL_WORLD: &str = "world";
+pub const COL_KEY: &str = "key";
+pub const COL_ACTIONS: &str = "actions";
+/// The shared cheapest-listing column, overridden by the page so it can be
+/// `Pending` before prices load (see [`ExplorerRow::listing_value`]).
+pub const COL_LISTING: &str = "market-listing";
+
+/// Legacy `?` keys, kept verbatim: every one of them is a bookmark contract
+/// from #1316. They resolve into shared grid filters through
+/// [`explorer_filter_aliases`], except `hq-only`, which is a route-level
+/// control the page applies itself.
+pub const FILTER_NAME: &str = "q";
+pub const FILTER_MIN_ILVL: &str = "min-ilvl";
+pub const FILTER_MAX_ILVL: &str = "max-ilvl";
+pub const FILTER_MIN_LV: &str = "min-lv";
+pub const FILTER_MAX_PRICE: &str = "max-price";
+pub const FILTER_VENDOR: &str = "vendor-only";
+pub const FILTER_HQ: &str = "hq-only";
+pub const FILTER_LISTED: &str = "listed";
+
+/// The cheapest listing across both qualities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CheapestPrice {
-    /// Prices are not available to this render yet. Price filters no-op.
-    NotLoaded,
-    /// Prices are loaded and nothing is listed for this item.
-    Missing,
-    Some(i32),
+pub struct CheapestListing {
+    pub price: i32,
+    pub hq: bool,
+    pub world_id: i32,
+}
+
+/// One row of the explorer's grid.
+///
+/// Prices are folded into the row rather than read from the listings
+/// resource in each cell, so the shared grid's metrics, the market subject
+/// and the page's own sort all see the same numbers, and so `prices_loaded`
+/// can hold the hydration gate: the server and the first client render both
+/// build rows with `prices_loaded == false`, and every price-backed value is
+/// then [`GridValue::Pending`] — a filter keeps the row, a `grid:` sort
+/// reports pending — so the two sides agree on the row set and its order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExplorerRow {
+    pub item_id: i32,
+    pub item: &'static Item,
+    pub nq: Option<i32>,
+    pub hq: Option<i32>,
+    pub cheapest: Option<CheapestListing>,
+    pub vendor: Option<u32>,
+    pub prices_loaded: bool,
+}
+
+impl ExplorerRow {
+    /// `prices` is `None` until the page's hydration gate flips.
+    pub fn build(
+        item_id: i32,
+        item: &'static Item,
+        prices: Option<&CheapestListingsMap>,
+        vendor: Option<u32>,
+    ) -> Self {
+        let summary = prices.map(|map| map.find_matching_listings(item_id));
+        let cheapest = summary
+            .as_ref()
+            .and_then(|summary| summary.chosen(false))
+            .map(|listing| {
+                // Equal price/world payloads do not identify a quality.
+                // Mirror chosen(false): NQ wins a price tie.
+                let hq = summary.as_ref().is_some_and(|s| {
+                    s.hq.is_some_and(|hq| s.lq.is_none_or(|nq| hq.price < nq.price))
+                });
+                CheapestListing {
+                    price: listing.price,
+                    hq,
+                    world_id: listing.world_id,
+                }
+            });
+        Self {
+            item_id,
+            item,
+            nq: summary.as_ref().and_then(|s| s.lq).map(|l| l.price),
+            hq: summary.as_ref().and_then(|s| s.hq).map(|l| l.price),
+            cheapest,
+            vendor,
+            prices_loaded: prices.is_some(),
+        }
+    }
+
+    /// Shared market statistics describe **the cheapest listed quality** in
+    /// the pricing scope, at that listing's world. With no listing (or before
+    /// prices load) the subject is NQ on world 0 with no listing price: world
+    /// 0 is what `MarketGrid` already reads as "no listing", so the location
+    /// columns render "—" and no history is requested for it. Statistics then
+    /// describe the NQ history, the quality every item has.
+    pub fn market_subject(&self) -> MarketSubject {
+        let mut subject = MarketSubject::new(
+            self.item_id,
+            self.cheapest.is_some_and(|c| c.hq),
+            self.cheapest.map_or(0, |c| c.world_id),
+        );
+        subject.label = self.item.name.clone();
+        subject.listing_price = self.cheapest.map(|c| c.price);
+        subject
+    }
+
+    /// The NQ or HQ price as a grid value: `Pending` before the gate flips,
+    /// `Missing` for a loaded map with nothing listed.
+    pub fn price_value(&self, quality_hq: bool) -> GridValue {
+        self.loaded(if quality_hq { self.hq } else { self.nq })
+    }
+
+    /// The cheapest listing of either quality — what the legacy `max-price`
+    /// and `listed` filters compared against.
+    pub fn listing_value(&self) -> GridValue {
+        self.loaded(self.cheapest.map(|c| c.price))
+    }
+
+    fn loaded(&self, price: Option<i32>) -> GridValue {
+        if !self.prices_loaded {
+            return GridValue::Pending;
+        }
+        price.map_or(GridValue::Missing, |p| GridValue::Number(f64::from(p)))
+    }
+}
+
+/// A boolean legacy key: only the literal `true` the old chips wrote turns
+/// the filter on. Anything else reads as unset, as it did before.
+fn true_only(raw: &str) -> Option<String> {
+    (raw.trim() == "true").then(|| "true".to_string())
+}
+
+/// The legacy filter keys as shared grid filters.
+///
+/// `resolve_filters` merges a `Gte` and an `Lte` alias on the same column
+/// into one inclusive `Between`, which is how `min-ilvl` + `max-ilvl` stay
+/// simultaneous. It keeps only the *first* alias for any other pair, so
+/// `max-price` is listed before `listed`: an upper bound on the cheapest
+/// listing already excludes rows with no listing, which is exactly what the
+/// old chips did when both were set.
+pub fn explorer_filter_aliases() -> Vec<FilterAlias> {
+    vec![
+        FilterAlias::new(FILTER_NAME, COL_ITEM, FilterOp::Contains),
+        FilterAlias::integer(FILTER_MIN_ILVL, COL_ITEM_LEVEL, FilterOp::Gte),
+        FilterAlias::integer(FILTER_MAX_ILVL, COL_ITEM_LEVEL, FilterOp::Lte),
+        FilterAlias::integer(FILTER_MIN_LV, COL_EQUIP_LEVEL, FilterOp::Gte),
+        FilterAlias::integer(FILTER_MAX_PRICE, COL_LISTING, FilterOp::Lte),
+        FilterAlias {
+            convert: true_only,
+            ..FilterAlias::new(FILTER_VENDOR, COL_VENDOR, FilterOp::Present)
+        },
+        FilterAlias {
+            convert: true_only,
+            ..FilterAlias::new(FILTER_LISTED, COL_LISTING, FilterOp::Present)
+        },
+    ]
 }
 
 /// Which of the explorer's optional columns any item in the current set
@@ -54,10 +202,10 @@ impl ColumnAvailability {
     /// Unknown ids (the always-present columns) report `true`.
     pub fn has(&self, column: &str) -> bool {
         match column {
-            super::item_explorer::COL_ID_ITEM_LEVEL => self.item_level,
-            super::item_explorer::COL_ID_EQUIP_LEVEL => self.equip_level,
-            super::item_explorer::COL_ID_HQ => self.hq,
-            super::item_explorer::COL_ID_VENDOR => self.vendor,
+            COL_ITEM_LEVEL => self.item_level,
+            COL_EQUIP_LEVEL => self.equip_level,
+            COL_HQ => self.hq,
+            COL_VENDOR => self.vendor,
             _ => true,
         }
     }
@@ -107,101 +255,27 @@ pub fn column_availability<'a>(
     availability
 }
 
-/// The explorer's filter chips, parsed out of the URL.
-///
-/// Every field is "no filter" when unset, so an explorer with no `?`-params
-/// keeps rendering the full category exactly as it did before #1296.
+/// The one legacy filter that is not a grid metric: "the item *can* be HQ"
+/// is a property of the item sheet, not of any column, so the page applies
+/// it before the rows reach the grid.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExplorerFilters {
-    /// Case-insensitive substring of the item name.
-    pub name: Option<String>,
-    pub min_ilvl: Option<i32>,
-    pub max_ilvl: Option<i32>,
-    pub min_lv: Option<i32>,
-    /// Cheapest market listing at or below this many gil.
-    pub max_price: Option<i32>,
-    /// Only items a vendor sells — the collection-completion case the issue
-    /// opens with ("which minions can be bought from a vendor").
-    pub vendor_only: bool,
     /// Only items with an HQ variant.
     pub hq_only: bool,
-    /// Only items with at least one market listing in the current scope.
-    pub listed_only: bool,
 }
 
 impl ExplorerFilters {
-    /// Is the filter behind this `?` key in use? Drives which chips the bar
-    /// draws and which entries `+ Filter` still offers.
-    pub fn is_set(&self, key: &str) -> bool {
-        use super::item_explorer as page;
-        match key {
-            page::FILTER_NAME => self.name.is_some(),
-            page::FILTER_MIN_ILVL => self.min_ilvl.is_some(),
-            page::FILTER_MAX_ILVL => self.max_ilvl.is_some(),
-            page::FILTER_MIN_LV => self.min_lv.is_some(),
-            page::FILTER_MAX_PRICE => self.max_price.is_some(),
-            page::FILTER_VENDOR => self.vendor_only,
-            page::FILTER_HQ => self.hq_only,
-            page::FILTER_LISTED => self.listed_only,
-            _ => false,
-        }
-    }
-
-    /// Does this item survive the filters?
-    ///
-    /// `vendor` is the item's vendor price (`None` when no vendor sells it)
-    /// and `price` its cheapest listing. Both are passed in because both come
-    /// from sources this module deliberately does not reach into: static game
-    /// data behind a context read, and a resource that is not resolved yet
-    /// during hydration.
-    pub fn matches(&self, item: &Item, vendor: Option<u32>, price: CheapestPrice) -> bool {
-        if let Some(needle) = &self.name
-            && !item.name.to_lowercase().contains(&needle.to_lowercase())
-        {
-            return false;
-        }
-        if let Some(min) = self.min_ilvl
-            && item.level_item < min
-        {
-            return false;
-        }
-        if let Some(max) = self.max_ilvl
-            && item.level_item > max
-        {
-            return false;
-        }
-        if let Some(min) = self.min_lv
-            && item.level_equip < min
-        {
-            return false;
-        }
-        if self.vendor_only && vendor.is_none() {
-            return false;
-        }
-        if self.hq_only && !item.can_be_hq {
-            return false;
-        }
-        // Both market-price filters are inert while `price` is `NotLoaded`, so
-        // the server and the first client render agree on the row set. See
-        // [`CheapestPrice`].
-        if self.listed_only && price == CheapestPrice::Missing {
-            return false;
-        }
-        if let Some(max) = self.max_price {
-            match price {
-                CheapestPrice::Some(gil) if gil > max => return false,
-                CheapestPrice::Missing => return false,
-                _ => {}
-            }
-        }
-        true
+    pub fn matches(&self, item: &Item) -> bool {
+        !self.hq_only || item.can_be_hq
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::item_explorer::ADDABLE_FILTERS;
+    use crate::components::virtual_grid::registry::resolve_filters;
+    use leptos_router::params::ParamsMap;
+    use ultros_api_types::cheapest_listings::{CheapestListingData, CheapestListingMapKey};
     use xiv_gen::{ItemSearchCategoryId, Language};
 
     /// The category the issue links to (`/items/category/75`): 261 minions,
@@ -227,6 +301,25 @@ mod tests {
             .into_iter()
             .min_by_key(|item| item.key_id.0)
             .unwrap_or_else(|| panic!("category {category} is empty in the shipped English pack"))
+    }
+
+    fn listings(item_id: i32, nq: Option<i32>, hq: Option<i32>) -> CheapestListingsMap {
+        let mut map = CheapestListingsMap {
+            map: Default::default(),
+        };
+        if let Some(price) = nq {
+            map.map.insert(
+                CheapestListingMapKey { item_id, hq: false },
+                CheapestListingData { price, world_id: 7 },
+            );
+        }
+        if let Some(price) = hq {
+            map.map.insert(
+                CheapestListingMapKey { item_id, hq: true },
+                CheapestListingData { price, world_id: 9 },
+            );
+        }
+        map
     }
 
     /// Pins the two category ids the tests key on, so a game-data bump that
@@ -268,7 +361,7 @@ mod tests {
     }
 
     /// Availability is a property of the *set*: one qualifying item is enough
-    /// to keep a column, so paging never changes the column layout.
+    /// to keep a column, so filtering never changes the column layout.
     #[test]
     fn one_item_with_a_value_keeps_the_column() {
         let equippable = category_items(GLADIATORS_ARMS)
@@ -291,96 +384,178 @@ mod tests {
         assert!(column_availability([minion], move |i| (i == id).then_some(100)).vendor);
     }
 
+    /// The documented subject rule: the cheapest listed quality at its own
+    /// world; NQ on world 0 with no price when nothing is listed or prices
+    /// have not loaded yet.
     #[test]
-    fn no_filters_match_everything() {
-        let filters = ExplorerFilters::default();
-        assert!(ADDABLE_FILTERS.iter().all(|key| !filters.is_set(key)));
-        for item in category_items(MINIONS) {
-            assert!(filters.matches(item, None, CheapestPrice::Missing));
+    fn subject_is_the_cheapest_listed_quality_or_nq_on_world_zero() {
+        let item = first(GLADIATORS_ARMS);
+        let id = item.key_id.0;
+
+        let both = ExplorerRow::build(id, item, Some(&listings(id, Some(500), Some(400))), None);
+        assert_eq!(
+            both.cheapest,
+            Some(CheapestListing {
+                price: 400,
+                hq: true,
+                world_id: 9
+            })
+        );
+        assert_eq!((both.nq, both.hq), (Some(500), Some(400)));
+        let subject = both.market_subject();
+        assert_eq!(
+            (subject.hq, subject.world_id, subject.listing_price),
+            (true, 9, Some(400))
+        );
+        assert_eq!(subject.label, item.name);
+
+        // A tie keeps NQ: `chosen(false)` only prefers HQ when it is cheaper.
+        let tie = ExplorerRow::build(id, item, Some(&listings(id, Some(400), Some(400))), None);
+        assert!(!tie.market_subject().hq);
+        let mut identical = listings(id, Some(400), Some(400));
+        identical
+            .map
+            .get_mut(&CheapestListingMapKey {
+                item_id: id,
+                hq: true,
+            })
+            .unwrap()
+            .world_id = 7;
+        let tie = ExplorerRow::build(id, item, Some(&identical), None);
+        assert!(
+            !tie.market_subject().hq,
+            "identical listing payloads still choose NQ"
+        );
+
+        let nq_only = ExplorerRow::build(id, item, Some(&listings(id, Some(300), None)), None);
+        assert_eq!(
+            nq_only.market_subject().world_id,
+            7,
+            "the location is the actual listing's"
+        );
+
+        let none = ExplorerRow::build(id, item, Some(&listings(id, None, None)), None);
+        let subject = none.market_subject();
+        assert_eq!(
+            (subject.hq, subject.world_id, subject.listing_price),
+            (false, 0, None)
+        );
+
+        let unloaded = ExplorerRow::build(id, item, None, None);
+        let subject = unloaded.market_subject();
+        assert_eq!(
+            (subject.hq, subject.world_id, subject.listing_price),
+            (false, 0, None)
+        );
+    }
+
+    /// The hydration contract, carried by the row: before the gate flips a
+    /// price value is `Pending` (a filter keeps the row, a sort waits); once
+    /// loaded, nothing listed is `Missing` and a price is a number.
+    #[test]
+    fn price_values_are_pending_until_prices_load() {
+        let item = first(GLADIATORS_ARMS);
+        let id = item.key_id.0;
+        let unloaded = ExplorerRow::build(id, item, None, None);
+        assert!(!unloaded.prices_loaded);
+        assert_eq!(unloaded.price_value(false), GridValue::Pending);
+        assert_eq!(unloaded.price_value(true), GridValue::Pending);
+        assert_eq!(unloaded.listing_value(), GridValue::Pending);
+
+        let none = ExplorerRow::build(id, item, Some(&listings(id, None, None)), None);
+        assert_eq!(none.price_value(false), GridValue::Missing);
+        assert_eq!(none.listing_value(), GridValue::Missing);
+
+        let both = ExplorerRow::build(id, item, Some(&listings(id, Some(500), Some(400))), None);
+        assert_eq!(both.price_value(false), GridValue::Number(500.0));
+        assert_eq!(both.price_value(true), GridValue::Number(400.0));
+        assert_eq!(both.listing_value(), GridValue::Number(400.0));
+    }
+
+    /// Every legacy key resolves to the shared filter with the old meaning,
+    /// and a min/max pair becomes one inclusive bound.
+    #[test]
+    fn legacy_filter_keys_resolve_to_inclusive_shared_bounds() {
+        let aliases = explorer_filter_aliases();
+        let mut query = ParamsMap::new();
+        query.insert(FILTER_MIN_ILVL, "600".to_string());
+        query.insert(FILTER_MAX_ILVL, "700".to_string());
+        query.insert(FILTER_MIN_LV, "90".to_string());
+        query.insert(FILTER_NAME, " sword ".to_string());
+        query.insert(FILTER_MAX_PRICE, "1000".to_string());
+        query.insert(FILTER_VENDOR, "true".to_string());
+        query.insert(FILTER_LISTED, "true".to_string());
+        let filters = resolve_filters(&query, &aliases);
+
+        assert_eq!(filters[COL_ITEM_LEVEL].op, FilterOp::Between);
+        assert_eq!(filters[COL_ITEM_LEVEL].value, "600,700");
+        assert_eq!(filters[COL_EQUIP_LEVEL].op, FilterOp::Gte);
+        assert_eq!(filters[COL_ITEM].op, FilterOp::Contains);
+        assert_eq!(filters[COL_ITEM].value, "sword");
+        assert_eq!(filters[COL_VENDOR].op, FilterOp::Present);
+        // `max-price` wins over `listed` on the shared listing column; an
+        // upper bound already excludes unlisted rows.
+        assert_eq!(filters[COL_LISTING].op, FilterOp::Lte);
+        assert_eq!(filters[COL_LISTING].value, "1000");
+        assert_eq!(filters.len(), 5);
+
+        let mut listed = ParamsMap::new();
+        listed.insert(FILTER_LISTED, "true".to_string());
+        assert_eq!(
+            resolve_filters(&listed, &aliases)[COL_LISTING].op,
+            FilterOp::Present
+        );
+
+        // A boolean key is on only for the literal `true` the chips wrote.
+        for raw in ["false", "", "yes", "1"] {
+            let mut off = ParamsMap::new();
+            off.insert(FILTER_VENDOR, raw.to_string());
+            off.insert(FILTER_LISTED, raw.to_string());
+            assert!(resolve_filters(&off, &aliases).is_empty(), "{raw:?}");
         }
     }
 
+    /// The bounds are inclusive, as the old chips were, and a `Pending`
+    /// price keeps the row: the hydration contract seen through the grid.
     #[test]
-    fn name_filter_is_a_case_insensitive_substring() {
-        let minion = first(MINIONS);
-        let shouty = minion.name.to_uppercase();
-        let filters = ExplorerFilters {
-            name: Some(shouty),
-            ..Default::default()
-        };
-        assert!(filters.matches(minion, None, CheapestPrice::NotLoaded));
-
-        let elsewhere = ExplorerFilters {
-            name: Some("definitely not an item name".to_string()),
-            ..Default::default()
-        };
-        assert!(!elsewhere.matches(minion, None, CheapestPrice::NotLoaded));
-    }
-
-    /// The issue's motivating question — "which minions can be bought from a
-    /// vendor" — is this filter.
-    #[test]
-    fn vendor_only_keeps_exactly_the_vendor_items() {
-        let filters = ExplorerFilters {
-            vendor_only: true,
-            ..Default::default()
-        };
-        let minion = first(MINIONS);
-        assert!(!filters.matches(minion, None, CheapestPrice::NotLoaded));
-        assert!(filters.matches(minion, Some(1000), CheapestPrice::NotLoaded));
+    fn level_bounds_are_inclusive_and_pending_prices_keep_rows() {
+        let aliases = explorer_filter_aliases();
+        let mut query = ParamsMap::new();
+        query.insert(FILTER_MIN_ILVL, "600".to_string());
+        query.insert(FILTER_MAX_ILVL, "700".to_string());
+        query.insert(FILTER_MAX_PRICE, "1000".to_string());
+        let filters = resolve_filters(&query, &aliases);
+        let ilvl = &filters[COL_ITEM_LEVEL];
+        for (level, pass) in [(599.0, false), (600.0, true), (700.0, true), (701.0, false)] {
+            assert_eq!(ilvl.matches(&GridValue::Number(level), false), Some(pass));
+        }
+        let price = &filters[COL_LISTING];
+        assert_eq!(price.matches(&GridValue::Pending, false), None);
+        assert_eq!(price.matches(&GridValue::Missing, false), Some(false));
+        assert_eq!(price.matches(&GridValue::Number(1000.0), false), Some(true));
     }
 
     #[test]
-    fn level_bounds_are_inclusive() {
-        let sword = category_items(GLADIATORS_ARMS)
+    fn hq_only_is_the_one_route_level_filter() {
+        let minion = first(MINIONS);
+        assert!(!minion.can_be_hq);
+        assert!(ExplorerFilters::default().matches(minion));
+        assert!(!ExplorerFilters { hq_only: true }.matches(minion));
+        let hq_able = category_items(GLADIATORS_ARMS)
             .into_iter()
-            .find(|item| item.level_item > 1)
-            .expect("gladiator gear carries an item level");
-        let ilvl = sword.level_item;
-        for (min, max, expected) in [
-            (Some(ilvl), Some(ilvl), true),
-            (Some(ilvl + 1), None, false),
-            (None, Some(ilvl - 1), false),
-        ] {
-            let filters = ExplorerFilters {
-                min_ilvl: min,
-                max_ilvl: max,
-                ..Default::default()
-            };
-            assert_eq!(
-                filters.matches(sword, None, CheapestPrice::NotLoaded),
-                expected,
-                "ilvl {ilvl} against min {min:?} / max {max:?}",
-            );
-        }
-    }
-
-    /// The hydration contract: while prices are `NotLoaded`, a price filter
-    /// must not remove a single row, or the server's row set and the client's
-    /// first render disagree and tachys' walker panics.
-    #[test]
-    fn price_filters_are_inert_until_prices_load() {
-        let filters = ExplorerFilters {
-            max_price: Some(1),
-            listed_only: true,
-            ..Default::default()
-        };
-        let minion = first(MINIONS);
-        assert!(filters.matches(minion, None, CheapestPrice::NotLoaded));
-        // Once loaded, the same filters bite.
-        assert!(!filters.matches(minion, None, CheapestPrice::Missing));
-        assert!(!filters.matches(minion, None, CheapestPrice::Some(500)));
-        assert!(filters.matches(minion, None, CheapestPrice::Some(1)));
+            .find(|item| item.can_be_hq)
+            .expect("gladiator gear can be HQ");
+        assert!(ExplorerFilters { hq_only: true }.matches(hq_able));
     }
 
     /// `has` is what the columns picker asks, so an id it does not know about
-    /// (the icon, name and action columns, which are never optional) must not
-    /// read as "unavailable" and take a column away.
+    /// (the item and action columns, which are never optional) must not read
+    /// as "unavailable" and take a column away.
     #[test]
     fn unknown_column_ids_are_always_available() {
         let nothing = ColumnAvailability::default();
-        assert!(nothing.has("name"));
-        assert!(!nothing.has(crate::routes::item_explorer::COL_ID_HQ));
+        assert!(nothing.has(COL_ITEM));
+        assert!(!nothing.has(COL_HQ));
     }
 
     /// Guards the em-dash rule the Lv and iLvl cells render with: both fields

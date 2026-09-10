@@ -8,6 +8,7 @@ use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_router::{NavigateOptions, hooks::use_navigate};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use ultros_api_types::search::SearchResult;
@@ -131,6 +132,30 @@ fn get_static_pages() -> &'static [SearchResult] {
     &STATIC_PAGES
 }
 
+const SEARCH_CACHE_SIZE: usize = 32;
+
+/// A small per-mount LRU. Cache only successful responses, including zero hits.
+#[derive(Default)]
+struct SearchCache(VecDeque<(String, Vec<Arc<SearchResult>>)>);
+
+impl SearchCache {
+    fn get(&mut self, query: &str) -> Option<Vec<Arc<SearchResult>>> {
+        let index = self.0.iter().position(|(key, _)| key == query)?;
+        let entry = self.0.remove(index)?;
+        let results = entry.1.clone();
+        self.0.push_back(entry);
+        Some(results)
+    }
+
+    fn insert(&mut self, query: String, results: Vec<Arc<SearchResult>>) {
+        self.0.retain(|(key, _)| key != &query);
+        self.0.push_back((query, results));
+        if self.0.len() > SEARCH_CACHE_SIZE {
+            self.0.pop_front();
+        }
+    }
+}
+
 /// What an in-flight search should do once its request comes back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchOutcome {
@@ -164,16 +189,25 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
     let i18n = use_i18n();
     let apple_hotkeys = use_platform_hotkeys().apple;
     let text_input = NodeRef::<Input>::new();
-    let (search, set_search) = signal(String::new());
+    let (search, write_search) = signal(String::new());
     let navigate = use_navigate();
     let (active, set_active) = signal(false);
     let (loading, set_loading) = signal(false);
 
-    use crate::api::search as api_search;
-
     // Search results and request tracking
     let (search_results, set_search_results) = signal::<Vec<Arc<SearchResult>>>(Vec::new());
     let (search_id, set_search_id) = signal(0usize);
+    let cache = StoredValue::new(SearchCache::default());
+    #[cfg(not(feature = "ssr"))]
+    let request = StoredValue::new_local(None::<web_sys::AbortController>);
+    #[cfg(not(feature = "ssr"))]
+    on_cleanup(move || {
+        request.update_value(|controller| {
+            if let Some(controller) = controller.take() {
+                controller.abort();
+            }
+        });
+    });
 
     // Keyboard navigation focus handling
     let (focused_index, set_focused_index) = signal::<Option<usize>>(None);
@@ -201,63 +235,88 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
         }
     });
 
-    // Debounced search effect with cancellation via serial search_id
-    Effect::new(move |_| {
-        let s = search.get();
+    // Every edit (typing, hints, clear, Escape, selection) goes through here.
+    // Invalidate synchronously, before a response can beat a scheduled effect.
+    let set_search = move |s: String| {
         set_search_id.update(|n| *n += 1);
         let current_id = search_id.get_untracked();
+        write_search.set(s.clone());
+        #[cfg(not(feature = "ssr"))]
+        request.update_value(|controller| {
+            if let Some(controller) = controller.take() {
+                controller.abort();
+            }
+        });
 
+        let s = s.trim().to_lowercase();
+        if s.is_empty() {
+            set_search_results.set(vec![]);
+            set_focused_index.set(None);
+            set_loading.set(false);
+            return;
+        }
+        let mut cached = None;
+        cache.update_value(|cache| cached = cache.get(&s));
+        if let Some(results) = cached {
+            set_search_results.set(results);
+            set_loading.set(false);
+            return;
+        }
+
+        // Leave the previous results visible while this request is running.
+        set_loading.set(true);
+        #[cfg(not(feature = "ssr"))]
+        let abort_signal = {
+            let controller = web_sys::AbortController::new().ok();
+            let signal = controller.as_ref().map(|controller| controller.signal());
+            request.set_value(controller);
+            signal
+        };
         spawn_local(async move {
-            TimeoutFuture::new(300).await;
-
             if search_outcome(search_id, current_id) != SearchOutcome::Commit {
                 return;
             }
-
-            if s.trim().is_empty() {
-                set_search_results.set(vec![]);
-                return;
-            }
-
-            let s_lower = s.to_lowercase();
             let mut matched_pages: Vec<SearchResult> = get_static_pages()
                 .iter()
-                .filter(|p| p.title.to_lowercase().contains(&s_lower))
+                .filter(|p| p.title.to_lowercase().contains(&s))
                 .cloned()
                 .collect();
 
             // Sort matched pages so exact matches or starts_with come first
             matched_pages.sort_by(|a, b| {
-                let a_starts = a.title.to_lowercase().starts_with(&s_lower);
-                let b_starts = b.title.to_lowercase().starts_with(&s_lower);
+                let a_starts = a.title.to_lowercase().starts_with(&s);
+                let b_starts = b.title.to_lowercase().starts_with(&s);
                 b_starts.cmp(&a_starts) // true (starts with) comes first
             });
 
-            set_loading.set(true);
-            match api_search(&s).await {
+            #[cfg(feature = "ssr")]
+            let response = crate::api::search(&s).await;
+            #[cfg(not(feature = "ssr"))]
+            let response = crate::api::search_with_abort(&s, abort_signal.as_ref()).await;
+            if search_outcome(search_id, current_id) != SearchOutcome::Commit {
+                return;
+            }
+            #[cfg(not(feature = "ssr"))]
+            request.set_value(None);
+            match response {
                 Ok(mut results) => {
-                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
-                        // Prepend static pages to the backend results
-                        let mut final_results = matched_pages;
-                        final_results.append(&mut results);
-
-                        let results = final_results.into_iter().map(Arc::new).collect();
-                        set_search_results.set(results);
-                        set_loading.set(false);
-                    }
+                    // Prepend static pages to the backend results.
+                    let mut final_results = matched_pages;
+                    final_results.append(&mut results);
+                    let results: Vec<_> = final_results.into_iter().map(Arc::new).collect();
+                    cache.update_value(|cache| cache.insert(s, results.clone()));
+                    set_search_results.set(results);
                 }
                 Err(e) => {
-                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
-                        log::error!("Search failed: {}", e);
-                        // Even if backend fails, show matched static pages
-                        let results = matched_pages.into_iter().map(Arc::new).collect();
-                        set_search_results.set(results);
-                        set_loading.set(false);
-                    }
+                    log::error!("Search failed: {}", e);
+                    // Failures remain retryable; don't cache this fallback.
+                    let results = matched_pages.into_iter().map(Arc::new).collect();
+                    set_search_results.set(results);
                 }
             }
+            set_loading.set(false);
         });
-    });
+    };
 
     // Escape binding on the input (kept as-is)
     leptos_hotkeys::use_hotkeys_ref(
@@ -274,7 +333,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
     let focus_out = move |_| {
         spawn_local(async move {
             TimeoutFuture::new(250).await;
-            set_active(false);
+            let _ = set_active.try_set(false);
         })
     };
 
@@ -627,6 +686,41 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_retains_recently_revisited_queries_and_bounds_memory() {
+        let mut cache = SearchCache::default();
+        for i in 0..SEARCH_CACHE_SIZE {
+            cache.insert(i.to_string(), vec![]);
+        }
+        assert!(cache.get("0").is_some());
+        cache.insert("new".into(), vec![]);
+        assert!(cache.get("1").is_none());
+        assert!(cache.get("0").is_some());
+        assert_eq!(cache.0.len(), SEARCH_CACHE_SIZE);
+    }
+
+    #[test]
+    fn cache_distinguishes_empty_hits_from_misses_and_replaces_entries() {
+        let mut cache = SearchCache::default();
+        assert!(cache.get("ring").is_none());
+        cache.insert("ring".into(), vec![Arc::new(get_static_pages()[0].clone())]);
+        assert_eq!(cache.get("ring").unwrap().len(), 1);
+        cache.insert("ring".into(), vec![]);
+        assert!(cache.get("ring").unwrap().is_empty());
+        assert_eq!(cache.0.len(), 1);
+    }
+
+    #[test]
+    fn returning_to_a_previous_query_does_not_accept_its_old_request() {
+        let owner = Owner::new();
+        let (search_id, set_search_id) = owner.with(|| signal(1usize));
+        // A -> B -> A: query text alone cannot protect against stale results.
+        set_search_id.set(3);
+        assert_eq!(search_outcome(search_id, 1), SearchOutcome::Superseded);
+        assert_eq!(search_outcome(search_id, 2), SearchOutcome::Superseded);
+        assert_eq!(search_outcome(search_id, 3), SearchOutcome::Commit);
+    }
 
     #[test]
     fn commits_the_newest_search() {

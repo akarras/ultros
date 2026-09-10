@@ -832,6 +832,91 @@ async fn floor_history(
     Ok(cached_json(body, ttl))
 }
 
+/// Bounded multi-item extension of the chart history API, with exact floor
+/// bounds and explicit unknown samples. Cache namespace includes cadence/quality.
+async fn floor_history_batch(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path(world): Path<String>,
+    axum::Json(request): axum::Json<ultros_api_types::floor_history::FloorHistoryRequest>,
+) -> Result<axum::response::Response, WebError> {
+    use ultros_api_types::floor_history::{FloorHistoryBatch, ItemFloorHistory};
+    if !request.valid() || request.to > chrono::Utc::now().timestamp() {
+        return Err(WebError::BadRequest);
+    }
+    let selected = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected)
+        .ok_or(WebError::NotFound)?;
+    let ttl = std::time::Duration::from_secs(60);
+    let key = |item_id, hq| crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: request.from,
+        to: request.to,
+        bucket: request.interval.seconds(),
+        group: "floor_window",
+        hq: if hq { "hq" } else { "nq" },
+        bins: 0,
+    };
+    let mut hits = Vec::new();
+    let mut complete = true;
+    for item_id in request
+        .item_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        for hq in [false, true]
+            .into_iter()
+            .filter(|q| request.hq.is_none_or(|wanted| *q == wanted))
+        {
+            match cache
+                .get(&key(item_id, hq))
+                .and_then(|body| serde_json::from_str::<ItemFloorHistory>(&body).ok())
+            {
+                Some(hit) => hits.push(hit),
+                None => complete = false,
+            }
+        }
+    }
+    let payload = if complete {
+        FloorHistoryBatch { series: hits }
+    } else {
+        static QUERIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let _permit = QUERIES
+            .try_acquire()
+            .map_err(|_| WebError::TemporarilyUnavailable)?;
+        let batch = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            ultros_clickhouse::floor_history::batch(&ch, &worlds, &request),
+        )
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?
+        .map_err(|e| crate::web::error::ClickHouseQueryError::new("floor_history_batch", e))?;
+        for series in &batch.series {
+            cache.insert(
+                key(series.item_id, series.hq),
+                serde_json::to_string(series).map_err(anyhow::Error::from)?,
+                ttl,
+            );
+        }
+        batch
+    };
+    let mut response = cached_json(
+        serde_json::to_string(&payload).map_err(anyhow::Error::from)?,
+        ttl,
+    );
+    // HTTP caches key by URL, not by this POST's items/range. Only the
+    // explicit body-aware in-process cache above may reuse batch responses.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
 /// JSON response carrying a `Cache-Control` matching the in-process TTL, so
 /// the browser and any CDN absorb repeats too.
 fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Response {
@@ -3358,6 +3443,10 @@ fn api_router() -> Router<WebState> {
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
         .route("/api/v1/floor_history/{world}/{itemid}", get(floor_history))
+        .route(
+            "/api/v1/floor_history/{world}",
+            post(floor_history_batch).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
         .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
         .route("/api/v1/game-history", get(game_history))
         .route(

@@ -21,3 +21,25 @@ pub fn market_query(world: &str, query: &leptos_router::params::ParamsMap) -> St
     }
     url
 }
+
+/// Return from a recipe detail to the analyzer using its canonical world path.
+pub fn recipe_analyzer_href(world: &str, query: &leptos_router::params::ParamsMap) -> String {
+    use leptos_router::{location::Url, params::ParamsMap};
+    let mut filters = ParamsMap::new();
+    for key in [
+        "buy-scope",
+        "require-hq",
+        "subcrafts",
+        "shards-exclude",
+        "lang",
+    ] {
+        if let Some(value) = query.get(key) {
+            filters.insert(key, value);
+        }
+    }
+    format!(
+        "/recipe-analyzer/{}{}",
+        Url::escape(world),
+        filters.to_query_string()
+    )
+}

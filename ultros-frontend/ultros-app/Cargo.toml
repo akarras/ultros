@@ -92,7 +92,6 @@ serde_json = { workspace = true }
 ultros-charts = { path = "../ultros-charts", features = ["leptos"] }
 icondata.workspace = true
 gloo-timers = { version = "0.4.0", features = ["futures"] }
-paginate = "1.1.11"
 percent-encoding = "2.3.2"
 # leptos_animation = "0.5.0"
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }

@@ -111,6 +111,14 @@ const routes = ['/', '/items', '/flip-finder', '/flip-finder/Gilgamesh', '/analy
 
 Edit that array to add/remove pages you care about. Re-run `npm run test:desktop` or `npm run test:mobile` to generate fresh screenshots.
 
+## Focused probes
+
+Single-page regression scripts live beside `runner.cjs` and each has an npm
+script (`npm run test:<name>`). They need a running server on `BASE_URL`.
+`test:item-explorer-grid` covers the Item Explorer on the shared market grid:
+no pagination, legacy `?page=`/filter links, on-demand `sale_stats` requests
+and phone-width scrolling.
+
 ## Horizontal-overflow guard
 
 Every route in both passes asserts that the page itself does not scroll sideways:
@@ -170,6 +178,20 @@ Remove-Item -Recurse -Force ultros/integration/artifacts
 - Flaky waits: The runner uses `waitUntil: 'networkidle0'` and then a short `waitForTimeout(1000)`. If pages hydrate slower locally, bump the timeout.
 
 ## CI notes
+
+### Currency Exchange regression
+
+Against a server built from the current worktree, run:
+
+```bash
+BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:currency-exchange
+```
+
+This probe uses real shop definitions with deterministic browser API fixtures,
+so it does not require populated market history. It checks native estimates
+against actual listing prices, NQ sale statistics, window changes, legacy hidden
+filters, saved column links, quantity restoration, and the mobile layout.
+Screenshots go to `integration/artifacts/currency-exchange/`.
 
 In CI, you can do:
 

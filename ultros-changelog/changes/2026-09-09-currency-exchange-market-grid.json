@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Compare sales history in Currency Exchange",
+  "blurb": "Add sales-history columns and choose a time window when comparing currency exchanges. Your existing exchange prices, quantities, and saved filters still work.",
+  "link": "/currency-exchange"
+}

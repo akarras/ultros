@@ -30,6 +30,8 @@ ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
 ultros-ui-grid = { path = "../ultros-ui-grid", default-features = false }
 wasm-bindgen = { version = "0.2" }
 web-sys = { version = "0.3", features = [
+    "AbortController",
+    "AbortSignal",
     "Window",
     "Document",
     "HtmlDocument",

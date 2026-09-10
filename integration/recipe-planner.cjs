@@ -51,15 +51,19 @@ async function main() {
     assert.equal(await page.$eval('[aria-label="Items to make"]', e => e.value), '2', 'quantity must be visible before hydration');
     assert.equal(await page.$eval('[aria-label="Starting world"]', e => e.value), 'Gilgamesh');
     assert.equal(await page.$eval('[aria-label="Buy from"]', e => e.value), 'datacenter');
+    assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), true, 'NPC purchases remain enabled by default before hydration');
     await page.setJavaScriptEnabled(true);
     await page.setRequestInterception(true);
     let homeUnavailable = false;
     let denseMarket = false;
+    let vendorMarket = false;
     page.on('request', request => {
       const match = new URL(request.url()).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
       if (!match) return request.continue();
       const item = Number(match[1]);
-      const marketRows = denseMarket
+      const marketRows = vendorMarket
+        ? [{ id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 1000 }]
+        : denseMarket
         ? [63, 79].flatMap(world => Array.from({ length: 90 }, (_, n) => ({
           // Cheap rows have larger IDs: ticking one used to switch from
           // price order to ID order and move it underneath the pointer.
@@ -226,6 +230,70 @@ async function main() {
       const home = document.querySelector('section[aria-label="World visit comparison"] button');
       return home?.textContent.includes('Stay home') && home.textContent.includes('units unavailable · partial cost');
     });
+    // Maple Lumber uses NPC-sold Maple Logs. Expensive whole-stack market
+    // fixtures make the NPC choice deterministic without a live market DB.
+    homeUnavailable = false;
+    vendorMarket = true;
+    await page.goto(`${BASE}/item/Gilgamesh/5361`, { waitUntil: 'networkidle2' });
+    const vendorRecipe = await page.$eval('a[href^="/recipe/"]', a => a.getAttribute('href'));
+    const vendorUrl = new URL(vendorRecipe, BASE);
+    vendorUrl.searchParams.set('world', 'Gilgamesh');
+    vendorUrl.searchParams.set('shards-exclude', 'true');
+    vendorUrl.searchParams.set('route', 'home');
+    vendorUrl.searchParams.set('include-vendors', 'false');
+    await page.setJavaScriptEnabled(false);
+    await page.goto(vendorUrl.href, { waitUntil: 'domcontentloaded' });
+    assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), false, 'shared vendor opt-out is rendered by SSR');
+    await page.setJavaScriptEnabled(true);
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    const npcSection = 'section[aria-label="NPC vendor purchases"]';
+    assert.equal(await page.$(npcSection), null, 'market-only plan has no NPC stops');
+    const marketTotal = await page.$eval('[data-testid="plan-total"]', e => Number(e.textContent.replace(/\D/g, '')));
+    await page.click('[aria-label="Include NPC vendors"]');
+    await page.waitForSelector(`${npcSection} a[href$="#vendor-sources"]`);
+    const npcTotal = await page.$eval('[data-testid="plan-total"]', e => Number(e.textContent.replace(/\D/g, '')));
+    assert.ok(npcTotal < marketTotal, 'NPC supply beats the expensive whole market stack');
+    assert.match(await page.$eval(npcSection, e => e.textContent), /Maple Log/);
+    assert.match(await page.$eval(npcSection, e => e.textContent), /gil each/);
+    assert.equal(await page.$$eval('[data-listing-id]', rows => rows.length), 0, 'vendor-only plan has no market stops');
+    assert.match(await page.$eval('[data-testid="vendor-plan-summary"]', e => e.textContent), /included/);
+    const copied = await page.$eval('aside button[aria-label^="Copy "]', e => e.getAttribute('aria-label'));
+    assert.match(copied, /NPC vendor:.*gil each/);
+    assert.match(copied, /#vendor-sources/);
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForSelector(npcSection);
+    assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), true, 'NPC selection survives shared URL reload');
+    const npcShare = await page.$eval('header button[aria-label^="Copy https://ultros.app/recipe/"]', e => e.getAttribute('aria-label'));
+    assert.equal(new URL(npcShare.replace(/^Copy /, '').replace(/ to clipboard$/, '')).searchParams.get('include-vendors'), 'true');
+    // Gathered logs cannot be HQ, so an HQ preference must still allow them.
+    await page.$$eval('label', labels => labels.find(l => l.textContent === 'HQ ingredients only').querySelector('input').click());
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('require-hq') === 'true');
+    assert.ok(await page.$('[data-testid="vendor-5380"]'), 'non-HQ-capable ingredients remain vendor eligible');
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: 1000 });
+      // Load at the target width so the sidebar resize transition cannot
+      // obscure the mobile screenshot or capture partially painted panels.
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForSelector(npcSection);
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})));
+      });
+      await page.screenshot({ path: path.join(OUT, `npc-vendors-${width}.png`), fullPage: true });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth) <= 1);
+    }
+    await page.click('[aria-label="Include NPC vendors"]');
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('include-vendors') === 'false' && !document.querySelector('section[aria-label="NPC vendor purchases"]'));
+    assert.equal(await page.$eval('[data-testid="plan-total"]', e => Number(e.textContent.replace(/\D/g, ''))), marketTotal);
+    // Bronze Hatchet uses HQ-capable Maple Lumber. With only NQ market
+    // fixtures, requiring HQ leaves a shortage instead of buying NPC lumber.
+    await page.goto(`${BASE}/recipe/2?world=Gilgamesh&shards-exclude=true&include-vendors=true&require-hq=true&route=home`, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    assert.equal(await page.$('[data-testid="vendor-5361"]'), null, 'NPC lumber cannot fulfill HQ demand');
+    assert.match(await page.$eval('[aria-label="Plan summary"]', e => e.textContent), /missing/);
+    await page.$$eval('label', labels => labels.find(l => l.textContent === 'HQ ingredients only').querySelector('input').click());
+    await page.waitForSelector('[data-testid="vendor-5361"]');
     assert.deepEqual(errors, [], 'browser errors');
     fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ passed: true, href, first, shared, subcraft: source }, null, 2));
     console.log('Recipe planner: SSR, hydration, quantities, owned inventory, shared links and layouts passed.');

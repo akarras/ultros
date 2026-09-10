@@ -10,7 +10,6 @@ pub use ultros_ui_shell::components::ad;
 pub mod app_shell;
 pub use ultros_ui::components::clipboard;
 pub use ultros_ui::components::confidence_badge;
-pub use ultros_ui::components::filter_chip;
 pub use ultros_ui::components::gil;
 pub use ultros_ui::components::icon;
 pub use ultros_ui_alerts::components::endpoints_panel;

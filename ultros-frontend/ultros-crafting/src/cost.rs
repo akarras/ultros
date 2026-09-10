@@ -84,6 +84,14 @@ pub struct SubcraftInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarketPurchase {
+    pub item_id: ItemId,
+    /// Quality selected by the price lookup, including NQ fallback when
+    /// HQ is preferred but no HQ price exists.
+    pub hq: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CostBreakdown {
     /// Resolved cost for the `require_hq` flavor of the caller's options.
     /// Surfaces that need both HQ and LQ totals call `compute_cost` twice
@@ -92,6 +100,10 @@ pub struct CostBreakdown {
     pub shard_cost: i32,
     pub on_hand_savings: i32,
     pub ingredient_lines: Vec<IngredientLine>,
+    /// Market inputs in the chosen recipe tree, including winning subcrafts.
+    /// Excludes vendors, fully owned inputs and excluded shards. These are
+    /// market identities, not quantities (subcraft costs use unit estimates).
+    pub market_purchases: Vec<MarketPurchase>,
     pub sub_crafts: Vec<SubcraftInfo>,
     /// Lines bought on a market that no listing priced (`unit_price == 0`),
     /// after the shard flag and the sub-craft pass: shards under
@@ -215,6 +227,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
     let mut shard_cost: i64 = 0;
     let mut on_hand_savings: i64 = 0;
     let mut ingredient_lines: Vec<IngredientLine> = Vec::new();
+    let mut market_purchases = Vec::new();
     let mut sub_crafts: Vec<SubcraftInfo> = Vec::new();
     let mut unpriced: u16 = 0;
 
@@ -227,6 +240,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
         // their sub_crafts into the final breakdown.
         let mut unit_cost = line.unit_price;
         let mut best_sub_crafts: Vec<SubcraftInfo> = Vec::new();
+        let mut best_market_purchases = Vec::new();
         let mut best_unpriced: u16 = 0;
         if depth < opts.max_subcraft_depth
             && line.used_from_market > 0
@@ -253,6 +267,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
                         unit_cost: sub_unit,
                     });
                     best_sub_crafts = winner;
+                    best_market_purchases = sub_breakdown.market_purchases;
                     best_unpriced = sub_breakdown.unpriced_market_lines;
                 }
             }
@@ -293,6 +308,19 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
         // Only an actual vendor purchase is priced: when require_hq skips
         // the vendor floor, an absent market listing still needs a warning.
         let off_the_books = line.is_shard && matches!(opts.shards, ShardsMode::ExcludeShards);
+        if !off_the_books && line.used_from_market > 0 {
+            if line.source == PriceSource::Subcraft {
+                market_purchases.extend(best_market_purchases);
+            } else if line.source == PriceSource::Market {
+                let summary = prices.find_matching_listings(item_id.0);
+                let hq = match (summary.lq, summary.hq) {
+                    (None, Some(_)) => true,
+                    (Some(nq), Some(hq)) => opts.require_hq || hq.price < nq.price,
+                    _ => false,
+                };
+                market_purchases.push(MarketPurchase { item_id, hq });
+            }
+        }
         if line.source == PriceSource::Market
             && line.used_from_market > 0
             && line.unit_price == 0
@@ -309,6 +337,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
         shard_cost: clamp_i64_to_i32(shard_cost),
         on_hand_savings: clamp_i64_to_i32(on_hand_savings),
         ingredient_lines,
+        market_purchases,
         sub_crafts,
         unpriced_market_lines: unpriced,
     }
@@ -1243,7 +1272,10 @@ mod tests {
         let leaked_expensive: &'static Recipe = Box::leak(Box::new(expensive));
         let leaked_cheap: &'static Recipe = Box::leak(Box::new(cheap));
         let mut recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
-        recipes_by_output.insert(ItemId(2000), vec![leaked_expensive, leaked_cheap]);
+        recipes_by_output.insert(
+            ItemId(2000),
+            vec![leaked_expensive, leaked_cheap, leaked_expensive],
+        );
 
         let oh = EmptyOnHand;
         let opts = CraftingCostOptions {
@@ -1260,6 +1292,91 @@ mod tests {
         // Only the winning sub-recipe contributes a SubcraftInfo.
         assert_eq!(cb.sub_crafts.len(), 1);
         assert_eq!(cb.sub_crafts[0].unit_cost, 20);
+        assert_eq!(
+            cb.market_purchases,
+            vec![MarketPurchase {
+                item_id: ItemId(1000),
+                hq: false
+            }],
+            "losing candidates before and after the winner cannot leak markets"
+        );
+    }
+
+    #[test]
+    fn nested_market_provenance_excludes_owned_vendor_and_excluded_shards() {
+        struct Owned;
+        impl OnHand for Owned {
+            fn available(&self, item: ItemId) -> i32 {
+                i32::from(item == ItemId(4000))
+            }
+            fn consume(&self, _: ItemId, _: i32) {}
+        }
+        let prices = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: [
+                (2000, 50),
+                (1000, 30),
+                (9000, 7),
+                (3000, 50),
+                (4000, 50),
+                (5000, 50),
+            ]
+            .into_iter()
+            .map(|(item_id, cheapest_price)| CheapestListingItem {
+                item_id,
+                cheapest_price,
+                hq: false,
+                world_id: 1,
+            })
+            .collect(),
+        });
+        let inner: &'static Recipe =
+            Box::leak(Box::new(make_recipe_yielding(&[(9000, 1)], 1000, 1)));
+        let middle: &'static Recipe =
+            Box::leak(Box::new(make_recipe_yielding(&[(1000, 1)], 2000, 1)));
+        let recipes = HashMap::from([(ItemId(1000), vec![inner]), (ItemId(2000), vec![middle])]);
+        let root = make_recipe(&[(2000, 1), (3000, 1), (4000, 1), (5000, 1)]);
+        let vendors = HashMap::from([(3000, 1)]);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 2,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &Owned,
+            vendor_prices: Some(&vendors),
+        };
+        let result = compute_cost(&root, &prices, &recipes, &opts, &|id| id == ItemId(5000));
+        assert_eq!(result.cost, 8);
+        assert_eq!(result.sub_crafts.len(), 2);
+        assert_eq!(
+            result.market_purchases,
+            vec![MarketPurchase {
+                item_id: ItemId(9000),
+                hq: false
+            }]
+        );
+        let included = compute_cost(
+            &root,
+            &prices,
+            &recipes,
+            &CraftingCostOptions {
+                shards: ShardsMode::IncludeMarket,
+                ..opts
+            },
+            &|id| id == ItemId(5000),
+        );
+        assert_eq!(included.cost, 58);
+        assert_eq!(
+            included.market_purchases,
+            vec![
+                MarketPurchase {
+                    item_id: ItemId(9000),
+                    hq: false
+                },
+                MarketPurchase {
+                    item_id: ItemId(5000),
+                    hq: false
+                },
+            ]
+        );
     }
 
     #[test]

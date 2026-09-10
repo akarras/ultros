@@ -6642,12 +6642,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paginate"
-version = "1.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ac1db209d9d6dc8e4435b744ed76198494406cd20eb8ca14baf9828664664c8"
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10798,7 +10792,6 @@ dependencies = [
  "leptos_meta",
  "leptos_router",
  "log",
- "paginate",
  "percent-encoding",
  "send_wrapper",
  "serde",
@@ -10876,6 +10869,7 @@ dependencies = [
  "metrics",
  "sea-orm",
  "serde",
+ "serde_json",
  "serde_repr",
  "thiserror 2.0.20",
  "tokio",

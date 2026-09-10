@@ -7,11 +7,11 @@ const BASE=process.env.BASE_URL || 'http://127.0.0.1:8080';
 const WORLD=process.env.WORLD || 'Gilgamesh';
 const routes=[
   ['flip-finder',`/flip-finder/${WORLD}`,'profit','profit'],
-  ['recipe-analyzer','/recipe-analyzer','profit','profit'],
-  ['leve-analyzer','/leve-analyzer','profit','profit'],
-  ['venture-analyzer','/venture-analyzer','profit','profit'],
+  ['recipe-analyzer',`/recipe-analyzer/${WORLD}`,'profit','profit'],
+  ['leve-analyzer',`/leve-analyzer/${WORLD}`,'profit','profit'],
+  ['venture-analyzer',`/venture-analyzer/${WORLD}`,'profit','profit'],
   ['vendor-resale',`/vendor-resale/${WORLD}`,'profit','profit'],
-  ['scrip-sources','/scrip-sources','scrip-type','scrip'],
+  ['scrip-sources',`/scrip-sources/${WORLD}`,'scrip-type','scrip'],
   ['fc-crafting-analyzer',`/fc-crafting-analyzer/${WORLD}`,'profit','profit'],
 ];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -67,8 +67,7 @@ async function main(){
   try{
     for(const [tool,route,column,filter] of routes){
       const page=await newPage();
-      const world=tool==='flip-finder'?'':`&world=${WORLD}`;
-      await goto(page,`${route}?v=1&min-sales=0&l=2~~item.8c${world}`);
+      await goto(page,`${route}?v=1&min-sales=0&l=2~~item.8c`);
       await aligned(page);
       if(tool==='recipe-analyzer'){
         assert(!(await page.cookies()).some(c=>c.name==='LABS'),'recipe controls work without a Labs cookie');
@@ -90,8 +89,10 @@ async function main(){
       const menu=`.virtual-grid-heading[data-column="${column}"]`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));
       await page.click(menu,{button:'right'});
-      const registered=tool!=='recipe-analyzer';
-      const form=registered?`.grid-column-filter[data-metric-filter="${column}"]`:`.grid-column-filter[data-filter="${filter}"]`;
+      // Every tool is a registered host: the recipe's old row-filter keys are
+      // aliases of its grid metrics (#1331), like the other six before it.
+      const registered=true;
+      const form=`.grid-column-filter[data-metric-filter="${column}"]`;
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';
       if(filter==='scrip')await page.select(`${form} select[aria-label="Value"]`,selected);
@@ -112,7 +113,7 @@ async function main(){
       assert(cookie && cookie.path===`/${tool}` && cookie.expires>Date.now()/1000,'view has a persistent, analyzer-scoped cookie');
       assert(cookie.value.length<3500);
       // A bare return is restored by HTTP before the SSR document is generated.
-      const response=await goto(page,`${route}?lang=ja${world}`);
+      const response=await goto(page,`${route}?lang=ja`);
       assert(response.request().redirectChain().some(r=>r.response()?.status()===307),'bare entry is restored before SSR');
       const restored=new URL(page.url()).searchParams;
       assert.equal(registered?JSON.parse(restored.get('gf')||'{}')[column]?.value:restored.get(filter),selected);
@@ -120,7 +121,7 @@ async function main(){
       assert.equal(new URL(page.url()).searchParams.get('l'),'2~~item.8c');
       // Explicit shared links override this device's last view.
       const explicit=filter==='scrip'?'PurpleCrafters':'200';
-      await goto(page,`${route}?v=1&${filter}=${explicit}&lang=en${world}`);
+      await goto(page,`${route}?v=1&${filter}=${explicit}&lang=en`);
       assert.equal(new URL(page.url()).searchParams.get(filter),explicit);
       assert(!new URL(page.url()).searchParams.has('l'));
        await page.setViewport({width:393,height:850,isMobile:true,hasTouch:true});
@@ -151,7 +152,7 @@ async function main(){
     await page.goto(BASE,{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>window.__hydrated);
     await page.click('.side-nav a[href*="recipe-analyzer"]');
-    await page.waitForFunction(()=>location.pathname==='/recipe-analyzer' && new URL(location.href).searchParams.get('profit')==='200');
+    await page.waitForFunction(world=>decodeURIComponent(location.pathname)===`/recipe-analyzer/${world}` && new URL(location.href).searchParams.get('profit')==='200',{},WORLD);
     // An explicitly cleared view must stay cleared on the next visit.
     await goto(page,`/recipe-analyzer?v=1&world=${WORLD}`);
     await page.waitForFunction(()=>localStorage.getItem('ultros.last-view.recipe-analyzer')==='?v=1');

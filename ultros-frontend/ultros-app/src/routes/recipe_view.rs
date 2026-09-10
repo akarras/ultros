@@ -28,7 +28,7 @@ use crate::i18n::*;
 use crate::query_defaults::filter_query_signal;
 use crate::recipe_planner::{self as planner, Material, Offer, Recipe, Travel};
 
-pub(crate) use ultros_ui_crafting::links::{market_query, recipe_href};
+pub(crate) use ultros_ui_crafting::links::recipe_href;
 
 fn resolve_market_query(
     mut query: leptos_router::params::ParamsMap,
@@ -174,16 +174,40 @@ fn purchase_summary(cost: i64, quantity: i64, missing: i64) -> String {
     text
 }
 
-/// Vendor top-up and shortage for one item; either part is omitted when zero.
-fn vendor_summary(vendor_quantity: i64, missing: i64) -> String {
-    let mut parts = Vec::new();
-    if vendor_quantity > 0 {
-        parts.push(format!("Vendor: {vendor_quantity}"));
-    }
-    if missing > 0 {
-        parts.push(format!("Still missing: {missing}"));
-    }
-    parts.join(" · ")
+/// Derive the NPC spend from the chosen purchase, including mixed market/NPC
+/// purchases, rather than looking up a price that may differ from the plan.
+fn vendor_cost(purchase: &planner::Purchase) -> i64 {
+    purchase.cost
+        - purchase
+            .offers
+            .iter()
+            .map(|o| o.price * o.quantity)
+            .sum::<i64>()
+}
+
+fn vendor_summary(purchase: &planner::Purchase) -> String {
+    let cost = vendor_cost(purchase);
+    format!(
+        "NPC vendor: {} × {} each · {}",
+        purchase.vendor_quantity,
+        gil(cost / purchase.vendor_quantity),
+        gil(cost)
+    )
+}
+
+fn vendor_plan_summary(plan: &planner::ShoppingPlan) -> Option<String> {
+    let count = plan
+        .purchases
+        .values()
+        .filter(|p| p.vendor_quantity > 0)
+        .count();
+    (count > 0).then(|| {
+        format!(
+            "NPC purchases: {count} ingredient{} · {} included",
+            if count == 1 { "" } else { "s" },
+            gil(plan.purchases.values().map(vendor_cost).sum())
+        )
+    })
 }
 
 fn plan_summary(route: &str, missing: i64) -> String {
@@ -301,6 +325,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     let (craft, set_craft) = filter_query_signal::<String>("craft");
     let (owned, set_owned) = filter_query_signal::<String>("owned");
     let (hq, set_hq) = filter_query_signal::<bool>("require-hq");
+    let (include_vendors, set_include_vendors) = filter_query_signal::<bool>("include-vendors");
     let (output_hq, set_output_hq) = filter_query_signal::<bool>("output-hq");
     let (shards, set_shards) = filter_query_signal::<bool>("shards-exclude");
     // Legacy hop budget from old links; only read, and cleared by a card click.
@@ -589,6 +614,9 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             .unwrap_or_default()
     });
     let vendors = Memo::new(move |_| {
+        if !include_vendors.get().unwrap_or(true) {
+            return BTreeMap::new();
+        }
         vendor_price_map()
             .iter()
             .filter(|(id, _)| {
@@ -790,9 +818,11 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 }
                 if p.vendor_quantity > 0 {
                     text.push_str(&format!(
-                        "Vendor: {} × {}\n",
+                        "{} · {}\nhttps://ultros.app/item/{}/{}#vendor-sources\n",
                         item_name(*id),
-                        p.vendor_quantity
+                        vendor_summary(p),
+                        selected_world.get(),
+                        id
                     ));
                 }
                 if p.missing() > 0 {
@@ -821,7 +851,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         <MetaDescription text="Plan a recipe without signing in. Compare full-stack ingredient costs, craft intermediates, and see what each extra world visit saves." />
         <div class="space-y-5 pb-12" data-testid="recipe-planner">
             <nav aria-label="Recipe navigation" class="flex flex-wrap gap-2 text-sm text-[color:var(--color-text-muted)]">
-                <a class="hover:text-brand-300" href=move || format!("/recipe-analyzer{}",market_query(&selected_world.get(),&resolved_query.get()))>"Recipe Analyzer"</a>
+                <a class="hover:text-brand-300" href=move || ultros_ui_crafting::links::recipe_analyzer_href(&selected_world.get(), &resolved_query.get())>"Recipe Analyzer"</a>
                 <span aria-hidden="true">"/"</span><span>"Recipe planner"</span>
             </nav>
             <header class="panel rounded-xl p-4 sm:p-5 flex flex-wrap items-center gap-4">
@@ -836,6 +866,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">"Buy from"</span><select aria-label="Buy from" class="input" prop:value=move ||scope_kind.get() on:change=move |e|set_buy_scope.set(Some(event_target_value(&e)))><option value="world" selected=move ||scope_kind.get()=="world">"Home world"</option><option value="datacenter" selected=move ||scope_kind.get()=="datacenter">"Datacenter"</option><option value="region" selected=move ||scope_kind.get()=="region">"Region"</option></select></label>
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||hq.get().unwrap_or(false) prop:checked=move ||hq.get().unwrap_or(false) on:change=move |e|set_hq.set(Some(event_target_checked(&e))) />"HQ ingredients only"</label>
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||exclude_crystals.get() prop:checked=move ||exclude_crystals.get() on:change=move |e|set_shards.set(Some(event_target_checked(&e))) />"Exclude crystals"</label>
+                <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" aria-label="Include NPC vendors" checked=move ||include_vendors.get().unwrap_or(true) prop:checked=move ||include_vendors.get().unwrap_or(true) on:change=move |e|set_include_vendors.set(Some(event_target_checked(&e))) />"Include NPC vendors"</label>
                 <button class="btn-secondary text-sm" on:click=move |_|refresh.update(|n|*n=n.wrapping_add(1))>"Refresh prices"</button>
                 <button class="btn-secondary text-sm" aria-label=move ||t_string!(i18n, recipe_planner_settings).to_string() on:click=move |_|show_settings.set(true)>{t!(i18n, recipe_planner_settings)}</button>
             </section>
@@ -873,6 +904,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                                     view!{<span class=badge_class data-testid="route-badge">{text}</span>}
                                 })}</span>
                                 <strong class="block text-xl tabular-nums">{gil(p.cost)}</strong>
+                                {vendor_plan_summary(&p).map(|text|view!{<span class="block text-xs text-brand-300">{text}</span>})}
                                 <span class="block text-xs">{if p.missing > 0 {format!("{} units unavailable · partial cost",p.missing)} else {stops}}</span>
                                 {match line {
                                     Some(SavingLine::Saved(s))=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_saved_vs_home, gil = gil(s)).to_string()}</span>}),
@@ -919,6 +951,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                     <p class="text-sm text-[color:var(--color-text-muted)]">{move ||selected.get().filter(|p|p.missing==0).map(|p|format!("{} per requested item, rounded up",gil((p.cost+quantity.get()-1)/quantity.get())) )}</p>
                     <p class="text-sm">{move ||materials.get().ok().map(|m|format!("{} crafting operations · {} finished items · {} extra output",m.iter().map(|m|m.crafts).sum::<i64>(),quantity.get(),m.first().map(|m|m.surplus).unwrap_or(0)))}</p>
                     <p class="text-sm">{move ||selected.get().map(|p|plan_summary(&route_label(p.travel,p.worlds.is_empty()),p.missing))}</p>
+                    <p class="text-sm text-brand-300" data-testid="vendor-plan-summary">{move ||selected.get().as_ref().and_then(vendor_plan_summary)}</p>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"Whole stacks included. Owned materials reduce cash spend; leftovers have no assumed resale value. Vendor prices assume access. Travel time and teleport fees are excluded."</p>
                     <Show when=move ||selected.get().is_some_and(|p|p.approximate)><p class="text-xs text-amber-300">"Large batch: stack selection is a best-found estimate."</p></Show>
                     <div class="border-t border-[color:var(--color-outline)] pt-3 space-y-2"><label class="flex items-center gap-2 text-sm"><input type="checkbox" checked=move ||output_hq.get().unwrap_or(false) prop:checked=move ||output_hq.get().unwrap_or(false) on:change=move |e|set_output_hq.set(Some(event_target_checked(&e))) />"Compare with HQ finished items"</label><p class="text-sm">{move ||finished.get().map(|p|if p.missing()>0{format!("Buy finished: {} units unavailable",p.missing())}else{format!("Buy finished in {}: {}",scope.get(),gil(p.cost))})}</p></div>
@@ -955,10 +988,26 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                                 <button class="btn-secondary text-xs shrink-0" disabled=move ||locks.with(|s|s.contains_key(&key)) on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.insert((id,world)); set_unavailable.set(write_pair_set(&set)); locks.update(|s|s.retain(|(item,_),o|!(*item==id && o.world==world))); }>{t!(i18n, recipe_planner_not_here)}</button></div>}
                         } /></div>}
                     } />
-                    {move ||selected.with(|plan|plan.as_ref().map(|plan|plan.purchases.iter().filter(|(_,p)|p.vendor_quantity>0 || p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(*id)}</strong><p>{vendor_summary(p.vendor_quantity,p.missing())}</p></div>}).collect_view()))}
+                    {move ||selected.with(|plan|plan.as_ref().map(|plan|plan.purchases.iter().filter(|(_,p)|p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(*id)}</strong><p>{format!("Still missing: {}",p.missing())}</p></div>}).collect_view()))}
                     </div>
                 </Show>
             </section>
+            <Show when=move ||selected.with(|p|p.as_ref().is_some_and(|p|p.purchases.values().any(|p|p.vendor_quantity>0)))>
+                <section class="space-y-3" aria-label="NPC vendor purchases">
+                    <h2 class="text-lg font-semibold">"Buy from NPC vendors"</h2>
+                    <p class="text-sm text-[color:var(--color-text-muted)]">"These NQ purchases are included in your total. Check vendor locations and unlock requirements before travelling. Vendor stops do not count as world hops. Turn off Include NPC vendors to plan with market listings only."</p>
+                    <div class="grid gap-3 lg:grid-cols-2">
+                        {move ||selected.with(|plan|plan.as_ref().map(|plan|plan.purchases.iter().filter(|(_,p)|p.vendor_quantity>0).map(|(id,p)|{
+                            let id=*id;
+                            view!{<div class="panel rounded-xl p-4 space-y-2 text-sm" data-testid=format!("vendor-{id}")>
+                                <strong>{item_name(id)}</strong>
+                                <p class="tabular-nums">{vendor_summary(p)}</p>
+                                <a class="text-brand-300 hover:underline" href=move ||format!("/item/{}/{id}#vendor-sources",selected_world.get())>{format!("View vendors and locations for {}",item_name(id))}</a>
+                            </div>}
+                        }).collect_view()))}
+                    </div>
+                </section>
+            </Show>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
             <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left. Each card to the right completes more of the recipe or, when equally complete, costs less gil; the last card is the most complete plan found and, among equally complete plans, the cheapest. The full scope is always evaluated, so the frontier keeps the best plan found. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
                 let mut lines=Vec::new();
@@ -1180,6 +1229,34 @@ mod tests {
     }
 
     #[test]
+    fn mixed_purchase_reports_only_vendor_spend() {
+        let purchase = planner::purchase(
+            5,
+            &[Offer {
+                id: 1,
+                world: 63,
+                quantity: 3,
+                price: 2,
+            }],
+            Some(10),
+        );
+        assert_eq!(vendor_cost(&purchase), 20);
+        assert_eq!(
+            vendor_summary(&purchase),
+            "NPC vendor: 2 × 10 gil each · 20 gil"
+        );
+        let plan = planner::ShoppingPlan {
+            purchases: BTreeMap::from([(1, purchase)]),
+            ..Default::default()
+        };
+        assert_eq!(
+            vendor_plan_summary(&plan).as_deref(),
+            Some("NPC purchases: 1 ingredient · 20 gil included")
+        );
+        assert_eq!(vendor_plan_summary(&planner::ShoppingPlan::default()), None);
+    }
+
+    #[test]
     fn plan_summary_mentions_missing_only_when_short() {
         assert_eq!(plan_summary("2 world hops", 0), "2 world hops");
         assert_eq!(plan_summary("Stay home", 4), "Stay home · 4 units missing");
@@ -1191,9 +1268,11 @@ mod tests {
         query.insert("world", "North-America".into());
         query.insert("buy-scope", "invalid".into());
         query.insert("owned", "42:7".into());
+        query.insert("include-vendors", "false".into());
         let resolved = resolve_market_query(query, "Gilgamesh".into(), "region".into());
         assert_eq!(resolved.get("world").as_deref(), Some("Gilgamesh"));
         assert_eq!(resolved.get("owned").as_deref(), Some("42:7"));
+        assert_eq!(resolved.get("include-vendors").as_deref(), Some("false"));
         assert_eq!(resolved.to_query_string().matches("world=").count(), 1);
     }
 }

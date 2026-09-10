@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Analyzer links keep your selected world",
+  "blurb": "Recipe, Venture, Leve, and Scrip Sources now keep the world picker, shared links, and market data in sync—even when you go back or forward. Existing links and saved views still work.",
+  "link": "/recipe-analyzer"
+}
