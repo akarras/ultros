@@ -1,6 +1,6 @@
 // Deterministic shared query behavior against the real SSR + hydrated QueryGrid.
 // Requires a debug build of this worktree; no market history is required.
-// CHECK_ANALYZER_ROUTES=1 also probes all seven tools with deterministic API data.
+// CHECK_ANALYZER_ROUTES=1 also probes all seven tools, then Trends, with deterministic API data.
 // ANALYZER_TOOLS=tool,tool narrows those probes; ANALYZER_MARKET_FIXTURE=0 uses live data.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -540,8 +540,15 @@ async function main() {
           console.log('PASS recipe-analyzer: promoted columns work by default and in old Labs bookmarks');
         }
       }
+      if (!process.env.ANALYZER_TOOLS || process.env.ANALYZER_TOOLS.split(',').includes('trends')) {
+        await checkTrends({ page, fixture, world, open, heading, sortLink, sorted, menu, menuAction });
+      }
       if (fixture) {
-        for (const source of ['cheapest', 'recentSales', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed`);
+        const ran = tool => !process.env.ANALYZER_TOOLS || process.env.ANALYZER_TOOLS.split(',').includes(tool);
+        if (routes.some(([tool]) => ran(tool))) {
+          for (const source of ['cheapest', 'recentSales', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed`);
+        }
+        if (ran('trends')) for (const source of ['trends', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed by Trends`);
       }
     }
     assert.deepEqual(errors, [], 'no browser or hydration errors');
@@ -554,6 +561,232 @@ async function main() {
   } finally {
     await browser.close();
   }
+}
+
+// Trends on the shared grid (issue #1344): old links, header sorting, the
+// Columns picker, window changes and request behavior over the 500-row
+// candidate set. Value assertions need the deterministic trends fixture.
+async function checkTrends({ page, fixture, world, open, heading, sortLink, sorted, menu, menuAction }) {
+  const requests = [];
+  const recorder = request => {
+    const url = new URL(request.url());
+    if (/^\/api\/v1\/(trends|sale_stats)\//.test(url.pathname)) requests.push(url);
+  };
+  page.on('request', recorder);
+  const requested = (kind, predicate = () => true) => requests.filter(url => url.pathname.startsWith(`/api/v1/${kind}/`) && predicate(url));
+  const firstItem = async expected => {
+    await page.$eval('.virtual-grid', element => { element.scrollTop = 0; element.scrollLeft = 0; });
+    await page.waitForFunction(expected =>
+      document.querySelector('.virtual-grid-cell[data-column="item"] a')?.getAttribute('href')?.endsWith(`/${expected}`),
+    {}, expected);
+  };
+  const rows = async expected => {
+    await page.waitForFunction(expected =>
+      Number(document.querySelector('.virtual-grid')?.getAttribute('aria-rowcount')) - 1 === expected,
+    {}, expected);
+  };
+  // Columns mount only while their portion of the grid is in view.
+  const reveal = async column => {
+    const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
+    for (let left = 0; left <= width; left += 400) {
+      await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (await page.$(heading(column))) return;
+    }
+    assert.fail(`trends: ${column} heading never mounted`);
+  };
+  const cellText = async (column, pattern) => {
+    await reveal(column);
+    await page.waitForFunction((column, pattern) => [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
+      .some(cell => new RegExp(pattern).test(cell.textContent)), { timeout: 90000 }, column, pattern);
+  };
+  const route = `/trends/${world}`;
+  // SSR resources read the server database, outside browser interception, so
+  // with the fixture every visit (including the "reload") navigates in-app.
+  const visit = async href => {
+    if (fixture) {
+      await open();
+      await page.evaluate(href => {
+        const link = document.createElement('a');
+        link.id = 'fixture-navigate'; link.href = href; link.textContent = 'Open trends';
+        document.querySelector('main').prepend(link);
+      }, href);
+      await page.$eval('#fixture-navigate', link => link.click());
+      await page.waitForFunction(pathname => location.pathname === pathname, {}, route);
+    } else {
+      const response = await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      assert(response.ok(), `trends: HTTP ${response.status()}`);
+    }
+    await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
+    await page.waitForSelector('.virtual-grid', { timeout: 90000 });
+  };
+  // An old bookmark: native sort token, legacy chip parameters, explicit window.
+  console.log('CHECK trends: navigating');
+  await visit(`${BASE}${route}?${new URLSearchParams({ v: '1', lang: 'en', window: '90', sort: 'units', dir: 'asc', min_sales: '40' })}`);
+  console.log('CHECK trends: grid ready');
+  // The shared window control keeps Trends' choices and honors the link.
+  assert.deepEqual(await page.$$eval('[data-market-window] option', options => options.map(el => el.value)), ['7', '30', '90']);
+  assert.equal(await page.$eval('[data-market-window]', el => el.value), '90');
+  await page.waitForFunction(() => document.querySelectorAll('[data-metric-sort="units"]').length === 1);
+  // Old sort tokens rank the grid without being rewritten until a header is used.
+  assert.equal(new URL(page.url()).searchParams.get('sort'), 'units');
+  await page.waitForFunction(() => document.querySelector('.virtual-grid-heading[data-column="units"]')?.getAttribute('aria-sort') === 'ascending');
+  assert.equal(await page.$eval(`${sortLink('units')} [aria-hidden]`, el => el.textContent), '↑');
+  // Native columns, the shared identity columns Trends places, and hidden shared history columns are all registered.
+  const observed = new Set();
+  const width = await page.$eval('.virtual-grid', element => element.scrollWidth);
+  for (let left = 0; left <= width; left += 500) {
+    await page.$eval('.virtual-grid', (element, left) => { element.scrollLeft = left; }, left);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    for (const id of await page.$$eval('.virtual-grid-heading', headings => headings.map(element => element.dataset.column))) observed.add(id);
+  }
+  for (const column of ['item', 'market-quality', 'trend', 'market-listing', 'vwap', 'pct', 'sales-per-day', 'units', 'confidence']) {
+    assert(observed.has(column), `trends shows ${column} by default`);
+  }
+  assert(!observed.has('market-sale-median'), 'shared history columns start hidden');
+  await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+  // The legacy Min sales chip is the hidden sales metric's filter.
+  await page.waitForSelector('[data-registered-filter="sales"]');
+  assert.match(await page.$eval('[data-registered-filter="sales"]', el => el.textContent), /At least 40/);
+  if (fixture) {
+    await rows(2); // 30-sale row excluded
+    await firstItem(5); // 900 units before 2,500
+    assert.equal(requested('trends', url => url.searchParams.get('window') === '90' && url.searchParams.get('show_suspicious') === '0').length, 1, 'one 90-day request');
+    assert.equal(requested('sale_stats').length, 0, 'no sale statistics until a shared column asks for them');
+    await cellText('vwap', '2,850'); // 950 × 90/30
+    await cellText('market-listing', '400');
+    await cellText('sales-per-day', '0\\.7'); // 60 / 90
+  }
+  // Header sorting rewrites the old token to the canonical grid sort and preserves the rest.
+  const before = new URL(page.url()).searchParams;
+  await page.click(sortLink('vwap'));
+  await sorted('vwap', 'desc');
+  for (const [key, value] of before) if (!['sort', 'dir'].includes(key)) {
+    assert.equal(new URL(page.url()).searchParams.get(key), value, `trends: ${key} survives header sorting`);
+  }
+  assert.equal(await page.$$eval('.virtual-grid-heading[aria-sort]', headings => headings.filter(el => el.getAttribute('aria-sort') !== 'none').length), 1);
+  if (fixture) await firstItem(5); // VWAP 950 before 120
+  await page.click(sortLink('vwap'));
+  await sorted('vwap', 'asc');
+  if (fixture) await firstItem(7);
+  // `price` sorted the observed listing, which the shared listing column now carries.
+  await page.click(sortLink('market-listing'));
+  await sorted('market-listing', 'desc');
+  if (fixture) await firstItem(5);
+  // The sparkline is display-only: no header sort and no menu sort links.
+  assert.equal(await page.$(sortLink('trend')), null);
+  await menu('trend');
+  assert.equal(await page.$$eval('.grid-menu-panel a', links => links.filter(link => /sort=grid/.test(link.href)).length), 0);
+  await page.keyboard.press('Escape');
+  // The Columns picker adds a shared follow-window column; only then is the 90-day body requested.
+  await page.click('button[aria-label="Columns"]');
+  let median;
+  for (const label of await page.$$('label')) {
+    if (await label.evaluate(el => el.textContent.trim().startsWith('Sale median (90d)') && !!el.querySelector('input[type="checkbox"]'))) { median = label; break; }
+  }
+  assert(median, 'picker offers the follow-window median');
+  assert.equal(await median.$eval('input', el => el.checked), false);
+  await median.click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('cols')?.split(',').includes('market-sale-median'));
+  assert(new URL(page.url()).searchParams.get('cols').split(',').includes('trend'), 'shared toggle keeps native defaults');
+  await page.keyboard.press('Escape');
+  await reveal('market-sale-median');
+  if (fixture) {
+    await cellText('market-sale-median', '900');
+    assert.equal(requested('sale_stats', url => url.searchParams.get('window') === '90').length, 1, 'the selected window body loads once');
+    assert.equal(requested('sale_stats', url => url.searchParams.get('window') !== '90').length, 0, 'no other window is fetched');
+  }
+  // A window change re-requests trends and the follow column together, keeping other URL state.
+  await page.select('[data-market-window]', '7');
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
+  assert.equal(new URL(page.url()).searchParams.get('sort'), 'grid:market-listing', 'window change keeps the sort');
+  assert(new URL(page.url()).searchParams.get('cols').split(',').includes('market-sale-median'), 'window change keeps the columns');
+  if (fixture) {
+    await cellText('vwap', '222'); // 950 × 7/30
+    await cellText('market-sale-median', '900');
+    assert.equal(requested('trends', url => url.searchParams.get('window') === '7').length, 1, 'trends re-requested for 7 days');
+    assert.equal(requested('sale_stats', url => url.searchParams.get('window') === '7').length, 1, 'follow column re-requested for 7 days');
+    await rows(2);
+  }
+  // The suspicious-sales control changes the request, not a post-hoc filter.
+  await page.click('.registered-filter-bar [data-add-filter-menu]');
+  await page.click('[data-add-filter="show_suspicious"]');
+  await page.waitForSelector('[data-registered-editor]');
+  let toggle;
+  for (const select of await page.$$('[data-registered-editor] select')) {
+    if (await select.evaluate(el => !!el.querySelector('option[value="true"]'))) { toggle = select; break; }
+  }
+  assert(toggle, 'suspicious control is a registered toggle');
+  await toggle.select('true');
+  await page.click('[data-registered-editor] button[type="submit"]');
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('show_suspicious') === 'true');
+  await page.waitForSelector('[data-registered-filter="show_suspicious"]');
+  if (fixture) {
+    await rows(3);
+    assert.equal(requested('trends', url => url.searchParams.get('show_suspicious') === '1').length, 1, 'suspicious rows requested from the server');
+    await cellText('confidence', 'Suspicious');
+  }
+  // Everything survives a reload: alias filter, canonical sort, picked column, window and control.
+  const saved = page.url();
+  if (fixture) await visit(saved);
+  else await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__queryHydrated, { timeout: 90000 });
+  await page.waitForSelector('.virtual-grid', { timeout: 90000 });
+  assert.equal(page.url(), saved);
+  await page.waitForSelector('[data-registered-filter="sales"]');
+  await page.waitForSelector('[data-registered-filter="show_suspicious"]');
+  await sorted('market-listing', 'desc');
+  await reveal('market-sale-median');
+  // Evidence: the restored state with its chips, canonical sort, picked column and 7-day window.
+  await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+  await page.evaluate(() => document.querySelector('#fixture-navigate')?.remove());
+  await page.setViewport({ width: 1800, height: 1000 });
+  await page.waitForFunction(() => document.querySelectorAll('.virtual-grid-cell[data-column="confidence"]').length > 0);
+  await page.screenshot({ path: path.join(artifacts, 'trends-market-grid.png'), fullPage: false });
+  await reveal('units');
+  // Hiding a column from its menu keeps its hidden filter, as on every other grid.
+  await menu('units');
+  await menuAction('Hide column');
+  await page.waitForFunction(() => !new URL(location.href).searchParams.get('cols')?.split(',').includes('units'));
+  assert.equal(await page.$(heading('units')), null);
+  await page.click('[aria-label="Clear all filters"]');
+  await page.waitForFunction(() => !new URL(location.href).searchParams.has('min_sales') && !new URL(location.href).searchParams.has('show_suspicious'));
+  assert.equal(new URL(page.url()).searchParams.get('window'), '7', 'Clear all preserves the window');
+  assert.equal(new URL(page.url()).searchParams.get('sort'), 'grid:market-listing', 'Clear all preserves the sort');
+  if (fixture) {
+    // Keep the same page owner: an empty category must not dispose the grid's
+    // registered count and filter providers while the toolbar still reads them.
+    await page.evaluate(() => {
+      const url = new URL(location.href);
+      url.searchParams.set('category', '2147483647');
+      const link = document.createElement('a');
+      link.href = url.href; link.id = 'empty-category-link';
+      document.querySelector('main').prepend(link);
+      link.click();
+    });
+    await page.waitForFunction(() => new URL(location.href).searchParams.has('category'));
+    await rows(0);
+    await page.waitForSelector('[data-registered-filter="category"]');
+    await page.click('[aria-label="Clear all filters"]');
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has('category'));
+    await rows(3);
+    // Missing sort retains the original Units default, including dir-only links.
+    await visit(`${BASE}${route}?dir=asc`);
+    await reveal('units');
+    assert.equal(await page.$eval(heading('units'), el => el.getAttribute('aria-sort')), 'ascending');
+    await firstItem(6);
+    await visit(`${BASE}${route}`);
+    await reveal('units');
+    assert.equal(await page.$eval(heading('units'), el => el.getAttribute('aria-sort')), 'descending');
+    await firstItem(7);
+    await reveal('units');
+    await page.click(sortLink('units'));
+    await sorted('units', 'asc');
+    await firstItem(6);
+  }
+  await page.setViewport({ width: 1600, height: 1000 });
+  page.off('request', recorder);
+  console.log('PASS trends: legacy sort/filter aliases, shared header sorting, columns picker, window changes, suspicious control and reload on the shared grid');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });
