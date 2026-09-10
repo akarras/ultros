@@ -118,13 +118,29 @@ impl MarketData {
 /// Failed requests settle with an explicit failure flag and an empty index,
 /// preserving price fallbacks while grid queries remain unavailable.
 pub fn use_market_data(scope: Signal<String>) -> MarketData {
+    use_market_data_with_window(
+        scope,
+        MarketWindow::new(Window::D7, &Window::ALL),
+        Some(Window::D7),
+    )
+}
+
+/// [`use_market_data`] for a page that owns its window choices and default
+/// (Trends: 7/30/90, default 30). `prefetch` names a body every consumer
+/// wants regardless of columns; pass `None` when only the grid's visible or
+/// hidden query columns should request sale statistics.
+pub fn use_market_data_with_window(
+    scope: Signal<String>,
+    window: MarketWindow,
+    prefetch: Option<Window>,
+) -> MarketData {
     // `RwSignal` is `Copy`: a `[RwSignal::new(None); 4]` literal would be one
     // signal four times over.
     let market = MarketData {
         scope,
-        window: MarketWindow::new(Window::D7, &Window::ALL),
+        window,
         stats: std::array::from_fn(|_| RwSignal::new(None)),
-        wanted: std::array::from_fn(|i| RwSignal::new(i == Window::D7.index())),
+        wanted: std::array::from_fn(|i| RwSignal::new(prefetch.is_some_and(|w| w.index() == i))),
     };
     for window in Window::ALL {
         fetch_stats(
@@ -718,10 +734,14 @@ where
             if let Some(cols) = q.get("cols") {
                 wanted.extend(cols.split(',').map(str::to_owned));
             }
-            if let Some(sort) = q
-                .get("sort")
-                .and_then(|s| s.strip_prefix("grid:").map(str::to_owned))
-            {
+            let sort = q.get("sort");
+            let sort = match filter_registry {
+                Some(registry) => registry.sort_column(sort.as_deref()),
+                None => {
+                    crate::components::virtual_grid::registry::resolve_sort(sort.as_deref(), &[])
+                }
+            };
+            if let Some(sort) = sort {
                 wanted.insert(sort);
             }
         });

@@ -52,18 +52,21 @@ where
         });
         filters
     });
+    // Registered hosts read retired native tokens as metric sorts (issue
+    // #1344); an unregistered grid only recognizes `grid:<id>`.
+    let sort_column = move |q: &leptos_router::params::ParamsMap| {
+        let sort = q.get("sort");
+        match registry {
+            Some(registry) => registry.sort_column(sort.as_deref()),
+            None => super::registry::resolve_sort(sort.as_deref(), &[]),
+        }
+    };
     let result = Memo::new(move |_| {
-        let sort = query.with(|q| q.get("sort"));
+        let sort = query.with(sort_column);
         let ascending = query.with(|q| q.get("dir")).as_deref() == Some("asc");
         each.with(|rows| {
             metrics.with_value(|metrics| {
-                query_rows(
-                    rows,
-                    metrics,
-                    &filters.get(),
-                    sort.as_deref().and_then(|s| s.strip_prefix("grid:")),
-                    ascending,
-                )
+                query_rows(rows, metrics, &filters.get(), sort.as_deref(), ascending)
             })
         })
     });
@@ -76,8 +79,8 @@ where
     let layout = Signal::derive(move || query.with(|q| q.get("l").or_else(|| q.get("layout"))));
     let resolved = Memo::new(move |_| {
         let mut defs = columns.get();
-        let sort = query.with(|q| q.get("sort"));
-        let sort = sort.as_deref().and_then(|s| s.strip_prefix("grid:"));
+        let sort = query.with(sort_column);
+        let sort = sort.as_deref();
         for col in &mut defs {
             let alias_choices: Vec<_> = col
                 .filters

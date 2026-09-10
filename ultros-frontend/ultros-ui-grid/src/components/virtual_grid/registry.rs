@@ -48,6 +48,43 @@ impl FilterAlias {
     }
 }
 
+/// A retired native `?sort=` token that now names a metric column. Old links
+/// keep their order; the first header click writes the canonical `grid:` form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SortAlias {
+    pub key: &'static str,
+    pub column: &'static str,
+}
+
+impl SortAlias {
+    pub const fn new(key: &'static str, column: &'static str) -> Self {
+        Self { key, column }
+    }
+}
+
+/// The metric column `?sort=` selects: an explicit `grid:<id>` first, then a
+/// registered alias. A native token without an alias sorts nothing here.
+pub fn resolve_sort(sort: Option<&str>, aliases: &[SortAlias]) -> Option<String> {
+    let sort = sort?;
+    if let Some(column) = sort.strip_prefix("grid:") {
+        return Some(column.to_string());
+    }
+    aliases
+        .iter()
+        .find(|alias| alias.key == sort)
+        .map(|alias| alias.column.to_string())
+}
+
+/// [`resolve_sort`] against the registry in context, or none when the host
+/// registered nothing.
+pub fn effective_sort(query: &ParamsMap) -> Option<String> {
+    let sort = query.get("sort");
+    match use_context::<FilterRegistry>() {
+        Some(registry) => registry.sort_column(sort.as_deref()),
+        None => resolve_sort(sort.as_deref(), &[]),
+    }
+}
+
 /// Read aliases only for columns absent from explicit gf, including invalid
 /// explicit values. An edit canonicalizes all aliases in one URL replacement.
 pub fn resolve_filters(query: &ParamsMap, aliases: &[FilterAlias]) -> MetricFilters {
@@ -119,6 +156,7 @@ pub struct RegisteredFilter {
 #[derive(Clone, Copy)]
 pub struct FilterRegistry {
     aliases: StoredValue<Vec<FilterAlias>>,
+    sort_aliases: StoredValue<Vec<SortAlias>>,
     controls: Signal<Vec<ColumnFilter>>,
     columns: RwSignal<Option<Signal<Vec<GridColumn>>>>,
     pub editing: RwSignal<Option<ColumnFilter>>,
@@ -129,6 +167,7 @@ impl FilterRegistry {
     pub fn provide(aliases: Vec<FilterAlias>, controls: Signal<Vec<ColumnFilter>>) -> Self {
         let registry = Self {
             aliases: StoredValue::new(aliases),
+            sort_aliases: StoredValue::new(Vec::new()),
             controls,
             columns: RwSignal::new(None),
             editing: RwSignal::new(None),
@@ -161,6 +200,18 @@ impl FilterRegistry {
     pub fn canonical(self, query: &ParamsMap) -> ParamsMap {
         self.aliases
             .with_value(|aliases| canonical_query(query, aliases))
+    }
+
+    /// Register retired native sort tokens once at setup, before any grid
+    /// or header reads the URL.
+    pub fn register_sort_aliases(self, aliases: Vec<SortAlias>) {
+        self.sort_aliases.set_value(aliases);
+    }
+
+    /// The metric column a raw `?sort=` value selects, aliases included.
+    pub fn sort_column(self, sort: Option<&str>) -> Option<String> {
+        self.sort_aliases
+            .with_value(|aliases| resolve_sort(sort, aliases))
     }
 
     pub fn is_alias(self, key: &str) -> bool {
@@ -510,6 +561,44 @@ mod tests {
         assert!(!filters["buy_price"].valid(ValueKind::Number));
         assert_eq!(filters["buy_price"].value, "invalid");
     }
+    #[test]
+    fn legacy_sort_tokens_resolve_to_metric_columns_until_a_header_rewrites_them() {
+        let aliases = [
+            SortAlias::new("units", "units"),
+            SortAlias::new("price", "market-listing"),
+        ];
+        assert_eq!(
+            resolve_sort(Some("units"), &aliases).as_deref(),
+            Some("units")
+        );
+        assert_eq!(
+            resolve_sort(Some("price"), &aliases).as_deref(),
+            Some("market-listing")
+        );
+        // Explicit grid state wins over an alias with the same token.
+        assert_eq!(
+            resolve_sort(Some("grid:price"), &aliases).as_deref(),
+            Some("price")
+        );
+        assert_eq!(resolve_sort(Some("profit"), &aliases), None);
+        assert_eq!(resolve_sort(None, &aliases), None);
+        assert_eq!(resolve_sort(Some("units"), &[]), None);
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            assert_eq!(registry.sort_column(Some("units")), None);
+            registry.register_sort_aliases(aliases.to_vec());
+            assert_eq!(
+                registry.sort_column(Some("units")).as_deref(),
+                Some("units")
+            );
+            assert_eq!(
+                effective_sort(&params(&[("sort", "price")])).as_deref(),
+                Some("market-listing")
+            );
+        });
+    }
+
     #[test]
     fn registry_includes_hidden_metrics_and_deduplicates_controls() {
         let owner = Owner::new();

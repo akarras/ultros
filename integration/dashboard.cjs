@@ -81,7 +81,12 @@ const SURFACES = (world) => [
       "Low",
       "Suspicious",
       // Or the column header itself (in case all rows happen to be Unknown).
-      "Quality",
+      // Trends renders on the shared virtual grid (#1344), which mounts only
+      // the columns in view, so on a phone the confidence column is
+      // offscreen; the shared quality column Trends places first proves the
+      // grid itself rendered.
+      "Trend confidence",
+      "Market quality",
     ],
   },
   {
