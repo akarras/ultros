@@ -7,6 +7,16 @@ async function request(path, options) {
   const text = await response.text();
   return { response, text, data: response.ok ? JSON.parse(text) : null };
 }
+async function windowRequest(path) {
+  const deadline = Date.now() + 150_000;
+  for (;;) {
+    const result = await request(path);
+    if (result.response.status !== 503) return result;
+    assert(!result.data, 'warming history must not masquerade as an empty successful snapshot');
+    assert(Date.now() < deadline, `snapshot did not become available: ${result.text}`);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+}
 (async () => {
   const route = `/api/v1/listing_stats/${world}`;
   const current = await request(route);
@@ -14,7 +24,7 @@ async function request(path, options) {
   assert(current.data.stats.length > 0, 'current-only compatibility must use a populated fixture');
   assert(current.data.stats.every(row => !Object.hasOwn(row, 'window')), 'current-only wire stays unchanged');
   for (const days of [1, 7, 30, 90]) {
-    const first = await request(`${route}?window=${days}`);
+    const first = await windowRequest(`${route}?window=${days}`);
     assert.equal(first.response.status, 200, first.text);
     assert(first.data.stats.length > 0, 'fixture must exercise populated history');
     assert(first.data.stats.every(row => row.window.window_days === days), 'cache must not mix windows');

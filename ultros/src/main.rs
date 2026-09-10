@@ -680,6 +680,10 @@ async fn main() -> Result<()> {
     // writers: sales, listing changes, floor moves, and websocket sale receipts.
     // Receipts cannot be recovered from Postgres. Each migration is idempotent.
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
+    let listing_snapshot_worker = tokio::spawn(ultros_clickhouse::listing_snapshots::run(
+        ch_client.clone(),
+        token.clone(),
+    ));
     let ch_writer =
         ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::SaleRow>::spawn_recovering(
             ch_client.clone(),
@@ -909,7 +913,12 @@ async fn main() -> Result<()> {
                 error!("Web shutdown failed: {e:?}");
             }
         };
-        tokio::join!(drain_analytics, drain_web);
+        let drain_snapshots = async {
+            if let Err(error) = listing_snapshot_worker.await {
+                error!(?error, "Listing snapshot worker shutdown failed");
+            }
+        };
+        tokio::join!(drain_analytics, drain_web, drain_snapshots);
         // Every listing_events producer (socket task, update service, web) has
         // been cancelled or drained by now.
         listing_events_writer.shutdown().await;

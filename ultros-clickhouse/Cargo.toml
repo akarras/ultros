@@ -12,6 +12,7 @@ metrics = "0.24.5"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_repr = "0.1"
 chrono = { workspace = true }
 futures = { workspace = true }

@@ -14,7 +14,10 @@
 //! here the rollup writes zero rows for emptied boards and there is no
 //! failover, so "nothing alive" is a real answer worth caching.
 //!
-//! An explicit 1/7/30/90-day window adds observed history. Omit it for the
+//! An explicit 1/7/30/90-day window adds observed history from the
+//! committed exact-scope snapshot (part I2 of #1342). A missing/expired
+//! generation is unavailable while the bounded background worker refreshes it.
+//! Omit the window for the
 //! unchanged current-listing response and inexpensive alive-only query.
 
 use std::sync::Arc;
@@ -92,13 +95,22 @@ async fn load_listing_stats(
         .map(|row| ((row.item_id, row.hq), row))
         .collect::<std::collections::BTreeMap<_, _>>();
     if let Some(days) = window {
-        let to = chrono::Utc::now().timestamp();
-        let mut history = ultros_clickhouse::listing_history::window(ch, &world_ids, days, to)
-            .await
-            .map_err(|e| ClickHouseQueryError::new("listing_history", e))?;
-        let stock = ultros_clickhouse::listing_history::stock(ch, &world_ids, days, to)
+        let now = chrono::Utc::now().timestamp();
+        let (to, mut history) =
+            ultros_clickhouse::listing_snapshots::read(ch, &world_ids, days, now)
+                .await
+                .map_err(|e| match e {
+                    ultros_clickhouse::ClickHouseError::SnapshotUnavailable(_) => {
+                        WebError::TemporarilyUnavailable
+                    }
+                    other => ClickHouseQueryError::new("listing_snapshot", other).into(),
+                })?;
+        let stock = ultros_clickhouse::listing_history::stock(ch, &world_ids, days, now)
             .await
             .map_err(|e| ClickHouseQueryError::new("listing_stock", e))?;
+        // Only a successfully committed generation can establish absence. A
+        // newly alive key without observations at its snapshot endpoint carries
+        // unknown floor coverage, rather than fabricating a current window.
         for key in stats.keys().copied().collect::<Vec<_>>() {
             history.entry(key).or_insert_with(|| {
                 ultros_api_types::listing_stats::ListingWindowStats {
@@ -125,10 +137,6 @@ async fn load_listing_stats(
                 row.alive_units,
                 stock.get(&key).copied().flatten(),
             );
-            metrics::counter!("ultros_listing_history_matches_total", "outcome" => "matched")
-                .increment(history.matches.matched);
-            metrics::counter!("ultros_listing_history_matches_total", "outcome" => "ambiguous")
-                .increment(history.matches.ambiguous);
             row.window = Some(history);
         }
     }
