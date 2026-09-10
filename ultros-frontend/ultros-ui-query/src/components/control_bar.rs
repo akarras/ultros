@@ -13,9 +13,12 @@
 //! exist.
 //!
 //! Registered grid hosts provide `FilterRegistry` in the common owner. Their
-//! native and shared metric definitions populate the menu and editable chips;
-//! the bar grows as chips wrap because their grids own the scrolling. Legacy
-//! hosts can continue passing their own options and children during migration.
+//! native and shared metric definitions populate the menu and editable chips,
+//! and their optional columns populate the Columns picker (#1330), which
+//! flips `?cols=` through the grid's own visibility command so the toolbar,
+//! the header menu and saved views never disagree; the bar grows as chips
+//! wrap because their grids own the scrolling. Legacy hosts can continue
+//! passing their own options, picker and children during migration.
 //!
 //! ## The height lock for legacy hosts
 //!
@@ -32,6 +35,7 @@
 //! Anything added to row 1 needs to be able to yield too.
 
 use std::collections::HashSet;
+use ultros_ui_grid::components::virtual_grid::GridColumn;
 use ultros_ui_grid::components::virtual_grid::registry::{
     FilterRegistry, RegisteredFilterChips, RegisteredFilterEditor, RegisteredFilterMenu,
 };
@@ -78,6 +82,47 @@ impl ColumnOption {
             hint: None,
         }
     }
+}
+
+/// The picker's options for a registered grid's optional columns.
+///
+/// The page's own columns carry no picker group and come first, as the
+/// flat list a page with only native columns always had; grouped (shared)
+/// columns follow, gathered under one heading per group in order of first
+/// appearance, so a shared column a page placed early in its table does not
+/// strand the native entries after it under its heading. The list renders a
+/// heading wherever it differs from the previous entry's, so the gathering
+/// is what keeps each heading to a single occurrence.
+pub fn picker_options_from(columns: &[GridColumn]) -> Vec<ColumnOption> {
+    let mut groups: Vec<&str> = Vec::new();
+    for col in columns.iter().filter(|col| col.optional) {
+        if let Some(group) = col.picker_group.as_deref()
+            && !groups.contains(&group)
+        {
+            groups.push(group);
+        }
+    }
+    let mut entries: Vec<(usize, ColumnOption)> = columns
+        .iter()
+        .filter(|col| col.optional)
+        .map(|col| {
+            let rank = col
+                .picker_group
+                .as_deref()
+                .and_then(|group| groups.iter().position(|g| *g == group))
+                .map_or(0, |i| i + 1);
+            let option = ColumnOption {
+                group: col
+                    .picker_group
+                    .clone()
+                    .map(|label| PickerHeading { label, title: None }),
+                ..ColumnOption::new(col.id, col.label.clone())
+            };
+            (rank, option)
+        })
+        .collect();
+    entries.sort_by_key(|(rank, _)| *rank);
+    entries.into_iter().map(|(_, option)| option).collect()
 }
 
 /// Handle on the bar's two popovers.
@@ -259,8 +304,10 @@ pub fn ControlBar(
     /// saved-views menu — anything that must not shrink.
     #[prop(optional, into)]
     actions: ViewFn,
-    /// Columns the picker offers. Empty (the default) hides the Columns
-    /// button entirely, for tools with a fixed column set.
+    /// Columns the picker offers. Empty (the default) hands the picker to
+    /// the registered grid's optional columns when a [`FilterRegistry`] is
+    /// in context, and otherwise hides the Columns button entirely, for
+    /// tools with a fixed column set.
     #[prop(optional, into)]
     columns: Signal<Vec<ColumnOption>>,
     /// Which of `columns` are currently on.
@@ -363,7 +410,36 @@ pub fn ControlBar(
     let columns_extra = StoredValue::new(columns_extra);
     let filter_menu_extra = StoredValue::new(filter_menu_extra);
 
-    let has_columns = Signal::derive(move || !columns.get().is_empty());
+    // A page that passes its own picker keeps it whole — options, checked
+    // state, toggle and reset are one contract. Everything else gets the
+    // registered grid's: the same resolved columns, `?cols=` state and
+    // visibility commands its header menu uses, so the two never disagree.
+    let registry_picker =
+        Signal::derive(move || registry.filter(|_| columns.with(|explicit| explicit.is_empty())));
+    let picker_columns = Signal::derive(move || match registry_picker.get() {
+        Some(registry) => picker_options_from(&registry.optional_columns()),
+        None => columns.get(),
+    });
+    let picker_visible = Signal::derive(move || match registry_picker.get() {
+        Some(registry) => registry.visible_columns(),
+        None => visible_columns.get(),
+    });
+    let toggle_column =
+        Callback::new(
+            move |id: &'static str| match registry_picker.get_untracked() {
+                Some(registry) => registry.toggle_column(id),
+                None => {
+                    if let Some(toggle) = on_toggle_column {
+                        toggle.run(id);
+                    }
+                }
+            },
+        );
+    let reset_columns = Signal::derive(move || match registry_picker.get() {
+        Some(registry) => Some(Callback::new(move |_| registry.reset_columns())),
+        None => on_reset_columns,
+    });
+    let has_columns = Signal::derive(move || !picker_columns.get().is_empty());
 
     view! {
         <div class="sticky-bar px-2 py-1 flex flex-col gap-1" class:registered-filter-bar=registry.is_some() style=format!("{} position: {};", if registry.is_some() { format!("min-height: {STICKY_BAR_HEIGHT}px;") } else { format!("height: {STICKY_BAR_HEIGHT}px;") }, if sticky { "sticky" } else { "relative" }) node_ref=bar_ref>
@@ -506,12 +582,13 @@ pub fn ControlBar(
                                     {t!(i18n, analyzer_columns_picker_label)}
                                 </span>
                                 <ColumnsPickerList
-                                    columns=columns
-                                    visible_columns=visible_columns
-                                    on_toggle_column=on_toggle_column
+                                    columns=picker_columns
+                                    visible_columns=picker_visible
+                                    on_toggle_column=Some(toggle_column)
                                 />
                                 {move || {
-                                    on_reset_columns
+                                    reset_columns
+                                        .get()
                                         .map(|reset| {
                                             view! {
                                                 <button
@@ -551,6 +628,51 @@ mod tests {
             }
             .to_html()
         })
+    }
+
+    /// Native (ungrouped) columns lead in table order; shared columns are
+    /// gathered under one heading per group in order of first appearance,
+    /// even when a page placed one of them ahead of its native columns.
+    /// Required columns never reach the picker.
+    #[test]
+    fn registered_picker_leads_with_native_columns_and_gathers_groups() {
+        let shared = |id, group: &str| {
+            let mut col = GridColumn::new(id, id.to_uppercase(), 100.0, true, false);
+            col.picker_group = Some(group.into());
+            col
+        };
+        let columns = vec![
+            GridColumn::new("item", "Item".into(), 300.0, false, true),
+            shared("market-sale-median", "Sale history (selected window)"),
+            GridColumn::new("profit", "Profit".into(), 100.0, true, true),
+            shared("market-units-7", "Sale history (7d)"),
+            GridColumn::new("level", "Level".into(), 100.0, true, false),
+            shared("market-units", "Sale history (selected window)"),
+        ];
+        let options = picker_options_from(&columns);
+        let ids: Vec<_> = options.iter().map(|o| o.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "profit",
+                "level",
+                "market-sale-median",
+                "market-units",
+                "market-units-7"
+            ]
+        );
+        assert!(options[0].group.is_none() && options[1].group.is_none());
+        assert_eq!(
+            options[2].group.as_ref().map(|g| g.label.as_str()),
+            Some("Sale history (selected window)")
+        );
+        assert_eq!(options[3].group, options[2].group);
+        assert_eq!(
+            options[4].group.as_ref().map(|g| g.label.as_str()),
+            Some("Sale history (7d)")
+        );
+        assert_eq!(options[2].label, "MARKET-SALE-MEDIAN");
+        assert!(options.iter().all(|o| !o.disabled && o.hint.is_none()));
     }
 
     /// Ungrouped options render the flat list every page renders today:

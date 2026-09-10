@@ -5,6 +5,7 @@ use super::{ColumnFilter, GridColumn, metrics::*};
 use crate::components::app_link::use_location_or_default;
 use leptos::prelude::*;
 use leptos_router::params::ParamsMap;
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FilterAlias {
@@ -153,6 +154,28 @@ pub struct RegisteredFilter {
     pub group: Option<String>,
 }
 
+/// The grid's column-visibility commands, registered beside its resolved
+/// columns so a toolbar picker flips the same `?cols=` the header menu does.
+#[derive(Clone, Copy)]
+pub struct ColumnVisibility {
+    /// Show or hide one optional column, leaving the layout delta untouched.
+    pub set_visible: Callback<(&'static str, bool)>,
+    /// Drop `?cols=` so every optional column returns to its page default.
+    pub reset: Callback<()>,
+}
+
+/// The `?cols=` value for a resolved column set: every optional column that
+/// is on, in definition order, so the URL is stable regardless of toggle
+/// order. Shared by the header menu and the toolbar picker.
+pub fn cols_query(columns: &[GridColumn]) -> String {
+    columns
+        .iter()
+        .filter(|c| c.optional && c.visible)
+        .map(|c| c.id)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[derive(Clone, Copy)]
 pub struct FilterRegistry {
     aliases: StoredValue<Vec<FilterAlias>>,
@@ -160,6 +183,7 @@ pub struct FilterRegistry {
     default_sort: StoredValue<Option<&'static str>>,
     controls: Signal<Vec<ColumnFilter>>,
     columns: RwSignal<Option<Signal<Vec<GridColumn>>>>,
+    visibility: RwSignal<Option<ColumnVisibility>>,
     pub editing: RwSignal<Option<ColumnFilter>>,
     count: RwSignal<Option<Signal<usize>>>,
 }
@@ -172,6 +196,7 @@ impl FilterRegistry {
             default_sort: StoredValue::new(None),
             controls,
             columns: RwSignal::new(None),
+            visibility: RwSignal::new(None),
             editing: RwSignal::new(None),
             count: RwSignal::new(None),
         };
@@ -192,6 +217,61 @@ impl FilterRegistry {
 
     pub fn register(self, columns: Signal<Vec<GridColumn>>) {
         self.columns.set(Some(columns));
+    }
+
+    pub fn register_visibility(self, visibility: ColumnVisibility) {
+        self.visibility.set(Some(visibility));
+    }
+
+    /// Every column the grid lets the user turn on or off, in the grid's
+    /// own order and carrying the labels and picker groups it resolved.
+    pub fn optional_columns(self) -> Vec<GridColumn> {
+        self.columns
+            .get()
+            .map(|columns| {
+                columns.with(|defs| defs.iter().filter(|c| c.optional).cloned().collect())
+            })
+            .unwrap_or_default()
+    }
+
+    /// The optional columns currently on, after `?cols=` is applied.
+    pub fn visible_columns(self) -> HashSet<&'static str> {
+        self.columns
+            .get()
+            .map(|columns| {
+                columns.with(|defs| {
+                    defs.iter()
+                        .filter(|c| c.optional && c.visible)
+                        .map(|c| c.id)
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Flip one optional column through the grid's own visibility command.
+    /// A no-op until a grid has registered, or for an id it does not own.
+    pub fn toggle_column(self, id: &'static str) {
+        let Some(visibility) = self.visibility.get_untracked() else {
+            return;
+        };
+        let Some(columns) = self.columns.get_untracked() else {
+            return;
+        };
+        let current = columns.with_untracked(|defs| {
+            defs.iter()
+                .find(|c| c.id == id && c.optional)
+                .map(|c| c.visible)
+        });
+        if let Some(visible) = current {
+            visibility.set_visible.run((id, !visible));
+        }
+    }
+
+    pub fn reset_columns(self) {
+        if let Some(visibility) = self.visibility.get_untracked() {
+            visibility.reset.run(());
+        }
     }
 
     pub fn filters(self, query: &ParamsMap) -> MetricFilters {
@@ -583,6 +663,43 @@ mod tests {
         assert!(!filters["buy_price"].valid(ValueKind::Number));
         assert_eq!(filters["buy_price"].value, "invalid");
     }
+    /// The toolbar picker reads the grid's resolved columns and flips them
+    /// through the grid's own command: required columns are never offered,
+    /// `?cols=` lists every optional column that is on, and an unknown id
+    /// is ignored rather than written.
+    #[test]
+    fn registry_offers_optional_columns_and_toggles_through_the_grid() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(aliases(), Signal::derive(Vec::new));
+            assert!(registry.optional_columns().is_empty());
+            registry.toggle_column("profit");
+            let defs = vec![
+                GridColumn::new("item", "Item".into(), 300.0, false, true),
+                GridColumn::new("profit", "Profit".into(), 100.0, true, true),
+                GridColumn::new("level", "Level".into(), 100.0, true, false),
+            ];
+            assert_eq!(cols_query(&defs), "profit");
+            registry.register(Signal::derive(move || defs.clone()));
+            let writes = RwSignal::new(Vec::<(&'static str, bool)>::new());
+            let resets = RwSignal::new(0usize);
+            registry.register_visibility(ColumnVisibility {
+                set_visible: Callback::new(move |change| writes.update(|w| w.push(change))),
+                reset: Callback::new(move |_| resets.update(|n| *n += 1)),
+            });
+            let ids: Vec<_> = registry.optional_columns().iter().map(|c| c.id).collect();
+            assert_eq!(ids, ["profit", "level"]);
+            assert_eq!(registry.visible_columns(), HashSet::from(["profit"]));
+            registry.toggle_column("profit");
+            registry.toggle_column("level");
+            registry.toggle_column("item");
+            registry.toggle_column("missing");
+            assert_eq!(writes.get(), vec![("profit", false), ("level", true)]);
+            registry.reset_columns();
+            assert_eq!(resets.get(), 1);
+        });
+    }
+
     #[test]
     fn legacy_sort_tokens_resolve_to_metric_columns_until_a_header_rewrites_them() {
         let aliases = [

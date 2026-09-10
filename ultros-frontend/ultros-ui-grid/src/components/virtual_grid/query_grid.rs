@@ -134,10 +134,6 @@ where
         }
         defs
     });
-    if let Some(registry) = registry {
-        registry.register(resolved.into());
-        registry.register_count(Signal::derive(move || queried.with(Vec::len)));
-    }
     let reset = Memo::new(move |_| {
         let mut q = query.get();
         for key in ["l", "layout", "cols"] {
@@ -147,31 +143,13 @@ where
     });
     #[cfg(feature = "hydrate")]
     let navigate = leptos_router::hooks::use_navigate();
-    let on_change = Callback::new(move |change: GridChange| {
-        let mut q = query.get_untracked();
-        q.remove("l");
-        q.remove("layout");
-        if let Some(layout) = change.layout {
-            q.insert("l", layout);
-        }
-        if change.reset {
-            q.remove("cols");
-        }
-        if let Some((id, visible)) = change.visibility {
-            let mut defs = resolved.get_untracked();
-            if let Some(col) = defs.iter_mut().find(|c| c.id == id) {
-                col.visible = visible;
-            }
-            q.remove("cols");
-            q.insert(
-                "cols",
-                defs.iter()
-                    .filter(|c| c.optional && c.visible)
-                    .map(|c| c.id)
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-        }
+    // Every column change is one URL replacement of the keys it owns; the
+    // rest of the query (filters, sort, window, world) rides along untouched.
+    // A `Callback` so the three writers below can each hold a copy: the
+    // navigator it captures is not `Copy`.
+    let commit_query = Callback::new(move |q: leptos_router::params::ParamsMap| {
+        #[cfg(not(feature = "hydrate"))]
+        let _ = q;
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
@@ -185,6 +163,50 @@ where
             },
         );
     });
+    // `?cols=` with one optional column flipped, from the resolved defs so
+    // the first write lists the page defaults too.
+    let write_visibility = move |q: &mut leptos_router::params::ParamsMap, id, visible| {
+        let mut defs = resolved.get_untracked();
+        if let Some(col) = defs.iter_mut().find(|c| c.id == id) {
+            col.visible = visible;
+        }
+        q.remove("cols");
+        q.insert("cols", super::registry::cols_query(&defs));
+    };
+    let on_change = Callback::new(move |change: GridChange| {
+        let mut q = query.get_untracked();
+        q.remove("l");
+        q.remove("layout");
+        if let Some(layout) = change.layout {
+            q.insert("l", layout);
+        }
+        if change.reset {
+            q.remove("cols");
+        }
+        if let Some((id, visible)) = change.visibility {
+            write_visibility(&mut q, id, visible);
+        }
+        commit_query.run(q);
+    });
+    if let Some(registry) = registry {
+        registry.register(resolved.into());
+        registry.register_count(Signal::derive(move || queried.with(Vec::len)));
+        // The toolbar picker shares these with the header menu, so a tick
+        // there and "Hide column" here write the same `?cols=`. Neither
+        // touches the layout delta: a picker toggle must not undo a drag.
+        registry.register_visibility(super::registry::ColumnVisibility {
+            set_visible: Callback::new(move |(id, visible)| {
+                let mut q = query.get_untracked();
+                write_visibility(&mut q, id, visible);
+                commit_query.run(q);
+            }),
+            reset: Callback::new(move |_| {
+                let mut q = query.get_untracked();
+                q.remove("cols");
+                commit_query.run(q);
+            }),
+        });
+    }
     let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
     let saved_views_id = id.clone();
     let clear_href = move || {
