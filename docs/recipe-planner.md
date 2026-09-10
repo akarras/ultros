@@ -17,6 +17,9 @@ new share links. `unavailable=item:world,...` records "Not here" reports.
 Datacenter/region item-page links resolve a starting world within that scope.
 `require-hq` strictly filters HQ-capable ingredient purchases; `output-hq`
 separately controls the finished-item comparison.
+`include-vendors=false` disables NPC purchases; omitted or `true` includes
+NPC gil-shop stock, preserving the existing default. Vendors supply NQ only,
+so HQ-capable ingredients still require market listings when `require-hq=true`.
 
 `craft=itemId:recipeId,...` chooses an explicit recipe for each intermediate;
 absent entries are bought. `owned=itemId:quantity,...` records on-hand materials.
@@ -38,7 +41,11 @@ Cycles, more than 128 materials, excessive depth and quantity overflow fail
 explicitly. Zero supply is a shortage, not a zero-cost ingredient.
 
 Purchases use a bounded 0/1 knapsack over complete listings. NPC gil prices can
-fill remaining demand, assuming the player has vendor access. Large cases
+fill remaining demand, assuming the player has vendor access. Seasonal-only
+stock is excluded by the shared vendor-price lookup. Route cards show the NPC
+spend included in each total; a separate NPC shopping section and copied plan
+show quantities, unit prices, totals, and links to vendor locations and unlock
+requirements. Disable NPC vendors when those shops are inaccessible. Large cases
 (more than 10,000 required units or 200,000 quantity/listing combinations) use
 the cheaper complete result of unit-price and stack-price greedy candidates and
 are marked approximate.
@@ -77,7 +84,7 @@ stops being something to buy. "Not here" excludes that `(item, world)` pair,
 unticks any lock on it, and re-plans; reports can be removed individually or
 cleared.
 
-The deterministic engine is `ultros-app/src/recipe_planner.rs`; it has no UI or
+The deterministic engine is `ultros-frontend/ultros-calc/src/recipe_planner.rs`; it has no UI or
 network dependencies. API requests are client-side, keyed by scope and selected
 leaf IDs, with at most four requests in flight. A quantity-only change reuses
 the market snapshot. Reversing the dependency order yields crafting instructions.
