@@ -49,6 +49,28 @@ pub async fn search(query: &str) -> AppResult<Vec<SearchResult>> {
     fetch_api(&format!("/api/v1/search?q={encoded_query}")).await
 }
 
+/// Search owns its browser request so superseded keystrokes can abort it.
+/// Keep cancellation out of the shared fetch helper: it intentionally spawns
+/// requests independently of the caller's lifetime.
+#[cfg(not(feature = "ssr"))]
+pub async fn search_with_abort(
+    query: &str,
+    abort_signal: Option<&web_sys::AbortSignal>,
+) -> AppResult<Vec<SearchResult>> {
+    let encoded_query = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
+    let response = gloo_net::http::Request::get(&format!("/api/v1/search?q={encoded_query}"))
+        .abort_signal(abort_signal)
+        .send()
+        .await?;
+    report_server_commit(&response);
+    if !response.ok() {
+        return Err(AppError::SystemError(crate::error::SystemError::Message(
+            format!("Search request failed with HTTP {}", response.status()),
+        )));
+    }
+    deserialize(&response.text().await?)
+}
+
 pub async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {
     if item_id == 0 {
         return Err(AppError::NoItem);
