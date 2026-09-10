@@ -4,3 +4,6 @@ name = "ultros"
 
 [setup]
 script = "cp $CODEX_SOURCE_TREE_PATH/.env $CODEX_WORKTREE_PATH/"
+
+[setup.windows]
+script = 'Copy-Item -LiteralPath (Join-Path $env:CODEX_SOURCE_TREE_PATH ".env") -Destination $env:CODEX_WORKTREE_PATH -ErrorAction Stop'
