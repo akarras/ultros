@@ -356,17 +356,41 @@ async fn run_socket_listener(
     }
 }
 
-async fn init_db(
-    db: &UltrosDb,
-    worlds_view: Result<WorldsView, universalis::Error>,
-    datacenters: Result<DataCentersView, universalis::Error>,
-) -> Result<()> {
+/// Refresh startup metadata without making an existing replica's readiness
+/// depend indefinitely on an upstream request. None preserves persisted worlds.
+async fn startup_world_data(
+    worlds: impl std::future::Future<Output = Result<WorldsView, universalis::Error>>,
+    datacenters: impl std::future::Future<Output = Result<DataCentersView, universalis::Error>>,
+) -> Option<(WorldsView, DataCentersView)> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        futures::future::join(worlds, datacenters),
+    )
+    .await
+    {
+        Ok((Ok(worlds), Ok(datacenters))) => Some((worlds, datacenters)),
+        Ok((worlds, datacenters)) => {
+            warn!(
+                ?worlds,
+                ?datacenters,
+                "world metadata refresh failed; using persisted worlds"
+            );
+            None
+        }
+        Err(_) => {
+            warn!("world metadata refresh timed out; using persisted worlds");
+            None
+        }
+    }
+}
+
+async fn init_db(db: &UltrosDb, world_data: Option<(WorldsView, DataCentersView)>) -> Result<()> {
     info!("db starting");
 
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
-        if let (Ok(worlds), Ok(datacenters)) = (worlds_view, datacenters) {
+        if let Some((worlds, datacenters)) = world_data {
             db.update_datacenters(&datacenters, &worlds).await?;
         }
     }
@@ -674,16 +698,18 @@ async fn main() -> Result<()> {
     let socket_listing_events = listing_events_writer.clone();
     let socket_token = token.clone();
     let websocket_disabled = universalis_websocket_disabled();
+    // Populate worlds before constructing the immutable world cache. Otherwise a
+    // first boot can run reconciliation against an empty cache indefinitely.
+    let world_data = startup_world_data(
+        startup_client.get_worlds(),
+        startup_client.get_data_centers(),
+    )
+    .await;
+    info!("Initializing database with worlds/datacenters");
+    init_db(&init, world_data)
+        .await
+        .expect("Unable to populate worlds datacenters- is universalis down?");
     tokio::spawn(async move {
-        let (datacenters, worlds) = futures::future::join(
-            startup_client.get_data_centers(),
-            startup_client.get_worlds(),
-        )
-        .await;
-        info!("Initializing database with worlds/datacenters");
-        init_db(&init, worlds, datacenters)
-            .await
-            .expect("Unable to populate worlds datacenters- is universalis down?");
         if websocket_disabled {
             // World/datacenter data above is still primed — the app needs it to
             // serve anything at all — we just never open the market feed.
@@ -701,8 +727,11 @@ async fn main() -> Result<()> {
         )
         .await;
     });
-    // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
+    anyhow::ensure!(
+        world_cache.get_all_worlds().next().is_some(),
+        "No worlds available after initialization; cannot start market reconciliation"
+    );
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
     // A Postgres advisory lock elects one web replica to refresh rollups.
@@ -736,11 +765,9 @@ async fn main() -> Result<()> {
         shutdown: token.clone(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
-    // A full sweep runs for hours, so a deploy lands in the middle of nearly
-    // every one. Its progress is persisted per chunk; this picks up whatever
-    // the last process left unfinished instead of waiting for an operator to
-    // notice and re-issue `/rescan_market`.
-    crate::discord::ffxiv::admin::spawn_interrupted_sweep_resume(
+    // Full-board coverage is independent of the 200-item recency window and
+    // fresh sales markers. Resume first, then cover any startup gap.
+    crate::discord::ffxiv::admin::spawn_market_reconciliation(
         update_service.clone(),
         token.clone(),
     );
@@ -921,6 +948,71 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn stalled_world_refresh_releases_startup_to_use_persisted_data() {
+        let started = tokio::time::Instant::now();
+        let data = super::startup_world_data(std::future::pending(), async {
+            Ok(universalis::DataCentersView(vec![]))
+        })
+        .await;
+        assert!(
+            data.is_none(),
+            "a partial refresh must not replace persisted data"
+        );
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(15));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_datacenter_refresh_also_has_a_startup_deadline() {
+        let started = tokio::time::Instant::now();
+        let data = super::startup_world_data(
+            async { Ok(universalis::WorldsView(vec![])) },
+            std::future::pending(),
+        )
+        .await;
+        assert!(data.is_none());
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(15));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn successful_world_refresh_is_available_before_the_deadline() {
+        let started = tokio::time::Instant::now();
+        let data =
+            super::startup_world_data(async { Ok(universalis::WorldsView(vec![])) }, async {
+                Ok(universalis::DataCentersView(vec![]))
+            })
+            .await;
+        assert!(data.is_some());
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn failed_world_refresh_preserves_persisted_data() {
+        let data = super::startup_world_data(async { Err(universalis::Error::NoItems) }, async {
+            Ok(universalis::DataCentersView(vec![]))
+        })
+        .await;
+        assert!(data.is_none());
+    }
+
+    #[test]
+    fn automatic_reconciliation_disable_flag_matches_websocket_safety() {
+        let name = "ULTROS_DISABLE_AUTOMATIC_RECONCILIATION";
+        for value in ["true", " TRUE ", "1", "yes", "on", "please"] {
+            assert!(super::env_flag_enabled(name, Some(value)), "{value:?}");
+        }
+        for value in [
+            None,
+            Some(""),
+            Some(" "),
+            Some("false"),
+            Some("0"),
+            Some("off"),
+        ] {
+            assert!(!super::env_flag_enabled(name, value), "{value:?}");
+        }
+    }
+
     use super::{
         DISABLE_WEBSOCKET_ENV, env_flag_enabled, error_reporting_disabled, resolve_environment,
     };
