@@ -7,6 +7,7 @@ use std::sync::Arc;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 
+use crate::components::control_bar::ColumnOption;
 use crate::components::icon::Icon;
 use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::term_badge::TermRole;
@@ -315,6 +316,11 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// Rendered row range for lazy market-data enrichment.
     #[prop(optional)]
     visible_range: Option<RwSignal<(usize, usize)>>,
+    /// The Columns picker's options. Their group headings become the
+    /// column definitions' `picker_group`, so the `+ Filter` menu groups
+    /// the same columns under the same headings.
+    #[prop(optional, into)]
+    picker: Option<Signal<Vec<ColumnOption>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let label = if label.is_empty() {
@@ -375,6 +381,14 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                     optional,
                     !optional || visible_cols.with(|v| v.contains(col.id)),
                 );
+                if optional && let Some(picker) = picker {
+                    def.picker_group = picker.with(|options| {
+                        options
+                            .iter()
+                            .find(|option| option.id == col.id)
+                            .and_then(|option| option.group.as_ref().map(|g| g.label.clone()))
+                    });
+                }
                 if let Some(role) = marked_role(col, marks) {
                     // TermBadge is 18px wide, separated from the title by 8px.
                     def.heading_adornments = 26.0;

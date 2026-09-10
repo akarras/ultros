@@ -112,9 +112,7 @@ async function main() {
       await page.waitForSelector(heading);
       await page.$eval(heading, e => e.scrollIntoView({block: 'center', inline: 'nearest'}));
       await page.click(heading, {button: 'right'});
-      const form = tool === 'recipe-analyzer'
-        ? '.grid-column-filter[data-filter="profit"]'
-        : `.grid-column-filter[data-metric-filter="${column}"]`;
+      const form = `.grid-column-filter[data-metric-filter="${column}"]`;
       await page.waitForSelector(form);
       const value = tool === 'scrip-sources' ? 'OrangeCrafters' : '0';
       if (tool === 'scrip-sources') await page.select(`${form} select[aria-label="Value"]`, value);
@@ -122,14 +120,54 @@ async function main() {
       const beforeEdit = await page.evaluate(() => ({length: history.length, scroll: scrollY}));
       await page.$eval(`${form} button[type="submit"]`, e => e.click());
       console.log(`CHECK ${tool}: filter applied`, page.url());
-      await page.waitForFunction((tool, column, value) => {
+      await page.waitForFunction((column, value) => {
         const query = new URL(location.href).searchParams;
-        return (tool === 'recipe-analyzer' ? query.get('profit') : JSON.parse(query.get('gf') || '{}')[column]?.value) === value;
-      }, {}, tool, column, value);
+        return JSON.parse(query.get('gf') || '{}')[column]?.value === value;
+      }, {}, column, value);
       await pause(200);
       assert.deepEqual(await page.evaluate(() => ({length: history.length, scroll: scrollY})), beforeEdit, `${tool}: filter edits replace without scrolling`);
       await ready('红玉海');
       await page.keyboard.press('Escape');
+      // Removing filters uses the same replace/no-scroll URL contract as
+      // editing them, including the fragment on a shared world link.
+      const filteredUrl = page.url();
+      async function clearedBy(selector, label) {
+        await page.waitForSelector(selector);
+        await page.$eval(selector, e => e.scrollIntoView({block: 'center', inline: 'nearest'}));
+        const before = await page.evaluate(() => ({length: history.length, scroll: scrollY}));
+        await page.click(selector);
+        await page.waitForFunction(column => !JSON.parse(new URL(location.href).searchParams.get('gf') || '{}')[column], {}, column);
+        await ready('红玉海');
+        assert.equal(await page.evaluate(() => history.length), before.length, `${tool}: ${label} replaces history`);
+        // Removing a filter may shrink the page, but must not reset scroll to
+        // the top when the document still has room for the previous offset.
+        const position = await page.evaluate(() => ({scroll: scrollY, max: Math.max(0, document.documentElement.scrollHeight - innerHeight)}));
+        assert.equal(position.scroll, Math.min(before.scroll, position.max), `${tool}: ${label} preserves scroll`);
+      }
+      async function restoreFilter() {
+        await page.goto(filteredUrl, {waitUntil: 'domcontentloaded'});
+        await ready('红玉海');
+        await page.waitForSelector(`[data-registered-filter="${column}"]`);
+      }
+      await clearedBy(`[data-registered-filter="${column}"] .filter-chip-x`, 'remove chip');
+      await restoreFilter();
+      await clearedBy(`${heading} .grid-filter-clear`, 'clear column');
+      await restoreFilter();
+      await clearedBy('[aria-label="Clear all filters"]', 'clear all');
+      assert.equal(new URL(page.url()).searchParams.get('cost-basis'), 'sale-avg', `${tool}: clear all preserves pricing`);
+      if (tool === 'recipe-analyzer') {
+        const empty = new URL(filteredUrl);
+        empty.searchParams.set('gf', JSON.stringify({profit: {op: 'gte', value: '1e20'}}));
+        await page.goto(empty.href, {waitUntil: 'domcontentloaded'});
+        await ready('红玉海');
+        await page.waitForFunction(() => [...document.querySelectorAll('button')].some(e => e.textContent.trim() === 'Clear filters'));
+        const before = await page.evaluate(() => history.length);
+        await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Clear filters').click());
+        await page.waitForFunction(() => !new URL(location.href).searchParams.has('gf'));
+        await ready('红玉海');
+        assert.equal(await page.evaluate(() => history.length), before, 'recipe empty-state clear replaces history');
+        assert.equal(new URL(page.url()).searchParams.get('cost-basis'), 'sale-avg');
+      }
       // Saved views created before path worlds must keep the current world.
       await page.waitForSelector('.virtual-grid');
       await page.click('[aria-label="Views"]');

@@ -316,9 +316,10 @@ pub fn RegisteredFilterChips(registry: FilterRegistry) -> impl IntoView {
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 location.pathname.get_untracked(),
-                _next.to_query_string()
+                _next.to_query_string(),
+                location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,
@@ -380,10 +381,23 @@ pub fn RegisteredFilterMenu(registry: FilterRegistry, on_select: Callback<()>) -
     move || {
         let query = query.get();
         let mut previous_group = None;
-        registry
+        let mut entries: Vec<_> = registry
             .entries()
             .into_iter()
             .filter(|e| !registry.active(&e.filter, &query))
+            .collect();
+        // A host's column table may interleave groups; the picker shows each
+        // heading once, so the menu keeps each group together too. Ungrouped
+        // controls lead, then groups in first-appearance order (stable sort).
+        let mut order: Vec<Option<String>> = vec![None];
+        for entry in &entries {
+            if !order.contains(&entry.group) {
+                order.push(entry.group.clone());
+            }
+        }
+        entries.sort_by_key(|entry| order.iter().position(|g| *g == entry.group).unwrap_or(0));
+        entries
+            .into_iter()
             .map(|entry| {
                 let heading = if entry.group != previous_group {
                     entry.group.clone()
@@ -618,6 +632,45 @@ mod tests {
                 effective_sort(&params(&[("dir", "asc")])).as_deref(),
                 Some("units")
             );
+        });
+    }
+
+    #[test]
+    fn the_menu_keeps_each_group_together_in_first_appearance_order() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            let column = |id: &'static str, group: Option<&str>| {
+                let mut col = GridColumn::new(id, id.to_string(), 100.0, true, false);
+                col.picker_group = group.map(str::to_string);
+                col.filters = vec![ColumnFilter::metric(id, id.to_string(), ValueKind::Number)];
+                col
+            };
+            // A column table that interleaves its groups, as Recipe's does.
+            let columns = vec![
+                column("profit", None),
+                column("rev-a", Some("Revenue")),
+                column("volume", Some("Market")),
+                column("rev-b", Some("Revenue")),
+                column("roi", None),
+            ];
+            registry.register(Signal::derive(move || columns.clone()));
+            let html = view! {
+                <RegisteredFilterMenu registry on_select=Callback::new(|_| ())/>
+            }
+            .to_html();
+            let at = |needle: &str| {
+                html.find(needle)
+                    .unwrap_or_else(|| panic!("{needle}: {html}"))
+            };
+            assert_eq!(html.matches("<strong").count(), 2, "{html}");
+            assert!(at("data-add-filter=\"profit\"") < at("data-add-filter=\"roi\""));
+            assert!(at("data-add-filter=\"roi\"") < at(">Revenue<"));
+            assert!(at(">Revenue<") < at("data-add-filter=\"rev-a\""));
+            assert!(at("data-add-filter=\"rev-a\"") < at("data-add-filter=\"rev-b\""));
+            assert!(at("data-add-filter=\"rev-b\"") < at(">Market<"));
+            assert!(at(">Market<") < at("data-add-filter=\"volume\""));
         });
     }
 

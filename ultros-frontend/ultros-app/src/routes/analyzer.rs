@@ -1918,9 +1918,10 @@ fn AnalyzerTable(
         let query = registry.clear_all(&filter_location.query.get_untracked());
         filter_nav(
             &format!(
-                "{}{}",
+                "{}{}{}",
                 filter_location.pathname.get_untracked(),
-                query.to_query_string()
+                query.to_query_string(),
+                filter_location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
                 replace: true,

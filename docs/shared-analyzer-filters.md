@@ -95,12 +95,20 @@ filters may evaluate known rows without claiming complete data or a global sort.
 
 ## Remaining consumers for issue #1351
 
-This change adopts the six existing MarketGrid tools: Flip Finder, Vendor
-Resale, Ventures, Leves, FC Crafting, and Scrip Sources. Keep #1351 open until:
+The six MarketGrid tools (Flip Finder, Vendor Resale, Ventures, Leves, FC
+Crafting, Scrip Sources), Trends, Currency Exchange, and the Recipe Analyzer's `AnalyzerGrid` host use
+this registry. Recipe keeps its legacy `profit`, `roi` and `min-sales` keys as
+aliases of its `profit`, `roi` and `daily-sales` metrics (`min-sales=0` still
+means "no limit"), and registers its job, sub-craft, HQ, outlier, crystal,
+on-hand, listing world/DC and pricing (`cost-basis`, `revenue`, `buy-scope`,
+`sell-scope`) inputs as controls; Clear all preserves the four pricing inputs.
+`AnalyzerGrid`'s `picker` prop forwards the Columns picker's headings to the
+`+ Filter` menu, which keeps each group together.
 
-- T08 adopts this registry in Recipe Analyzer's common grid host.
-- T10 adopts it while moving Currency Exchange to the shared grid.
-- T11 adopts it while moving Item Explorer to the shared grid.
+Keep #1351 open until the remaining tables adopt it while moving to the
+shared grid, each under its own route migration:
+
+- Item Explorer (#1346).
 
 Those tasks own their route migrations. They should use the current app
 re-exports and preserve existing column IDs, URL presets, and pre-calculation

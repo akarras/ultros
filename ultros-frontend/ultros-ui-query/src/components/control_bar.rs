@@ -410,7 +410,7 @@ pub fn ControlBar(
                             registry.editing.set(None);
                             let _q = registry.clear_all(&location.query.get_untracked());
                             #[cfg(feature = "hydrate")]
-                            nav(&format!("{}{}", location.pathname.get_untracked(), _q.to_query_string()), leptos_router::NavigateOptions { replace: true, scroll: false, ..Default::default() });
+                            nav(&format!("{}{}{}", location.pathname.get_untracked(), _q.to_query_string(), location.hash.get_untracked()), leptos_router::NavigateOptions { replace: true, scroll: false, ..Default::default() });
                         } else {
                             on_clear_all.run(());
                             set_grid_filters.set(None);
