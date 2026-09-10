@@ -408,7 +408,7 @@ pub fn EditLists() -> impl IntoView {
                     None => view! { <BoxSkeleton rows=1 /> }.into_any(),
                     Some(None) => {
                         if device_lists.get() {
-                            return view! { <p class="text-sm opacity-70">{t!(i18n, lists_device_other_device)}" "<a class="underline" rel="external" href="/login?next=/list%3Flabs%3Dlists-sync">{t!(i18n, lists_device_sign_in)}</a></p> }.into_any();
+                            return view! { <p class="text-sm opacity-70">{t!(i18n, lists_device_other_device)}" "<a class="underline" rel="external" href="/login?next=/list?labs=lists-sync">{t!(i18n, lists_device_sign_in)}</a></p> }.into_any();
                         }
                         view! {
                             <ActionableEmptyState
