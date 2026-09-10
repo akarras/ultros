@@ -63,8 +63,8 @@ explains *why* it went up.
 
 ## Known gap: `WorldCache` never refreshes
 
-`WorldCache` is built exactly once, in `main.rs`, and on a cold database that
-build races the task that populates the world table. A world it misses is absent
+`WorldCache` is built exactly once, in `main.rs`, after startup world initialization
+has completed. The previous cold-start race is fixed. A world added later is absent
 from the analyzer's maps for the lifetime of the process, and every event for
 that world is dropped — visible as
 `ultros_analyzer_skipped_events_total{reason="unknown_world"}` climbing steadily.

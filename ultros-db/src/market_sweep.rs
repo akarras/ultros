@@ -8,7 +8,7 @@
 //! worlds are done and where each unfinished one left off.
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DbErr, EntityTrait, QueryFilter, Set,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
     sea_query::OnConflict,
 };
 
@@ -18,6 +18,17 @@ use crate::{
 };
 
 impl UltrosDb {
+    /// Last completed pass, used to schedule coverage independently of event markers.
+    pub async fn latest_completed_market_sweep(
+        &self,
+    ) -> Result<Option<market_sweep::Model>, DbErr> {
+        market_sweep::Entity::find()
+            .filter(market_sweep::Column::FinishedAt.is_not_null())
+            .order_by_desc(market_sweep::Column::FinishedAt)
+            .one(&self.db)
+            .await
+    }
+
     /// The sweep that is still in flight, if any. At most one row can be
     /// unfinished — the migration's partial unique index enforces it.
     pub async fn active_market_sweep(&self) -> Result<Option<market_sweep::Model>, DbErr> {
@@ -220,9 +231,26 @@ mod tests {
         db.record_market_sweep_progress(&progress).await.unwrap();
         db.finish_market_sweep(run.id).await.unwrap();
         assert!(db.active_market_sweep().await.unwrap().is_none());
+        assert_eq!(
+            db.latest_completed_market_sweep()
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            run.id
+        );
         let (next, resumed) = db.begin_or_resume_market_sweep(None).await.unwrap();
         assert!(!resumed);
         assert_ne!(next.id, run.id);
+        // The active successor must not hide the latest completed coverage.
+        assert_eq!(
+            db.latest_completed_market_sweep()
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            run.id
+        );
         migration
             .down(&migration::SchemaManager::new(&connection))
             .await
