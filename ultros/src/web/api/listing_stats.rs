@@ -14,15 +14,14 @@
 //! here the rollup writes zero rows for emptied boards and there is no
 //! failover, so "nothing alive" is a real answer worth caching.
 //!
-//! `?window=` is accepted and ignored — no `Query` extractor, so axum drops
-//! it unread — which lets I2 add the windowed metrics without changing the
-//! URL shape.
+//! An explicit 1/7/30/90-day window adds observed history. Omit it for the
+//! unchanged current-listing response and inexpensive alive-only query.
 
 use std::sync::Arc;
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use ultros_api_types::listing_stats::{BulkListingStats, ItemListingStats};
@@ -34,7 +33,12 @@ use crate::web::{
     stats_cache::{CacheKey, ListingStatsCache, cached_response},
 };
 
-/// I1 has no window; every scope shares one key until I2 keys on the real one.
+#[derive(serde::Deserialize)]
+pub(crate) struct ListingStatsQuery {
+    window: Option<u16>,
+}
+
+/// Current-only requests retain their separate cache slot.
 const NO_WINDOW: u16 = 0;
 
 pub(crate) async fn get_listing_stats(
@@ -42,7 +46,14 @@ pub(crate) async fn get_listing_stats(
     State(world_cache): State<Arc<WorldCache>>,
     State(cache): State<ListingStatsCache>,
     Path(world): Path<String>,
+    Query(query): Query<ListingStatsQuery>,
 ) -> Result<impl IntoResponse, WebError> {
+    if query
+        .window
+        .is_some_and(|w| !ultros_clickhouse::listing_history::WINDOWS.contains(&w))
+    {
+        return Err(WebError::BadRequest);
+    }
     let value = world_cache.lookup_value_by_name(&world)?;
     let selector = AnySelector::from(&value);
     let world_ids = world_cache
@@ -53,9 +64,9 @@ pub(crate) async fn get_listing_stats(
         .get_or_load(
             CacheKey {
                 selector,
-                window_days: NO_WINDOW,
+                window_days: query.window.unwrap_or(NO_WINDOW),
             },
-            move || async move { load_listing_stats(&ch, world_ids).await },
+            move || async move { load_listing_stats(&ch, world_ids, query.window).await },
         )
         .await?;
     let disposition = cached.disposition.as_str();
@@ -67,11 +78,61 @@ pub(crate) async fn get_listing_stats(
     Ok(cached_response(cached.body, disposition))
 }
 
-async fn load_listing_stats(ch: &ClickHouseClient, world_ids: Vec<i32>) -> Result<Bytes, WebError> {
+async fn load_listing_stats(
+    ch: &ClickHouseClient,
+    world_ids: Vec<i32>,
+    window: Option<u16>,
+) -> Result<Bytes, WebError> {
     let rows = ultros_clickhouse::queries::bulk_listing_alive(ch, &world_ids)
         .await
         .map_err(|e| ClickHouseQueryError::new("bulk_listing_alive", e))?;
-    let stats = rows.into_iter().map(to_wire).collect();
+    let mut stats = rows
+        .into_iter()
+        .map(to_wire)
+        .map(|row| ((row.item_id, row.hq), row))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if let Some(days) = window {
+        let to = chrono::Utc::now().timestamp();
+        let mut history = ultros_clickhouse::listing_history::window(ch, &world_ids, days, to)
+            .await
+            .map_err(|e| ClickHouseQueryError::new("listing_history", e))?;
+        let stock = ultros_clickhouse::listing_history::stock(ch, &world_ids, days, to)
+            .await
+            .map_err(|e| ClickHouseQueryError::new("listing_stock", e))?;
+        for key in stats.keys().copied().collect::<Vec<_>>() {
+            history.entry(key).or_insert_with(|| {
+                ultros_api_types::listing_stats::ListingWindowStats {
+                    window_days: days,
+                    from: to - i64::from(days) * 86400,
+                    to,
+                    floor_unknown_secs: u64::from(days) * 86400,
+                    matches: ultros_api_types::listing_stats::MatchedSalesStats {
+                        settled_through_unix: to - 601,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+        }
+        for (key, mut history) in history {
+            let row = stats.entry(key).or_insert_with(|| ItemListingStats {
+                item_id: key.0,
+                hq: key.1,
+                ..Default::default()
+            });
+            ultros_clickhouse::listing_history::set_stock(
+                &mut history,
+                row.alive_units,
+                stock.get(&key).copied().flatten(),
+            );
+            metrics::counter!("ultros_listing_history_matches_total", "outcome" => "matched")
+                .increment(history.matches.matched);
+            metrics::counter!("ultros_listing_history_matches_total", "outcome" => "ambiguous")
+                .increment(history.matches.ambiguous);
+            row.window = Some(history);
+        }
+    }
+    let stats = stats.into_values().collect();
     serde_json::to_vec(&BulkListingStats { stats })
         .map(Bytes::from)
         .map_err(anyhow::Error::from)
@@ -91,6 +152,7 @@ fn to_wire(row: BulkListingAliveRow) -> ItemListingStats {
         oldest_reviewed_unix: row.oldest_reviewed_unix,
         median_age_secs: row.median_age_secs,
         floor_alive: i32::try_from(row.floor_alive).unwrap_or(i32::MAX),
+        window: None,
     }
 }
 
@@ -125,6 +187,7 @@ mod tests {
                 oldest_reviewed_unix: 1_700_000_000,
                 median_age_secs: 86_400,
                 floor_alive: 950,
+                window: None,
             }
         );
     }

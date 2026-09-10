@@ -116,4 +116,32 @@ mod tests {
         }
         assert!(cache.len() <= 2, "capacity must bound the map");
     }
+    #[test]
+    fn floor_batches_isolate_quality_cadence_range_scope_and_chart_entries() {
+        let cache = PriceSeriesCache::new(16);
+        let base = CacheKey {
+            group: "floor_window",
+            hq: "nq",
+            ..key(1)
+        };
+        let mut variants = vec![base.clone()];
+        for index in 0..6 {
+            let mut next = base.clone();
+            match index {
+                0 => next.group = "floor",
+                1 => next.hq = "hq",
+                2 => next.bucket = 86400,
+                3 => next.from = 1,
+                4 => next.to = 101,
+                _ => next.scope = "Aether".into(),
+            }
+            variants.push(next);
+        }
+        for (i, key) in variants.iter().enumerate() {
+            cache.insert(key.clone(), i.to_string(), Duration::from_secs(60));
+        }
+        for (i, key) in variants.iter().enumerate() {
+            assert_eq!(cache.get(key), Some(i.to_string()));
+        }
+    }
 }

@@ -15,6 +15,7 @@ use crate::ClickHouseError;
 
 pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_sales_table(client).await?;
+    apply_sale_receipts(client).await?;
     apply_item_stats_window(client).await?;
     apply_item_quality_score(client).await?;
     apply_item_vendor_price(client).await?;
@@ -467,6 +468,21 @@ async fn apply_item_quality_score(client: &Client) -> Result<(), ClickHouseError
             ORDER BY (item_id, hq, world_id)
             SETTINGS index_granularity = 8192
             "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+async fn apply_sale_receipts(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            "CREATE TABLE IF NOT EXISTS sale_receipts (
+        pg_id Int32, received_at DateTime, sold_at DateTime,
+        item_id Int32, hq UInt8, world_id Int32, price_per_unit UInt32, quantity UInt16
+    ) ENGINE = MergeTree PARTITION BY toYYYYMM(received_at)
+    ORDER BY (world_id, item_id, hq, received_at, pg_id)
+    TTL received_at + INTERVAL 365 DAY",
         )
         .execute()
         .await?;

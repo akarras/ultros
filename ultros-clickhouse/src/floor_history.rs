@@ -57,19 +57,7 @@ pub async fn history(
     if worlds.is_empty() || requested_from >= to {
         return Ok(empty());
     }
-    let worlds = worlds
-        .iter()
-        .map(i32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    let quality = match hq {
-        HqFilter::Any => "",
-        HqFilter::Hq => " AND hq = 1",
-        HqFilter::Nq => " AND hq = 0",
-    };
-    // Only typed integers and a closed enum enter SQL. Include a pre-window
-    // seed per (world, quality); without it quiet markets disappear on zoom.
-    let predicate = format!("item_id = {item_id} AND world_id IN ({worlds}){quality}");
+    let predicate = predicate(&[item_id], worlds, hq);
     let first = ch.client().query(&format!(
         "SELECT toInt64(minOrNull(event_time)) FROM floor_changes WHERE {predicate} AND event_time < toDateTime({to}) SETTINGS max_execution_time = 15"
     )).fetch_one::<Option<i64>>().await?;
@@ -78,24 +66,27 @@ pub async fn history(
     };
     let from = requested_from.max(first);
     let step = ((to - from + 479) / 480).max(60);
-    // Sample at the END of each interval so a future price is never moved
-    // backwards in time. Same-second ties have no sequence in the source;
-    // choose zero conservatively, otherwise the lower price, deterministically.
-    let sql = format!(
-        r#"
-        SELECT toInt64({from}) AS timestamp, world_id, hq,
-               argMax(price_per_unit, tuple(event_time, -toInt64(price_per_unit))) AS price
-        FROM floor_changes WHERE {predicate} AND event_time <= toDateTime({from})
-        GROUP BY world_id, hq
-        UNION ALL
-        SELECT toInt64(least({to}, {from} + (intDiv(toInt64(event_time) - {from} - 1, {step}) + 1) * {step})) AS timestamp,
-               world_id, hq, argMax(price_per_unit, tuple(event_time, -toInt64(price_per_unit))) AS price
-        FROM floor_changes WHERE {predicate} AND event_time > toDateTime({from}) AND event_time < toDateTime({to})
-        GROUP BY timestamp, world_id, hq
-        SETTINGS max_execution_time = 15
-    "#
-    );
-    let rows = ch.client().query(&sql).fetch_all::<Change>().await?;
+    let rows = load_changes(
+        ch,
+        &[item_id],
+        worlds,
+        ChangeWindow {
+            from,
+            to,
+            hq,
+            step: Some(step),
+        },
+    )
+    .await?;
+    let rows = rows
+        .into_iter()
+        .map(|r| Change {
+            timestamp: r.timestamp,
+            world_id: r.world_id,
+            hq: r.hq,
+            price: r.price,
+        })
+        .collect();
     Ok(FloorHistory {
         from,
         to,
@@ -151,4 +142,217 @@ mod tests {
         );
         assert_eq!(points.last().unwrap().timestamp, 25);
     }
+}
+
+/// Exact transitions shared by window bounds and bounded multi-item history.
+/// Hard limits throw instead of returning a truncated successful history.
+#[derive(Clone, Debug, Row, Deserialize)]
+pub(crate) struct WindowChange {
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    pub timestamp: i64,
+    pub price: u32,
+}
+
+pub(crate) async fn window_changes(
+    ch: &ClickHouseClient,
+    items: &[i32],
+    worlds: &[i32],
+    from: i64,
+    to: i64,
+) -> Result<Vec<WindowChange>, ClickHouseError> {
+    load_changes(
+        ch,
+        items,
+        worlds,
+        ChangeWindow {
+            from,
+            to,
+            hq: HqFilter::Any,
+            step: None,
+        },
+    )
+    .await
+}
+
+struct ChangeWindow {
+    from: i64,
+    to: i64,
+    hq: HqFilter,
+    step: Option<i64>,
+}
+
+fn predicate(items: &[i32], worlds: &[i32], hq: HqFilter) -> String {
+    let ids = |ids: &[i32]| ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+    let items = if items.is_empty() {
+        String::new()
+    } else {
+        format!(" AND item_id IN ({})", ids(items))
+    };
+    let quality = match hq {
+        HqFilter::Any => "",
+        HqFilter::Hq => " AND hq=1",
+        HqFilter::Nq => " AND hq=0",
+    };
+    format!("world_id IN ({}){items}{quality}", ids(worlds))
+}
+
+/// One baseline/tie-breaking implementation serves both the existing sampled
+/// chart and exact analyzer windows. Sampling changes only the output timestamp
+/// grouping, and always assigns observations to the interval's closing boundary.
+async fn load_changes(
+    ch: &ClickHouseClient,
+    items: &[i32],
+    worlds: &[i32],
+    window: ChangeWindow,
+) -> Result<Vec<WindowChange>, ClickHouseError> {
+    if worlds.is_empty() {
+        return Ok(vec![]);
+    }
+    let ChangeWindow { from, to, hq, step } = window;
+    let predicate = predicate(items, worlds, hq);
+    let timestamp = match step {
+        Some(step) => format!(
+            "toInt64(least({to}, {from} + (intDiv(toInt64(event_time) - {from} - 1, {step}) + 1) * {step}))"
+        ),
+        None => "toInt64(event_time)".into(),
+    };
+    // Keep the original timestamp on the seed: it is evidence, carried to from.
+    let sql = format!("SELECT item_id, hq, world_id, toInt64(max(event_time)) AS timestamp,
+        argMax(price_per_unit, tuple(event_time, -toInt64(price_per_unit))) AS price
+        FROM floor_changes WHERE {predicate} AND event_time <= toDateTime({from})
+        GROUP BY item_id, hq, world_id
+        UNION ALL
+        SELECT item_id, hq, world_id, {timestamp} AS timestamp,
+        argMax(price_per_unit, tuple(event_time, -toInt64(price_per_unit))) AS price
+        FROM floor_changes WHERE {predicate} AND event_time > toDateTime({from}) AND event_time < toDateTime({to})
+        GROUP BY item_id, hq, world_id, timestamp
+        SETTINGS max_execution_time=10, max_result_rows=2000000, result_overflow_mode='throw', max_memory_usage=536870912");
+    Ok(ch.client().query(&sql).fetch_all::<WindowChange>().await?)
+}
+
+/// Replay simultaneous changes together. A partial scope cannot establish a
+/// known floor (or emptiness); unknown worlds may hold a cheaper listing.
+pub(crate) fn bounds(
+    rows: &[WindowChange],
+    worlds: &[i32],
+    from: i64,
+    to: i64,
+) -> ultros_api_types::floor_history::FloorBounds {
+    use ultros_api_types::floor_history::FloorBounds;
+    let mut ordered = rows.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|r| r.timestamp);
+    let expected = worlds
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let mut state = BTreeMap::new();
+    let mut bounds = FloorBounds::default();
+    let mut cursor = from;
+    let mut index = 0;
+    loop {
+        while index < ordered.len() && ordered[index].timestamp <= cursor {
+            let row = ordered[index];
+            state.insert(row.world_id, row.price);
+            index += 1;
+        }
+        if cursor >= to {
+            break;
+        }
+        let next = ordered.get(index).map_or(to, |r| r.timestamp.min(to));
+        let duration = (next - cursor) as u64;
+        if state.len() == expected && expected > 0 {
+            bounds.known_secs += duration;
+            if let Some(price) = state.values().copied().filter(|p| *p > 0).min() {
+                bounds.min = Some(bounds.min.map_or(price, |old| old.min(price)));
+                bounds.max = Some(bounds.max.map_or(price, |old| old.max(price)));
+            } else {
+                bounds.empty_secs += duration;
+            }
+        } else {
+            bounds.unknown_secs += duration;
+        }
+        cursor = next;
+    }
+    bounds
+}
+
+pub async fn batch(
+    ch: &ClickHouseClient,
+    worlds: &[i32],
+    request: &ultros_api_types::floor_history::FloorHistoryRequest,
+) -> Result<ultros_api_types::floor_history::FloorHistoryBatch, ClickHouseError> {
+    use ultros_api_types::floor_history::{FloorHistoryBatch, ItemFloorHistory};
+    if !request.valid() {
+        return Err(ClickHouseError::Backfill(
+            "invalid floor history request".into(),
+        ));
+    }
+    let rows = window_changes(ch, &request.item_ids, worlds, request.from, request.to).await?;
+    let mut series = Vec::new();
+    for item_id in request
+        .item_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        for hq in [false, true]
+            .into_iter()
+            .filter(|hq| request.hq.is_none_or(|wanted| wanted == *hq))
+        {
+            let rows = rows
+                .iter()
+                .filter(|r| r.item_id == item_id && (r.hq != 0) == hq)
+                .cloned()
+                .collect::<Vec<_>>();
+            let bounds = bounds(&rows, worlds, request.from, request.to);
+            let mut points = sample(
+                rows.iter()
+                    .map(|r| Change {
+                        timestamp: r.timestamp,
+                        world_id: r.world_id,
+                        hq: r.hq,
+                        price: r.price,
+                    })
+                    .collect(),
+                request.from,
+                request.to,
+                request.interval.seconds(),
+            );
+            // Legacy chart GET shows tracked-world minima. Analyzer batches require
+            // a complete scope baseline and explicitly report unknown intervals.
+            let first_by_world = rows.iter().fold(BTreeMap::<i32, i64>::new(), |mut map, r| {
+                map.entry(r.world_id)
+                    .and_modify(|t| *t = (*t).min(r.timestamp))
+                    .or_insert(r.timestamp);
+                map
+            });
+            let known_from = worlds
+                .iter()
+                .map(|w| first_by_world.get(w).copied())
+                .collect::<Option<Vec<_>>>()
+                .and_then(|v| v.into_iter().max());
+            let mut unknown_timestamps = Vec::new();
+            for point in &mut points {
+                if known_from.is_none_or(|first| point.timestamp < first) {
+                    point.price = None;
+                    unknown_timestamps.push(point.timestamp);
+                }
+            }
+            series.push(ItemFloorHistory {
+                item_id,
+                hq,
+                bounds,
+                unknown_timestamps,
+                history: FloorHistory {
+                    from: request.from,
+                    to: request.to,
+                    bucket_seconds: request.interval.seconds(),
+                    points,
+                },
+            });
+        }
+    }
+    Ok(FloorHistoryBatch { series })
 }

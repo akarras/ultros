@@ -228,6 +228,7 @@ async fn run_socket_listener(
     listings_tx: EventProducer<ListingEventData>,
     sales_tx: EventProducer<SaleEventData>,
     listing_events: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    sale_receipts: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleReceiptRow>,
     token: CancellationToken,
 ) {
     let mut socket = WebsocketClient::connect(UNIVERSALIS_USER_AGENT).await;
@@ -255,6 +256,10 @@ async fn run_socket_listener(
             let listings_tx = listings_tx.clone();
             let sales_tx = sales_tx.clone();
             let listing_events = listing_events.clone();
+            let sale_receipts = sale_receipts.clone();
+            // Capture receipt before the spawned task waits on Postgres. Backfill
+            // insertion times cannot reconstruct this matching evidence later.
+            let received_at = chrono::Utc::now();
             if let SocketRx::Event(Ok(e)) = &msg {
                 let world_id = WorldId::from(e);
                 metrics::counter!("ultros_websocket_rx", "WorldId" => world_id.0.to_string())
@@ -319,6 +324,11 @@ async fn run_socket_listener(
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
                         match db.update_sales(sales.clone(), item, world).await {
                             Ok(added_sales) => {
+                                for (sale, _) in &added_sales {
+                                    sale_receipts.send(
+                                        ultros_clickhouse::rows::SaleReceiptRow::from_sale(sale, received_at),
+                                    );
+                                }
                                 info!(?added_sales, ?item, ?world, "Stored sale data");
                                 match sales_tx
                                     .send(EventType::added(SaleEventData { sales: added_sales }))
@@ -642,9 +652,9 @@ async fn main() -> Result<()> {
     let token = CancellationToken::new();
     // Migration retries in the writers so an outage at startup does not disable
     // analytics for the lifetime of this process. Keep their cancellation
-    // separate so producers can finish sending before the final flush. Three
-    // writers, one per table: sales (analyzer), listing changes (every ingest
-    // path), and floor moves (analyzer). The migrate each runs is idempotent.
+    // separate so producers can finish sending before the final flush. Four
+    // writers: sales, listing changes, floor moves, and websocket sale receipts.
+    // Receipts cannot be recovered from Postgres. Each migration is idempotent.
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
     let ch_writer =
         ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::SaleRow>::spawn_recovering(
@@ -657,6 +667,10 @@ async fn main() -> Result<()> {
     let floor_writer = ultros_clickhouse::writer::Writer::<
         ultros_clickhouse::rows::FloorChangeRow,
     >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let sale_receipts = ultros_clickhouse::writer::Writer::<
+        ultros_clickhouse::rows::SaleReceiptRow,
+    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let socket_sale_receipts = sale_receipts.clone();
     let socket_listing_events = listing_events_writer.clone();
     let socket_token = token.clone();
     let websocket_disabled = universalis_websocket_disabled();
@@ -682,6 +696,7 @@ async fn main() -> Result<()> {
             listings_sender,
             history_sender,
             socket_listing_events,
+            socket_sale_receipts,
             socket_token,
         )
         .await;
@@ -856,7 +871,11 @@ async fn main() -> Result<()> {
             // Independent tables, independent tasks. Draining them in sequence
             // spent two drain budgets back to back against the one 30 second
             // budget below (GlitchTip #7310).
-            tokio::join!(ch_writer.shutdown(), floor_writer.shutdown());
+            tokio::join!(
+                ch_writer.shutdown(),
+                sale_receipts.shutdown(),
+                floor_writer.shutdown()
+            );
         };
         let drain_web = async {
             if !web_finished && let Err(e) = web_task.await {
