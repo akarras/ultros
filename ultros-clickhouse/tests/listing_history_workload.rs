@@ -85,7 +85,13 @@ async fn listing_history_scope_workload() {
             .unwrap();
         assert_eq!(count, 0, "fresh disposable database required: {table}");
     }
-    let to = chrono::Utc::now().timestamp() - 120;
+    let to = ch
+        .client()
+        .query("SELECT toInt64(now())")
+        .fetch_one::<i64>()
+        .await
+        .unwrap()
+        - 120;
     let cycles = rows / 3;
     let total = cycles * 32;
     // Spread triplets through 90 days. 20% share a hot item; the remainder
@@ -112,9 +118,9 @@ async fn listing_history_scope_workload() {
     sql(&ch, &format!("INSERT INTO floor_changes SELECT toDateTime(t),item,quality,world,if(c%11=0,0,price),'listing' FROM ({source})")).await;
     let boards = "SELECT toInt32(intDiv(number,2000)+1) AS world,toInt32(700000+number%1000) AS item,toUInt8(intDiv(number%2000,1000)) AS quality FROM numbers(64000)";
     sql(&ch, &format!("INSERT INTO floor_changes SELECT toDateTime({to}-91*86400),item,quality,world,toUInt32(100),'resync' FROM ({boards})")).await;
-    sql(&ch, &format!("INSERT INTO listing_alive SELECT world,item,quality,now(),toUInt32(50),toUInt64(100),toUInt32(50),toDateTime({to}-3600),quantileTDigestState(0.5)(toUInt32(3600)),toUInt32(100) FROM ({boards}) GROUP BY world,item,quality")).await;
+    sql(&ch, &format!("INSERT INTO listing_alive SELECT world,item,quality,toDateTime({to}),toUInt32(50),toUInt64(100),toUInt32(50),toDateTime({to}-3600),quantileTDigestState(0.5)(toUInt32(3600)),toUInt32(100) FROM ({boards}) GROUP BY world,item,quality")).await;
     for days in [30, 90] {
-        sql(&ch, &format!("INSERT INTO sale_stats_window SELECT world,toUInt16({days}),item,quality,now(),toUInt32(100),quantileTDigestState(0.5)(toUInt32(100)),toUInt64(100),toUInt64(1),toInt64({to}),toUInt64(200),toUInt64(100) FROM ({boards}) GROUP BY world,item,quality")).await;
+        sql(&ch, &format!("INSERT INTO sale_stats_window SELECT world,toUInt16({days}),item,quality,toDateTime({to}),toUInt32(100),quantileTDigestState(0.5)(toUInt32(100)),toUInt64(100),toUInt64(1),toInt64({to}-1),toUInt64(200),toUInt64(100) FROM ({boards}) GROUP BY world,item,quality")).await;
     }
     println!(
         "FIXTURE database={database} worlds=32 items=1000 qualities=2 events={} receipt_rows={} sales={} floor_rows={} seed_seconds={:.3} to={to}",
@@ -139,7 +145,7 @@ async fn listing_history_scope_workload() {
                 let result = tokio::time::timeout(Duration::from_secs(12), async {
                     let alive = queries::bulk_listing_alive(&ch, &worlds).await?;
                     let mut history = listing_history::window(&ch, &worlds, days, to).await?;
-                    let stock = listing_history::stock(&ch, &worlds, days).await?;
+                    let stock = listing_history::stock(&ch, &worlds, days, to).await?;
                     for row in &alive {
                         let key = (row.item_id, row.hq != 0);
                         listing_history::set_stock(

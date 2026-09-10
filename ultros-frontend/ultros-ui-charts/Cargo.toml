@@ -1,0 +1,62 @@
+[package]
+name = "ultros-ui-charts"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+chrono = { workspace = true }
+icondata = { workspace = true }
+icondata_core = { workspace = true }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos-use = { workspace = true }
+leptos_i18n = { workspace = true }
+leptos_router = { workspace = true }
+thousands = "0.2.0"
+time = "0.3.47"
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-charts = { path = "../ultros-charts", features = [
+    "leptos",
+] }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+ultros-ui-query = { path = "../ultros-ui-query", default-features = false }
+wasm-bindgen = { version = "0.2" }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "PointerEvent",
+    "MouseEvent",
+    "DomRect",
+] }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "leptos-use/ssr",
+    "leptos_router/ssr",
+    "ultros-frontend-core/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+    "ultros-ui-query/ssr",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-frontend-core/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+    "ultros-ui-query/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

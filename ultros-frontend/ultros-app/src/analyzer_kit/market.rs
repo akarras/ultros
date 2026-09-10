@@ -23,7 +23,7 @@ use crate::{
         virtual_grid::{
             GridColumn,
             metrics::{GridMetric, GridValue, active_metric_columns},
-            query_grid::QueryGrid,
+            query_grid::{MetricSortHeader, QueryGrid},
         },
     },
     global_state::LocalWorldData,
@@ -682,26 +682,38 @@ where
     let all_columns = Memo::new(move |_| {
         let mut result = columns.get();
         for metric in market_metrics() {
-            if !result.iter().any(|col| col.id == metric.id()) {
-                let mut column = GridColumn::new(
+            let position = result.iter().position(|col| col.id == metric.id());
+            let column = if let Some(position) = position {
+                &mut result[position]
+            } else {
+                result.push(GridColumn::new(
                     metric.id(),
-                    metric_label(metric, market.window.selected.get()),
+                    String::new(),
                     160.0,
                     true,
                     false,
-                );
-                column.picker_group = match metric {
-                    MarketMetric::Follow(_) => Some(market_picker_group(None)),
-                    MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
-                    _ => None,
-                };
-                result.push(column);
-            }
+                ));
+                result.last_mut().unwrap()
+            };
+            // Pages own placement, initial width and default visibility, while
+            // shared columns retain the same labels and picker groups everywhere.
+            column.label = metric_label(metric, market.window.selected.get());
+            column.picker_group = match metric {
+                MarketMetric::Follow(_) => Some(market_picker_group(None)),
+                MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
+                _ => None,
+            };
         }
         result
     });
+    let filter_registry =
+        use_context::<crate::components::virtual_grid::registry::FilterRegistry>();
     let needs = Memo::new(move |_| {
-        let mut wanted = query.with(|q| active_metric_columns(q.get("gf").as_deref()));
+        let mut wanted = query.with(|q| {
+            filter_registry
+                .map(|r| r.filters(q).into_keys().collect())
+                .unwrap_or_else(|| active_metric_columns(q.get("gf").as_deref()))
+        });
         query.with(|q| {
             if let Some(cols) = q.get("cols") {
                 wanted.extend(cols.split(',').map(str::to_owned));
@@ -801,6 +813,13 @@ where
         };
         all_metrics.push(if metric.partial() { def.partial() } else { def });
     }
+    let sortable = StoredValue::new(
+        all_metrics
+            .iter()
+            .filter(|m| !m.partial)
+            .map(|m| m.id)
+            .collect::<Vec<_>>(),
+    );
     let native_header = StoredValue::new(header);
     let native_view = StoredValue::new(view);
     let native_measure = StoredValue::new(measure);
@@ -817,6 +836,9 @@ where
     view! {
         <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| match metric_by_id(id) {
+                Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {
+                    <MetricSortHeader column=id label=Signal::derive(move || metric_label(metric, market.window.selected.get())) />
+                }.into_any(),
                 Some(metric) => (move || metric_label(metric, market.window.selected.get())).into_any(),
                 None => native_header.with_value(|header| header(id)),
             }
@@ -863,6 +885,26 @@ where
 mod tests {
     use super::*;
     use ultros_api_types::cheapest_listings::CheapestListingData;
+
+    #[test]
+    fn hidden_legacy_filters_request_their_window_before_any_edit() {
+        use crate::components::virtual_grid::{
+            metrics::FilterOp,
+            registry::{FilterAlias, resolve_filters},
+        };
+        let mut query = leptos_router::params::ParamsMap::new();
+        query.insert("legacy-median", "100".into());
+        let aliases = [FilterAlias::integer(
+            "legacy-median",
+            "market-sale-median-30",
+            FilterOp::Gte,
+        )];
+        let needs = resolve_filters(&query, &aliases).into_keys().collect();
+        assert_eq!(
+            required_windows(&needs, Window::D7, false),
+            vec![Window::D30]
+        );
+    }
 
     #[test]
     fn selected_prices_and_columns_follow_window_without_reusing_other_scope_data() {

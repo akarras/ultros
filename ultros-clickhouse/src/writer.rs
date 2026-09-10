@@ -32,6 +32,17 @@ const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 const QUEUE_CAPACITY: usize = 10_000;
 const INSERT_TIMEOUT: Duration = Duration::from_secs(10);
 const MIGRATION_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+/// How long the shutdown drain may spend emptying the queue.
+///
+/// Without a bound the drain is `QUEUE_CAPACITY / batch_size` batches at
+/// `INSERT_TIMEOUT` each — 100 seconds for one writer — while `main` gives the
+/// analyzer, the web server and *three* writers 30 seconds in total. A slow
+/// ClickHouse therefore let the first writer eat the whole budget, the process
+/// was killed mid-drain ("Graceful shutdown exceeded 30 seconds", GlitchTip
+/// #7310), and the writers that never got to run dropped their queues without
+/// even counting the rows. Bounding each drain keeps every writer inside the
+/// process budget and keeps `record_unflushed` accurate.
+const DRAIN_BUDGET: Duration = Duration::from_secs(5);
 
 /// Cheap handle to the bounded writer. Clones share the task and shutdown.
 pub struct Writer<R: TableRow> {
@@ -239,19 +250,22 @@ async fn run_writer<R, F>(
         if stopping {
             // Closing first prevents concurrent producers extending the drain.
             rx.close();
-            loop {
-                while buf.len() < batch_size {
-                    match rx.try_recv() {
-                        Ok(row) => buf.push(row),
-                        Err(_) => break,
-                    }
-                }
-                if buf.is_empty() {
-                    break;
-                }
-                if !try_flush(&mut buf, &mut insert).await {
+            match tokio::time::timeout(
+                DRAIN_BUDGET,
+                drain(&mut buf, &mut rx, batch_size, &mut insert),
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => record_unflushed(buf.len() + rx.len(), R::TABLE),
+                Err(_) => {
+                    warn!(
+                        rows = buf.len() + rx.len(),
+                        table = R::TABLE,
+                        budget_secs = DRAIN_BUDGET.as_secs(),
+                        "ClickHouse drain budget expired; abandoning the rest of the queue"
+                    );
                     record_unflushed(buf.len() + rx.len(), R::TABLE);
-                    break;
                 }
             }
             break;
@@ -262,6 +276,38 @@ async fn run_writer<R, F>(
     }
     metrics::gauge!("ultros_clickhouse_writer_queued_rows", "table" => R::TABLE).set(0.0);
     info!(table = R::TABLE, "ClickHouse writer task exiting");
+}
+
+/// Flushes the buffer and everything still queued, `batch_size` rows at a time.
+/// Returns false when an insert failed and the batch was retained.
+///
+/// Cancel safe on purpose: the caller bounds it with [`DRAIN_BUDGET`], and
+/// dropping it mid-insert leaves `buf` and `rx` holding exactly the rows that
+/// were not written, which is what `record_unflushed` reports.
+async fn drain<R, F>(
+    buf: &mut Vec<R>,
+    rx: &mut mpsc::Receiver<R>,
+    batch_size: usize,
+    insert: &mut F,
+) -> bool
+where
+    R: TableRow,
+    F: for<'a> FnMut(&'a [R]) -> BoxFuture<'a, Result<(), ClickHouseError>>,
+{
+    loop {
+        while buf.len() < batch_size {
+            match rx.try_recv() {
+                Ok(row) => buf.push(row),
+                Err(_) => break,
+            }
+        }
+        if buf.is_empty() {
+            return true;
+        }
+        if !try_flush(buf, insert).await {
+            return false;
+        }
+    }
 }
 
 async fn try_flush<R, F>(buf: &mut Vec<R>, insert: &mut F) -> bool
@@ -439,6 +485,55 @@ mod tests {
         assert_eq!(batches.recv().await.unwrap(), vec![4, 5, 6]);
         assert_eq!(batches.recv().await.unwrap(), vec![7]);
         assert!(tx.is_closed());
+    }
+
+    /// Regression for GlitchTip #7310, "Graceful shutdown exceeded 30 seconds".
+    ///
+    /// `main` drains the analyzer, the web server and three ClickHouse writers
+    /// inside one 30 second budget, and `listing_events` can only start once
+    /// its producers are gone. A ClickHouse that is merely slow used to make a
+    /// single writer's drain run for `queue / batch_size` inserts with no
+    /// ceiling, so an early writer consumed the whole budget and the ones
+    /// behind it were killed with a full queue and no dropped-row accounting.
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_drain_stays_inside_the_process_budget() {
+        let (tx, rx) = mpsc::channel(8);
+        for id in 1..=8 {
+            tx.try_send(row(id)).unwrap();
+        }
+        let batches = Arc::new(AtomicUsize::new(0));
+        let counted = batches.clone();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let started = tokio::time::Instant::now();
+        run_writer(
+            rx,
+            token,
+            2,
+            Duration::from_secs(60),
+            move |_: &[SaleRow]| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                // Succeeds, but slowly: four batches at this speed is 16
+                // seconds, over half the whole process shutdown budget.
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_secs(4)).await;
+                    Ok(())
+                })
+            },
+        )
+        .await;
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed <= DRAIN_BUDGET,
+            "drain ran for {elapsed:?}, over the {DRAIN_BUDGET:?} budget",
+        );
+        // The bound has to actually bite, or the assertion above proves nothing.
+        assert!(
+            batches.load(Ordering::SeqCst) < 4,
+            "every batch was written, so this queue never exercised the budget",
+        );
     }
 
     #[tokio::test]

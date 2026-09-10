@@ -67,13 +67,14 @@ mod development {
     pub struct QueryRow {
         id: usize,
         loaded: bool,
+        amount: f64,
     }
 
     fn query_value(row: &QueryRow, column: &str) -> GridValue {
         match column {
             "item" => GridValue::Text(format!("Row {}", row.id)),
             "amount" if row.id == 249 => GridValue::Missing,
-            "amount" => GridValue::Number(row.id as f64),
+            "amount" => GridValue::Number(row.amount),
             "partial" if !row.loaded || row.id == 249 => GridValue::Pending,
             "partial" if row.id == 247 => GridValue::Unavailable,
             "partial" if row.id == 248 => GridValue::Missing,
@@ -104,11 +105,38 @@ mod development {
         if use_query_map().with_untracked(|q| q.get("market-window-test").is_some()) {
             return view! { <MarketWindowFixture /> }.into_any();
         }
+        let query = use_query_map();
+        let registered = query.with_untracked(|q| q.get("registry-test").is_some());
+        if registered {
+            use super::super::{
+                metrics::FilterOp,
+                registry::{FilterAlias, FilterRegistry},
+            };
+            FilterRegistry::provide(
+                vec![
+                    FilterAlias::new("min-amount", "amount", FilterOp::Gte),
+                    FilterAlias::new("max-amount", "amount", FilterOp::Lte),
+                ],
+                Signal::derive(|| {
+                    vec![ColumnFilter::new(
+                        "multiplier",
+                        "Calculation multiplier".into(),
+                        true,
+                    )]
+                }),
+            );
+        }
         let loaded = RwSignal::new(0usize);
         let rows = Memo::new(move |_| {
             (0..250)
                 .map(|id| QueryRow {
                     id,
+                    amount: id as f64
+                        * query.with(|q| {
+                            q.get("multiplier")
+                                .and_then(|v| v.parse::<f64>().ok())
+                                .unwrap_or(1.0)
+                        }),
                     loaded: id < loaded.get(),
                 })
                 .collect::<Vec<_>>()
@@ -129,6 +157,7 @@ mod development {
         ];
         view! {
             <h1>"Shared analyzer data fixture"</h1>
+            {registered.then(|| view! { <crate::components::control_bar::ControlBar sticky=false summary=|| ().into_any() empty_label=Signal::derive(|| "No filters".to_string())/> })}
             <button id="query-load-first" on:click=move |_| loaded.set(125)>"Load first half"</button>
             <button id="query-load-all" on:click=move |_| loaded.set(250)>"Finish feed"</button>
             <QueryGrid id="query-fixture-grid" label="Shared analyzer data fixture" each=rows columns metrics
@@ -189,7 +218,9 @@ mod development {
         let rows = Memo::new(|_| vec![42, 43, 44]);
         let columns = Signal::derive(|| {
             vec![
-                GridColumn::new("item", "Item".into(), 100.0, false, true),
+                // The source rows are natively ordered by ID. This column has
+                // no grid metric, so shared sorting must clear its aria-sort too.
+                GridColumn::new("item", "Item".into(), 100.0, false, true).sorted(true, true),
                 GridColumn::new("price", "Price".into(), 100.0, false, true),
             ]
         });

@@ -146,7 +146,10 @@ async fn window_items(
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let events = ch.client().query(&format!("SELECT ?fields FROM listing_events WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to}){LIMITS}", from-600)).fetch_all::<WindowEvent>().await?;
+    // Ambiguous insert acknowledgements can make the writer retry a complete
+    // batch. Deduplicate stored observations before the compact projection:
+    // distinct listing identities can otherwise share every WindowEvent field.
+    let events = ch.client().query(&format!("SELECT ?fields FROM (SELECT DISTINCT * FROM listing_events WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to})){LIMITS}", from-600)).fetch_all::<WindowEvent>().await?;
     // Deduplicate receipts by stable PG identity, preserving the earliest actual
     // observation. An old sale replay cannot acquire a fresh matching timestamp.
     let receipts = ch.client().query(&format!("SELECT ?fields FROM sale_receipts WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}){LIMITS}", from-600)).fetch_all::<SaleReceiptRow>().await?;
@@ -437,11 +440,30 @@ fn match_observations(
 }
 
 /// A ratio of scope totals, with missing world snapshots distinct from zero sales.
+/// A delayed refresh can temporarily make stock unavailable. Never reuse a
+/// vanished rolling-window group's old positive snapshot indefinitely.
 pub async fn stock(
     ch: &ClickHouseClient,
     worlds: &[i32],
     days: u16,
+    to: i64,
 ) -> Result<HashMap<(i32, bool), Option<u64>>, ClickHouseError> {
+    use crate::rollups::{
+        LISTING_ALIVE_REFRESH_SECS, SALE_STATS_1D_REFRESH_SECS, SALE_STATS_7D_REFRESH_SECS,
+        SALE_STATS_LONG_REFRESH_SECS,
+    };
+    let sale_cadence = match days {
+        1 => SALE_STATS_1D_REFRESH_SECS,
+        7 => SALE_STATS_7D_REFRESH_SECS,
+        30 | 90 => SALE_STATS_LONG_REFRESH_SECS,
+        _ => return Err(ClickHouseError::Backfill("invalid stock window".into())),
+    };
+    if to < i64::from(days) * 86400 + 600 || to > i64::from(u32::MAX) {
+        return Err(ClickHouseError::Backfill("invalid stock window".into()));
+    }
+    let from = to - i64::from(days) * 86400;
+    let sale_cutoff = to - sale_cadence as i64;
+    let alive_cutoff = to - LISTING_ALIVE_REFRESH_SECS as i64;
     #[derive(Row, Deserialize)]
     struct Row {
         item_id: i32,
@@ -460,7 +482,11 @@ pub async fn stock(
     let rows = ch
         .client()
         .query(&format!(
-            "SELECT item_id, hq, uniqExact(world_id) AS worlds, sum(units_sold) AS units
+            "SELECT item_id, hq,
+        uniqExactIf(world_id,
+            computed_at >= toDateTime({sale_cutoff}) AND computed_at <= toDateTime({to})
+            AND (units_sold = 0 OR (last_sold_unix >= {from} AND last_sold_unix < {to}))) AS worlds,
+        sum(units_sold) AS units
         FROM sale_stats_window FINAL WHERE world_id IN ({ids}) AND window_days = {days}
         GROUP BY item_id, hq{LIMITS}"
         ))
@@ -476,7 +502,9 @@ pub async fn stock(
         hq: u8,
         worlds: u64,
     }
-    let alive = ch.client().query(&format!("SELECT item_id, hq, uniqExact(world_id) AS worlds FROM listing_alive FINAL WHERE world_id IN ({ids}) GROUP BY item_id,hq{LIMITS}")).fetch_all::<Alive>().await?;
+    let alive = ch.client().query(&format!("SELECT item_id, hq,
+        uniqExactIf(world_id, computed_at >= toDateTime({alive_cutoff}) AND computed_at <= toDateTime({to})) AS worlds
+        FROM listing_alive FINAL WHERE world_id IN ({ids}) GROUP BY item_id,hq{LIMITS}")).fetch_all::<Alive>().await?;
     let alive = alive
         .into_iter()
         .map(|r| ((r.item_id, r.hq != 0), r.worlds))

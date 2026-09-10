@@ -1,11 +1,14 @@
+use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
-    market::{MarketGrid, MarketPriceControls, MarketSubject, resolve_price, use_market_data},
+    market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -15,8 +18,7 @@ use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        control_bar::{ControlBar, FilterOption},
-        filter_chip::FilterChip,
+        control_bar::ControlBar,
         gil::*,
         item_icon::*,
         realtime_status::RealtimeStatus,
@@ -154,8 +156,9 @@ fn leve_analyzer_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetV
     .collect()
 }
 
-/// Filters the `+ Filter` menu can add, in menu order.
-const ADDABLE_FILTERS: &[&str] = &[FILTER_PROFIT, FILTER_JOB, FILTER_OUTLIERS];
+/// Historical preset keys: these must remain readable after migration.
+#[cfg(test)]
+const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[FILTER_PROFIT, FILTER_JOB, FILTER_OUTLIERS];
 
 /// The job-select's values, in menu order. Values are the class-job-category
 /// name substrings the old `<select>` matched against — kept verbatim so
@@ -195,6 +198,7 @@ fn financial_value(value: i32, pending: bool) -> GridValue {
     }
 }
 
+#[cfg(test)]
 fn profit_meets_minimum(profit: i32, minimum: Option<i32>, pending: bool) -> bool {
     pending || minimum.is_none_or(|minimum| profit >= minimum)
 }
@@ -251,9 +255,9 @@ fn LeveAnalyzerTable(
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let market = use_market_data(world);
-    let (cost_basis, set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    let (cost_basis, _set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
     market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
-    let (revenue_basis, set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    let (revenue_basis, _set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
     market.require_price_basis(Signal::derive(move || {
         revenue_basis.get().unwrap_or_default()
     }));
@@ -268,20 +272,8 @@ fn LeveAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    // Filter params use `filter_query_signal` (replace: true, scroll: false):
-    // editing a chip writes the URL on every keystroke, and plain
-    // `query_signal`'s defaults would push a history entry and yank the
-    // window to the top each time.
-    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
-    let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
-    let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
-
-    // A filter picked from the `+ Filter` menu but not yet committed — its
-    // chip mounts in edit state with an empty input/selection (see
-    // currency_exchange.rs for the same pattern). The boolean toggle commits
-    // immediately on add instead, so this only ever holds `FILTER_PROFIT` or
-    // `FILTER_JOB`.
-    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
+    let (job_filter, _set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
+    let (filter_outliers, _set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
@@ -496,14 +488,6 @@ fn LeveAnalyzerTable(
             let revenue = gil_reward + expected_item_value as i64;
             let profit = revenue - cost;
 
-            if !profit_meets_minimum(
-                profit as i32,
-                minimum_profit(),
-                cost_pending || revenue_pending,
-            ) {
-                continue;
-            }
-
             results.push(LeveProfitData {
                 leve,
                 craft_leve,
@@ -546,23 +530,6 @@ fn LeveAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
-    // Filters currently drawn as a chip. Drives the "no active filters" hint
-    // and keeps `+ Filter` from offering a second copy of something the user
-    // can already see.
-    let active_filters = Memo::new(move |_| {
-        let mut active: Vec<&'static str> = Vec::new();
-        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
-            active.push(FILTER_PROFIT);
-        }
-        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
-            active.push(FILTER_JOB);
-        }
-        if filter_outliers().unwrap_or(false) {
-            active.push(FILTER_OUTLIERS);
-        }
-        active
-    });
-
     // Menu label for a filter: the long, explanatory label the old toolbar
     // fields carried.
     let filter_label = move |id: &str| -> String {
@@ -595,58 +562,46 @@ fn LeveAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
-    // What the `+ Filter` menu offers: everything addable that is not already
-    // on screen as a chip.
-    let filter_options = Memo::new(move |_| {
-        ADDABLE_FILTERS
-            .iter()
-            .copied()
-            .filter(|id| !active_filters().contains(id))
-            .map(|id| FilterOption {
-                id,
-                label: filter_label(id),
-            })
-            .collect::<Vec<_>>()
-    });
+    let filters = register_filters(
+        vec![FilterAlias::integer("profit", "profit", FilterOp::Gte)],
+        Signal::derive(move || {
+            vec![
+                price_control(
+                    "cost-basis",
+                    t_string!(i18n, market_turn_in_cost).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                price_control(
+                    "revenue",
+                    t_string!(i18n, market_reward_value).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                toggle_control(FILTER_OUTLIERS, filter_label(FILTER_OUTLIERS)),
+                {
+                    let mut f = ColumnFilter::new(FILTER_JOB, filter_label(FILTER_JOB), false);
+                    f.options = job_chip_options.get();
+                    f
+                },
+            ]
+        }),
+    );
 
-    let add_filter = Callback::new(move |id: &'static str| match id {
-        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
-        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
-        // Boolean toggle: the chip's presence *is* the value, so it commits
-        // straight to `true` rather than mounting an editable chip.
-        FILTER_OUTLIERS => set_filter_outliers(Some(true)),
-        _ => {}
-    });
-
-    let clear_all = Callback::new(move |_| {
-        pending_filter.set(None);
-        set_minimum_profit(None);
-        set_job_filter(None);
-        set_filter_outliers(None);
-    });
-
-    // Built outside `ControlBar`'s `actions` closure: that closure runs
-    // in a render effect and `t_string!` is tracked, so resolving the
-    // labels there would rebuild the whole slot on a language switch.
     let presets = Signal::derive(move || leve_analyzer_presets(i18n));
 
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap gap-3">
                     <MarketWindowControl window=market.window />
-                    <MarketPriceControls window=market.window label=t_string!(i18n, market_turn_in_cost).to_string()
-                        basis=Signal::derive(move || cost_basis.get().unwrap_or_default())
-                        on_change=Callback::new(move |basis| set_cost_basis(Some(basis))) />
-                    <MarketPriceControls window=market.window label=t_string!(i18n, market_reward_value).to_string()
-                        basis=Signal::derive(move || revenue_basis.get().unwrap_or_default())
-                        on_change=Callback::new(move |basis| set_revenue_basis(Some(basis))) />
+
                 </div>
 
                 <ControlBar sticky=false
                     summary=move || {
                         view! {
                             <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                                {move || t!(i18n, leve_analyzer_result_count, n = move || computed_data().len())}
+                                {move || t!(i18n, leve_analyzer_result_count, n = move || filters.row_count())}
                             </span>
                         }
                         .into_any()
@@ -658,71 +613,11 @@ fn LeveAnalyzerTable(
                         }
                             .into_any()
                     }
-                    available_filters=Signal::derive(filter_options)
-                    on_add_filter=add_filter
-                    on_clear_all=clear_all
+
                     empty_label=Signal::derive(move || {
                         t_string!(i18n, leve_analyzer_no_filters_hint).to_string()
                     })
-                    is_empty=Signal::derive(move || active_filters().is_empty())
-                >
-                    {move || {
-                        (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, leve_analyzer_chip_profit_min).to_string()
-                                        value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
-                                        numeric=true
-                                        min="0"
-                                        step="1000"
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_minimum_profit(v.and_then(|v| v.parse().ok()));
-                                            if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
-                            .then(|| {
-                                let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, leve_analyzer_filter_job_label).to_string()
-                                        value=Signal::derive(job_filter)
-                                        options=job_chip_options.get()
-                                        start_editing=start_editing
-                                        on_commit=Callback::new(move |v: Option<String>| {
-                                            set_job_filter(v);
-                                            if pending_filter.get_untracked() == Some(FILTER_JOB) {
-                                                pending_filter.set(None);
-                                            }
-                                        })
-                                    />
-                                }
-                            })
-                    }}
-                    {move || {
-                        filter_outliers()
-                            .unwrap_or(false)
-                            .then(|| {
-                                view! {
-                                    <FilterChip
-                                        label=t_string!(i18n, leve_analyzer_filter_outliers).to_string()
-                                        readonly=true
-                                        value=Signal::derive(|| None::<String>)
-                                        on_commit=Callback::new(move |_| set_filter_outliers(None))
-                                    />
-                                }
-                            })
-                    }}
-                </ControlBar>
+                />
 
                 <div>
                     <MarketGrid show_saved_views=false market subject=Arc::new(move |(_, row): &(usize, Arc<LeveProfitData>)| {
@@ -798,9 +693,6 @@ fn LeveAnalyzerTable(
                             let item_id = data.item_id;
                             let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
                             let leve_name = data.leve.name.as_str();
-
-
-
 
      let _ = index;
      match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
@@ -1035,7 +927,7 @@ mod test {
                             .is_ok(),
                         "{query}"
                     ),
-                    other => assert!(ADDABLE_FILTERS.contains(&other), "{query}"),
+                    other => assert!(LEGACY_PRESET_FILTER_KEYS.contains(&other), "{query}"),
                 }
             }
         }

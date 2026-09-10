@@ -1,0 +1,1647 @@
+use crate::components::app_link::AppLink;
+use itertools::Itertools;
+/// Related items links items that are related to the current set
+use leptos::prelude::*;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, RwLock};
+use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
+use xiv_gen::{
+    GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup, Recipe, SpecialShop,
+    VendorAvailability,
+};
+
+use crate::{
+    components::{
+        add_recipe_to_list::AddRecipeToList,
+        crafting_cost::{
+            CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, IngredientsIter, ShardsMode,
+            compute_cost, vendor_price_map,
+        },
+        icon::Icon,
+        item_icon::ItemIcon,
+        item_tooltip::ItemTooltip,
+        on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap, OnHandQuantity},
+        skeleton::SingleLineSkeleton,
+    },
+    global_state::{
+        cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data,
+    },
+    i18n::*,
+};
+
+use super::{cheapest_price::*, gil::*, small_item_display::*};
+use crate::components::app_link::use_query_map_or_default;
+
+pub fn is_shard_item(item_id: ItemId) -> bool {
+    tracked_data()
+        .items
+        .get(&item_id)
+        .map(|i| i.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+        .unwrap_or(false)
+}
+
+/// Every id `is_shard_item` matches, sorted for `binary_search`. For hot
+/// loops: `is_shard_item` pays `tracked_data()`'s context lookup and
+/// `DataRevision` subscription on every call, which recipe pricing made
+/// once per ingredient of every recipe and sub-recipe. This reads the data
+/// once (still tracked, so a locale swap re-runs the caller).
+pub fn shard_item_ids() -> Vec<i32> {
+    let mut ids: Vec<i32> = tracked_data()
+        .items
+        .iter()
+        .filter(|(_, item)| item.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+        .map(|(id, _)| id.0)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// Matches against items that start with the same prefix
+/// "Diadochos" -> "Diadochos Helmet" etc
+fn prefix_item_iterator<'a>(
+    data: &'a xiv_gen::Data,
+    item: &'a Item,
+) -> impl Iterator<Item = &'a Item> {
+    let items = &data.items;
+    let prefix = item.name.split_once(' ').map(|(prefix, _)| prefix);
+    items.values().filter(move |f| {
+        if let Some(prefix) = prefix {
+            f.name.starts_with(prefix)
+                && f.item_search_category != 0
+                && f.level_item == item.level_item
+        } else {
+            false
+        }
+    })
+}
+
+fn suffix_item_iterator<'a>(
+    data: &'a xiv_gen::Data,
+    item: &'a Item,
+) -> impl Iterator<Item = &'a Item> {
+    let items = &data.items;
+    let suffix = item.name.rsplit_once(' ').map(|(_, suffix)| suffix);
+    items.values().filter(move |f| {
+        if let Some(suffix) = suffix {
+            f.name.ends_with(suffix)
+                && f.item_search_category != 0
+                && f.level_item == item.level_item
+        } else {
+            false
+        }
+    })
+}
+
+/// This iterator will attempt to find related items using the classjobcategory && ilvl
+fn item_set_iter<'a>(data: &'a xiv_gen::Data, item: &'a Item) -> impl Iterator<Item = &'a Item> {
+    let items = &data.items;
+    items.values().filter(|i| {
+        item.class_job_category != 0
+            && item.class_job_category == i.class_job_category
+            && item.level_item == i.level_item
+            && i.key_id != item.key_id
+            && item.item_search_category > 0
+    })
+}
+
+/// The item ids shown in the "related items" grid on the item page, in render
+/// order.
+///
+/// **This selection is locale-dependent and must never be rendered during
+/// SSR/hydration.** The server always renders game data in English (`xiv_gen_db`
+/// is never swapped under `ssr`) while the client swaps to the visitor's locale
+/// *before* `hydrate()` runs, so the prefix/suffix name match below picks a
+/// different set of items on each side. Japanese/Chinese/Korean item names carry
+/// no ASCII space at all, so `split_once(' ')` yields `None` and the name match
+/// contributes nothing client-side: measured over the whole pack, 11257 of 16843
+/// marketable items render a different *number* of `<AppLink>` elements under `ja`
+/// than under `en`. That is a structural DOM mismatch, and tachys panics on it
+/// with `failed_to_cast_element` — GlitchTip #6831, reproduced on prod at
+/// `/item/Sargatanas/4` with `i18n_pref_locale=ja` (4/4 panics) against an `en`
+/// control (0/4).
+///
+/// `RelatedItems` therefore defers this grid to after hydration; see the
+/// `hydrated` gate there. `related_items_are_locale_dependent` pins the
+/// invariant that makes that gate load-bearing.
+pub fn related_item_ids(data: &xiv_gen::Data, item_id: ItemId) -> Vec<ItemId> {
+    let Some(item) = data.items.get(&item_id) else {
+        return Vec::new();
+    };
+    item_set_iter(data, item)
+        .chain(prefix_item_iterator(data, item))
+        .chain(suffix_item_iterator(data, item))
+        .sorted_by_key(|i| i.key_id.0)
+        .unique_by(|i| i.key_id)
+        .filter(|i| i.item_search_category > 0)
+        .filter(|i| i.key_id.0 != item.key_id.0)
+        .map(|i| i.key_id)
+        .collect()
+}
+
+/// This iterator will traverse the recipe tree for items that are related to using this item for crafting
+pub fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
+    let recipes = &tracked_data().recipes;
+    // our item id could be in item_result, or item_ingredient
+    recipes
+        .values()
+        .filter(move |filter| {
+            ItemId(filter.item_result) == item_id
+                || IngredientsIter::new(filter).any(|(i, _amount)| i.0 == item_id.0)
+        })
+        .sorted_by_key(|r| r.key_id.0)
+}
+
+#[component]
+fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
+    use crate::global_state::cookies::Cookies;
+    use crate::global_state::craft_options::{self, CraftOptions};
+
+    let i18n = use_i18n();
+    let cheapest_prices = use_context::<CheapestPrices>().unwrap();
+    let cookies = use_context::<Cookies>().unwrap();
+    let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+    let on_hand_map = use_context::<OnHandMap>();
+
+    // Defer the resource read until after the first client render so SSR and
+    // the initial CSR hydration both render the skeleton (the same shape as
+    // the Suspense fallback). Same idiom as #740 (cheapest-price), #732
+    // (source-callout), #730 (relative-time), #725 (chart cutoff), #719
+    // (item-explorer): `Resource::with()` does not subscribe-and-suspend the
+    // wrapping `<Suspense>`, so SSR sees the resource as pending and the body
+    // returns `None` while CSR receives the serialised resource and would
+    // immediately emit the populated `<span>`. The structural mismatch trips
+    // tachys' walker at `tachys-0.2.15/src/hydration.rs:227` and cascades
+    // into the `RefCell already borrowed` panic from the
+    // wasm-bindgen-futures executor.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
+    view! {
+        <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
+            {move || {
+                if !hydrated.get() {
+                    return view! { <SingleLineSkeleton /> }.into_any();
+                }
+                cheapest_prices.read_listings.with(|prices| {
+                    let prices = prices.as_ref()?.as_ref().ok()?;
+                    let opts_value = opts_cookie.get().unwrap_or_default();
+                    let shards = if opts_value.exclude_shards {
+                        ShardsMode::ExcludeShards
+                    } else {
+                        ShardsMode::IncludeMarket
+                    };
+
+                    // Snapshot the on-hand map. Read tracked (not `get_untracked`)
+                    // so editing an ingredient's on-hand qty re-prices the recipe.
+                    let local = on_hand_map
+                        .map(|m| LocalOnHand::from_map(m.0.get()))
+                        .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                    let empty = EmptyOnHand;
+                    let active_on_hand: &dyn crate::components::crafting_cost::OnHand =
+                        if opts_value.use_on_hand { &local } else { &empty };
+
+                    let recipes_by_output = std::collections::HashMap::new();
+
+                    let lq_opts = CraftingCostOptions {
+                        require_hq: false,
+                        max_subcraft_depth: 0,
+                        shards,
+                        on_hand: active_on_hand,
+                        vendor_prices: Some(vendor_price_map()),
+                    };
+                    let lq = compute_cost(recipe, prices, &recipes_by_output, &lq_opts, &is_shard_item);
+
+                    // Re-snapshot on-hand for the HQ pass (the LQ pass consumed it).
+                    let local_hq = on_hand_map
+                        .map(|m| LocalOnHand::from_map(m.0.get()))
+                        .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                    let active_on_hand_hq: &dyn crate::components::crafting_cost::OnHand =
+                        if opts_value.use_on_hand { &local_hq } else { &empty };
+                    let hq_opts = CraftingCostOptions {
+                        require_hq: true,
+                        max_subcraft_depth: 0,
+                        shards,
+                        on_hand: active_on_hand_hq,
+                        vendor_prices: Some(vendor_price_map()),
+                    };
+                    let hq = compute_cost(recipe, prices, &recipes_by_output, &hq_opts, &is_shard_item);
+
+                    Some(view! {
+                        <span class="flex flex-row gap-2 items-center flex-wrap">
+                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">{t!(i18n, related_recipe_hq_label)}</span>
+                            <Gil amount=hq.cost />
+                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">{t!(i18n, related_recipe_lq_label)}</span>
+                            <Gil amount=lq.cost />
+                            {(lq.shard_cost > 0 && opts_value.exclude_shards).then(|| view! {
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] text-[10px] text-[color:var(--color-text-muted)]">
+                                    {t!(i18n, related_recipe_crystals_excluded)} " " <Gil amount=lq.shard_cost />
+                                </span>
+                            })}
+                            {(lq.on_hand_savings > 0).then(|| view! {
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-300 text-[10px]">
+                                    {t!(i18n, related_recipe_on_hand_saved)} " " <Gil amount=lq.on_hand_savings />
+                                </span>
+                            })}
+                        </span>
+                    }.into_any())
+                }).unwrap_or_else(|| ().into_any())
+            }}
+        </Suspense>
+    }
+}
+
+#[component]
+fn CraftOptionsToggleRow() -> impl IntoView {
+    use crate::global_state::cookies::Cookies;
+    use crate::global_state::craft_options::{self, CraftOptions};
+    let i18n = use_i18n();
+    let cookies = use_context::<Cookies>().unwrap();
+    let (opts_signal, set_opts) =
+        cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+
+    let opts = move || opts_signal.get().unwrap_or_default();
+    let toggle = move |mutator: Box<dyn Fn(&mut CraftOptions)>| {
+        let mut current = opts();
+        mutator(&mut current);
+        set_opts(Some(current));
+    };
+
+    // The item-page recipe panel always shows both HQ and LQ chips, so a
+    // "Require HQ" toggle would be a no-op here. The analyzers (Tasks 8-9)
+    // get their own filter cards that read/write the same cookie field.
+    view! {
+        <div class="flex flex-row items-center gap-3 text-xs flex-wrap">
+            <label class="flex flex-row items-center gap-1">
+                <input
+                    type="checkbox"
+                    class="checkbox checkbox-xs"
+                    prop:checked=move || opts().exclude_shards
+                    on:change=move |_| toggle(Box::new(|o| o.exclude_shards = !o.exclude_shards))
+                />
+                {t!(i18n, recipe_analyzer_filter_exclude_crystals_label)}
+            </label>
+            <label class="flex flex-row items-center gap-1">
+                <input
+                    type="checkbox"
+                    class="checkbox checkbox-xs"
+                    prop:checked=move || opts().use_on_hand
+                    on:change=move |_| toggle(Box::new(|o| o.use_on_hand = !o.use_on_hand))
+                />
+                {t!(i18n, recipe_analyzer_filter_use_on_hand_label)}
+            </label>
+        </div>
+    }
+}
+
+#[component]
+fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
+    let i18n = use_i18n();
+    let query = use_query_map_or_default();
+    let params = leptos_router::hooks::use_params_map();
+    let (home, _) = crate::global_state::home_world::use_home_world();
+    // Share the options signal between the ingredient rows and planner link.
+    let (opts_cookie, _) = use_context::<crate::global_state::cookies::Cookies>()
+        .unwrap()
+        .use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(
+            crate::global_state::craft_options::COOKIE_NAME,
+        );
+    let on_hand_map = use_context::<OnHandMap>();
+    let analyzer_href = move || {
+        let o = opts_cookie.get().unwrap_or_default();
+        let world = params
+            .get()
+            .get("world")
+            .or_else(|| home.get().map(|w| w.name))
+            .unwrap_or_default();
+        let mut url = crate::links::recipe_href(recipe.key_id.0, &world, &query.get());
+        if query.get().get("require-hq").is_none() {
+            url.push_str(&format!("&require-hq={}", o.require_hq));
+        }
+        if query.get().get("shards-exclude").is_none() {
+            url.push_str(&format!("&shards-exclude={}", o.exclude_shards));
+        }
+        url
+    };
+    let items = &tracked_data().items;
+    let ingredients = IngredientsIter::new(recipe)
+        .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
+        .map(|(ingredient, amount)| {
+            let ingredient_id = ingredient.key_id;
+            let is_shard = is_shard_item(ingredient_id);
+            let excluded = move || {
+                is_shard && opts_cookie.get().unwrap_or_default().exclude_shards
+            };
+            let use_on_hand = move || opts_cookie.get().unwrap_or_default().use_on_hand;
+            let on_hand_qty = move || {
+                if !use_on_hand() || excluded() {
+                    return 0;
+                }
+                on_hand_map
+                    .map(|m| m.0.with(|map| map.get(&ingredient_id.0).copied().unwrap_or(0)))
+                    .unwrap_or(0)
+                    .clamp(0, amount)
+            };
+            let still_needed = move || amount - on_hand_qty();
+            let muted = move || excluded() || still_needed() == 0;
+            view! {
+                <div
+                    class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-1"
+                    class:opacity-50=muted
+                >
+                    <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs tabular-nums text-center min-w-7">
+                        {move || still_needed().to_string()}
+                    </span>
+                    <div class="min-w-0 flex flex-row items-center gap-2 flex-wrap">
+                        <SmallItemDisplay item=ingredient />
+                        <Show when=excluded>
+                            <span class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)]">
+                                {t!(i18n, related_recipe_ingredient_excluded)}
+                            </span>
+                        </Show>
+                        <Show when=move || { on_hand_qty() > 0 }>
+                            <span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-900/30 text-emerald-300 whitespace-nowrap">
+                                {move || t_string!(i18n, related_recipe_ingredient_on_hand, count = on_hand_qty()).to_string()}
+                            </span>
+                        </Show>
+                    </div>
+                    <div class="flex flex-row items-center gap-2 justify-self-end">
+                        // No input on an excluded shard row: ExcludeShards keeps
+                        // shards off the books entirely, so a qty typed there
+                        // would visibly do nothing.
+                        <Show when=move || { use_on_hand() && !excluded() }>
+                            <OnHandQuantity
+                                item_id=Signal::derive(move || ingredient_id.0)
+                                item_name=Signal::derive(move || ingredient.name.clone())
+                            />
+                        </Show>
+                        <div class="text-xs whitespace-nowrap"><CheapestPrice item_id=ingredient_id /></div>
+                    </div>
+                </div>
+            }
+        })
+        .collect::<Vec<_>>();
+    let target_item = items.get(&ItemId(recipe.item_result))?;
+    // role chips
+    let is_target = ItemId(recipe.item_result) == item_id;
+    let is_ingredient = IngredientsIter::new(recipe).any(|(i, _)| i == item_id);
+
+    // Defer the inner profit-chip Suspense's resource read until after the
+    // first client render — same idiom as #740 and `RecipePriceEstimate`
+    // above. `Resource::with()` does not subscribe-and-suspend, so SSR
+    // returns `None` (skeleton fallback) while CSR hydration sees the
+    // serialised resource and would otherwise emit the populated profit
+    // `<div>` immediately, tripping tachys' walker at
+    // `tachys-0.2.15/src/hydration.rs:227`.
+    let profit_hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        profit_hydrated.set(true);
+    });
+
+    Some(view! {
+        <div class="panel p-4 sm:p-5 space-y-4 min-w-0">
+            <div class="flex flex-col gap-3 border-b border-brand-700/30 pb-3 lg:flex-row lg:items-center lg:justify-between">
+                <div class="flex min-w-0 flex-wrap items-center gap-3">
+                    <SmallItemDisplay item=target_item />
+                    <CheapestPrice item_id=target_item.key_id />
+                </div>
+                <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+                    {is_target.then(|| view! {
+                        <span class="px-2 py-0.5 rounded-full text-xs font-bold
+                                     border border-emerald-400/40
+                                     text-emerald-200">
+                            {t!(i18n, related_recipe_target_chip)}
+                        </span>
+                    })}
+                    {is_ingredient.then(|| view! {
+                        <span class="px-2 py-0.5 rounded-full text-xs font-bold
+                                     border border-blue-400/40
+                                     text-blue-200">
+                            {t!(i18n, related_recipe_ingredient_chip)}
+                        </span>
+                    })}
+                    <AddRecipeToList recipe />
+                    <a
+                        class="btn-secondary text-xs px-2 py-1 flex flex-row items-center gap-1"
+                        href=analyzer_href
+                        aria-label=t_string!(i18n, related_items_aria_open_recipe)
+                    >
+                        <Icon icon=icondata::AiBarChartOutlined />
+                        {t!(i18n, related_items_aria_open_recipe)}
+                    </a>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">{t!(i18n, related_recipe_ingredients_heading)}</div>
+                <div class="rounded-md border border-brand-700/25 bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] px-3 py-2">
+                    {ingredients}
+                </div>
+            </div>
+
+            <div class="grid gap-3 pt-3 border-t border-brand-700/30 sm:grid-cols-2">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span class="text-brand-300">{t!(i18n, related_recipe_est_cost)}</span>
+                    <RecipePriceEstimate recipe />
+                </div>
+
+                // Profitability at a glance
+                <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
+                    {move || {
+                        if !profit_hydrated.get() {
+                            return view! { <SingleLineSkeleton /> }.into_any();
+                        }
+                        use crate::global_state::cookies::Cookies;
+                        use crate::global_state::craft_options::{self, CraftOptions};
+                        let cookies = use_context::<Cookies>().unwrap();
+                        let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+                        let on_hand_map = use_context::<OnHandMap>();
+
+                        use_context::<CheapestPrices>().unwrap().read_listings.with(|data| {
+                            let data = data.as_ref()?.as_ref().ok()?;
+                            let opts_value = opts_cookie.get().unwrap_or_default();
+                            let shards = if opts_value.exclude_shards {
+                                ShardsMode::ExcludeShards
+                            } else { ShardsMode::IncludeMarket };
+
+                            let local = on_hand_map
+                                .map(|m| LocalOnHand::from_map(m.0.get()))
+                                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                            let empty = EmptyOnHand;
+                            let active: &dyn crate::components::crafting_cost::OnHand =
+                                if opts_value.use_on_hand { &local } else { &empty };
+                            let recipes_by_output = std::collections::HashMap::new();
+
+                            let lq_opts = CraftingCostOptions {
+                                require_hq: false, max_subcraft_depth: 0, shards, on_hand: active,
+                                vendor_prices: Some(vendor_price_map()),
+                            };
+                            let lq = compute_cost(recipe, data, &recipes_by_output, &lq_opts, &is_shard_item);
+
+                            let local_hq = on_hand_map
+                                .map(|m| LocalOnHand::from_map(m.0.get()))
+                                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                            let active_hq: &dyn crate::components::crafting_cost::OnHand =
+                                if opts_value.use_on_hand { &local_hq } else { &empty };
+                            let hq_opts = CraftingCostOptions {
+                                require_hq: true, max_subcraft_depth: 0, shards, on_hand: active_hq,
+                                vendor_prices: Some(vendor_price_map()),
+                            };
+                            let hq = compute_cost(recipe, data, &recipes_by_output, &hq_opts, &is_shard_item);
+
+                            let lq_sell = data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }).map(|d| d.price);
+                            let hq_sell = if target_item.can_be_hq {
+                                data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
+                                    .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
+                                    .map(|d| d.price)
+                            } else { None };
+
+                            let profit_chip = |label: String, profit_opt: Option<i32>| {
+                                profit_opt.map(|profit| {
+                                    let cls = if profit >= 0 {
+                                        "px-2 py-0.5 rounded-full text-xs font-bold text-emerald-300 border border-emerald-400/40 flex items-center gap-1"
+                                    } else {
+                                        "px-2 py-0.5 rounded-full text-xs font-bold text-red-300 border border-red-400/40 flex items-center gap-1"
+                                    };
+                                    view! { <span class=cls><span>{label}</span><Gil amount=profit /></span> }.into_any()
+                                })
+                            };
+
+                            Some(view! {
+                                <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
+                                    <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
+                                    <div class="flex flex-wrap justify-end gap-2">
+                                        {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq.cost))}
+                                        {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq.cost))}
+                                    </div>
+                                </div>
+                            }.into_any())
+                        }).unwrap_or_else(|| ().into_any())
+                    }}
+                </Suspense>
+            </div>
+        </div>
+    }.into_any())
+}
+
+/// One NPC that offers one shop stocking the item, with how reachable that
+/// particular row is.
+#[derive(Clone, Copy, PartialEq)]
+struct VendorSource {
+    shop: GilShopId,
+    npc: &'static xiv_gen::ENpcResident,
+    availability: VendorAvailability,
+}
+
+/// Resolved shop/NPC pairs, shared by the source panel and its navigation count.
+///
+/// The shop -> NPC direction is precomputed in the game-data pack
+/// (`Data::gil_shop_npcs`); this used to scan every `ENpcBase` row's 32 data
+/// slots on each call.
+///
+/// Unlike the analyzers, this keeps seasonal rows and labels them instead. The
+/// item page answers "where does this come from?", and "the Heavensturn vendor"
+/// is the true answer — hiding it would leave the panel emptier and no more
+/// honest.
+fn vendor_sources_for_item(item_id: i32) -> Vec<VendorSource> {
+    let data = tracked_data();
+    if !data.items.contains_key(&ItemId(item_id)) {
+        return Vec::new();
+    }
+    let mut sources: Vec<_> = data
+        .gil_shop_items
+        .iter()
+        .filter_map(|(shop_id, items)| {
+            let row = items.iter().find(|item| item.item == item_id)?;
+            Some((data.gil_shops.get(shop_id)?, row.availability))
+        })
+        .flat_map(|(shop, availability)| {
+            data.gil_shop_npcs
+                .get(&shop.key_id)
+                .into_iter()
+                .flatten()
+                .filter_map(move |npc| {
+                    data.e_npc_residents.get(npc).map(|resident| VendorSource {
+                        shop: shop.key_id,
+                        npc: resident,
+                        availability,
+                    })
+                })
+        })
+        .collect();
+    // `gil_shop_items` is a std HashMap whose iteration order is randomized per
+    // process (RandomState). Without a stable sort the SSR server and the
+    // hydrating wasm client emit the vendor rows in different orders, desyncing
+    // the DOM and tripping tachys' hydration walker (#6831).
+    sources.sort_unstable_by_key(|s| (s.npc.key_id.0, s.shop.0));
+    sources
+}
+
+/// Why a vendor row may not be purchasable, or nothing when it plainly is.
+///
+/// `Unlockable` is called out as well as the seasonal cases: "the Paintings need
+/// the sightseeing log" is the kind of thing a reader wants before walking to
+/// the NPC, and it is not a warning — hence the softer styling.
+#[component]
+fn VendorGateBadge(availability: VendorAvailability) -> impl IntoView {
+    let i18n = use_i18n();
+    if availability == VendorAvailability::Open {
+        return None;
+    }
+    let (label, class) = match availability {
+        VendorAvailability::Open => unreachable!("returned above"),
+        VendorAvailability::Unlockable => (
+            t!(i18n, vendor_gate_unlockable).into_any(),
+            "text-[color:var(--color-text-muted)] border-[color:var(--color-outline)]",
+        ),
+        VendorAvailability::SeasonalShop => (
+            t!(i18n, vendor_gate_seasonal_shop).into_any(),
+            "vendor-gate-seasonal text-amber-300 border-amber-500/40",
+        ),
+        VendorAvailability::SeasonalUnlock => (
+            t!(i18n, vendor_gate_seasonal_unlock).into_any(),
+            "vendor-gate-seasonal text-amber-300 border-amber-500/40",
+        ),
+    };
+    Some(view! {
+        <div class=format!(
+            "inline-flex w-fit items-center gap-1 rounded border px-1.5 py-0.5 text-xs {class}",
+        )>
+            <Icon icon=icondata::FaLockSolid attr:class="text-[0.65rem] opacity-70" />
+            <span>{label}</span>
+        </div>
+    })
+}
+
+#[component]
+fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let npcs = Memo::new(move |_| vendor_sources_for_item(item_id()));
+    let data = move || {
+        let data = tracked_data();
+        let items = npcs();
+        let item = data.items.get(&ItemId(item_id()))?;
+        Some(
+            items.into_iter()
+            .filter_map(|source| {
+                let resident = source.npc;
+                let shop = data.gil_shops.get(&source.shop)?;
+                let price = item.price_mid as i32;
+                Some(view! {
+                    <a
+                        href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
+                        class="group flex flex-col gap-2 panel panel-interactive p-3"
+                    >
+                        <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
+                            <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
+                            <Gil amount=price />
+                        </div>
+                        <div class="text-sm text-[color:var(--color-text-muted)] flex items-center gap-1">
+                            <Icon icon=icondata::FaStoreSolid attr:class="text-xs opacity-70" />
+                            <span class="truncate">{shop.name.as_str()}</span>
+                        </div>
+                        <VendorGateBadge availability=source.availability />
+                        <super::npc_locations::NpcLocations npc_id=resident.key_id.0 />
+                    </a>
+                })
+            }).collect_view())
+    };
+    let empty = move || npcs.with(|n| n.is_empty());
+    view! {
+        <div id="vendor-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || npcs.with(Vec::len)>
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
+                    {t!(i18n, related_vendor_sources_title)}
+                    <span class="item-detail-count">{move || npcs.with(Vec::len)}</span>
+                </h3>
+                <div class="item-detail-entries">{data}</div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+/// Items a player can actually buy from a gil shop.
+///
+/// Rows behind a seasonal event are left out: an item whose only vendors are a
+/// Heavensturn stall and a Calamity Salvager gated on a 2013 achievement has no
+/// vendor price any reader of this could act on (#1362). An item keeps its
+/// place here as long as *one* row is reachable, so a seasonal duplicate of an
+/// ordinary vendor item changes nothing.
+// Availability can differ between the independently versioned locale packs.
+// Cache each immutable data instance, rather than the first request's locale.
+// xiv-gen-db leaks these instances (both data_for and client locale reloads),
+// so their addresses are stable and cannot be reused by another dataset.
+type VendorItemsByData = HashMap<usize, HashSet<i32>>;
+static VENDOR_ITEM_IDS: LazyLock<RwLock<VendorItemsByData>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn is_vendor_item_in(data: &'static xiv_gen::Data, item_id: i32) -> bool {
+    let key = std::ptr::from_ref(data).addr();
+    if let Some(items) = VENDOR_ITEM_IDS.read().unwrap().get(&key) {
+        return items.contains(&item_id);
+    }
+    VENDOR_ITEM_IDS
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_insert_with(|| {
+            data.gil_shop_items
+                .values()
+                .flatten()
+                .filter(|row| row.availability.is_obtainable())
+                .map(|row| row.item)
+                .collect()
+        })
+        .contains(&item_id)
+}
+
+pub fn is_vendor_item(item_id: i32) -> bool {
+    is_vendor_item_in(tracked_data(), item_id)
+}
+
+pub fn get_vendor_price(item_id: i32) -> Option<u32> {
+    if is_vendor_item(item_id) {
+        let data = tracked_data();
+        if let Some(item) = data.items.get(&ItemId(item_id)) {
+            let price = if item.price_mid > 0 {
+                item.price_mid
+            } else {
+                item.price_low
+            };
+            return Some(price);
+        }
+    }
+    None
+}
+
+pub fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
+    // Check both possible receive slots for each of the 60 entries
+    shop.item_receive_0.iter().any(|&i| i as i32 == item_id)
+        || shop.item_receive_1.iter().any(|&i| i as i32 == item_id)
+}
+
+type Cost = (ItemId, u32);
+type TradeCosts = Vec<Cost>;
+
+fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
+    let mut results = Vec::new();
+    // SpecialShop has 60 entries, each with up to 2 receive items and 3 cost items
+    for i in 0..60 {
+        let is_receive_0 = shop
+            .item_receive_0
+            .get(i)
+            .map(|&id| id as i32 == item_id)
+            .unwrap_or(false);
+        let is_receive_1 = shop
+            .item_receive_1
+            .get(i)
+            .map(|&id| id as i32 == item_id)
+            .unwrap_or(false);
+
+        if is_receive_0 || is_receive_1 {
+            let mut costs = Vec::new();
+            // Check all three possible cost slots
+            if let Some(&cost_item) = shop.item_cost_0.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_0.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
+            }
+            if let Some(&cost_item) = shop.item_cost_1.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_1.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
+            }
+            if let Some(&cost_item) = shop.item_cost_2.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_2.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
+            }
+
+            if !costs.is_empty() {
+                results.push(costs);
+            }
+        }
+    }
+    results
+}
+
+/// Collect the special shops that trade for `item_id`, in a stable,
+/// `key_id`-ascending order.
+///
+/// `special_shops` is a `std::collections::HashMap` whose iteration order is
+/// randomized per process (`RandomState`). The SSR server process and the
+/// client wasm instance each build their own copy of the game data, so an
+/// unsorted `.values()` yields the shops in a *different* order on each side.
+/// That makes the server-rendered DOM and the hydrating DOM disagree, tripping
+/// tachys' hydration walker (`failed_to_cast_element`) — the #6831 crash.
+/// Sorting by the stable `key_id` makes both sides render the same sequence.
+fn exchange_shops_for_item(
+    special_shops: &std::collections::HashMap<xiv_gen::SpecialShopId, SpecialShop>,
+    item_id: i32,
+) -> Vec<&SpecialShop> {
+    special_shops
+        .values()
+        .filter(|shop| special_shop_has_item(shop, item_id))
+        .sorted_by_key(|shop| shop.key_id.0)
+        .collect()
+}
+
+#[component]
+fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let data = tracked_data();
+    let exchanges = Memo::new(move |_| {
+        let item_id = item_id();
+        exchange_shops_for_item(&data.special_shops, item_id)
+    });
+    let trade_count = Memo::new(move |_| {
+        exchanges.with(|shops| {
+            shops
+                .iter()
+                .map(|shop| get_trade_costs(shop, item_id()).len())
+                .sum::<usize>()
+        })
+    });
+
+    let view = move || {
+        exchanges
+            .with(|exchanges| {
+                exchanges
+                    .iter()
+                   .flat_map(|shop| {
+                        let trades = get_trade_costs(shop, item_id());
+                        trades.into_iter().map(move |costs| {
+                            view! {
+                                <div class="group flex flex-col gap-2 panel p-3">
+                                    <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
+                                    <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
+                                        <span class="font-semibold text-brand-300">{t!(i18n, related_items_costs_label)}</span>
+                                        {
+                                            costs.into_iter().map(|(item_id, count)| {
+                                                if let Some(item) = data.items.get(&item_id) {
+                                                    view! {
+                                                        <div class="flex min-w-0 items-center gap-1 px-2 py-1 rounded border border-[color:var(--color-outline)] hover:border-brand-300/60 transition-colors">
+                                                            <span class="shrink-0 whitespace-nowrap font-bold text-brand-200">{count} "x"</span>
+                                                            <SmallItemDisplay item />
+                                                        </div>
+                                                    }.into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }
+                                            }).collect_view()
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        })
+                    })
+                    .collect_view()
+            })
+    };
+
+    let empty = move || trade_count.get() == 0;
+
+    view! {
+        <div id="exchange-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || trade_count.get()>
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
+                    {t!(i18n, related_exchange_sources_title)}
+                    <span class="item-detail-count">{move || trade_count.get()}</span>
+                </h3>
+                <div class="item-detail-entries">
+                    {view}
+                </div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xiv_gen::SpecialShop;
+
+    /// Regression guard for the off-by-one that made "exclude shards" a no-op:
+    /// crystals/shards/clusters are ItemSearchCategory 58, while 59 is
+    /// "Catalysts" (dark matter, glamour prisms).
+    #[test]
+    fn is_shard_item_matches_crystals_and_nothing_else() {
+        let items = &tracked_data().items;
+        let by_name = |name: &str| {
+            items
+                .values()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from game data"))
+                .key_id
+        };
+
+        for name in ["Fire Shard", "Wind Crystal", "Earth Cluster"] {
+            assert!(
+                is_shard_item(by_name(name)),
+                "{name} should count as a shard"
+            );
+        }
+        for name in ["Grade 1 Dark Matter", "Glamour Prism", "Maple Log"] {
+            assert!(
+                !is_shard_item(by_name(name)),
+                "{name} should not count as a shard"
+            );
+        }
+    }
+
+    /// The pack ships `gil_shop_npcs` instead of the `ENpcBase` /
+    /// `TopicSelect` / `PreHandler` sheets the mapping was derived from, so
+    /// nothing at runtime can re-derive it. These invariants are what the
+    /// vendor panel relies on.
+    #[test]
+    fn gil_shop_npc_index_is_sorted_and_names_displayable_npcs() {
+        let data = tracked_data();
+        assert!(
+            !data.gil_shop_npcs.is_empty(),
+            "pack carries no shop -> NPC index"
+        );
+        for (shop, npcs) in &data.gil_shop_npcs {
+            assert!(
+                npcs.windows(2).all(|w| w[0].0 <= w[1].0),
+                "shop {shop:?} lists NPCs out of order; render order would differ \
+                 between SSR and hydration"
+            );
+            for npc in npcs {
+                assert!(
+                    data.e_npc_residents.contains_key(npc),
+                    "shop {shop:?} names {npc:?}, which has no resident row to render"
+                );
+            }
+        }
+    }
+
+    /// Usagi Kabuto is stocked by two shops that are reached by different
+    /// routes through the NPC data (a festival vendor and the Calamity
+    /// Salvager's Heavensturn menu), so it exercises both the direct and the
+    /// `TopicSelect`/`PreHandler` paths that fed the index.
+    #[test]
+    fn vendor_sources_resolve_every_stocking_shop() {
+        let data = tracked_data();
+        let item_id = data
+            .items
+            .values()
+            .find(|i| i.name == "Usagi Kabuto")
+            .expect("Usagi Kabuto missing from game data")
+            .key_id;
+
+        let sources = vendor_sources_for_item(item_id.0);
+        assert!(!sources.is_empty(), "expected vendor sources");
+        assert!(
+            sources.iter().all(|s| !s.npc.singular.is_empty()),
+            "every resolved vendor should have a name to display"
+        );
+
+        let stocking: HashSet<_> = data
+            .gil_shop_items
+            .iter()
+            .filter(|(_, items)| items.iter().any(|i| i.item == item_id.0))
+            .map(|(shop, _)| *shop)
+            .collect();
+        let resolved: HashSet<_> = sources.iter().map(|s| s.shop).collect();
+        assert_eq!(resolved, stocking, "a stocking shop resolved to no NPC");
+    }
+
+    /// #1362: Usagi Kabuto was offered as a vendor-resale flip even though its
+    /// only vendors are a Heavensturn stall and a Calamity Salvager gated on a
+    /// 2013 achievement. It must carry no vendor price for the analyzers, while
+    /// ordinary vendor stock is untouched.
+    #[test]
+    fn seasonal_only_items_have_no_vendor_price() {
+        let data = tracked_data();
+        let by_name = |name: &str| {
+            data.items
+                .values()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from game data"))
+                .key_id
+                .0
+        };
+
+        for name in ["Usagi Kabuto", "Black Usagi Kabuto", "Dream Hat"] {
+            let id = by_name(name);
+            assert!(
+                !is_vendor_item(id),
+                "{name} should not count as vendor-sold"
+            );
+            assert_eq!(get_vendor_price(id), None, "{name} should have no price");
+        }
+
+        // Everyday vendor stock stays priced — over-filtering would gut the
+        // very page this protects.
+        for name in ["Maple Log", "Copper Ore", "Distilled Water"] {
+            let id = by_name(name);
+            assert!(is_vendor_item(id), "{name} should still be vendor-sold");
+            assert!(get_vendor_price(id).is_some(), "{name} lost its price");
+        }
+    }
+
+    /// Gated-but-reachable stock must survive. Ruling out every gated row was
+    /// the tempting wrong answer here: the biggest group of achievement-gated
+    /// items is the sightseeing-log Paintings, and the biggest group of
+    /// quest-gated ones is main-scenario progress. Both are things a player can
+    /// simply go and do.
+    #[test]
+    fn quest_and_achievement_gated_items_are_still_vendor_items() {
+        let data = tracked_data();
+        let gated: Vec<_> = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .filter(|r| r.availability == VendorAvailability::Unlockable)
+            .map(|r| r.item)
+            .filter(|i| *i > 0)
+            .sorted()
+            .dedup()
+            .collect();
+        assert!(
+            gated.len() > 100,
+            "expected a substantial unlockable tier, got {}",
+            gated.len()
+        );
+        for id in &gated {
+            assert!(
+                is_vendor_item(*id),
+                "item {id} is merely unlockable and should stay vendor-sold"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_availability_follows_locale_data_in_both_lookup_orders() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let tc = xiv_gen_db::data_for(xiv_gen::Language::Tc);
+        // Lord's Yukata (Blue) has only seasonal English rows. The older TC
+        // fork has an unmatched shop row that intentionally defaults to Open.
+        // Neither locale may inherit the other one's first cached verdict.
+        for (data, expected) in [(tc, true), (en, false), (en, false), (tc, true)] {
+            assert_eq!(is_vendor_item_in(data, 2967), expected);
+            assert!(
+                is_vendor_item_in(data, 5364),
+                "ordinary Maple Log stays sold"
+            );
+        }
+    }
+
+    /// The filter must reject only the seasonal tail. If it ever starts
+    /// rejecting a large slice, Vendor Resale silently empties out.
+    #[test]
+    fn seasonal_filtering_removes_only_a_small_tail() {
+        let data = tracked_data();
+        let all: HashSet<i32> = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .map(|i| i.item)
+            .filter(|i| *i > 0)
+            .collect();
+        let dropped = all.iter().filter(|id| !is_vendor_item(**id)).count();
+        assert!(dropped > 0, "no seasonal vendor items were filtered at all");
+        // Measured at 450 of 6743 (~6.7%) when this landed. The bound is a
+        // blast-radius guard, not a pin — game-data updates move the exact
+        // number, but an order-of-magnitude jump means the rule broke.
+        assert!(
+            dropped * 5 < all.len(),
+            "filtered {dropped} of {} vendor items — far more than the seasonal tail",
+            all.len()
+        );
+
+        // Marketable items are the ones the analyzers price, so scope the tight
+        // bound there: 52 of ~4900 when this landed.
+        let marketable_dropped = all
+            .iter()
+            .filter(|id| {
+                data.items
+                    .get(&ItemId(**id))
+                    .is_some_and(|i| i.item_search_category != 0)
+            })
+            .filter(|id| !is_vendor_item(**id))
+            .count();
+        assert!(
+            marketable_dropped > 0 && marketable_dropped < 400,
+            "dropped {marketable_dropped} marketable vendor items"
+        );
+    }
+
+    #[test]
+    fn vendor_sources_are_sorted_by_npc_then_shop() {
+        let data = tracked_data();
+        // Any item sold by more than one shop exercises the cross-shop sort.
+        let item_id = data
+            .gil_shop_items
+            .values()
+            .flatten()
+            .map(|i| i.item)
+            .sorted()
+            .dedup()
+            .find(|id| {
+                *id > 0
+                    && data
+                        .gil_shop_items
+                        .values()
+                        .filter(|items| items.iter().any(|i| i.item == *id))
+                        .count()
+                        > 1
+            })
+            .expect("game data has multi-shop items");
+
+        let sources = vendor_sources_for_item(item_id);
+        let keys: Vec<_> = sources.iter().map(|s| (s.npc.key_id.0, s.shop.0)).collect();
+        assert!(keys.windows(2).all(|w| w[0] <= w[1]), "unsorted: {keys:?}");
+    }
+
+    #[test]
+    fn source_counts_hide_invalid_items() {
+        for item_id in [-1, 0, i32::MAX] {
+            assert_eq!(item_source_counts(item_id), ItemSourceCounts::default());
+        }
+    }
+
+    #[test]
+    fn source_counts_do_not_treat_ingredients_as_craftable() {
+        let data = tracked_data();
+        let outputs: HashSet<_> = data.recipes.values().map(|r| r.item_result).collect();
+        let ingredient = data
+            .recipes
+            .values()
+            .flat_map(IngredientsIter::new)
+            .map(|(id, _)| id.0)
+            .find(|id| *id > 0 && !outputs.contains(id))
+            .expect("game data has raw ingredients that cannot be crafted");
+        assert!(recipe_tree_iter(ItemId(ingredient)).next().is_some());
+        assert_eq!(item_source_counts(ingredient).craftable, 0);
+    }
+
+    #[test]
+    fn source_counts_include_every_available_type() {
+        let data = tracked_data();
+        // Sample deterministic item IDs spanning the recipe and vendor data.
+        let ids = data
+            .recipes
+            .values()
+            .map(|r| r.item_result)
+            .chain(data.gil_shop_items.values().flatten().map(|i| i.item))
+            .filter(|id| *id > 0)
+            .sorted()
+            .dedup()
+            .step_by(53)
+            .take(8);
+        for id in ids {
+            let counts = item_source_counts(id);
+            assert_eq!(
+                counts.craftable,
+                data.recipes
+                    .values()
+                    .filter(|r| r.item_result == id)
+                    .count()
+            );
+            assert_eq!(counts.vendor, vendor_sources_for_item(id).len());
+            assert_eq!(counts.levequest, leve_sources_for_item(id).len());
+            assert_eq!(
+                counts.exchange,
+                exchange_shops_for_item(&data.special_shops, id)
+                    .iter()
+                    .map(|shop| get_trade_costs(shop, id).len())
+                    .sum::<usize>()
+            );
+        }
+    }
+
+    /// A spread of marketable items: gear (which has a class job category), plus
+    /// consumables/materials (which do not, and are carried entirely by the name
+    /// match).
+    fn sample_item_ids() -> Vec<ItemId> {
+        let data = xiv_gen_db::data_for(xiv_gen::Language::En);
+        data.items
+            .values()
+            .filter(|i| i.item_search_category > 0)
+            .sorted_by_key(|i| i.key_id.0)
+            .step_by(97)
+            .map(|i| i.key_id)
+            .collect()
+    }
+
+    /// GlitchTip #6831's third recurrence, pinned as an invariant: this grid is
+    /// chosen by item *name*, so it resolves differently under the English data
+    /// the server renders with and the locale data the client hydrates with.
+    ///
+    /// Only the number of rendered nodes matters for hydration — the grid shows
+    /// the first 12 — so that is what this asserts, and it is why `RelatedItems`
+    /// must keep deferring the grid past hydration. If this test ever fails
+    /// because the selection became locale-stable, the `hydrated` gate can go.
+    #[test]
+    fn related_items_are_locale_dependent() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let ja = xiv_gen_db::data_for(xiv_gen::Language::Ja);
+        let diverged = sample_item_ids()
+            .into_iter()
+            .filter(|id| ja.items.contains_key(id))
+            .filter(|&id| {
+                related_item_ids(en, id).len().min(12) != related_item_ids(ja, id).len().min(12)
+            })
+            .count();
+        assert!(
+            diverged > 0,
+            "expected the related-items grid to render a different node count under ja than \
+             under en; if this is genuinely zero now, re-check before dropping the hydration gate"
+        );
+    }
+
+    #[test]
+    fn related_items_are_deterministically_ordered() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        for id in sample_item_ids() {
+            let ids = related_item_ids(en, id);
+            assert!(
+                ids.windows(2).all(|w| w[0].0 < w[1].0),
+                "item {} produced an unsorted/duplicated related list",
+                id.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_special_shop_has_item() {
+        let shop = SpecialShop {
+            key_id: xiv_gen::SpecialShopId(1),
+            name: "Test Shop".to_string(),
+            item: vec![],
+            item_receive_0: vec![123, 456],
+            count_receive_0: vec![1, 1],
+            item_receive_1: vec![0, 789],
+            count_receive_1: vec![0, 1],
+            item_cost_0: vec![10, 20],
+            count_cost_0: vec![100, 200],
+            item_cost_1: vec![0, 0],
+            count_cost_1: vec![0, 0],
+            item_cost_2: vec![0, 0],
+            count_cost_2: vec![0, 0],
+        };
+        assert!(special_shop_has_item(&shop, 123));
+        assert!(special_shop_has_item(&shop, 789));
+        assert!(!special_shop_has_item(&shop, 999));
+    }
+
+    #[test]
+    fn test_get_trade_costs() {
+        let shop = SpecialShop {
+            key_id: xiv_gen::SpecialShopId(1),
+            name: "Test Shop".to_string(),
+            item: vec![],
+            item_receive_0: vec![123, 456],
+            count_receive_0: vec![1, 1],
+            item_receive_1: vec![0, 789],
+            count_receive_1: vec![0, 1],
+            item_cost_0: vec![10, 20],
+            count_cost_0: vec![100, 200],
+            item_cost_1: vec![11, 0],
+            count_cost_1: vec![50, 0],
+            item_cost_2: vec![0, 0],
+            count_cost_2: vec![0, 0],
+        };
+
+        let costs_123 = get_trade_costs(&shop, 123);
+        assert_eq!(costs_123.len(), 1);
+        assert_eq!(costs_123[0].len(), 2);
+        assert_eq!(costs_123[0][0], (ItemId(10), 100));
+        assert_eq!(costs_123[0][1], (ItemId(11), 50));
+
+        let costs_789 = get_trade_costs(&shop, 789);
+        assert_eq!(costs_789.len(), 1);
+        assert_eq!(costs_789[0].len(), 1);
+        assert_eq!(costs_789[0][0], (ItemId(20), 200));
+
+        // Two offers in one shop are two exchange options, not one shop count.
+        let mut multiple_offers = shop;
+        multiple_offers.item_receive_0[1] = 123;
+        assert_eq!(get_trade_costs(&multiple_offers, 123).len(), 2);
+    }
+
+    /// Regression guard for #6831: the exchange-source shops must come out in a
+    /// stable, `key_id`-ascending order no matter what order they sit in the
+    /// (randomly seeded) `special_shops` HashMap. If this order ever depends on
+    /// HashMap iteration order again, SSR and CSR render different DOM and the
+    /// item page crashes on hydration.
+    #[test]
+    fn exchange_shops_for_item_is_deterministically_sorted() {
+        use std::collections::HashMap;
+
+        // A shop whose first receive slot trades for `received`.
+        fn mk_shop(key_id: i32, received: u16) -> SpecialShop {
+            SpecialShop {
+                key_id: xiv_gen::SpecialShopId(key_id),
+                name: format!("Shop {key_id}"),
+                item: vec![],
+                item_receive_0: vec![received],
+                count_receive_0: vec![1],
+                item_receive_1: vec![0],
+                count_receive_1: vec![0],
+                item_cost_0: vec![10],
+                count_cost_0: vec![1],
+                item_cost_1: vec![0],
+                count_cost_1: vec![0],
+                item_cost_2: vec![0],
+                count_cost_2: vec![0],
+            }
+        }
+
+        let mut shops = HashMap::new();
+        // Insert in a deliberately non-ascending key order.
+        for key_id in [7, 2, 9, 4, 1] {
+            shops.insert(xiv_gen::SpecialShopId(key_id), mk_shop(key_id, 123));
+        }
+        // Two shops that do NOT trade for item 123 must be filtered out.
+        shops.insert(xiv_gen::SpecialShopId(50), mk_shop(50, 999));
+        shops.insert(xiv_gen::SpecialShopId(51), mk_shop(51, 888));
+
+        let ids: Vec<i32> = exchange_shops_for_item(&shops, 123)
+            .iter()
+            .map(|shop| shop.key_id.0)
+            .collect();
+
+        // Ascending key_id order regardless of HashMap seed — the deterministic
+        // sequence both SSR and CSR must produce.
+        assert_eq!(ids, vec![1, 2, 4, 7, 9]);
+    }
+}
+
+pub fn leve_rewards_item(
+    leve: &Leve,
+    item_id: i32,
+    reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
+    groups: &std::collections::HashMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
+) -> bool {
+    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item)) {
+        // Check all 8 groups
+        let group_ids: [u16; 8] = [
+            reward.leve_reward_item_group_0,
+            reward.leve_reward_item_group_1,
+            reward.leve_reward_item_group_2,
+            reward.leve_reward_item_group_3,
+            reward.leve_reward_item_group_4,
+            reward.leve_reward_item_group_5,
+            reward.leve_reward_item_group_6,
+            reward.leve_reward_item_group_7,
+        ];
+
+        for group_id in group_ids {
+            if let Some(group) = groups.get(&xiv_gen::LeveRewardItemGroupId(group_id as i32)) {
+                // Check all items in group (0-8)
+                let items: [u16; 9] = [
+                    group.item_0,
+                    group.item_1,
+                    group.item_2,
+                    group.item_3,
+                    group.item_4,
+                    group.item_5,
+                    group.item_6,
+                    group.item_7,
+                    group.item_8,
+                ];
+                if items.iter().any(|&i| i as i32 == item_id) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn leve_sources_for_item(item_id: i32) -> Vec<&'static Leve> {
+    let data = tracked_data();
+    data.leves
+        .values()
+        .filter(|leve| {
+            leve_rewards_item(
+                leve,
+                item_id,
+                &data.leve_reward_items,
+                &data.leve_reward_item_groups,
+            )
+        })
+        // Keep SSR and hydration order identical despite randomized HashMaps.
+        .sorted_by_key(|leve| leve.key_id.0)
+        .collect()
+}
+
+/// Counts describe available recipes, trade options, reward leves, and vendor
+/// shop/NPC pairs, not market listings. No market resource is needed during SSR.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ItemSourceCounts {
+    pub craftable: usize,
+    pub exchange: usize,
+    pub levequest: usize,
+    pub vendor: usize,
+}
+
+pub fn item_source_counts(item_id: i32) -> ItemSourceCounts {
+    let data = tracked_data();
+    if item_id <= 0 || !data.items.contains_key(&ItemId(item_id)) {
+        return ItemSourceCounts::default();
+    }
+    ItemSourceCounts {
+        // recipe_tree_iter also matches ingredients: those are not acquisition sources.
+        craftable: data
+            .recipes
+            .values()
+            .filter(|r| r.item_result == item_id)
+            .count(),
+        exchange: exchange_shops_for_item(&data.special_shops, item_id)
+            .iter()
+            .map(|shop| get_trade_costs(shop, item_id).len())
+            .sum(),
+        levequest: leve_sources_for_item(item_id).len(),
+        vendor: vendor_sources_for_item(item_id).len(),
+    }
+}
+
+#[component]
+fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let data = tracked_data();
+    let leves = Memo::new(move |_| leve_sources_for_item(item_id()));
+
+    let view = move || {
+        leves.with(|leves| {
+            leves
+                .iter()
+                .map(|leve| {
+                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    view! {
+                        <div class="group flex flex-col gap-2 panel p-3">
+                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
+                             <div class="flex items-center gap-2 mt-1">
+                                <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">
+                                    "Lvl " {leve.class_job_level}
+                                </span>
+                                <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
+                                    <Icon icon=icondata::FaHammerSolid attr:class="text-[10px] opacity-70" />
+                                    {job_name}
+                                </span>
+                             </div>
+                             <super::npc_locations::LeveIssuers leve_id=leve.key_id.0 />
+                        </div>
+                    }
+                })
+                .collect_view()
+        })
+    };
+
+    let empty = move || leves.with(|l| l.is_empty());
+
+    view! {
+        <div id="leve-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || leves.with(Vec::len)>
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
+                    {t!(i18n, related_levequest_rewards_title)}
+                    <span class="item-detail-count">{move || leves.with(Vec::len)}</span>
+                </h3>
+                <div class="item-detail-entries">{view}</div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[component]
+pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let (price_zone, _) = get_price_zone();
+    // The grid below is chosen by matching item *names*, and SSR renders game
+    // data in English while the client has already swapped to the visitor's
+    // locale by the time `hydrate()` runs — so the two sides disagree about how
+    // many `<AppLink>` elements belong here and tachys panics walking the DOM
+    // (GlitchTip #6831; see `related_item_ids`). Render nothing until the first
+    // client effect has run, so SSR and the initial CSR pass both emit an empty
+    // grid and the real list arrives as an ordinary reactive update afterwards.
+    // Same idiom as `RecipePriceEstimate` above.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+    let related_items_data = Memo::new(move |_| {
+        if !hydrated.get() {
+            return Vec::new();
+        }
+        let data = tracked_data();
+        related_item_ids(data, ItemId(item_id()))
+            .into_iter()
+            .filter_map(|id| data.items.get(&id))
+            .collect::<Vec<_>>()
+    });
+
+    let item_set = move || {
+        related_items_data.with(|items| {
+            items.iter().take(12).map(|&item| {
+                view! {
+                    <AppLink
+                        attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
+                        exact=true
+                        href=move || {
+                            format!(
+                                "/item/{}/{}",
+                                price_zone()
+                                    .as_ref()
+                                    .map(|z| z.get_name())
+                                    .unwrap_or("North-America"),
+                                item.key_id.0,
+                            )
+                        }
+                    >
+
+                        <div class="flex items-center gap-2 text-sm">
+                            <ItemTooltip item_id=item.key_id.0 class="shrink-0">
+                                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                            </ItemTooltip>
+                            <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                            <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
+                        </div>
+                        <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                            <CheapestPrice item_id=item.key_id />
+                        </div>
+                    </AppLink>
+                }
+            }).collect_view()
+        })
+    };
+
+    let recipes = Memo::new(move |_| {
+        let mut recipes = recipe_tree_iter(ItemId(item_id.get()))
+            // Acquisition recipes come first when jumping from "Craftable".
+            .sorted_by_key(|r| (r.item_result != item_id.get(), r.key_id.0))
+            .collect::<Vec<_>>();
+        let acquisition_count = recipes
+            .iter()
+            .take_while(|r| r.item_result == item_id.get())
+            .count();
+        recipes.truncate(30.max(acquisition_count));
+        recipes
+    });
+
+    let (show_more, set_show_more) = signal(false);
+    let has_more = move || related_items_data.with(|items| items.len() > 12);
+    let source_counts = Memo::new(move |_| item_source_counts(item_id()));
+    let source_entries = move || {
+        let counts = source_counts.get();
+        counts.vendor + counts.exchange + counts.levequest
+    };
+    let visible_recipes = Memo::new(move |_| {
+        let mut recipes = recipes.get();
+        // Every acquisition recipe counted in the shortcut must be visible.
+        let acquisition_count = recipes
+            .iter()
+            .take_while(|r| r.item_result == item_id())
+            .count();
+        recipes.truncate(5.max(acquisition_count));
+        recipes
+    });
+
+    view! {
+        <div class="item-details-layout">
+            <div class="item-detail-section panel p-4 sm:p-6" data-entry-count=move || related_items_data.with(Vec::len) class:hidden=move || related_items_data.with(|i| i.is_empty())>
+                <h2 class="text-lg font-bold text-brand-200 mb-4 flex flex-wrap items-center gap-2">
+                    {t!(i18n, related_items_heading)}
+                    <span class="item-detail-count">{move || related_items_data.with(Vec::len)}</span>
+                </h2>
+                <div class="item-detail-entries">
+                    {item_set}
+                    {move || {
+                        show_more().then(|| {
+                            related_items_data.with(|items| {
+                                items.iter().skip(12).map(|&item| {
+                                    view! {
+                                        <AppLink
+                                            attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
+                                            exact=true
+                                            href=move || {
+                                                format!(
+                                                    "/item/{}/{}",
+                                                    price_zone()
+                                                        .as_ref()
+                                                        .map(|z| z.get_name())
+                                                        .unwrap_or("North-America"),
+                                                    item.key_id.0,
+                                                )
+                                            }
+                                        >
+
+                                            <div class="flex items-center gap-2 text-sm">
+                                                <ItemTooltip item_id=item.key_id.0 class="shrink-0">
+                                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                </ItemTooltip>
+                                                <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
+                                            </div>
+                                            <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                                                <CheapestPrice item_id=item.key_id />
+                                            </div>
+                                        </AppLink>
+                                    }
+                                }).collect_view()
+                            })
+                        })
+                    }}
+                </div>
+                <div class="mt-4 flex justify-center" class:hidden=move || !has_more()>
+                    <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
+                        {move || if show_more() { "Show less" } else { "Show more" }}
+                    </button>
+                </div>
+            </div>
+
+            // The inner #vendor-sources / #exchange-sources / #leve-sources ids
+            // stay — SectionNav's source shortcuts link to them directly.
+            // This wrapper id is the jump-nav's coarser "Sources" destination.
+            <div id="sources" class="item-source-group scroll-mt-16" data-entry-count=source_entries
+                data-section-count=move || {
+                    let counts = source_counts.get();
+                    [counts.vendor, counts.exchange, counts.levequest].into_iter().filter(|count| *count > 0).count()
+                }
+                class:hidden=move || source_entries() == 0
+            >
+                <VendorItems item_id />
+                <ExchangeSources item_id />
+                <LeveSources item_id />
+            </div>
+
+            <div
+                id="crafting-recipes"
+                class="item-recipe-section item-detail-section scroll-mt-20 panel p-4 sm:p-6"
+                data-entry-count=move || visible_recipes.with(Vec::len)
+                class:hidden=move || recipes.with(|recipes| recipes.is_empty())
+            >
+                <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
+                    <h2 class="text-lg font-bold text-brand-200 flex flex-wrap items-center gap-2">
+                        {t!(i18n, related_items_crafting_recipes_heading)}
+                        <span class="item-detail-count">{move || visible_recipes.with(Vec::len)}</span>
+                    </h2>
+                    <CraftOptionsToggleRow />
+                </div>
+                <ActiveListBanner />
+                <div class="item-detail-entries item-recipe-entries">
+                    <For
+                        each=move || visible_recipes.get()
+                        key=|recipe| recipe.key_id
+                        children=move |recipe: &'static Recipe| {
+                            view! { <Recipe recipe item_id=ItemId(item_id()) /> }
+                        }
+                    />
+                </div>
+            </div>
+        </div>
+    }
+    .into_any()
+}

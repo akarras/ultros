@@ -5,7 +5,9 @@
 
 use crate::i18n::*;
 use crate::routes::item_explorer::canonical_job_acronym;
-use xiv_gen::{ClassJobId, ItemId, Language};
+#[cfg(test)]
+use xiv_gen::Language;
+use xiv_gen::{ClassJobId, ItemId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SocialCardKind {
@@ -52,17 +54,7 @@ pub fn parse_locale(value: &str) -> Option<Locale> {
     })
 }
 
-pub fn game_language(locale: Locale) -> Language {
-    match locale {
-        Locale::en => Language::En,
-        Locale::ja => Language::Ja,
-        Locale::de => Language::De,
-        Locale::fr => Language::Fr,
-        Locale::cn => Language::Cn,
-        Locale::ko => Language::Ko,
-        Locale::tc => Language::Tc,
-    }
-}
+pub use ultros_frontend_core::global_state::xiv_data::game_language;
 
 pub fn og_locale(locale: Locale) -> &'static str {
     match locale {

@@ -33,6 +33,9 @@ pub enum AppError {
     WorldDataUnavailable,
     #[error("The internal API request timed out")]
     InternalApiTimeout,
+    /// The local list document refused an edit (spec section 3.2).
+    #[error("List document: {0}")]
+    ListDoc(String),
 }
 
 impl AppError {

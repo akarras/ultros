@@ -27,6 +27,13 @@ use tracing::{info, instrument};
 
 use crate::{ClickHouseClient, ClickHouseError, schema::LISTING_EVENTS_SEED_MARKER_TABLE};
 
+// Consumers use the same cadence to distinguish a current snapshot from an
+// abandoned ReplacingMergeTree key when a rolling-window group disappears.
+pub(crate) const SALE_STATS_1D_REFRESH_SECS: u64 = 15 * 60;
+pub(crate) const SALE_STATS_7D_REFRESH_SECS: u64 = 60 * 60;
+pub(crate) const SALE_STATS_LONG_REFRESH_SECS: u64 = 6 * 60 * 60;
+pub(crate) const LISTING_ALIVE_REFRESH_SECS: u64 = 15 * 60;
+
 /// Refresh `item_stats_window` for a single window size.
 ///
 /// Strategy:
@@ -713,9 +720,12 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
         tracing::info!("initial rollup seed complete");
     }
 
-    let mut tick_1d = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
-    let mut tick_7d = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
-    let mut tick_30d_90d = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+    let mut tick_1d =
+        tokio::time::interval(std::time::Duration::from_secs(SALE_STATS_1D_REFRESH_SECS));
+    let mut tick_7d =
+        tokio::time::interval(std::time::Duration::from_secs(SALE_STATS_7D_REFRESH_SECS));
+    let mut tick_30d_90d =
+        tokio::time::interval(std::time::Duration::from_secs(SALE_STATS_LONG_REFRESH_SECS));
     let mut tick_quality = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
     let mut tick_kpi = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
     // sales_hourly drives the home-page sparklines + Market Movers, so
@@ -726,7 +736,8 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
     // listing_alive feeds "how long has this sat on the board"; 15 min keeps
     // it inside the consuming endpoint's 5 min fresh / 30 min stale window
     // without a second full replay of listing_events per cadence.
-    let mut tick_listing_alive = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+    let mut tick_listing_alive =
+        tokio::time::interval(std::time::Duration::from_secs(LISTING_ALIVE_REFRESH_SECS));
 
     // All intervals fire immediately on first .tick() — burn those since
     // we already seeded above.

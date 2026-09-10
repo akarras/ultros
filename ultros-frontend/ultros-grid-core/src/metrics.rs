@@ -105,6 +105,9 @@ pub enum FilterOp {
     Contains,
     Gte,
     Lte,
+    Lt,
+    /// Inclusive numeric bounds, encoded as `lower,upper` in `value`.
+    Between,
     Missing,
     Present,
 }
@@ -130,9 +133,21 @@ pub fn active_metric_columns(raw: Option<&str>) -> HashSet<String> {
 }
 
 impl MetricFilter {
+    pub fn bounds(&self) -> Option<(f64, f64)> {
+        let (low, high) = self.value.split_once(',')?;
+        let (low, high) = (
+            low.trim().parse::<f64>().ok()?,
+            high.trim().parse::<f64>().ok()?,
+        );
+        (low.is_finite() && high.is_finite()).then_some((low, high))
+    }
+
     pub fn valid(&self, kind: ValueKind) -> bool {
         if matches!(self.op, FilterOp::Missing | FilterOp::Present) {
             return true;
+        }
+        if self.op == FilterOp::Between {
+            return kind != ValueKind::Text && self.bounds().is_some();
         }
         match kind {
             ValueKind::Number => {
@@ -140,10 +155,11 @@ impl MetricFilter {
                     && self.value.parse::<f64>().is_ok_and(f64::is_finite)
             }
             ValueKind::Text => {
-                !matches!(self.op, FilterOp::Gte | FilterOp::Lte) && !self.value.trim().is_empty()
+                !matches!(self.op, FilterOp::Gte | FilterOp::Lte | FilterOp::Lt)
+                    && !self.value.trim().is_empty()
             }
             ValueKind::Mixed => {
-                if matches!(self.op, FilterOp::Gte | FilterOp::Lte) {
+                if matches!(self.op, FilterOp::Gte | FilterOp::Lte | FilterOp::Lt) {
                     self.value.parse::<f64>().is_ok_and(f64::is_finite)
                 } else {
                     !self.value.trim().is_empty()
@@ -167,6 +183,12 @@ impl MetricFilter {
         if value.is_unknown() {
             return if partial { None } else { Some(false) };
         }
+        if self.op == FilterOp::Between {
+            return Some(match (value, self.bounds()) {
+                (GridValue::Number(n), Some((low, high))) => *n >= low && *n <= high,
+                _ => false,
+            });
+        }
         let equal = match value {
             GridValue::Number(n) => {
                 let Some(rhs) = self.value.parse::<f64>().ok().filter(|v| v.is_finite()) else {
@@ -177,6 +199,7 @@ impl MetricFilter {
                     FilterOp::Ne => *n != rhs,
                     FilterOp::Gte => *n >= rhs,
                     FilterOp::Lte => *n <= rhs,
+                    FilterOp::Lt => *n < rhs,
                     _ => false,
                 });
             }
@@ -310,6 +333,41 @@ pub fn query_rows<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranges_validate_both_bounds_and_preserve_unknown_coverage() {
+        for raw in ["NaN,20", "10,inf", "10,", "10", "a,b"] {
+            assert!(
+                !MetricFilter {
+                    op: FilterOp::Between,
+                    value: raw.into()
+                }
+                .valid(ValueKind::Number),
+                "{raw}"
+            );
+        }
+        let filter = MetricFilter {
+            op: FilterOp::Between,
+            value: "10,20".into(),
+        };
+        assert!(!filter.valid(ValueKind::Text));
+        let rows = vec![
+            GridValue::Number(5.0),
+            GridValue::Number(15.0),
+            GridValue::Pending,
+            GridValue::Missing,
+            GridValue::Unavailable,
+        ];
+        let result = query_rows(
+            &rows,
+            &[GridMetric::number("price", |v: &GridValue| v.clone()).partial()],
+            &BTreeMap::from([("price".into(), filter)]),
+            None,
+            true,
+        );
+        assert_eq!(result.rows, Some(rows[1..].to_vec()));
+        assert_eq!(result.lacking_data, 3);
+    }
 
     #[test]
     fn untouched_queries_never_clone_rows_or_read_providers() {

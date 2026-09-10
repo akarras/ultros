@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "More reliable shared-list edits",
+  "blurb": "List edits now keep target prices when adding items and combine matching rows when you switch their quality. Quality changes appear as a removal and addition in the activity feed. Removing someone's access also stops live updates to their open list.",
+  "link": "/lists"
+}

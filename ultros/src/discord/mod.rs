@@ -21,6 +21,10 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 
 pub(crate) struct Data {
     db: UltrosDb,
+    /// No bot command reads this yet; a later task in the lists-sync plan
+    /// routes the legacy list-editing commands through `ListSync`.
+    #[allow(dead_code)]
+    list_sync: crate::lists::ListSync,
     lodestone_client: reqwest::Client,
     event_senders: EventSenders,
     analyzer_service: AnalyzerService,
@@ -164,6 +168,7 @@ async fn handle_event(event: &serenity::FullEvent, data: &Data) {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_discord(
     db: UltrosDb,
+    list_sync: crate::lists::ListSync,
     event_senders: EventSenders,
     event_receivers: EventReceivers,
     analyzer_service: AnalyzerService,
@@ -222,6 +227,7 @@ pub(crate) async fn start_discord(
                 ));
                 Ok(Data {
                     db,
+                    list_sync,
                     lodestone_client: reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(10))
                         .build()

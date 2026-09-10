@@ -6,7 +6,9 @@ pub mod key;
 pub mod snapshot;
 pub mod undo;
 
-pub use document::{DocError, ImportReport, ListDocument, SCHEMA_VERSION, SyncPayload};
+pub use document::{
+    DocError, ImportReport, ListDocument, SCHEMA_VERSION, SyncPayload, rebase_rows,
+};
 pub use key::{KeyError, Quality, RowKey};
 pub use snapshot::{MetaSnapshot, RowChange, RowSnapshot, diff_rows, encode_scope, parse_scope};
 pub use undo::ListUndo;

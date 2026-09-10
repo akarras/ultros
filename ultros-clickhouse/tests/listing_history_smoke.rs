@@ -21,7 +21,15 @@ async fn window_history_receipts_floors_stock_and_bounds() {
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.unwrap();
     ch.migrate().await.unwrap();
-    let to = chrono::Utc::now().timestamp();
+    // Use the producer's clock as well as a fixed endpoint for every assertion.
+    // A host/ClickHouse clock offset must not move the expired-sale fixture
+    // back inside the real refresh query's rolling window.
+    let to = ch
+        .client()
+        .query("SELECT toInt64(now())")
+        .fetch_one::<i64>()
+        .await
+        .unwrap();
     let from = to - 86400;
     let removal = to - 2000;
     let item = 700_000 + (std::process::id() % 100000) as i32;
@@ -56,6 +64,16 @@ async fn window_history_receipts_floors_stock_and_bounds() {
         removal
     );
     ch.client().query(&sql).execute().await.unwrap();
+    // Simulate an acknowledged-late append-only insert: the writer retries the
+    // entire batch, so every event is physically present twice. Turnover and
+    // one-to-one sale attribution must still describe the original observations.
+    ch.client()
+        .query(&format!(
+            "INSERT INTO listing_events SELECT * FROM listing_events WHERE item_id = {item}"
+        ))
+        .execute()
+        .await
+        .unwrap();
     ch.client()
         .query(&format!(
             "INSERT INTO sale_receipts VALUES
@@ -152,26 +170,185 @@ async fn window_history_receipts_floors_stock_and_bounds() {
     req.item_ids = vec![item; 21];
     assert!(floor_history::batch(&ch, &[1, 2], &req).await.is_err());
     assert!(
-        listing_history::stock(&ch, &[1, 2], 1)
+        listing_history::stock(&ch, &[1, 2], 1, to)
             .await
             .unwrap()
             .is_empty()
     );
     for world in [1, 2] {
-        ch.client().query(&format!("INSERT INTO listing_alive SELECT {world},{item},toUInt8(0),now(),toUInt32(1),toUInt64(100),toUInt32(1),now(),quantileTDigestState(0.5)(toUInt32(0)),toUInt32(100)")).execute().await.unwrap();
-        ch.client().query(&format!("INSERT INTO sale_stats_window SELECT {world},toUInt16(1),{item},toUInt8(0),now(),toUInt32(100),quantileTDigestState(0.5)(toUInt32(100)),toUInt64(100),toUInt64(1),toInt64(now()),toUInt64({}),toUInt64(100)",if world==1 { 0 } else { 50 })).execute().await.unwrap();
+        ch.client().query(&format!("INSERT INTO listing_alive SELECT {world},{item},toUInt8(0),toDateTime({to}),toUInt32(1),toUInt64(100),toUInt32(1),toDateTime({to}),quantileTDigestState(0.5)(toUInt32(0)),toUInt32(100)")).execute().await.unwrap();
+        ch.client().query(&format!("INSERT INTO sale_stats_window SELECT {world},toUInt16(1),{item},toUInt8(0),toDateTime({to}),toUInt32(100),quantileTDigestState(0.5)(toUInt32(100)),toUInt64(100),toUInt64(1),toInt64({to}-1),toUInt64({}),toUInt64(100)",if world==1 { 0 } else { 50 })).execute().await.unwrap();
     }
     assert_eq!(
-        listing_history::stock(&ch, &[1], 1).await.unwrap()[&(item, false)],
+        listing_history::stock(&ch, &[1], 1, to).await.unwrap()[&(item, false)],
         Some(0)
     );
     assert_eq!(
-        listing_history::stock(&ch, &[1, 2], 1).await.unwrap()[&(item, false)],
+        listing_history::stock(&ch, &[1, 2], 1, to).await.unwrap()[&(item, false)],
         Some(50)
     );
     assert_eq!(
-        listing_history::stock(&ch, &[1, 2, 3], 1).await.unwrap()[&(item, false)],
+        listing_history::stock(&ch, &[1, 2, 3], 1, to)
+            .await
+            .unwrap()[&(item, false)],
         None
+    );
+
+    // Evaluate at a fixed window end so exact cutoffs do not depend on how
+    // quickly ClickHouse executes the inserts. Each case has a separate key.
+    for (index, (days, cadence)) in [(1, 900), (7, 3600), (30, 21600), (90, 21600)]
+        .into_iter()
+        .enumerate()
+    {
+        let first = item + 100 + index as i32 * 20;
+        let start = to - i64::from(days) * 86400;
+        let cases = [
+            (to - cadence, to - 900, start, 50, Some(50)),
+            (to - cadence - 1, to, to - 1, 50, None),
+            (to, to - 901, to - 1, 50, None),
+            (to + 1, to, to - 1, 50, None),
+            (to, to + 1, to - 1, 50, None),
+            (to, to, start - 1, 50, None),
+            (to, to, to, 50, None),
+            (to, to, 0, 0, Some(0)),
+            (to - cadence - 1, to, 0, 0, None),
+        ];
+        for (offset, &(sale_time, alive_time, sold_at, units, _)) in cases.iter().enumerate() {
+            stock_snapshot(
+                &ch,
+                first + offset as i32,
+                1,
+                days,
+                (sale_time, sold_at, units),
+                alive_time,
+            )
+            .await;
+        }
+        let actual = listing_history::stock(&ch, &[1], days, to).await.unwrap();
+        for (offset, &(_, _, _, _, expected)) in cases.iter().enumerate() {
+            assert_eq!(
+                actual[&(first + offset as i32, false)],
+                expected,
+                "window {days}, boundary case {offset}"
+            );
+        }
+        let mixed = first + 10;
+        stock_snapshot(&ch, mixed, 1, days, (to, to - 1, 50), to).await;
+        stock_snapshot(&ch, mixed, 2, days, (to - cadence - 1, to - 1, 50), to).await;
+        let actual = listing_history::stock(&ch, &[1, 2], days, to)
+            .await
+            .unwrap();
+        assert_eq!(
+            actual[&(mixed, false)],
+            None,
+            "one stale world invalidates the scope"
+        );
+        assert_eq!(
+            actual[&(first, false)],
+            None,
+            "one missing world invalidates the scope"
+        );
+    }
+
+    // Exercise the real producer's vanished-group behavior: once its final
+    // sale is outside the window, a refresh leaves the older positive row in
+    // ReplacingMergeTree. The consumer must not treat it as current stock data.
+    let expired = item + 1000;
+    stock_snapshot(&ch, expired, 1, 1, (to - 900, to - 86401, 50), to).await;
+    ch.client().query(&format!("INSERT INTO sales (pg_id,sold_date,item_id,hq,world_id,price_per_item,quantity,buying_character_id) VALUES (100,{},{expired},0,1,100,50,1)",to-86401)).execute().await.unwrap();
+    ultros_clickhouse::rollups::refresh_sale_stats_window(&ch, 1)
+        .await
+        .unwrap();
+    let retained = ch.client().query(&format!("SELECT sum(units_sold) FROM sale_stats_window FINAL WHERE item_id={expired} AND world_id=1 AND window_days=1")).fetch_one::<u64>().await.unwrap();
+    assert_eq!(
+        retained, 50,
+        "the real producer retains the obsolete positive row"
+    );
+    assert_eq!(
+        listing_history::stock(&ch, &[1], 1, to).await.unwrap()[&(expired, false)],
+        None
+    );
+}
+
+async fn stock_snapshot(
+    ch: &ClickHouseClient,
+    item: i32,
+    world: i32,
+    days: u16,
+    sale: (i64, i64, u64),
+    alive_time: i64,
+) {
+    let (computed_at, sold_at, units) = sale;
+    ch.client().query(&format!("INSERT INTO listing_alive SELECT {world},{item},toUInt8(0),toDateTime({alive_time}),toUInt32(1),toUInt64(100),toUInt32(1),toDateTime({alive_time}),quantileTDigestState(0.5)(toUInt32(0)),toUInt32(100)")).execute().await.unwrap();
+    ch.client().query(&format!("INSERT INTO sale_stats_window SELECT {world},toUInt16({days}),{item},toUInt8(0),toDateTime({computed_at}),toUInt32(100),quantileTDigestState(0.5)(toUInt32(100)),toUInt64(100),toUInt64(1),toInt64({sold_at}),toUInt64({units}),toUInt64(100)")).execute().await.unwrap();
+}
+
+/// A retry is duplicate evidence; two distinct listings are still two events.
+#[tokio::test]
+async fn event_dedup_preserves_distinct_listing_identities() {
+    if std::env::var("ULTROS_CH_INTEGRATION").is_err() {
+        return;
+    }
+    assert!(
+        std::env::var("CLICKHOUSE_URL")
+            .unwrap()
+            .starts_with("http://127.0.0.1:")
+    );
+    assert!(
+        std::env::var("CLICKHOUSE_DATABASE")
+            .unwrap()
+            .starts_with("ultros_t12_")
+    );
+    let ch = ClickHouseClient::from_env();
+    ch.migrate().await.unwrap();
+    let to = ch
+        .client()
+        .query("SELECT toInt64(now())")
+        .fetch_one::<i64>()
+        .await
+        .unwrap();
+    let item = 1_800_000 + (std::process::id() % 100000) as i32;
+    let added = to - 8000;
+    let removed = to - 2000;
+    // Every compact WindowEvent field is identical between A and B. Only the
+    // stored listing identities distinguish these genuinely separate stacks.
+    for (listing, pg_id) in [("distinct-a", 1001), ("distinct-b", 1002)] {
+        ch.client()
+            .query(&format!(
+                "INSERT INTO listing_events VALUES
+            ({added},'added','websocket',{item},0,1,'{listing}',{pg_id},42,777,2,0,0,{added}),
+            ({removed},'removed','websocket',{item},0,1,'{listing}',{pg_id},42,777,2,0,0,{added})"
+            ))
+            .execute()
+            .await
+            .unwrap();
+    }
+    ch.client()
+        .query(&format!(
+            "INSERT INTO listing_events SELECT * FROM listing_events WHERE item_id={item}"
+        ))
+        .execute()
+        .await
+        .unwrap();
+    ch.client()
+        .query(&format!(
+            "INSERT INTO sale_receipts VALUES (1999,{}, {removed},{item},0,1,777,2)",
+            removed + 1
+        ))
+        .execute()
+        .await
+        .unwrap();
+    let rows = listing_history::window(&ch, &[1], 1, to).await.unwrap();
+    let stats = &rows[&(item, false)];
+    assert_eq!(
+        stats.additions, 2,
+        "retries must not inflate distinct additions"
+    );
+    assert_eq!(stats.removals, 2, "distinct stacks must not be collapsed");
+    assert_eq!(stats.matches.matched, 0);
+    assert_eq!(
+        stats.matches.ambiguous, 2,
+        "one receipt cannot identify either stack"
     );
 }
 

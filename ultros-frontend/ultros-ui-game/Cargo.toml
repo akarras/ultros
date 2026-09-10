@@ -1,0 +1,53 @@
+[package]
+name = "ultros-ui-game"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+colorsys = "0.7.3"
+futures = "0.3.32"
+icondata = { workspace = true }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos_i18n = { workspace = true }
+serde = { workspace = true, features = [
+    "rc",
+] }
+serde_json = { workspace = true }
+time = "0.3.47"
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "Storage",
+] }
+xiv-gen = { workspace = true }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "ultros-frontend-core/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-frontend-core/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

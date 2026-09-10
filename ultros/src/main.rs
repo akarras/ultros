@@ -10,6 +10,7 @@ pub(crate) mod group_sync;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
+pub(crate) mod lists;
 pub(crate) mod lodestone_profile;
 #[cfg(feature = "profiling")]
 pub mod profiling;
@@ -645,6 +646,7 @@ async fn main() -> Result<()> {
     let startup_client = universalis_client.clone();
     let init = db.clone();
     let (senders, receivers) = create_event_busses();
+    let list_sync = lists::ListSync::new(db.clone(), senders.clone());
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
@@ -731,8 +733,17 @@ async fn main() -> Result<()> {
         full_sweep_cooldowns: Default::default(),
         uncovered_worlds: Default::default(),
         sweep_lock: Default::default(),
+        shutdown: token.clone(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
+    // A full sweep runs for hours, so a deploy lands in the middle of nearly
+    // every one. Its progress is persisted per chunk; this picks up whatever
+    // the last process left unfinished instead of waiting for an operator to
+    // notice and re-issue `/rescan_market`.
+    crate::discord::ffxiv::admin::spawn_interrupted_sweep_resume(
+        update_service.clone(),
+        token.clone(),
+    );
     // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
     // failure looks like a healthy process serving frozen numbers, so this gauge
     // is the only thing that makes one visible from outside.
@@ -786,6 +797,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(start_discord(
         db.clone(),
+        list_sync.clone(),
         senders.clone(),
         receivers.clone(),
         analyzer_service.clone(),
@@ -835,6 +847,7 @@ async fn main() -> Result<()> {
         price_series_cache: Default::default(),
         sale_stats_cache: Default::default(),
         listing_stats_cache: Default::default(),
+        list_sync,
     };
     let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
     let web_finished = tokio::select! {
@@ -855,9 +868,14 @@ async fn main() -> Result<()> {
             if let Err(e) = analyzer_shutdown.await {
                 error!("Analyzer shutdown failed: {e:?}");
             }
-            ch_writer.shutdown().await;
-            sale_receipts.shutdown().await;
-            floor_writer.shutdown().await;
+            // Independent tables, independent tasks. Draining them in sequence
+            // spent two drain budgets back to back against the one 30 second
+            // budget below (GlitchTip #7310).
+            tokio::join!(
+                ch_writer.shutdown(),
+                sale_receipts.shutdown(),
+                floor_writer.shutdown()
+            );
         };
         let drain_web = async {
             if !web_finished && let Err(e) = web_task.await {

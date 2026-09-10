@@ -7,7 +7,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # no-op during SSR (tachys renders nothing for it), so crawlers/social
 # unfurlers never see the value. Use the plain attribute (reactive closures
 # work fine on regular attributes) instead of prop:.
-if grep -rEn "prop:(href|alt|src|content)=" ultros-frontend/ultros-app/src/ ultros-frontend/ultros-ui/src/; then
+if grep -rEn "prop:(href|alt|src|content)=" ultros-frontend/ultros-app/src/ ultros-frontend/ultros-ui*/src/ ultros-frontend/ultros-frontend-core/src/; then
     echo "error: found prop:href/alt/src/content in frontend components -- these are SSR no-ops, see above" >&2
     exit 1
 fi

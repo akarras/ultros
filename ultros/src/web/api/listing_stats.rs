@@ -96,7 +96,7 @@ async fn load_listing_stats(
         let mut history = ultros_clickhouse::listing_history::window(ch, &world_ids, days, to)
             .await
             .map_err(|e| ClickHouseQueryError::new("listing_history", e))?;
-        let stock = ultros_clickhouse::listing_history::stock(ch, &world_ids, days)
+        let stock = ultros_clickhouse::listing_history::stock(ch, &world_ids, days, to)
             .await
             .map_err(|e| ClickHouseQueryError::new("listing_stock", e))?;
         for key in stats.keys().copied().collect::<Vec<_>>() {
