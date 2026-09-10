@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "单价",
     "currency_exchange_table_qty_recv": "可获得",
     "currency_exchange_table_profit": "利润",
-    "currency_exchange_table_hours_per_sale": "小时/件",
+    "currency_exchange_table_hours_per_sale": "小时/件（近期）",
     "currency_exchange_error_loading": "加载失败，请 30 秒后重试！",
     "currency_exchange_hero_desc": "查找可以用联盟章、狼之印记等游戏内通货购买，并在市场板上转售换取金币的物品。",
     "currency_exchange_meta_title_ultros": "通货兑换 - Ultros",

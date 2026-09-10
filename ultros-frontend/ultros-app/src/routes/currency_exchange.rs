@@ -5,16 +5,16 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
+use crate::analyzer_kit::filters::register_filters;
+use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
+use crate::analyzer_kit::stat_columns::{market_picker_options, shared_cols_in, toggle_shared_col};
+use crate::analyzer_kit::window::MarketWindowControl;
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
-use crate::components::control_bar::{ColumnOption, ControlBar, FilterOption};
-use crate::components::data_table::{
-    Column, ColumnHeader, TrackWidths, body_cells, header_cells, visible_column_count,
-};
-use crate::components::filter_chip::FilterChip;
+use crate::components::control_bar::{ColumnOption, ControlBar};
 use crate::components::icon::Icon;
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::MetaDescription;
@@ -22,6 +22,10 @@ use crate::components::meta::MetaTitle;
 use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
 use crate::components::sort_header::{SortColumn, SortDir, SortHeader};
 use crate::components::tool_help::ToolHeader;
+use crate::components::virtual_grid::GridColumn;
+use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
+use crate::components::virtual_grid::registry::FilterAlias;
+use crate::components::virtual_grid::saved_views::provide_grid_saved_views;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
@@ -33,12 +37,11 @@ use chrono::Utc;
 use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
 
-use crate::components::app_link::use_query_map_or_default;
 use crate::query_defaults::query_signal;
+#[cfg(test)]
 use leptos_router::params::ParamsMap;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
@@ -164,40 +167,162 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
         })
 }
 
-/// Stable URL IDs for optional columns, in picker + `?cols=` order.
-/// Required columns (item, qty received, profit) are not listed — they
-/// always render, and lead the table so a phone's visible slice is the
-/// answer, not the trivia.
+/// Keep native exchange revenue and recent-sale cadence independent of the
+/// selectable market-history window.
+fn compute_prices(
+    shops_with_item: &[(ShopItems, &SpecialShop)],
+    sales: Option<&ultros_api_types::recent_sales::RecentSales>,
+    listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
+    quantity: i32,
+    now: chrono::NaiveDateTime,
+) -> Option<Vec<CurrencyTrade>> {
+    let sales: HashMap<(bool, i32), SaleData> = sales?
+        .sales
+        .iter()
+        .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
+        .collect();
+    let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
+        .cheapest_listings
+        .iter()
+        .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
+        .collect();
+    let rows = shops_with_item
+        .iter()
+        .filter_map(|(item, shop)| {
+            let cost = item.cost[0];
+            let recv = item.recv.iter().find(|i| i.item.item_search_category > 0)?;
+            let item_key = (false, recv.item.key_id.0);
+            let sales = &sales.get(&item_key)?.sales;
+            let recent = sales.first()?;
+            let most_recent = recent.sale_date;
+            let stale_threshold = now - TimeDelta::days(60);
+            if most_recent < stale_threshold {
+                return None;
+            }
+            let sale = recent.price_per_unit;
+            let current_listing_price = world_listings
+                .get(&item_key)
+                .map(|listing| listing.cheapest_price - 1);
+            let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
+            let input_amount = quantity;
+            let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
+            let sales_len = sales.len();
+            let hours_between_sales = sales
+                .last()
+                .map(|last| {
+                    let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
+                    time_between.num_hours() as i16
+                })
+                .unwrap_or(i16::MAX);
+            Some((
+                (
+                    cost,
+                    *recv,
+                    guessed_price_per_item,
+                    number_received,
+                    guessed_price_per_item as i64 * number_received as i64,
+                    hours_between_sales,
+                ),
+                shop.name.to_string(),
+            ))
+        })
+        .into_group_map()
+        .into_iter()
+        .map(
+            |(
+                (
+                    cost,
+                    recv,
+                    guessed_price_per_item,
+                    number_received,
+                    total_profit,
+                    hours_between_sales,
+                ),
+                shop_names,
+            )| {
+                CurrencyTrade {
+                    shop_names: ShopNames {
+                        shops: shop_names.into_iter().unique().collect(),
+                    },
+                    cost_item: Some(cost),
+                    receive_item: Some(recv),
+                    listing_price: world_listings
+                        .get(&(false, recv.item.key_id.0))
+                        .map(|l| l.cheapest_price),
+                    price_per_item: guessed_price_per_item,
+                    number_received,
+                    total_profit,
+                    hours_between_sales,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    Some(rows)
+}
+
+/// Existing optional-column IDs are part of saved exchange links.
 const COL_PRICE_PER_ITEM: &str = "price_per_item";
 const COL_SHOPS: &str = "shops";
 const COL_COST: &str = "cost";
 const COL_HOURS: &str = "hours_between_sales";
 
+/// Native optional columns, in picker order. All four are on by default.
 const ALL_OPTIONAL_COLS: &[&str] = &[COL_PRICE_PER_ITEM, COL_SHOPS, COL_COST, COL_HOURS];
 
-/// All four default on; `?cols=` absent = this set, explicitly set (even
-/// to "") = respected exactly — same contract as the flip finder.
-const DEFAULT_VISIBLE_COLS: &[&str] = ALL_OPTIONAL_COLS;
-
-fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    match raw {
-        None => DEFAULT_VISIBLE_COLS.iter().copied().collect(),
-        Some(s) => s
-            .split(',')
-            .filter_map(|tok| ALL_OPTIONAL_COLS.iter().find(|c| **c == tok).copied())
-            .collect(),
-    }
+/// The `?cols=` value an absent param stands for: every native optional
+/// column and no shared sale-history column — the grid's own defaults.
+fn default_cols_query() -> String {
+    ALL_OPTIONAL_COLS.join(",")
 }
 
-fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> String {
-    ALL_OPTIONAL_COLS
+/// Picker checkboxes for a `?cols=` value. The grid owns the param (absent =
+/// defaults, explicit — even empty — = exact), so the toolbar reads the same
+/// token list the grid does rather than keeping a second visible set.
+fn picker_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
+    let Some(raw) = raw else {
+        return ALL_OPTIONAL_COLS.iter().copied().collect();
+    };
+    let mut visible: std::collections::HashSet<&'static str> = ALL_OPTIONAL_COLS
         .iter()
-        .filter(|c| visible.contains(*c))
         .copied()
-        .collect::<Vec<_>>()
-        .join(",")
+        .filter(|col| raw.split(',').any(|tok| tok == *col))
+        .collect();
+    visible.extend(shared_cols_in(Some(raw)));
+    visible
 }
 
+fn exchange_filter_aliases() -> Vec<FilterAlias> {
+    [
+        ("price_per_item_min", COL_PRICE_PER_ITEM, FilterOp::Gte),
+        ("price_per_item_max", COL_PRICE_PER_ITEM, FilterOp::Lte),
+        ("number_received_min", "number_received", FilterOp::Gte),
+        ("number_received_max", "number_received", FilterOp::Lte),
+        ("total_profit_min", "total_profit", FilterOp::Gte),
+        ("total_profit_max", "total_profit", FilterOp::Lte),
+        ("hours_between_sales_min", COL_HOURS, FilterOp::Gte),
+        ("hours_between_sales_max", COL_HOURS, FilterOp::Lte),
+    ]
+    .into_iter()
+    .map(|(key, column, op)| FilterAlias::integer(key, column, op))
+    .collect()
+}
+
+fn exchange_metrics() -> Vec<GridMetric<CurrencyTrade>> {
+    vec![
+        GridMetric::number(COL_PRICE_PER_ITEM, |t: &CurrencyTrade| {
+            GridValue::Number(t.price_per_item as f64)
+        }),
+        GridMetric::number("number_received", |t: &CurrencyTrade| {
+            GridValue::Number(t.number_received as f64)
+        }),
+        GridMetric::number("total_profit", |t: &CurrencyTrade| {
+            GridValue::Number(t.total_profit as f64)
+        }),
+        GridMetric::number(COL_HOURS, |t: &CurrencyTrade| {
+            GridValue::Number(t.hours_between_sales as f64)
+        }),
+    ]
+}
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Profit,
@@ -260,98 +385,7 @@ fn sort_trades(rows: &mut [CurrencyTrade], mode: SortMode, dir: SortDir) {
     }
 }
 
-/// Skeleton columns matching the visible column set, so the placeholder
-/// table has the same rhythm as the one that loads in. Order mirrors the
-/// real DOM order: item, qty, profit, then whatever `?cols=` has on.
-fn skeleton_columns(visible: &std::collections::HashSet<&'static str>) -> Vec<SkeletonColumn> {
-    let mut cols = vec![
-        SkeletonColumn::new("flex-1 min-w-40", SkeletonCell::IconText),
-        SkeletonColumn::new("w-20", SkeletonCell::Number),
-        SkeletonColumn::new("w-24", SkeletonCell::Number),
-    ];
-    if visible.contains(COL_PRICE_PER_ITEM) {
-        cols.push(SkeletonColumn::new("w-24", SkeletonCell::Number));
-    }
-    if visible.contains(COL_SHOPS) {
-        cols.push(SkeletonColumn::new("w-40", SkeletonCell::Text));
-    }
-    if visible.contains(COL_COST) {
-        cols.push(SkeletonColumn::new("w-40", SkeletonCell::IconText));
-    }
-    if visible.contains(COL_HOURS) {
-        cols.push(SkeletonColumn::new("w-20", SkeletonCell::Number));
-    }
-    cols
-}
-
-/// One min/max half of a numeric column filter: everything the chip, the
-/// `+ Filter` menu, and Clear-all need to agree on.
-struct RangeFilter {
-    /// Query key, kept verbatim from the old UI so deep links survive.
-    key: &'static str,
-    /// Spinner floor for the chip's inline input. `None` for profit —
-    /// a negative profit floor is a legitimate filter.
-    min: Option<&'static str>,
-}
-
-const RANGE_FILTERS: &[RangeFilter] = &[
-    RangeFilter {
-        key: "price_per_item_min",
-        min: Some("0"),
-    },
-    RangeFilter {
-        key: "price_per_item_max",
-        min: Some("0"),
-    },
-    RangeFilter {
-        key: "number_received_min",
-        min: Some("0"),
-    },
-    RangeFilter {
-        key: "number_received_max",
-        min: Some("0"),
-    },
-    RangeFilter {
-        key: "total_profit_min",
-        min: None,
-    },
-    RangeFilter {
-        key: "total_profit_max",
-        min: None,
-    },
-    RangeFilter {
-        key: "hours_between_sales_min",
-        min: Some("0"),
-    },
-    RangeFilter {
-        key: "hours_between_sales_max",
-        min: Some("0"),
-    },
-];
-
-/// Set the `.hscroll-fade` mask variables from the scrollport's geometry: a
-/// 24px fade on any side that still has content past the fold, 0 otherwise.
-/// The 1px deadbands absorb the browser's rounding of `scrollWidth`.
-#[cfg(feature = "hydrate")]
-fn apply_table_fades(el: &web_sys::HtmlDivElement) {
-    const FADE_PX: f64 = 24.0;
-    let left = el.scroll_left();
-    let right = (el.scroll_width() as f64 - el.client_width() as f64 - left).max(0.0);
-    let px = |on: bool| {
-        if on {
-            format!("{FADE_PX}px")
-        } else {
-            "0px".to_string()
-        }
-    };
-    // Fully qualified for the same reason as the analyzer's chip fades:
-    // tachys' `ElementExt::style` wins method resolution over the inherent
-    // `HtmlElement::style` on a bare `el.style()` call.
-    let style = web_sys::HtmlElement::style(el);
-    let _ = style.set_property("--hfade-start", &px(left > 1.0));
-    let _ = style.set_property("--hfade-end", &px(right > 1.0));
-}
-
+#[cfg(test)]
 fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
     let max = query_map
         .get(&format!("{field_label}_max"))
@@ -392,7 +426,6 @@ pub fn ExchangeItem() -> impl IntoView {
 fn ExchangeItemContent() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
-    let query = use_query_map_or_default();
     let (home_world, _) = use_home_world();
     // `filter_query_signal`, not a plain `query_signal`: this box is typed into
     // a digit at a time, and the router default (replace: false, scroll: true)
@@ -451,451 +484,81 @@ fn ExchangeItemContent() -> impl IntoView {
     let (dir_param, _) = query_signal::<String>("dir");
     let sort_mode = Memo::new(move |_| sort_param().and_then(|s| s.parse::<SortMode>().ok()));
     let sort_dir = Memo::new(move |_| dir_param().and_then(|s| s.parse::<SortDir>().ok()));
-    let (cols_param, set_cols_param) = query_signal::<String>("cols");
-    let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
-
-    // The results table's seven columns, described once. The header cells,
-    // every body row and the empty state's `colspan` all read this one
-    // ordered list, so they can no longer disagree about which `?cols=`
-    // columns are on or what order they come in — that hand-matching was the
-    // other half of the debt #1080 tracked.
-    //
-    // The list is a `Vec`, never keyed off `visible_cols`' `HashSet`: a set's
-    // iteration order reaching the DOM is an SSR/CSR hydration mismatch. The
-    // set is only ever *queried*, exactly as the inline `.contains(…)` guards
-    // did.
-    //
-    // This table keeps its real `<table>` rather than moving to
-    // `DataTableGrid`'s div grid (see the substrate note in
-    // `components/data_table.rs`): its columns are sized to their content by
-    // table auto-layout, and its empty state spans them with `colspan`.
-    // `TrackWidths` is therefore unused here.
-    const TH: &str = "px-3 py-2 font-bold whitespace-nowrap";
-    let sortable_th = move |mode: SortMode, label: String| {
-        ColumnHeader::cell(move |class| {
-            let label = label.clone();
-            view! {
-                <th scope="col" class=class>
-                    <div class="flex justify-end">
-                        <SortHeader mode=mode label=label sort_mode=sort_mode sort_dir=sort_dir />
-                    </div>
-                </th>
-            }
-            .into_any()
-        })
-    };
-    let toggled = move |col: &'static str| Signal::derive(move || visible_cols.get().contains(col));
-    let columns: Arc<Vec<Column<CurrencyTrade>>> = Arc::new(vec![
-        Column::new(
-            TrackWidths::default(),
-            ColumnHeader::content(move || {
-                view! { {t!(i18n, currency_exchange_table_item)} }.into_any()
-            }),
-            |trade: &CurrencyTrade| {
-                let receive_item = trade.receive_item;
-                view! {
-                    <td class="px-3 py-2">
-                        <ItemAmount item_amount=receive_item />
-                    </td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH),
-        Column::new(
-            TrackWidths::default(),
-            sortable_th(
-                SortMode::QtyReceived,
-                t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
-            ),
-            |trade: &CurrencyTrade| {
-                let number_received = trade.number_received;
-                view! {
-                    <td class="px-3 py-2 text-right tabular-nums">{number_received}</td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH),
-        Column::new(
-            TrackWidths::default(),
-            sortable_th(
-                SortMode::Profit,
-                t_string!(i18n, currency_exchange_table_profit).to_string(),
-            ),
-            |trade: &CurrencyTrade| {
-                let total_profit = trade.total_profit;
-                view! {
-                    <td class="px-3 py-2 text-right tabular-nums font-medium text-[color:var(--color-text)]">
-                        {total_profit}
-                    </td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH),
-        Column::new(
-            TrackWidths::default(),
-            sortable_th(
-                SortMode::PricePerItem,
-                t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
-            ),
-            |trade: &CurrencyTrade| {
-                let price_per_item = trade.price_per_item;
-                view! {
-                    <td class="px-3 py-2 text-right tabular-nums">{price_per_item}</td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH)
-        .visible(toggled(COL_PRICE_PER_ITEM)),
-        Column::new(
-            TrackWidths::default(),
-            ColumnHeader::content(move || {
-                view! { {t!(i18n, currency_exchange_table_shops)} }.into_any()
-            }),
-            |trade: &CurrencyTrade| {
-                let shop_names = trade.shop_names.clone();
-                view! {
-                    <td class="px-3 py-2 text-[color:var(--color-text-muted)]">
-                        <ShopNames shop_names=shop_names />
-                    </td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH)
-        .visible(toggled(COL_SHOPS)),
-        Column::new(
-            TrackWidths::default(),
-            ColumnHeader::content(move || {
-                view! { {t!(i18n, currency_exchange_table_cost)} }.into_any()
-            }),
-            |trade: &CurrencyTrade| {
-                let cost_item = trade.cost_item;
-                view! {
-                    <td class="px-3 py-2">
-                        <ItemAmount item_amount=cost_item />
-                    </td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH)
-        .visible(toggled(COL_COST)),
-        Column::new(
-            TrackWidths::default(),
-            sortable_th(
-                SortMode::HoursBetweenSales,
-                t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
-            ),
-            |trade: &CurrencyTrade| {
-                let hours_between_sales = trade.hours_between_sales;
-                view! {
-                    <td class="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-muted)]">
-                        {hours_between_sales}
-                    </td>
-                }
-                .into_any()
-            },
-        )
-        .header_class(TH)
-        .visible(toggled(COL_HOURS)),
-    ]);
-
-    let list_scroll = NodeRef::<leptos::html::Div>::new();
+    let market = use_market_data(Signal::derive(move || {
+        home_world.get().map(|w| w.name).unwrap_or_default()
+    }));
+    let filters = register_filters(exchange_filter_aliases(), Signal::derive(Vec::new));
+    provide_grid_saved_views("currency-exchange-grid");
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
-
-    // One (getter, setter) per range filter, in RANGE_FILTERS order. The
-    // filter *logic* keeps reading the raw query map through `is_in_range`;
-    // these signals exist for the chips, bound with `filter_query_signal`
-    // (replace: true, scroll: false) so editing a filter neither pushes a
-    // history entry per keystroke nor yanks the window back to the top.
-    type RangeFilterSignal = (Memo<Option<i32>>, SignalSetter<Option<i32>>);
-    let filter_signals: Vec<RangeFilterSignal> = RANGE_FILTERS
-        .iter()
-        .map(|f| filter_query_signal::<i32>(f.key))
-        .collect();
-    let filter_signals = StoredValue::new(filter_signals);
-
-    // A filter the user just added from the `+ Filter` menu but hasn't
-    // committed yet — its chip mounts in edit state with an empty input.
-    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
-
-    // Filters currently drawn as a chip. Drives the "no active filters"
-    // hint and keeps `+ Filter` from offering a second copy of something
-    // the user can already see.
-    let active_filters = Memo::new(move |_| {
-        filter_signals.with_value(|sigs| {
-            RANGE_FILTERS
-                .iter()
-                .zip(sigs)
-                .filter(|(f, (get, _))| get.get().is_some() || pending_filter.get() == Some(f.key))
-                .map(|(f, _)| f.key)
-                .collect::<Vec<_>>()
-        })
-    });
-
-    // Menu label for a filter: the long, explanatory one — the menu is where
-    // a filter has to be recognized, not just recalled. The chip reuses the
-    // terser comparison-shaped label.
-    let menu_label = move |key: &str| -> String {
-        match key {
-            "price_per_item_min" => {
-                t_string!(i18n, currency_exchange_filter_price_min_label).to_string()
+    let column_label = move |id| -> String {
+        match id {
+            "item" => t_string!(i18n, currency_exchange_table_item).to_string(),
+            "number_received" => t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
+            "total_profit" => t_string!(i18n, currency_exchange_table_profit).to_string(),
+            COL_PRICE_PER_ITEM => {
+                t_string!(i18n, currency_exchange_table_price_per_item).to_string()
             }
-            "price_per_item_max" => {
-                t_string!(i18n, currency_exchange_filter_price_max_label).to_string()
-            }
-            "number_received_min" => {
-                t_string!(i18n, currency_exchange_filter_qty_min_label).to_string()
-            }
-            "number_received_max" => {
-                t_string!(i18n, currency_exchange_filter_qty_max_label).to_string()
-            }
-            "total_profit_min" => {
-                t_string!(i18n, currency_exchange_filter_profit_min_label).to_string()
-            }
-            "total_profit_max" => {
-                t_string!(i18n, currency_exchange_filter_profit_max_label).to_string()
-            }
-            "hours_between_sales_min" => {
-                t_string!(i18n, currency_exchange_filter_hours_min_label).to_string()
-            }
-            "hours_between_sales_max" => {
-                t_string!(i18n, currency_exchange_filter_hours_max_label).to_string()
-            }
+            COL_SHOPS => t_string!(i18n, currency_exchange_table_shops).to_string(),
+            COL_COST => t_string!(i18n, currency_exchange_table_cost).to_string(),
+            COL_HOURS => t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
             _ => String::new(),
         }
     };
-    let chip_label = move |key: &str| -> String {
-        match key {
-            "price_per_item_min" => t_string!(i18n, currency_exchange_chip_price_min).to_string(),
-            "price_per_item_max" => t_string!(i18n, currency_exchange_chip_price_max).to_string(),
-            "number_received_min" => t_string!(i18n, currency_exchange_chip_qty_min).to_string(),
-            "number_received_max" => t_string!(i18n, currency_exchange_chip_qty_max).to_string(),
-            "total_profit_min" => t_string!(i18n, currency_exchange_chip_profit_min).to_string(),
-            "total_profit_max" => t_string!(i18n, currency_exchange_chip_profit_max).to_string(),
-            "hours_between_sales_min" => {
-                t_string!(i18n, currency_exchange_chip_hours_min).to_string()
-            }
-            "hours_between_sales_max" => {
-                t_string!(i18n, currency_exchange_chip_hours_max).to_string()
-            }
-            _ => String::new(),
-        }
-    };
-
-    // What the `+ Filter` menu offers: everything not already on screen.
-    let filter_options = Memo::new(move |_| {
-        let active = active_filters();
-        RANGE_FILTERS
+    // Toolbar column picker: the four native optional columns, then every
+    // shared sale-history column grouped by window — the same picker the
+    // flip finder and recipe analyzer offer. Checked state and toggles go
+    // through `?cols=`, which the grid already reads for all optional
+    // columns, so saved links keep their exact meaning.
+    let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let picker_visible = Memo::new(move |_| picker_visible_cols(cols_param.get().as_deref()));
+    let column_options = Memo::new(move |_| {
+        ALL_OPTIONAL_COLS
             .iter()
-            .filter(|f| !active.contains(&f.key))
-            .map(|f| FilterOption {
-                id: f.key,
-                label: menu_label(f.key),
-            })
+            .copied()
+            .map(|col| ColumnOption::new(col, column_label(col)))
+            .chain(market_picker_options(market.window.selected.get()))
             .collect::<Vec<_>>()
     });
-    let column_options = Memo::new(move |_| {
-        vec![
-            ColumnOption::new(
-                COL_PRICE_PER_ITEM,
-                t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
-            ),
-            ColumnOption::new(
-                COL_SHOPS,
-                t_string!(i18n, currency_exchange_table_shops).to_string(),
-            ),
-            ColumnOption::new(
-                COL_COST,
-                t_string!(i18n, currency_exchange_table_cost).to_string(),
-            ),
-            ColumnOption::new(
-                COL_HOURS,
-                t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
-            ),
-        ]
-    });
     let toggle_column = Callback::new(move |col: &'static str| {
-        let mut set = visible_cols.get_untracked();
-        if set.contains(col) {
-            set.remove(col);
-        } else {
-            set.insert(col);
-        }
-        set_cols_param.set(Some(serialize_visible_cols(&set)));
+        let previous = cols_param.get_untracked();
+        set_cols_param.set(Some(toggle_shared_col(
+            previous.as_deref(),
+            &default_cols_query(),
+            col,
+        )));
     });
     let reset_columns = Callback::new(move |_| set_cols_param.set(None));
-    let add_filter = Callback::new(move |key: &'static str| pending_filter.set(Some(key)));
-    let clear_all = Callback::new(move |_| {
-        pending_filter.set(None);
-        filter_signals.with_value(|sigs| {
-            for (_, set) in sigs.iter() {
-                set.set(None);
-            }
-        });
-    });
-
-    // Filtered row total, written from inside the Suspense closure where the
-    // rows are computed and read by the control bar's summary. Guarded so a
-    // re-render with an unchanged count doesn't re-notify the bar.
-    let trade_count = RwSignal::new(0usize);
-
-    // --- Table scrollport: edge fades --------------------------------------
-    // The table is wider than a phone viewport and scrolls horizontally with
-    // no scrollbar to say so; `--hfade-start`/`--hfade-end` drive the
-    // `.hscroll-fade` mask so a fade appears on whichever side has more
-    // columns. Client-only, same listener-parking shape as the analyzer's
-    // chip fades: a forgotten listener keeps firing after disposal, and a
-    // `new_local` StoredValue must never exist in an SSR-compiled path.
-    #[cfg(feature = "hydrate")]
-    {
-        use web_sys::wasm_bindgen::JsCast;
-        use web_sys::wasm_bindgen::closure::Closure;
-        let fade_listeners = StoredValue::new_local(
-            None::<(
-                web_sys::HtmlDivElement,
-                Closure<dyn FnMut()>,
-                Closure<dyn FnMut()>,
-            )>,
-        );
-        on_cleanup(move || {
-            fade_listeners.update_value(|slot| {
-                if let Some((el, scroll_cb, resize_cb)) = slot.take() {
-                    let _ = el.remove_event_listener_with_callback(
-                        "scroll",
-                        scroll_cb.as_ref().unchecked_ref(),
-                    );
-                    if let Some(win) = web_sys::window() {
-                        let _ = win.remove_event_listener_with_callback(
-                            "resize",
-                            resize_cb.as_ref().unchecked_ref(),
-                        );
-                    }
-                }
-            });
-        });
-        Effect::new(move |_| {
-            // Tracked: toggling a column changes scrollWidth without a
-            // scroll or resize event firing.
-            let _ = visible_cols.get();
-            let Some(el) = list_scroll.get() else {
-                return;
-            };
-            apply_table_fades(&el);
-            if fade_listeners.with_value(|slot| slot.is_some()) {
-                return;
-            }
-            let on_scroll = {
-                let el = el.clone();
-                Closure::wrap(Box::new(move || apply_table_fades(&el)) as Box<dyn FnMut()>)
-            };
-            let on_resize = {
-                let el = el.clone();
-                Closure::wrap(Box::new(move || apply_table_fades(&el)) as Box<dyn FnMut()>)
-            };
-            let _ =
-                el.add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref());
-            if let Some(win) = web_sys::window() {
-                let _ = win
-                    .add_event_listener_with_callback("resize", on_resize.as_ref().unchecked_ref());
-            }
-            fade_listeners.set_value(Some((el, on_scroll, on_resize)));
-        });
-    }
-
-    // Define the computation logic as a separate closure that takes data as arguments.
-    // This avoids capturing the ArcResources directly, preventing move/FnOnce issues.
-    let compute_prices =
-        move |sales: Option<&ultros_api_types::recent_sales::RecentSales>,
-              listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
-              quantity: i32| {
-            let sales: HashMap<(bool, i32), SaleData> = sales?
-                .sales
-                .iter()
-                .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
-                .collect();
-            let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
-                .cheapest_listings
-                .iter()
-                .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
-                .collect();
-            let shops_with_item = shop_data();
-            let now = Utc::now().naive_utc();
-            let rows = shops_with_item
-                .iter()
-                .filter_map(|(item, shop)| {
-                    let cost = item.cost[0];
-                    let recv = item.recv.iter().find(|i| i.item.item_search_category > 0)?;
-                    let item_key = (false, recv.item.key_id.0);
-                    let sales = &sales.get(&item_key)?.sales;
-                    let recent = sales.first()?;
-                    let most_recent = recent.sale_date;
-                    let stale_threshold = now - TimeDelta::days(60);
-                    if most_recent < stale_threshold {
-                        return None;
-                    }
-                    let sale = recent.price_per_unit;
-                    let current_listing_price = world_listings
-                        .get(&item_key)
-                        .map(|listing| listing.cheapest_price - 1);
-                    let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
-                    let input_amount = quantity;
-                    let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
-                    let sales_len = sales.len();
-                    let hours_between_sales = sales
-                        .last()
-                        .map(|last| {
-                            let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
-                            time_between.num_hours() as i16
-                        })
-                        .unwrap_or(i16::MAX);
-                    Some((
-                        (
-                            cost,
-                            *recv,
-                            guessed_price_per_item,
-                            number_received,
-                            guessed_price_per_item as i64 * number_received as i64,
-                            hours_between_sales,
-                        ),
-                        shop.name.to_string(),
-                    ))
-                })
-                .into_group_map()
-                .into_iter()
-                .map(
-                    |(
-                        (
-                            cost,
-                            recv,
-                            guessed_price_per_item,
-                            number_received,
-                            total_profit,
-                            hours_between_sales,
-                        ),
-                        shop_names,
-                    )| {
-                        CurrencyTrade {
-                            shop_names: ShopNames {
-                                shops: shop_names.into_iter().unique().collect(),
-                            },
-                            cost_item: Some(cost),
-                            receive_item: Some(recv),
-                            price_per_item: guessed_price_per_item,
-                            number_received,
-                            total_profit,
-                            hours_between_sales,
-                        }
-                    },
+    let column_sort = |id| match id {
+        "number_received" => Some(SortMode::QtyReceived),
+        "total_profit" => Some(SortMode::Profit),
+        COL_PRICE_PER_ITEM => Some(SortMode::PricePerItem),
+        COL_HOURS => Some(SortMode::HoursBetweenSales),
+        _ => None,
+    };
+    let columns = Signal::derive(move || {
+        [
+            ("item", 320.0, false),
+            ("number_received", 130.0, false),
+            ("total_profit", 130.0, false),
+            (COL_PRICE_PER_ITEM, 150.0, true),
+            (COL_SHOPS, 240.0, true),
+            (COL_COST, 320.0, true),
+            (COL_HOURS, 180.0, true),
+        ]
+        .into_iter()
+        .map(|(id, width, optional)| {
+            let column = GridColumn::new(id, column_label(id), width, optional, true);
+            if let Some(mode) = column_sort(id) {
+                column.sorted(
+                    sort_mode.get().unwrap_or_else(SortMode::fallback) == mode,
+                    sort_dir.get().unwrap_or_else(|| mode.default_dir()) == SortDir::Asc,
                 )
-                .collect::<Vec<_>>();
-            Some(rows)
-        };
-
+            } else {
+                column
+            }
+        })
+        .collect::<Vec<_>>()
+    });
     // Create derived signals to access resources, avoiding ownership issues in view closures.
     let sales_2 = sales.clone();
     let s_getter_2 = Signal::derive(move || sales_2.get());
@@ -903,6 +566,27 @@ fn ExchangeItemContent() -> impl IntoView {
     let listings_2 = world_cheapest_listings.clone();
     let l_getter_2 = Signal::derive(move || listings_2.get());
 
+    // Keep the grid mounted when quantity or market resources change so the
+    // shared filter registry never points at a disposed grid owner.
+    let rows = Memo::new(move |_| {
+        let sales = s_getter_2.get();
+        let listings = l_getter_2.get();
+        let mut rows = compute_prices(
+            &shop_data(),
+            sales.as_ref().and_then(|r| r.as_ref().ok()),
+            listings.as_ref().and_then(|r| r.as_ref().ok()),
+            currency_quantity.get(),
+            Utc::now().naive_utc(),
+        )
+        .unwrap_or_default();
+        let mode = sort_mode.get().unwrap_or_else(SortMode::fallback);
+        sort_trades(
+            &mut rows,
+            mode,
+            sort_dir.get().unwrap_or_else(|| mode.default_dir()),
+        );
+        rows
+    });
     view! {
         <div>
             <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", item_name()) />
@@ -932,81 +616,26 @@ fn ExchangeItemContent() -> impl IntoView {
                 />
             </ToolHeader>
             <ControlBar
+                sticky=false
                 summary=move || {
                     view! {
                         <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                            {move || t!(i18n, currency_exchange_trade_count, n = move || trade_count.get())}
+                            {move || t!(i18n, currency_exchange_trade_count, n = move || filters.row_count())}
                         </span>
                     }
                     .into_any()
                 }
-                columns=Signal::derive(column_options)
-                visible_columns=Signal::derive(move || visible_cols.get())
+                columns=column_options
+                visible_columns=picker_visible
                 on_toggle_column=toggle_column
                 on_reset_columns=reset_columns
-                available_filters=Signal::derive(filter_options)
-                on_add_filter=add_filter
-                on_clear_all=clear_all
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, currency_exchange_no_filters_hint).to_string()
                 })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-            >
-                {move || {
-                    filter_signals
-                        .with_value(|sigs| {
-                            RANGE_FILTERS
-                                .iter()
-                                .zip(sigs.iter().copied())
-                                .filter(|(f, (get, _))| {
-                                    get.get().is_some() || pending_filter.get() == Some(f.key)
-                                })
-                                .map(|(f, (get, set))| {
-                                    let key = f.key;
-                                    let value = Signal::derive(move || {
-                                        get.get().map(|v| v.to_string())
-                                    });
-                                    let start_editing =
-                                        pending_filter.get_untracked() == Some(key);
-                                    let on_commit = Callback::new(move |v: Option<String>| {
-                                        set.set(v.and_then(|v| v.parse::<i32>().ok()));
-                                        if pending_filter.get_untracked() == Some(key) {
-                                            pending_filter.set(None);
-                                        }
-                                    });
-                                    // `min` is an `into`-String prop, so "no floor"
-                                    // has to omit the prop rather than pass None.
-                                    match f.min {
-                                        Some(m) => Either::Left(view! {
-                                            <FilterChip
-                                                label=chip_label(key)
-                                                value=value
-                                                numeric=true
-                                                min=m
-                                                start_editing=start_editing
-                                                on_commit=on_commit
-                                            />
-                                        }),
-                                        None => Either::Right(view! {
-                                            <FilterChip
-                                                label=chip_label(key)
-                                                value=value
-                                                numeric=true
-                                                start_editing=start_editing
-                                                on_commit=on_commit
-                                            />
-                                        }),
-                                    }
-                                })
-                                .collect_view()
-                        })
-                }}
-            </ControlBar>
+            />
+            <MarketWindowControl window=market.window />
             <div>
-                {move || {
-                    let columns = columns.clone();
-                    if home_world().is_none() {
-                        let left = view! {
+                <Show when=move || home_world().is_none()>
                             <div class="bg-red-900/50 p-4 rounded-lg text-white">
                                 {t!(i18n, currency_exchange_home_world_not_set_prefix)}
                                 <AppLink
@@ -1016,10 +645,11 @@ fn ExchangeItemContent() -> impl IntoView {
                                     {t!(i18n, currency_exchange_settings)}
                                 </AppLink> {t!(i18n, currency_exchange_home_world_not_set_suffix)}
                             </div>
-                        };
-                        Either::Left(left)
-                    } else {
-                        let right = view! {
+                </Show>
+                // The toolbar registry keeps signals owned by this grid. Keep
+                // the grid mounted as the home world changes; disposing it
+                // would leave the toolbar reading a previous owner's signals.
+                <div class:hidden=move || home_world().is_none()>
                             <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
                                 {move || home_world().map(|w| t!(i18n, currency_exchange_assuming_sales_on, world = w.name))}
                             </div>
@@ -1030,113 +660,41 @@ fn ExchangeItemContent() -> impl IntoView {
                                 <Suspense fallback=move || {
                                     view! {
                                         <TableSkeleton
-                                            columns=skeleton_columns(&visible_cols.get())
+                                            columns=vec![SkeletonColumn::new("flex-1", SkeletonCell::IconText), SkeletonColumn::new("w-24", SkeletonCell::Number)]
                                             rows=10
                                         />
                                     }
                                 }>
-                                    {move || {
-                                    let columns = columns.clone();
-                                    let s_res = s_getter_2.get();
-                                    let l_res = l_getter_2.get();
-                                    let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
-                                    let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
-                                    let q = currency_quantity.get();
-                                    compute_prices(s, l, q)
-                                        .map(|p: Vec<CurrencyTrade>| {
-                                            let row_columns = columns.clone();
-                                            let header_columns = columns.clone();
-                                            let empty_columns = columns.clone();
-                                            let sorted_and_filtered_rows = move || {
-                                                let query = query();
-                                                let mut p = p
-                                                    .clone()
-                                                    .into_iter()
-                                                    .filter(|currency| {
-                                                        let query = &query;
-                                                        is_in_range(
-                                                            currency.price_per_item,
-                                                            "price_per_item",
-                                                            query,
-                                                        )
-                                                            && is_in_range(
-                                                                currency.number_received,
-                                                                "number_received",
-                                                                query,
-                                                            )
-                                                            && is_in_range(
-                                                                currency.total_profit as i32,
-                                                                "total_profit",
-                                                                query,
-                                                            )
-                                                            && is_in_range(
-                                                                currency.hours_between_sales as i32,
-                                                                "hours_between_sales",
-                                                                query,
-                                                            )
-                                                    })
-                                                    .collect::<Vec<_>>();
-                                                let mode = sort_mode.get().unwrap_or_else(SortMode::fallback);
-                                                let dir = sort_dir.get().unwrap_or_else(|| mode.default_dir());
-                                                sort_trades(&mut p, mode, dir);
-                                                // Feed the control bar's "N trades" summary. Guarded
-                                                // so a re-render with an unchanged count doesn't
-                                                // re-notify the bar.
-                                                if trade_count.get_untracked() != p.len() {
-                                                    trade_count.set(p.len());
-                                                }
-                                                // Filters that matched nothing get a message and a
-                                                // way out, not a silently empty body.
-                                                if p.is_empty() && !active_filters.get().is_empty() {
-                                                    return view! {
-                                                        <tr>
-                                                            <td
-                                                                colspan=visible_column_count(&empty_columns).to_string()
-                                                                class="px-3 py-8 text-center text-[color:var(--color-text-muted)]"
-                                                            >
-                                                                <div class="flex flex-col items-center gap-2">
-                                                                    {t!(i18n, currency_exchange_no_matches)}
-                                                                    <button class="btn-secondary" on:click=move |_| clear_all.run(())>
-                                                                        {t!(i18n, currency_exchange_clear_all)}
-                                                                    </button>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    }
-                                                    .into_any();
-                                                }
-                                                p.into_iter()
-                                                    .map(|p| {
-                                                        let cells = body_cells(&row_columns, &p);
-                                                        view! {
-                                                            <tr class="hover:bg-white/5 transition-colors">
-                                                                {cells}
-                                                            </tr>
-                                                        }
-                                                    })
-                                                    .collect_view()
-                                                    .into_any()
-                                            };
-                                            view! {
-                                                // Only the table scrolls sideways on narrow
-                                                // viewports; the surrounding panel must not, or
-                                                // `overflow-x` would force `overflow-y: auto` and
-                                                // trap anything absolutely positioned inside it.
-                                                <div class="overflow-x-auto hscroll-fade" node_ref=list_scroll>
-                                                <table class="w-full text-sm text-left">
-                                                    <thead class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                                                        <tr class="border-b border-white/5">
-                                                            {move || header_cells(&header_columns)}
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody class="divide-y divide-white/5">
-                                                        {sorted_and_filtered_rows}
-                                                    </tbody>
-                                                </table>
-                                                </div>
-                                            }
-                                        })
-                                }}
+                                    <MarketGrid
+                                        id="currency-exchange-grid"
+                                        label=t_string!(i18n, currency_exchange_full_results).to_string()
+                                        each=rows columns market
+                                        row_height=72.0
+                                        key=|t: &CurrencyTrade| (t.cost_item, t.receive_item)
+                                        metrics=exchange_metrics()
+                                        subject=Arc::new(move |t: &CurrencyTrade| t.market_subject(home_world.get().map(|w| w.id).unwrap_or_default()))
+                                        header=move |id| {
+                                            let label = column_label(id);
+                                            if let Some(mode) = column_sort(id) {
+                                                view! { <SortHeader mode label sort_mode sort_dir /> }.into_any()
+                                            } else { label.into_any() }
+                                        }
+                                        view=move |trade: CurrencyTrade, id| {
+                                            let content = match id {
+                                            "item" => view! { <ItemAmount item_amount=trade.receive_item /> }.into_any(),
+                                            COL_COST => view! { <ItemAmount item_amount=trade.cost_item /> }.into_any(),
+                                            COL_SHOPS => view! { <div class="max-h-full overflow-y-auto"><ShopNames shop_names=trade.shop_names /></div> }.into_any(),
+                                            _ => view! { <div class="text-right tabular-nums w-full">{trade.cell_text(id)}</div> }.into_any(),
+                                        };
+                                        view! { <div class="px-3 flex h-full items-center min-w-0">{content}</div> }.into_any()
+                                        }
+                                        measure=|trade: &CurrencyTrade, id| (trade.cell_text(id), if matches!(id, "item" | COL_COST) { 120.0 } else { 24.0 })
+                                    />
+                                    <Show when=move || filters.row_count() == 0>
+                                        <p role="status" class="px-3 py-8 text-center text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, currency_exchange_no_matches)}
+                                        </p>
+                                    </Show>
                                 {move || {
                                     s_getter_2
                                         .with(|sales| {
@@ -1156,10 +714,7 @@ fn ExchangeItemContent() -> impl IntoView {
                                 }}
                                 </Suspense>
                             </div>
-                        };
-                        Either::Right(right)
-                    }
-                }}
+                </div>
             </div>
         </div>
     }.into_any()
@@ -1176,17 +731,62 @@ fn item_cost_iter(shop: &SpecialShop) -> impl Iterator<Item = ItemId> + '_ {
         .map(|item_id| ItemId(item_id as i32))
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct CurrencyTrade {
     shop_names: ShopNames,
     cost_item: Option<ItemAmount>,
     receive_item: Option<ItemAmount>,
+    /// Actual NQ listing; the native revenue estimate may be lower.
+    listing_price: Option<i32>,
     price_per_item: i32,
     number_received: i32,
     total_profit: i64,
     hours_between_sales: i16,
 }
 
+impl CurrencyTrade {
+    fn market_subject(&self, world_id: i32) -> MarketSubject {
+        MarketSubject {
+            item_id: self
+                .receive_item
+                .map(|i| i.item.key_id.0)
+                .unwrap_or_default(),
+            hq: false,
+            world_id,
+            label: self
+                .receive_item
+                .map(|i| i.item.name.clone())
+                .unwrap_or_default(),
+            listing_price: self.listing_price,
+        }
+    }
+
+    fn cell_text(&self, id: &str) -> String {
+        match id {
+            "item" | COL_COST => {
+                let item = if id == "item" {
+                    self.receive_item
+                } else {
+                    self.cost_item
+                };
+                item.map(|i| format!("{} ×{}", i.item.name, i.amount))
+                    .unwrap_or_default()
+            }
+            COL_SHOPS => self
+                .shop_names
+                .shops
+                .iter()
+                .max_by_key(|s| s.len())
+                .cloned()
+                .unwrap_or_default(),
+            COL_PRICE_PER_ITEM => self.price_per_item.to_string(),
+            "number_received" => self.number_received.to_string(),
+            "total_profit" => self.total_profit.to_string(),
+            COL_HOURS => self.hours_between_sales.to_string(),
+            _ => String::new(),
+        }
+    }
+}
 #[derive(PartialEq, Eq, Clone, PartialOrd, Ord, Debug)]
 pub struct ShopNames {
     shops: Vec<String>,
@@ -1378,34 +978,222 @@ pub fn CurrencyExchange() -> impl IntoView {
 mod tests {
     use super::*;
 
-    /// `?cols=` is a URL contract: absent means the default set, an explicit
-    /// value (even empty) is honored exactly, and unknown tokens are dropped
-    /// rather than erroring — same semantics as the flip finder's.
+    fn trade(value: i32) -> CurrencyTrade {
+        CurrencyTrade {
+            shop_names: ShopNames { shops: vec![] },
+            cost_item: None,
+            receive_item: None,
+            listing_price: Some(200),
+            price_per_item: value,
+            number_received: value,
+            total_profit: value as i64,
+            hours_between_sales: value as i16,
+        }
+    }
+
     #[test]
-    fn cols_param_round_trips() {
-        let all: std::collections::HashSet<_> = ALL_OPTIONAL_COLS.iter().copied().collect();
+    fn pricing_quantity_grouping_and_recent_cadence_stay_independent_of_market_stats() {
+        use ultros_api_types::cheapest_listings::CheapestListings;
+        use ultros_api_types::recent_sales::{RecentSales, Sales};
+        let data = xiv_gen_db::data();
+        let shop = data.special_shops.values().next().unwrap();
+        let received = data
+            .items
+            .values()
+            .find(|i| i.item_search_category > 0)
+            .unwrap();
+        let shop_items = || ShopItems {
+            recv: vec![ItemAmount {
+                item: received,
+                amount: 3,
+            }],
+            cost: vec![ItemAmount {
+                item: &data.items[&ItemId(1)],
+                amount: 5,
+            }],
+        };
+        let shops = vec![(shop_items(), shop), (shop_items(), shop)];
+        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let mut sales = RecentSales {
+            sales: vec![SaleData {
+                item_id: received.key_id.0,
+                hq: false,
+                sales: vec![
+                    Sales {
+                        price_per_unit: 100,
+                        sale_date: now,
+                    },
+                    Sales {
+                        price_per_unit: 90,
+                        sale_date: now - TimeDelta::hours(12),
+                    },
+                ],
+            }],
+        };
+        let mut listings = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: received.key_id.0,
+                hq: false,
+                cheapest_price: 80,
+                world_id: 21,
+            }],
+        };
+        for (listing, expected) in [(80, 79), (200, 100)] {
+            listings.cheapest_listings[0].cheapest_price = listing;
+            let rows = compute_prices(&shops, Some(&sales), Some(&listings), 12, now).unwrap();
+            assert_eq!(rows.len(), 1, "identical shop offers stay grouped");
+            assert_eq!(rows[0].shop_names.shops.len(), 1);
+            assert_eq!(rows[0].price_per_item, expected);
+            assert_eq!(rows[0].listing_price, Some(listing));
+            assert_eq!(rows[0].number_received, 6, "only complete trades count");
+            assert_eq!(rows[0].total_profit, i64::from(expected) * 6);
+            assert_eq!(rows[0].hours_between_sales, 6);
+        }
+        listings.cheapest_listings.clear();
+        let rows = compute_prices(&shops, Some(&sales), Some(&listings), 12, now).unwrap();
         assert_eq!(
-            parse_visible_cols(None),
-            all,
-            "absent ?cols= means defaults, and all four default on"
+            rows[0].price_per_item, 100,
+            "missing listings fall back to latest sale"
+        );
+        assert_eq!(rows[0].listing_price, None);
+        sales.sales[0].sales[0].sale_date = now - TimeDelta::days(60);
+        assert_eq!(
+            compute_prices(&shops, Some(&sales), Some(&listings), 12, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        sales.sales[0].sales[0].sale_date -= TimeDelta::seconds(1);
+        assert!(
+            compute_prices(&shops, Some(&sales), Some(&listings), 12, now)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn legacy_ranges_match_shared_filters_and_survive_canonical_links() {
+        use crate::components::virtual_grid::metrics::query_rows;
+        use crate::components::virtual_grid::registry::{canonical_query, resolve_filters};
+        let aliases = exchange_filter_aliases();
+        let rows = vec![trade(-1), trade(0), trade(9), trade(10), trade(11)];
+        for field in [
+            COL_PRICE_PER_ITEM,
+            "number_received",
+            "total_profit",
+            COL_HOURS,
+        ] {
+            for (low, high) in [
+                (None, None),
+                (Some("10"), None),
+                (None, Some("10")),
+                (Some("10"), Some("10")),
+                (Some("11"), Some("9")),
+                (Some("invalid"), Some("10")),
+            ] {
+                let mut query = ParamsMap::new();
+                if let Some(low) = low {
+                    query.insert(format!("{field}_min"), low.to_string());
+                }
+                if let Some(high) = high {
+                    query.insert(format!("{field}_max"), high.to_string());
+                }
+                let filters = resolve_filters(&query, &aliases);
+                let expected: Vec<_> = rows
+                    .iter()
+                    .filter(|r| is_in_range(r.price_per_item, field, &query))
+                    .map(|r| r.price_per_item)
+                    .collect();
+                let result = query_rows(&rows, &exchange_metrics(), &filters, None, false);
+                assert_eq!(
+                    result
+                        .rows
+                        .as_ref()
+                        .unwrap_or(&rows)
+                        .iter()
+                        .map(|r| r.price_per_item)
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert_eq!(
+                    resolve_filters(&canonical_query(&query, &aliases), &aliases),
+                    filters
+                );
+            }
+        }
+    }
+
+    /// The toolbar picker and the grid read the same `?cols=`: absent means
+    /// the four native columns, an explicit value (even empty) is exact,
+    /// unknown tokens are dropped, and toggling flips one token while
+    /// leaving every other native or shared column in place.
+    #[test]
+    fn toolbar_picker_mirrors_the_grid_cols_contract() {
+        type Cols = std::collections::HashSet<&'static str>;
+        let all: Cols = ALL_OPTIONAL_COLS.iter().copied().collect();
+        assert_eq!(picker_visible_cols(None), all);
+        assert_eq!(picker_visible_cols(Some("")), Cols::new());
+        let mixed = picker_visible_cols(Some("shops,bogus,market-sale-median"));
+        assert_eq!(
+            mixed,
+            [COL_SHOPS, "market-sale-median"]
+                .into_iter()
+                .collect::<Cols>()
+        );
+
+        let defaults = default_cols_query();
+        assert_eq!(defaults, "price_per_item,shops,cost,hours_between_sales");
+        let with_shared = toggle_shared_col(None, &defaults, "market-sale-median");
+        assert_eq!(
+            picker_visible_cols(Some(&with_shared)),
+            all.iter()
+                .copied()
+                .chain(["market-sale-median"])
+                .collect::<Cols>()
+        );
+        let without_shops = toggle_shared_col(Some(&with_shared), &defaults, COL_SHOPS);
+        assert_eq!(
+            picker_visible_cols(Some(&without_shops)),
+            [
+                COL_PRICE_PER_ITEM,
+                COL_COST,
+                COL_HOURS,
+                "market-sale-median"
+            ]
+            .into_iter()
+            .collect::<Cols>()
         );
         assert_eq!(
-            parse_visible_cols(Some("")),
-            std::collections::HashSet::new(),
-            "explicit empty set is respected"
+            toggle_shared_col(Some(""), &defaults, COL_SHOPS),
+            COL_SHOPS,
+            "an explicit empty set starts from nothing, not the defaults"
         );
-        let mut some = std::collections::HashSet::new();
-        some.insert(COL_SHOPS);
-        some.insert(COL_HOURS);
-        assert_eq!(
-            parse_visible_cols(Some(&serialize_visible_cols(&some))),
-            some
-        );
-        assert_eq!(
-            parse_visible_cols(Some("shops,bogus,hours_between_sales")),
-            some,
-            "unknown tokens are dropped"
-        );
+    }
+
+    #[test]
+    fn market_subject_uses_received_nq_item_and_raw_listing_on_home_world() {
+        let data = xiv_gen_db::data();
+        let mut row = trade(100);
+        row.cost_item = Some(ItemAmount {
+            item: &data.items[&ItemId(1)],
+            amount: 5,
+        });
+        row.receive_item = Some(ItemAmount {
+            item: &data.items[&ItemId(2)],
+            amount: 1,
+        });
+        for world_id in [21, 74] {
+            let subject = row.market_subject(world_id);
+            assert_eq!(subject.item_id, 2);
+            assert!(!subject.hq);
+            assert_eq!(subject.world_id, world_id);
+            assert_eq!(subject.listing_price, Some(200));
+            assert_ne!(subject.listing_price, Some(row.price_per_item));
+        }
+        row.listing_price = None;
+        assert_eq!(row.market_subject(21).listing_price, None);
     }
 
     /// `Display` must produce exactly the token `FromStr` parses back out of
@@ -1474,6 +1262,7 @@ mod tests {
             shop_names: ShopNames { shops: vec![] },
             cost_item: None,
             receive_item: None,
+            listing_price: None,
             price_per_item: 0,
             number_received: 0,
             total_profit: profit,
@@ -1491,30 +1280,6 @@ mod tests {
                 .map(|t| t.hours_between_sales)
                 .collect::<Vec<_>>(),
             [1, 5, 9]
-        );
-    }
-
-    /// `RANGE_FILTERS` drives the chips, the `+ Filter` menu, and Clear-all,
-    /// and its keys are a URL contract: they must stay exactly the names the
-    /// pre-kit page wrote, or every bookmarked filter deep link silently
-    /// stops filtering. `is_in_range` reads these same `{key}` names off the
-    /// raw query map, so a drifted key would also detach a chip from the
-    /// filtering it claims to do.
-    #[test]
-    fn range_filter_keys_are_a_stable_url_contract() {
-        let keys: Vec<&str> = RANGE_FILTERS.iter().map(|f| f.key).collect();
-        assert_eq!(
-            keys,
-            [
-                "price_per_item_min",
-                "price_per_item_max",
-                "number_received_min",
-                "number_received_max",
-                "total_profit_min",
-                "total_profit_max",
-                "hours_between_sales_min",
-                "hours_between_sales_max",
-            ]
         );
     }
 

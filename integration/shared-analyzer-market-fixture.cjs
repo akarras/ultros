@@ -9,21 +9,21 @@ const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
   7020, 7606, 9360, 9462, 9463, 12518, 12519, 12525, 12562, 12563, 12565,
   12581, 12582, 12602];
 
-function marketFixture() {
+function marketFixture(itemIds = ids) {
   const now = Date.now();
   const naive = ms => new Date(ms).toISOString().slice(0, -1);
-  const recent = { sales: ids.map(item_id => ({ item_id, hq: false,
+  const recent = { sales: itemIds.map(item_id => ({ item_id, hq: false,
     sales: Array.from({ length: 6 }, (_, index) => ({
       price_per_unit: 800 + (5 - index) * 40,
       sale_date: naive(now - index * 4 * 3600000),
     })),
   })) };
-  const stats = { stats: ids.flatMap(item_id => [false, true].map(hq => ({
+  const stats = { stats: itemIds.flatMap(item_id => [false, true].map(hq => ({
     item_id, hq, min_price: [9462, 9463].includes(item_id) ? 600000 : (hq ? 1200 : 600), median_price: [9462, 9463].includes(item_id) ? 900000 : (hq ? 1500 : 900),
     avg_price: hq ? 1700 : 1000, num_sold: 70, last_sold_unix: Math.floor(now / 1000),
     units_sold: 210, gil_volume: hq ? 336000 : 199500, vwap: hq ? 1600 : 950, sales_per_day: 10, confidence: 'high',
   }))) };
-  const listings = world => ({ cheapest_listings: ids.map(item_id => ({
+  const listings = world => ({ cheapest_listings: itemIds.map(item_id => ({
     item_id, hq: false, cheapest_price: [9462, 9463].includes(item_id) ? 1000000 : (world === 'Gilgamesh' ? 400 : 100),
     world_id: world === 'Gilgamesh' ? 63 : 79,
   })) });

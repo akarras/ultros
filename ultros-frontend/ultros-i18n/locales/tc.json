@@ -726,7 +726,7 @@
     "currency_exchange_table_price_per_item": "單價",
     "currency_exchange_table_qty_recv": "可取得",
     "currency_exchange_table_profit": "利潤",
-    "currency_exchange_table_hours_per_sale": "小時/件",
+    "currency_exchange_table_hours_per_sale": "小時/件（近期）",
     "currency_exchange_error_loading": "載入失敗，請 30 秒後再試！",
     "currency_exchange_hero_desc": "尋找可用聯盟徽記、狼徽等遊戲內通貨購買，並在市場板上轉賣換取金幣的物品。",
     "currency_exchange_meta_title_ultros": "通貨兌換 - Ultros",
