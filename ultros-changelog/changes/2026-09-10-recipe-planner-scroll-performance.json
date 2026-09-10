@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Smoother scrolling on long recipe plans",
+  "blurb": "Large crafting itineraries no longer stutter while you scroll. Buttons and panels dropped a blur effect that was invisible against their solid backgrounds but cost real work on every frame, which was most noticeable on machines without hardware acceleration.",
+  "link": "/recipe",
+  "importance": "medium"
+}
