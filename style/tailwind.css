@@ -1164,7 +1164,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         var(--color-background-elevated)
     );
     border: 1px solid var(--color-outline);
-    backdrop-filter: blur(6px);
+    /* No backdrop-filter here: the surface is opaque so a blur is invisible,
+       and this class is rendered per row (370+ times on a big recipe
+       itinerary). Each blurred element is its own compositing layer, and
+       with hardware acceleration off the blur cost ~5x the compositor draw
+       time per scrolled frame (#1334). Reserve backdrop-filter for single
+       translucent overlays like .app-nav and the mobile bar. */
 }
 
 .btn-secondary > * {
@@ -1205,7 +1210,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
             color-mix(in srgb, var(--color-background) 4%, transparent)
         );
     background-blend-mode: overlay, normal;
-    backdrop-filter: blur(4px);
+    /* Opaque surface: no backdrop-filter (see .btn-secondary, #1334). */
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
 }
 
