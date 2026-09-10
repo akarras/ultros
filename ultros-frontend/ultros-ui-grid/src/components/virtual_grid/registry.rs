@@ -157,6 +157,7 @@ pub struct RegisteredFilter {
 pub struct FilterRegistry {
     aliases: StoredValue<Vec<FilterAlias>>,
     sort_aliases: StoredValue<Vec<SortAlias>>,
+    default_sort: StoredValue<Option<&'static str>>,
     controls: Signal<Vec<ColumnFilter>>,
     columns: RwSignal<Option<Signal<Vec<GridColumn>>>>,
     pub editing: RwSignal<Option<ColumnFilter>>,
@@ -168,6 +169,7 @@ impl FilterRegistry {
         let registry = Self {
             aliases: StoredValue::new(aliases),
             sort_aliases: StoredValue::new(Vec::new()),
+            default_sort: StoredValue::new(None),
             controls,
             columns: RwSignal::new(None),
             editing: RwSignal::new(None),
@@ -208,10 +210,16 @@ impl FilterRegistry {
         self.sort_aliases.set_value(aliases);
     }
 
+    /// Preserve a host's original ordering when no recognized sort is present.
+    pub fn register_default_sort(self, column: &'static str) {
+        self.default_sort.set_value(Some(column));
+    }
+
     /// The metric column a raw `?sort=` value selects, aliases included.
     pub fn sort_column(self, sort: Option<&str>) -> Option<String> {
         self.sort_aliases
             .with_value(|aliases| resolve_sort(sort, aliases))
+            .or_else(|| self.default_sort.get_value().map(str::to_owned))
     }
 
     pub fn is_alias(self, key: &str) -> bool {
@@ -595,6 +603,20 @@ mod tests {
             assert_eq!(
                 effective_sort(&params(&[("sort", "price")])).as_deref(),
                 Some("market-listing")
+            );
+            registry.register_default_sort("units");
+            assert_eq!(registry.sort_column(None).as_deref(), Some("units"));
+            assert_eq!(
+                registry.sort_column(Some("invalid")).as_deref(),
+                Some("units")
+            );
+            assert_eq!(
+                registry.sort_column(Some("grid:market-listing")).as_deref(),
+                Some("market-listing")
+            );
+            assert_eq!(
+                effective_sort(&params(&[("dir", "asc")])).as_deref(),
+                Some("units")
             );
         });
     }

@@ -399,7 +399,8 @@ pub fn Trends() -> impl IntoView {
     // ArcResource is Clone — split the handle so neither the Memo nor
     // the view closure consumes the same binding.
     let trends_for_rows = trends.clone();
-    let trends_for_view = trends;
+    let trends_for_view = trends.clone();
+    let trends_for_visibility = trends;
 
     let world_signal: Signal<Option<String>> = Signal::derive(move || {
         let w = world();
@@ -464,6 +465,7 @@ pub fn Trends() -> impl IntoView {
         }),
     );
     filters.register_sort_aliases(SORT_ALIASES.to_vec());
+    filters.register_default_sort(COL_UNITS);
 
     // Columns picker: native columns in table order under their own heading,
     // then every shared sale-history column grouped by window.
@@ -594,20 +596,7 @@ pub fn Trends() -> impl IntoView {
                 <div class="min-h-[500px]">
                     <Suspense fallback=TrendsTableSkeleton>
                         {move || match trends_for_view.get() {
-                            Some(Ok(Some(data))) => {
-                                // Nothing to rank: the server returned no
-                                // candidates, or the category control
-                                // excluded every one before the grid.
-                                if data.items.is_empty() || rows.with(Vec::is_empty) {
-                                    view! {
-                                        <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
-                                            {t!(i18n, trends_empty_filtered)}
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <TrendsGrid rows market columns /> }.into_any()
-                                }
-                            },
+                            Some(Ok(Some(_))) => ().into_any(),
                             Some(Ok(None)) => view! {
                                 <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
                                     {t!(i18n, trends_select_valid_world)}
@@ -620,6 +609,11 @@ pub fn Trends() -> impl IntoView {
                             }.into_any(),
                             None => view! { <TrendsTableSkeleton /> }.into_any(),
                         }}
+                        // Keep the registry's column/count providers alive across
+                        // empty categories, loading and errors. Only visibility changes.
+                        <div class:hidden=move || !matches!(trends_for_visibility.get(), Some(Ok(Some(_))))>
+                            <TrendsGrid rows market columns />
+                        </div>
                     </Suspense>
                 </div>
             </div>

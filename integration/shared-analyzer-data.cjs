@@ -754,6 +754,37 @@ async function checkTrends({ page, fixture, world, open, heading, sortLink, sort
   await page.waitForFunction(() => !new URL(location.href).searchParams.has('min_sales') && !new URL(location.href).searchParams.has('show_suspicious'));
   assert.equal(new URL(page.url()).searchParams.get('window'), '7', 'Clear all preserves the window');
   assert.equal(new URL(page.url()).searchParams.get('sort'), 'grid:market-listing', 'Clear all preserves the sort');
+  if (fixture) {
+    // Keep the same page owner: an empty category must not dispose the grid's
+    // registered count and filter providers while the toolbar still reads them.
+    await page.evaluate(() => {
+      const url = new URL(location.href);
+      url.searchParams.set('category', '2147483647');
+      const link = document.createElement('a');
+      link.href = url.href; link.id = 'empty-category-link';
+      document.querySelector('main').prepend(link);
+      link.click();
+    });
+    await page.waitForFunction(() => new URL(location.href).searchParams.has('category'));
+    await rows(0);
+    await page.waitForSelector('[data-registered-filter="category"]');
+    await page.click('[aria-label="Clear all filters"]');
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has('category'));
+    await rows(3);
+    // Missing sort retains the original Units default, including dir-only links.
+    await visit(`${BASE}${route}?dir=asc`);
+    await reveal('units');
+    assert.equal(await page.$eval(heading('units'), el => el.getAttribute('aria-sort')), 'ascending');
+    await firstItem(6);
+    await visit(`${BASE}${route}`);
+    await reveal('units');
+    assert.equal(await page.$eval(heading('units'), el => el.getAttribute('aria-sort')), 'descending');
+    await firstItem(7);
+    await reveal('units');
+    await page.click(sortLink('units'));
+    await sorted('units', 'asc');
+    await firstItem(6);
+  }
   await page.setViewport({ width: 1600, height: 1000 });
   page.off('request', recorder);
   console.log('PASS trends: legacy sort/filter aliases, shared header sorting, columns picker, window changes, suspicious control and reload on the shared grid');
