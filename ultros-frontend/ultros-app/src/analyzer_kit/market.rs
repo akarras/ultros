@@ -10,13 +10,15 @@ use leptos::prelude::*;
 use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
+    listing_stats::ItemListingStats,
     sale_stats::ItemSaleStats,
     sparklines::{SparklinesRequest, SparklinesResponse},
     trends::ConfidenceBand,
 };
 
 use crate::{
-    api::{get_sale_stats, post_sparklines},
+    analysis::format_duration_short,
+    api::{get_listing_stats, get_sale_stats, post_sparklines},
     components::{
         app_link::use_location_or_default,
         sparkline::Sparkline,
@@ -38,13 +40,34 @@ use super::{
     formula::PriceSignal,
     signals::{StatsIndex, stat_only, stats_index},
     stat_columns::{
-        FOLLOW_COLUMNS, STAT_COLUMNS, StatKind, Window, follow_id, market_picker_group,
-        required_windows, stat_column, stat_label,
+        FOLLOW_COLUMNS, LISTING_COLUMNS, ListingKind, STAT_COLUMNS, StatKind, Window, follow_id,
+        listing_id, listing_label, listing_title, listings_wanted, market_picker_group,
+        market_picker_group_listings, required_windows, stat_column, stat_label,
     },
     window::MarketWindow,
 };
 
 type ScopedStats = Option<(String, Arc<StatsIndex>, bool)>;
+
+pub type ListingIndex = HashMap<(i32, bool), ItemListingStats>;
+
+/// One current-listing body for one scope. `fetched_unix` is the clock the
+/// age columns count from, captured once so cells stay pure functions of
+/// the payload rather than re-reading the clock on every render.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListingSlot {
+    pub scope: String,
+    pub index: Arc<ListingIndex>,
+    /// The request failed; the empty index is not evidence of an empty board.
+    pub failed: bool,
+    pub fetched_unix: i64,
+}
+
+type ScopedListings = Option<ListingSlot>;
+
+pub fn listing_index(stats: &[ItemListingStats]) -> ListingIndex {
+    stats.iter().map(|s| ((s.item_id, s.hq), *s)).collect()
+}
 
 /// A cheap reactive handle; the payloads are cloned only by Arc. One slot
 /// per server window, indexed by `Window::index()`. The seven-day body keeps
@@ -56,6 +79,9 @@ pub struct MarketData {
     pub window: MarketWindow,
     stats: [RwSignal<ScopedStats>; Window::ALL.len()],
     wanted: [RwSignal<bool>; Window::ALL.len()],
+    /// The alive set is window-independent: one slot, one gate.
+    listings: RwSignal<ScopedListings>,
+    listings_wanted: RwSignal<bool>,
 }
 
 impl MarketData {
@@ -65,6 +91,21 @@ impl MarketData {
     /// `provided`; a window the loader owns is overwritten on its next run.
     pub fn supply(self, window: Window, scope_name: String, stats: Arc<StatsIndex>, failed: bool) {
         self.stats[window.index()].set(Some((scope_name, stats, failed)));
+    }
+
+    /// The current-listing body for the present scope, once it has landed.
+    /// A failed request is `Some` with `failed` set and an empty index.
+    pub fn listings(self) -> Option<ListingSlot> {
+        let scope = self.scope.get();
+        self.listings
+            .with(|v| v.as_ref().filter(|slot| slot.scope == scope).cloned())
+    }
+
+    /// Ask for the current-listing body. Idempotent; never un-wants.
+    fn want_listings(self) {
+        if !self.listings_wanted.get_untracked() {
+            self.listings_wanted.set(true);
+        }
     }
 
     pub fn stats(self, window: Window) -> Option<Arc<StatsIndex>> {
@@ -118,6 +159,7 @@ impl MarketData {
         for slot in self.stats {
             slot.with(|_| ());
         }
+        self.listings.with(|_| ());
     }
 }
 
@@ -171,6 +213,8 @@ fn use_market_data_configured(
         window,
         stats: std::array::from_fn(|_| RwSignal::new(None)),
         wanted: std::array::from_fn(|i| RwSignal::new(prefetch.is_some_and(|w| w.index() == i))),
+        listings: RwSignal::new(None),
+        listings_wanted: RwSignal::new(false),
     };
     for window in Window::ALL {
         fetch_stats(
@@ -181,7 +225,56 @@ fn use_market_data_configured(
             window.days(),
         );
     }
+    fetch_listing_stats(scope, market.listings, market.listings_wanted.into());
     market
+}
+
+/// Same scope-change guard as `fetch_stats`. Unlike `sale_stats`, an empty
+/// board is a successful `200 {"stats":[]}`: only a transport error sets
+/// `failed`, so cells can tell "nothing alive" from "could not ask".
+fn fetch_listing_stats(
+    scope: Signal<String>,
+    output: RwSignal<ScopedListings>,
+    wanted: Signal<bool>,
+) {
+    let generation = StoredValue::new(0u64);
+    Effect::new(move |_| {
+        let name = scope.get();
+        let wanted = wanted.get();
+        generation.update_value(|n| *n = n.wrapping_add(1));
+        let epoch = generation.get_value();
+        output.set(None);
+        if !wanted {
+            return;
+        }
+        if name.is_empty() {
+            output.set(Some(ListingSlot {
+                scope: name,
+                index: Arc::new(ListingIndex::new()),
+                failed: true,
+                fetched_unix: 0,
+            }));
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            let result = get_listing_stats(&name)
+                .await
+                .map(|body| listing_index(&body.stats));
+            let failed = result.is_err();
+            let index = result.unwrap_or_default();
+            if scope.try_get_untracked().as_ref() != Some(&name)
+                || generation.try_get_value() != Some(epoch)
+            {
+                return;
+            }
+            let _ = output.try_set(Some(ListingSlot {
+                scope: name,
+                index: Arc::new(index),
+                failed,
+                fetched_unix: chrono::Utc::now().timestamp(),
+            }));
+        });
+    });
 }
 
 fn fetch_stats(
@@ -372,11 +465,14 @@ enum MarketMetric {
     TrendWorld,
     Trend7,
     Drift7,
+    /// The board as it stands now; ids and labels come from `LISTING_COLUMNS`.
+    Listings(ListingKind),
 }
 
 impl MarketMetric {
     fn id(self) -> &'static str {
         match self {
+            Self::Listings(kind) => listing_id(kind),
             Self::Subject => "market-subject",
             Self::Scope => "market-scope",
             Self::Quality => "market-quality",
@@ -456,15 +552,29 @@ fn market_metrics() -> impl Iterator<Item = MarketMetric> {
                 .map(|c| MarketMetric::Stat(c.kind, c.window)),
         )
         .chain(TRAILING_METRICS)
+        .chain(
+            LISTING_COLUMNS
+                .iter()
+                .map(|(kind, _)| MarketMetric::Listings(*kind)),
+        )
 }
 
 fn metric_by_id(id: &str) -> Option<MarketMetric> {
     market_metrics().find(|m| m.id() == id)
 }
 
+/// Header hover text; only the age columns carry one.
+fn metric_title(metric: MarketMetric) -> Option<String> {
+    match metric {
+        MarketMetric::Listings(kind) => listing_title(kind),
+        _ => None,
+    }
+}
+
 fn metric_label(metric: MarketMetric, selected: Window) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     match metric {
+        MarketMetric::Listings(kind) => return listing_label(kind),
         MarketMetric::Subject => t_string!(i18n, market_subject),
         MarketMetric::Scope => t_string!(i18n, market_scope),
         MarketMetric::Quality => t_string!(i18n, market_quality),
@@ -516,6 +626,30 @@ fn stats_value(metric: MarketMetric, stats: Option<ItemSaleStats>) -> GridValue 
             StatKind::GilVolume => (s.gil_volume > 0).then_some(s.gil_volume as f64),
         }),
         _ => GridValue::Missing,
+    }
+}
+
+/// A row absent from a successful body has no alive listings Ultros knows
+/// of. Ages count from the retainer's last review; a zero review time is an
+/// unknown timestamp, not a listing from 1970.
+fn listing_value(
+    kind: ListingKind,
+    stats: Option<&ItemListingStats>,
+    fetched_unix: i64,
+) -> GridValue {
+    let Some(s) = stats else {
+        return GridValue::Missing;
+    };
+    let alive = s.alive_count > 0;
+    match kind {
+        ListingKind::Alive => GridValue::Number(f64::from(s.alive_count)),
+        ListingKind::AliveUnits => GridValue::Number(s.alive_units as f64),
+        ListingKind::Sellers => GridValue::Number(f64::from(s.distinct_retainers)),
+        ListingKind::MedianAge => number(alive.then_some(f64::from(s.median_age_secs))),
+        ListingKind::OldestAge => number(
+            (alive && s.oldest_reviewed_unix > 0)
+                .then(|| (fetched_unix - s.oldest_reviewed_unix).max(0) as f64),
+        ),
     }
 }
 
@@ -612,6 +746,15 @@ fn market_value(
             let key = spark_key(subject, scope_world.get());
             spark_metric_value(store, &key)
         }),
+        MarketMetric::Listings(kind) => match market.listings() {
+            None => GridValue::Pending,
+            Some(slot) if slot.failed => GridValue::Unavailable,
+            Some(slot) => listing_value(
+                kind,
+                slot.index.get(&(subject.item_id, subject.hq)),
+                slot.fetched_unix,
+            ),
+        },
         _ => {
             let Some(window) = metric.window(market.window.selected.get()) else {
                 return GridValue::Missing;
@@ -641,6 +784,9 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
     match value {
         GridValue::Number(n) if matches!(metric, MarketMetric::Trend7 | MarketMetric::Drift7) => {
             format!("{n:+.1}%")
+        }
+        GridValue::Number(n) if matches!(metric, MarketMetric::Listings(kind) if kind.is_age()) => {
+            format_duration_short(n.max(0.0).round() as u64)
         }
         GridValue::Number(n)
             if matches!(
@@ -765,6 +911,7 @@ where
             column.picker_group = match metric {
                 MarketMetric::Follow(_) => Some(market_picker_group(None)),
                 MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
+                MarketMetric::Listings(_) => Some(market_picker_group_listings()),
                 _ => None,
             };
         }
@@ -802,6 +949,9 @@ where
         needs.with(|n| {
             for window in required_windows(n, market.window.selected.get(), false) {
                 market.want(window);
+            }
+            if listings_wanted(n) {
+                market.want_listings();
             }
         });
     });
@@ -905,7 +1055,9 @@ where
         <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| match metric_by_id(id) {
                 Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {
-                    <MetricSortHeader column=id label=Signal::derive(move || metric_label(metric, market.window.selected.get())) />
+                    <span title=metric_title(metric)>
+                        <MetricSortHeader column=id label=Signal::derive(move || metric_label(metric, market.window.selected.get())) />
+                    </span>
                 }.into_any(),
                 Some(metric) => (move || metric_label(metric, market.window.selected.get())).into_any(),
                 None => native_header.with_value(|header| header(id)),
@@ -1090,6 +1242,190 @@ mod tests {
             )));
             assert_eq!(value(), GridValue::Unavailable);
             assert!(market.stats_failed(Window::D30));
+        });
+    }
+
+    #[test]
+    fn listing_columns_distinguish_pending_failed_empty_and_absent_rows() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let scope = RwSignal::new("Gilgamesh".to_owned());
+            let market = use_market_data(scope.into());
+            let sparks = RwSignal::new(MarketSparkStore::default());
+            let scope_world = Memo::new(|_| None);
+            let worlds = Arc::new(HashMap::new());
+            let subject = MarketSubject::new(42, true, 7);
+            let value = |kind| {
+                market_value(
+                    MarketMetric::Listings(kind),
+                    &subject,
+                    market,
+                    sparks,
+                    scope_world,
+                    &worlds,
+                )
+            };
+            // Nothing wanted yet: the slot is empty and cells wait.
+            assert!(!market.listings_wanted.get_untracked());
+            assert_eq!(value(ListingKind::Alive), GridValue::Pending);
+            let slot = |scope: &str, rows: Vec<ItemListingStats>, failed| {
+                Some(ListingSlot {
+                    scope: scope.into(),
+                    index: Arc::new(listing_index(&rows)),
+                    failed,
+                    fetched_unix: 1_000_000,
+                })
+            };
+            // A body from another scope never satisfies this scope's cells.
+            market
+                .listings
+                .set(slot("Cactuar", vec![row(42, true, 3)], false));
+            assert_eq!(value(ListingKind::Alive), GridValue::Pending);
+            market.listings.set(slot("Gilgamesh", Vec::new(), true));
+            assert!(market.listings().is_some_and(|slot| slot.failed));
+            assert_eq!(value(ListingKind::Alive), GridValue::Unavailable);
+            assert_eq!(value(ListingKind::OldestAge), GridValue::Unavailable);
+            // An empty successful body is an empty board, not a failure.
+            market.listings.set(slot("Gilgamesh", Vec::new(), false));
+            assert!(market.listings().is_some_and(|slot| !slot.failed));
+            assert_eq!(value(ListingKind::Alive), GridValue::Missing);
+            // Exact quality: an NQ row does not answer for the HQ subject.
+            market
+                .listings
+                .set(slot("Gilgamesh", vec![row(42, false, 3)], false));
+            assert_eq!(value(ListingKind::Sellers), GridValue::Missing);
+            market
+                .listings
+                .set(slot("Gilgamesh", vec![row(42, true, 3)], false));
+            assert_eq!(value(ListingKind::Alive), GridValue::Number(3.0));
+            assert_eq!(value(ListingKind::AliveUnits), GridValue::Number(30.0));
+            assert_eq!(value(ListingKind::Sellers), GridValue::Number(2.0));
+            assert_eq!(value(ListingKind::MedianAge), GridValue::Number(3_600.0));
+            assert_eq!(
+                value(ListingKind::OldestAge),
+                GridValue::Number(f64::from(1_000_000 - 913_600))
+            );
+            scope.set("Cactuar".into());
+            assert_eq!(value(ListingKind::Alive), GridValue::Pending);
+        });
+    }
+
+    fn row(item_id: i32, hq: bool, alive_count: u32) -> ItemListingStats {
+        ItemListingStats {
+            item_id,
+            hq,
+            alive_count,
+            alive_units: u64::from(alive_count) * 10,
+            distinct_retainers: 2,
+            oldest_reviewed_unix: 913_600,
+            median_age_secs: 3_600,
+            floor_alive: 500,
+            window: None,
+        }
+    }
+
+    #[test]
+    fn listing_ages_treat_unknown_timestamps_and_empty_boards_as_missing() {
+        let now = 2_000_000;
+        let zero = ItemListingStats {
+            alive_count: 0,
+            ..row(42, false, 0)
+        };
+        assert_eq!(
+            listing_value(ListingKind::Alive, Some(&zero), now),
+            GridValue::Number(0.0)
+        );
+        assert_eq!(
+            listing_value(ListingKind::MedianAge, Some(&zero), now),
+            GridValue::Missing
+        );
+        assert_eq!(
+            listing_value(ListingKind::OldestAge, Some(&zero), now),
+            GridValue::Missing
+        );
+        let unknown = ItemListingStats {
+            oldest_reviewed_unix: 0,
+            ..row(42, false, 2)
+        };
+        assert_eq!(
+            listing_value(ListingKind::OldestAge, Some(&unknown), now),
+            GridValue::Missing
+        );
+        assert_eq!(
+            listing_value(ListingKind::MedianAge, Some(&unknown), now),
+            GridValue::Number(3_600.0)
+        );
+        // A review time ahead of the fetch clock (skew) is an age of zero, not negative.
+        let future = ItemListingStats {
+            oldest_reviewed_unix: now + 60,
+            ..row(42, false, 2)
+        };
+        assert_eq!(
+            listing_value(ListingKind::OldestAge, Some(&future), now),
+            GridValue::Number(0.0)
+        );
+        assert_eq!(
+            listing_value(ListingKind::Alive, None, now),
+            GridValue::Missing
+        );
+    }
+
+    #[test]
+    fn listing_ages_display_as_durations_and_counts_as_integers() {
+        assert_eq!(
+            display_value(
+                MarketMetric::Listings(ListingKind::OldestAge),
+                GridValue::Number(90_000.0)
+            ),
+            "1d 1h"
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::Listings(ListingKind::MedianAge),
+                GridValue::Number(59.4)
+            ),
+            "59s"
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::Listings(ListingKind::AliveUnits),
+                GridValue::Number(12345.0)
+            ),
+            "12,345"
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::Listings(ListingKind::Alive),
+                GridValue::Unavailable
+            ),
+            "—"
+        );
+        for id in [
+            "market-alive",
+            "market-alive-units",
+            "market-sellers",
+            "market-listing-age",
+            "market-oldest-listing",
+        ] {
+            let metric = metric_by_id(id).unwrap();
+            assert!(matches!(metric, MarketMetric::Listings(_)), "{id}");
+            assert!(!metric.text() && !metric.partial(), "{id} sorts globally");
+            assert_eq!(metric.window(Window::D30), None, "{id} needs no window");
+        }
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            assert!(metric_title(metric_by_id("market-alive").unwrap()).is_none());
+            assert!(
+                metric_title(metric_by_id("market-listing-age").unwrap())
+                    .is_some_and(|t| t.contains("retainer last touched"))
+            );
+            assert_eq!(
+                metric_label(metric_by_id("market-sellers").unwrap(), Window::D7),
+                "Sellers"
+            );
         });
     }
 

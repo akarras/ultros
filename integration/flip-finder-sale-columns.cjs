@@ -92,6 +92,8 @@ module.exports = async function flipSaleColumns({ page, base, route, openFixture
   }
   assert(await (await pickerEntry('Sale median')).$eval('input', el => el.checked));
   assert.equal(await (await pickerEntry('Sale average')).$eval('input', el => el.checked), false);
+  assert.equal(await (await pickerEntry('Active listings')).$eval('input', el => el.checked), false, 'listing columns are off by default');
+  assert(await page.$$eval('span.basis-full', spans => spans.some(el => el.textContent.trim() === 'Listings')), 'picker groups the alive set under Listings');
   await (await pickerEntry('Sale average')).click();
   await page.waitForFunction(() => new URL(location.href).searchParams.get('cols')?.split(',').includes('market-sale-avg'));
   assert(new URL(page.url()).searchParams.get('cols').split(',').includes(median));

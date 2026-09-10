@@ -335,6 +335,13 @@ async function main() {
     await page.setViewport({ width: 393, height: 844, isMobile: true, hasTouch: true });
     await page.waitForFunction(() => window.__queryHydrated);
     await page.$eval(heading(median), el => el.scrollIntoView({ block: 'nearest', inline: 'center' }));
+    // The viewport change re-fits the columns; a tap that lands mid-shift is lost.
+    await page.waitForFunction(selector => {
+      const rect = JSON.stringify(document.querySelector(selector)?.getBoundingClientRect());
+      const settled = window.__settledRect === rect;
+      window.__settledRect = rect;
+      return settled;
+    }, { polling: 250 }, sortLink(median));
     await page.tap(sortLink(median));
     await sorted(median, 'asc');
     await marketFirst(42);
@@ -372,7 +379,8 @@ async function main() {
       ];
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',
         'market-sale-median-30', 'market-sale-median', 'market-gil-7',
-        'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7'];
+        'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7',
+        'market-alive', 'market-listing-age'];
       await page.setViewport({ width: 1600, height: 1000 });
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });
       for (const [tool, route] of routes) {
@@ -443,6 +451,15 @@ async function main() {
         await page.waitForSelector(`.virtual-grid-heading[data-column="${medianColumn}"]`);
         if (fixture) await page.waitForFunction(column => [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
           .some(cell => /900|1[,. ]?500/.test(cell.textContent)), { timeout: 90000 }, medianColumn);
+        if (fixture && tool !== 'recipe-analyzer') {
+          // The alive set lands on every MarketGrid consumer together with the sale family.
+          await page.$eval('.virtual-grid', element => { element.scrollLeft = element.scrollWidth; });
+          await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-alive"]')]
+            .some(cell => /^[25]$/.test(cell.textContent.trim())), { timeout: 90000 });
+          await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-listing-age"]')]
+            .some(cell => cell.textContent.trim() === '30m'), { timeout: 90000 });
+          await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
+        }
         if (fixture) {
           await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
           const calculated = `.virtual-grid-cell[data-column="${tool === 'scrip-sources' ? 'cost' : 'profit'}"]`;
@@ -584,7 +601,7 @@ async function main() {
       if (fixture) {
         const ran = tool => !process.env.ANALYZER_TOOLS || process.env.ANALYZER_TOOLS.split(',').includes(tool);
         if (routes.some(([tool]) => ran(tool))) {
-          for (const source of ['cheapest', 'recentSales', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed`);
+          for (const source of ['cheapest', 'recentSales', 'sale_stats', 'listing_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed`);
         }
         if (ran('trends')) for (const source of ['trends', 'sale_stats']) assert(fixture.hits.get(source) > 0, `${source} fixture was consumed by Trends`);
       }
