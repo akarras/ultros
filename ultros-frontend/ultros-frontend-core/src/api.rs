@@ -18,6 +18,7 @@ use ultros_api_types::{
         ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup, ShareListRole,
         ShareListUser,
     },
+    listing_stats::BulkListingStats,
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
     price_density::PriceDensity,
@@ -291,6 +292,13 @@ pub async fn get_sale_stats(scope_name: &str, window_days: u16) -> AppResult<Bul
         "/api/v1/sale_stats/{scope_name}?window={window_days}"
     ))
     .await
+}
+
+/// Current-listing statistics (alive count, units, sellers, ages) for every
+/// item/quality pair in a world, datacenter, or region. An empty board is a
+/// successful empty body, not an error; only transport failures are `Err`.
+pub async fn get_listing_stats(scope_name: &str) -> AppResult<BulkListingStats> {
+    fetch_api(&format!("/api/v1/listing_stats/{scope_name}")).await
 }
 
 /// Get most expensive

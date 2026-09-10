@@ -113,12 +113,76 @@ pub fn follow_id(kind: StatKind) -> &'static str {
     FOLLOW_COLUMNS.iter().find(|(k, _)| *k == kind).unwrap().1
 }
 
+/// One statistic read from an `ItemListingStats` row: the board as it
+/// stands now, independent of the page window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ListingKind {
+    /// Listings whose last observed event is not a removal.
+    Alive,
+    /// Units across those listings.
+    AliveUnits,
+    /// Distinct retainers holding them.
+    Sellers,
+    /// Median seconds since an alive listing was last touched by its retainer.
+    MedianAge,
+    /// Seconds since the least recently touched alive listing was reviewed.
+    OldestAge,
+}
+
+impl ListingKind {
+    /// Age columns hold seconds since the retainer's last review, never
+    /// since the listing was first posted.
+    pub const fn is_age(self) -> bool {
+        matches!(self, ListingKind::MedianAge | ListingKind::OldestAge)
+    }
+}
+
+/// Window-independent ids: the alive set is one body per scope, so these
+/// never acquire a numeric suffix.
+pub static LISTING_COLUMNS: [(ListingKind, &str); 5] = [
+    (ListingKind::Alive, "market-alive"),
+    (ListingKind::AliveUnits, "market-alive-units"),
+    (ListingKind::Sellers, "market-sellers"),
+    (ListingKind::MedianAge, "market-listing-age"),
+    (ListingKind::OldestAge, "market-oldest-listing"),
+];
+
+pub fn listing_id(kind: ListingKind) -> &'static str {
+    LISTING_COLUMNS.iter().find(|(k, _)| *k == kind).unwrap().1
+}
+
+/// Whether any current-listing column is in the grid's wanted set.
+pub fn listings_wanted(needs: &HashSet<String>) -> bool {
+    LISTING_COLUMNS.iter().any(|(_, id)| needs.contains(*id))
+}
+
+pub fn listing_label(kind: ListingKind) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    match kind {
+        ListingKind::Alive => t_string!(i18n, market_alive),
+        ListingKind::AliveUnits => t_string!(i18n, market_alive_units),
+        ListingKind::Sellers => t_string!(i18n, market_sellers),
+        ListingKind::MedianAge => t_string!(i18n, market_listing_age),
+        ListingKind::OldestAge => t_string!(i18n, market_oldest_listing),
+    }
+    .to_string()
+}
+
+/// Hover text for the age columns: review age is not ingestion freshness,
+/// and an old listing may be an unrelated expensive one.
+pub fn listing_title(kind: ListingKind) -> Option<String> {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    kind.is_age()
+        .then(|| t_string!(i18n, market_listing_age_title).to_string())
+}
+
 pub fn shared_cols_in(raw: Option<&str>) -> HashSet<&'static str> {
     let selected: HashSet<_> = raw.unwrap_or("").split(',').collect();
     FOLLOW_COLUMNS
         .iter()
         .map(|(_, id)| *id)
         .chain(STAT_COLUMNS.iter().map(|c| c.id))
+        .chain(LISTING_COLUMNS.iter().map(|(_, id)| *id))
         .filter(|id| selected.contains(id))
         .collect()
 }
@@ -220,8 +284,15 @@ pub fn market_picker_group(window: Option<Window>) -> String {
     }
 }
 
+/// The picker and filter-menu heading for the current-listing family.
+pub fn market_picker_group_listings() -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    t_string!(i18n, market_picker_group_listings).to_string()
+}
+
 /// Every stat column as a toolbar-picker option, grouped under one
-/// "Sale history (Nd)" heading per window.
+/// "Sale history (Nd)" heading per window, then the current-listing
+/// columns under "Listings".
 pub fn market_picker_options(window: Window) -> Vec<ColumnOption> {
     FOLLOW_COLUMNS
         .iter()
@@ -244,6 +315,16 @@ pub fn market_picker_options(window: Window) -> Vec<ColumnOption> {
             }),
             disabled: false,
             hint: None,
+        }))
+        .chain(LISTING_COLUMNS.iter().map(|(kind, id)| ColumnOption {
+            id,
+            label: listing_label(*kind),
+            group: Some(PickerHeading {
+                label: market_picker_group_listings(),
+                title: None,
+            }),
+            disabled: false,
+            hint: listing_title(*kind),
         }))
         .collect()
 }
@@ -328,6 +409,35 @@ mod tests {
     }
 
     #[test]
+    fn listing_columns_are_window_free_unique_and_wanted_together() {
+        let ids: HashSet<_> = LISTING_COLUMNS.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids.len(), LISTING_COLUMNS.len());
+        assert_eq!(LISTING_COLUMNS.len(), 5);
+        for (kind, id) in &LISTING_COLUMNS {
+            assert_eq!(listing_id(*kind), *id);
+            assert!(!STAT_COLUMNS.iter().any(|c| c.id == *id), "{id} collides");
+            assert!(
+                !FOLLOW_COLUMNS.iter().any(|(_, f)| f == id),
+                "{id} collides"
+            );
+            for window in Window::ALL {
+                assert!(!id.ends_with(&format!("-{}", window.days())), "{id}");
+            }
+        }
+        let needs: HashSet<String> = ["market-sellers", "roi"].map(str::to_owned).into();
+        assert!(listings_wanted(&needs));
+        assert!(required_windows(&needs, Window::D7, false).is_empty());
+        let none: HashSet<String> = ["market-sale-median-7"].map(str::to_owned).into();
+        assert!(!listings_wanted(&none));
+        assert_eq!(
+            shared_cols_in(Some("profit,market-alive,market-oldest-listing")),
+            HashSet::from(["market-alive", "market-oldest-listing"])
+        );
+        assert!(ListingKind::MedianAge.is_age() && ListingKind::OldestAge.is_age());
+        assert!(!ListingKind::Alive.is_age());
+    }
+
+    #[test]
     fn a_window_is_wanted_only_when_one_of_its_columns_is() {
         let needs: HashSet<String> = ["market-sale-median-30", "roi"].map(str::to_owned).into();
         assert!(window_wanted(&needs, Window::D30));
@@ -347,7 +457,27 @@ mod tests {
                 "Gil traded (90d)"
             );
             let options = market_picker_options(Window::D7);
-            assert_eq!(options.len(), STAT_COLUMNS.len() + FOLLOW_COLUMNS.len());
+            assert_eq!(
+                options.len(),
+                STAT_COLUMNS.len() + FOLLOW_COLUMNS.len() + LISTING_COLUMNS.len()
+            );
+            let alive = options.iter().find(|o| o.id == "market-alive").unwrap();
+            assert_eq!(alive.label, "Active listings");
+            assert_eq!(
+                alive.group.as_ref().map(|g| g.label.as_str()),
+                Some("Listings")
+            );
+            assert_eq!(alive.hint, None);
+            let oldest = options
+                .iter()
+                .find(|o| o.id == "market-oldest-listing")
+                .unwrap();
+            assert_eq!(oldest.label, "Oldest listing age");
+            assert_eq!(
+                oldest.hint.as_deref(),
+                Some("Time since the retainer last touched the listing, not how long it has been for sale. An old listing may be an unrelated expensive one; it says nothing about how fresh the price data is.")
+            );
+            assert_eq!(options.last().unwrap().id, "market-oldest-listing");
             let median = options
                 .iter()
                 .find(|o| o.id == "market-sale-median-7")

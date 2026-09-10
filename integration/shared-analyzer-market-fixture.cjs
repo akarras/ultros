@@ -40,6 +40,12 @@ function marketFixture(itemIds = ids) {
       body = { stats: stats.stats.map(row => ({ ...row, min_price: row.min_price * multiplier,
         median_price: row.median_price * multiplier, avg_price: row.avg_price * multiplier })) };
     }
+    if (kind === 'listing_stats') {
+      body = { stats: ids.flatMap(item_id => [false, true].map(hq => ({
+        item_id, hq, alive_count: hq ? 2 : 5, alive_units: hq ? 4 : 25, distinct_retainers: hq ? 2 : 3,
+        oldest_reviewed_unix: Math.floor(now / 1000) - 7200, median_age_secs: 1800, floor_alive: hq ? 1200 : 600,
+      }))) };
+    }
     if (kind === 'sparklines') {
       const items = JSON.parse(request.postData() || '{}').items || [];
       body = { world_id: worldId, series: items.map(([item_id, hq]) => ({
