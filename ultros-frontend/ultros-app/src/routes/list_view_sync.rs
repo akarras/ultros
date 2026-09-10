@@ -1,10 +1,5 @@
-//! `/list/:id` behind the `lists-sync` Labs toggle: the same page as
-//! [`crate::routes::list_view`], reading and writing the browser's local
-//! document (spec sections 3.1-3.3) instead of the REST list endpoints.
-//!
-//! Everything that renders is imported from `list_view.rs` rather than
-//! copied, so the two pages cannot drift apart; what differs here is the
-//! data source and the handle's lifecycle.
+//! Labs list workspace: inline construction and a stable shopping companion,
+//! backed by the local document and account synchronization.
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -13,7 +8,6 @@ use std::rc::Rc;
 
 use crate::global_state::xiv_data::tracked_data;
 
-use crate::components::data_table::header_cells;
 use crate::components::icon::Icon;
 use crate::global_state::LocalWorldData;
 use icondata as i;
@@ -28,13 +22,10 @@ use ultros_api_types::{
 
 use crate::api::{get_list_activity, get_list_items_with_listings};
 use crate::components::{
-    add_recipe_to_current_list::AddRecipeToCurrentListModal,
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases,
-        buying_view::BuyingView,
         filter_row::{ListFilterRow, SortSpec, worlds_in_listings},
-        list_item_row::ListItemRow,
         list_settings_drawer::ListSettingsDrawer,
         list_summary::*,
     },
@@ -55,7 +46,7 @@ use crate::list_doc::handle::ListDocHandle;
 use crate::query_defaults::filter_query_signal;
 use crate::routes::list_view::{
     ActivityFeed, IdList, ListView, ListViewResult, MenuState, NameList, filter_excluded,
-    list_item_table_columns, list_item_table_skeleton_columns, remaining_quantity, sort_list_items,
+    list_item_table_skeleton_columns, remaining_quantity, sort_list_items,
 };
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use ultros_api_types::websocket::{
@@ -63,6 +54,271 @@ use ultros_api_types::websocket::{
     is_list_market_update_relevant,
 };
 use xiv_gen::ItemId;
+
+/// Inline catalog composer shared by account and device lists.
+#[component]
+pub fn InlineListAdd(
+    list_id: Signal<i32>,
+    on_add: Callback<ListItem>,
+    #[prop(default = Signal::derive(|| false))] pending: Signal<bool>,
+    #[prop(default = Signal::derive(String::new))] feedback: Signal<String>,
+) -> impl IntoView {
+    let search = RwSignal::new(String::new());
+    let quantity = RwSignal::new("1".to_string());
+    let quality = RwSignal::new("any".to_string());
+    let input = NodeRef::<leptos::html::Input>::new();
+    let results = Memo::new(move |_| {
+        let query = search.get().trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let mut found = tracked_data()
+            .items
+            .iter()
+            .filter(|(_, item)| {
+                item.item_search_category > 0 && item.name.to_lowercase().contains(&query)
+            })
+            .map(|(id, item)| (id.0, item.name.to_string(), item.can_be_hq, item.level_item))
+            .collect::<Vec<_>>();
+        found.sort_by_key(|(_, name, _, level)| (name.to_lowercase() != query, Reverse(*level)));
+        found.truncate(12);
+        found
+    });
+    let add = Callback::new(move |(id, can_hq): (i32, bool)| {
+        if pending.get_untracked() {
+            return;
+        }
+        let Ok(count) = quantity.get_untracked().parse::<i32>() else {
+            return;
+        };
+        if count < 1 {
+            return;
+        }
+        let hq = match quality.get_untracked().as_str() {
+            "hq" if can_hq => Some(true),
+            "nq" => Some(false),
+            _ => None,
+        };
+        on_add.run(ListItem {
+            item_id: id,
+            list_id: list_id.get_untracked(),
+            quantity: Some(count),
+            hq,
+            ..Default::default()
+        });
+        if let Some(input) = input.get() {
+            let _ = input.focus();
+            input.select();
+        }
+    });
+    view! {
+        <section class="panel rounded-xl p-4 sm:p-5" aria-label="Add items to this list" data-testid="inline-list-add">
+            <div class="mb-3"><h2 class="font-semibold">"Build your list"</h2><p class="text-sm text-[color:var(--color-text-muted)]">"Search the item catalog. Add what you need, then head to Shop."</p></div>
+            <div class="flex flex-wrap gap-2">
+                <input node_ref=input class="input flex-1 min-w-48" placeholder="Add an item…" aria-label="Add an item" prop:value=search
+                    on:input=move |ev| search.set(event_target_value(&ev))
+                    on:keydown=move |ev| {
+                        if ev.key() == "Escape" { search.set(String::new()); ev.stop_propagation(); }
+                        if ev.key() == "Enter" {
+                            ev.prevent_default();
+                            if let Some((id, _, can_hq, _)) = results.get_untracked().first() { add.run((*id, *can_hq)); }
+                        }
+                    } />
+                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label="Quantity to add" prop:value=quantity on:input=move |ev| quantity.set(event_target_value(&ev)) />
+                <select class="input" aria-label="Quality to add" prop:value=quality on:change=move |ev| quality.set(event_target_value(&ev))><option value="any">"Any quality"</option><option value="nq">"NQ"</option><option value="hq">"HQ when available"</option></select>
+            </div>
+            <p class="text-sm mt-2 text-[color:var(--color-text-muted)]" role="status">{feedback}</p>
+            <Show when=move || !search.get().trim().is_empty()>
+                <div class="mt-3 max-h-80 overflow-y-auto divide-y divide-[color:var(--color-outline)]" aria-label="Catalog results">
+                    <Show when=move || results.get().is_empty()><p class="p-3 text-sm">"No matching items. Try another name."</p></Show>
+                    <For each=move || results.get() key=|item| item.0 children=move |(id, name, can_hq, _)| view! {
+                        <div class="flex items-center gap-3 py-2"><ItemIcon item_id=id icon_size=IconSize::Small /><span class="flex-1 min-w-0">{name.clone()}</span>
+                            <button class="btn-primary" aria-label=format!("Add {name}") disabled={move || pending.get() || quantity.get().parse::<i32>().map_or(true, |q| q < 1)} on:click=move |_| add.run((id, can_hq))>"Add"</button>
+                        </div>
+                    } />
+                </div>
+            </Show>
+        </section>
+    }
+}
+
+/// Recipe preview uses the same local add callback as ordinary catalog rows.
+fn recipe_preview_ingredients(recipe: &xiv_gen::Recipe) -> impl Iterator<Item = (ItemId, i32)> {
+    // Unused crystal slots can use item -1 with amount 0. The shared
+    // iterator skips item 0, but deliberately preserves other sheet values.
+    // Only positive quantities belong in a shopping preview; retain a
+    // genuinely missing positive-quantity item so validation still fails.
+    crate::components::crafting_cost::IngredientsIter::new(recipe).filter(|(_, amount)| *amount > 0)
+}
+
+#[component]
+pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) -> impl IntoView {
+    use crate::components::crafting_cost::CRYSTAL_SEARCH_CATEGORY;
+    let query = RwSignal::new(String::new());
+    let selected = RwSignal::new(None::<&'static xiv_gen::Recipe>);
+    let crafts = RwSignal::new("1".to_string());
+    let ingredients = RwSignal::new(true);
+    let crystals = RwSignal::new(true);
+    let quality = RwSignal::new("any".to_string());
+    let results = Memo::new(move |_| {
+        let data = tracked_data();
+        let query = query.get().trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        data.recipes
+            .iter()
+            .filter_map(|(id, recipe)| {
+                let item = data.items.get(&ItemId(recipe.item_result))?;
+                item.name.to_lowercase().contains(&query).then_some((
+                    id.0,
+                    item.name.to_string(),
+                    recipe,
+                ))
+            })
+            .take(20)
+            .collect::<Vec<_>>()
+    });
+    let preview = Memo::new(move |_| {
+        let recipe = selected.get()?;
+        let crafts = crafts
+            .get()
+            .parse::<i32>()
+            .ok()
+            .filter(|count| (1..=9999).contains(count))?;
+        let data = tracked_data();
+        let make_item = |item_id, count: i32| {
+            let item = data.items.get(&ItemId(item_id))?;
+            let count = count.checked_mul(crafts)?;
+            let hq = match quality.get().as_str() {
+                "hq" if item.can_be_hq => Some(true),
+                "nq" => Some(false),
+                _ => None,
+            };
+            Some(ListItem {
+                list_id: list_id.get(),
+                item_id,
+                quantity: Some(count),
+                hq,
+                ..Default::default()
+            })
+        };
+        if ingredients.get() {
+            recipe_preview_ingredients(recipe)
+                .filter(|(id, _)| {
+                    crystals.get()
+                        || data
+                            .items
+                            .get(id)
+                            .is_none_or(|item| item.item_search_category != CRYSTAL_SEARCH_CATEGORY)
+                })
+                .map(|(id, count)| make_item(id.0, count))
+                .collect::<Option<Vec<_>>>()
+        } else {
+            Some(vec![make_item(recipe.item_result, recipe.amount_result)?])
+        }
+    });
+    view! {
+        <section class="panel rounded-xl p-4 space-y-3" data-testid="inline-recipe-add" aria-label="Add a recipe">
+            <h2 class="font-semibold">"Add a recipe"</h2>
+            <p class="text-sm text-[color:var(--color-text-muted)]">"Preview the finished items or ingredients before adding them to your list."</p>
+            <input class="input w-full" aria-label="Search recipes" placeholder="Search recipes…" prop:value=query on:input=move |ev| query.set(event_target_value(&ev)) />
+            <div class="max-h-48 overflow-y-auto flex flex-col gap-1">
+                <For each=move || results.get() key=|(id, _, _)| *id children=move |(_, name, recipe)| view! {
+                    <button class="btn-secondary justify-start" on:click=move |_| selected.set(Some(recipe))>{name}</button>
+                } />
+                <Show when=move || !query.get().trim().is_empty() && results.get().is_empty()><p>"No matching recipes."</p></Show>
+            </div>
+            <Show when=move || selected.get().is_some()>
+                <h3 class="font-semibold">{move || selected.get().and_then(|recipe| tracked_data().items.get(&ItemId(recipe.item_result))).map(|item| item.name.to_string())}</h3>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <label>"Crafts "<input type="number" min="1" max="9999" class="input w-24" aria-label="Recipe crafts" prop:value=crafts on:input=move |ev| crafts.set(event_target_value(&ev)) /></label>
+                    <select class="input" aria-label="Recipe items to add" on:change=move |ev| ingredients.set(event_target_value(&ev) == "ingredients")><option value="ingredients">"Ingredients"</option><option value="finished">"Finished items"</option></select>
+                    <select class="input" aria-label="Recipe quality" on:change=move |ev| quality.set(event_target_value(&ev))><option value="any">"Any quality"</option><option value="nq">"NQ"</option><option value="hq">"HQ when available"</option></select>
+                    <Show when=move || ingredients.get()><label class="flex gap-2 items-center"><input type="checkbox" prop:checked=crystals on:change=move |ev| crystals.set(event_target_checked(&ev)) />"Include crystals"</label></Show>
+                </div>
+                <ul class="space-y-2" aria-label="Recipe preview">{move || preview.get().unwrap_or_default().into_iter().map(|item| {
+                    let name = tracked_data().items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default();
+                    view! { <li class="flex gap-3 items-center"><ItemIcon item_id=item.item_id icon_size=IconSize::Small /><span>{format!("{} × {}{}", item.quantity.unwrap_or(1), name, if item.hq == Some(true) { " HQ" } else { "" })}</span></li> }
+                }).collect_view()}</ul>
+                <Show when=move || preview.get().is_none()>
+                    <p role="status" class="text-sm text-red-200">{move || {
+                        if !crafts.get().parse::<i32>().is_ok_and(|count| (1..=9999).contains(&count)) {
+                            "Enter a craft count between 1 and 9999."
+                        } else {
+                            "This recipe references an item missing from the loaded catalog. Reload the catalog before adding it."
+                        }
+                    }}</p>
+                </Show>
+                <p class="text-xs text-[color:var(--color-text-muted)]">"Adds the previewed quantities as ordinary list rows. Matching items and quality are combined."</p>
+                <button class="btn-primary" disabled=move || preview.get().is_none_or(|items| items.is_empty()) on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }>"Add previewed items"</button>
+            </Show>
+        </section>
+    }
+}
+
+/// Commit-on-change grid: typing never writes or reorders the document.
+#[component]
+pub fn BuildListRow(
+    item: ListItem,
+    selected_items: RwSignal<HashSet<i32>>,
+    on_edit: Callback<ListItem>,
+    on_delete: Callback<i32>,
+    can_write: Signal<bool>,
+    #[prop(default = Signal::derive(|| false))] highlighted: Signal<bool>,
+) -> impl IntoView {
+    let name = tracked_data()
+        .items
+        .get(&ItemId(item.item_id))
+        .map(|i| i.name.to_string())
+        .unwrap_or_else(|| format!("Item {}", item.item_id));
+    let can_hq = tracked_data()
+        .items
+        .get(&ItemId(item.item_id))
+        .is_some_and(|i| i.can_be_hq);
+    let row = StoredValue::new(item.clone());
+    let id = item.id;
+    let numeric = move |label: &'static str, value: String, field: u8| {
+        let original = StoredValue::new(value.clone());
+        view! {
+            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=format!("{label} for {}", name.clone()) prop:value=value readonly=move || !can_write.get()
+                on:keydown=move |ev| {
+                    ev.stop_propagation();
+                    if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
+                    if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&original.get_value()); }
+                }
+                on:change=move |ev| {
+                    let value = event_target_value(&ev);
+                    let mut updated = row.get_value();
+                    let valid = if field == 2 && value.is_empty() { updated.target_price = None; true }
+                    else if field == 2 { value.parse::<i64>().ok().filter(|v| *v >= 0).map(|v| updated.target_price = Some(v)).is_some() }
+                    else { value.parse::<i32>().ok().filter(|v| *v >= if field == 0 {1} else {0}).map(|v| if field == 0 { updated.quantity = Some(v); } else { updated.acquired = Some(v); }).is_some() };
+                    if valid && can_write.get_untracked() { on_edit.run(updated); } else { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&original.get_value()); }
+                } />
+        }
+    };
+    let needed = numeric("Needed", item.quantity.unwrap_or(1).to_string(), 0);
+    let owned = numeric("Owned", item.acquired.unwrap_or(0).to_string(), 1);
+    let target = numeric(
+        "Target price",
+        item.target_price.map(|v| v.to_string()).unwrap_or_default(),
+        2,
+    );
+    let display_name = tracked_data()
+        .items
+        .get(&ItemId(item.item_id))
+        .map(|i| i.name.to_string())
+        .unwrap_or_else(|| format!("Item {}", item.item_id));
+    view! {
+        <tr class="hover:bg-[color:var(--color-background-panel)] transition-colors" class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=item.item_id>
+            <td class="p-3"><input type="checkbox" aria-label=format!("Select {display_name}") disabled=move || !can_write.get() prop:checked=move || selected_items.with(|s| s.contains(&id)) on:change=move |_| selected_items.update(|s| { if !s.remove(&id) {s.insert(id);} }) /></td>
+            <td class="p-3"><div class="flex items-center gap-3"><ItemIcon item_id=item.item_id icon_size=IconSize::Small /><span class="font-semibold">{display_name}</span></div></td>
+            <td class="p-3"><select class="input min-w-24" aria-label="Item quality" disabled=move || !can_write.get() prop:value=match item.hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_value(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}><option value="any">"Any"</option><option value="nq">"NQ"</option><option value="hq" disabled=!can_hq>"HQ"</option></select></td>
+            <td class="p-3">{needed}</td><td class="p-3">{owned}</td><td class="p-3">{target}</td>
+            <td class="p-3"><button class="btn-ghost" disabled=move || !can_write.get() on:click=move |_| on_delete.run(id)>"Remove"</button></td>
+        </tr>
+    }
+}
 
 /// Prices for the rows, fetched once per list and again only when the market
 /// subscription or an import says so. The document — not this cache —
@@ -431,9 +687,17 @@ pub fn ListViewSync() -> impl IntoView {
         let edit = Edit::Add(list_item.clone());
         async move { apply_edit(handle, edit) }
     });
+    let mutation_feedback = RwSignal::new(String::new());
     let delete_item = Action::new(move |list_item: &i32| {
         let edit = Edit::Remove(*list_item);
-        async move { apply_edit(handle, edit) }
+        async move {
+            let result = apply_edit(handle, edit);
+            mutation_feedback.set(match &result {
+                Ok(()) => "Item removed. Undo restores it.".to_string(),
+                Err(error) => error.to_string(),
+            });
+            result
+        }
     });
 
     let edit_item = Action::new(move |item: &ListItem| {
@@ -445,10 +709,27 @@ pub fn ListViewSync() -> impl IntoView {
     });
     let delete_items = Action::new(move |items: &Vec<i32>| {
         let edit = Edit::RemoveMany(items.clone());
-        async move { apply_edit(handle, edit) }
+        async move {
+            let result = apply_edit(handle, edit);
+            mutation_feedback.set(match &result {
+                Ok(()) => "Selected items removed. Undo restores them.".to_string(),
+                Err(error) => error.to_string(),
+            });
+            result
+        }
     });
     let edit_items_hq = Action::new(move |(items, hq): &(Vec<i32>, Option<bool>)| {
-        let edit = Edit::SetQuality(items.clone(), *hq);
+        let items = items
+            .iter()
+            .copied()
+            .filter(|id| {
+                *hq != Some(true)
+                    || crate::list_doc::adapter::key_of(*id)
+                        .and_then(|key| tracked_data().items.get(&ItemId(key.item_id)))
+                        .is_some_and(|item| item.can_be_hq)
+            })
+            .collect();
+        let edit = Edit::SetQuality(items, *hq);
         async move { apply_edit(handle, edit) }
     });
     let edit_list_action = Action::new(move |list: &ultros_api_types::list::List| {
@@ -476,7 +757,6 @@ pub fn ListViewSync() -> impl IntoView {
 
     // Listings come from the existing endpoint and are cached per list; the
     // document supplies rows, so a local edit never refetches prices.
-    let (external_update_version, set_external_update_version) = signal(0);
     let (activity_update_version, set_activity_update_version) = signal(0);
     // Global Constraint 2: bumped (on a debounce) by ANY list broadcast for
     // this list, and part of the `list_view` resource's key, so an idle page
@@ -497,11 +777,10 @@ pub fn ListViewSync() -> impl IntoView {
                 list_id(),
                 handle.get().map(|handle| handle.revision.get()),
                 listings_version.get(),
-                external_update_version.get(),
                 revalidate_version.get(),
             )
         },
-        move |(id, _, listings_v, _, revalidate_v)| {
+        move |(id, _, listings_v, revalidate_v)| {
             load_view(
                 list_id,
                 id,
@@ -604,7 +883,6 @@ pub fn ListViewSync() -> impl IntoView {
     });
 
     let (menu, set_menu) = signal(MenuState::None);
-    let (item_modal_open, set_item_modal_open) = signal(false);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
     let (settings_open, set_settings_open) = signal(false);
@@ -618,13 +896,8 @@ pub fn ListViewSync() -> impl IntoView {
     // `StoredValue::new_local`s that must never exist on the SSR half
     // (#1332), and `SyncSubscription` owns `Rc`s, so it can only live in a
     // thread-local slot.
-    let modal_open = Signal::derive(move || {
-        item_modal_open()
-            || recipe_modal_open()
-            || subscribe_open()
-            || settings_open()
-            || confirm_bulk_delete()
-    });
+    let modal_open =
+        Signal::derive(move || subscribe_open() || settings_open() || confirm_bulk_delete());
     let (resync, set_resync) = signal(0u32);
     #[cfg(feature = "hydrate")]
     {
@@ -784,7 +1057,7 @@ pub fn ListViewSync() -> impl IntoView {
         let _ = (modal_open, resync, set_resync);
     }
 
-    let edit_list_mode = RwSignal::new(false);
+    let edit_list_mode = RwSignal::new(true);
     let selected_items = RwSignal::new(HashSet::new());
 
     // Shopping-view state lives in the URL so a shared link reproduces the
@@ -904,6 +1177,52 @@ pub fn ListViewSync() -> impl IntoView {
             .and_then(|r| r.ok().map(|(l, _)| l.list.name))
             .unwrap_or_default()
     });
+    let (home_world, _) = crate::global_state::home_world::use_home_world();
+    let shop_worlds = use_context::<LocalWorldData>().and_then(|data| data.0.ok());
+    let shop_input = Signal::derive(move || {
+        use crate::components::list_shop::{ShopInput, ShopRow};
+        let Some(Ok((list, rows))) = list_view.get() else {
+            return ShopInput::default();
+        };
+        let rows = filter_excluded(
+            &rows,
+            &excluded_worlds.get(),
+            &excluded_datacenters.get(),
+            shop_worlds.as_deref(),
+        );
+        let mut result = ShopInput {
+            title: list.list.name,
+            home_world: home_world.get().map(|world| world.id).unwrap_or_default(),
+            observed_at: None,
+            ..Default::default()
+        };
+        if let Some(scope) = shop_worlds
+            .as_ref()
+            .and_then(|helper| helper.lookup_selector(list.list.wdr_filter))
+        {
+            for world in scope.all_worlds() {
+                result.world_names.insert(world.id, world.name.clone());
+                result.datacenters.insert(world.id, world.datacenter_id);
+            }
+        }
+        result.rows = rows
+            .into_iter()
+            .map(|(row, listings)| ShopRow {
+                key: row.id.to_string(),
+                name: tracked_data()
+                    .items
+                    .get(&ItemId(row.item_id))
+                    .map(|item| item.name.to_string())
+                    .unwrap_or_else(|| format!("Item {}", row.item_id)),
+                item_id: row.item_id,
+                hq: row.hq,
+                needed: row.quantity.unwrap_or(1),
+                acquired: row.acquired.unwrap_or(0),
+                listings,
+            })
+            .collect();
+        result
+    });
     let meta_title = move || {
         let name = list_name_for_meta.get();
         if name.is_empty() {
@@ -932,23 +1251,15 @@ pub fn ListViewSync() -> impl IntoView {
                     <div class="flex flex-wrap items-center gap-2">
                         <Show when=move || view_caps.with(|c| c.can_write)>
                             <>
-                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
-                                    <button
-                                        class="sticky-bar-button sticky-bar-button-shrink"
-                                        class:bg-brand-900=move || item_modal_open.get()
-                                        class:border-brand-500=move || item_modal_open.get()
-                                        on:click=move |_| set_item_modal_open(true)
-                                    >
-                                        <Icon icon=i::BiPlusRegular />
-                                        <span class="sticky-bar-button-label">{t!(i18n, list_view_add_item)}</span>
-                                    </button>
-                                </Tooltip>
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
                                     <button
                                         class="sticky-bar-button sticky-bar-button-shrink"
                                         class:bg-brand-900=move || recipe_modal_open.get()
                                         class:border-brand-500=move || recipe_modal_open.get()
-                                        on:click=move |_| set_recipe_modal_open(true)
+                                        on:click=move |_| {
+                                            set_buying_view_param.set(None);
+                                            set_recipe_modal_open(!recipe_modal_open.get_untracked());
+                                        }
                                     >
                                         <Icon icon=i::BiBookAddRegular />
                                         <span class="sticky-bar-button-label">{t!(i18n, list_view_add_recipe)}</span>
@@ -1006,20 +1317,10 @@ pub fn ListViewSync() -> impl IntoView {
                                 <span class="sticky-bar-button-label">{t!(i18n, list_view_subscribe_button)}</span>
                             </button>
                         </Tooltip>
-                        <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>
-                            <button
-                                class="sticky-bar-button sticky-bar-button-shrink"
-                                class:bg-brand-900=buying_view
-                                class:border-brand-500=buying_view
-                                on:click=move |_| {
-                                    let next = !buying_view.get_untracked();
-                                    set_buying_view_param.set(next.then_some(true));
-                                }
-                            >
-                                <Icon icon=i::BiCartRegular />
-                                <span class="sticky-bar-button-label">{t!(i18n, list_view_purchasing_view)}</span>
-                            </button>
-                        </Tooltip>
+                        <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label="List mode">
+                            <button class=move || if !buying_view.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } aria-pressed=move || (!buying_view.get()).to_string() on:click=move |_| set_buying_view_param.set(None)>"Build"</button>
+                            <button class=move || if buying_view.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } aria-pressed=move || buying_view.get().to_string() on:click=move |_| set_buying_view_param.set(Some(true))>"Shop"</button>
+                        </div>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
                             <button
                                 class="sticky-bar-button sticky-bar-button-shrink"
@@ -1035,16 +1336,11 @@ pub fn ListViewSync() -> impl IntoView {
                 </div>
             </div>
 
-            <Show when=recipe_modal_open>
-                <AddRecipeToCurrentListModal
-                    list_id=list_id
-                    set_visible=set_recipe_modal_open
-                    on_success=move || {
-                        set_external_update_version.update(|v| *v += 1);
-                        set_activity_update_version.update(|v| *v += 1);
-                        set_recipe_modal_open(false);
-                    }
-                />
+            <Show when=move || recipe_modal_open.get() && !buying_view.get() && view_caps.with(|c| c.can_write)>
+                <InlineRecipeAdd list_id=list_id.into() on_add=Callback::new(move |items| {
+                    let result = apply_edit(handle, Edit::AddMany(items));
+                    mutation_feedback.set(match result { Ok(()) => "Recipe items added. Undo reverses the whole addition.".to_string(), Err(error) => error.to_string() });
+                }) />
             </Show>
 
             <Show when=subscribe_open>
@@ -1063,142 +1359,29 @@ pub fn ListViewSync() -> impl IntoView {
                 }}
             </Show>
 
-            <Show when=item_modal_open>
-                {move || {
-                    let (search, set_search) = signal("".to_string());
-                    // Lowercase the searchable item names once per modal open instead of
-                    // once per item per keystroke. `tracked_data()` is read here, so a
-                    // locale swap re-runs this block and rebuilds the index against the
-                    // new names — the index is never keyed on stale English strings.
-                    // Same shape as components/add_recipe_to_current_list.rs.
-                    // `StoredValue` so `item_search` stays `Copy` — the view closure
-                    // below captures it by move.
-                    let search_index = StoredValue::new(
-                        tracked_data()
-                            .items
-                            .iter()
-                            .filter(|(_, i)| i.item_search_category > 0)
-                            .map(|(id, i)| (id, i, i.name.to_lowercase()))
-                            .collect::<Vec<_>>(),
-                    );
-                    let item_search = move || {
-                        search
-                            .with(|s| {
-                                if s.is_empty() {
-                                    return Vec::new();
-                                }
-                                let s_lower = s.to_lowercase();
-                                let mut score = search_index.with_value(|index| {
-                                    index
-                                        .iter()
-                                        .filter(|(_, _, lower)| lower.contains(&s_lower))
-                                        .map(|(id, i, _)| (*id, *i))
-                                        .collect::<Vec<_>>()
-                                });
-                                // ⚡ Bolt Optimization: Use select_nth_unstable_by_key to avoid O(N log N) full sort
-                                // when we only need the top 100 results. This reduces time complexity to O(N).
-                                if score.len() > 100 {
-                                    score.select_nth_unstable_by_key(100, |(_, i)| (
-                                        Reverse(i.level_item),
-                                    ));
-                                    score.truncate(100);
-                                }
-                                score
-                                    .sort_unstable_by_key(|(_, i)| (
-                                        Reverse(i.level_item),
-                                    ));
-                                score
-                            })
-                    };
-                    let adding = add_item.pending();
-                    let add_result = add_item.value();
-                    view! {
-                        <Modal set_visible=set_item_modal_open max_width="max-w-[90vw] w-[90vw] sm:w-[640px]">
-                            <div class="flex flex-col gap-4 h-[70vh]">
-                                <div class="flex flex-col gap-2 shrink-0">
-                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_add_item_to_list)}</h2>
-                                    <input
-                                        class="input w-full"
-                                        placeholder=t_string!(i18n, list_view_search_items).to_string()
-                                        aria-label=t_string!(i18n, list_view_search_items).to_string()
-                                        autofocus
-                                        prop:value=search
-                                        on:input=move |input| set_search(event_target_value(&input))
-                                    />
-                                    {move || add_result.get().map(|v| {
-                                        let text = match v {
-                                            Ok(()) => t_string!(i18n, list_view_added_to_list_success).to_string(),
-                                            Err(e) => format!("{} {e}", t_string!(i18n, list_view_failed_to_add)),
-                                        };
-                                        view! { <div class="text-sm text-[color:var(--color-text-muted)]">{text}</div> }.into_view()
-                                    })}
-                                </div>
-                                <div class="grid gap-2 flex-1 min-h-0 content-start overflow-y-auto pr-1">
-                                    {move || {
-                                        item_search()
-                                            .into_iter()
-                                            .map(move |(id, item)| {
-                                                let (quantity, set_quantity) = signal(1);
-                                                let read_input_quantity = move |input| {
-                                                    if let Ok(quantity) = event_target_value(&input).parse() {
-                                                        set_quantity(quantity)
-                                                    }
-                                                };
-                                                view! {
-                                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-2 flex flex-col gap-3 sm:flex-row sm:items-center">
-                                                        <div class="flex min-w-0 flex-1 items-center gap-3">
-                                                            <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
-                                                            <span class="min-w-0 truncate font-semibold">{item.name.as_str()}</span>
-                                                        </div>
-                                                        <div class="flex items-center gap-2">
-                                                            <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_qty)}</label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                class="input w-20"
-                                                                on:input=read_input_quantity
-                                                                prop:value=quantity
-                                                            />
-                                                            <button
-                                                                class="btn-primary"
-                                                                disabled=adding
-                                                                on:click=move |_| {
-                                                                    let item = ListItem {
-                                                                        item_id: id.0,
-                                                                        list_id: params
-                                                                            .with(|p| {
-                                                                                p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok())
-                                                                            })
-                                                                            .unwrap_or_default(),
-                                                                        quantity: Some(quantity()),
-                                                                        ..Default::default()
-                                                                    };
-                                                                    add_item.dispatch(item);
-                                                                }
-                                                            >
-                                                                {move || if adding() {
-                                                                    Either::Left(view! { <span>{t!(i18n, list_view_adding)}</span> })
-                                                                } else {
-                                                                    Either::Right(view! {
-                                                                        <>
-                                                                            <Icon icon=i::BiPlusRegular />
-                                                                            <span>{t!(i18n, list_view_add)}</span>
-                                                                        </>
-                                                                    })
-                                                                }}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                }
-                                            })
-                                            .collect::<Vec<_>>()
-                                    }}
+            <Show when=move || !buying_view.get() && view_caps.with(|c| c.can_write)>
+                <InlineListAdd list_id=list_id.into() on_add=Callback::new(move |item| { add_item.dispatch(item); }) pending=add_item.pending().into()
+                    feedback=Signal::derive(move || add_item.value().get().map(|result| match result { Ok(()) => "Added. Matching item and quality increases the quantity needed. Use Undo to reverse it.".to_string(), Err(error) => error.to_string() }).unwrap_or_default()) />
+                <button class="btn-secondary self-start" on:click=move |_| { if let Some(handle) = handle.get_untracked() { handle.undo(); } }>"Undo last change"</button>
+                <p role="status" class="text-sm text-[color:var(--color-text-muted)]">{mutation_feedback}</p>
+            </Show>
 
-                                </div>
-                            </div>
-                        </Modal>
-                    }
-                }}
+            <Show when=move || buying_view.get()>
+                <Suspense fallback=move || view! { <Loading /> }>
+                    <crate::components::list_shop::ListShop input=shop_input
+                        on_purchase=Callback::new(move |(key, delta): (String, i32)| {
+                            if !view_caps.with_untracked(|c| c.can_write) { return; }
+                            if let Ok(id) = key.parse::<i32>()
+                                && let Some(Ok((_, rows))) = list_view.get_untracked()
+                                && let Some((mut item, _)) = rows.into_iter().find(|(item, _)| item.id == id)
+                            {
+                                item.acquired = Some(item.acquired.unwrap_or(0).saturating_add(delta.max(0)));
+                                edit_item.dispatch(item);
+                            }
+                        })
+                        on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
+                        can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
+                </Suspense>
             </Show>
 
             {move || match menu() {
@@ -1278,7 +1461,6 @@ pub fn ListViewSync() -> impl IntoView {
                                         &excluded_datacenters.get(),
                                         world_helper.as_deref(),
                                     );
-                                    let filtered_items_for_buying = filtered_item_snapshot.clone();
                                     let mut filtered_items_for_rows = filtered_item_snapshot.clone();
                                     if hide_acquired.get() {
                                         filtered_items_for_rows.retain(|(item, _)| remaining_quantity(item) > 0);
@@ -1355,11 +1537,7 @@ pub fn ListViewSync() -> impl IntoView {
                                                         </div>
                                                     </div>
                                                     <div class="p-4 sm:p-5">
-                                                        <BuyingView
-                                                            items=filtered_items_for_buying
-                                                            edit_item=edit_item
-                                                            excluded_datacenters=excluded_datacenters
-                                                        />
+
                                                     </div>
                                                 </section>
                                             },
@@ -1497,22 +1675,10 @@ pub fn ListViewSync() -> impl IntoView {
                                                     <Show when=move || view_caps.with(|c| c.can_write)>
                                                         <div class="flex flex-col gap-3 border-b border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]/60 p-3 lg:flex-row lg:items-center lg:justify-between">
                                                             <div class="flex flex-wrap items-center gap-2">
-                                                                <button
-                                                                    class="btn-secondary"
-                                                                    class:bg-brand-950=edit_list_mode
-                                                                    on:click=move |_| {
-                                                                        edit_list_mode
-                                                                            .update(|u| {
-                                                                                *u = !*u;
-                                                                            })
-                                                                    }
-                                                                >
-                                                                    <Icon icon=i::BsPencilFill />
-                                                                    <span>{t!(i18n, list_view_bulk_edit)}</span>
-                                                                </button>
+                                                                <span class="text-sm">{move || format!("{} selected", selected_items.with(|s| s.len()))}</span>
                                                                 <div
                                                                     class="flex flex-wrap items-center gap-2"
-                                                                    class:hidden=move || !edit_list_mode()
+                                                                    class:hidden=move || selected_items.with(|s| s.is_empty())
                                                                 >
                                                                     <button
                                                                         class="btn-danger"
@@ -1647,27 +1813,21 @@ pub fn ListViewSync() -> impl IntoView {
                                                         <table class="w-full min-w-[760px] text-sm">
                                                             <thead>
                                                                 <tr class="border-b border-[color:var(--color-outline)] bg-[color:var(--color-background)]/80 text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                                                                    {header_cells(&list_item_table_columns(i18n, edit_list_mode))}
+                                                                    <th class="p-3">"Select"</th><th class="p-3">"Item"</th><th class="p-3">"Quality"</th><th class="p-3">"Needed"</th><th class="p-3">"Owned"</th><th class="p-3">"Target price"</th><th class="p-3">"Actions"</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody class="divide-y divide-[color:var(--color-outline)]">
                                                                 <For
                                                                     each=move || filtered_items_for_rows.clone()
                                                                     key=|(item, _)| item.id
-                                                                    children=move |(item, listings)| {
+                                                                    children=move |(item, _listings)| {
+                                                                        let row_id = item.id;
                                                                         view! {
-                                                                            <ListItemRow
-                                                                                item=item
-                                                                                listings=listings
-                                                                                edit_list_mode=edit_list_mode.into()
-                                                                                selected_items=selected_items
-                                                                                delete_item=delete_item
-                                                                                edit_item=edit_item
-                                                                                recently_changed=recently_changed
-                                                                                can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
-                                                                                excluded_worlds=&[]
-                                                                                excluded_datacenters=excluded_datacenters
-                                                                            />
+                                                                            <BuildListRow item=item selected_items=selected_items
+                                                                                highlighted=Signal::derive(move || recently_changed.with(|items| items.contains(&row_id)))
+                                                                                on_delete=Callback::new(move |id| { delete_item.dispatch(id); })
+                                                                                on_edit=Callback::new(move |item| { edit_item.dispatch(item); })
+                                                                                can_write=Signal::derive(move || view_caps.with(|c| c.can_write)) />
                                                                         }
                                                                     }
                                                                 />
@@ -1749,6 +1909,29 @@ pub fn ListRoute() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recipe_preview_ignores_empty_crystal_sentinels_without_dropping_real_ingredients() {
+        let recipe = xiv_gen::Recipe {
+            key_id: xiv_gen::RecipeId(170),
+            item_result: 5056,
+            amount_result: 1,
+            ingredient: [5106, 5107, 0, 0, 0, 0, 3, -1],
+            amount_ingredient: [2, 1, 0, 0, 0, 0, 1, 0],
+            craft_type: 0,
+            recipe_level_table: 1,
+        };
+        assert_eq!(
+            recipe_preview_ingredients(&recipe).collect::<Vec<_>>(),
+            vec![(ItemId(5106), 2), (ItemId(5107), 1), (ItemId(3), 1),]
+        );
+        let mut broken = recipe;
+        broken.amount_ingredient[7] = 1;
+        assert!(
+            recipe_preview_ingredients(&broken).any(|(id, amount)| id.0 == -1 && amount == 1),
+            "a positive-quantity missing ingredient must remain visible to validation"
+        );
+    }
 
     /// Global Constraint 2: only "you may not have this list" purges the
     /// browser's copy.

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Build your list in place",
+  "blurb": "The Labs list view lets you search and add items without opening a modal, edit quantities directly, and undo changes as you go.",
+  "link": "/list?labs=lists-sync"
+}

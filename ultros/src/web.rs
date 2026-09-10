@@ -1639,6 +1639,24 @@ pub(crate) async fn create_list(
     Ok(Json(()))
 }
 
+pub(crate) async fn adopt_guest_list(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(request): Json<ultros_api_types::list::AdoptGuestList>,
+) -> Result<Json<ultros_api_types::list::AdoptGuestListResponse>, ApiError> {
+    if request.items.iter().any(|row| {
+        !xiv_gen_db::data()
+            .items
+            .contains_key(&xiv_gen::ItemId(row.item_id))
+    }) {
+        return Err(ApiError::BadRequest("guest list contains an unknown item"));
+    }
+    let owner = db
+        .get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
+    Ok(Json(db.adopt_guest_list(owner.id, request).await?))
+}
+
 pub(crate) async fn edit_list(
     State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
@@ -3348,6 +3366,7 @@ fn api_router() -> Router<WebState> {
         )
         .route("/api/v1/list", get(get_lists))
         .route("/api/v1/list/create", post(create_list))
+        .route("/api/v1/list/adopt", post(adopt_guest_list))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
         .route("/api/v1/list/{id}", get(get_list))

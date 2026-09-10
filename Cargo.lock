@@ -10827,6 +10827,7 @@ dependencies = [
  "ultros-ui-query",
  "ultros-ui-shell",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",

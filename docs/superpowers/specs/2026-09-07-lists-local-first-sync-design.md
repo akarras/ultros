@@ -1,5 +1,15 @@
 # Lists local-first sync — design spec (2026-09-07)
 
+## Follow-on product scope (2026-09-10)
+
+The next stage is specified in [Lists 2.0: guest lists, Build, Shop and
+companion](2026-09-10-lists-2-product-design.md). It adds anonymous device
+lists and explicit account adoption before the Build redesign, plus a
+Document Picture-in-Picture shopping companion. This document records the
+authenticated sync foundation already implemented; its user-scoped cache
+and server list IDs must not be reused as anonymous ownership. Production
+promotion still requires the gates in `docs/lists-sync.md`.
+
 First of four Lists 2.0 sub-projects. This one replaces the list page's data
 layer with a local-first CRDT document synced through the server, shipped
 behind a Labs toggle with no visual redesign. The three that follow build on

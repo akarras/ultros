@@ -5,6 +5,9 @@
   "description": "Puppeteer-based E2E tests for the Ultros Leptos app",
   "license": "MIT",
   "scripts": {
+    "test:lists-v2": "node ./lists-v2.cjs",
+    "test:list-adoption": "node ./list-adoption.cjs",
+    "test:guest-list-store": "node ./guest-list-store.cjs",
     "test:virtual-grid": "node ./virtual-grid.cjs",
     "test:analyzer-grids": "node ./analyzer-grids.cjs",
     "test:market-window": "node ./market-window.cjs",

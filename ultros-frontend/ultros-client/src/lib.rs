@@ -331,6 +331,46 @@ fn dispatch_boot_event(name: &str) {
     }
 }
 
+// The service worker supplies only a generated anonymous shell on guest-list
+// routes. There is no SSR tree in that document, so it must mount rather than
+// hydrate. Keep the ordinary SSR truncation guard intact everywhere else.
+fn is_offline_guest_shell() -> bool {
+    js_sys::Reflect::get(
+        &js_sys::global(),
+        &JsValue::from_str("__ULTROS_OFFLINE_GUEST__"),
+    )
+    .ok()
+    .and_then(|value| value.as_bool())
+    .unwrap_or(false)
+}
+
+#[wasm_bindgen(inline_js = r#"
+export function prepare_guest_offline(catalogUrl, lang) {
+  const prepare = () => {
+    const path = location.pathname.replace(/\/$/, '');
+    if (path !== '/list' && !path.startsWith('/list/device/')) return;
+    let cookie = '';
+    try {
+        cookie = decodeURIComponent((document.cookie.split(';').map(s => s.trim()).find(s => s.startsWith('LABS=')) || '').slice(5));
+    } catch (_) { /* an invalid cookie cannot enable an experiment */ }
+    const query = new URL(location.href).searchParams.get('labs') || '';
+    const enabled = [cookie, query].some(value => value.split(',').some(token => token.trim() === 'lists-sync'));
+    if (!enabled && !window.__ULTROS_OFFLINE_GUEST__) return;
+    import('/static/guest-offline.mjs')
+        .then(module => module.prepareGuestOffline(catalogUrl, lang))
+        .catch(() => { window.__ULTROS_GUEST_OFFLINE_READY__ = false; });
+  };
+  if (!window.__ultrosGuestOfflineListener) {
+    window.__ultrosGuestOfflineListener = prepare;
+    window.addEventListener('ultros:guest-list-opened', prepare);
+  }
+  prepare();
+}
+"#)]
+extern "C" {
+    fn prepare_guest_offline(catalog_url: &str, lang: &str);
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     set_panic_hook();
@@ -341,6 +381,7 @@ pub fn hydrate() {
     log::info!("hydrate mode - hydrating");
     dispatch_boot_event("ultros:wasm-loaded");
     spawn_local(async move {
+        let offline_guest = is_offline_guest_shell();
         info!("fetching..");
         // Use the SSR-injected bootstrap when available; only fall back to
         // network requests if it's missing (e.g. stale cached HTML).
@@ -415,7 +456,7 @@ pub fn hydrate() {
         // `<body>`, so its absence means the document we were handed is
         // incomplete. There is nothing coherent to hydrate against; keep the
         // partial server-rendered markup rather than panicking on it.
-        if document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
+        if !offline_guest && document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
             error!(
                 "SSR document truncated (missing #{SSR_END_SENTINEL_ID}); \
                  skipping hydration to avoid a tachys hydration panic"
@@ -436,7 +477,7 @@ pub fn hydrate() {
                 LocalWorldData::failed(e.to_string())
             }
         };
-        hydrate_body(move || {
+        let app = move || {
             let world_data = world_data.clone();
             let region = region.clone();
             let current_user = current_user.clone();
@@ -446,7 +487,20 @@ pub fn hydrate() {
                 provide_context(BootstrapUser(current_user));
             }
             view! { <App /> }
-        });
+        };
+        if offline_guest {
+            if let Some(status) = document().get_element_by_id("offline-boot-status") {
+                status.remove();
+            }
+            leptos::mount::mount_to_body(app);
+        } else {
+            hydrate_body(app);
+        }
         dispatch_boot_event("ultros:hydrated");
+        let lang = get_i18n_lang();
+        prepare_guest_offline(
+            &format!("/static/data/{}/{}.rkyv", xiv_gen::data_version(), lang),
+            &lang,
+        );
     });
 }

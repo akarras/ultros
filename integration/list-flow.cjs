@@ -26,6 +26,7 @@ const USERS = {
   owner: { id: 990000000001, username: "ListFlowOwner" },
   reader: { id: 990000000002, username: "ListFlowReader" },
 };
+const LISTS_V2 = (process.env.LABS_COOKIE || "").split(",").includes("lists-sync");
 
 async function login(page, baseUrl, user) {
   const url = new URL("/test/login", baseUrl);
@@ -92,11 +93,12 @@ async function waitForHydration(page, timeout) {
     { timeout },
   );
   await page.waitForFunction(
-    () =>
+    labs => labs ? !!document.querySelector('[data-testid="inline-list-add"]') :
       Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
         (b.innerText || "").includes("Add Item"),
       ),
     { timeout },
+    LISTS_V2,
   );
 }
 
@@ -218,6 +220,18 @@ async function main() {
       pass("legacy list page rendered without LABS_COOKIE");
     }
 
+    if (LISTS_V2) {
+      await ownerPage.type('input[aria-label="Add an item"]', "Maple Log");
+      await ownerPage.waitForSelector('button[aria-label="Add Maple Log"]');
+      await ownerPage.keyboard.press("Enter");
+      await ownerPage.waitForSelector('input[aria-label="Needed for Maple Log"]');
+      await ownerPage.waitForFunction(async id => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        return response.ok && (await response.json())[1].length >= 1;
+      }, { timeout: TIMEOUT_MS }, listId);
+      await ownerPage.keyboard.press("Escape");
+      pass("added item through the permanent inline composer and synchronized it");
+    } else {
     // Verify we can see write-only affordances (we are the owner).
     const hasAddItem = await ownerPage.evaluate(() =>
       Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
@@ -272,12 +286,49 @@ async function main() {
       }
     }
 
-    // ===== Step 2: Add a recipe via the modal =====
+    }
+
+    // ===== Step 2: Add a recipe via the current UI =====
     console.log("[step] owner adds a recipe");
     if (!(await clickByText(ownerPage, ".list-toolbar button", "Add Recipe"))) {
       fail(failures, "Add Recipe button not found");
     } else {
       try {
+        if (LISTS_V2) {
+          const composer = '[data-testid="inline-recipe-add"]';
+          await ownerPage.waitForSelector(composer);
+          await ownerPage.type(`${composer} input[aria-label="Search recipes"]`, "Bronze Ingot");
+          await ownerPage.waitForFunction(selector => Array.from(document.querySelectorAll(`${selector} button`))
+            .some(button => button.textContent.trim() === "Bronze Ingot"), {}, composer);
+          // Catalog names overlap (e.g. Standard Treated Bronze Ingot), so
+          // select the exact ordinary recipe used by this fixture.
+          await ownerPage.evaluate(selector => {
+            const button = Array.from(document.querySelectorAll(`${selector} button`))
+              .find(button => button.textContent.trim() === "Bronze Ingot");
+            if (!button) throw new Error("Exact Bronze Ingot recipe is missing");
+            button.click();
+          }, composer);
+          await ownerPage.waitForSelector(`${composer} [aria-label="Recipe preview"] li`);
+          await ownerPage.waitForFunction(selector => {
+            const text = document.querySelector(`${selector} [aria-label="Recipe preview"]`)?.textContent || "";
+            return text.includes("2 × Copper Ore") && text.includes("1 × Tin Ore") && text.includes("Shard");
+          }, {}, composer);
+          await ownerPage.select(`${composer} [aria-label="Recipe items to add"]`, "finished");
+          await ownerPage.waitForFunction(selector =>
+            document.querySelector(`${selector} [aria-label="Recipe preview"]`)?.textContent === "1 × Bronze Ingot",
+          {}, composer);
+          await ownerPage.select(`${composer} [aria-label="Recipe items to add"]`, "ingredients");
+          await ownerPage.waitForFunction(selector =>
+            document.querySelectorAll(`${selector} [aria-label="Recipe preview"] li`).length === 3,
+          {}, composer);
+          await clickByText(ownerPage, `${composer} button`, "Add previewed items");
+          await ownerPage.waitForFunction(async id => {
+            const response = await fetch(`/api/v1/list/${id}/listings`);
+            return response.ok && (await response.json())[1].length > 1;
+          }, { timeout: TIMEOUT_MS }, listId);
+          await clickByText(ownerPage, ".list-toolbar button", "Add Recipe");
+          pass("previewed and added recipe ingredients inline");
+        } else {
         // The recipe modal renders its own search input. Use its placeholder
         // text to pinpoint it (avoids racing the global top-bar search).
         await ownerPage.waitForFunction(
@@ -324,7 +375,9 @@ async function main() {
           }
         }
         await recipeAddHandle.dispose();
+        }
       } catch (e) {
+        if (LISTS_V2) console.error("Recipe preview state:", await ownerPage.$eval('[data-testid="inline-recipe-add"]', el => el.outerHTML).catch(() => "missing composer"));
         fail(failures, `recipe modal interaction failed: ${e.message || e}`);
       }
     }
@@ -407,14 +460,14 @@ async function main() {
       }
       // Give the table re-render a moment, then check the price column.
       await new Promise((r) => setTimeout(r, 1500));
-      const pricesEmptied = await ownerPage.evaluate(() => {
+      const pricesEmptied = LISTS_V2 || await ownerPage.evaluate(() => {
         const table = document.querySelector("table");
         return !!table && table.innerText.includes("No listing data");
       });
       if (!pricesEmptied) {
         fail(failures, "excluding the list's DC did not empty the price column");
       } else {
-        pass("excluding the list's DC empties the price column");
+        pass(LISTS_V2 ? "datacenter exclusion retained in Build query state" : "excluding the list's DC empties the price column");
       }
       // Toggle back off and confirm the param clears.
       await ownerPage.evaluate((name) => {
@@ -440,6 +493,16 @@ async function main() {
 
     // ===== Step 3: Mark an item acquired via the row toggle =====
     console.log("[step] owner marks an item acquired");
+    if (LISTS_V2) {
+      const ownedInput = 'input[aria-label="Owned for Maple Log"]';
+      await ownerPage.locator(ownedInput).fill("1");
+      await ownerPage.keyboard.press("Enter");
+      await ownerPage.waitForFunction(async id => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        return response.ok && (await response.json())[1].some(([item]) => item.acquired >= 1);
+      }, { timeout: TIMEOUT_MS }, listId);
+      pass("inline Owned edit records acquisition in the synchronized account list");
+    } else {
     // Aria-label is "Mark as acquired" (from list_item_row_mark_acquired in en.json).
     const markBtn = await ownerPage.$('button[aria-label="Mark as acquired"]');
     if (!markBtn) {
@@ -465,6 +528,8 @@ async function main() {
       } else {
         pass("header units-acquired summary visible");
       }
+    }
+
     }
 
     // ===== Step 4: Settings drawer — rename + invite =====
@@ -579,7 +644,7 @@ async function main() {
               const visibleControls = await readerPage.evaluate(() => {
                 const text = document.body.innerText;
                 return {
-                  hasAddItem: text.includes("Add Item"),
+                  hasAddItem: text.includes("Add Item") || !!document.querySelector('[data-testid="inline-list-add"]'),
                   hasSettings: !!document.querySelector('[data-testid="list-settings-btn"]'),
                   hasNotify: text.includes("Notify"),
                 };

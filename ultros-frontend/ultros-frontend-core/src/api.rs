@@ -543,6 +543,12 @@ pub async fn create_list(list: CreateList) -> AppResult<()> {
     post_api("/api/v1/list/create", list).await
 }
 
+pub async fn adopt_guest_list(
+    list: ultros_api_types::list::AdoptGuestList,
+) -> AppResult<ultros_api_types::list::AdoptGuestListResponse> {
+    post_api("/api/v1/list/adopt", list).await
+}
+
 pub async fn edit_list(list: List) -> AppResult<()> {
     post_api("/api/v1/list/edit", list).await
 }

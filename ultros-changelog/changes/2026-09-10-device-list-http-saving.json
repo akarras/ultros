@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Save device lists in more browsers",
+  "blurb": "Create and restore device lists reliably in HTTP previews and older browsers.",
+  "link": "/list?labs=lists-sync"
+}

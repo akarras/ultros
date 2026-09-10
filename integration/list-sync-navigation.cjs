@@ -3,10 +3,12 @@
 // Hold an actual list fetch across client-side navigation. Returning a stale
 // success used to access a disposed signal; a stale denial cleared the new doc.
 module.exports = async function navigationRace({ page, baseUrl, userId, worldId,
-  createList, addItem, api, createdLists, waitForState, waitForDocKey, timeout }) {
+  createList, addItem, api, createdLists, waitForState, waitForDocKey, timeout, setAcquired,
+  waitForHydration, waitForLive }) {
   for (const mode of ["load", "revalidate"])
   for (const status of [200, 403])
   for (const destination of ["list", "unmount"]) {
+    console.log(`  . navigation probe ${mode} ${status} ${destination}`);
     const a = await createList(page, worldId, `Navigation source ${mode} ${status}`);
     const b = await createList(page, worldId, `Navigation target ${mode} ${status}`);
     createdLists.push(a, b);
@@ -15,14 +17,16 @@ module.exports = async function navigationRace({ page, baseUrl, userId, worldId,
       if (result.status !== 200) throw new Error(`navigation fixture: ${result.status}`);
     }
     await page.goto(`${baseUrl}/list/${a}`, { waitUntil: "domcontentloaded" });
+    await waitForHydration(page, timeout);
     const ready = await waitForState(page, s => s.unacquired === 1, timeout);
     if (ready.unacquired !== 1) throw new Error("source list did not hydrate");
     await waitForDocKey(page, userId, a, true, timeout);
+    if (!(await waitForLive(page, timeout))) throw new Error("source socket did not become live before triggering the navigation race");
     const existing = mode === "revalidate"
       ? await api(page, "GET", `/api/v1/list/${a}/listings`)
       : null;
     const errors = [];
-    const onError = error => errors.push(String(error));
+    const onError = error => errors.push(error.stack || String(error));
     const onConsole = message => {
       if (message.type() === "error") errors.push(message.text());
     };
@@ -95,7 +99,8 @@ module.exports = async function navigationRace({ page, baseUrl, userId, worldId,
       await new Promise(resolve => setTimeout(resolve, 250));
       const target = await waitForState(page, s => s.unacquired === 2, timeout);
       if (target.unacquired !== 2) throw new Error(`stale ${status} response broke target list`);
-      await page.click('button[aria-label="Mark as acquired"]');
+      if (!(await waitForLive(page, timeout))) throw new Error("target socket did not become live after navigation");
+      await setAcquired(page, true);
       const deadline = Date.now() + timeout;
       let persisted = false;
       while (Date.now() < deadline) {

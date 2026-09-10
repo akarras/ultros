@@ -52,6 +52,7 @@ use crate::{
         fc_crafting_analyzer::*,
         group_detail::GroupDetail,
         groups::*,
+        guest_lists::GuestListRoute,
         help::*,
         history::*,
         home_page::*,
@@ -581,6 +582,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />
+                            <Route path=path!("device/:device_id") view=GuestListRoute />
                             <Route path=path!(":id") view=ListRoute />
                             <Route path=path!("") view=EditLists />
                         </ParentRoute>

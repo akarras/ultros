@@ -121,6 +121,8 @@ pub fn view_result(
 #[derive(Clone, Debug)]
 pub enum Edit {
     Add(ListItem),
+    /// Recipe previews add their complete ingredient set in one undo step.
+    AddMany(Vec<ListItem>),
     /// The caller must keep the ORIGINAL `id` on the mutated `ListItem`: ids
     /// are derived from the row key (see `row_id`/`find_key`), so an id that
     /// reflects the edit's new `hq`/`item_id` would fail to locate the row
@@ -187,6 +189,17 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                 Ok(())
             })
         }
+        Edit::AddMany(items) => undo.group(|| {
+            for item in items {
+                let key = RowKey::new(item.item_id, item.hq);
+                doc.add_row(key, item.quantity.unwrap_or(1) as i64, item.target_price)?;
+                let acquired = item.acquired.unwrap_or(0) as i64;
+                if acquired != 0 {
+                    doc.add_acquired(&key, acquired)?;
+                }
+            }
+            Ok(())
+        }),
         Edit::Edit(item) => {
             let Some(key) = find_key(doc, item.id) else {
                 return Ok(());
@@ -284,6 +297,34 @@ mod tests {
         assert!(any > 0 && hq > 0);
         assert_ne!(any, hq);
         assert_eq!(any, row_id(&RowKey::new(21482, None)).unwrap());
+    }
+
+    #[test]
+    fn adding_a_recipe_is_one_undo_step_and_merges_existing_need() {
+        let doc = doc();
+        let mut undo = ListUndo::with_merge_interval(&doc, 0);
+        apply(
+            &doc,
+            &mut undo,
+            Edit::AddMany(vec![
+                ListItem {
+                    item_id: 10,
+                    quantity: Some(3),
+                    ..Default::default()
+                },
+                ListItem {
+                    item_id: 11,
+                    quantity: Some(7),
+                    ..Default::default()
+                },
+            ]),
+        )
+        .unwrap();
+        assert_eq!(doc.row(&RowKey::new(10, None)).unwrap().need, 5);
+        assert_eq!(doc.row(&RowKey::new(11, None)).unwrap().need, 7);
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&RowKey::new(10, None)).unwrap().need, 2);
+        assert!(doc.row(&RowKey::new(11, None)).is_none());
     }
 
     #[test]

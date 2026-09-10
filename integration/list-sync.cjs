@@ -84,17 +84,48 @@ function pass(msg) {
 
 async function waitForHydration(page, timeout) {
   await page.waitForFunction(
-    () => !!document.querySelector('[data-testid="list-settings-btn"]'),
+    () => window.__listSyncHydrated && !!document.querySelector('[data-testid="list-settings-btn"]'),
     { timeout },
-  );
+  ).catch(async error => {
+    console.error("Hydration timeout:", await page.evaluate(() => ({
+      url: location.href, hydrated: window.__listSyncHydrated,
+      title: document.title, body: document.body.innerText.slice(0, 1500),
+    })).catch(() => ({ url: page.url() })));
+    throw error;
+  });
 }
 
-// Counts of the two acquire toggles tell us the rows and their state.
+// Labs exposes owned quantities directly; the production view retains toggles.
 async function rowState(page) {
-  return page.evaluate(() => ({
+  return page.evaluate(() => {
+    if (document.querySelector('[data-testid="list-view-sync"]')) {
+      const owned = [...document.querySelectorAll('input[aria-label^="Owned for "]')];
+      return { unacquired: owned.filter(input => Number(input.value) === 0).length,
+        acquired: owned.filter(input => Number(input.value) > 0).length };
+    }
+    return {
     unacquired: document.querySelectorAll('button[aria-label="Mark as acquired"]').length,
     acquired: document.querySelectorAll('button[aria-label="Mark unacquired"]').length,
-  }));
+    };
+  });
+}
+
+async function setAcquired(page, acquired) {
+  const label = await page.evaluate(acquired => Array.from(document.querySelectorAll('input[aria-label^="Owned for "]'))
+    .find(input => (Number(input.value) > 0) !== acquired)?.getAttribute('aria-label'), acquired);
+  if (!label) throw new Error(`No editable Labs row available to set acquired=${acquired}`);
+  await page.locator(`input[aria-label=${JSON.stringify(label)}]`).fill(acquired ? "1" : "0");
+  await page.keyboard.press("Enter");
+}
+
+async function attemptStaleEdit(page) {
+  return page.evaluate(() => {
+    const input = document.querySelector('input[aria-label^="Owned for "]:not([readonly])');
+    if (!input) return false;
+    input.value = String(Number(input.value) + 1);
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }).catch(() => false);
 }
 
 async function waitForState(page, predicate, timeout) {
@@ -113,6 +144,16 @@ async function serverAcquired(page, listId) {
   const res = await api(page, "GET", `/api/v1/list/${listId}/listings`);
   if (res.status !== 200 || !res.body || !res.body[1]) return null;
   return res.body[1].map(([item]) => item.acquired || 0);
+}
+
+async function waitForServerAcquisition(page, listId, timeout) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const values = await serverAcquired(page, listId);
+    if (values?.filter(value => value > 0).length === 1) return values;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`List ${listId}: initial acquisition did not reach the server before the permission test`);
 }
 
 // `ultros.listdoc.v1.{user_id}.{list_id}` — the browser's cached snapshot.
@@ -158,7 +199,7 @@ async function waitForDenied(page, timeout) {
     // The Labs page renders `list_view_failed_to_get_items` for a denial.
     if (/Failed to get items/i.test(seen)) return true;
     // Or the write chrome is gone, which is the softer "no longer yours".
-    if (!/Add Item/.test(seen) && !/Mark as acquired|Mark unacquired/.test(seen)) {
+    if (!(await page.$('[data-testid="inline-list-add"]')) && !/Add Item/.test(seen)) {
       const controls = await rowState(page).catch(() => ({ unacquired: 0, acquired: 0 }));
       if (controls.unacquired + controls.acquired === 0) return true;
     }
@@ -200,22 +241,35 @@ async function main() {
     headless,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
+  const browsers = [browser];
   const failures = [];
   const createdLists = [];
   let ownerPage = null;
 
   try {
-    // Separate contexts so each user keeps its own cookie jar and localStorage.
-    const ownerContext = await browser.createBrowserContext();
-    const editorContext = await browser.createBrowserContext();
-    const legacyContext = await browser.createBrowserContext();
-    const switchContext = await browser.createBrowserContext();
+    // Separate regular disposable profiles preserve identity isolation without
+    // incognito's smaller in-memory storage budget for the large debug WASM.
+    for (let index = 0; index < 3; index++) {
+      browsers.push(await puppeteer.launch({ headless, args: ["--no-sandbox", "--disable-setuid-sandbox"] }));
+    }
+    const [ownerContext, editorContext, legacyContext, switchContext] = browsers.map(value => value.defaultBrowserContext());
     ownerPage = await ownerContext.newPage();
     const editorPage = await editorContext.newPage();
     const legacyPage = await legacyContext.newPage();
     const switchPage = await switchContext.newPage();
     for (const p of [ownerPage, editorPage, legacyPage, switchPage]) {
       p.setDefaultTimeout(TIMEOUT_MS);
+      p.on("pageerror", error => console.error("[browser]", error.stack || String(error)));
+      p.on("requestfailed", request => {
+        if (/\/pkg\/|\/static\/data\//.test(request.url())) {
+          console.error("[asset request failed]", request.url(), request.failure()?.errorText);
+        }
+      });
+      await p.setCookie({ name: "HIDE_ADS", value: "true", url: BASE_URL, path: "/" });
+      await p.evaluateOnNewDocument(() => {
+        window.__listSyncHydrated = false;
+        window.addEventListener("ultros:hydrated", () => { window.__listSyncHydrated = true; });
+      });
       await p.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     }
 
@@ -266,7 +320,7 @@ async function main() {
     else pass("A: owner is live");
 
     console.log("[step] owner marks a row acquired; editor sees it");
-    await ownerPage.click('button[aria-label="Mark as acquired"]');
+    await setAcquired(ownerPage, true);
     const ownerAfter = await waitForState(ownerPage, (s) => s.acquired === 1, 10000);
     if (ownerAfter.acquired !== 1) {
       fail(failures, `A: owner's own edit did not render: ${JSON.stringify(ownerAfter)}`);
@@ -287,7 +341,7 @@ async function main() {
     // edit alone.
     await new Promise((r) => setTimeout(r, 1500));
     await ownerPage.setOfflineMode(true);
-    await ownerPage.click('button[aria-label="Mark unacquired"]');
+    await setAcquired(ownerPage, false);
     const offline = await waitForState(ownerPage, (s) => s.acquired === 0, 10000);
     if (offline.acquired !== 0) {
       fail(failures, `A: offline edit did not apply locally: ${JSON.stringify(offline)}`);
@@ -416,8 +470,9 @@ async function main() {
     if (bReady.unacquired !== 2) {
       fail(failures, `B: editor did not load both rows: ${JSON.stringify(bReady)}`);
     }
+    if (!(await waitForLive(editorPage, TIMEOUT_MS))) throw new Error("B: editor never reached live before revocation setup");
     // An edit guarantees a persisted snapshot to look for (and later, to lose).
-    await editorPage.click('button[aria-label="Mark as acquired"]');
+    await setAcquired(editorPage, true);
     const bEdited = await waitForState(editorPage, (s) => s.acquired === 1, 10000);
     if (bEdited.acquired !== 1) {
       fail(failures, `B: editor's edit did not apply: ${JSON.stringify(bEdited)}`);
@@ -430,7 +485,10 @@ async function main() {
     } else {
       pass(`B: editor holds ${bKeysBefore[0]}`);
     }
-    const bBeforeServer = await serverAcquired(ownerPage, listB);
+    // A local render/cache write is not an acknowledgement. Establish the
+    // authorized server state before revocation so an in-flight initial edit
+    // cannot be mistaken for a forbidden post-revocation mutation.
+    const bBeforeServer = await waitForServerAcquisition(ownerPage, listB, TIMEOUT_MS);
 
     const unshare = await api(
       ownerPage,
@@ -459,20 +517,11 @@ async function main() {
     } else {
       pass("B: editor's cached snapshot is gone (no interaction)");
     }
-    // A later edit attempt must not reach the server. Clicking a toggle that
-    // is still on screen sends an update over the document socket; the server
+    // A later edit attempt must not reach the server. Editing a surviving
+    // Owned field sends an update over the document socket; the server
     // rejecting it is the client's other chance to notice the revocation.
-    const bClicked = await editorPage
-      .evaluate(() => {
-        const b = document.querySelector(
-          'button[aria-label="Mark as acquired"], button[aria-label="Mark unacquired"]',
-        );
-        if (!b) return false;
-        b.click();
-        return true;
-      })
-      .catch(() => false);
-    console.log(`  . B: post-revocation toggle click attempted=${bClicked}`);
+    const bClicked = await attemptStaleEdit(editorPage);
+    console.log(`  . B: post-revocation field edit attempted=${bClicked}`);
     const bKeysAfterEdit = await waitForDocKey(editorPage, USERS.editor.id, listB, false, 10000);
     if (bKeysAfterEdit.length > 0) {
       fail(
@@ -513,8 +562,10 @@ async function main() {
     if (cReady.unacquired !== 2) {
       fail(failures, `C: editor did not load both rows: ${JSON.stringify(cReady)}`);
     }
-    await editorPage.click('button[aria-label="Mark as acquired"]');
+    if (!(await waitForLive(editorPage, TIMEOUT_MS))) throw new Error("C: editor never reached live before deletion setup");
+    await setAcquired(editorPage, true);
     await waitForState(editorPage, (s) => s.acquired === 1, 10000);
+    await waitForServerAcquisition(ownerPage, listC, TIMEOUT_MS);
     const cKeysBefore = await waitForDocKey(editorPage, USERS.editor.id, listC, true, 15000);
     if (cKeysBefore.length === 0) fail(failures, "C: no snapshot key before deletion");
     else pass(`C: editor holds ${cKeysBefore[0]}`);
@@ -541,17 +592,8 @@ async function main() {
     } else {
       pass("C: editor's cached snapshot is gone (no interaction)");
     }
-    const cClicked = await editorPage
-      .evaluate(() => {
-        const b = document.querySelector(
-          'button[aria-label="Mark as acquired"], button[aria-label="Mark unacquired"]',
-        );
-        if (!b) return false;
-        b.click();
-        return true;
-      })
-      .catch(() => false);
-    console.log(`  . C: post-deletion toggle click attempted=${cClicked}`);
+    const cClicked = await attemptStaleEdit(editorPage);
+    console.log(`  . C: post-deletion field edit attempted=${cClicked}`);
     const cKeysAfterEdit = await waitForDocKey(editorPage, USERS.editor.id, listC, false, 10000);
     if (cKeysAfterEdit.length > 0) {
       fail(
@@ -581,8 +623,10 @@ async function main() {
     if (dReady.unacquired !== 2) {
       fail(failures, `D: user A did not load both rows: ${JSON.stringify(dReady)}`);
     }
-    await switchPage.click('button[aria-label="Mark as acquired"]');
+    if (!(await waitForLive(switchPage, TIMEOUT_MS))) throw new Error("D: editor never reached live before account switch setup");
+    await setAcquired(switchPage, true);
     await waitForState(switchPage, (s) => s.acquired === 1, 10000);
+    await waitForServerAcquisition(ownerPage, listD, TIMEOUT_MS);
     const dKeysA = await waitForDocKey(switchPage, USERS.editor.id, listD, true, 15000);
     if (dKeysA.length === 0) fail(failures, "D: user A has no snapshot key before the switch");
     else pass(`D: user A holds ${dKeysA[0]}`);
@@ -614,7 +658,7 @@ async function main() {
     await require("./list-sync-navigation.cjs")({
       page: ownerPage, baseUrl: BASE_URL, userId: USERS.owner.id, worldId,
       createList, addItem, api, createdLists, waitForState, waitForDocKey,
-      timeout: TIMEOUT_MS,
+      timeout: TIMEOUT_MS, setAcquired, waitForHydration, waitForLive,
     });
   } catch (e) {
     fail(failures, `uncaught: ${e && e.stack ? e.stack : e}`);
@@ -624,7 +668,7 @@ async function main() {
         await api(ownerPage, "DELETE", `/api/v1/list/${id}/delete`).catch(() => {});
       }
     }
-    await browser.close();
+    await Promise.all(browsers.map(value => value.close()));
   }
 
   if (failures.length) {
