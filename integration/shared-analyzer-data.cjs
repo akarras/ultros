@@ -363,12 +363,12 @@ async function main() {
       const world = process.env.WORLD || 'Gilgamesh';
       const routes = [
         ['flip-finder', `/flip-finder/${world}`],
-        ['recipe-analyzer', '/recipe-analyzer'],
-        ['venture-analyzer', '/venture-analyzer'],
-        ['leve-analyzer', '/leve-analyzer'],
+        ['recipe-analyzer', `/recipe-analyzer/${world}`],
+        ['venture-analyzer', `/venture-analyzer/${world}`],
+        ['leve-analyzer', `/leve-analyzer/${world}`],
         ['fc-crafting-analyzer', `/fc-crafting-analyzer/${world}`],
         ['vendor-resale', `/vendor-resale/${world}`],
-        ['scrip-sources', '/scrip-sources'],
+        ['scrip-sources', `/scrip-sources/${world}`],
       ];
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',
         'market-sale-median-30', 'market-sale-median', 'market-gil-7',
@@ -386,10 +386,9 @@ async function main() {
           await require('./flip-finder-sale-columns.cjs')({ page, base: BASE, route, openFixture: open, artifacts });
         }
         const medianColumn = required[0];
-        const query = new URLSearchParams({ v: '1', lang: 'en', world, 'min-sales': '0',
+        const query = new URLSearchParams({ v: '1', lang: 'en', 'min-sales': '0',
           profit: '-1000000000', roi: '-1000000000', 'next-sale': '1M', sort: 'grid:item', dir: 'asc',
           cols: ['profit', 'cost', ...required].join(',') });
-        if (tool === 'flip-finder' || tool === 'vendor-resale') query.delete('world');
         const target = `${BASE}${route}?${query}`;
         console.log(`CHECK ${tool}: navigating`);
         if (fixture) {

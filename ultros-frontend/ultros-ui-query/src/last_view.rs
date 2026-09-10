@@ -220,4 +220,25 @@ mod tests {
         assert!(cookie.encoded().to_string().len() < MAX_COOKIE_BYTES);
         assert!(saved_query("/recipe-analyzer", &"x".repeat(MAX_QUERY_BYTES + 1)).is_none());
     }
+
+    #[test]
+    fn legacy_preferences_restore_filters_on_the_current_world_path() {
+        for tool in [
+            "recipe-analyzer",
+            "venture-analyzer",
+            "leve-analyzer",
+            "scrip-sources",
+        ] {
+            let cookie = preference_cookie(tool, "?world=Cerberus&profit=20")
+                .encoded()
+                .to_string();
+            let path = format!("/{tool}/Gilgamesh");
+            let restored = cookie_redirect(&path, "lang=ja", &cookie).unwrap();
+            assert!(restored.starts_with(&format!("{path}?")));
+            let query = parse(restored.split_once('?').unwrap().1);
+            assert_eq!(query.get("world"), None);
+            assert_eq!(query.get("profit").as_deref(), Some("20"));
+            assert_eq!(query.get("lang").as_deref(), Some("ja"));
+        }
+    }
 }

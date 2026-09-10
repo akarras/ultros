@@ -53,7 +53,9 @@ pub(crate) async fn sitemap_index() -> Result<Xml, WebError> {
     Ok(Xml(index_xml))
 }
 
-pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
+pub(crate) async fn generic_pages_sitemap(
+    State(worlds): State<Arc<WorldHelper>>,
+) -> Result<Xml, WebError> {
     // (url, priority, change_frequency). Order matters for sitemap consumers
     // that don't sort: high-priority entries first. We list the home page
     // and the highest-traffic tool routes near the top so crawlers don't
@@ -129,6 +131,34 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
             builder.build().unwrap()
         })
         .collect();
+
+    // Keep bare tool entries for visitors without a world. World-qualified
+    // entries use the same canonical path contract as the pickers and sidebar.
+    for world in worlds
+        .get_inner_data()
+        .regions
+        .iter()
+        .flat_map(|region| &region.datacenters)
+        .flat_map(|dc| &dc.worlds)
+    {
+        for tool in [
+            "recipe-analyzer",
+            "leve-analyzer",
+            "venture-analyzer",
+            "scrip-sources",
+        ] {
+            let mut destination = url::Url::parse("https://ultros.app").unwrap();
+            destination.set_path(&format!("/{tool}/{}", world.name));
+            let mut builder = Url::builder(destination.to_string());
+            builder.priority(0.6);
+            builder.change_frequency(ChangeFrequency::Daily);
+            urls.push(
+                builder
+                    .build()
+                    .map_err(|e| anyhow!("Error generating sitemap: {e}"))?,
+            );
+        }
+    }
 
     // Help articles — surface them so deep-linkable, evergreen content can
     // rank for task-specific queries ("ffxiv flip finder", "ultros lists").

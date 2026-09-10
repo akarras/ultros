@@ -138,7 +138,14 @@ impl SocialCardKind {
             ["analyzer"] | ["analyzer", _] => Some(Self::Tool("flip-finder".to_string())),
             [tool] if TOOLS.contains(tool) => Some(Self::Tool((*tool).to_string())),
             [
-                tool @ ("flip-finder" | "vendor-resale" | "fc-crafting-analyzer" | "trends"),
+                tool @ ("flip-finder"
+                | "vendor-resale"
+                | "fc-crafting-analyzer"
+                | "trends"
+                | "recipe-analyzer"
+                | "leve-analyzer"
+                | "venture-analyzer"
+                | "scrip-sources"),
                 _,
             ] => Some(Self::Tool((*tool).to_string())),
             _ => None,
@@ -369,6 +376,19 @@ mod tests {
         for tool in TOOLS {
             let kind = SocialCardKind::from_route(&format!("/{tool}"));
             assert_eq!(kind, SocialCardKind::Tool(tool.to_string()));
+        }
+        for tool in [
+            "recipe-analyzer",
+            "venture-analyzer",
+            "leve-analyzer",
+            "scrip-sources",
+        ] {
+            for world in ["Gilgamesh", "%E7%BA%A2%E7%8E%89%E6%B5%B7"] {
+                assert_eq!(
+                    SocialCardKind::from_route(&format!("/{tool}/{world}?world=Goblin")),
+                    SocialCardKind::Tool(tool.into())
+                );
+            }
         }
     }
 

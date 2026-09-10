@@ -8,7 +8,100 @@
 //! `leptos_router`'s navigate builds the next URL purely from the path it is
 //! handed, so the query has to be carried across explicitly.
 
-use leptos_router::params::ParamsMap;
+use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
+use leptos_router::{
+    NavigateOptions,
+    hooks::{use_location, use_navigate, use_params_map},
+    location::Url,
+    params::ParamsMap,
+};
+use ultros_api_types::{world::World, world_helper::WorldHelper};
+
+use crate::global_state::{home_world::use_home_world, use_world_helper};
+
+/// Path wins over legacy `?world=`, then the home-world cookie is the fallback.
+/// An invalid explicit path never lets a conflicting query choose the market.
+fn selected_analyzer_world(
+    worlds: &WorldHelper,
+    path: Option<&str>,
+    query: Option<&str>,
+    home: Option<World>,
+) -> Option<World> {
+    path.or(query)
+        .and_then(|name| worlds.lookup_world_by_name(&Url::unescape(name)))
+        .and_then(|world| world.as_world().cloned())
+        .or(home)
+}
+
+/// Canonical analyzer destination, stripping only the obsolete world query.
+fn analyzer_world_url(base: &str, world: &str, path: &str, query: &ParamsMap) -> Option<String> {
+    let mut filters = query.clone();
+    let legacy_world = filters.remove("world").is_some();
+    world_nav_url(base, world, path, &filters)
+        .or_else(|| legacy_world.then(|| format!("{path}{}", filters.to_query_string())))
+}
+
+/// Route-owned selection keeps reloads and Back/Forward in sync with all data
+/// scopes. Compatibility/cookie navigation replaces history; picker edits push.
+pub fn use_analyzer_world(
+    base: &'static str,
+) -> (Memo<Option<World>>, SignalSetter<Option<World>>) {
+    let params = use_params_map();
+    let location = use_location();
+    let (home, _) = use_home_world();
+    let worlds = use_world_helper().ok();
+    let selected = Memo::new(move |_| {
+        worlds.as_ref().and_then(|worlds| {
+            selected_analyzer_world(
+                worlds,
+                params.get().get_str("world"),
+                location.query.get().get_str("world"),
+                home.get(),
+            )
+        })
+    });
+    let navigate = use_navigate();
+    let navigate_to = move |world: World, replace: bool| {
+        if let Some(url) = analyzer_world_url(
+            base,
+            &world.name,
+            &location.pathname.get_untracked(),
+            &location.query.get_untracked(),
+        ) {
+            navigate(
+                &format!("{url}{}", location.hash.get_untracked()),
+                NavigateOptions {
+                    replace,
+                    scroll: false,
+                    ..Default::default()
+                },
+            );
+        }
+    };
+    let canonicalize = navigate_to.clone();
+    Effect::new(move |_| {
+        // Track legacy query changes even when the path's world stays the same.
+        location.query.with(|query| query.get("world"));
+        if let Some(world) = selected.get() {
+            let navigate = canonicalize.clone();
+            // Let hydration's delayed storage and filter writes settle before
+            // canonicalizing. The optional world route keeps the page owner
+            // alive across bare/path URLs so queued storage events stay valid.
+            request_animation_frame(move || {
+                if selected.try_get_untracked().flatten().as_ref() == Some(&world) {
+                    navigate(world, true);
+                }
+            });
+        }
+    });
+    let setter = SignalSetter::map(move |world: Option<World>| {
+        if let Some(world) = world {
+            navigate_to(world, false);
+        }
+    });
+    (selected, setter)
+}
 
 /// Where a world picker should navigate, or `None` if it is already there.
 ///
@@ -38,6 +131,74 @@ pub fn world_nav_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analyzer_compatibility_removes_world_without_losing_encoded_filters() {
+        let mut query = ParamsMap::new();
+        query.insert("world", "Cerberus".into());
+        query.insert("filter", "ore & crystals=1 + HQ/材料".into());
+        query.insert("probe", "one".into());
+        query.insert("probe", "two".into());
+        let mut expected = query.clone();
+        expected.remove("world");
+        for base in [
+            "/recipe-analyzer",
+            "/venture-analyzer",
+            "/leve-analyzer",
+            "/scrip-sources",
+        ] {
+            let canonical = format!("{base}/Gilgamesh");
+            for path in [base, canonical.as_str()] {
+                assert_eq!(
+                    analyzer_world_url(base, "Gilgamesh", path, &query),
+                    Some(format!("{canonical}{}", expected.to_query_string()))
+                );
+            }
+            assert_eq!(
+                analyzer_world_url(base, "Gilgamesh", &canonical, &expected),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn analyzer_selection_prefers_path_then_legacy_query_then_cookie() {
+        use ultros_api_types::world::{Datacenter, Region, WorldData};
+        let world = |id, name: &str| World {
+            id,
+            name: name.into(),
+            datacenter_id: 1,
+        };
+        let home = world(3, "Goblin");
+        let worlds = WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "test".into(),
+                datacenters: vec![Datacenter {
+                    id: 1,
+                    region_id: 1,
+                    name: "dc".into(),
+                    worlds: vec![world(1, "Gilgamesh"), world(2, "红玉海"), home.clone()],
+                }],
+            }],
+        });
+        for (path, query, expected) in [
+            (Some("Gilgamesh"), Some("红玉海"), "Gilgamesh"),
+            (None, Some("Gilgamesh"), "Gilgamesh"),
+            (Some("%E7%BA%A2%E7%8E%89%E6%B5%B7"), None, "红玉海"),
+            (None, None, "Goblin"),
+            (Some("invalid"), Some("Gilgamesh"), "Goblin"),
+            (None, Some("invalid"), "Goblin"),
+        ] {
+            assert_eq!(
+                selected_analyzer_world(&worlds, path, query, Some(home.clone()))
+                    .unwrap()
+                    .name,
+                expected
+            );
+        }
+        assert_eq!(selected_analyzer_world(&worlds, None, None, None), None);
+    }
 
     #[test]
     fn encoded_world_and_query_values_survive_navigation() {
