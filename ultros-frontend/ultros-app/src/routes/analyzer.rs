@@ -2107,7 +2107,7 @@ fn AnalyzerTable(
                 on_toggle_column=toggle_column
                 on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
                 empty_label=Signal::derive(move || {
-                    t_string!(i18n, analyzer_no_active_filters).to_string()
+                    t_string!(i18n, no_active_filters).to_string()
                 })
 
                 popovers=popovers

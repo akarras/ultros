@@ -20,8 +20,10 @@ registers its resolved column definitions, metric kinds, and filtered row count.
 `ControlBar` discovers that registry and owns the only metric chip row. Its old
 `available_filters`, `on_add_filter`, `on_clear_all`, and `is_empty` props are
 optional for registered hosts; omit page chip children. Use
-`filters.row_count()` for the toolbar total. Unregistered consumers retain their
-existing behavior until migrated.
+`filters.row_count()` for the toolbar total. `QueryGrid` renders no filter
+strip of its own: the bar is a host's only filter surface, so a grid with
+metric filters must be paired with a registered `ControlBar`. Every host,
+including the `/__test/shared-analyzer-data` fixtures, is registered.
 
 ## Definitions and evaluation
 
@@ -93,33 +95,35 @@ provider's required-data set; `MarketGrid` uses the registry's effective filters
 including aliases, when requesting windows. Preserve intrinsic `partial` flags:
 filters may evaluate known rows without claiming complete data or a global sort.
 
-## Consumers for issue #1351
+## Consumers
 
-The six MarketGrid tools (Flip Finder, Vendor Resale, Ventures, Leves, FC
-Crafting, Scrip Sources), Trends, Currency Exchange, and the Recipe Analyzer's `AnalyzerGrid` host use
-this registry. Recipe keeps its legacy `profit`, `roi` and `min-sales` keys as
-aliases of its `profit`, `roi` and `daily-sales` metrics (`min-sales=0` still
-means "no limit"), and registers its job, sub-craft, HQ, outlier, crystal,
-on-hand and pricing (`cost-basis`, `revenue`, `buy-scope`,
-`sell-scope`) inputs as controls. Listing world/DC keys are metric aliases. Its MarketGrid host shares the page window, and Clear all preserves that window and the four pricing inputs.
-`AnalyzerGrid`'s `picker` prop forwards the Columns picker's headings to the
-`+ Filter` menu, which keeps each group together.
+All ten grid hosts use this registry: the six MarketGrid tools (Flip Finder,
+Vendor Resale, Ventures, Leves, FC Crafting, Scrip Sources), Trends, Currency
+Exchange, Item Explorer, and the Recipe Analyzer's `AnalyzerGrid` host. There
+is no other filter surface; issue #1351 is complete.
 
-Item Explorer also uses the shared grid and registry; all planned consumers have now adopted it.
-
-T09 (Trends, #1344) is done: the page keeps `category` and `show_suspicious`
-as registered controls, aliases `min_sales`/`min_price` onto its `sales` and
-`market-listing` metrics, and registers its native cleaned-sample statistics
-(`vwap`, `pct`, `sales-per-day`, `units`, `sales`, `confidence`) as their own
-metrics. They are not the `sale_stats` follow-window columns: the deep-scan
-drops noise-filtered sales and its confidence band comes from that scan, while
-`sale_stats` counts every recorded sale and its confidence is a seven-day fact.
-Both sets stay available from the Columns picker under separate headings.
-
-T11 (Item Explorer, #1346) is done: category and job-set lists use the shared
-grid and filter registry, preserving their existing query keys and saved
-column choices. Market statistics load when a selected column, filter, or
-sort needs them.
+- Recipe keeps its legacy `profit`, `roi` and `min-sales` keys as aliases of
+  its `profit`, `roi` and `daily-sales` metrics (`min-sales=0` still means "no
+  limit"), and registers its job, sub-craft, HQ, outlier, crystal, on-hand and
+  pricing (`cost-basis`, `revenue`, `buy-scope`, `sell-scope`) inputs as
+  controls. Listing world/DC keys are metric aliases. Its MarketGrid host
+  shares the page window, and Clear all preserves that window and the four
+  pricing inputs. `AnalyzerGrid`'s `picker` prop forwards the Columns picker's
+  headings to the `+ Filter` menu, which keeps each group together.
+- Trends keeps `category` and `show_suspicious` as registered controls,
+  aliases `min_sales`/`min_price` onto its `sales` and `market-listing`
+  metrics, and registers its native cleaned-sample statistics (`vwap`, `pct`,
+  `sales-per-day`, `units`, `sales`, `confidence`) as their own metrics. They
+  are not the `sale_stats` follow-window columns: the deep-scan drops
+  noise-filtered sales and its confidence band comes from that scan, while
+  `sale_stats` counts every recorded sale and its confidence is a seven-day
+  fact. Both sets stay available from the Columns picker under separate
+  headings.
+- Item Explorer's category and job-set lists preserve their existing query
+  keys and saved column choices. Market statistics load when a selected
+  column, filter, or sort needs them.
+- The chip row's empty state is the shared `no_active_filters` string unless a
+  tool has a more specific hint ("No filters — showing every recipe").
 
 ## Regression coverage
 
@@ -127,7 +131,7 @@ Grid-core tests cover range validation and unresolved values. UI registry tests
 cover alias precedence, simultaneous and contradictory bounds, canonical clear
 and reload, default sentinels, hidden definitions, and control deduplication.
 `integration/shared-analyzer-data.cjs` exercises the real SSR/hydrated registry
-fixture (`registry-test=1`), including menu/header/chip edits, blank input,
+fixture, including menu/header/chip edits, blank input,
 calculation inputs, hidden filters, clear/reload, and mobile wrapping, followed
 by the existing seven-tool market probes and the Trends probe (old sort and
 chip links, header sorting, the Columns picker, window changes, the

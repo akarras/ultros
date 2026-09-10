@@ -588,7 +588,7 @@ pub fn Trends() -> impl IntoView {
                     on_toggle_column=toggle_column
                     on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
                     empty_label=Signal::derive(move || {
-                        t_string!(i18n, trends_no_active_filters).to_string()
+                        t_string!(i18n, no_active_filters).to_string()
                     })
                 />
 
