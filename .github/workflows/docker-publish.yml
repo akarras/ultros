@@ -36,6 +36,10 @@ env:
     REGISTRY: ghcr.io
     # github.repository as <owner>/<repo>
     IMAGE_NAME: ${{ github.repository }}
+    # The measured ubuntu-latest runner has 4 CPUs / 16 GiB RAM. Keep the
+    # server/frontend passes sequential, but allow two Cargo/LLVM jobs per pass.
+    # All exports must use the same value to reuse the application build layers.
+    APP_BUILD_JOBS: "2"
 
 jobs:
     build:
@@ -80,6 +84,7 @@ jobs:
                   context: .
                   platforms: linux/amd64
                   push: ${{ github.event_name != 'pull_request' }}
+                  build-args: APP_BUILD_JOBS=${{ env.APP_BUILD_JOBS }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
                   # Registry cache, not type=gha. A mode=max export of this
@@ -92,6 +97,25 @@ jobs:
                   # PRs read main's cache but don't write — avoids thrashing
                   # the shared cache from short-lived branches.
                   cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}:buildcache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
+
+            - name: Extract compiler timings
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/amd64
+                  target: build-timings
+                  build-args: APP_BUILD_JOBS=${{ env.APP_BUILD_JOBS }}
+                  outputs: type=local,dest=./build-timings
+                  # Reuse this job's builder, including on PRs that don't export
+                  # a registry cache. This only copies the existing HTML reports.
+
+            - name: Upload compiler timings
+              uses: actions/upload-artifact@v4
+              with:
+                  name: docker-compiler-timings
+                  path: build-timings/
+                  if-no-files-found: error
+                  retention-days: 14
 
             - name: Install cosign
               if: github.event_name != 'pull_request'
@@ -132,6 +156,7 @@ jobs:
                   context: .
                   platforms: linux/amd64
                   target: debug-files
+                  build-args: APP_BUILD_JOBS=${{ env.APP_BUILD_JOBS }}
                   outputs: type=local,dest=./debug
                   # Reuse the layer cache the main build already populated;
                   # this step just emits the unstripped binary as a local file.
