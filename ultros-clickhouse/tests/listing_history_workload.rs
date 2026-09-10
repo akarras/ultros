@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use clickhouse::Row;
 use serde::Deserialize;
 use ultros_clickhouse::{
-    ClickHouseClient, ClickHouseError, ClickHouseErrorKind, listing_history, queries,
+    ClickHouseClient, ClickHouseError, ClickHouseErrorKind, listing_history, listing_snapshots,
+    queries,
 };
 
 #[derive(Row, Deserialize)]
@@ -56,6 +57,11 @@ async fn listing_history_scope_workload() {
     assert!(
         [24_000, 240_000].contains(&rows),
         "bounded fixture sizes only"
+    );
+    let run_cap_guard = std::env::var("T12_RUN_CAP_GUARD").as_deref() == Ok("1");
+    assert!(
+        !run_cap_guard || rows == 240_000,
+        "the optional replacement row-cap guard requires the large fixture"
     );
     let ch = ClickHouseClient::from_env();
     let existing_tables = ch
@@ -134,17 +140,39 @@ async fn listing_history_scope_workload() {
         total + 64000,
         seed_start.elapsed().as_secs_f64()
     );
-    for (scope, n) in [("world", 1), ("dc", 8), ("region", 32)] {
+    // Default to one representative full-region generation and its bounded
+    // cached read. The larger matrix is explicit, never an accidental 72-run
+    // replay during ordinary validation.
+    let full_matrix = std::env::var("T12_FULL_MATRIX").as_deref() == Ok("1");
+    let scopes = if full_matrix {
+        vec![("world", 1), ("dc", 8), ("region", 32)]
+    } else {
+        vec![("region", 32)]
+    };
+    let windows = if full_matrix { vec![30, 90] } else { vec![90] };
+    for (scope, n) in scopes {
         let worlds = (1..=n).collect::<Vec<_>>();
-        for days in [30, 90] {
-            for repeat in 1..=3 {
+        for &days in &windows {
+            for repeat in 1..=if full_matrix { 3 } else { 1 } {
                 let start_us = chrono::Utc::now().timestamp_micros();
+                let producing = Instant::now();
+                let generated = tokio::time::timeout(
+                    Duration::from_secs(120),
+                    listing_snapshots::refresh(&ch, &worlds, days, to),
+                )
+                .await
+                .expect("producer must honor its bounded generation budget")
+                .expect("representative producer must publish complete history");
+                println!(
+                    "GENERATION rows_per_world={rows} scope={scope} days={days} repeat={repeat} seconds={:.3} output_keys={generated}",
+                    producing.elapsed().as_secs_f64()
+                );
                 let start = Instant::now();
                 // Match StatsCache's full-load deadline, not just each SQL's
                 // ten-second limit. Timing includes local decode and matching.
                 let result = tokio::time::timeout(Duration::from_secs(12), async {
                     let alive = queries::bulk_listing_alive(&ch, &worlds).await?;
-                    let mut history = listing_history::window(&ch, &worlds, days, to).await?;
+                    let (_, mut history) = listing_snapshots::read(&ch, &worlds, days, to).await?;
                     let stock = listing_history::stock(&ch, &worlds, days, to).await?;
                     for row in &alive {
                         let key = (row.item_id, row.hq != 0);
@@ -239,6 +267,8 @@ async fn listing_history_scope_workload() {
                         "item_keys"
                     } else if q.query.contains("FROM listing_events") {
                         "events"
+                    } else if q.query.contains("listing_window_snapshot") {
+                        "snapshot"
                     } else if q.query.contains("FROM floor_changes") {
                         "floors"
                     } else if q.query.contains("FROM sales FINAL") {
@@ -262,18 +292,28 @@ async fn listing_history_scope_workload() {
             }
         }
     }
-    if rows == 240000 {
+    if run_cap_guard {
         sql(&ch, &format!("INSERT INTO listing_events SELECT toDateTime({to}-2000),'updated','websocket',toInt32(900000),toUInt8(0),toInt32(1),toString(number),toInt32(number),toInt32(number),toUInt32(100),toUInt16(2),toUInt32(100),toUInt16(2),toDateTime({to}-3600) FROM numbers(2000001)")).await;
         let start = Instant::now();
+        let previous = listing_snapshots::read(&ch, &(1..=32).collect::<Vec<_>>(), 90, to)
+            .await
+            .unwrap();
         let result = tokio::time::timeout(
-            Duration::from_secs(12),
-            listing_history::window(&ch, &[1], 90, to),
+            Duration::from_secs(120),
+            listing_snapshots::refresh(&ch, &(1..=32).collect::<Vec<_>>(), 90, to + 1),
         )
         .await;
         let error = result
-            .expect("oversized-item guard must return within the cache deadline")
+            .expect("oversized-item guard must return within the producer deadline")
             .expect_err("a failed later item batch must not return earlier partial history");
         assert!(error.to_string().contains("TOO_MANY_ROWS_OR_BYTES"));
+        assert_eq!(
+            listing_snapshots::read(&ch, &(1..=32).collect::<Vec<_>>(), 90, to + 1)
+                .await
+                .unwrap(),
+            previous,
+            "failed replacement must leave the previous complete generation selected"
+        );
         println!(
             "CAP_GUARD item=900000 rows=2000001 status=unavailable seconds={:.3} error={error}",
             start.elapsed().as_secs_f64()

@@ -46,14 +46,21 @@ pub async fn window(
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let items = ch.client().query(&format!("/* listing_history_items */ SELECT item_id,sum(event_rows) AS events,sum(receipt_rows) AS receipts,sum(floor_rows) AS floors FROM (
-        SELECT item_id,count() AS event_rows,toUInt64(0) AS receipt_rows,toUInt64(0) AS floor_rows FROM listing_events WHERE world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to}) GROUP BY item_id
+    let items = ch.client().query(&format!("/* listing_history_items */ SELECT item_id,sum(event_rows) AS events,sum(receipt_rows) AS receipts,sum(floor_rows) AS floors,sum(sale_rows) AS sales FROM (
+        SELECT item_id,count() AS event_rows,toUInt64(0) AS receipt_rows,toUInt64(0) AS floor_rows,toUInt64(0) AS sale_rows FROM listing_events WHERE world_id IN ({world_sql}) AND event_time >= toDateTime({}) AND event_time < toDateTime({to}) GROUP BY item_id
         UNION ALL
-        SELECT item_id,toUInt64(0),count(),toUInt64(0) FROM sale_receipts WHERE world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}) GROUP BY item_id
+        SELECT item_id,toUInt64(0),count(),toUInt64(0),toUInt64(0) FROM sale_receipts WHERE world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}) GROUP BY item_id
         UNION ALL
-        SELECT item_id,toUInt64(0),toUInt64(0),countIf(event_time > toDateTime({from})) FROM floor_changes WHERE world_id IN ({world_sql}) AND event_time < toDateTime({to}) GROUP BY item_id
+        SELECT item_id,toUInt64(0),toUInt64(0),countIf(event_time > toDateTime({from})),toUInt64(0) FROM floor_changes WHERE world_id IN ({world_sql}) AND event_time < toDateTime({to}) GROUP BY item_id
+        UNION ALL
+        SELECT item_id,toUInt64(0),toUInt64(0),toUInt64(0),count() FROM sales WHERE world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to}) GROUP BY item_id
         ) GROUP BY item_id ORDER BY item_id{LIMITS}", from-600, from-600))
         .fetch_all::<ItemCounts>().await?;
+    if items.len() > 100_000 {
+        return Err(ClickHouseError::Backfill(
+            "listing snapshot item limit exceeded".into(),
+        ));
+    }
     let batches = item_batches(items, worlds.len());
     // Two in-flight batches overlap SQL with local reduction without spawning
     // detached work. Dropping this stream cancels both on the cache deadline.
@@ -64,8 +71,21 @@ pub async fn window(
     while let Some(batch) = pending.try_next().await? {
         output.extend(batch);
     }
-    // Sales without receipt evidence are explicitly counted, never guessed from
-    // sold_date or ClickHouse inserted_at (which is also rewritten by backfill).
+    Ok(output)
+}
+
+// Reconcile authoritative sales in the SAME bounded item batches as the
+// observation read, including sales-only keys. A whole-scope FINAL/NOT IN read
+// exceeded the query memory cap even with only a few days of live history.
+async fn add_missing_receipts(
+    ch: &ClickHouseClient,
+    output: &mut BTreeMap<(i32, bool), ListingWindowStats>,
+    world_sql: &str,
+    item_sql: &str,
+    days: u16,
+    from: i64,
+    to: i64,
+) -> Result<(), ClickHouseError> {
     #[derive(Row, Deserialize)]
     struct Missing {
         item_id: i32,
@@ -73,8 +93,8 @@ pub async fn window(
         n: u64,
     }
     let missing = ch.client().query(&format!("SELECT item_id, hq, count() AS n FROM sales FINAL
-        WHERE world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to})
-        AND pg_id NOT IN (SELECT pg_id FROM sale_receipts WHERE world_id IN ({world_sql}) AND sold_at >= toDateTime({from}) AND sold_at < toDateTime({to}))
+        WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to})
+        AND pg_id NOT IN (SELECT pg_id FROM sale_receipts WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND sold_at >= toDateTime({from}) AND sold_at < toDateTime({to}) AND received_at < toDateTime({to}))
         GROUP BY item_id, hq{LIMITS}")).fetch_all::<Missing>().await?;
     for row in missing {
         output
@@ -93,7 +113,7 @@ pub async fn window(
             .matches
             .sales_without_receipt = row.n;
     }
-    Ok(output)
+    Ok(())
 }
 
 #[derive(Row, Deserialize)]
@@ -102,6 +122,7 @@ struct ItemCounts {
     events: u64,
     receipts: u64,
     floors: u64,
+    sales: u64,
 }
 
 fn item_batches(items: Vec<ItemCounts>, worlds: usize) -> Vec<Vec<i32>> {
@@ -114,6 +135,7 @@ fn item_batches(items: Vec<ItemCounts>, worlds: usize) -> Vec<Vec<i32>> {
         let size = item
             .events
             .max(item.receipts)
+            .max(item.sales)
             .max(item.floors.saturating_add(worlds as u64 * 2));
         if !batch.is_empty() && (batch.len() == 128 || rows.saturating_add(size) > 500_000) {
             batches.push(std::mem::take(&mut batch));
@@ -248,6 +270,7 @@ async fn window_items(
             },
         );
     }
+    add_missing_receipts(ch, &mut output, &world_sql, &item_sql, days, from, to).await?;
     Ok(output)
 }
 

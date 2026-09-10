@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Historical listing statistics for datacenters and regions",
+  "blurb": "Historical listing statistics now refresh in the background, keeping exact regional floor history and correcting sale matches when delayed evidence arrives. New requests may need a short warm-up before history is available."
+}

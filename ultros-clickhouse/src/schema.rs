@@ -27,6 +27,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_floor_changes_table(client).await?;
     apply_listing_events_seed_marker(client).await?;
     apply_listing_alive(client).await?;
+    crate::listing_snapshots::apply_schema(client).await?;
     Ok(())
 }
 
