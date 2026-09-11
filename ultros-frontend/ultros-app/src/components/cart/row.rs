@@ -48,11 +48,14 @@ pub fn CartRow(
             }
         });
         view! {
-            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() readonly=move || !can_write.get()
+            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() attr:data-committed=move || value.get() readonly=move || !can_write.get()
                 on:keydown=move |ev| {
-                    ev.stop_propagation();
-                    if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
-                    if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
+                    // Only the keys this cell handles stop here; Ctrl+Z must
+                    // reach the window listener, which decides between native
+                    // text undo (a draft) and document undo (a clean cell) from
+                    // `data-committed` (#1430).
+                    if ev.key() == "Enter" { ev.stop_propagation(); let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
+                    if ev.key() == "Escape" { ev.stop_propagation(); event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
                 }
                 on:change=move |ev| {
                     let entered = event_target_value(&ev);

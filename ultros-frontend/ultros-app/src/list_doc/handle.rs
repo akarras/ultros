@@ -238,16 +238,19 @@ impl ListDocHandle {
         done
     }
 
-    /// Whether `undo` would change anything. Not reactive on its own: read it
-    /// under `revision.track()` so it follows the document.
+    /// Reactive: tracks the document revision, which every local edit, undo,
+    /// redo, import and rebase bumps, so a toolbar can derive its disabled
+    /// state from this (#1430). A closed or disposed handle has nothing to
+    /// undo.
     pub fn can_undo(&self) -> bool {
+        let _ = self.revision.try_get();
         self.undo
             .try_with_value(|undo| undo.can_undo())
             .unwrap_or(false)
     }
 
-    /// Whether `redo` would change anything. See [`Self::can_undo`].
     pub fn can_redo(&self) -> bool {
+        let _ = self.revision.try_get();
         self.undo
             .try_with_value(|undo| undo.can_redo())
             .unwrap_or(false)
