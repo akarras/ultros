@@ -193,7 +193,7 @@ pub fn InlineListAdd(
                             if let Some((id, _, can_hq, _)) = results.get_untracked().first() { add.run((*id, *can_hq)); }
                         }
                     } />
-                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity attr:data-committed=move || quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) />
+                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity data-committed=move || quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) />
                 <select class="input" aria-label=t_string!(i18n, lists_workspace_add_quality) prop:value=quality on:change=move |ev| quality.set(event_target_value(&ev))><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
             </div>
             <p class="text-sm mt-2 text-[color:var(--color-text-muted)]" role="status">{feedback}</p>
@@ -362,7 +362,7 @@ pub fn BuildListRow(
             }
         });
         view! {
-            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() attr:data-committed=move || value.get() readonly=move || !can_write.get()
+            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
                 on:keydown=move |ev| {
                     // Only the keys this cell handles stop here; Ctrl+Z must
                     // reach the window listener, which decides between native

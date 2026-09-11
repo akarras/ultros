@@ -288,7 +288,7 @@ mod browser {
             <section class="space-y-3">
                 <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <div class="min-w-0 flex-1 basis-56">
-                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } attr:data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
+                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
                         <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
