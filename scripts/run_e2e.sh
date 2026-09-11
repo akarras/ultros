@@ -247,6 +247,24 @@ if [ "${RUN_LISTS_V2:-1}" != "0" ]; then
     if [ "$lists_v2_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$lists_v2_exit"
     fi
+
+    # Device-list keyboard undo/redo and the editor-focus contract (#1429,
+    # #1430). Needs only the catalog, like lists-v2.
+    log "running device-list keyboard undo E2E"
+    list_undo_keyboard_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:list-undo-keyboard ) || list_undo_keyboard_exit=$?
+    if [ "$list_undo_keyboard_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$list_undo_keyboard_exit"
+    fi
+
+    # The shopping companion module against its own loopback fixture; it
+    # does not talk to $BASE_URL.
+    log "running shopping companion module E2E"
+    list_companion_exit=0
+    ( cd integration && npm run test:list-companion ) || list_companion_exit=$?
+    if [ "$list_companion_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$list_companion_exit"
+    fi
 fi
 
 # If we built with test-auth, also exercise the login flow even when the
