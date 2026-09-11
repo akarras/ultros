@@ -212,20 +212,28 @@ mod browser {
         let deleting = RwSignal::new(false);
         let navigate = StoredValue::new_local(use_navigate());
         on_cleanup(move || handle.with_value(|h| h.close()));
+        // Explains a shortcut that found nothing to do (#1430); any later
+        // edit clears it. Errors take precedence in the feedback line.
+        let notice = RwSignal::new(String::new());
         let apply = Callback::new(move |edit| {
+            notice.set(String::new());
             if let Err(e) = handle.with_value(|h| h.apply(edit)) {
                 error.set(e);
             }
         });
         let undo = Callback::new(move |()| {
-            handle.with_value(|h| {
-                h.undo();
-            });
+            if handle.with_value(|h| h.undo()) {
+                notice.set(String::new());
+            } else {
+                notice.set(t_string!(i18n, lists_workspace_nothing_to_undo).to_string());
+            }
         });
         let redo = Callback::new(move |()| {
-            handle.with_value(|h| {
-                h.redo();
-            });
+            if handle.with_value(|h| h.redo()) {
+                notice.set(String::new());
+            } else {
+                notice.set(t_string!(i18n, lists_workspace_nothing_to_redo).to_string());
+            }
         });
         // The same window shortcuts account lists get (#1429). This
         // component is created per loaded list and disposed with it, so the
@@ -244,8 +252,17 @@ mod browser {
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
             undo,
             redo,
+            can_undo: Signal::derive(move || handle.with_value(|h| h.can_undo())),
+            can_redo: Signal::derive(move || handle.with_value(|h| h.can_redo())),
             pending: Signal::derive(|| false),
-            feedback: error.into(),
+            feedback: Signal::derive(move || {
+                let error = error.get();
+                if error.is_empty() {
+                    notice.get()
+                } else {
+                    error
+                }
+            }),
             recipe_open: recipe_open.into(),
             toggle_recipe: Callback::new(move |()| recipe_open.update(|open| *open = !*open)),
             rows: Signal::derive(move || {
@@ -271,7 +288,7 @@ mod browser {
             <section class="space-y-3">
                 <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <div class="min-w-0 flex-1 basis-56">
-                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
+                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
                         <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
                     </div>
                     <div class="flex flex-wrap gap-2">

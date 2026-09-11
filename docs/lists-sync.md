@@ -52,11 +52,22 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   one-second debounce. Revocation/deletion is checked about a second after
   the final broadcast, plus request latency; sustained broadcasts can defer
   this check because the debounce has no maximum wait.
-- Undo is Loro's undo manager: local operations only, one-second merge
-  window, 100 steps, per open page. Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y (Cmd on
-  Apple), never inside an input, textarea or an open modal. Account and
-  device lists install the same window listener (`list_doc::undo`), one per
-  open document, removed with the page or editor that installed it.
+- Undo is Loro's undo manager: local operations only, 100 steps, per open
+  page. Every committed action (an applied `Edit`, a rename, a purchase) is
+  exactly one step; there is no time-based merging, and multi-row edits are
+  one step through an explicit group. Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y (Cmd
+  on Apple) are ignored while a modal is open. Inside a form control the
+  rule is draft versus committed: a list editor renders `data-committed`
+  with the document's value, and while its live value matches, the shortcut
+  is a document undo; while it differs (a draft), the browser's own text
+  undo keeps the keys. Selects and checkboxes never hold a draft; inputs
+  without the attribute, textareas and contenteditable regions always keep
+  native undo. Account and device lists install the same window listener
+  (`list_doc::undo`), one per open document, removed with the page or editor
+  that installed it. Both handles expose reactive `can_undo`/`can_redo`; the
+  toolbar disables an unavailable action and a shortcut that finds nothing
+  to do says so in the workspace feedback line. A snapshot rebase restarts
+  the stack.
 
 ## Debugging
 

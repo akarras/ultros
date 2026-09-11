@@ -90,6 +90,8 @@
     "lists_workspace_added": "Added. Matching item and quality increases the quantity needed. Use Undo to reverse it.",
     "lists_workspace_undo": "Undo last change",
     "lists_workspace_redo": "Redo",
+    "lists_workspace_nothing_to_undo": "Nothing to undo",
+    "lists_workspace_nothing_to_redo": "Nothing to redo",
     "lists_workspace_selected": "{{count}} selected",
     "lists_workspace_preview_row": "{{quantity}} × {{name}}{{quality}}",
     "lists_workspace_document_closed": "This list is closed. Reopen it to make changes.",
