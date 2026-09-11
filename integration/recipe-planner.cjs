@@ -230,6 +230,15 @@ async function main() {
       const home = document.querySelector('section[aria-label="World visit comparison"] button');
       return home?.textContent.includes('Stay home') && home.textContent.includes('units unavailable · partial cost');
     });
+    // The short home card is marked rather than compared, and the savings
+    // basis moves to the first card that completes the recipe (#1334).
+    assert.ok(await page.$eval(cardSelector, home => home.dataset.incomplete === 'true' && home.textContent.includes('Does not complete the recipe')), 'a short home card carries the incomplete marker');
+    assert.equal(await page.$$eval(cardSelector, buttons => buttons.filter(b => b.textContent.includes('saved vs staying home')).length), 0, 'no card claims a saving against an incomplete home');
+    const firstComplete = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.dataset.incomplete === 'false'));
+    assert.notEqual(firstComplete, 0, 'a short home card is never the savings basis');
+    if (firstComplete > 0) {
+      assert.ok(await page.$$eval(cardSelector, (buttons, i) => buttons[i].textContent.includes('Savings basis'), firstComplete), 'the first complete card is labelled as the savings basis');
+    }
     // Maple Lumber uses NPC-sold Maple Logs. Expensive whole-stack market
     // fixtures make the NPC choice deterministic without a live market DB.
     homeUnavailable = false;
