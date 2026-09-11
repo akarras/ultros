@@ -16,6 +16,7 @@ pub(crate) mod lodestone_profile;
 pub mod profiling;
 pub(crate) mod resale_eligibility;
 pub(crate) mod search_service;
+mod ssr_drain;
 pub(crate) mod trend_candidates;
 pub(crate) mod utils;
 mod web;

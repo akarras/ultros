@@ -10681,6 +10681,7 @@ dependencies = [
  "envy",
  "flate2",
  "futures",
+ "http-body 1.1.0",
  "http-body-util",
  "hyper 1.11.1",
  "include_dir",
