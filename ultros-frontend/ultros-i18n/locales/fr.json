@@ -1363,6 +1363,8 @@
     "category_view_default": "Vue par catégorie",
     "job_set_default": "Tenue de classe",
     "job_set_card_section_heading": "Ensembles d'équipement",
+    "job_set_card_equip_level": "Nv. %level%",
+    "job_set_card_equip_level_tooltip": "Niveau %level% requis pour équiper",
     "job_set_card_pieces": "%count% pièces",
     "job_set_card_total_nq": "Total NQ",
     "job_set_card_total_hq": "Total HQ",

@@ -420,6 +420,7 @@ pub fn JobItems() -> impl IntoView {
                 id: **id,
                 name: item.name.clone(),
                 ilvl: item.level_item,
+                level_equip: item.level_equip,
             })
             .collect();
 

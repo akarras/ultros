@@ -85,6 +85,7 @@ mod tests {
             id: ItemId(id),
             name: name.to_string(),
             ilvl: 770,
+            level_equip: 100,
         }
     }
 
@@ -113,6 +114,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "Courtly Lover's".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "Courtly Lover's Sword")],
         };
         assert_eq!(detail_href("PLD", &group), "/items/jobset/PLD/set/770");
@@ -127,6 +129,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 1,
+            level_equip: None,
             items: vec![item(1, "x")],
         };
         assert_eq!(detail_href("a/b", &group), "/items/jobset/a%2Fb/set/1");
@@ -137,6 +140,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b")],
         };
         // Item 1: NQ 100, HQ 200 -> takes 100.
@@ -150,6 +154,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b")],
         };
         // Only HQ listings count when hq_only=true. Item 2 has no
@@ -164,6 +169,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b")],
         };
         let prices = map_with(&[]);
@@ -183,6 +189,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b")],
         };
         let prices = map_with(&[(1, false, 100), (1, true, 200), (2, true, 50)]);
@@ -203,6 +210,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a")],
         };
         assert_eq!(card_totals(true, None, &group), (None, None));
@@ -218,6 +226,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b"), item(3, "c")],
         };
         let prices = map_with(&[(2, false, 75)]);
@@ -237,6 +246,7 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
     let stem = group.stem.clone();
     let item_count = group.items.len();
     let ilvl = group.ilvl;
+    let level_equip = group.level_equip;
     let href = detail_href(&jobset, &group_for_href);
 
     // Defer reading the cheapest-listings resource until after the first
@@ -298,6 +308,20 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                         <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
                             {t!(i18n, item_explorer_ilvl_prefix)} " " {ilvl}
                         </span>
+                        // Equip level chip: static game data, identical on
+                        // SSR and CSR, so branching on `Option` here is safe.
+                        {level_equip.map(|level| {
+                            let level = level.to_string();
+                            let level_for_title = level.clone();
+                            view! {
+                                <span
+                                    class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap"
+                                    title=move || t_string!(i18n, job_set_card_equip_level_tooltip).to_string().replace("%level%", &level_for_title)
+                                >
+                                    {move || t_string!(i18n, job_set_card_equip_level).to_string().replace("%level%", &level)}
+                                </span>
+                            }
+                        })}
                         <span class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
                             {move || t_string!(i18n, job_set_card_pieces).to_string().replace("%count%", &item_count.to_string())}
                         </span>

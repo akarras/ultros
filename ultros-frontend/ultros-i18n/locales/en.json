@@ -1366,6 +1366,8 @@
     "category_view_default": "Category View",
     "job_set_default": "Job Set",
     "job_set_card_section_heading": "Gear sets",
+    "job_set_card_equip_level": "Lv. %level%",
+    "job_set_card_equip_level_tooltip": "Requires level %level% to equip",
     "job_set_card_pieces": "%count% pieces",
     "job_set_card_total_nq": "NQ total",
     "job_set_card_total_hq": "HQ total",

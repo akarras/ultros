@@ -1363,6 +1363,8 @@
     "category_view_default": "分類檢視",
     "job_set_default": "職業套裝",
     "job_set_card_section_heading": "裝備套裝",
+    "job_set_card_equip_level": "%level%級",
+    "job_set_card_equip_level_tooltip": "需要 %level% 級才能裝備",
     "job_set_card_pieces": "%count%件",
     "job_set_card_total_nq": "NQ總價",
     "job_set_card_total_hq": "HQ總價",
