@@ -54,7 +54,9 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   this check because the debounce has no maximum wait.
 - Undo is Loro's undo manager: local operations only, one-second merge
   window, 100 steps, per open page. Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y (Cmd on
-  Apple), never inside an input, textarea or an open modal.
+  Apple), never inside an input, textarea or an open modal. Account and
+  device lists install the same window listener (`list_doc::undo`), one per
+  open document, removed with the page or editor that installed it.
 
 ## Debugging
 

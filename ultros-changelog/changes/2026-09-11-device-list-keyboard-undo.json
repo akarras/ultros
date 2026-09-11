@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Ctrl+Z works on device lists",
+  "blurb": "Lists saved on this device now answer the same keyboard shortcuts as account lists: Ctrl+Z undoes the last change and Ctrl+Y or Ctrl+Shift+Z redoes it (Cmd on Mac). The Undo and Redo buttons were already there; the shortcuts now reach them.",
+  "link": "/list"
+}
