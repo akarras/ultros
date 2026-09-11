@@ -488,6 +488,15 @@ pub fn ListBuildWorkspace(
             rows
         },
     );
+    // The whole cart, not the filtered view: a filter narrows what the grid
+    // shows, never what the list will cost. Rows already track the document
+    // revision and the listings cache, so quantity, quality, list and market
+    // changes all reprice through this one memo.
+    let estimate = Memo::new(move |_| {
+        source
+            .rows
+            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
+    });
     view! {
         <section class="space-y-3" data-testid="list-build-workspace">
             <Show when=move || source.can_write.get()>
@@ -500,6 +509,7 @@ pub fn ListBuildWorkspace(
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() />
             <div class="overflow-x-auto panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {
