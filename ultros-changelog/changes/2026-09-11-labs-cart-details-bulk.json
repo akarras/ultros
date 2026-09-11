@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Cart details and bulk actions on demand (Labs)",
+  "blurb": "In the Labs list builder, each row's details panel now shows the cheapest matching listings and exactly what the estimate priced, alongside owned quantity and target price; Escape closes it and puts focus back where you were. Ticking one or more rows reveals a bar with Set HQ, Any quality, Delete selected and Clear, and the column headers sort by name, quantity or estimated cost without moving a row you are still editing.",
+  "link": "/list?labs=lists-sync",
+  "importance": "medium"
+}

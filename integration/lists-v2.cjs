@@ -182,6 +182,73 @@ async function main() {
     await saved();
     assert.equal(await page.$(owned), null, "owned quantity is not a default column in the compact cart");
     console.log("[ok] compact cart shows the estimate summary and commits a quality change");
+
+    // Details: Escape inside the panel closes it and returns focus to the toggle.
+    await openDetails();
+    await page.focus(owned);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, owned);
+    assert.equal(await page.$eval(details, button =>
+      document.activeElement === button && button.getAttribute("aria-expanded") === "false"), true,
+    "Escape closes the details panel and focus returns to the row's toggle");
+
+    // A second row for selection, bulk quality and sorting checks.
+    const mapleNeeded = 'input[aria-label="Needed for Maple Log"]';
+    const mapleQuality = 'select[aria-label="Quality for Maple Log"]';
+    await replace('input[aria-label="Quantity to add"]', "2");
+    await replace(search, "Maple Log");
+    await page.waitForSelector('button[aria-label="Add Maple Log"]');
+    await page.keyboard.press("Enter");
+    await waitValue(mapleNeeded, 2);
+    await page.keyboard.press("Escape");
+    assert.equal(await page.$(testId("cart-selection-bar")), null, "bulk controls stay hidden until something is selected");
+    await page.click('input[aria-label="Select Bronze Ingot"]');
+    await page.waitForSelector(testId("cart-selection-bar"), { visible: true });
+    await page.click('input[aria-label="Select Maple Log"]');
+    await page.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid="cart-selection-bar"]')?.textContent || ""));
+    await page.click(testId("cart-bulk-hq"));
+    await page.waitForFunction((a, b) => document.querySelector(a)?.value === "hq" && document.querySelector(b)?.value === "hq", {}, quality, mapleQuality);
+    await page.click(testId("cart-bulk-any"));
+    await page.waitForFunction((a, b) => document.querySelector(a)?.value === "any" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
+    await saved();
+    console.log("[ok] selecting rows reveals bulk quality actions that apply to every selected row");
+
+    // Sorting by quantity must not relocate a row whose editor holds a draft.
+    const rowIndex = name => page.evaluate(name =>
+      Array.from(document.querySelectorAll('[data-testid="cart-rows"] > li')).findIndex(li => li.textContent.includes(name)), name);
+    await page.click('button[aria-label="Sort by Qty"]');
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="cart-rows"] > li')[0]?.textContent.includes("Maple Log"));
+    assert.equal(await rowIndex("Bronze Ingot"), 1, "ascending quantity puts the 2-unit row first");
+    await page.click(needed, { clickCount: 3 });
+    await page.keyboard.type("1");
+    await page.$eval(mapleNeeded, input => { input.value = "9"; input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await waitValue(mapleNeeded, 9);
+    assert.equal(await rowIndex("Bronze Ingot"), 1, "a committed change elsewhere does not move the row being edited");
+    assert.equal(await page.$eval(needed, input => document.activeElement === input && input.value === "1"), true,
+      "the uncommitted draft and focus survive the re-sort");
+    await page.keyboard.press("Tab");
+    await waitValue(needed, 1);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="cart-rows"] > li')[0]?.textContent.includes("Bronze Ingot"));
+    await page.click('button[aria-label="Sort by Qty"]');
+    await page.click('button[aria-label="Sort by Qty"]');
+    await page.waitForFunction(() => document.querySelector('button[aria-label="Sort by Qty"]')?.closest('[role="columnheader"]')?.getAttribute("aria-sort") === "none");
+    await replace(needed, 6);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 6);
+    console.log("[ok] header sorting waits for the active editor to commit");
+
+    // Bulk delete clears the selection; Undo brings the row back.
+    await page.click('input[aria-label="Select Maple Log"]');
+    await page.waitForSelector(testId("cart-selection-bar"), { visible: true });
+    await page.click(testId("cart-bulk-delete"));
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
+    assert.equal(await page.$(testId("cart-selection-bar")), null, "deleting the selection clears it");
+    await page.click(testId("list-undo"));
+    await waitValue(mapleNeeded, 9);
+    await page.click('button[aria-label="Remove Maple Log"]');
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
+    await saved();
+    console.log("[ok] bulk delete clears the selection and undo restores the rows");
     await replace(needed, 9);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Tab");
@@ -214,7 +281,7 @@ async function main() {
     await capture(page, { path: path.join(shots, "cart-mobile.png"), fullPage: true }).catch(() => {});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       "the compact cart fits a 390px viewport without horizontal scroll");
-    await page.setViewport({ width: 1280, height: 800 });
+    await page.setViewport({ width: 1280, height: 900 });
 
     console.log("[step] opening a second guest editor for the cross-tab focus check");
     const secondEditor = await browser.newPage();

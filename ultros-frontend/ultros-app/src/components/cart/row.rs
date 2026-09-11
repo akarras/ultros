@@ -1,15 +1,15 @@
 //! One compact cart row: identity, quantity, quality, estimated line cost,
 //! a details toggle and an icon-only delete button. Commit-on-change:
 //! typing never writes or reorders the document; Enter blurs to commit,
-//! Escape restores the committed value. Owned quantity and target price
-//! live in the row's details panel (`details.rs`).
+//! Escape restores the committed value. Owned quantity, target price and
+//! listing detail live in the row's details panel (`details.rs`).
 
 use std::collections::HashSet;
 
 use icondata as i;
 use leptos::prelude::*;
 use thousands::Separable;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
 use super::details::CartRowDetails;
@@ -70,9 +70,32 @@ pub fn gil_text(i18n: leptos_i18n::I18nContext<Locale, I18nKeys>, amount: i64) -
     .to_string()
 }
 
+/// Move keyboard focus to the element with this id, if it is in the DOM.
+pub fn focus_element(id: &str) {
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::JsCast;
+        if let Some(element) = leptos::prelude::document()
+            .get_element_by_id(id)
+            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = element.focus();
+        }
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = id;
+    }
+}
+
+pub fn details_toggle_id(row_id: i32) -> String {
+    format!("cart-details-toggle-{row_id}")
+}
+
 #[component]
 pub fn CartRow(
     item: Signal<ListItem>,
+    listings: Signal<Vec<ActiveListing>>,
     line: Signal<Option<LineEstimate>>,
     selected_items: RwSignal<HashSet<i32>>,
     /// Row ids whose details panel is open; keyed by id so a reactive
@@ -100,6 +123,13 @@ pub fn CartRow(
     let id = initial.id;
     let is_open = Memo::new(move |_| expanded.with(|open| open.contains(&id)));
     let details_id = format!("cart-details-{id}");
+    let toggle_id = details_toggle_id(id);
+    let close_details = Callback::new(move |()| {
+        expanded.update(|open| {
+            open.remove(&id);
+        });
+        focus_element(&details_toggle_id(id));
+    });
     let quantity = numeric_editor(
         row,
         name.clone(),
@@ -138,7 +168,6 @@ pub fn CartRow(
     let details_name = name.clone();
     let remove_name = name.clone();
     let panel_name = name.clone();
-    let toggle_id = format!("cart-details-toggle-{id}");
     let panel_controls = details_id.clone();
     view! {
         <li class=format!("{ROW_GRID} border-b border-[color:var(--color-outline)] last:border-b-0 hover:bg-[color:var(--color-background-panel)] transition-colors") class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=initial.item_id data-row-id=id>
@@ -159,14 +188,14 @@ pub fn CartRow(
                     {can_hq.then(|| view! { <option value="hq">{t!(i18n, lists_workspace_hq)}</option> })}
                 </select>
                 <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
-                    <Icon icon=i::BiChevronDownRegular />
+                    <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
                 </button>
-                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) disabled=move || !can_write.get() on:click=move |_| on_delete.run(id)>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" disabled=move || !can_write.get() on:click=move |_| on_delete.run(id)>
                     <Icon icon=i::BiTrashRegular />
                 </button>
             </div>
             <Show when=move || is_open.get()>
-                <CartRowDetails id=panel_controls.clone() item=row name=panel_name.clone() can_write on_edit />
+                <CartRowDetails id=panel_controls.clone() item=row listings line name=panel_name.clone() can_write on_edit on_close=close_details />
             </Show>
         </li>
     }
