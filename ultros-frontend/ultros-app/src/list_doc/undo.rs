@@ -1,10 +1,24 @@
 //! Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, Cmd on Apple (spec section 3.3). One
 //! window listener per open page, ignored while an editable element has
 //! focus or one of the page's modals is open.
+//!
+//! The listener is document-agnostic: account lists (`ListDocHandle`) and
+//! device lists (`GuestListHandle`) both install it through
+//! [`UndoBindings`], so the platform modifiers, the editable-target and
+//! modal guards and the listener lifecycle are defined exactly once
+//! (issue #1429).
 
 use leptos::prelude::*;
 
-use crate::list_doc::handle::ListDocHandle;
+/// What the keyboard shortcuts drive. `undo`/`redo` run on the document the
+/// installing page currently has open; `modal_open` suppresses the shortcuts
+/// while a modal or confirmation panel owns the keyboard.
+#[derive(Clone, Copy)]
+pub struct UndoBindings {
+    pub undo: Callback<()>,
+    pub redo: Callback<()>,
+    pub modal_open: Signal<bool>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UndoKey {
@@ -38,8 +52,11 @@ pub fn classify_key(key: &str, ctx: KeyContext) -> Option<UndoKey> {
     }
 }
 
-/// Register the window listener. Hydrate only: the server never sees keys.
-pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
+/// Register the window listener under the current reactive owner. Hydrate
+/// only: the server never sees keys. The listener is removed when that owner
+/// is disposed, so a page that re-installs per opened document (or a device
+/// editor that is re-created per list) never accumulates listeners.
+pub fn install(bindings: UndoBindings) {
     #[cfg(feature = "hydrate")]
     {
         use leptos_use::{UseEventListenerOptions, use_event_listener_with_options, use_window};
@@ -69,16 +86,16 @@ pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
                     shift: ev.shift_key(),
                     apple: apple.get_untracked(),
                     editable_target,
-                    modal_open: modal_open.get_untracked(),
+                    modal_open: bindings.modal_open.get_untracked(),
                 };
                 match classify_key(&ev.key(), ctx) {
                     Some(UndoKey::Undo) => {
                         ev.prevent_default();
-                        handle.undo();
+                        bindings.undo.run(());
                     }
                     Some(UndoKey::Redo) => {
                         ev.prevent_default();
-                        handle.redo();
+                        bindings.redo.run(());
                     }
                     None => {}
                 }
@@ -90,7 +107,7 @@ pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
     }
     #[cfg(not(feature = "hydrate"))]
     {
-        let _ = (handle, modal_open);
+        let _ = bindings;
     }
 }
 

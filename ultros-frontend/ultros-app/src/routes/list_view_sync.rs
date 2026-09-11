@@ -1193,15 +1193,23 @@ pub fn ListViewSync() -> impl IntoView {
                     // `close` again; it is idempotent.
                     on_cleanup(move || opened.close());
                     // Re-installed alongside each handle so the keys always
-                    // reach the live document. `install` takes the handle by
-                    // value, and one window listener per open is cheap:
-                    // switching accounts without a page load isn't reachable
-                    // (signing in navigates away and back), so in practice
-                    // this runs exactly once per page. Left under the
-                    // Effect's own owner on purpose: it creates no node the
-                    // handle needs, and its listener is then removed when
-                    // this run is superseded, instead of piling up.
-                    crate::list_doc::undo::install(opened, modal_open);
+                    // reach the live document. The bindings capture the
+                    // handle by value, and one window listener per open is
+                    // cheap: switching accounts without a page load isn't
+                    // reachable (signing in navigates away and back), so in
+                    // practice this runs exactly once per page. Left under
+                    // the Effect's own owner on purpose: it creates no node
+                    // the handle needs, and its listener is then removed
+                    // when this run is superseded, instead of piling up.
+                    crate::list_doc::undo::install(crate::list_doc::undo::UndoBindings {
+                        undo: Callback::new(move |()| {
+                            opened.undo();
+                        }),
+                        redo: Callback::new(move |()| {
+                            opened.redo();
+                        }),
+                        modal_open,
+                    });
                 }
                 _ => {
                     // Signed out, or no list id. Drop the document; the page

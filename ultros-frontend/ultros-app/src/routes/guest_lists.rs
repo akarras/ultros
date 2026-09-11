@@ -217,21 +217,33 @@ mod browser {
                 error.set(e);
             }
         });
+        let undo = Callback::new(move |()| {
+            handle.with_value(|h| {
+                h.undo();
+            });
+        });
+        let redo = Callback::new(move |()| {
+            handle.with_value(|h| {
+                h.redo();
+            });
+        });
+        // The same window shortcuts account lists get (#1429). This
+        // component is created per loaded list and disposed with it, so the
+        // listener follows the document: none is left behind for a previous
+        // list, and a closed handle ignores the callbacks anyway. The delete
+        // confirmation is the one panel here that owns the keyboard.
+        crate::list_doc::undo::install(crate::list_doc::undo::UndoBindings {
+            undo,
+            redo,
+            modal_open: confirm_delete.into(),
+        });
         let source = ListWorkspaceSource {
             hide_acquired: Signal::derive(|| false),
             list_id: Signal::derive(|| 0),
             add: Callback::new(move |item| apply.run(Edit::Add(item))),
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
-            undo: Callback::new(move |()| {
-                handle.with_value(|h| {
-                    h.undo();
-                });
-            }),
-            redo: Callback::new(move |()| {
-                handle.with_value(|h| {
-                    h.redo();
-                });
-            }),
+            undo,
+            redo,
             pending: Signal::derive(|| false),
             feedback: error.into(),
             recipe_open: recipe_open.into(),
