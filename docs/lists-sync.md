@@ -107,6 +107,11 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
 Lists 2.0 adds guest Build/Shop and account adoption under the same Labs
 preference; its product contract is in
 [`2026-09-10-lists-2-product-design.md`](superpowers/specs/2026-09-10-lists-2-product-design.md).
+The Shop and companion requirements from that contract are tracked item by
+item, with the checks that exercised each one, in
+[`qa/lists-2-shop-companion-evidence.md`](qa/lists-2-shop-companion-evidence.md);
+its open rows (physical game validation, purchase-specific undo, the
+per-hop savings ladder) are not promotion blockers but must stay visible.
 New UI strings, including companion labels and offline boot messages, must
 remain translated in all seven supported locales. Verify keyboard focus
 through a committed row edit on both device and account lists before promotion.

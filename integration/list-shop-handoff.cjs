@@ -170,6 +170,25 @@ async function main() {
     const adopted = await text(testId("shop-totals"));
     assert.match(adopted, priced ? /gil/ : /5 missing/, `${adopted} after adopting ${refreshed}`);
     console.log("[ok] Build edits keep the chosen trip; the refresh was reviewed, kept, then adopted");
+
+    if (priced) {
+      // A listing that is gone in game is excluded, and the replacement is
+      // reviewed like any other refresh rather than swapped in underneath.
+      console.log("[step] excluding the first stack as gone and reviewing the replacement");
+      const gone = await text(testId("shop-stack-description"));
+      await page.click(testId("shop-stack-gone"));
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('[role="status"]'))
+        .some(element => /Listing excluded/.test(element.textContent)));
+      assert.equal(await text(testId("shop-stack-description")), gone, "excluding a listing does not change the trip by itself");
+      await page.click(testId("shop-refresh"));
+      await page.waitForSelector(testId("shop-review-apply"));
+      await page.click(testId("shop-review-apply"));
+      await page.waitForFunction((selector, gone) => {
+        const description = document.querySelector(selector)?.textContent;
+        return description && description !== gone;
+      }, {}, testId("shop-stack-description"), gone);
+      console.log("[ok] the gone listing was replaced through a reviewed refresh");
+    }
     assert.deepEqual(errors, [], "no uncaught browser errors");
     console.log("Shop handoff account journey passed.");
   } catch (error) {
