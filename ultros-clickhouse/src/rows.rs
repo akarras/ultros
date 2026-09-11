@@ -240,6 +240,21 @@ impl TableRow for FloorChangeRow {
     const TABLE: &'static str = "floor_changes";
 }
 
+/// Mirrors the `floor_anchors` table: one row per world and boot at which the
+/// analyzer's resync diffed every current listing into `floor_changes`
+/// against ClickHouse's own baseline. From `anchored_at` on, a key with no
+/// `floor_changes` row on that world is known to have had no listing there.
+#[derive(Row, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FloorAnchorRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub anchored_at: DateTime<Utc>,
+    pub world_id: i32,
+}
+
+impl TableRow for FloorAnchorRow {
+    const TABLE: &'static str = "floor_anchors";
+}
+
 /// Prices are domain-constrained non-negative; the Postgres column is `i32`.
 fn clamp_price(p: i32) -> u32 {
     p.max(0) as u32

@@ -191,6 +191,7 @@ async fn window_items(
     }
     let receipts = unique.into_values().collect::<Vec<_>>();
     let floors = floor_history::window_changes(ch, items, worlds, from, to).await?;
+    let anchors = floor_history::anchors(ch, worlds).await?;
     let mut grouped_events: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let mut grouped_receipts: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let mut grouped_floors: BTreeMap<_, Vec<_>> = BTreeMap::new();
@@ -235,6 +236,7 @@ async fn window_items(
         let events = grouped_events.remove(&key).unwrap_or_default();
         let receipts = grouped_receipts.remove(&key).unwrap_or_default();
         let floors = grouped_floors.remove(&key).unwrap_or_default();
+        let floors = floor_history::seeded(&floors, worlds, &anchors);
         let floor = floor_history::bounds(&floors, worlds, from, to);
         let relevant = |e: &&WindowEvent| {
             e.event_time.timestamp() >= from && e.source != ListingEventSource::Snapshot

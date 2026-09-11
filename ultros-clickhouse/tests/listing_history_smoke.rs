@@ -123,6 +123,36 @@ async fn window_history_receipts_floors_stock_and_bounds() {
     assert_eq!(stats.floor_empty_secs, 86400 - 300);
     assert_eq!(stats.floor_unknown_secs, 0);
     assert!(!stats.listing_coverage.continuity_verified);
+    // A scope world with no floor row at all keeps the floor unknown until a
+    // boot anchor proves it empty; then the scope reads exactly as [1, 2].
+    let wider = listing_history::window(&ch, &[1, 2, 3], 1, to)
+        .await
+        .unwrap();
+    let wider = &wider[&(item, false)];
+    assert_eq!((wider.floor_min, wider.floor_unknown_secs), (None, 86400));
+    ch.client()
+        .query(&format!(
+            "INSERT INTO floor_anchors VALUES ({}, 3)",
+            from - 100
+        ))
+        .execute()
+        .await
+        .unwrap();
+    let anchored = listing_history::window(&ch, &[1, 2, 3], 1, to)
+        .await
+        .unwrap();
+    let anchored = &anchored[&(item, false)];
+    assert_eq!(
+        (anchored.floor_min, anchored.floor_max),
+        (Some(80), Some(120))
+    );
+    assert_eq!(anchored.floor_empty_secs, 86400 - 300);
+    assert_eq!(anchored.floor_unknown_secs, 0);
+    ch.client()
+        .query("ALTER TABLE floor_anchors DELETE WHERE world_id = 3 SETTINGS mutations_sync = 1")
+        .execute()
+        .await
+        .unwrap();
     assert!(stats.listing_coverage.observed_span_secs < 86400);
     for days in [7, 30, 90] {
         let longer = listing_history::window(&ch, &[1, 2], days, to)

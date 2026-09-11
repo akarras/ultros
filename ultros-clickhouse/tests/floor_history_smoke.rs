@@ -105,3 +105,74 @@ async fn latest_floors_reports_the_floor_the_history_reader_would_carry() {
         .await
         .unwrap();
 }
+
+/// A world that never listed an item has no `floor_changes` row, so on its
+/// own it keeps a datacenter's floor unknown. A recorded boot anchor proves
+/// the world empty from that instant on; the earliest anchor per world wins.
+#[tokio::test]
+async fn anchored_world_without_rows_is_known_empty_in_batch_bounds() {
+    if std::env::var("ULTROS_CH_INTEGRATION").is_err() {
+        eprintln!("skipped: set ULTROS_CH_INTEGRATION=1 against a disposable ClickHouse");
+        return;
+    }
+    use chrono::{TimeZone, Utc};
+    use ultros_api_types::floor_history::{FloorHistoryRequest, FloorInterval};
+    use ultros_clickhouse::{
+        floor_history::{anchors, batch},
+        rows::FloorAnchorRow,
+        writer::insert_all,
+    };
+    let ch = ClickHouseClient::from_env();
+    ch.migrate().await.unwrap();
+    // `batch` only accepts real (positive) item ids; stay far above game data.
+    let item = i32::MAX - (std::process::id() as i32 % 1_000_000);
+    ch.client()
+        .query(&format!(
+            "INSERT INTO floor_changes VALUES (1000,{item},0,1,100,'listing')"
+        ))
+        .execute()
+        .await
+        .unwrap();
+    let rows = [
+        FloorAnchorRow {
+            anchored_at: Utc.timestamp_opt(5000, 0).unwrap(),
+            world_id: 2,
+        },
+        FloorAnchorRow {
+            anchored_at: Utc.timestamp_opt(1000, 0).unwrap(),
+            world_id: 2,
+        },
+    ];
+    insert_all(&ch, &rows, 10).await.unwrap();
+    let found = anchors(&ch, &[1, 2, 3]).await.unwrap();
+    assert_eq!(found, std::collections::BTreeMap::from([(2, 1000i64)]));
+
+    let request = |to| FloorHistoryRequest {
+        item_ids: vec![item],
+        from: 1100,
+        to,
+        interval: FloorInterval::Hourly,
+        hq: Some(false),
+    };
+    let known = batch(&ch, &[1, 2], &request(4700)).await.unwrap();
+    let series = &known.series[0];
+    assert_eq!(series.bounds.known_secs, 3600);
+    assert_eq!(series.bounds.unknown_secs, 0);
+    assert_eq!(series.bounds.min, Some(100));
+    assert!(series.unknown_timestamps.is_empty());
+    assert!(series.history.points.iter().all(|p| p.price == Some(100)));
+
+    let unanchored = batch(&ch, &[1, 3], &request(4700)).await.unwrap();
+    assert_eq!(unanchored.series[0].bounds.unknown_secs, 3600);
+    assert_eq!(unanchored.series[0].bounds.min, None);
+
+    for sql in [
+        format!(
+            "ALTER TABLE floor_changes DELETE WHERE item_id = {item} SETTINGS mutations_sync = 1"
+        ),
+        "ALTER TABLE floor_anchors DELETE WHERE world_id = 2 SETTINGS mutations_sync = 1"
+            .to_string(),
+    ] {
+        ch.client().query(&sql).execute().await.unwrap();
+    }
+}

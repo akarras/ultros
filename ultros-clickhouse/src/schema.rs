@@ -25,6 +25,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_item_category_map(client).await?;
     apply_listing_events_table(client).await?;
     apply_floor_changes_table(client).await?;
+    apply_floor_anchors_table(client).await?;
     apply_listing_events_seed_marker(client).await?;
     apply_listing_alive(client).await?;
     crate::listing_snapshots::apply_schema(client).await?;
@@ -93,6 +94,28 @@ async fn apply_floor_changes_table(client: &Client) -> Result<(), ClickHouseErro
             PARTITION BY toYYYYMM(event_time)
             ORDER BY (item_id, hq, world_id, event_time)
             SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// One row per (world, boot) at which the analyzer resync diffed every
+/// current listing into `floor_changes` against ClickHouse's own baseline.
+/// Readers take the earliest anchor per world: from then on a key with no
+/// `floor_changes` row on that world is a known-empty board, not an unknown
+/// one. A handful of rows per boot, so no TTL.
+async fn apply_floor_anchors_table(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS floor_anchors (
+                anchored_at  DateTime,
+                world_id     Int32
+            )
+            ENGINE = MergeTree
+            ORDER BY (world_id, anchored_at)
             "#,
         )
         .execute()

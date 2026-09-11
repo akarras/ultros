@@ -142,6 +142,86 @@ mod tests {
         );
         assert_eq!(points.last().unwrap().timestamp, 25);
     }
+
+    fn row(timestamp: i64, world_id: i32, price: u32) -> WindowChange {
+        WindowChange {
+            item_id: 7,
+            hq: 0,
+            world_id,
+            timestamp,
+            price,
+        }
+    }
+    fn anchors(pairs: &[(i32, i64)]) -> FloorAnchors {
+        pairs.iter().copied().collect()
+    }
+    fn scope_bounds(
+        rows: Vec<WindowChange>,
+        worlds: &[i32],
+        anchors: &FloorAnchors,
+        from: i64,
+        to: i64,
+    ) -> ultros_api_types::floor_history::FloorBounds {
+        bounds(&seeded(&rows, worlds, anchors), worlds, from, to)
+    }
+
+    #[test]
+    fn world_without_rows_stays_unknown_without_an_anchor() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[]), 0, 100);
+        assert_eq!((b.known_secs, b.unknown_secs, b.min), (0, 100, None));
+    }
+
+    #[test]
+    fn anchor_proves_an_absent_world_empty_from_the_anchor_on() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 0)]), 0, 100);
+        assert_eq!(
+            (b.known_secs, b.empty_secs, b.unknown_secs, b.min),
+            (100, 0, 0, Some(100))
+        );
+    }
+
+    #[test]
+    fn anchor_inside_the_window_leaves_the_time_before_it_unknown() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 40)]), 0, 100);
+        assert_eq!((b.known_secs, b.unknown_secs, b.min), (60, 40, Some(100)));
+    }
+
+    #[test]
+    fn anchor_never_overrides_a_row_observed_at_or_before_it() {
+        let rows = vec![row(0, 1, 100), row(10, 2, 50)];
+        let b = scope_bounds(rows.clone(), &[1, 2], &anchors(&[(2, 40)]), 0, 100);
+        // Nothing is claimed for world 2 before its first observation at 10.
+        assert_eq!((b.known_secs, b.unknown_secs, b.min), (90, 10, Some(50)));
+        let same_second = scope_bounds(rows, &[1, 2], &anchors(&[(2, 10)]), 0, 100);
+        assert_eq!(same_second.min, Some(50));
+    }
+
+    #[test]
+    fn anchor_before_the_window_is_superseded_by_a_later_seed_row() {
+        let b = scope_bounds(
+            vec![row(0, 1, 100), row(5, 2, 50)],
+            &[1, 2],
+            &anchors(&[(2, 0)]),
+            20,
+            100,
+        );
+        assert_eq!((b.known_secs, b.min), (80, Some(50)));
+    }
+
+    #[test]
+    fn anchored_worlds_with_no_rows_form_a_known_empty_board() {
+        let b = scope_bounds(vec![], &[1, 2], &anchors(&[(1, 0), (2, 0)]), 0, 100);
+        assert_eq!(
+            (b.known_secs, b.empty_secs, b.unknown_secs, b.min),
+            (100, 100, 0, None)
+        );
+    }
+
+    #[test]
+    fn anchor_at_or_after_the_window_end_changes_nothing() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 100)]), 0, 100);
+        assert_eq!((b.known_secs, b.unknown_secs), (0, 100));
+    }
 }
 
 /// Exact transitions shared by window bounds and bounded multi-item history.
@@ -260,6 +340,69 @@ pub async fn latest_floors(ch: &ClickHouseClient) -> Result<Vec<LatestFloor>, Cl
         .await?)
 }
 
+/// Per world, the unix time of the earliest complete resync: at that instant
+/// every listing on the world was diffed into `floor_changes`, so a key with
+/// no row at or before it had no listing there. Nothing is claimed earlier.
+pub type FloorAnchors = BTreeMap<i32, i64>;
+
+/// Earliest recorded anchor per requested world. Tiny table, bounded read.
+pub async fn anchors(
+    ch: &ClickHouseClient,
+    worlds: &[i32],
+) -> Result<FloorAnchors, ClickHouseError> {
+    if worlds.is_empty() {
+        return Ok(FloorAnchors::new());
+    }
+    let ids = worlds
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows = ch
+        .client()
+        .query(&format!(
+            "SELECT world_id, toInt64(min(anchored_at)) AS anchored_at FROM floor_anchors
+            WHERE world_id IN ({ids}) GROUP BY world_id SETTINGS max_execution_time=10"
+        ))
+        .fetch_all::<(i32, i64)>()
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// One key's rows plus a synthetic empty (`price 0`) row at each anchored
+/// world's anchor when nothing was observed there at or before it. Synthetic
+/// rows sort before real rows at the same second, so an observation always
+/// wins. Without this a world that never listed the item stays unknown and
+/// makes every datacenter and region floor unknown with it.
+pub(crate) fn seeded(
+    rows: &[WindowChange],
+    worlds: &[i32],
+    anchors: &FloorAnchors,
+) -> Vec<WindowChange> {
+    let (item_id, hq) = rows.first().map_or((0, 0), |r| (r.item_id, r.hq));
+    let mut out = Vec::with_capacity(rows.len() + worlds.len());
+    for world_id in worlds {
+        let Some(&anchor) = anchors.get(world_id) else {
+            continue;
+        };
+        if rows
+            .iter()
+            .any(|r| r.world_id == *world_id && r.timestamp <= anchor)
+        {
+            continue;
+        }
+        out.push(WindowChange {
+            item_id,
+            hq,
+            world_id: *world_id,
+            timestamp: anchor,
+            price: 0,
+        });
+    }
+    out.extend(rows.iter().cloned());
+    out
+}
+
 /// Replay simultaneous changes together. A partial scope cannot establish a
 /// known floor (or emptiness); unknown worlds may hold a cheaper listing.
 pub(crate) fn bounds(
@@ -318,6 +461,7 @@ pub async fn batch(
         ));
     }
     let rows = window_changes(ch, &request.item_ids, worlds, request.from, request.to).await?;
+    let anchors = anchors(ch, worlds).await?;
     let mut series = Vec::new();
     for item_id in request
         .item_ids
@@ -334,6 +478,7 @@ pub async fn batch(
                 .filter(|r| r.item_id == item_id && (r.hq != 0) == hq)
                 .cloned()
                 .collect::<Vec<_>>();
+            let rows = seeded(&rows, worlds, &anchors);
             let bounds = bounds(&rows, worlds, request.from, request.to);
             let mut points = sample(
                 rows.iter()
