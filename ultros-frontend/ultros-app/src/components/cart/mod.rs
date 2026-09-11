@@ -12,7 +12,6 @@
 pub mod details;
 pub mod estimate;
 pub mod row;
-pub mod summary;
 
 use std::collections::{HashMap, HashSet};
 
@@ -26,7 +25,6 @@ use crate::routes::list_view::remaining_quantity;
 use crate::routes::list_view_sync::{InlineListAdd, InlineRecipeAdd, ListWorkspaceSource};
 
 use row::{CartRow, ROW_GRID};
-use summary::CartSummary;
 
 /// `?cart=legacy` mounts the previous Labs grid (`ListBuildWorkspace`) so a
 /// tester can compare the two presentations on the same list. The
@@ -102,6 +100,14 @@ pub fn ListCart(
         },
     );
     let is_empty = Memo::new(move |_| source.rows.with(|rows| rows.is_empty()));
+    // The whole cart, not the filtered view, priced by the shared estimator
+    // (#1431/#1432): a filter narrows what the list shows, never what it
+    // costs, and both Labs presentations must agree on the total.
+    let estimate = Memo::new(move |_| {
+        source
+            .rows
+            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
+    });
     view! {
         <section class="space-y-3" data-testid="list-cart">
             <Show when=move || source.can_write.get()>
@@ -109,13 +115,13 @@ pub fn ListCart(
                 <div class="flex flex-wrap items-center gap-2 text-sm">
                     <button type="button" class="btn-ghost" aria-expanded=move || source.recipe_open.get().to_string() on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
-                    <button type="button" class="btn-ghost" disabled=move || !source.can_undo.get() on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button type="button" class="btn-ghost" disabled=move || !source.can_redo.get() on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
+                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
-            <CartSummary rows=source.rows />
-            <input class="input w-full" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
+            <input class="input w-full" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
             <div class="panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {

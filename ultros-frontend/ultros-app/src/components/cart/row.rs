@@ -13,7 +13,7 @@ use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
 use super::details::CartRowDetails;
-use super::estimate::{Coverage, LineEstimate};
+use super::estimate::{LineEstimate, LineStatus};
 use crate::components::icon::Icon;
 use crate::components::item_icon::*;
 use crate::global_state::xiv_data::tracked_data;
@@ -43,11 +43,14 @@ pub fn numeric_editor(
         }
     });
     view! {
-        <input class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() readonly=move || !can_write.get()
+        <input class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
             on:keydown=move |ev| {
-                ev.stop_propagation();
-                if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
-                if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
+                // Only the keys this cell handles stop here; Ctrl+Z must
+                // reach the window listener, which decides between native
+                // text undo (a draft) and document undo (a clean cell) from
+                // `data-committed` (#1430).
+                if ev.key() == "Enter" { ev.stop_propagation(); let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
+                if ev.key() == "Escape" { ev.stop_propagation(); event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
             }
             on:change=move |ev| {
                 let entered = event_target_value(&ev);
@@ -114,23 +117,23 @@ pub fn CartRow(
             return view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }
                 .into_any();
         };
-        match (line.coverage, line.total) {
-            (Coverage::None, _) => view! {
+        match line.status {
+            LineStatus::NoSupply => view! {
                 <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_no_listings)}</span>
             }
             .into_any(),
-            (Coverage::Partial, Some(total)) => view! {
+            LineStatus::PartialSupply => view! {
                 <span class="flex flex-col items-end leading-tight">
-                    <span>{"≥"}{gil_text(i18n, total)}</span>
-                    <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_partial, covered = line.covered, requested = line.requested)}</span>
+                    <span>{"≥"}{gil_text(i18n, line.total)}</span>
+                    <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_partial, covered = line.priced_units, requested = line.remaining)}</span>
                 </span>
             }
             .into_any(),
-            (_, Some(total)) => view! {
-                <span class=if line.requested == 0 { "text-[color:var(--color-text-muted)]" } else { "" }>{gil_text(i18n, total)}</span>
+            LineStatus::Acquired => view! {
+                <span class="text-[color:var(--color-text-muted)]">{gil_text(i18n, line.total)}</span>
             }
             .into_any(),
-            (_, None) => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+            LineStatus::Priced => view! { <span>{gil_text(i18n, line.total)}</span> }.into_any(),
         }
     };
     let select_name = name.clone();
