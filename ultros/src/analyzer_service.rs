@@ -360,6 +360,52 @@ fn floor_diff(
     rows
 }
 
+/// Per-world floors as ClickHouse currently holds them, in `floor_diff`'s
+/// `old` shape. An emptied board (`price == 0`) carries no floor, so it is
+/// absent here exactly like a key ClickHouse never saw.
+fn floor_baseline(
+    rows: impl IntoIterator<Item = ultros_clickhouse::floor_history::LatestFloor>,
+) -> BTreeMap<i32, BTreeMap<ItemKey, CheapestListingValue>> {
+    let mut baseline: BTreeMap<i32, BTreeMap<ItemKey, CheapestListingValue>> = BTreeMap::new();
+    for row in rows {
+        if row.price == 0 {
+            continue;
+        }
+        baseline.entry(row.world_id).or_default().insert(
+            ItemKey {
+                item_id: row.item_id,
+                hq: row.hq != 0,
+            },
+            CheapestListingValue {
+                price: row.price as i32,
+                world_id: row.world_id,
+            },
+        );
+    }
+    baseline
+}
+
+/// Resync rows for one world: `fresh` (just read from Postgres) against what
+/// ClickHouse's `floor_changes` series already carries. The in-memory map is
+/// only a stand-in when ClickHouse could not answer — diffing against it is
+/// what left keys without any row: the analyzer snapshot restores the map
+/// before the boot rebuild, so the "cold boot writes every key" anchor never
+/// fired in production and keys whose floor never moved stayed unknown.
+fn resync_rows(
+    baseline: Option<&BTreeMap<i32, BTreeMap<ItemKey, CheapestListingValue>>>,
+    current: &BTreeMap<ItemKey, CheapestListingValue>,
+    fresh: &BTreeMap<ItemKey, CheapestListingValue>,
+    world_id: i32,
+    at: chrono::DateTime<Utc>,
+) -> Vec<ultros_clickhouse::rows::FloorChangeRow> {
+    static EMPTY: BTreeMap<ItemKey, CheapestListingValue> = BTreeMap::new();
+    let old = match baseline {
+        Some(worlds) => worlds.get(&world_id).unwrap_or(&EMPTY),
+        None => current,
+    };
+    floor_diff(old, fresh, world_id, at)
+}
+
 /// Estimate what an item will actually **sell** for on the target world.
 ///
 /// This is intentionally the same formula the Flip Finder uses client-side
@@ -858,12 +904,48 @@ impl AnalyzerService {
         }
 
         let at = Utc::now();
-        let mut resync_rows = Vec::new();
+        // Diff against the floors ClickHouse actually holds, so every key it
+        // has never seen (or drifted on) gets a row. Bounded: a slow or absent
+        // ClickHouse falls back to the in-memory map rather than delaying boot.
+        let baseline = match tokio::time::timeout(
+            std::time::Duration::from_secs(90),
+            ultros_clickhouse::floor_history::latest_floors(&self.ch_client),
+        )
+        .await
+        {
+            Ok(Ok(rows)) => {
+                let baseline = floor_baseline(rows);
+                info!(
+                    worlds = baseline.len(),
+                    keys = baseline.values().map(BTreeMap::len).sum::<usize>(),
+                    "loaded floor baseline from ClickHouse for resync"
+                );
+                Some(baseline)
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    ?error,
+                    "floor baseline query failed; resync diffs against the in-memory map"
+                );
+                None
+            }
+            Err(_) => {
+                warn!("floor baseline query timed out; resync diffs against the in-memory map");
+                None
+            }
+        };
+        metrics::counter!(
+            "ultros_analyzer_floor_resync_total",
+            "baseline" => if baseline.is_some() { "clickhouse" } else { "memory" }
+        )
+        .increment(1);
+        let mut rows = Vec::new();
         for (selector, listings) in fresh {
             if let Some(lock) = self.cheapest_items.get(&selector) {
                 let mut current = lock.write().await;
                 if let AnySelector::World(world_id) = selector {
-                    resync_rows.extend(floor_diff(
+                    rows.extend(resync_rows(
+                        baseline.as_ref(),
                         &current.item_map,
                         &listings.item_map,
                         world_id,
@@ -873,7 +955,7 @@ impl AnalyzerService {
                 *current = listings;
             }
         }
-        self.spawn_floor_resync_insert(resync_rows);
+        self.spawn_floor_resync_insert(rows);
         Ok(())
     }
 
@@ -2265,7 +2347,7 @@ mod test {
 
     use super::{
         SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
-        floor_diff,
+        floor_baseline, floor_diff, resync_rows,
     };
     use ultros_api_types::ActiveListing;
     use ultros_db::listings::ListingSummary;
@@ -2841,6 +2923,82 @@ mod test {
         .collect();
         let rows = floor_diff(&BTreeMap::new(), &new, 40, Utc::now());
         assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn floor_baseline_groups_by_world_and_treats_empty_board_rows_as_absent() {
+        use ultros_clickhouse::floor_history::LatestFloor;
+        let rows = vec![
+            LatestFloor {
+                item_id: 1,
+                hq: 0,
+                world_id: 40,
+                price: 100,
+            },
+            LatestFloor {
+                item_id: 1,
+                hq: 1,
+                world_id: 40,
+                price: 0, // board emptied: no floor to carry
+            },
+            LatestFloor {
+                item_id: 2,
+                hq: 0,
+                world_id: 41,
+                price: 7,
+            },
+        ];
+        let baseline = floor_baseline(rows);
+        assert_eq!(baseline.len(), 2);
+        let w40 = &baseline[&40];
+        assert_eq!(w40.len(), 1);
+        assert_eq!(
+            w40[&ItemKey {
+                item_id: 1,
+                hq: false
+            }]
+                .price,
+            100
+        );
+        assert_eq!(
+            w40[&ItemKey {
+                item_id: 1,
+                hq: false
+            }]
+                .world_id,
+            40
+        );
+        assert_eq!(baseline[&41].len(), 1);
+    }
+
+    /// The bug behind #1342's empty floor series: the rkyv snapshot restores
+    /// the cheapest map before the boot rebuild, so diffing against it never
+    /// writes the per-key anchor and keys whose floor never moved stay unknown.
+    #[test]
+    fn resync_rows_diff_against_clickhouse_baseline_not_the_restored_map() {
+        let key = ItemKey {
+            item_id: 1,
+            hq: false,
+        };
+        let val = CheapestListingValue {
+            price: 100,
+            world_id: 40,
+        };
+        let restored: BTreeMap<ItemKey, CheapestListingValue> = [(key, val)].into_iter().collect();
+        let fresh = restored.clone();
+        // ClickHouse has never seen world 40: every fresh key is an anchor.
+        let baseline: BTreeMap<i32, BTreeMap<ItemKey, CheapestListingValue>> = BTreeMap::new();
+        let rows = resync_rows(Some(&baseline), &restored, &fresh, 40, Utc::now());
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].item_id, rows[0].price_per_unit), (1, 100));
+
+        // ClickHouse already holds the same floor: nothing to write.
+        let mut known = BTreeMap::new();
+        known.insert(40, restored.clone());
+        assert!(resync_rows(Some(&known), &restored, &fresh, 40, Utc::now()).is_empty());
+
+        // ClickHouse unreachable: fall back to the in-memory map as before.
+        assert!(resync_rows(None, &restored, &fresh, 40, Utc::now()).is_empty());
     }
 
     #[test]
