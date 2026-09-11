@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "One place for active filters",
+  "blurb": "Every analyzer now shows its active filters only in the control bar above the table. The second \"Active column filters\" strip that some tables drew underneath has been removed, so chips, counts, and Clear all live in a single row on every tool.",
+  "link": "/flip-finder",
+  "importance": "medium"
+}

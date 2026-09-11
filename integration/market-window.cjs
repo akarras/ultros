@@ -161,7 +161,9 @@ async function main() {
     await cell('price', '300');
     await cell('market-sale-median-7', '70');
     assert.equal(hits.get('Gilgamesh/30'), 1, 'switching back while loading reuses the same slot');
-    await page.click('[data-grid-query-summary] a');
+    // The shared bar owns the only filter surface (#1351); Clear all is its button.
+    assert.equal(await page.$('[data-grid-query-summary]'), null, 'the grid renders no filter strip of its own');
+    await page.click('.registered-filter-bar button[aria-label="Clear all filters"]');
     await rows(3);
     assert.equal(new URL(page.url()).searchParams.get('window'), '30', 'clear filters preserves view window');
     assert.equal(new URL(page.url()).searchParams.get('revenue'), 'sale-median');

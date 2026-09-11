@@ -100,7 +100,9 @@ async function main() {
     await menuAction('Hide column');
     await page.waitForFunction(() => !document.querySelector('.virtual-grid-heading[data-column="amount"]'));
     await count(99);
-    assert.match(await page.$eval('[data-grid-query-summary]', element => element.textContent), /Amount: At least 150/);
+    // The hidden column's filter is still a chip in the shared bar (#1351).
+    assert.match(await page.$eval('[data-registered-filter="amount"]', element => element.textContent), /At least 150/);
+    assert.equal(await page.$('[data-grid-query-summary]'), null, 'the grid renders no filter strip of its own');
     const saved = page.url();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__queryHydrated);
@@ -113,7 +115,7 @@ async function main() {
     await page.waitForFunction(() =>
       JSON.parse(localStorage.getItem('ultros.grid.query-fixture-grid.views') || '[]').some(view => view.name === 'Hidden amount'));
     await page.keyboard.press('Escape');
-    await page.click('[data-grid-query-summary] a');
+    await page.click('.registered-filter-bar button[aria-label="Clear all filters"]');
     await count(250);
     await page.click('[data-grid-saved-views] > button');
     await page.click('[data-grid-saved-views] a');
@@ -179,7 +181,7 @@ async function main() {
     // Shared registry: toolbar/menu/header edits are the same query, including
     // legacy bounds and inputs that run before metric evaluation.
     await page.setViewport({ width: 1200, height: 900 });
-    await open({ 'registry-test': '1', 'min-amount': '10', 'max-amount': '20' });
+    await open({ 'min-amount': '10', 'max-amount': '20' });
     await count(11);
     assert.equal(await page.$$eval('[data-registered-filter="amount"]', chips => chips.length), 1);
     assert.equal(await page.$('[data-grid-query-summary]'), null, 'one filter surface');

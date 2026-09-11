@@ -1258,7 +1258,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 on_toggle_column=toggle_column
                 on_reset_columns=reset_columns
                 empty_label=Signal::derive(move || {
-                    t_string!(i18n, item_explorer_no_active_filters).to_string()
+                    t_string!(i18n, no_active_filters).to_string()
                 })
             />
 

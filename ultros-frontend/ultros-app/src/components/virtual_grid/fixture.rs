@@ -106,8 +106,10 @@ mod development {
             return view! { <MarketWindowFixture /> }.into_any();
         }
         let query = use_query_map();
-        let registered = query.with_untracked(|q| q.get("registry-test").is_some());
-        if registered {
+        // Every grid host shares its filters with a `ControlBar` through one
+        // registry (issue #1351); the fixture is no exception, so the bar is
+        // the only place a filter chip can render here.
+        {
             use super::super::{
                 metrics::FilterOp,
                 registry::{FilterAlias, FilterRegistry},
@@ -157,7 +159,7 @@ mod development {
         ];
         view! {
             <h1>"Shared analyzer data fixture"</h1>
-            {registered.then(|| view! { <crate::components::control_bar::ControlBar sticky=false summary=|| ().into_any() empty_label=Signal::derive(|| "No filters".to_string())/> })}
+            <crate::components::control_bar::ControlBar sticky=false summary=|| ().into_any() empty_label=Signal::derive(|| "No filters".to_string())/>
             <button id="query-load-first" on:click=move |_| loaded.set(125)>"Load first half"</button>
             <button id="query-load-all" on:click=move |_| loaded.set(250)>"Finish feed"</button>
             <QueryGrid id="query-fixture-grid" label="Shared analyzer data fixture" each=rows columns metrics
@@ -181,6 +183,8 @@ mod development {
         use ultros_api_types::cheapest_listings::{
             CheapestListingData, CheapestListingMapKey, CheapestListingsMap,
         };
+        // Same contract as the query fixture: the control bar owns the chips.
+        super::super::registry::FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
         let (scope, set_scope) = crate::query_defaults::query_signal::<String>("scope");
         let market = use_market_data(Signal::derive(move || {
             scope.get().unwrap_or_else(|| "Gilgamesh".into())
@@ -233,6 +237,7 @@ mod development {
         })];
         view! {
             <h1>"Market window fixture"</h1>
+            <crate::components::control_bar::ControlBar sticky=false summary=|| ().into_any() empty_label=Signal::derive(|| "No filters".to_string())/>
             <MarketWindowControl window=market.window />
             <MarketPriceControls window=market.window basis=selected_basis label="Price basis"
                 on_change=Callback::new(move |basis| set_basis.set(Some(basis))) />

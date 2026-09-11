@@ -1,7 +1,7 @@
 //! URL persistence shared by all analyzer tables. Existing `cols` and JSON
 //! `layout` links remain readable; new layouts use a small `l` delta.
 pub use super::filter::MetricSortHeader;
-use super::metrics::{FilterOp, GridMetric, parse_filters, query_rows};
+use super::metrics::{GridMetric, parse_filters, query_rows};
 use super::row_source::RowSource;
 use super::{GridChange, GridColumn, VirtualGrid};
 use crate::components::app_link::use_location_or_default;
@@ -209,29 +209,11 @@ where
     }
     let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
     let saved_views_id = id.clone();
-    let clear_href = move || {
-        let mut q = query.get();
-        q.remove("gf");
-        format!("{}{}", location.pathname.get(), q.to_query_string())
-    };
+    // Active filters are shown and edited by the `ControlBar` sharing this
+    // grid's `FilterRegistry` (issue #1351). The grid itself renders none, so
+    // a host has exactly one filter surface.
     view! {
         {show_saved_views.then(||view! {<div class="flex justify-end px-3 py-2"><super::saved_views::GridSavedViews id=saved_views_id/></div>})}
-        {move || (registry.is_none() && !filters.with(|f|f.is_empty())).then(||view! {
-            <div class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-grid-query-summary>
-                <span>{t!(i18n, grid_query_count, count = move || queried.with(Vec::len))}</span>
-                <span>{t!(i18n,grid_query_filters)}</span>
-                {move ||filters.with(|f|f.iter().map(|(id,filter)| {
-                    let label=columns.with(|defs|defs.iter().find(|c|c.id==id).map(|c|c.label.clone())).unwrap_or_else(||id.clone());
-                    let mut q=query.get(); let mut next=filters.get();next.remove(id);q.remove("gf");
-                    if !next.is_empty(){q.insert("gf",serde_json::to_string(&next).unwrap_or_default());}
-                    let href=format!("{}{}",location.pathname.get(),q.to_query_string());
-                    let operator = super::filter::operator_label(filter.op);
-                    let value = if matches!(filter.op,FilterOp::Missing|FilterOp::Present) { "" } else { &filter.value };
-                    view! {<leptos_router::components::A href scroll=false attr:class="rounded-full border px-2 py-1" attr:title=t_string!(i18n,grid_filter_clear).to_string()>{format!("{label}: {operator} {value} ×")}</leptos_router::components::A>}
-                }).collect_view())}
-                <leptos_router::components::A href=clear_href scroll=false>{t!(i18n,grid_query_clear)}</leptos_router::components::A>
-            </div>
-        })}
         {move || (result.with(|r|r.lacking_data)>0).then(||view! {
             <div class="px-3 py-2 text-xs text-[color:var(--color-text-muted)]" role="status" data-grid-query-coverage>
                 <span>{t!(i18n, analyzer_rows_lacking_data, count = move || result.with(|r| r.lacking_data))}</span>

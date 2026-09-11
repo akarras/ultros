@@ -737,7 +737,7 @@ fn ScripSourceTable(
                     }
 
                     empty_label=Signal::derive(move || {
-                        t_string!(i18n, scrip_sources_no_filters_hint).to_string()
+                        t_string!(i18n, no_active_filters).to_string()
                     })
                 />
 
