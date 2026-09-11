@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "橙色采集票据",
     "update_banner_message": "Ultros 已更新。",
     "update_banner_reload": "重新加载",
-    "update_banner_dismiss": "关闭"
+    "update_banner_dismiss": "关闭",
+    "cart_estimated_total": "预估总额",
+    "cart_covers_all": "已计入待购买的全部{{units}}个",
+    "cart_covers_partial": "已计入{{requested}}个中的{{covered}}个；总额为下限",
+    "cart_no_listings": "{{count}}件物品没有在售",
+    "cart_nothing_to_buy": "没有需要购买的物品",
+    "cart_items_count": "{{count}}件物品",
+    "cart_estimate_note": "预估使用此清单范围内最便宜的在售商品，按你仍需的数量计算。这只是观测值，并非预留。",
+    "cart_line_no_listings": "没有在售",
+    "cart_line_partial": "{{requested}}个中的{{covered}}个",
+    "cart_qty": "数量",
+    "cart_est_cost": "预估费用",
+    "cart_details_for": "{{name}}的详情",
+    "cart_remove_named": "移除{{name}}",
+    "cart_empty": "还没有物品。在上方搜索目录以添加第一件。"
 }

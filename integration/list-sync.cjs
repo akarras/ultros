@@ -95,9 +95,17 @@ async function waitForHydration(page, timeout) {
   });
 }
 
-// Labs exposes owned quantities directly; the production view retains toggles.
+// The compact Labs cart keeps owned quantities behind each row's details
+// toggle; open every closed panel so the inputs exist, then let Leptos flush.
+const OPEN_DETAILS = `
+  const closed = Array.from(document.querySelectorAll('button[aria-label^="Details for "][aria-expanded="false"]'));
+  closed.forEach(button => button.click());
+  if (closed.length) await new Promise(resolve => setTimeout(resolve, 150));
+`;
+
+// Labs exposes owned quantities in row details; the production view retains toggles.
 async function rowState(page) {
-  return page.evaluate(() => {
+  return page.evaluate(new Function(`return (async () => {${OPEN_DETAILS}
     if (document.querySelector('[data-testid="list-view-sync"]')) {
       const owned = [...document.querySelectorAll('input[aria-label^="Owned for "]')];
       return { unacquired: owned.filter(input => Number(input.value) === 0).length,
@@ -107,25 +115,27 @@ async function rowState(page) {
     unacquired: document.querySelectorAll('button[aria-label="Mark as acquired"]').length,
     acquired: document.querySelectorAll('button[aria-label="Mark unacquired"]').length,
     };
-  });
+  })();`));
 }
 
 async function setAcquired(page, acquired) {
-  const label = await page.evaluate(acquired => Array.from(document.querySelectorAll('input[aria-label^="Owned for "]'))
-    .find(input => (Number(input.value) > 0) !== acquired)?.getAttribute('aria-label'), acquired);
+  const label = await page.evaluate(new Function("acquired", `return (async () => {${OPEN_DETAILS}
+    return Array.from(document.querySelectorAll('input[aria-label^="Owned for "]'))
+    .find(input => (Number(input.value) > 0) !== acquired)?.getAttribute('aria-label');
+  })();`), acquired);
   if (!label) throw new Error(`No editable Labs row available to set acquired=${acquired}`);
   await page.locator(`input[aria-label=${JSON.stringify(label)}]`).fill(acquired ? "1" : "0");
   await page.keyboard.press("Enter");
 }
 
 async function attemptStaleEdit(page) {
-  return page.evaluate(() => {
+  return page.evaluate(new Function(`return (async () => {${OPEN_DETAILS}
     const input = document.querySelector('input[aria-label^="Owned for "]:not([readonly])');
     if (!input) return false;
     input.value = String(Number(input.value) + 1);
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
-  }).catch(() => false);
+  })();`)).catch(() => false);
 }
 
 async function waitForState(page, predicate, timeout) {

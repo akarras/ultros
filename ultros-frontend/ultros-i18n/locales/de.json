@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "Orangene Sammlerdevisen",
     "update_banner_message": "Ultros wurde aktualisiert.",
     "update_banner_reload": "Neu laden",
-    "update_banner_dismiss": "Schließen"
+    "update_banner_dismiss": "Schließen",
+    "cart_estimated_total": "Geschätzte Summe",
+    "cart_covers_all": "Preist alle {{units}} noch zu kaufenden Einheiten",
+    "cart_covers_partial": "Preist {{covered}} von {{requested}} Einheiten; die Summe ist eine Untergrenze",
+    "cart_no_listings": "{{count}} Gegenstände ohne Angebote",
+    "cart_nothing_to_buy": "Nichts mehr zu kaufen",
+    "cart_items_count": "{{count}} Gegenstände",
+    "cart_estimate_note": "Schätzungen nutzen die günstigsten Angebote im Bereich dieser Liste für die Einheiten, die du noch brauchst. Sie sind Beobachtungen, keine Reservierungen.",
+    "cart_line_no_listings": "Keine Angebote",
+    "cart_line_partial": "{{covered}} von {{requested}} Einheiten",
+    "cart_qty": "Menge",
+    "cart_est_cost": "Gesch. Kosten",
+    "cart_details_for": "Details zu {{name}}",
+    "cart_remove_named": "{{name}} entfernen",
+    "cart_empty": "Noch keine Gegenstände. Suche oben im Katalog, um den ersten hinzuzufügen."
 }

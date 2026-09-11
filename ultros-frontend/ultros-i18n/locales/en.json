@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "Orange gatherers' scrips",
     "update_banner_message": "Ultros has been updated.",
     "update_banner_reload": "Reload",
-    "update_banner_dismiss": "Dismiss"
+    "update_banner_dismiss": "Dismiss",
+    "cart_estimated_total": "Estimated total",
+    "cart_covers_all": "Prices all {{units}} units still to buy",
+    "cart_covers_partial": "Prices {{covered}} of {{requested}} units; the total is a lower bound",
+    "cart_no_listings": "{{count}} items have no listings",
+    "cart_nothing_to_buy": "Nothing left to buy",
+    "cart_items_count": "{{count}} items",
+    "cart_estimate_note": "Estimates use the cheapest listings in this list's scope for the units you still need. They are observations, not reservations.",
+    "cart_line_no_listings": "No listings",
+    "cart_line_partial": "{{covered}} of {{requested}} units",
+    "cart_qty": "Qty",
+    "cart_est_cost": "Est. cost",
+    "cart_details_for": "Details for {{name}}",
+    "cart_remove_named": "Remove {{name}}",
+    "cart_empty": "No items yet. Search the catalog above to add the first one."
 }

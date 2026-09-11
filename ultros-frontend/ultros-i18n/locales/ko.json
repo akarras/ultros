@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "주황 채집자의 증표",
     "update_banner_message": "Ultros가 업데이트되었습니다.",
     "update_banner_reload": "새로고침",
-    "update_banner_dismiss": "닫기"
+    "update_banner_dismiss": "닫기",
+    "cart_estimated_total": "예상 합계",
+    "cart_covers_all": "구매할 {{units}}개 전부를 계산했습니다",
+    "cart_covers_partial": "{{requested}}개 중 {{covered}}개를 계산했습니다. 합계는 최저치입니다",
+    "cart_no_listings": "{{count}}개 아이템에 판매 목록이 없습니다",
+    "cart_nothing_to_buy": "더 구매할 것이 없습니다",
+    "cart_items_count": "아이템 {{count}}개",
+    "cart_estimate_note": "예상 금액은 이 목록의 범위 안에서 가장 저렴한 판매 목록을 아직 필요한 수량에 적용한 것입니다. 관측값이며 예약이 아닙니다.",
+    "cart_line_no_listings": "판매 목록 없음",
+    "cart_line_partial": "{{requested}}개 중 {{covered}}개",
+    "cart_qty": "수량",
+    "cart_est_cost": "예상 비용",
+    "cart_details_for": "{{name}} 상세",
+    "cart_remove_named": "{{name}} 제거",
+    "cart_empty": "아직 아이템이 없습니다. 위의 카탈로그에서 검색해 첫 아이템을 추가하세요."
 }

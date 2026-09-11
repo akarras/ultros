@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "オレンジ・ギャザラースクリップ",
     "update_banner_message": "Ultrosが更新されました。",
     "update_banner_reload": "再読み込み",
-    "update_banner_dismiss": "閉じる"
+    "update_banner_dismiss": "閉じる",
+    "cart_estimated_total": "概算合計",
+    "cart_covers_all": "購入予定の{{units}}個すべてを計上",
+    "cart_covers_partial": "{{requested}}個のうち{{covered}}個を計上。合計は下限値です",
+    "cart_no_listings": "{{count}}件のアイテムに出品がありません",
+    "cart_nothing_to_buy": "購入するものはありません",
+    "cart_items_count": "{{count}}件のアイテム",
+    "cart_estimate_note": "概算は、このリストの範囲内で最安の出品を、まだ必要な個数に対して使用しています。観測値であり、取り置きではありません。",
+    "cart_line_no_listings": "出品なし",
+    "cart_line_partial": "{{requested}}個中{{covered}}個",
+    "cart_qty": "数量",
+    "cart_est_cost": "概算費用",
+    "cart_details_for": "{{name}}の詳細",
+    "cart_remove_named": "{{name}}を削除",
+    "cart_empty": "アイテムはまだありません。上のカタログ検索から最初のアイテムを追加してください。"
 }

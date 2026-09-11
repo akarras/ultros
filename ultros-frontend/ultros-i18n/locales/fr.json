@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "Scripts orange de récolteur",
     "update_banner_message": "Ultros a été mis à jour.",
     "update_banner_reload": "Recharger",
-    "update_banner_dismiss": "Fermer"
+    "update_banner_dismiss": "Fermer",
+    "cart_estimated_total": "Total estimé",
+    "cart_covers_all": "Chiffre les {{units}} unités restant à acheter",
+    "cart_covers_partial": "Chiffre {{covered}} unités sur {{requested}} ; le total est un minimum",
+    "cart_no_listings": "{{count}} objets sans annonce",
+    "cart_nothing_to_buy": "Plus rien à acheter",
+    "cart_items_count": "{{count}} objets",
+    "cart_estimate_note": "Les estimations utilisent les annonces les moins chères dans le périmètre de cette liste pour les unités qu'il vous reste à acheter. Ce sont des observations, pas des réservations.",
+    "cart_line_no_listings": "Aucune annonce",
+    "cart_line_partial": "{{covered}} unités sur {{requested}}",
+    "cart_qty": "Qté",
+    "cart_est_cost": "Coût est.",
+    "cart_details_for": "Détails pour {{name}}",
+    "cart_remove_named": "Retirer {{name}}",
+    "cart_empty": "Aucun objet pour l'instant. Cherchez dans le catalogue ci-dessus pour ajouter le premier."
 }

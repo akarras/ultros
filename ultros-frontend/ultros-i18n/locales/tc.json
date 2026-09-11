@@ -2284,5 +2284,19 @@
     "scrip_sources_preset_orange_gatherers": "橙色採集票據",
     "update_banner_message": "Ultros 已更新。",
     "update_banner_reload": "重新載入",
-    "update_banner_dismiss": "關閉"
+    "update_banner_dismiss": "關閉",
+    "cart_estimated_total": "預估總額",
+    "cart_covers_all": "已計入待購買的全部{{units}}個",
+    "cart_covers_partial": "已計入{{requested}}個中的{{covered}}個；總額為下限",
+    "cart_no_listings": "{{count}}件物品沒有在售",
+    "cart_nothing_to_buy": "沒有需要購買的物品",
+    "cart_items_count": "{{count}}件物品",
+    "cart_estimate_note": "預估使用此清單範圍內最便宜的在售商品，按你仍需的數量計算。這只是觀測值，並非預留。",
+    "cart_line_no_listings": "沒有在售",
+    "cart_line_partial": "{{requested}}個中的{{covered}}個",
+    "cart_qty": "數量",
+    "cart_est_cost": "預估費用",
+    "cart_details_for": "{{name}}的詳情",
+    "cart_remove_named": "移除{{name}}",
+    "cart_empty": "還沒有物品。在上方搜尋目錄以新增第一件。"
 }
