@@ -2323,5 +2323,12 @@
     "scrip_sources_preset_orange_gatherers": "オレンジ・ギャザラースクリップ",
     "update_banner_message": "Ultrosが更新されました。",
     "update_banner_reload": "再読み込み",
-    "update_banner_dismiss": "閉じる"
+    "update_banner_dismiss": "閉じる",
+    "cart_line_no_listings": "出品なし",
+    "cart_line_partial": "{{requested}}個中{{covered}}個",
+    "cart_qty": "数量",
+    "cart_est_cost": "概算費用",
+    "cart_details_for": "{{name}}の詳細",
+    "cart_remove_named": "{{name}}を削除",
+    "cart_empty": "アイテムはまだありません。上のカタログ検索から最初のアイテムを追加してください。"
 }

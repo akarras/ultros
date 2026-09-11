@@ -2323,5 +2323,12 @@
     "scrip_sources_preset_orange_gatherers": "Orange gatherers' scrips",
     "update_banner_message": "Ultros has been updated.",
     "update_banner_reload": "Reload",
-    "update_banner_dismiss": "Dismiss"
+    "update_banner_dismiss": "Dismiss",
+    "cart_line_no_listings": "No listings",
+    "cart_line_partial": "{{covered}} of {{requested}} units",
+    "cart_qty": "Qty",
+    "cart_est_cost": "Est. cost",
+    "cart_details_for": "Details for {{name}}",
+    "cart_remove_named": "Remove {{name}}",
+    "cart_empty": "No items yet. Search the catalog above to add the first one."
 }

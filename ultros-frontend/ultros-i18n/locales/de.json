@@ -2323,5 +2323,12 @@
     "scrip_sources_preset_orange_gatherers": "Orangene Sammlerdevisen",
     "update_banner_message": "Ultros wurde aktualisiert.",
     "update_banner_reload": "Neu laden",
-    "update_banner_dismiss": "Schließen"
+    "update_banner_dismiss": "Schließen",
+    "cart_line_no_listings": "Keine Angebote",
+    "cart_line_partial": "{{covered}} von {{requested}} Einheiten",
+    "cart_qty": "Menge",
+    "cart_est_cost": "Gesch. Kosten",
+    "cart_details_for": "Details zu {{name}}",
+    "cart_remove_named": "{{name}} entfernen",
+    "cart_empty": "Noch keine Gegenstände. Suche oben im Katalog, um den ersten hinzuzufügen."
 }

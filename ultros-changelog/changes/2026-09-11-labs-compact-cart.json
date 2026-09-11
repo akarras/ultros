@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "A compact cart with a running estimate (Labs)",
+  "blurb": "Under the Lists Labs experiment, Build now shows a compact cart: each row keeps the item, the quantity you need, its quality, the estimated cost of what you still have to buy, and a small trash button. The estimated total for the whole cart stays in view while you add items, and it says plainly when listings only cover part of what you need. Owned counts and target prices moved into a per-row details panel.",
+  "link": "/list?labs=lists-sync",
+  "importance": "medium"
+}

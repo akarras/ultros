@@ -46,7 +46,10 @@ async function main() {
   }
   async function replace(selector, value) {
     await page.waitForSelector(selector, { visible: true });
-    await page.click(selector, { clickCount: 3 });
+    // Triple-click never selects a number input, and a right-aligned cell
+    // puts the caret before the digits; select explicitly instead.
+    await page.click(selector);
+    await page.$eval(selector, input => input.select());
     await page.keyboard.press("Backspace");
     await page.type(selector, String(value));
   }
@@ -121,10 +124,7 @@ async function main() {
     await waitValue(NEEDED, 8);
     console.log("[ok] a committed cell edit undoes and redoes");
 
-    const removeButton = await page.evaluateHandle(() =>
-      [...document.querySelectorAll("tr[data-item-id]")]
-        .find(row => row.textContent.includes("Bronze Ingot"))
-        ?.querySelector("button.btn-ghost"));
+    const removeButton = await page.$('[data-item-id] button[aria-label="Remove Bronze Ingot"]');
     assert(removeButton, "the row's Remove button exists");
     await removeButton.click();
     await waitGone(NEEDED);
@@ -175,8 +175,10 @@ async function main() {
     // an editor with a draft keeps native text undo; a clean editor, a
     // select, a checkbox and focus outside the grid all reach document undo.
     console.log("[step] editor-focus rules on the navigated-to list");
-    const QUALITY = 'tr[data-item-id] select[aria-label="Item quality"]';
-    const CHECKBOX = 'tr[data-item-id] input[type="checkbox"]';
+    // The compact cart (#1434) renders rows as `li[data-item-id]` with
+    // per-row accessible names and puts Quality right after Needed.
+    const QUALITY = '[data-item-id] select[aria-label="Quality for Bronze Ingot"]';
+    const CHECKBOX = '[data-item-id] input[type="checkbox"]';
     const FEEDBACK = `${testId("inline-list-add")} [role="status"]`;
     const committed = () => page.$eval(NEEDED, input => input.getAttribute("data-committed"));
     const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? null);
@@ -200,7 +202,7 @@ async function main() {
     await replace(NEEDED, 5);
     await page.keyboard.press("Tab");
     await waitValue(NEEDED, 5);
-    assert.equal(await focusedLabel(), "Owned for Bronze Ingot", "Tab moved focus into the next cell");
+    assert.equal(await focusedLabel(), "Quality for Bronze Ingot", "Tab moved focus into the next control");
     await undo();
     await waitValue(NEEDED, 3);
     console.log("[ok] Ctrl+Z in the next clean cell undoes the Tab-committed edit");

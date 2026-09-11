@@ -50,12 +50,22 @@ async function main() {
     {}, selector, String(expected));
   async function replace(selector, value) {
     await page.waitForSelector(selector, { visible: true });
-    await page.click(selector, { clickCount: 3 });
+    // Triple-click never selects a number input, and a right-aligned cell
+    // puts the caret before the digits; select explicitly instead.
+    await page.click(selector);
+    await page.$eval(selector, input => input.select());
     await page.keyboard.press("Backspace");
     await page.type(selector, String(value));
   }
+  // The account page scrolls smoothly; puppeteer's own scroll-into-view can
+  // fire the click before the button has arrived, so settle it instantly.
+  async function click(selector) {
+    await page.waitForSelector(selector, { visible: true });
+    await page.$eval(selector, element => element.scrollIntoView({ block: "center", behavior: "instant" }));
+    await page.click(selector);
+  }
   async function shopMode(shop) {
-    await page.click(testId(shop ? "guest-shop-mode" : "guest-build-mode"));
+    await click(testId(shop ? "guest-shop-mode" : "guest-build-mode"));
     await page.waitForFunction((selector, shop) =>
       document.querySelector(selector)?.getAttribute("aria-pressed") === String(shop),
     {}, testId("guest-shop-mode"), shop);
@@ -118,7 +128,7 @@ async function main() {
     assert.match(await text(testId("shop-handoff")), new RegExp(`Home world: ${world.name}`),
       "the handoff names the home world the trip starts from");
     assert.equal(await visible(testId("shop-no-prices")), !priced, "unknown prices are called out only when nothing is priced");
-    await page.click(testId("shop-cheapest"));
+    await click(testId("shop-cheapest"));
     await page.waitForSelector(testId("shop-totals"));
     const planned = await text(testId("shop-totals"));
     if (priced) {
@@ -128,7 +138,7 @@ async function main() {
       console.log("[step] recording a partial purchase of 1 unit from the first stack");
       const before = await text(testId("shop-stack-description"));
       await replace(testId("shop-stack-quantity"), "1");
-      await page.click(testId("shop-stack-bought"));
+      await click(testId("shop-stack-bought"));
       await page.waitForFunction((selector, before) => {
         const description = document.querySelector(selector)?.textContent;
         return description && description !== before;
@@ -144,6 +154,8 @@ async function main() {
     await page.waitForSelector(needed, { visible: true });
     assert.equal(await visible(testId("shop-totals")), false, "Shop stays mounted but hidden in Build");
     if (priced) {
+      // Owned lives behind the compact cart's details toggle (#1434).
+      await click(`button[aria-label="Details for ${ITEM}"]`);
       await waitValue(owned, 1);
       console.log("[ok] the partial purchase reached the Build grid as an owned unit");
     }
@@ -157,18 +169,19 @@ async function main() {
       const element = document.querySelector(selector);
       return element && !element.closest(".hidden") && /1 quantity change/.test(element.textContent);
     }, {}, testId("shop-drift"));
-    await page.click(testId("shop-refresh"));
+    await click(testId("shop-refresh"));
     await page.waitForSelector(testId("shop-review"));
     assert.equal(await text(testId("shop-totals")), planned, "a refresh is reviewed before it replaces the trip");
-    await page.click(testId("shop-review-keep"));
+    await click(testId("shop-review-keep"));
     await page.waitForFunction(selector => !document.querySelector(selector), {}, testId("shop-review"));
-    await page.click(testId("shop-refresh"));
+    await click(testId("shop-refresh"));
     await page.waitForSelector(testId("shop-review-apply"));
     const refreshed = await text(testId("shop-review-next"));
-    await page.click(testId("shop-review-apply"));
+    await click(testId("shop-review-apply"));
     await page.waitForFunction(selector => !!document.querySelector(selector)?.closest(".hidden"), {}, testId("shop-drift"));
     const adopted = await text(testId("shop-totals"));
-    assert.match(adopted, priced ? /gil/ : /5 missing/, `${adopted} after adopting ${refreshed}`);
+    // 6 needed; the priced journey owns 1 by now, the unknown one nothing.
+    assert.match(adopted, priced ? /gil/ : /6 missing/, `${adopted} after adopting ${refreshed}`);
     console.log("[ok] Build edits keep the chosen trip; the refresh was reviewed, kept, then adopted");
 
     if (priced) {
@@ -176,13 +189,13 @@ async function main() {
       // reviewed like any other refresh rather than swapped in underneath.
       console.log("[step] excluding the first stack as gone and reviewing the replacement");
       const gone = await text(testId("shop-stack-description"));
-      await page.click(testId("shop-stack-gone"));
+      await click(testId("shop-stack-gone"));
       await page.waitForFunction(() => Array.from(document.querySelectorAll('[role="status"]'))
         .some(element => /Listing excluded/.test(element.textContent)));
       assert.equal(await text(testId("shop-stack-description")), gone, "excluding a listing does not change the trip by itself");
-      await page.click(testId("shop-refresh"));
+      await click(testId("shop-refresh"));
       await page.waitForSelector(testId("shop-review-apply"));
-      await page.click(testId("shop-review-apply"));
+      await click(testId("shop-review-apply"));
       await page.waitForFunction((selector, gone) => {
         const description = document.querySelector(selector)?.textContent;
         return description && description !== gone;

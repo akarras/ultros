@@ -2323,5 +2323,12 @@
     "scrip_sources_preset_orange_gatherers": "橙色採集票據",
     "update_banner_message": "Ultros 已更新。",
     "update_banner_reload": "重新載入",
-    "update_banner_dismiss": "關閉"
+    "update_banner_dismiss": "關閉",
+    "cart_line_no_listings": "沒有在售",
+    "cart_line_partial": "{{requested}}個中的{{covered}}個",
+    "cart_qty": "數量",
+    "cart_est_cost": "預估費用",
+    "cart_details_for": "{{name}}的詳情",
+    "cart_remove_named": "移除{{name}}",
+    "cart_empty": "還沒有物品。在上方搜尋目錄以新增第一件。"
 }

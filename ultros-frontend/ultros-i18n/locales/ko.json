@@ -2323,5 +2323,12 @@
     "scrip_sources_preset_orange_gatherers": "주황 채집자의 증표",
     "update_banner_message": "Ultros가 업데이트되었습니다.",
     "update_banner_reload": "새로고침",
-    "update_banner_dismiss": "닫기"
+    "update_banner_dismiss": "닫기",
+    "cart_line_no_listings": "판매 목록 없음",
+    "cart_line_partial": "{{requested}}개 중 {{covered}}개",
+    "cart_qty": "수량",
+    "cart_est_cost": "예상 비용",
+    "cart_details_for": "{{name}} 상세",
+    "cart_remove_named": "{{name}} 제거",
+    "cart_empty": "아직 아이템이 없습니다. 위의 카탈로그에서 검색해 첫 아이템을 추가하세요."
 }

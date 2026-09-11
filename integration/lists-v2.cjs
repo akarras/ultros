@@ -104,7 +104,10 @@ async function main() {
   }
   async function replace(selector, value) {
     await page.waitForSelector(selector, { visible: true });
-    await page.click(selector, { clickCount: 3 });
+    // Triple-click never selects a number input, and a right-aligned cell
+    // puts the caret before the digits; select explicitly instead.
+    await page.click(selector);
+    await page.$eval(selector, input => input.select());
     await page.keyboard.press("Backspace");
     await page.type(selector, String(value));
   }
@@ -147,6 +150,17 @@ async function main() {
     const needed = 'input[aria-label="Needed for Bronze Ingot"]';
     const owned = 'input[aria-label="Owned for Bronze Ingot"]';
     const target = 'input[aria-label="Target price for Bronze Ingot"]';
+    const quality = 'select[aria-label="Quality for Bronze Ingot"]';
+    const details = 'button[aria-label="Details for Bronze Ingot"]';
+    // Owned and target price sit behind the row's details toggle in the
+    // compact cart; open it (idempotently) before touching either field.
+    const openDetails = async (target = page) => {
+      await target.waitForSelector(details, { visible: true });
+      if (await target.$eval(details, button => button.getAttribute("aria-expanded")) !== "true") {
+        await target.click(details);
+      }
+      await target.waitForSelector(owned, { visible: true });
+    };
     const waitValue = (selector, expected) => page.waitForFunction(
       (selector, expected) => document.querySelector(selector)?.value === expected,
       {}, selector, String(expected));
@@ -163,18 +177,27 @@ async function main() {
       "duplicate additions increase a single row's need");
     await page.keyboard.press("Escape");
     assert.equal(await page.$('[aria-label="Catalog results"]'), null, "Escape dismisses catalog results");
+    await page.waitForSelector(testId("list-estimate-total"));
+    assert.match(await page.$eval(testId("list-estimate-status"), element => element.textContent), /prices|units|Nothing left/i,
+      "the cart summary explains what its estimated total covers (or why there is none yet)");
+    await page.select(quality, "nq");
+    await page.waitForFunction(selector => document.querySelector(selector)?.value === "nq", {}, quality);
+    await saved();
+    assert.equal(await page.$(owned), null, "owned quantity is not a default column in the compact cart");
+    console.log("[ok] compact cart shows the estimate summary and commits a quality change");
     await replace(needed, 9);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Tab");
     await waitValue(needed, 6);
-    await page.$eval(owned, element => { window.__ownedBeforeCommit = element; });
+    await page.$eval(quality, element => { window.__qualityBeforeCommit = element; });
     await replace(needed, 8);
     await page.keyboard.press("Tab");
     await waitValue(needed, 8);
     await saved();
-    assert.equal(await page.$eval(owned, element =>
-      element === window.__ownedBeforeCommit && document.activeElement === element), true,
-    "Tab commits Needed and preserves the existing Owned input and keyboard focus");
+    assert.equal(await page.$eval(quality, element =>
+      element === window.__qualityBeforeCommit && document.activeElement === element), true,
+    "Tab commits Needed and preserves the existing Quality control and keyboard focus");
+    await openDetails();
     await replace(owned, 2);
     await page.keyboard.press("Enter");
     await replace(target, 125);
@@ -182,16 +205,33 @@ async function main() {
     await saved();
     await load(deviceUrl);
     await waitValue(needed, 8);
+    await openDetails();
     await waitValue(owned, 2);
     await waitValue(target, 125);
     console.log("[ok] inline add, duplicate quantities, focus, Escape and edited values survive reload");
+    const shots = path.join(__dirname, "artifacts", "lists-v2");
+    fs.mkdirSync(shots, { recursive: true });
+    await capture(page, { path: path.join(shots, "cart-desktop.png"), fullPage: true }).catch(() => {});
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    // Changing isMobile/hasTouch reloads the page: wait for the cart itself
+    // so the width assertion and the capture see rows, not the loading screen.
+    await waitValue(needed, 8);
+    await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    await capture(page, { path: path.join(shots, "cart-mobile.png"), fullPage: true }).catch(() => {});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
+      "the compact cart fits a 390px viewport without horizontal scroll");
+    await page.setViewport({ width: 1280, height: 800 });
+    // Toggling isMobile/hasTouch makes puppeteer reload the page, which
+    // closes the details panel the cross-tab check reads Owned from.
+    await waitValue(needed, 8);
+    await openDetails();
 
     console.log("[step] opening a second guest editor for the cross-tab focus check");
     const secondEditor = await browser.newPage();
     secondEditor.setDefaultTimeout(timeout);
     try {
       await secondEditor.goto(deviceUrl, { waitUntil: "domcontentloaded" });
-      await secondEditor.waitForSelector(owned);
+      await openDetails(secondEditor);
       console.log("[step] second guest editor ready");
       await page.bringToFront();
       await replace(needed, 12);
@@ -229,10 +269,13 @@ async function main() {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__ULTROS_OFFLINE_GUEST__ === true);
     await waitValue(needed, 8);
+    await openDetails();
     await replace(owned, 3);
     await page.keyboard.press("Enter");
     await saved();
     await page.reload({ waitUntil: "domcontentloaded" });
+    await waitValue(needed, 8);
+    await openDetails();
     await waitValue(owned, 3);
     await replace(search, "Bronze Ingot");
     await page.waitForSelector('button[aria-label="Add Bronze Ingot"]');
@@ -255,6 +298,7 @@ async function main() {
       {}, deviceUrl);
     await saved();
     await waitValue(needed, 8);
+    await openDetails();
     await waitValue(owned, 3);
     await waitValue(target, 125);
     console.log("[ok] portable backup restores into a distinct device list");

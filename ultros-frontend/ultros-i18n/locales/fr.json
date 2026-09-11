@@ -2323,5 +2323,12 @@
     "scrip_sources_preset_orange_gatherers": "Scripts orange de récolteur",
     "update_banner_message": "Ultros a été mis à jour.",
     "update_banner_reload": "Recharger",
-    "update_banner_dismiss": "Fermer"
+    "update_banner_dismiss": "Fermer",
+    "cart_line_no_listings": "Aucune annonce",
+    "cart_line_partial": "{{covered}} unités sur {{requested}}",
+    "cart_qty": "Qté",
+    "cart_est_cost": "Coût est.",
+    "cart_details_for": "Détails pour {{name}}",
+    "cart_remove_named": "Retirer {{name}}",
+    "cart_empty": "Aucun objet pour l'instant. Cherchez dans le catalogue ci-dessus pour ajouter le premier."
 }
