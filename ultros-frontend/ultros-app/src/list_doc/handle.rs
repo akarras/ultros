@@ -238,6 +238,24 @@ impl ListDocHandle {
         done
     }
 
+    /// Reactive: tracks the document revision, which every local edit, undo,
+    /// redo, import and rebase bumps, so a toolbar can derive its disabled
+    /// state from this (#1430). A closed or disposed handle has nothing to
+    /// undo.
+    pub fn can_undo(&self) -> bool {
+        let _ = self.revision.try_get();
+        self.undo
+            .try_with_value(|undo| undo.can_undo())
+            .unwrap_or(false)
+    }
+
+    pub fn can_redo(&self) -> bool {
+        let _ = self.revision.try_get();
+        self.undo
+            .try_with_value(|undo| undo.can_redo())
+            .unwrap_or(false)
+    }
+
     /// Only a real change notifies: the sync loop reports "live" on every
     /// relayed update, and re-notifying an unchanged status would re-render
     /// everything that shows it.
