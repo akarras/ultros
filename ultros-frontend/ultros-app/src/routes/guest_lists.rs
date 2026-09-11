@@ -202,6 +202,9 @@ mod browser {
             Vec<ultros_api_types::ActiveListing>,
         >::new());
         let shop = RwSignal::new(false);
+        let shop_mounted = Memo::new(move |previous: Option<&bool>| {
+            shop.get() || previous.copied().unwrap_or(false)
+        });
         let (home, _) = crate::global_state::home_world::use_home_world();
         let scope = RwSignal::new(
             home.get_untracked()
@@ -279,7 +282,11 @@ mod browser {
                 </header>
                 <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
                 <crate::routes::list_view_sync::ListWorkspaceModes shop=shop.into() set_shop=Callback::new(move |value| shop.set(value)) />
-                <Show when=move || shop.get()><DeviceShop handle=handle.get_value() offers scope /></Show>
+                // Mounted on first use and then only hidden, so a return to
+                // Build keeps the chosen trip and its recorded stacks.
+                <div class:hidden=move || !shop.get()>
+                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() offers scope /></Show>
+                </div>
                 <div class:hidden=move || shop.get()>
                 <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_build_prices)}</p>
                 <ListBuildWorkspace source selected_items=selected />

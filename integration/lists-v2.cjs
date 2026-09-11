@@ -259,8 +259,52 @@ async function main() {
     await waitValue(target, 125);
     console.log("[ok] portable backup restores into a distinct device list");
 
+    // ===== Build → Shop → Build handoff (#1437), with unknown prices =====
+    // The restored list needs 8 Bronze Ingots and owns 3; no prices were
+    // looked up, so every trip reports the 5 remaining units as missing.
+    const visible = selector => page.$eval(selector, element => !element.closest(".hidden"));
     await page.click(testId("guest-shop-mode"));
-    await page.waitForSelector(testId("shop-cheapest"));
+    await page.waitForSelector(testId("shop-cart-summary"), { visible: true });
+    assert.match(await page.$eval(testId("shop-cart-summary"), element => element.textContent),
+      /1 items · 5 units left to buy · 0 priced/, "handoff counts remaining units of a partially acquired row");
+    assert.equal(await visible(testId("shop-no-prices")), true, "unknown prices are called out before a trip exists");
+    await page.click(testId("shop-cheapest"));
+    await page.waitForSelector(testId("shop-totals"));
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /0 gil · 0 surplus · 5 missing/);
+    await page.$eval(testId("shop-estimate"), details => { details.open = true; });
+    assert.match(await page.$eval(testId("shop-estimate"), element => element.textContent),
+      /Build estimate: 0 gil \(0 of 1 items priced/, "Shop explains the whole-stack total against the Build estimate");
+    assert.equal(await visible(testId("shop-drift")), false, "a fresh trip reports no drift");
+    await page.click(testId("guest-build-mode"));
+    await page.waitForSelector(needed, { visible: true });
+    assert.equal(await visible(testId("shop-totals")), false, "Shop stays mounted but hidden in Build");
+    await replace(needed, 9);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 9);
+    await saved();
+    await page.click(testId("guest-shop-mode"));
+    await page.waitForSelector(testId("shop-totals"), { visible: true });
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /5 missing/,
+      "returning to Shop keeps the chosen trip as it was planned");
+    await page.waitForFunction(selector => {
+      const element = document.querySelector(selector);
+      return element && !element.closest(".hidden") && /1 quantity change/.test(element.textContent);
+    }, {}, testId("shop-drift"));
+    await page.click(testId("shop-refresh"));
+    await page.waitForSelector(testId("shop-review"));
+    assert.match(await page.$eval(testId("shop-review-next"), element => element.textContent), /6 missing/);
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /5 missing/,
+      "a refresh is reviewed before it replaces the trip");
+    await page.click(testId("shop-review-keep"));
+    await page.waitForFunction(selector => !document.querySelector(selector), {}, testId("shop-review"));
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /5 missing/);
+    await page.click(testId("shop-refresh"));
+    await page.waitForSelector(testId("shop-review-apply"));
+    await page.click(testId("shop-review-apply"));
+    await page.waitForFunction(selector => /6 missing/.test(document.querySelector(selector)?.textContent), {}, testId("shop-totals"));
+    await page.waitForFunction(selector => !!document.querySelector(selector)?.closest(".hidden"), {}, testId("shop-drift"));
+    console.log("[ok] Build edits keep the chosen trip; a refresh is reviewed before it replaces it");
+
     await page.click(testId("shop-cheapest"));
     await page.waitForSelector(testId("open-shopping-companion"));
     const popupPromise = new Promise((resolve, reject) => {

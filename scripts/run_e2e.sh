@@ -260,6 +260,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_adoption_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_adoption_exit"
         fi
+        log "running account Build/Shop handoff (test-auth feature detected)"
+        list_shop_handoff_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-shop-handoff ) || list_shop_handoff_exit=$?
+        if [ "$list_shop_handoff_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_shop_handoff_exit"
+        fi
         log "running login flow (test-auth feature detected)"
         login_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:login ) || login_exit=$?

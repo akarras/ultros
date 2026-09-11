@@ -31,6 +31,7 @@
     "test:list-socket-revocation": "node ./list-socket-revocation.cjs",
     "test:list-flow": "node ./list-flow.cjs",
     "test:lists-v2": "node ./lists-v2.cjs",
+    "test:list-shop-handoff": "node ./list-shop-handoff.cjs",
     "test:list-adoption": "node ./list-adoption.cjs",
     "test:guest-list-store": "node ./guest-list-store.cjs",
     "test:list-sync": "node ./list-sync.cjs",
