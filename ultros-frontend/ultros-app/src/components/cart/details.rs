@@ -10,7 +10,7 @@ use leptos::prelude::*;
 use thousands::Separable;
 use ultros_api_types::{ActiveListing, list::ListItem, world_helper::AnySelector};
 
-use super::estimate::{Coverage, LineEstimate, matching_listings};
+use super::estimate::{LineEstimate, LineStatus, matching_listings};
 use super::row::{gil_text, numeric_editor};
 use crate::global_state::LocalWorldData;
 use crate::i18n::*;
@@ -75,21 +75,19 @@ pub fn CartRowDetails(
         listings.with(|listings| matching_listings(&item, listings).len())
     });
     let pricing = move || {
-        let Some(line) = line.get() else {
-            return None;
-        };
-        if line.requested == 0 {
+        let line = line.get()?;
+        if line.remaining == 0 {
             return Some(t_string!(i18n, cart_nothing_to_buy).to_string());
         }
-        Some(match (line.coverage, line.unit_price) {
-            (Coverage::None, _) | (_, None) => {
+        Some(match (line.status, line.unit_price) {
+            (LineStatus::NoSupply, _) | (_, None) => {
                 t_string!(i18n, cart_no_matching_listings).to_string()
             }
             (_, Some(price)) => t_string!(
                 i18n,
                 cart_pricing_detail,
-                covered = line.covered,
-                requested = line.requested,
+                covered = line.priced_units,
+                requested = line.remaining,
                 listings = matching_count.get(),
                 price = gil_text(i18n, i64::from(price))
             )

@@ -218,35 +218,50 @@ fn plan_summary(route: &str, missing: i64) -> String {
     text
 }
 
-/// The card's comparison line against the no-new-travel baseline.
+/// The card's comparison line against the savings basis: the first
+/// (shortest-trip) card that completes the recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SavingLine {
-    /// The baseline card itself; `alone` when no travel route beats it.
-    Baseline { alone: bool },
-    /// Complete on both sides and this card is cheaper by this much gil.
+    /// This card cannot finish the recipe; its partial cost is not compared.
+    Incomplete,
+    /// The basis card itself; `alone` when it is the only card.
+    Basis { alone: bool },
+    /// Complete and cheaper than the basis by this much gil.
     Saved(i64),
-    /// The baseline is short and this card completes the recipe.
-    Completes,
-    /// This card is still short by this many units.
-    Partial(i64),
+    /// Complete and dearer than the basis by this much gil (a pinned shared
+    /// route can cost more than the frontier).
+    Dearer(i64),
+    /// Complete and priced the same as the basis.
+    Same,
+}
+
+/// Index of the first card that completes the recipe. Comparing against
+/// the no-travel card is misleading when home is short: its partial cost
+/// can be lower than a route that actually finishes the craft.
+fn savings_basis(plans: &[planner::ShoppingPlan]) -> Option<usize> {
+    plans.iter().position(|p| p.missing == 0)
 }
 
 fn saving_line(
-    baseline: &planner::ShoppingPlan,
-    plan: &planner::ShoppingPlan,
-    is_baseline: bool,
-    cards: usize,
+    plans: &[planner::ShoppingPlan],
+    basis: Option<usize>,
+    index: usize,
 ) -> Option<SavingLine> {
-    if is_baseline {
-        return Some(SavingLine::Baseline { alone: cards == 1 });
-    }
+    let plan = plans.get(index)?;
     if plan.missing > 0 {
-        return Some(SavingLine::Partial(plan.missing));
+        return Some(SavingLine::Incomplete);
     }
-    if baseline.missing > 0 {
-        return Some(SavingLine::Completes);
+    let basis = basis?;
+    if basis == index {
+        return Some(SavingLine::Basis {
+            alone: plans.len() == 1,
+        });
     }
-    (baseline.cost > plan.cost).then(|| SavingLine::Saved(baseline.cost - plan.cost))
+    Some(match plans.get(basis)?.cost - plan.cost {
+        d if d > 0 => SavingLine::Saved(d),
+        d if d < 0 => SavingLine::Dearer(-d),
+        _ => SavingLine::Same,
+    })
 }
 
 fn job(recipe: &xiv_gen::Recipe) -> String {
@@ -279,20 +294,19 @@ struct Cards {
     pinned: Option<usize>,
     best_value: Option<usize>,
     cheapest: Option<usize>,
-    /// The no-new-travel card every other card's saving line compares
-    /// against. Always `plans[0]`: the frontier sorts the no-travel shape
-    /// first by construction, and inserting a pinned card by travel distance
-    /// (`partition_point` with `<=`) can only land it after cards sharing
-    /// that shape's zero distance, never before index 0.
-    baseline: planner::ShoppingPlan,
+    /// The card every other card's saving line compares against: the first
+    /// card (pinned card included) that completes the recipe, or `None`
+    /// when no card does.
+    basis: Option<usize>,
 }
 
 /// The frontier's rightmost card is the most complete plan found, but because
 /// the frontier improves lexicographically on `(missing, cost)`, completing
 /// the recipe can cost more gil than an earlier, incomplete card. Badge it
 /// "Cheapest" only when its gil cost is actually the lowest among the
-/// displayed cards; otherwise the "Completes the recipe" subtext already
-/// tells the story, and a false "Cheapest" claim would mislead.
+/// displayed cards; otherwise the incomplete cards' "Does not complete"
+/// marker already tells the story, and a false "Cheapest" claim would
+/// mislead.
 fn cheapest_badge(plans: &[planner::ShoppingPlan], candidate: Option<usize>) -> Option<usize> {
     let i = candidate?;
     let cost = plans.get(i)?.cost;
@@ -679,7 +693,6 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             .best_value()
             .map(|i| comparison.cards[i].worlds.clone());
         let cheapest_worlds = comparison.cheapest().map(|p| p.worlds.clone());
-        let baseline = comparison.baseline().cloned().unwrap_or_default();
         let mut plans = comparison.cards;
         let mut pinned = None;
         let unranked = route_set(route.get().as_deref())
@@ -704,12 +717,13 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         } else {
             (None, None)
         };
+        let basis = savings_basis(&plans);
         Cards {
             plans,
             pinned,
             best_value: badges.0,
             cheapest: badges.1,
-            baseline,
+            basis,
         }
     });
     let selected_index = Memo::new(move |_| {
@@ -884,12 +898,12 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <div class="grid grid-cols-2 xl:grid-cols-5 gap-3">
                 <Suspense fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
                     {move || {
-                        let Cards{plans,pinned,best_value,cheapest,baseline}=cards.get();
-                        let total=plans.len();
-                        plans.into_iter().enumerate().map(|(index,p)| {
+                        let Cards{plans,pinned,best_value,cheapest,basis}=cards.get();
+                        let basis_name=move ||if basis==Some(0) { t_string!(i18n, recipe_planner_route_basis_home).to_string() } else { t_string!(i18n, recipe_planner_route_basis_first_complete).to_string() };
+                        let lines=(0..plans.len()).map(|i|saving_line(&plans,basis,i)).collect::<Vec<_>>();
+                        plans.into_iter().zip(lines).enumerate().map(|(index,(p,line))| {
                             let mut label=route_label(p.travel,p.worlds.is_empty());
                             if pinned==Some(index) { label=format!("{} · {label}",t_string!(i18n, recipe_planner_shared_route)); }
-                            let line=saving_line(&baseline,&p,index==0,total);
                             let stops=if p.worlds.is_empty() { t_string!(i18n, recipe_planner_route_home_only).to_string() } else { route_stops(&p.worlds) };
                             let badge=match (best_value==Some(index),cheapest==Some(index)) {
                                 (true,true)=>Some((format!("{} · {}",t_string!(i18n, recipe_planner_route_best_value),t_string!(i18n, recipe_planner_route_cheapest)),true)),
@@ -898,20 +912,31 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                                 (false,false)=>None,
                             };
                             let worlds=p.worlds.clone();
-                            view!{<button class="panel rounded-xl p-4 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
+                            let incomplete=p.missing>0;
+                            // Partial plans get a hatched, dashed card so their lower total reads as "not comparable", not as a saving.
+                            let card_class=if incomplete { "panel panel-incomplete rounded-xl p-4 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" } else { "panel rounded-xl p-4 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" };
+                            view!{<button class=card_class data-incomplete=incomplete.to_string() class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
                                 <span class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm text-[color:var(--color-text-muted)]">{label}</span>{badge.map(|(text,brand)|{
                                     let badge_class=if brand { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-brand-500/20 text-brand-300" } else { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[color:var(--color-outline)] text-[color:var(--color-text-muted)]" };
                                     view!{<span class=badge_class data-testid="route-badge">{text}</span>}
                                 })}</span>
                                 <strong class="block text-xl tabular-nums">{gil(p.cost)}</strong>
                                 {vendor_plan_summary(&p).map(|text|view!{<span class="block text-xs text-brand-300">{text}</span>})}
-                                <span class="block text-xs">{if p.missing > 0 {format!("{} units unavailable · partial cost",p.missing)} else {stops}}</span>
-                                {match line {
-                                    Some(SavingLine::Saved(s))=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_saved_vs_home, gil = gil(s)).to_string()}</span>}),
-                                    Some(SavingLine::Completes)=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_completes).to_string()}</span>}),
-                                    Some(SavingLine::Baseline{alone:true})=>Some(view!{<span class="block text-xs text-emerald-400">{t_string!(i18n, recipe_planner_route_just_stay_home).to_string()}</span>}),
-                                    _=>None,
-                                }}
+                                <span class="block text-xs">{if incomplete {format!("{} units unavailable · partial cost",p.missing)} else {stops}}</span>
+                                {line.and_then(|line| {
+                                    const OK: &str = "block text-xs text-emerald-400";
+                                    const MUTED: &str = "block text-xs text-[color:var(--color-text-muted)]";
+                                    const WARN: &str = "block text-xs font-semibold text-yellow-300";
+                                    match line {
+                                        SavingLine::Incomplete=>Some((WARN,t_string!(i18n, recipe_planner_route_incomplete).to_string())),
+                                        SavingLine::Saved(s)=>Some((OK,t_string!(i18n, recipe_planner_route_saved_vs, gil = gil(s), basis = basis_name()).to_string())),
+                                        SavingLine::Dearer(s)=>Some((MUTED,t_string!(i18n, recipe_planner_route_dearer_than, gil = gil(s), basis = basis_name()).to_string())),
+                                        SavingLine::Same=>Some((MUTED,t_string!(i18n, recipe_planner_route_same_as, basis = basis_name()).to_string())),
+                                        SavingLine::Basis{alone:true}=>Some((OK,t_string!(i18n, recipe_planner_route_just_stay_home).to_string())),
+                                        SavingLine::Basis{alone:false} if index>0=>Some((MUTED,t_string!(i18n, recipe_planner_route_savings_basis).to_string())),
+                                        SavingLine::Basis{..}=>None,
+                                    }
+                                }).map(|(class,text)|view!{<span class=class data-testid="route-saving">{text}</span>})}
                             </button>}
                         }).collect_view()
                     }}
@@ -1163,35 +1188,60 @@ mod tests {
     }
 
     #[test]
-    fn saving_line_frames_each_card_against_the_baseline() {
+    fn saving_line_frames_each_card_against_the_first_complete_card() {
         let plan = |cost: i64, missing: i64| planner::ShoppingPlan {
             cost,
             missing,
             ..Default::default()
         };
-        let home = plan(1_000, 0);
+        // Home completes the recipe, so it is the basis. Later cards are
+        // cheaper on the frontier, but a pinned shared route can be dearer
+        // or priced the same, and each still says how it compares.
+        let plans = vec![plan(1_000, 0), plan(800, 0), plan(1_200, 0), plan(1_000, 0)];
+        assert_eq!(savings_basis(&plans), Some(0));
         assert_eq!(
-            saving_line(&home, &home, true, 1),
-            Some(SavingLine::Baseline { alone: true })
+            saving_line(&plans, Some(0), 0),
+            Some(SavingLine::Basis { alone: false })
         );
         assert_eq!(
-            saving_line(&home, &home, true, 3),
-            Some(SavingLine::Baseline { alone: false })
-        );
-        assert_eq!(
-            saving_line(&home, &plan(800, 0), false, 2),
+            saving_line(&plans, Some(0), 1),
             Some(SavingLine::Saved(200))
         );
         assert_eq!(
-            saving_line(&home, &plan(800, 2), false, 2),
-            Some(SavingLine::Partial(2))
+            saving_line(&plans, Some(0), 2),
+            Some(SavingLine::Dearer(200))
+        );
+        assert_eq!(saving_line(&plans, Some(0), 3), Some(SavingLine::Same));
+        let alone = vec![plan(1_000, 0)];
+        assert_eq!(
+            saving_line(&alone, Some(0), 0),
+            Some(SavingLine::Basis { alone: true })
+        );
+        // Home is short: its partial cost is cheaper than any route that
+        // finishes the craft, so it is marked incomplete rather than
+        // compared, and the first complete card becomes the basis.
+        let plans = vec![plan(10, 4), plan(900, 2), plan(1_000, 0), plan(700, 0)];
+        assert_eq!(savings_basis(&plans), Some(2));
+        assert_eq!(
+            saving_line(&plans, Some(2), 0),
+            Some(SavingLine::Incomplete)
         );
         assert_eq!(
-            saving_line(&plan(10, 4), &plan(900, 0), false, 2),
-            Some(SavingLine::Completes)
+            saving_line(&plans, Some(2), 1),
+            Some(SavingLine::Incomplete)
         );
-        // A pinned shared route can be dearer than home: no claim is made.
-        assert_eq!(saving_line(&home, &plan(1_200, 0), false, 3), None);
+        assert_eq!(
+            saving_line(&plans, Some(2), 2),
+            Some(SavingLine::Basis { alone: false })
+        );
+        assert_eq!(
+            saving_line(&plans, Some(2), 3),
+            Some(SavingLine::Saved(300))
+        );
+        // Nothing completes: no basis, and every card is marked incomplete.
+        let short = vec![plan(10, 4)];
+        assert_eq!(savings_basis(&short), None);
+        assert_eq!(saving_line(&short, None, 0), Some(SavingLine::Incomplete));
     }
 
     #[test]

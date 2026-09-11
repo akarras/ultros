@@ -1,10 +1,24 @@
 //! Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, Cmd on Apple (spec section 3.3). One
 //! window listener per open page, ignored while an editable element has
 //! focus or one of the page's modals is open.
+//!
+//! The listener is document-agnostic: account lists (`ListDocHandle`) and
+//! device lists (`GuestListHandle`) both install it through
+//! [`UndoBindings`], so the platform modifiers, the editable-target and
+//! modal guards and the listener lifecycle are defined exactly once
+//! (issue #1429).
 
 use leptos::prelude::*;
 
-use crate::list_doc::handle::ListDocHandle;
+/// What the keyboard shortcuts drive. `undo`/`redo` run on the document the
+/// installing page currently has open; `modal_open` suppresses the shortcuts
+/// while a modal or confirmation panel owns the keyboard.
+#[derive(Clone, Copy)]
+pub struct UndoBindings {
+    pub undo: Callback<()>,
+    pub redo: Callback<()>,
+    pub modal_open: Signal<bool>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UndoKey {
@@ -20,6 +34,50 @@ pub struct KeyContext {
     pub apple: bool,
     pub editable_target: bool,
     pub modal_open: bool,
+}
+
+/// Who owns Ctrl+Z when the keydown target is a form control (#1430).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// Not a text editor, or a list editor whose live value equals the value
+    /// the document holds: the shortcut is a document undo/redo.
+    Document,
+    /// An editor holding uncommitted text: the browser's own text undo keeps
+    /// the keys and the document is untouched.
+    Draft,
+}
+
+/// The draft-versus-committed rule. A list editor opts in by rendering
+/// `data-committed` with the document's current value for that field; while
+/// its live value matches, nothing is drafted and Ctrl+Z reaches the
+/// document. Inputs without the attribute (free text elsewhere on the page),
+/// textareas and contenteditable regions always keep native undo. Selects
+/// and non-text inputs never hold a draft.
+pub fn classify_target(
+    tag: &str,
+    input_type: Option<&str>,
+    content_editable: bool,
+    value: Option<&str>,
+    committed: Option<&str>,
+) -> Target {
+    match tag.to_ascii_uppercase().as_str() {
+        "SELECT" => Target::Document,
+        "TEXTAREA" => Target::Draft,
+        "INPUT" => match input_type.map(|kind| kind.to_ascii_lowercase()).as_deref() {
+            Some(
+                "checkbox" | "radio" | "button" | "submit" | "reset" | "range" | "color" | "file"
+                | "image",
+            ) => Target::Document,
+            _ => match committed {
+                Some(committed) if value.unwrap_or_default().trim() == committed.trim() => {
+                    Target::Document
+                }
+                _ => Target::Draft,
+            },
+        },
+        _ if content_editable => Target::Draft,
+        _ => Target::Document,
+    }
 }
 
 pub fn classify_key(key: &str, ctx: KeyContext) -> Option<UndoKey> {
@@ -38,8 +96,11 @@ pub fn classify_key(key: &str, ctx: KeyContext) -> Option<UndoKey> {
     }
 }
 
-/// Register the window listener. Hydrate only: the server never sees keys.
-pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
+/// Register the window listener under the current reactive owner. Hydrate
+/// only: the server never sees keys. The listener is removed when that owner
+/// is disposed, so a page that re-installs per opened document (or a device
+/// editor that is re-created per list) never accumulates listeners.
+pub fn install(bindings: UndoBindings) {
     #[cfg(feature = "hydrate")]
     {
         use leptos_use::{UseEventListenerOptions, use_event_listener_with_options, use_window};
@@ -54,13 +115,17 @@ pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
                     .target()
                     .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
                     .map(|el| {
-                        let tag = el.tag_name().to_ascii_uppercase();
-                        tag == "INPUT"
-                            || tag == "TEXTAREA"
-                            || tag == "SELECT"
-                            || el
-                                .dyn_ref::<web_sys::HtmlElement>()
-                                .is_some_and(|h| h.is_content_editable())
+                        let value = el
+                            .dyn_ref::<web_sys::HtmlInputElement>()
+                            .map(|input| input.value());
+                        classify_target(
+                            &el.tag_name(),
+                            el.get_attribute("type").as_deref(),
+                            el.dyn_ref::<web_sys::HtmlElement>()
+                                .is_some_and(|h| h.is_content_editable()),
+                            value.as_deref(),
+                            el.get_attribute("data-committed").as_deref(),
+                        ) == Target::Draft
                     })
                     .unwrap_or(false);
                 let ctx = KeyContext {
@@ -69,16 +134,16 @@ pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
                     shift: ev.shift_key(),
                     apple: apple.get_untracked(),
                     editable_target,
-                    modal_open: modal_open.get_untracked(),
+                    modal_open: bindings.modal_open.get_untracked(),
                 };
                 match classify_key(&ev.key(), ctx) {
                     Some(UndoKey::Undo) => {
                         ev.prevent_default();
-                        handle.undo();
+                        bindings.undo.run(());
                     }
                     Some(UndoKey::Redo) => {
                         ev.prevent_default();
-                        handle.redo();
+                        bindings.redo.run(());
                     }
                     None => {}
                 }
@@ -90,7 +155,7 @@ pub fn install(handle: ListDocHandle, modal_open: Signal<bool>) {
     }
     #[cfg(not(feature = "hydrate"))]
     {
-        let _ = (handle, modal_open);
+        let _ = bindings;
     }
 }
 
@@ -156,6 +221,48 @@ mod tests {
                 }
             ),
             None
+        );
+    }
+
+    #[test]
+    fn list_editors_hand_the_keys_over_once_clean() {
+        let input = |kind: Option<&str>, value: &str, committed: Option<&str>| {
+            classify_target("INPUT", kind, false, Some(value), committed)
+        };
+        // A cell whose live value is what the document holds.
+        assert_eq!(input(Some("number"), "8", Some("8")), Target::Document);
+        assert_eq!(input(Some("number"), " 8 ", Some("8")), Target::Document);
+        // The same cell mid-edit.
+        assert_eq!(input(Some("number"), "44", Some("8")), Target::Draft);
+        // Catalog search: empty is clean, typed text is a draft.
+        assert_eq!(input(Some("text"), "", Some("")), Target::Document);
+        assert_eq!(input(Some("text"), "Bronze", Some("")), Target::Draft);
+        assert_eq!(input(None, "", Some("")), Target::Document);
+        // Inputs that never opted in keep native undo.
+        assert_eq!(input(Some("text"), "", None), Target::Draft);
+        assert_eq!(input(Some("text"), "name", None), Target::Draft);
+        // Non-text controls never hold a draft.
+        assert_eq!(input(Some("checkbox"), "on", None), Target::Document);
+        assert_eq!(input(Some("Radio"), "on", None), Target::Document);
+        assert_eq!(
+            classify_target("select", None, false, Some("hq"), None),
+            Target::Document
+        );
+        assert_eq!(
+            classify_target("TEXTAREA", None, false, Some(""), Some("")),
+            Target::Draft
+        );
+        assert_eq!(
+            classify_target("DIV", None, true, None, None),
+            Target::Draft
+        );
+        assert_eq!(
+            classify_target("BUTTON", None, false, None, None),
+            Target::Document
+        );
+        assert_eq!(
+            classify_target("TD", None, false, None, None),
+            Target::Document
         );
     }
 

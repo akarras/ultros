@@ -54,6 +54,8 @@ use ultros_api_types::websocket::{
     EventType as WEvent, FilterPredicate, ListEventData, ServerClient, SocketMessageType,
     is_list_market_update_relevant,
 };
+use ultros_api_types::world_helper::AnySelector;
+use ultros_calc::list_estimate::PriceFeed;
 use xiv_gen::ItemId;
 
 type CatalogSearchEntry<T> = (i32, String, i32, T);
@@ -185,7 +187,7 @@ pub fn InlineListAdd(
         <section class="panel rounded-xl p-4 sm:p-5" aria-label=t_string!(i18n, lists_workspace_add_items_label) data-testid="inline-list-add">
             <div class="mb-3"><h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_build_hint)}</p></div>
             <div class="flex flex-wrap gap-2">
-                <input node_ref=input class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search
+                <input node_ref=input class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed=""
                     on:input=move |ev| search.set(event_target_value(&ev))
                     on:keydown=move |ev| {
                         if ev.key() == "Escape" { search.set(String::new()); ev.stop_propagation(); }
@@ -194,7 +196,7 @@ pub fn InlineListAdd(
                             if let Some((id, _, can_hq, _)) = results.get_untracked().first() { add.run((*id, *can_hq)); }
                         }
                     } />
-                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity on:input=move |ev| quantity.set(event_target_value(&ev)) />
+                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity data-committed=move || quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) />
                 <select class="input" aria-label=t_string!(i18n, lists_workspace_add_quality) prop:value=quality on:change=move |ev| quality.set(event_target_value(&ev))><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
             </div>
             <p class="text-sm mt-2 text-[color:var(--color-text-muted)]" role="status">{feedback}</p>
@@ -363,11 +365,14 @@ pub fn BuildListRow(
             }
         });
         view! {
-            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() readonly=move || !can_write.get()
+            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
                 on:keydown=move |ev| {
-                    ev.stop_propagation();
-                    if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
-                    if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
+                    // Only the keys this cell handles stop here; Ctrl+Z must
+                    // reach the window listener, which decides between native
+                    // text undo (a draft) and document undo (a clean cell) from
+                    // `data-committed` (#1430).
+                    if ev.key() == "Enter" { ev.stop_propagation(); let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
+                    if ev.key() == "Escape" { ev.stop_propagation(); event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
                 }
                 on:change=move |ev| {
                     let entered = event_target_value(&ev);
@@ -405,7 +410,7 @@ pub fn ListWorkspaceModes(shop: Signal<bool>, set_shop: Callback<bool>) -> impl 
     let i18n = use_i18n();
     view! {
         <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label=t_string!(i18n, lists_workspace_mode)>
-            <button class=move || if !shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
+            <button class=move || if !shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } data-testid="guest-build-mode" aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
             <button class=move || if shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } data-testid="guest-shop-mode" aria-pressed=move || shop.get().to_string() on:click=move |_| set_shop.run(true)>{t!(i18n, lists_workspace_shop)}</button>
         </div>
     }
@@ -420,8 +425,9 @@ pub struct ListWorkspaceSource {
     pub add_many: Callback<Vec<ListItem>>,
     pub undo: Callback<()>,
     pub redo: Callback<()>,
-    /// Whether `undo` / `redo` would change the document right now. Read
-    /// by the cart to disable the controls; Track A owns what a step is.
+    /// Reactive availability (#1430): the toolbar disables and explains an
+    /// action with nothing to do, and the callbacks report the same through
+    /// `feedback` when a shortcut hits an empty stack.
     pub can_undo: Signal<bool>,
     pub can_redo: Signal<bool>,
     pub pending: Signal<bool>,
@@ -429,6 +435,14 @@ pub struct ListWorkspaceSource {
     pub recipe_open: Signal<bool>,
     pub toggle_recipe: Callback<()>,
     pub rows: Signal<Vec<(ListItem, Vec<ActiveListing>)>>,
+    /// Where the listings in `rows` stand: loading, missing (and why), or
+    /// observed at a client-clock instant, possibly marked by a failed
+    /// refresh. Drives the estimate's status text; never inferred from a
+    /// listing's own timestamp.
+    pub market: Signal<PriceFeed>,
+    /// The world, datacenter or region the listings in `rows` were served
+    /// for — the scope the prices are *for*, not the one currently picked.
+    pub scope_name: Signal<Option<String>>,
     pub hide_acquired: Signal<bool>,
     pub can_write: Signal<bool>,
     pub edit: Callback<ListItem>,
@@ -502,18 +516,28 @@ pub fn ListBuildWorkspace(
             rows
         },
     );
+    // The whole cart, not the filtered view: a filter narrows what the grid
+    // shows, never what the list will cost. Rows already track the document
+    // revision and the listings cache, so quantity, quality, list and market
+    // changes all reprice through this one memo.
+    let estimate = Memo::new(move |_| {
+        source
+            .rows
+            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
+    });
     view! {
         <section class="space-y-3" data-testid="list-build-workspace">
             <Show when=move || source.can_write.get()>
                 <InlineListAdd list_id=source.list_id on_add=source.add pending=source.pending feedback=source.feedback />
                 <div class="flex gap-2 flex-wrap">
                     <button class="btn-secondary" on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
-                    <button class="btn-secondary" on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button class="btn-secondary" on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button class="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
+                    <button class="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
-            <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+            <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
+            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
             <div class="overflow-x-auto panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {
@@ -553,6 +577,11 @@ struct ListingsCache {
     /// rendering from prices fetched while the client still had access, and
     /// the 403/404 that `is_denial` acts on would never arrive.
     revalidate: u32,
+    /// The scope the document had when this entry was fetched. A scope edit
+    /// (`Edit::Rename { scope }`) bumps the document revision but not
+    /// `listings_version`, so without this the re-run would be a cache hit
+    /// and the page would keep estimating from the old scope's prices.
+    requested_scope: Option<AnySelector>,
     list: ListWithPermission,
     listings: HashMap<i32, Vec<ActiveListing>>,
     /// The item ids the fetch that filled this cache covered — every row the
@@ -568,6 +597,39 @@ struct ListingsCache {
 /// The ids a fetch covered, built from the rows the server returned.
 fn covered_ids(items: &[(ListItem, Vec<ActiveListing>)]) -> HashSet<i32> {
     items.iter().map(|(item, _)| item.item_id).collect()
+}
+
+/// The estimate's account of its prices, written by every listings fetch.
+#[derive(Clone, Copy)]
+struct PriceStatus {
+    feed: RwSignal<PriceFeed>,
+    /// The scope the server priced the last successful fetch for.
+    served_scope: RwSignal<Option<AnySelector>>,
+}
+
+/// Where a listings fetch left the price feed and the served scope. Every
+/// account-list fetch reports through here so the estimate's freshness is
+/// exactly "when the last listings response arrived".
+///
+/// Client only. The SSR half renders the feed as loading: its `Utc::now()`
+/// would be baked into the HTML while the client's signal starts at
+/// `Loading` (nothing of the feed is serialized), and the client's first
+/// handle-backed run always fetches — its cache starts empty — so the real
+/// instant is recorded within the first client tick. A signed-in visitor
+/// always gets a handle; an anonymous one cannot read an account list at all.
+fn note_fetch(prices: PriceStatus, outcome: Option<&ListWithPermission>) {
+    #[cfg(feature = "hydrate")]
+    {
+        let fetched_at = outcome.map(|_| chrono::Utc::now());
+        let _ = prices
+            .feed
+            .try_update(|feed| *feed = feed.after_fetch(fetched_at));
+        if let Some(list) = outcome {
+            let _ = prices.served_scope.try_set(Some(list.list.wdr_filter));
+        }
+    }
+    #[cfg(not(feature = "hydrate"))]
+    let _ = (prices.feed, prices.served_scope, outcome);
 }
 
 /// How long a burst of relayed list broadcasts is allowed to coalesce into
@@ -614,6 +676,7 @@ fn revalidate(
     handle: RwSignal<Option<ListDocHandle>>,
     cache: StoredValue<Option<ListingsCache>>,
     bump: WriteSignal<u32>,
+    prices: PriceStatus,
 ) {
     let expected = handle.try_get_untracked().flatten().map(|h| h.revision);
     if !request_is_current(active_list, list_id, handle, expected) {
@@ -637,6 +700,7 @@ fn revalidate(
                         .is_none_or(|c| c.list.permission != permission)
                 });
                 let covered = covered_ids(&items);
+                note_fetch(prices, Some(&list));
                 cache.update_value(|cached| {
                     if let Some(c) = cached.as_mut().filter(|c| c.list_id == list_id) {
                         c.list = list;
@@ -660,8 +724,9 @@ fn revalidate(
                 bump.update(|v| *v += 1);
             }
             // Transport or server trouble says nothing about permission;
-            // the next broadcast tries again.
-            Err(_) => {}
+            // the next broadcast tries again. It *is* a refresh that failed,
+            // though, so the prices on the page are marked as such.
+            Err(_) => note_fetch(prices, None),
         }
     });
 }
@@ -673,6 +738,7 @@ fn revalidate(
     _handle: RwSignal<Option<ListDocHandle>>,
     _cache: StoredValue<Option<ListingsCache>>,
     _bump: WriteSignal<u32>,
+    _prices: PriceStatus,
 ) {
 }
 
@@ -763,6 +829,7 @@ async fn load_view(
     cache: StoredValue<Option<ListingsCache>>,
     listings_version: u32,
     revalidate_version: u32,
+    prices: PriceStatus,
 ) -> ListViewResult {
     let current = handle.try_get_untracked().flatten();
     let expected = current.map(|h| h.revision);
@@ -779,11 +846,16 @@ async fn load_view(
         if !request_is_current(list_id, id, handle, expected) {
             return Err(stale());
         }
+        note_fetch(prices, result.as_ref().ok().map(|(list, _)| list));
         if let Ok((list, items)) = &result {
             cache.set_value(Some(ListingsCache {
                 list_id: id,
                 version: listings_version,
                 revalidate: revalidate_version,
+                // The document, once open, carries the server's scope unless
+                // an offline edit changed it — in which case the mismatch
+                // below is exactly the refetch that edit deserves.
+                requested_scope: Some(list.list.wdr_filter),
                 list: list.clone(),
                 listings: items
                     .iter()
@@ -802,11 +874,15 @@ async fn load_view(
         .into_iter()
         .map(|row| row.key.item_id)
         .collect();
+    // A document that has never recorded a scope prices against whatever
+    // the server scoped the cached listings to; one that has must match.
+    let wanted_scope = doc_handle.meta().scope;
     let cached = cache.get_value().filter(|c| {
         c.list_id == id
             && c.version == listings_version
             && c.revalidate == revalidate_version
             && wanted_ids.is_subset(&c.covered)
+            && wanted_scope.is_none_or(|scope| c.requested_scope == Some(scope))
     });
     let base = match cached {
         Some(cached) => cached,
@@ -819,10 +895,12 @@ async fn load_view(
                 Ok((list, items)) => {
                     doc_handle.remember_permission(list.permission as i16);
                     let covered = covered_ids(&items);
+                    note_fetch(prices, Some(&list));
                     let fresh = ListingsCache {
                         list_id: id,
                         version: listings_version,
                         revalidate: revalidate_version,
+                        requested_scope: wanted_scope.or(Some(list.list.wdr_filter)),
                         list,
                         listings: items
                             .into_iter()
@@ -844,23 +922,32 @@ async fn load_view(
                     doc_handle.purge();
                     cache.set_value(None);
                     handle.set(None);
+                    note_fetch(prices, None);
                     return Err(error);
                 }
-                Err(error) => match cache.get_value().filter(|c| c.list_id == id) {
-                    // Stale prices beat no page.
-                    Some(stale) => stale,
-                    None => match offline_list(id, doc_handle) {
-                        Some(list) => ListingsCache {
-                            list_id: id,
-                            version: listings_version,
-                            revalidate: revalidate_version,
-                            list,
-                            listings: HashMap::new(),
-                            covered: wanted_ids.clone(),
+                Err(error) => {
+                    // The refresh failed. Whatever was observed before stays
+                    // on the page, marked; with nothing observed, the
+                    // estimate reports that prices are unavailable. Either
+                    // way the document keeps rendering and editing.
+                    note_fetch(prices, None);
+                    match cache.get_value().filter(|c| c.list_id == id) {
+                        // Stale prices beat no page.
+                        Some(stale) => stale,
+                        None => match offline_list(id, doc_handle) {
+                            Some(list) => ListingsCache {
+                                list_id: id,
+                                version: listings_version,
+                                revalidate: revalidate_version,
+                                requested_scope: wanted_scope,
+                                list,
+                                listings: HashMap::new(),
+                                covered: wanted_ids.clone(),
+                            },
+                            None => return Err(error),
                         },
-                        None => return Err(error),
-                    },
-                },
+                    }
+                }
             }
         }
     };
@@ -925,6 +1012,24 @@ pub fn ListViewSync() -> impl IntoView {
         async move { apply_edit(handle, edit) }
     });
     let mutation_feedback = RwSignal::new(String::new());
+    // Shared by the toolbar buttons and the keyboard bindings (#1430): a
+    // shortcut that finds nothing to do says so in the workspace feedback
+    // line instead of appearing broken. The add action's own feedback is
+    // cleared so the explanation is actually visible.
+    let undo_action = Callback::new(move |()| {
+        let done = handle.get_untracked().is_some_and(|handle| handle.undo());
+        if !done {
+            add_item.value().set(None);
+            mutation_feedback.set(t_string!(i18n, lists_workspace_nothing_to_undo).to_string());
+        }
+    });
+    let redo_action = Callback::new(move |()| {
+        let done = handle.get_untracked().is_some_and(|handle| handle.redo());
+        if !done {
+            add_item.value().set(None);
+            mutation_feedback.set(t_string!(i18n, lists_workspace_nothing_to_redo).to_string());
+        }
+    });
     let delete_item = Action::new(move |list_item: &i32| {
         let edit = Edit::Remove(*list_item);
         async move {
@@ -1013,6 +1118,15 @@ pub fn ListViewSync() -> impl IntoView {
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let listings_cache: StoredValue<Option<ListingsCache>> = StoredValue::new(None);
+    // The estimate's account of its prices (see `note_fetch`): every fetch
+    // above reports here, so "prices fetched 2 minutes ago" is the arrival
+    // of the last listings response and nothing else.
+    let price_feed = RwSignal::new(PriceFeed::Loading);
+    let served_scope = RwSignal::new(None::<AnySelector>);
+    let prices = PriceStatus {
+        feed: price_feed,
+        served_scope,
+    };
 
     let list_view = Resource::new(
         move || {
@@ -1031,6 +1145,7 @@ pub fn ListViewSync() -> impl IntoView {
                 listings_cache,
                 listings_v,
                 revalidate_v,
+                prices,
             )
         },
     );
@@ -1085,7 +1200,14 @@ pub fn ListViewSync() -> impl IntoView {
                 // broadcasts an ordinary `List` update), so it revalidates
                 // on all of them and lets the REST answer decide.
                 schedule_revalidate(&revalidate_timer, move || {
-                    revalidate(list_id, id, handle, listings_cache, set_revalidate_version)
+                    revalidate(
+                        list_id,
+                        id,
+                        handle,
+                        listings_cache,
+                        set_revalidate_version,
+                        prices,
+                    )
                 });
             });
             activity_subscription.set_value(Some(sub));
@@ -1213,15 +1335,19 @@ pub fn ListViewSync() -> impl IntoView {
                     // `close` again; it is idempotent.
                     on_cleanup(move || opened.close());
                     // Re-installed alongside each handle so the keys always
-                    // reach the live document. `install` takes the handle by
-                    // value, and one window listener per open is cheap:
-                    // switching accounts without a page load isn't reachable
-                    // (signing in navigates away and back), so in practice
-                    // this runs exactly once per page. Left under the
-                    // Effect's own owner on purpose: it creates no node the
-                    // handle needs, and its listener is then removed when
-                    // this run is superseded, instead of piling up.
-                    crate::list_doc::undo::install(opened, modal_open);
+                    // reach the live document. The bindings capture the
+                    // handle by value, and one window listener per open is
+                    // cheap: switching accounts without a page load isn't
+                    // reachable (signing in navigates away and back), so in
+                    // practice this runs exactly once per page. Left under
+                    // the Effect's own owner on purpose: it creates no node
+                    // the handle needs, and its listener is then removed
+                    // when this run is superseded, instead of piling up.
+                    crate::list_doc::undo::install(crate::list_doc::undo::UndoBindings {
+                        undo: undo_action,
+                        redo: redo_action,
+                        modal_open,
+                    });
                 }
                 _ => {
                     // Signed out, or no list id. Drop the document; the page
@@ -1307,6 +1433,10 @@ pub fn ListViewSync() -> impl IntoView {
     // renders the same view a hydrated client shows.
     let (buying_view_param, set_buying_view_param) = filter_query_signal::<bool>("buy");
     let buying_view = Memo::new(move |_| buying_view_param.get().unwrap_or(false));
+    // Latches once Shop has been opened; see the Shop mount below.
+    let shop_mounted = Memo::new(move |previous: Option<&bool>| {
+        buying_view.get() || previous.copied().unwrap_or(false)
+    });
 
     let (excluded_worlds_param, set_excluded_worlds_param) =
         filter_query_signal::<IdList>("excluded-worlds");
@@ -1458,28 +1588,10 @@ pub fn ListViewSync() -> impl IntoView {
                 Err(error) => workspace_error(i18n, &error),
             });
         }),
-        undo: Callback::new(move |()| {
-            if let Some(handle) = handle.get_untracked() {
-                handle.undo();
-            }
-        }),
-        redo: Callback::new(move |()| {
-            if let Some(handle) = handle.get_untracked() {
-                handle.redo();
-            }
-        }),
-        can_undo: Signal::derive(move || {
-            handle.get().is_some_and(|handle| {
-                handle.revision.track();
-                handle.can_undo()
-            })
-        }),
-        can_redo: Signal::derive(move || {
-            handle.get().is_some_and(|handle| {
-                handle.revision.track();
-                handle.can_redo()
-            })
-        }),
+        undo: undo_action,
+        redo: redo_action,
+        can_undo: Signal::derive(move || handle.get().is_some_and(|handle| handle.can_undo())),
+        can_redo: Signal::derive(move || handle.get().is_some_and(|handle| handle.can_redo())),
         pending: add_item.pending().into(),
         feedback: Signal::derive(move || {
             add_item
@@ -1495,6 +1607,14 @@ pub fn ListViewSync() -> impl IntoView {
         recipe_open: recipe_modal_open.into(),
         toggle_recipe: Callback::new(move |()| set_recipe_modal_open.update(|open| *open = !*open)),
         rows: build_rows,
+        market: price_feed.into(),
+        scope_name: Signal::derive(move || {
+            let scope = served_scope.get()?;
+            let helper = use_context::<LocalWorldData>()?.0.ok()?;
+            helper
+                .lookup_selector(scope)
+                .map(|result| result.get_name().to_string())
+        }),
         hide_acquired: hide_acquired.into(),
         can_write: Signal::derive(move || view_caps.with(|c| c.can_write)),
         edit: Callback::new(move |item| {
@@ -1703,21 +1823,27 @@ pub fn ListViewSync() -> impl IntoView {
                 }}
             </Show>
 
-            <Show when=move || buying_view.get()>
-                <Suspense fallback=move || view! { <Loading /> }>
-                    <crate::components::list_shop::ListShop input=shop_input
-                        on_purchase=Callback::new(move |(key, delta): (String, i32)| {
-                            if !view_caps.with_untracked(|c| c.can_write) { return; }
-                            if let Ok(id) = key.parse::<i32>()
-                                && let Some(key) = crate::list_doc::adapter::key_of(id)
-                                && let Some(handle) = handle.get_untracked()
-                                && let Err(error) = handle.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta.max(0)) })
-                            { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
-                        })
-                        on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
-                        can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
-                </Suspense>
-            </Show>
+            // Shop mounts the first time it is opened and then stays mounted
+            // but hidden, so returning to Build keeps the chosen trip, its
+            // recorded stacks and an open companion. The first server render
+            // is unchanged: without `?buy=true` nothing is mounted yet.
+            <div class:hidden=move || !buying_view.get()>
+                <Show when=move || shop_mounted.get()>
+                    <Suspense fallback=move || view! { <Loading /> }>
+                        <crate::components::list_shop::ListShop input=shop_input
+                            on_purchase=Callback::new(move |(key, delta): (String, i32)| {
+                                if !view_caps.with_untracked(|c| c.can_write) { return; }
+                                if let Ok(id) = key.parse::<i32>()
+                                    && let Some(key) = crate::list_doc::adapter::key_of(id)
+                                    && let Some(handle) = handle.get_untracked()
+                                    && let Err(error) = handle.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta.max(0)) })
+                                { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
+                            })
+                            on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
+                            can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
+                    </Suspense>
+                </Show>
+            </div>
 
             {move || match menu() {
                 MenuState::None => None,

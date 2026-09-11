@@ -13,7 +13,6 @@ pub mod details;
 pub mod estimate;
 pub mod row;
 pub mod selection;
-pub mod summary;
 
 use std::collections::{HashMap, HashSet};
 
@@ -29,7 +28,6 @@ use crate::routes::list_view_sync::{InlineListAdd, InlineRecipeAdd, ListWorkspac
 
 use row::{CartRow, ROW_GRID};
 use selection::{CartSelectionBar, retain_present};
-use summary::CartSummary;
 
 /// `?cart=legacy` mounts the previous Labs grid (`ListBuildWorkspace`) so a
 /// tester can compare the two presentations on the same list. The
@@ -55,9 +53,13 @@ pub fn sort_cart_rows<'a>(
                 .cmp(name_of(b.item_id).unwrap_or_default()),
             SortKey::Price => {
                 let cost = |item: &ListItem, listings: &[ActiveListing]| {
-                    estimate::estimate_line(item, listings)
-                        .total
-                        .unwrap_or(i64::MAX)
+                    let line = estimate::estimate_line(item, listings);
+                    // Nothing priced sorts last, after every known cost.
+                    if line.status == estimate::LineStatus::NoSupply {
+                        i64::MAX
+                    } else {
+                        line.total
+                    }
                 };
                 cost(a, a_listings).cmp(&cost(b, b_listings))
             }
@@ -222,6 +224,14 @@ pub fn ListCart(
         }
     });
     let is_empty = Memo::new(move |_| source.rows.with(|rows| rows.is_empty()));
+    // The whole cart, not the filtered view, priced by the shared estimator
+    // (#1431/#1432): a filter narrows what the list shows, never what it
+    // costs, and both Labs presentations must agree on the total.
+    let estimate = Memo::new(move |_| {
+        source
+            .rows
+            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
+    });
     let all_visible_selected = Memo::new(move |_| {
         let ids = visible_ids.get();
         !ids.is_empty() && selected_items.with(|s| ids.iter().all(|id| s.contains(id)))
@@ -251,12 +261,12 @@ pub fn ListCart(
                 <div class="flex flex-wrap items-center gap-2 text-sm">
                     <button type="button" class="btn-ghost" aria-expanded=move || source.recipe_open.get().to_string() on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
-                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-undo" disabled=move || !source.can_undo.get() on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-redo" disabled=move || !source.can_redo.get() on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
+                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
-            <CartSummary rows=source.rows />
+            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
             <div class="flex flex-wrap items-center gap-2">
                 <input class="input min-w-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
                 <label class="flex items-center gap-2 text-sm sm:hidden">
@@ -375,8 +385,14 @@ mod tests {
     fn sort_by_estimate_puts_unknown_lines_last_and_is_stable_by_id() {
         let mut rows = vec![
             (item(3, 30, 2, 0), vec![]),
-            (item(1, 10, 2, 0), vec![fixture_listing(1, 50, 5, false)]),
-            (item(2, 20, 2, 0), vec![fixture_listing(2, 20, 5, false)]),
+            (
+                item(1, 10, 2, 0),
+                vec![fixture_listing(1, 10, 50, 5, false)],
+            ),
+            (
+                item(2, 20, 2, 0),
+                vec![fixture_listing(2, 20, 20, 5, false)],
+            ),
             (item(4, 40, 2, 0), vec![]),
         ];
         sort_cart_rows(
