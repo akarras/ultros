@@ -447,6 +447,15 @@ pub struct ListWorkspaceSource {
     pub can_write: Signal<bool>,
     pub edit: Callback<ListItem>,
     pub remove: Callback<i32>,
+    /// Bulk edits from the cart's selection bar; `bulk_pending` disables the
+    /// bar while the host's actions are in flight.
+    pub remove_many: Callback<Vec<i32>>,
+    pub set_quality_many: Callback<(Vec<i32>, Option<bool>)>,
+    pub bulk_pending: Signal<bool>,
+    /// Row order. Account lists keep it in the URL `sort` param (shared
+    /// with the filter row); device lists keep it in memory.
+    pub sort: Signal<Option<SortSpec>>,
+    pub set_sort: Callback<Option<SortSpec>>,
 }
 
 /// The grid is mounted once, independently of resource revisions. Row identity is
@@ -1063,7 +1072,13 @@ pub fn ListViewSync() -> impl IntoView {
             })
             .collect();
         let edit = Edit::SetQuality(items, *hq);
-        async move { apply_edit(handle, edit) }
+        async move {
+            let result = apply_edit(handle, edit);
+            if let Err(error) = &result {
+                mutation_feedback.set(workspace_error(i18n, error));
+            }
+            result
+        }
     });
     let edit_list_action = Action::new(move |list: &ultros_api_types::list::List| {
         let edit = Edit::Rename {
@@ -1519,6 +1534,9 @@ pub fn ListViewSync() -> impl IntoView {
         view_caps.set(next);
     });
 
+    let legacy_cart = use_legacy_cart();
+    // The cart sorts its own rows (so an active editor can pin its row);
+    // only the legacy grid still expects them pre-sorted.
     let build_rows = Signal::derive(move || {
         let snapshot = list_view
             .get()
@@ -1549,7 +1567,9 @@ pub fn ListViewSync() -> impl IntoView {
             &excluded_datacenters.get(),
             world_helper.as_deref(),
         );
-        if let Some(spec) = sort_spec.get() {
+        if legacy_cart.get()
+            && let Some(spec) = sort_spec.get()
+        {
             sort_list_items(&mut rows, spec, |id| {
                 game_items.get(&ItemId(id)).map(|item| item.name.as_str())
             });
@@ -1603,9 +1623,16 @@ pub fn ListViewSync() -> impl IntoView {
         remove: Callback::new(move |id| {
             delete_item.dispatch(id);
         }),
+        remove_many: Callback::new(move |ids| {
+            delete_items.dispatch(ids);
+        }),
+        set_quality_many: Callback::new(move |(ids, hq)| {
+            edit_items_hq.dispatch((ids, hq));
+        }),
+        bulk_pending,
+        sort: Signal::derive(move || sort_spec.get()),
+        set_sort: Callback::new(move |spec| set_sort_spec.set(spec)),
     };
-
-    let legacy_cart = use_legacy_cart();
 
     let drawer_refresh = Signal::derive(move || {
         last_update_at
@@ -2063,7 +2090,7 @@ pub fn ListViewSync() -> impl IntoView {
                                                         </div>
                                                     </div>
 
-                                                    <Show when=move || view_caps.with(|c| c.can_write)>
+                                                    <Show when=move || legacy_cart.get() && view_caps.with(|c| c.can_write)>
                                                         <div class="flex flex-col gap-3 border-b border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]/60 p-3 lg:flex-row lg:items-center lg:justify-between">
                                                             <div class="flex flex-wrap items-center gap-2">
                                                                 <span class="text-sm">{move || t_string!(i18n, lists_workspace_selected, count = selected_items.with(|s| s.len())).to_string()}</span>

@@ -41,6 +41,7 @@ pub fn GuestListRoute() -> impl IntoView {
 mod browser {
     use super::*;
     use crate::components::cart::{ListCart, use_legacy_cart};
+    use crate::components::list::filter_row::SortSpec;
     use crate::list_doc::{
         adapter::{self, Edit},
         guest::GuestListHandle,
@@ -256,6 +257,7 @@ mod browser {
             redo,
             modal_open: confirm_delete.into(),
         });
+        let sort = RwSignal::new(None::<SortSpec>);
         let source = ListWorkspaceSource {
             hide_acquired: Signal::derive(|| false),
             list_id: Signal::derive(|| 0),
@@ -296,6 +298,11 @@ mod browser {
             can_write: Signal::derive(|| true),
             edit: Callback::new(move |item| apply.run(Edit::Edit(item))),
             remove: Callback::new(move |id| apply.run(Edit::Remove(id))),
+            remove_many: Callback::new(move |ids| apply.run(Edit::RemoveMany(ids))),
+            set_quality_many: Callback::new(move |(ids, hq)| apply.run(Edit::SetQuality(ids, hq))),
+            bulk_pending: Signal::derive(|| false),
+            sort: sort.into(),
+            set_sort: Callback::new(move |spec| sort.set(spec)),
         };
         let legacy_cart = use_legacy_cart();
         view! {
@@ -306,7 +313,7 @@ mod browser {
                         <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                    <Show when=move || !selected.get().is_empty()>
+                    <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
                         <button class="btn-secondary" on:click=move |_| {
                             apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
                             selected.set(HashSet::new());

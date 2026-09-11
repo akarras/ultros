@@ -14,6 +14,51 @@ pub fn estimate_line(item: &ListItem, listings: &[ActiveListing]) -> LineEstimat
     ultros_calc::list_estimate::estimate_line(LineRequest::from(item), listings)
 }
 
+/// The listings the engine would draw from for this row, in the order it
+/// takes them: the row's item and quality (an "Any" row takes both), empty
+/// stacks and free listings ignored, cheapest first, larger stack then
+/// lower id on ties. The details panel shows the head of this list.
+pub fn matching_listings<'a>(
+    item: &ListItem,
+    listings: &'a [ActiveListing],
+) -> Vec<&'a ActiveListing> {
+    let mut matching: Vec<&ActiveListing> = listings
+        .iter()
+        .filter(|listing| listing.item_id == item.item_id)
+        .filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq))
+        .filter(|listing| listing.quantity > 0 && listing.price_per_unit > 0)
+        .collect();
+    matching.sort_by_key(|listing| {
+        (
+            listing.price_per_unit,
+            std::cmp::Reverse(listing.quantity),
+            listing.id,
+        )
+    });
+    matching
+}
+
+/// Test fixture: `quantity` units of `item_id` at `price` gil per unit.
+#[cfg(test)]
+pub fn fixture_listing(
+    id: i32,
+    item_id: i32,
+    price: i32,
+    quantity: i32,
+    hq: bool,
+) -> ActiveListing {
+    ActiveListing {
+        id,
+        world_id: 1,
+        item_id,
+        retainer_id: 1,
+        price_per_unit: price,
+        quantity,
+        hq,
+        timestamp: chrono::NaiveDateTime::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,16 +76,7 @@ mod tests {
     }
 
     fn listing(id: i32, price: i32, quantity: i32, hq: bool) -> ActiveListing {
-        ActiveListing {
-            id,
-            world_id: 1,
-            item_id: 1,
-            retainer_id: 1,
-            price_per_unit: price,
-            quantity,
-            hq,
-            timestamp: chrono::NaiveDateTime::default(),
-        }
+        fixture_listing(id, 1, price, quantity, hq)
     }
 
     /// The row adapter carries the document row's identity, need and owned
