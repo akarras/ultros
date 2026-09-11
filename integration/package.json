@@ -35,6 +35,7 @@
     "test:list-adoption": "node ./list-adoption.cjs",
     "test:guest-list-store": "node ./guest-list-store.cjs",
     "test:list-sync": "node ./list-sync.cjs",
+    "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",
     "test:labs": "node ./labs.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",
     "test:list-view-rename": "node ./list-view-rename.cjs",

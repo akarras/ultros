@@ -47,6 +47,7 @@ mod browser {
     use crate::routes::list_view_sync::{ListBuildWorkspace, ListWorkspaceSource};
     use leptos_router::hooks::{use_navigate, use_params_map};
     use std::collections::HashSet;
+    use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
 
     fn prepare_offline() {
         if let (Some(window), Ok(event)) = (
@@ -201,6 +202,12 @@ mod browser {
             i32,
             Vec<ultros_api_types::ActiveListing>,
         >::new());
+        // A device list has no prices until the player looks them up in
+        // Shop; the estimate says so rather than reading as free. The scope
+        // is the one the *offers* were fetched for, so changing the picker
+        // without a new lookup never relabels old prices.
+        let feed = RwSignal::new(PriceFeed::Missing(MissingReason::NotRequested));
+        let offers_scope = RwSignal::new(None::<String>);
         let shop = RwSignal::new(false);
         let shop_mounted = Memo::new(move |previous: Option<&bool>| {
             shop.get() || previous.copied().unwrap_or(false)
@@ -215,28 +222,57 @@ mod browser {
         let deleting = RwSignal::new(false);
         let navigate = StoredValue::new_local(use_navigate());
         on_cleanup(move || handle.with_value(|h| h.close()));
+        // Explains a shortcut that found nothing to do (#1430); any later
+        // edit clears it. Errors take precedence in the feedback line.
+        let notice = RwSignal::new(String::new());
         let apply = Callback::new(move |edit| {
+            notice.set(String::new());
             if let Err(e) = handle.with_value(|h| h.apply(edit)) {
                 error.set(e);
             }
+        });
+        let undo = Callback::new(move |()| {
+            if handle.with_value(|h| h.undo()) {
+                notice.set(String::new());
+            } else {
+                notice.set(t_string!(i18n, lists_workspace_nothing_to_undo).to_string());
+            }
+        });
+        let redo = Callback::new(move |()| {
+            if handle.with_value(|h| h.redo()) {
+                notice.set(String::new());
+            } else {
+                notice.set(t_string!(i18n, lists_workspace_nothing_to_redo).to_string());
+            }
+        });
+        // The same window shortcuts account lists get (#1429). This
+        // component is created per loaded list and disposed with it, so the
+        // listener follows the document: none is left behind for a previous
+        // list, and a closed handle ignores the callbacks anyway. The delete
+        // confirmation is the one panel here that owns the keyboard.
+        crate::list_doc::undo::install(crate::list_doc::undo::UndoBindings {
+            undo,
+            redo,
+            modal_open: confirm_delete.into(),
         });
         let source = ListWorkspaceSource {
             hide_acquired: Signal::derive(|| false),
             list_id: Signal::derive(|| 0),
             add: Callback::new(move |item| apply.run(Edit::Add(item))),
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
-            undo: Callback::new(move |()| {
-                handle.with_value(|h| {
-                    h.undo();
-                });
-            }),
-            redo: Callback::new(move |()| {
-                handle.with_value(|h| {
-                    h.redo();
-                });
-            }),
+            undo,
+            redo,
+            can_undo: Signal::derive(move || handle.with_value(|h| h.can_undo())),
+            can_redo: Signal::derive(move || handle.with_value(|h| h.can_redo())),
             pending: Signal::derive(|| false),
-            feedback: error.into(),
+            feedback: Signal::derive(move || {
+                let error = error.get();
+                if error.is_empty() {
+                    notice.get()
+                } else {
+                    error
+                }
+            }),
             recipe_open: recipe_open.into(),
             toggle_recipe: Callback::new(move |()| recipe_open.update(|open| *open = !*open)),
             rows: Signal::derive(move || {
@@ -254,6 +290,8 @@ mod browser {
                         .collect()
                 })
             }),
+            market: feed.into(),
+            scope_name: offers_scope.into(),
             can_write: Signal::derive(|| true),
             edit: Callback::new(move |item| apply.run(Edit::Edit(item))),
             remove: Callback::new(move |id| apply.run(Edit::Remove(id))),
@@ -262,7 +300,7 @@ mod browser {
             <section class="space-y-3">
                 <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <div class="min-w-0 flex-1 basis-56">
-                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
+                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
                         <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
@@ -285,7 +323,7 @@ mod browser {
                 // Mounted on first use and then only hidden, so a return to
                 // Build keeps the chosen trip and its recorded stacks.
                 <div class:hidden=move || !shop.get()>
-                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() offers scope /></Show>
+                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() offers scope feed offers_scope /></Show>
                 </div>
                 <div class:hidden=move || shop.get()>
                 <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_build_prices)}</p>
@@ -338,10 +376,17 @@ mod browser {
         handle: GuestListHandle,
         offers: RwSignal<std::collections::HashMap<i32, Vec<ultros_api_types::ActiveListing>>>,
         scope: RwSignal<Option<ultros_api_types::world_helper::AnySelector>>,
+        feed: RwSignal<PriceFeed>,
+        offers_scope: RwSignal<Option<String>>,
     ) -> impl IntoView {
         use crate::components::list_shop::{ListShop, ShopInput, ShopRow};
         let i18n = use_i18n();
         let handle = StoredValue::new_local(handle);
+        // Every lookup takes a ticket; a response whose ticket is no longer
+        // the newest — the player changed scope and looked up again while it
+        // was in flight — is dropped, so old-scope prices never land on top
+        // of the ones they asked for last.
+        let ticket = StoredValue::new(LookupTicket::default());
         let revision = handle.with_value(|h| h.revision);
         let (home, _) = crate::global_state::home_world::use_home_world();
         let worlds = StoredValue::new(
@@ -403,15 +448,32 @@ mod browser {
                         busy.set(true); error.set(String::new());
                         let Some(scope) = scope.get_untracked().and_then(|scope| crate::global_state::use_world_helper().ok()?.lookup_selector(scope).map(|world| world.get_name().to_string())) else { busy.set(false); return; };
                         let ids: Vec<_> = handle.with_value(|h| h.rows()).into_iter().map(|r| r.key.item_id).collect();
+                        let request = ticket.try_update_value(|ticket| ticket.begin()).unwrap_or_default();
+                        feed.update(|feed| *feed = feed.begin_fetch());
                         leptos::task::spawn_local(async move {
-                            match crate::api::get_bulk_listings(scope.trim(), ids.into_iter()).await {
+                            let result = crate::api::get_bulk_listings(scope.trim(), ids.into_iter()).await;
+                            if !ticket.try_with_value(|ticket| ticket.accepts(request)).unwrap_or(false) {
+                                // A newer lookup owns the offers, the feed and `busy` now.
+                                return;
+                            }
+                            match result {
                                 Ok(data) => {
                                     let _ = offers.try_set(data.into_iter().map(|(id, rows)| (id, rows.into_iter().map(|(listing, _)| listing).collect())).collect());
+                                    let _ = offers_scope.try_set(Some(scope));
+                                    // The estimate's freshness is the instant this
+                                    // response arrived: a fetch time, documented as
+                                    // such, never a listing's seller review time.
+                                    let _ = feed.try_update(|feed| *feed = feed.after_fetch(Some(chrono::Utc::now())));
                                     // This endpoint carries seller review times, not ingest times.
                                     // Do not label this fetch time as a market observation.
                                     let _ = observed.try_set(None);
                                 }
-                                Err(e) => { let _ = error.try_set(e.to_string()); }
+                                Err(e) => {
+                                    let _ = error.try_set(e.to_string());
+                                    // Earlier prices stay usable and are marked; with
+                                    // none, the estimate says prices are unavailable.
+                                    let _ = feed.try_update(|feed| *feed = feed.after_fetch(None));
+                                }
                             }
                             let _ = busy.try_set(false);
                         });
