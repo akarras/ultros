@@ -22,6 +22,7 @@ use ultros_api_types::{
 
 use crate::api::{get_list_activity, get_list_items_with_listings};
 use crate::components::{
+    cart::{ListCart, use_legacy_cart},
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases,
@@ -1604,6 +1605,8 @@ pub fn ListViewSync() -> impl IntoView {
         }),
     };
 
+    let legacy_cart = use_legacy_cart();
+
     let drawer_refresh = Signal::derive(move || {
         last_update_at
             .get()
@@ -2216,7 +2219,11 @@ pub fn ListViewSync() -> impl IntoView {
 
             <div class:hidden=move || buying_view.get()>
                 <Transition fallback=move || view! { <Loading /> }>
-                    <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) />
+                    {move || if legacy_cart.get() {
+                        view! { <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                    } else {
+                        view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                    }}
                     <div class="panel rounded-lg p-4 mt-3">
                         {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
                         <ActivityFeed activity=activity_view />

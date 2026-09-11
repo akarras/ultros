@@ -40,6 +40,7 @@ pub fn GuestListRoute() -> impl IntoView {
 #[cfg(feature = "hydrate")]
 mod browser {
     use super::*;
+    use crate::components::cart::{ListCart, use_legacy_cart};
     use crate::list_doc::{
         adapter::{self, Edit},
         guest::GuestListHandle,
@@ -296,6 +297,7 @@ mod browser {
             edit: Callback::new(move |item| apply.run(Edit::Edit(item))),
             remove: Callback::new(move |id| apply.run(Edit::Remove(id))),
         };
+        let legacy_cart = use_legacy_cart();
         view! {
             <section class="space-y-3">
                 <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -327,7 +329,11 @@ mod browser {
                 </div>
                 <div class:hidden=move || shop.get()>
                 <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_build_prices)}</p>
-                <ListBuildWorkspace source selected_items=selected />
+                {move || if legacy_cart.get() {
+                    view! { <ListBuildWorkspace source selected_items=selected /> }.into_any()
+                } else {
+                    view! { <ListCart source selected_items=selected /> }.into_any()
+                }}
                 </div>
                 <details class="panel rounded-lg p-3" data-testid="device-list-storage-details">
                     <summary class="cursor-pointer text-sm font-medium" data-testid="device-list-storage-toggle">{t!(i18n, guest_workspace_storage_heading)}</summary>

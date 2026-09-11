@@ -8,6 +8,7 @@ pub use ultros_ui_lists::components::add_to_list;
 pub use ultros_ui_shell::components::account_menu;
 pub use ultros_ui_shell::components::ad;
 pub mod app_shell;
+pub mod cart;
 pub use ultros_ui::components::clipboard;
 pub use ultros_ui::components::confidence_badge;
 pub use ultros_ui::components::gil;
