@@ -1195,21 +1195,11 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 @utility panel {
     @apply rounded-xl border;
     border-color: var(--color-outline);
-    /* base panel surface */
+    /* Flat opaque surface. The radial/linear gradients this used to carry
+       were blended with `overlay`, which on a sub-50% backdrop collapses to
+       2*backdrop*source: the 6% white spot came out within 2/255 of the flat
+       fill, so it cost a raster pass and drew nothing (#1334). */
     background-color: var(--color-background-elevated);
-    /* subtle dark-mode gradient shading like settings world panel */
-    background-image:
-        radial-gradient(
-            1200px 600px at 50% -20%,
-            var(--decor-spot),
-            transparent 60%
-        ),
-        linear-gradient(
-            135deg,
-            color-mix(in srgb, var(--brand-bg) 6%, transparent),
-            color-mix(in srgb, var(--color-background) 4%, transparent)
-        );
-    background-blend-mode: overlay, normal;
     /* Opaque surface: no backdrop-filter (see .btn-secondary, #1334). */
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
 }
@@ -1267,24 +1257,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         var(--brand-ring) 18%,
         var(--color-outline)
     );
+    /* Flat surface: same gradient+overlay removal as `.panel` (#1334). */
     background-color: var(--color-background-elevated);
-    background-image:
-        radial-gradient(
-            1000px 500px at 50% -20%,
-            var(--decor-spot),
-            transparent 60%
-        ),
-        linear-gradient(
-            135deg,
-            color-mix(in srgb, var(--brand-bg) 6%, transparent),
-            color-mix(in srgb, var(--color-background) 4%, transparent)
-        );
-    background-blend-mode: overlay, normal;
     box-shadow:
         0 12px 24px -12px rgba(0, 0, 0, 0.28),
         0 4px 8px -6px rgba(0, 0, 0, 0.16);
     outline: 1px solid transparent;
-    @apply bg-blend-overlay;
     @apply hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none;
 }
 .card:hover {
@@ -1345,19 +1323,8 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         var(--color-outline)
     );
     @apply aspect-square overflow-hidden p-5;
+    /* Flat surface: same gradient+overlay removal as `.panel` (#1334). */
     background-color: var(--color-background-elevated);
-    background-image:
-        radial-gradient(
-            1200px 600px at 50% -20%,
-            var(--decor-spot),
-            transparent 60%
-        ),
-        linear-gradient(
-            135deg,
-            color-mix(in srgb, var(--brand-bg) 6%, transparent),
-            color-mix(in srgb, var(--color-background) 4%, transparent)
-        );
-    @apply bg-blend-overlay;
     @apply transition-all duration-300 ease-out transform-gpu will-change-[transform];
     @apply sm:hover:-translate-y-1 sm:hover:scale-[1.02] active:translate-y-0 focus-visible:outline-none;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);

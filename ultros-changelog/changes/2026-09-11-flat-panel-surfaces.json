@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Faster rendering for panels and cards",
+  "blurb": "Panels, cards, and the home page tiles dropped a gradient overlay that blended away to nothing against their dark backgrounds but still cost a paint pass. Pages built from many panels, like the recipe planner, redraw quicker, especially without hardware acceleration.",
+  "link": "/recipe",
+  "importance": "low"
+}
