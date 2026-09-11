@@ -1324,6 +1324,8 @@
     "category_view_default": "分类视图",
     "job_set_default": "职业套装",
     "job_set_card_section_heading": "装备套装",
+    "job_set_card_equip_level": "%level%级",
+    "job_set_card_equip_level_tooltip": "需要 %level% 级才能装备",
     "job_set_card_pieces": "%count%件",
     "job_set_card_total_nq": "NQ总价",
     "job_set_card_total_hq": "HQ总价",

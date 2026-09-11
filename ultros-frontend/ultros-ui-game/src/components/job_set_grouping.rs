@@ -8,13 +8,33 @@ pub struct GroupableItem {
     pub id: ItemId,
     pub name: String,
     pub ilvl: i32,
+    /// Character level required to equip the piece (`Item::level_equip`).
+    /// The sheet stores `1` for anything that cannot be equipped, so
+    /// `<= 1` means "no meaningful requirement".
+    pub level_equip: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSetGroup {
     pub stem: String,
     pub ilvl: i32,
+    /// Highest equip level across the set's pieces, or `None` when no
+    /// piece carries a real requirement (see [`GroupableItem::level_equip`]).
+    /// Pieces in one set share an iLvl and almost always share an equip
+    /// level too; taking the max means the card advertises the level at
+    /// which the *whole* set becomes wearable.
+    pub level_equip: Option<i32>,
     pub items: Vec<GroupableItem>,
+}
+
+/// Highest meaningful equip level in `items`, ignoring the sheet's
+/// `1` placeholder.
+pub fn set_equip_level(items: &[GroupableItem]) -> Option<i32> {
+    items
+        .iter()
+        .map(|item| item.level_equip)
+        .filter(|level| *level > 1)
+        .max()
 }
 
 /// True when the name carries the English `Ornate ` (case-insensitive)
@@ -111,6 +131,7 @@ pub fn group_into_sets(items: Vec<GroupableItem>) -> (Vec<JobSetGroup>, Vec<Grou
             groups.push(JobSetGroup {
                 stem: stem.to_string(),
                 ilvl,
+                level_equip: set_equip_level(&bucket),
                 items: bucket,
             });
         } else {
@@ -130,7 +151,55 @@ mod tests {
             id: ItemId(id as i32),
             name: name.to_string(),
             ilvl,
+            level_equip: 1,
         }
+    }
+
+    fn it_lv(id: u32, name: &str, ilvl: i32, level_equip: i32) -> GroupableItem {
+        GroupableItem {
+            level_equip,
+            ..it(id, name, ilvl)
+        }
+    }
+
+    #[test]
+    fn set_equip_level_is_the_max_across_pieces() {
+        // A set's pieces normally share one equip level; if they ever
+        // drift the card should advertise the level at which the whole
+        // set is wearable, i.e. the highest.
+        let items = vec![
+            it_lv(1, "Courtly Lover's Sword", 770, 100),
+            it_lv(2, "Courtly Lover's Shield", 770, 100),
+            it_lv(3, "Courtly Lover's Helm of Fending", 770, 99),
+        ];
+        assert_eq!(set_equip_level(&items), Some(100));
+    }
+
+    #[test]
+    fn set_equip_level_ignores_the_sheet_placeholder() {
+        // `level_equip == 1` is the sheet's "not equippable" marker, not a
+        // level-one requirement, so a set made of such rows reports none.
+        let items = vec![it(1, "a", 10), it(2, "b", 10)];
+        assert_eq!(set_equip_level(&items), None);
+        assert_eq!(set_equip_level(&[]), None);
+    }
+
+    #[test]
+    fn groups_carry_their_equip_level() {
+        let items = vec![
+            it_lv(1, "Courtly Lover's Sword", 770, 100),
+            it_lv(2, "Courtly Lover's Shield", 770, 100),
+            it_lv(3, "Ironworks Sword", 130, 50),
+            it_lv(4, "Ironworks Shield", 130, 50),
+        ];
+
+        let (groups, _) = group_into_sets(items);
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].ilvl, 770);
+        assert_eq!(groups[0].level_equip, Some(100));
+        assert_eq!(groups[1].ilvl, 130);
+        assert_eq!(groups[1].level_equip, Some(50));
     }
 
     /// Augmented Ironworks (PLD/Fending) at iLvl 130 — a Heavensward-

@@ -1324,6 +1324,8 @@
     "category_view_default": "Kategorie-Ansicht",
     "job_set_default": "Klassen-Set",
     "job_set_card_section_heading": "Ausrüstungs-Sets",
+    "job_set_card_equip_level": "Stufe %level%",
+    "job_set_card_equip_level_tooltip": "Ab Stufe %level% anlegbar",
     "job_set_card_pieces": "%count% Teile",
     "job_set_card_total_nq": "NQ-Gesamtpreis",
     "job_set_card_total_hq": "HQ-Gesamtpreis",

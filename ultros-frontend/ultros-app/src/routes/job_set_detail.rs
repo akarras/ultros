@@ -263,6 +263,7 @@ where
             id: item.key_id,
             name: item.name.clone(),
             ilvl: item.level_item,
+            level_equip: item.level_equip,
         })
         .collect();
     projections.sort_by(|a, b| {
@@ -502,12 +503,20 @@ pub fn JobSetDetail() -> impl IntoView {
             // text props when client navigation changes the set or locale.
             {move || {
                 let stem = set_stem.get();
-                let title = format!(
+                let mut title = format!(
                     "{} · {} {}",
                     if stem.is_empty() { t_string!(i18n, job_set_default).to_string() } else { stem },
                     t_string!(i18n, item_explorer_ilvl_prefix),
                     target_ilvl.get(),
                 );
+                if let Some(level) = group.with(|g| g.as_ref().and_then(|g| g.level_equip)) {
+                    title.push_str(" · ");
+                    title.push_str(
+                        &t_string!(i18n, job_set_card_equip_level)
+                            .to_string()
+                            .replace("%level%", &level.to_string()),
+                    );
+                }
                 view! {
                     <ToolHeader
                         title=title
@@ -775,6 +784,7 @@ mod tests {
             id: ItemId(id),
             name: name.to_string(),
             ilvl: 770,
+            level_equip: 100,
         }
     }
 
@@ -834,6 +844,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b")],
         };
         let prices = map_with(&[(1, false, 100), (1, true, 200), (2, true, 50)]);
@@ -845,6 +856,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a")],
         };
         assert_eq!(set_total(&group, &map_with(&[]), false), None);
@@ -1129,6 +1141,7 @@ mod tests {
         let set = JobSetGroup {
             stem: "Courtly Lover's".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "Cloak"), item(2, "Brais")],
         };
         // Item 1 needs 2 fiber + 3 shards; item 2 needs 1 fiber + 5 shards.
@@ -1166,6 +1179,7 @@ mod tests {
         let set = JobSetGroup {
             stem: "Vendor".to_string(),
             ilvl: 100,
+            level_equip: Some(100),
             items: vec![item(500, "Vendor Sword")],
         };
         let recipes: HashMap<RecipeId, Recipe> = HashMap::new();

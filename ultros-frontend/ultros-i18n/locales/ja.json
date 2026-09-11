@@ -1324,6 +1324,8 @@
     "category_view_default": "カテゴリビュー",
     "job_set_default": "ジョブセット",
     "job_set_card_section_heading": "装備セット",
+    "job_set_card_equip_level": "Lv%level%",
+    "job_set_card_equip_level_tooltip": "装備レベル%level%以上で装備可能",
     "job_set_card_pieces": "%count%点",
     "job_set_card_total_nq": "NQ合計",
     "job_set_card_total_hq": "HQ合計",
