@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "List estimates say when prices are missing or old",
+  "blurb": "The Labs list builder's estimated total now tells you when prices are still loading, haven't been looked up yet, or couldn't be fetched, and shows when the prices it is using were fetched and for which world or datacenter. A cart with no prices shows a dash instead of 0 gil, and if a refresh fails you keep the last prices, clearly marked, while you carry on editing.",
+  "link": "/list?labs=lists-sync"
+}

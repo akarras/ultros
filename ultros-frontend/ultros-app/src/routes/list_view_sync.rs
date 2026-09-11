@@ -53,6 +53,8 @@ use ultros_api_types::websocket::{
     EventType as WEvent, FilterPredicate, ListEventData, ServerClient, SocketMessageType,
     is_list_market_update_relevant,
 };
+use ultros_api_types::world_helper::AnySelector;
+use ultros_calc::list_estimate::PriceFeed;
 use xiv_gen::ItemId;
 
 type CatalogSearchEntry<T> = (i32, String, i32, T);
@@ -432,6 +434,14 @@ pub struct ListWorkspaceSource {
     pub recipe_open: Signal<bool>,
     pub toggle_recipe: Callback<()>,
     pub rows: Signal<Vec<(ListItem, Vec<ActiveListing>)>>,
+    /// Where the listings in `rows` stand: loading, missing (and why), or
+    /// observed at a client-clock instant, possibly marked by a failed
+    /// refresh. Drives the estimate's status text; never inferred from a
+    /// listing's own timestamp.
+    pub market: Signal<PriceFeed>,
+    /// The world, datacenter or region the listings in `rows` were served
+    /// for — the scope the prices are *for*, not the one currently picked.
+    pub scope_name: Signal<Option<String>>,
     pub hide_acquired: Signal<bool>,
     pub can_write: Signal<bool>,
     pub edit: Callback<ListItem>,
@@ -517,7 +527,7 @@ pub fn ListBuildWorkspace(
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
-            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() />
+            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
             <div class="overflow-x-auto panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {
@@ -557,6 +567,11 @@ struct ListingsCache {
     /// rendering from prices fetched while the client still had access, and
     /// the 403/404 that `is_denial` acts on would never arrive.
     revalidate: u32,
+    /// The scope the document had when this entry was fetched. A scope edit
+    /// (`Edit::Rename { scope }`) bumps the document revision but not
+    /// `listings_version`, so without this the re-run would be a cache hit
+    /// and the page would keep estimating from the old scope's prices.
+    requested_scope: Option<AnySelector>,
     list: ListWithPermission,
     listings: HashMap<i32, Vec<ActiveListing>>,
     /// The item ids the fetch that filled this cache covered — every row the
@@ -572,6 +587,39 @@ struct ListingsCache {
 /// The ids a fetch covered, built from the rows the server returned.
 fn covered_ids(items: &[(ListItem, Vec<ActiveListing>)]) -> HashSet<i32> {
     items.iter().map(|(item, _)| item.item_id).collect()
+}
+
+/// The estimate's account of its prices, written by every listings fetch.
+#[derive(Clone, Copy)]
+struct PriceStatus {
+    feed: RwSignal<PriceFeed>,
+    /// The scope the server priced the last successful fetch for.
+    served_scope: RwSignal<Option<AnySelector>>,
+}
+
+/// Where a listings fetch left the price feed and the served scope. Every
+/// account-list fetch reports through here so the estimate's freshness is
+/// exactly "when the last listings response arrived".
+///
+/// Client only. The SSR half renders the feed as loading: its `Utc::now()`
+/// would be baked into the HTML while the client's signal starts at
+/// `Loading` (nothing of the feed is serialized), and the client's first
+/// handle-backed run always fetches — its cache starts empty — so the real
+/// instant is recorded within the first client tick. A signed-in visitor
+/// always gets a handle; an anonymous one cannot read an account list at all.
+fn note_fetch(prices: PriceStatus, outcome: Option<&ListWithPermission>) {
+    #[cfg(feature = "hydrate")]
+    {
+        let fetched_at = outcome.map(|_| chrono::Utc::now());
+        let _ = prices
+            .feed
+            .try_update(|feed| *feed = feed.after_fetch(fetched_at));
+        if let Some(list) = outcome {
+            let _ = prices.served_scope.try_set(Some(list.list.wdr_filter));
+        }
+    }
+    #[cfg(not(feature = "hydrate"))]
+    let _ = (prices.feed, prices.served_scope, outcome);
 }
 
 /// How long a burst of relayed list broadcasts is allowed to coalesce into
@@ -618,6 +666,7 @@ fn revalidate(
     handle: RwSignal<Option<ListDocHandle>>,
     cache: StoredValue<Option<ListingsCache>>,
     bump: WriteSignal<u32>,
+    prices: PriceStatus,
 ) {
     let expected = handle.try_get_untracked().flatten().map(|h| h.revision);
     if !request_is_current(active_list, list_id, handle, expected) {
@@ -641,6 +690,7 @@ fn revalidate(
                         .is_none_or(|c| c.list.permission != permission)
                 });
                 let covered = covered_ids(&items);
+                note_fetch(prices, Some(&list));
                 cache.update_value(|cached| {
                     if let Some(c) = cached.as_mut().filter(|c| c.list_id == list_id) {
                         c.list = list;
@@ -664,8 +714,9 @@ fn revalidate(
                 bump.update(|v| *v += 1);
             }
             // Transport or server trouble says nothing about permission;
-            // the next broadcast tries again.
-            Err(_) => {}
+            // the next broadcast tries again. It *is* a refresh that failed,
+            // though, so the prices on the page are marked as such.
+            Err(_) => note_fetch(prices, None),
         }
     });
 }
@@ -677,6 +728,7 @@ fn revalidate(
     _handle: RwSignal<Option<ListDocHandle>>,
     _cache: StoredValue<Option<ListingsCache>>,
     _bump: WriteSignal<u32>,
+    _prices: PriceStatus,
 ) {
 }
 
@@ -767,6 +819,7 @@ async fn load_view(
     cache: StoredValue<Option<ListingsCache>>,
     listings_version: u32,
     revalidate_version: u32,
+    prices: PriceStatus,
 ) -> ListViewResult {
     let current = handle.try_get_untracked().flatten();
     let expected = current.map(|h| h.revision);
@@ -783,11 +836,16 @@ async fn load_view(
         if !request_is_current(list_id, id, handle, expected) {
             return Err(stale());
         }
+        note_fetch(prices, result.as_ref().ok().map(|(list, _)| list));
         if let Ok((list, items)) = &result {
             cache.set_value(Some(ListingsCache {
                 list_id: id,
                 version: listings_version,
                 revalidate: revalidate_version,
+                // The document, once open, carries the server's scope unless
+                // an offline edit changed it — in which case the mismatch
+                // below is exactly the refetch that edit deserves.
+                requested_scope: Some(list.list.wdr_filter),
                 list: list.clone(),
                 listings: items
                     .iter()
@@ -806,11 +864,15 @@ async fn load_view(
         .into_iter()
         .map(|row| row.key.item_id)
         .collect();
+    // A document that has never recorded a scope prices against whatever
+    // the server scoped the cached listings to; one that has must match.
+    let wanted_scope = doc_handle.meta().scope;
     let cached = cache.get_value().filter(|c| {
         c.list_id == id
             && c.version == listings_version
             && c.revalidate == revalidate_version
             && wanted_ids.is_subset(&c.covered)
+            && wanted_scope.is_none_or(|scope| c.requested_scope == Some(scope))
     });
     let base = match cached {
         Some(cached) => cached,
@@ -823,10 +885,12 @@ async fn load_view(
                 Ok((list, items)) => {
                     doc_handle.remember_permission(list.permission as i16);
                     let covered = covered_ids(&items);
+                    note_fetch(prices, Some(&list));
                     let fresh = ListingsCache {
                         list_id: id,
                         version: listings_version,
                         revalidate: revalidate_version,
+                        requested_scope: wanted_scope.or(Some(list.list.wdr_filter)),
                         list,
                         listings: items
                             .into_iter()
@@ -848,23 +912,32 @@ async fn load_view(
                     doc_handle.purge();
                     cache.set_value(None);
                     handle.set(None);
+                    note_fetch(prices, None);
                     return Err(error);
                 }
-                Err(error) => match cache.get_value().filter(|c| c.list_id == id) {
-                    // Stale prices beat no page.
-                    Some(stale) => stale,
-                    None => match offline_list(id, doc_handle) {
-                        Some(list) => ListingsCache {
-                            list_id: id,
-                            version: listings_version,
-                            revalidate: revalidate_version,
-                            list,
-                            listings: HashMap::new(),
-                            covered: wanted_ids.clone(),
+                Err(error) => {
+                    // The refresh failed. Whatever was observed before stays
+                    // on the page, marked; with nothing observed, the
+                    // estimate reports that prices are unavailable. Either
+                    // way the document keeps rendering and editing.
+                    note_fetch(prices, None);
+                    match cache.get_value().filter(|c| c.list_id == id) {
+                        // Stale prices beat no page.
+                        Some(stale) => stale,
+                        None => match offline_list(id, doc_handle) {
+                            Some(list) => ListingsCache {
+                                list_id: id,
+                                version: listings_version,
+                                revalidate: revalidate_version,
+                                requested_scope: wanted_scope,
+                                list,
+                                listings: HashMap::new(),
+                                covered: wanted_ids.clone(),
+                            },
+                            None => return Err(error),
                         },
-                        None => return Err(error),
-                    },
-                },
+                    }
+                }
             }
         }
     };
@@ -1029,6 +1102,15 @@ pub fn ListViewSync() -> impl IntoView {
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let listings_cache: StoredValue<Option<ListingsCache>> = StoredValue::new(None);
+    // The estimate's account of its prices (see `note_fetch`): every fetch
+    // above reports here, so "prices fetched 2 minutes ago" is the arrival
+    // of the last listings response and nothing else.
+    let price_feed = RwSignal::new(PriceFeed::Loading);
+    let served_scope = RwSignal::new(None::<AnySelector>);
+    let prices = PriceStatus {
+        feed: price_feed,
+        served_scope,
+    };
 
     let list_view = Resource::new(
         move || {
@@ -1047,6 +1129,7 @@ pub fn ListViewSync() -> impl IntoView {
                 listings_cache,
                 listings_v,
                 revalidate_v,
+                prices,
             )
         },
     );
@@ -1101,7 +1184,14 @@ pub fn ListViewSync() -> impl IntoView {
                 // broadcasts an ordinary `List` update), so it revalidates
                 // on all of them and lets the REST answer decide.
                 schedule_revalidate(&revalidate_timer, move || {
-                    revalidate(list_id, id, handle, listings_cache, set_revalidate_version)
+                    revalidate(
+                        list_id,
+                        id,
+                        handle,
+                        listings_cache,
+                        set_revalidate_version,
+                        prices,
+                    )
                 });
             });
             activity_subscription.set_value(Some(sub));
@@ -1492,6 +1582,14 @@ pub fn ListViewSync() -> impl IntoView {
         recipe_open: recipe_modal_open.into(),
         toggle_recipe: Callback::new(move |()| set_recipe_modal_open.update(|open| *open = !*open)),
         rows: build_rows,
+        market: price_feed.into(),
+        scope_name: Signal::derive(move || {
+            let scope = served_scope.get()?;
+            let helper = use_context::<LocalWorldData>()?.0.ok()?;
+            helper
+                .lookup_selector(scope)
+                .map(|result| result.get_name().to_string())
+        }),
         hide_acquired: hide_acquired.into(),
         can_write: Signal::derive(move || view_caps.with(|c| c.can_write)),
         edit: Callback::new(move |item| {

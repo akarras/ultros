@@ -24,6 +24,7 @@
 
 use std::cmp::Reverse;
 
+use chrono::{DateTime, Utc};
 use ultros_api_types::{ActiveListing, list::ListItem};
 
 /// One row's request, independent of how the row is stored.
@@ -246,6 +247,104 @@ pub fn estimate_list_items(rows: &[(ListItem, Vec<ActiveListing>)]) -> CartEstim
         rows.iter()
             .map(|(item, listings)| (LineRequest::from(item), listings.as_slice())),
     )
+}
+
+/// Why an estimate has no listings behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MissingReason {
+    /// Nobody has asked for prices yet (a device list before its Shop
+    /// lookup).
+    NotRequested,
+    /// The lookup failed and nothing earlier is cached.
+    Failed,
+}
+
+/// The listings behind an estimate: whether any exist and when they arrived.
+///
+/// `fetched_at` is the *client-clock* instant a listing response was
+/// received — the REST read for an account list (including the refetches a
+/// market broadcast triggers), the Shop lookup for a device list. It is not
+/// an ingest time and must never be derived from a listing's own
+/// `timestamp`, which is a seller review time. A failed refresh keeps the
+/// previous observation and marks it, so the page can say "prices from
+/// <time>; refresh failed" instead of pretending the failure produced fresh
+/// prices, and an offline edit keeps whatever was last seen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PriceFeed {
+    /// A lookup is in flight (or about to be) and nothing earlier exists.
+    Loading,
+    /// No listings, and why.
+    Missing(MissingReason),
+    /// Listings from a completed lookup.
+    Observed {
+        fetched_at: DateTime<Utc>,
+        /// A later lookup failed; these listings are older than intended.
+        refresh_failed: bool,
+    },
+}
+
+impl PriceFeed {
+    pub fn observed(fetched_at: DateTime<Utc>) -> Self {
+        Self::Observed {
+            fetched_at,
+            refresh_failed: false,
+        }
+    }
+
+    /// A lookup is starting. Prices already observed stay in place — the
+    /// estimate keeps working through a refresh — while a feed with nothing
+    /// to show reports that it is loading.
+    pub fn begin_fetch(self) -> Self {
+        match self {
+            Self::Observed { .. } => self,
+            Self::Loading | Self::Missing(_) => Self::Loading,
+        }
+    }
+
+    /// The lookup finished. `Some(instant)` replaces whatever was there;
+    /// `None` (a failure) keeps an earlier observation, marked, and
+    /// otherwise records that there is nothing to show.
+    pub fn after_fetch(self, fetched_at: Option<DateTime<Utc>>) -> Self {
+        match (self, fetched_at) {
+            (_, Some(fetched_at)) => Self::observed(fetched_at),
+            (Self::Observed { fetched_at, .. }, None) => Self::Observed {
+                fetched_at,
+                refresh_failed: true,
+            },
+            (Self::Loading | Self::Missing(_), None) => Self::Missing(MissingReason::Failed),
+        }
+    }
+
+    pub fn fetched_at(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Observed { fetched_at, .. } => Some(*fetched_at),
+            Self::Loading | Self::Missing(_) => None,
+        }
+    }
+
+    /// True when there are listings to estimate from, fresh or marked.
+    pub fn has_prices(&self) -> bool {
+        matches!(self, Self::Observed { .. })
+    }
+}
+
+/// Discards a lookup that lands after a newer one began — the player changed
+/// scope or list while the request was in flight — so a late response can
+/// never overwrite the prices for the scope they are now looking at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LookupTicket(u64);
+
+impl LookupTicket {
+    /// Start a lookup, invalidating every earlier ticket.
+    pub fn begin(&mut self) -> Self {
+        self.0 = self.0.wrapping_add(1);
+        *self
+    }
+
+    /// Whether `ticket` is still the newest lookup.
+    pub fn accepts(&self, ticket: Self) -> bool {
+        *self == ticket
+    }
 }
 
 /// Ready-made carts for the presentation track to build against before its
@@ -596,5 +695,95 @@ mod tests {
         assert_eq!(cart.total, 200);
         assert_eq!(cart.lines[0].row_id, 1);
         assert_eq!(cart.lines[0].remaining, 2);
+    }
+
+    fn at(seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(seconds, 0).expect("valid timestamp")
+    }
+
+    #[test]
+    fn a_first_fetch_observes_prices() {
+        let feed = PriceFeed::Loading.after_fetch(Some(at(100)));
+        assert_eq!(feed, PriceFeed::observed(at(100)));
+        assert_eq!(feed.fetched_at(), Some(at(100)));
+        assert!(feed.has_prices());
+    }
+
+    #[test]
+    fn a_failed_first_fetch_has_nothing_to_show() {
+        let feed = PriceFeed::Loading.after_fetch(None);
+        assert_eq!(feed, PriceFeed::Missing(MissingReason::Failed));
+        assert!(!feed.has_prices());
+        assert_eq!(feed.fetched_at(), None);
+        let never = PriceFeed::Missing(MissingReason::NotRequested).after_fetch(None);
+        assert_eq!(never, PriceFeed::Missing(MissingReason::Failed));
+    }
+
+    #[test]
+    fn a_failed_refresh_keeps_the_earlier_prices_and_marks_them() {
+        // Offline, a 5xx, a dropped socket: the cart keeps estimating from
+        // what it last saw, and says those prices are older than intended.
+        let feed = PriceFeed::observed(at(100)).after_fetch(None);
+        assert_eq!(
+            feed,
+            PriceFeed::Observed {
+                fetched_at: at(100),
+                refresh_failed: true,
+            }
+        );
+        assert!(feed.has_prices());
+        assert_eq!(feed.fetched_at(), Some(at(100)));
+        // The next successful fetch clears the mark and moves the clock.
+        assert_eq!(
+            feed.after_fetch(Some(at(200))),
+            PriceFeed::observed(at(200))
+        );
+    }
+
+    #[test]
+    fn beginning_a_fetch_only_changes_a_feed_with_nothing_to_show() {
+        assert_eq!(
+            PriceFeed::Missing(MissingReason::NotRequested).begin_fetch(),
+            PriceFeed::Loading
+        );
+        assert_eq!(
+            PriceFeed::Missing(MissingReason::Failed).begin_fetch(),
+            PriceFeed::Loading
+        );
+        assert_eq!(PriceFeed::Loading.begin_fetch(), PriceFeed::Loading);
+        let stale = PriceFeed::Observed {
+            fetched_at: at(100),
+            refresh_failed: true,
+        };
+        assert_eq!(
+            stale.begin_fetch(),
+            stale,
+            "a refresh never blanks the cart"
+        );
+    }
+
+    #[test]
+    fn a_lookup_that_lands_after_a_newer_one_began_is_rejected() {
+        let mut ticket = LookupTicket::default();
+        let first = ticket.begin();
+        assert!(ticket.accepts(first));
+        // The player changed scope: a second lookup starts before the first
+        // returns.
+        let second = ticket.begin();
+        assert!(
+            !ticket.accepts(first),
+            "the old scope's prices must not land"
+        );
+        assert!(ticket.accepts(second));
+        // Applying the guarded transition twice out of order leaves the
+        // feed on the newer result only.
+        let mut feed = PriceFeed::Loading;
+        if ticket.accepts(second) {
+            feed = feed.after_fetch(Some(at(200)));
+        }
+        if ticket.accepts(first) {
+            feed = feed.after_fetch(Some(at(100)));
+        }
+        assert_eq!(feed, PriceFeed::observed(at(200)));
     }
 }
