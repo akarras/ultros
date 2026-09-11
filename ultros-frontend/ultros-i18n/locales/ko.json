@@ -90,6 +90,8 @@
     "lists_workspace_added": "추가했습니다. 아이템과 품질이 같으면 필요 수량이 증가합니다. 실행 취소로 되돌릴 수 있습니다.",
     "lists_workspace_undo": "마지막 변경 실행 취소",
     "lists_workspace_redo": "다시 실행",
+    "lists_workspace_nothing_to_undo": "실행 취소할 변경이 없습니다",
+    "lists_workspace_nothing_to_redo": "다시 실행할 변경이 없습니다",
     "lists_workspace_selected": "{{count}}개 선택됨",
     "lists_workspace_preview_row": "{{quantity}} × {{name}}{{quality}}",
     "lists_workspace_document_closed": "이 목록은 닫혀 있습니다. 변경하려면 다시 여세요.",

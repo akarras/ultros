@@ -90,6 +90,8 @@
     "lists_workspace_added": "追加しました。アイテムと品質が一致する場合は必要数が増加します。「元に戻す」で取り消せます。",
     "lists_workspace_undo": "最後の変更を元に戻す",
     "lists_workspace_redo": "やり直す",
+    "lists_workspace_nothing_to_undo": "元に戻す変更はありません",
+    "lists_workspace_nothing_to_redo": "やり直す変更はありません",
     "lists_workspace_selected": "{{count}}件選択中",
     "lists_workspace_preview_row": "{{quantity}} × {{name}}{{quality}}",
     "lists_workspace_document_closed": "このリストは閉じられています。変更するには開き直してください。",

@@ -90,6 +90,8 @@
     "lists_workspace_added": "Ajout effectué. Si l’objet et sa qualité correspondent, la quantité nécessaire augmente. Utilisez Annuler pour revenir en arrière.",
     "lists_workspace_undo": "Annuler la dernière modification",
     "lists_workspace_redo": "Rétablir",
+    "lists_workspace_nothing_to_undo": "Rien à annuler",
+    "lists_workspace_nothing_to_redo": "Rien à rétablir",
     "lists_workspace_selected": "{{count}} sélectionné(s)",
     "lists_workspace_preview_row": "{{quantity}} × {{name}}{{quality}}",
     "lists_workspace_document_closed": "Cette liste est fermée. Rouvrez-la pour la modifier.",
