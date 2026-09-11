@@ -11,6 +11,7 @@
 
 pub mod details;
 pub mod estimate;
+pub mod feedback;
 pub mod row;
 pub mod selection;
 pub mod summary;
@@ -27,7 +28,8 @@ use crate::i18n::*;
 use crate::routes::list_view::remaining_quantity;
 use crate::routes::list_view_sync::{InlineListAdd, InlineRecipeAdd, ListWorkspaceSource};
 
-use row::{CartRow, ROW_GRID};
+use feedback::{CartFeedback, Removal, focus_after_removal};
+use row::{CartRow, ROW_GRID, focus_element, quantity_input_id, remove_button_id};
 use selection::{CartSelectionBar, retain_present};
 use summary::CartSummary;
 
@@ -204,6 +206,165 @@ pub fn ListCart(
     let visible_ids = Memo::new(move |_| {
         visible.with(|rows| rows.iter().map(|(item, _)| item.id).collect::<Vec<_>>())
     });
+
+    // ---- Removal feedback (#1436) ----
+    //
+    // Every local write bumps `action_seq`; a removal toast remembers the
+    // value it was created at and offers Undo only while it is still the
+    // latest action. A removal is only *announced* once its rows have left
+    // the document, so a failed edit never reads as success; the pending
+    // record is dropped after a short grace period if the rows never leave.
+    let action_seq = RwSignal::new(0u64);
+    let bump = move || action_seq.update(|n| *n += 1);
+    let pending_removal: RwSignal<Option<Removal>> = RwSignal::new(None);
+    let toast: RwSignal<Option<Removal>> = RwSignal::new(None);
+    // Rows whose removal is in flight; their delete button is disabled so a
+    // second click cannot queue a duplicate mutation.
+    let removing: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
+    // The row whose quantity should take focus once it is back (after Undo).
+    let refocus: RwSignal<Option<i32>> = RwSignal::new(None);
+    let schedule = move |ms: u32, f: Box<dyn FnOnce()>| {
+        #[cfg(feature = "hydrate")]
+        {
+            gloo_timers::callback::Timeout::new(ms, f).forget();
+        }
+        #[cfg(not(feature = "hydrate"))]
+        {
+            let _ = (ms, f);
+        }
+    };
+    let request_removal = move |ids: Vec<i32>| {
+        if ids.is_empty() || !source.can_write.get_untracked() {
+            return;
+        }
+        let data = tracked_data();
+        let names = source.rows.with_untracked(|rows| {
+            ids.iter()
+                .filter_map(|id| rows.iter().find(|(item, _)| item.id == *id))
+                .map(|(item, _)| {
+                    data.items
+                        .get(&ItemId(item.item_id))
+                        .map(|item| item.name.to_string())
+                        .unwrap_or_else(|| {
+                            t_string!(i18n, lists_workspace_item_fallback, id = item.item_id)
+                                .to_string()
+                        })
+                })
+                .collect::<Vec<_>>()
+        });
+        let focus_next = focus_after_removal(&visible_ids.get_untracked(), &ids);
+        removing.update(|set| set.extend(ids.iter().copied()));
+        bump();
+        let seq = action_seq.get_untracked();
+        pending_removal.set(Some(Removal {
+            ids: ids.clone(),
+            names,
+            seq,
+            focus_next,
+        }));
+        if let [id] = ids.as_slice() {
+            source.remove.run(*id);
+        } else {
+            source.remove_many.run(ids.clone());
+        }
+        schedule(
+            1_500,
+            Box::new(move || {
+                if pending_removal
+                    .try_get_untracked()
+                    .flatten()
+                    .is_some_and(|p| p.seq == seq)
+                {
+                    // The rows never left: the edit failed (the host's
+                    // feedback line says why). Re-enable the buttons.
+                    pending_removal.set(None);
+                    removing.update(|set| {
+                        for id in &ids {
+                            set.remove(id);
+                        }
+                    });
+                }
+            }),
+        );
+    };
+    Effect::new(move |_| {
+        let present: HashSet<i32> = source
+            .rows
+            .with(|rows| rows.iter().map(|(item, _)| item.id).collect());
+        if let Some(pending) = pending_removal.get_untracked()
+            && pending.ids.iter().all(|id| !present.contains(id))
+        {
+            pending_removal.set(None);
+            removing.update(|set| {
+                for id in &pending.ids {
+                    set.remove(id);
+                }
+            });
+            let seq = pending.seq;
+            match pending.focus_next {
+                Some(next) => focus_element(&remove_button_id(next)),
+                None => focus_element("list-cart-add-input"),
+            }
+            toast.set(Some(pending));
+            schedule(
+                feedback::TOAST_MS,
+                Box::new(move || {
+                    if toast
+                        .try_get_untracked()
+                        .flatten()
+                        .is_some_and(|t| t.seq == seq)
+                    {
+                        toast.set(None);
+                    }
+                }),
+            );
+        }
+        if let Some(id) = refocus.get_untracked()
+            && present.contains(&id)
+        {
+            refocus.set(None);
+            focus_element(&quantity_input_id(id));
+        }
+    });
+    let undo_removal = Callback::new(move |removal: Removal| {
+        if !source.can_undo.get_untracked() || !source.can_write.get_untracked() {
+            return;
+        }
+        toast.set(None);
+        if let Some(first) = removal.ids.first() {
+            refocus.set(Some(*first));
+        }
+        bump();
+        source.undo.run(());
+    });
+    let on_edit = Callback::new(move |item| {
+        bump();
+        source.edit.run(item);
+    });
+    let on_add = Callback::new(move |item| {
+        bump();
+        source.add.run(item);
+    });
+    let on_add_many = Callback::new(move |items| {
+        bump();
+        source.add_many.run(items);
+    });
+    let on_set_quality_many = Callback::new(move |edit| {
+        bump();
+        source.set_quality_many.run(edit);
+    });
+    let on_undo = Callback::new(move |()| {
+        bump();
+        toast.set(None);
+        source.undo.run(());
+    });
+    let on_redo = Callback::new(move |()| {
+        bump();
+        toast.set(None);
+        source.redo.run(());
+    });
+    let on_remove = Callback::new(move |id| request_removal(vec![id]));
+    let on_remove_many = Callback::new(move |ids| request_removal(ids));
     // A row that left the document (deleted here, by a collaborator or by
     // undo) leaves the selection and the open-panel set with it.
     Effect::new(move |_| {
@@ -247,16 +408,17 @@ pub fn ListCart(
     view! {
         <section class="space-y-3" data-testid="list-cart">
             <Show when=move || source.can_write.get()>
-                <InlineListAdd list_id=source.list_id on_add=source.add pending=source.pending feedback=source.feedback />
+                <InlineListAdd list_id=source.list_id on_add=on_add pending=source.pending feedback=source.feedback />
                 <div class="flex flex-wrap items-center gap-2 text-sm">
                     <button type="button" class="btn-ghost" aria-expanded=move || source.recipe_open.get().to_string() on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
-                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-undo" disabled=move || !source.can_undo.get() on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-redo" disabled=move || !source.can_redo.get() on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-undo" disabled=move || !source.can_undo.get() on:click=move |_| on_undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
+                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-redo" disabled=move || !source.can_redo.get() on:click=move |_| on_redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
-                <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
+                <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=on_add_many /></Show>
             </Show>
             <CartSummary rows=source.rows />
+            <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <div class="flex flex-wrap items-center gap-2">
                 <input class="input min-w-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
                 <label class="flex items-center gap-2 text-sm sm:hidden">
@@ -272,7 +434,7 @@ pub fn ListCart(
                     </select>
                 </label>
             </div>
-            <CartSelectionBar selected_items visible_ids=visible_ids.into() can_write=source.can_write pending=source.bulk_pending on_remove_many=source.remove_many on_set_quality=source.set_quality_many />
+            <CartSelectionBar selected_items visible_ids=visible_ids.into() can_write=source.can_write pending=source.bulk_pending on_remove_many=on_remove_many on_set_quality=on_set_quality_many />
             <div class="panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {
@@ -310,7 +472,7 @@ pub fn ListCart(
                         let item = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(item, _)| item.clone())).unwrap_or_else(|| fallback.get_value()));
                         let listings = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(_, listings)| listings.clone()).unwrap_or_default()));
                         let line = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(item, listings)| estimate::estimate_line(item, listings))));
-                        view! { <CartRow item=item.into() listings=listings.into() line=line.into() selected_items expanded on_edit=source.edit on_delete=source.remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
+                        view! { <CartRow item=item.into() listings=listings.into() line=line.into() selected_items expanded removing=removing.into() on_edit=on_edit on_delete=on_remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
                     } />
                 </ul>
                 <Show when=move || is_empty.get()>

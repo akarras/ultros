@@ -2319,5 +2319,10 @@
     "cart_listing_world": "World",
     "cart_listing_unit_price": "Unit price",
     "cart_listing_stack": "Stack",
-    "cart_close_details": "Close details"
+    "cart_close_details": "Close details",
+    "cart_removed_named": "Removed {{name}}",
+    "cart_removed_count": "Removed {{count}} items",
+    "cart_undo_removal": "Undo",
+    "cart_dismiss": "Dismiss",
+    "cart_undo_unavailable": "Undo is no longer available for this removal"
 }

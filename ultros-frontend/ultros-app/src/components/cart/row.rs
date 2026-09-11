@@ -32,6 +32,7 @@ pub fn numeric_editor(
     can_write: Signal<bool>,
     on_edit: Callback<ListItem>,
     class: &'static str,
+    id: Option<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let value = Memo::new(move |_| {
@@ -43,7 +44,7 @@ pub fn numeric_editor(
         }
     });
     view! {
-        <input class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() readonly=move || !can_write.get()
+        <input id=id class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() readonly=move || !can_write.get()
             on:keydown=move |ev| {
                 ev.stop_propagation();
                 if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
@@ -92,6 +93,14 @@ pub fn details_toggle_id(row_id: i32) -> String {
     format!("cart-details-toggle-{row_id}")
 }
 
+pub fn remove_button_id(row_id: i32) -> String {
+    format!("cart-remove-{row_id}")
+}
+
+pub fn quantity_input_id(row_id: i32) -> String {
+    format!("cart-qty-{row_id}")
+}
+
 #[component]
 pub fn CartRow(
     item: Signal<ListItem>,
@@ -101,6 +110,9 @@ pub fn CartRow(
     /// Row ids whose details panel is open; keyed by id so a reactive
     /// update or re-sort never moves the open panel to another row.
     expanded: RwSignal<HashSet<i32>>,
+    /// Rows whose removal is in flight; their delete button is disabled.
+    #[prop(default = Signal::derive(HashSet::new))]
+    removing: Signal<HashSet<i32>>,
     on_edit: Callback<ListItem>,
     on_delete: Callback<i32>,
     can_write: Signal<bool>,
@@ -138,6 +150,7 @@ pub fn CartRow(
         can_write,
         on_edit,
         "input w-full min-w-0 text-right tabular-nums",
+        Some(quantity_input_id(id)),
     );
     let estimate_text = move || {
         let Some(line) = line.get() else {
@@ -190,7 +203,7 @@ pub fn CartRow(
                 <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
                     <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
                 </button>
-                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" disabled=move || !can_write.get() on:click=move |_| on_delete.run(id)>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
                     <Icon icon=i::BiTrashRegular />
                 </button>
             </div>

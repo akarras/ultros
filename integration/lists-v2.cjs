@@ -243,12 +243,38 @@ async function main() {
     await page.click(testId("cart-bulk-delete"));
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
     assert.equal(await page.$(testId("cart-selection-bar")), null, "deleting the selection clears it");
-    await page.click(testId("list-undo"));
+    await page.waitForSelector(testId("cart-removal-toast"), { visible: true });
+    assert.match(await page.$eval(testId("cart-removal-toast"), element => element.textContent), /Removed Maple Log/,
+      "a single-row bulk removal is announced by name");
+    await page.click(testId("cart-undo-removal"));
     await waitValue(mapleNeeded, 9);
-    await page.click('button[aria-label="Remove Maple Log"]');
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-removal-toast"));
+    assert.equal(await page.$eval(mapleNeeded, input => document.activeElement === input), true,
+      "undo focuses the restored row's quantity");
+    console.log("[ok] bulk delete announces the removal and its Undo restores the row");
+
+    // Keyboard removal: Enter on the trash button removes, focus moves to a
+    // neighbour, and an intervening edit retires the toast's Undo.
+    await page.focus('button[aria-label="Remove Maple Log"]');
+    await page.keyboard.press("Enter");
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
+    await page.waitForSelector(testId("cart-removal-toast"), { visible: true });
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Remove Bronze Ingot",
+      "focus lands on the neighbouring row's remove button after a keyboard removal");
+    await page.waitForSelector(testId("cart-undo-removal"), { visible: true });
+    await replace(needed, 7);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 7);
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-undo-removal"));
+    assert.match(await page.$eval(testId("cart-removal-toast"), element => element.textContent), /no longer available/,
+      "an edit after the removal withdraws the toast's Undo instead of undoing the wrong action");
+    await page.click(`${testId("cart-removal-toast")} button[aria-label="Dismiss"]`);
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-removal-toast"));
+    await replace(needed, 6);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 6);
     await saved();
-    console.log("[ok] bulk delete clears the selection and undo restores the rows");
+    console.log("[ok] keyboard removal restores focus and a later edit retires the stale Undo");
     await replace(needed, 9);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Tab");

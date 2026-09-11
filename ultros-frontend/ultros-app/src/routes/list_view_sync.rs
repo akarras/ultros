@@ -185,7 +185,7 @@ pub fn InlineListAdd(
         <section class="panel rounded-xl p-4 sm:p-5" aria-label=t_string!(i18n, lists_workspace_add_items_label) data-testid="inline-list-add">
             <div class="mb-3"><h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_build_hint)}</p></div>
             <div class="flex flex-wrap gap-2">
-                <input node_ref=input class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search
+                <input node_ref=input id="list-cart-add-input" class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search
                     on:input=move |ev| search.set(event_target_value(&ev))
                     on:keydown=move |ev| {
                         if ev.key() == "Escape" { search.set(String::new()); ev.stop_propagation(); }

@@ -2319,5 +2319,10 @@
     "cart_listing_world": "伺服器",
     "cart_listing_unit_price": "單價",
     "cart_listing_stack": "數量",
-    "cart_close_details": "關閉詳情"
+    "cart_close_details": "關閉詳情",
+    "cart_removed_named": "已移除{{name}}",
+    "cart_removed_count": "已移除{{count}}件物品",
+    "cart_undo_removal": "復原",
+    "cart_dismiss": "關閉",
+    "cart_undo_unavailable": "此次移除已無法復原"
 }

@@ -2319,5 +2319,10 @@
     "cart_listing_world": "Welt",
     "cart_listing_unit_price": "Stückpreis",
     "cart_listing_stack": "Stapel",
-    "cart_close_details": "Details schließen"
+    "cart_close_details": "Details schließen",
+    "cart_removed_named": "{{name}} entfernt",
+    "cart_removed_count": "{{count}} Gegenstände entfernt",
+    "cart_undo_removal": "Rückgängig",
+    "cart_dismiss": "Schließen",
+    "cart_undo_unavailable": "Dieses Entfernen lässt sich nicht mehr rückgängig machen"
 }

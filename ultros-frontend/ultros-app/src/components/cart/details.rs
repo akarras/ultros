@@ -50,6 +50,7 @@ pub fn CartRowDetails(
         can_write,
         on_edit,
         "input w-24 text-right tabular-nums",
+        None,
     );
     let target = numeric_editor(
         item,
@@ -59,6 +60,7 @@ pub fn CartRowDetails(
         can_write,
         on_edit,
         "input w-32 text-right tabular-nums",
+        None,
     );
     let cheapest = Memo::new(move |_| {
         let item = item.get();
