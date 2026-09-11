@@ -2359,5 +2359,10 @@
     "cart_listing_world": "ワールド",
     "cart_listing_unit_price": "単価",
     "cart_listing_stack": "個数",
-    "cart_close_details": "詳細を閉じる"
+    "cart_close_details": "詳細を閉じる",
+    "cart_removed_named": "{{name}}を削除しました",
+    "cart_removed_count": "{{count}}件のアイテムを削除しました",
+    "cart_undo_removal": "元に戻す",
+    "cart_dismiss": "閉じる",
+    "cart_undo_unavailable": "この削除は元に戻せなくなりました"
 }

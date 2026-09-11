@@ -2359,5 +2359,10 @@
     "cart_listing_world": "Monde",
     "cart_listing_unit_price": "Prix unitaire",
     "cart_listing_stack": "Lot",
-    "cart_close_details": "Fermer les détails"
+    "cart_close_details": "Fermer les détails",
+    "cart_removed_named": "{{name}} retiré",
+    "cart_removed_count": "{{count}} objets retirés",
+    "cart_undo_removal": "Annuler",
+    "cart_dismiss": "Fermer",
+    "cart_undo_unavailable": "Ce retrait ne peut plus être annulé"
 }

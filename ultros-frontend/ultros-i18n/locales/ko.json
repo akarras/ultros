@@ -2359,5 +2359,10 @@
     "cart_listing_world": "서버",
     "cart_listing_unit_price": "단가",
     "cart_listing_stack": "수량",
-    "cart_close_details": "상세 닫기"
+    "cart_close_details": "상세 닫기",
+    "cart_removed_named": "{{name}} 제거됨",
+    "cart_removed_count": "아이템 {{count}}개 제거됨",
+    "cart_undo_removal": "실행 취소",
+    "cart_dismiss": "닫기",
+    "cart_undo_unavailable": "이 제거는 더 이상 실행 취소할 수 없습니다"
 }

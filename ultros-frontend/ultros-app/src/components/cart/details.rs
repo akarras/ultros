@@ -11,7 +11,7 @@ use thousands::Separable;
 use ultros_api_types::{ActiveListing, list::ListItem, world_helper::AnySelector};
 
 use super::estimate::{LineEstimate, LineStatus, matching_listings};
-use super::row::{gil_text, numeric_editor};
+use super::row::{NumericField, gil_text, numeric_editor};
 use crate::global_state::LocalWorldData;
 use crate::i18n::*;
 
@@ -45,20 +45,26 @@ pub fn CartRowDetails(
     let owned = numeric_editor(
         item,
         name.clone(),
-        t_string!(i18n, lists_workspace_owned).to_string(),
-        1,
+        NumericField {
+            field: 1,
+            label: t_string!(i18n, lists_workspace_owned).to_string(),
+            class: "input w-24 text-right tabular-nums",
+            id: None,
+        },
         can_write,
         on_edit,
-        "input w-24 text-right tabular-nums",
     );
     let target = numeric_editor(
         item,
         name,
-        t_string!(i18n, lists_workspace_target_price).to_string(),
-        2,
+        NumericField {
+            field: 2,
+            label: t_string!(i18n, lists_workspace_target_price).to_string(),
+            class: "input w-32 text-right tabular-nums",
+            id: None,
+        },
         can_write,
         on_edit,
-        "input w-32 text-right tabular-nums",
     );
     let cheapest = Memo::new(move |_| {
         let item = item.get();

@@ -210,10 +210,18 @@ async function main() {
     await page.click('input[aria-label="Select Maple Log"]');
     await page.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid="cart-selection-bar"]')?.textContent || ""));
     await page.click(testId("cart-bulk-hq"));
-    await page.waitForFunction((a, b) => document.querySelector(a)?.value === "hq" && document.querySelector(b)?.value === "hq", {}, quality, mapleQuality);
+    // Set HQ only touches rows whose item can be HQ: Bronze Ingot flips,
+    // Maple Log (no HQ variant since 7.0) keeps "any".
+    await page.waitForFunction((a, b) => document.querySelector(a)?.value === "hq" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
     await page.click(testId("cart-bulk-any"));
     await page.waitForFunction((a, b) => document.querySelector(a)?.value === "any" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
     await saved();
+    // Both rows stay selected across the quality edits (the edit re-keys
+    // the rows; the cart carries the selection over). Clear it for the
+    // scenarios below, which select rows one at a time.
+    await page.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid="cart-selection-bar"]')?.textContent || ""));
+    await page.evaluate(() => [...document.querySelectorAll('[data-testid="cart-selection-bar"] button')].find(b => /Clear selection/.test(b.textContent))?.click());
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-selection-bar"]') === null);
     console.log("[ok] selecting rows reveals bulk quality actions that apply to every selected row");
 
     // Sorting by quantity must not relocate a row whose editor holds a draft.
@@ -222,7 +230,8 @@ async function main() {
     await page.click('button[aria-label="Sort by Qty"]');
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="cart-rows"] > li')[0]?.textContent.includes("Maple Log"));
     assert.equal(await rowIndex("Bronze Ingot"), 1, "ascending quantity puts the 2-unit row first");
-    await page.click(needed, { clickCount: 3 });
+    await page.click(needed);
+    await page.$eval(needed, input => input.select());
     await page.keyboard.type("1");
     await page.$eval(mapleNeeded, input => { input.value = "9"; input.dispatchEvent(new Event("change", { bubbles: true })); });
     await waitValue(mapleNeeded, 9);
@@ -246,12 +255,39 @@ async function main() {
     await page.click(testId("cart-bulk-delete"));
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
     assert.equal(await page.$(testId("cart-selection-bar")), null, "deleting the selection clears it");
-    await page.click(testId("list-undo"));
+    await page.waitForSelector(testId("cart-removal-toast"), { visible: true });
+    assert.match(await page.$eval(testId("cart-removal-toast"), element => element.textContent), /Removed Maple Log/,
+      "a single-row bulk removal is announced by name");
+    await page.click(testId("cart-undo-removal"));
     await waitValue(mapleNeeded, 9);
-    await page.click('button[aria-label="Remove Maple Log"]');
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-removal-toast"));
+    // Focus recovery lands on the next frame once the restored row renders.
+    await page.waitForFunction(selector => document.activeElement === document.querySelector(selector), {}, mapleNeeded)
+      .catch(() => assert.fail("undo focuses the restored row's quantity"));
+    console.log("[ok] bulk delete announces the removal and its Undo restores the row");
+
+    // Keyboard removal: Enter on the trash button removes, focus moves to a
+    // neighbour, and an intervening edit retires the toast's Undo.
+    await page.focus('button[aria-label="Remove Maple Log"]');
+    await page.keyboard.press("Enter");
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
+    await page.waitForSelector(testId("cart-removal-toast"), { visible: true });
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Remove Bronze Ingot")
+      .catch(() => assert.fail("focus lands on the neighbouring row's remove button after a keyboard removal"));
+    await page.waitForSelector(testId("cart-undo-removal"), { visible: true });
+    await replace(needed, 7);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 7);
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-undo-removal"));
+    assert.match(await page.$eval(testId("cart-removal-toast"), element => element.textContent), /no longer available/,
+      "an edit after the removal withdraws the toast's Undo instead of undoing the wrong action");
+    await page.click(`${testId("cart-removal-toast")} button[aria-label="Dismiss"]`);
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-removal-toast"));
+    await replace(needed, 6);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 6);
     await saved();
-    console.log("[ok] bulk delete clears the selection and undo restores the rows");
+    console.log("[ok] keyboard removal restores focus and a later edit retires the stale Undo");
     await replace(needed, 9);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Tab");

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Remove cart rows without a dialog, and undo it (Labs)",
+  "blurb": "In the Labs list builder, the trash button removes a row immediately and a small notice under the cart total says what went, with an Undo button that puts the row back with its quantity and quality intact. Bulk removals work the same way. The notice only offers Undo while that removal is still your latest change, so it can never undo something else, and keyboard focus moves to a sensible neighbour after a removal or an undo.",
+  "link": "/list?labs=lists-sync",
+  "importance": "medium"
+}

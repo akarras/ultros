@@ -22,17 +22,31 @@ use crate::i18n::*;
 /// Shared by the header row and every item row so the columns line up.
 pub const ROW_GRID: &str = "grid items-center gap-x-2 gap-y-1 px-2 py-1.5 grid-cols-[auto_minmax(0,1fr)_auto] sm:grid-cols-[2rem_minmax(0,1fr)_5.5rem_6.5rem_8rem_2.5rem_2.5rem]";
 
+/// Which numeric field an editor commits to, and how it is rendered.
+pub struct NumericField {
+    /// Quantity (0), owned (1) or target price (2).
+    pub field: u8,
+    /// The accessible label's field name ("Needed", "Owned", ...).
+    pub label: String,
+    pub class: &'static str,
+    /// Element id, when something needs to focus this editor.
+    pub id: Option<String>,
+}
+
 /// The commit-on-change numeric editor the row and its details share.
-/// `field` selects quantity (0), owned (1) or target price (2).
 pub fn numeric_editor(
     row: Signal<ListItem>,
     name: String,
-    label: String,
-    field: u8,
+    spec: NumericField,
     can_write: Signal<bool>,
     on_edit: Callback<ListItem>,
-    class: &'static str,
 ) -> impl IntoView {
+    let NumericField {
+        field,
+        label,
+        class,
+        id,
+    } = spec;
     let i18n = use_i18n();
     let value = Memo::new(move |_| {
         let item = row.get();
@@ -43,7 +57,7 @@ pub fn numeric_editor(
         }
     });
     view! {
-        <input class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
+        <input id=id class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
             on:keydown=move |ev| {
                 // Only the keys this cell handles stop here; Ctrl+Z must
                 // reach the window listener, which decides between native
@@ -84,11 +98,23 @@ pub fn focus_element(id: &str) {
     #[cfg(feature = "hydrate")]
     {
         use wasm_bindgen::JsCast;
-        if let Some(element) = leptos::prelude::document()
-            .get_element_by_id(id)
-            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-        {
+        let find = |id: &str| {
+            leptos::prelude::document()
+                .get_element_by_id(id)
+                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+        };
+        if let Some(element) = find(id) {
             let _ = element.focus();
+        } else {
+            // The row that should take focus may not be in the DOM yet: the
+            // effect asking for it and the `<For>` rendering it react to the
+            // same document change. Try once more after the next paint.
+            let id = id.to_string();
+            leptos::leptos_dom::helpers::request_animation_frame(move || {
+                if let Some(element) = find(&id) {
+                    let _ = element.focus();
+                }
+            });
         }
     }
     #[cfg(not(feature = "hydrate"))]
@@ -101,6 +127,14 @@ pub fn details_toggle_id(row_id: i32) -> String {
     format!("cart-details-toggle-{row_id}")
 }
 
+pub fn remove_button_id(row_id: i32) -> String {
+    format!("cart-remove-{row_id}")
+}
+
+pub fn quantity_input_id(row_id: i32) -> String {
+    format!("cart-qty-{row_id}")
+}
+
 #[component]
 pub fn CartRow(
     item: Signal<ListItem>,
@@ -110,6 +144,9 @@ pub fn CartRow(
     /// Row ids whose details panel is open; keyed by id so a reactive
     /// update or re-sort never moves the open panel to another row.
     expanded: RwSignal<HashSet<i32>>,
+    /// Rows whose removal is in flight; their delete button is disabled.
+    #[prop(default = Signal::derive(HashSet::new))]
+    removing: Signal<HashSet<i32>>,
     on_edit: Callback<ListItem>,
     on_delete: Callback<i32>,
     can_write: Signal<bool>,
@@ -142,11 +179,14 @@ pub fn CartRow(
     let quantity = numeric_editor(
         row,
         name.clone(),
-        t_string!(i18n, lists_workspace_needed).to_string(),
-        0,
+        NumericField {
+            field: 0,
+            label: t_string!(i18n, lists_workspace_needed).to_string(),
+            class: "input w-full min-w-0 text-right tabular-nums",
+            id: Some(quantity_input_id(id)),
+        },
         can_write,
         on_edit,
-        "input w-full min-w-0 text-right tabular-nums",
     );
     let estimate_text = move || {
         let Some(line) = line.get() else {
@@ -199,7 +239,7 @@ pub fn CartRow(
                 <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
                     <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
                 </button>
-                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" disabled=move || !can_write.get() on:click=move |_| on_delete.run(id)>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
                     <Icon icon=i::BiTrashRegular />
                 </button>
             </div>
