@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Undo that does what you expect while editing a list",
+  "blurb": "Every committed change to a list is now its own undo step, even quick ones back to back. Ctrl+Z inside a cell still undoes your typing while you have unsaved text; once the cell matches the list, it undoes the last committed change instead. The Undo and Redo buttons grey out when there is nothing to do, and the shortcut says so.",
+  "link": "/list"
+}

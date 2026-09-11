@@ -186,7 +186,7 @@ pub fn InlineListAdd(
         <section class="panel rounded-xl p-4 sm:p-5" aria-label=t_string!(i18n, lists_workspace_add_items_label) data-testid="inline-list-add">
             <div class="mb-3"><h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_build_hint)}</p></div>
             <div class="flex flex-wrap gap-2">
-                <input node_ref=input class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search
+                <input node_ref=input class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed=""
                     on:input=move |ev| search.set(event_target_value(&ev))
                     on:keydown=move |ev| {
                         if ev.key() == "Escape" { search.set(String::new()); ev.stop_propagation(); }
@@ -195,7 +195,7 @@ pub fn InlineListAdd(
                             if let Some((id, _, can_hq, _)) = results.get_untracked().first() { add.run((*id, *can_hq)); }
                         }
                     } />
-                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity on:input=move |ev| quantity.set(event_target_value(&ev)) />
+                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity data-committed=move || quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) />
                 <select class="input" aria-label=t_string!(i18n, lists_workspace_add_quality) prop:value=quality on:change=move |ev| quality.set(event_target_value(&ev))><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
             </div>
             <p class="text-sm mt-2 text-[color:var(--color-text-muted)]" role="status">{feedback}</p>
@@ -364,11 +364,14 @@ pub fn BuildListRow(
             }
         });
         view! {
-            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() readonly=move || !can_write.get()
+            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
                 on:keydown=move |ev| {
-                    ev.stop_propagation();
-                    if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
-                    if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
+                    // Only the keys this cell handles stop here; Ctrl+Z must
+                    // reach the window listener, which decides between native
+                    // text undo (a draft) and document undo (a clean cell) from
+                    // `data-committed` (#1430).
+                    if ev.key() == "Enter" { ev.stop_propagation(); let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
+                    if ev.key() == "Escape" { ev.stop_propagation(); event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
                 }
                 on:change=move |ev| {
                     let entered = event_target_value(&ev);
@@ -421,6 +424,11 @@ pub struct ListWorkspaceSource {
     pub add_many: Callback<Vec<ListItem>>,
     pub undo: Callback<()>,
     pub redo: Callback<()>,
+    /// Reactive availability (#1430): the toolbar disables and explains an
+    /// action with nothing to do, and the callbacks report the same through
+    /// `feedback` when a shortcut hits an empty stack.
+    pub can_undo: Signal<bool>,
+    pub can_redo: Signal<bool>,
     pub pending: Signal<bool>,
     pub feedback: Signal<String>,
     pub recipe_open: Signal<bool>,
@@ -513,12 +521,12 @@ pub fn ListBuildWorkspace(
                 <InlineListAdd list_id=source.list_id on_add=source.add pending=source.pending feedback=source.feedback />
                 <div class="flex gap-2 flex-wrap">
                     <button class="btn-secondary" on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
-                    <button class="btn-secondary" on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button class="btn-secondary" on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button class="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
+                    <button class="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
-            <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+            <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
             <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
             <div class="overflow-x-auto panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
@@ -994,6 +1002,24 @@ pub fn ListViewSync() -> impl IntoView {
         async move { apply_edit(handle, edit) }
     });
     let mutation_feedback = RwSignal::new(String::new());
+    // Shared by the toolbar buttons and the keyboard bindings (#1430): a
+    // shortcut that finds nothing to do says so in the workspace feedback
+    // line instead of appearing broken. The add action's own feedback is
+    // cleared so the explanation is actually visible.
+    let undo_action = Callback::new(move |()| {
+        let done = handle.get_untracked().is_some_and(|handle| handle.undo());
+        if !done {
+            add_item.value().set(None);
+            mutation_feedback.set(t_string!(i18n, lists_workspace_nothing_to_undo).to_string());
+        }
+    });
+    let redo_action = Callback::new(move |()| {
+        let done = handle.get_untracked().is_some_and(|handle| handle.redo());
+        if !done {
+            add_item.value().set(None);
+            mutation_feedback.set(t_string!(i18n, lists_workspace_nothing_to_redo).to_string());
+        }
+    });
     let delete_item = Action::new(move |list_item: &i32| {
         let edit = Edit::Remove(*list_item);
         async move {
@@ -1293,15 +1319,19 @@ pub fn ListViewSync() -> impl IntoView {
                     // `close` again; it is idempotent.
                     on_cleanup(move || opened.close());
                     // Re-installed alongside each handle so the keys always
-                    // reach the live document. `install` takes the handle by
-                    // value, and one window listener per open is cheap:
-                    // switching accounts without a page load isn't reachable
-                    // (signing in navigates away and back), so in practice
-                    // this runs exactly once per page. Left under the
-                    // Effect's own owner on purpose: it creates no node the
-                    // handle needs, and its listener is then removed when
-                    // this run is superseded, instead of piling up.
-                    crate::list_doc::undo::install(opened, modal_open);
+                    // reach the live document. The bindings capture the
+                    // handle by value, and one window listener per open is
+                    // cheap: switching accounts without a page load isn't
+                    // reachable (signing in navigates away and back), so in
+                    // practice this runs exactly once per page. Left under
+                    // the Effect's own owner on purpose: it creates no node
+                    // the handle needs, and its listener is then removed
+                    // when this run is superseded, instead of piling up.
+                    crate::list_doc::undo::install(crate::list_doc::undo::UndoBindings {
+                        undo: undo_action,
+                        redo: redo_action,
+                        modal_open,
+                    });
                 }
                 _ => {
                     // Signed out, or no list id. Drop the document; the page
@@ -1533,16 +1563,10 @@ pub fn ListViewSync() -> impl IntoView {
                 Err(error) => workspace_error(i18n, &error),
             });
         }),
-        undo: Callback::new(move |()| {
-            if let Some(handle) = handle.get_untracked() {
-                handle.undo();
-            }
-        }),
-        redo: Callback::new(move |()| {
-            if let Some(handle) = handle.get_untracked() {
-                handle.redo();
-            }
-        }),
+        undo: undo_action,
+        redo: redo_action,
+        can_undo: Signal::derive(move || handle.get().is_some_and(|handle| handle.can_undo())),
+        can_redo: Signal::derive(move || handle.get().is_some_and(|handle| handle.can_redo())),
         pending: add_item.pending().into(),
         feedback: Signal::derive(move || {
             add_item
