@@ -409,7 +409,7 @@ pub fn ListWorkspaceModes(shop: Signal<bool>, set_shop: Callback<bool>) -> impl 
     let i18n = use_i18n();
     view! {
         <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label=t_string!(i18n, lists_workspace_mode)>
-            <button class=move || if !shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
+            <button class=move || if !shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } data-testid="guest-build-mode" aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
             <button class=move || if shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } data-testid="guest-shop-mode" aria-pressed=move || shop.get().to_string() on:click=move |_| set_shop.run(true)>{t!(i18n, lists_workspace_shop)}</button>
         </div>
     }
@@ -1417,6 +1417,10 @@ pub fn ListViewSync() -> impl IntoView {
     // renders the same view a hydrated client shows.
     let (buying_view_param, set_buying_view_param) = filter_query_signal::<bool>("buy");
     let buying_view = Memo::new(move |_| buying_view_param.get().unwrap_or(false));
+    // Latches once Shop has been opened; see the Shop mount below.
+    let shop_mounted = Memo::new(move |previous: Option<&bool>| {
+        buying_view.get() || previous.copied().unwrap_or(false)
+    });
 
     let (excluded_worlds_param, set_excluded_worlds_param) =
         filter_query_signal::<IdList>("excluded-worlds");
@@ -1789,21 +1793,27 @@ pub fn ListViewSync() -> impl IntoView {
                 }}
             </Show>
 
-            <Show when=move || buying_view.get()>
-                <Suspense fallback=move || view! { <Loading /> }>
-                    <crate::components::list_shop::ListShop input=shop_input
-                        on_purchase=Callback::new(move |(key, delta): (String, i32)| {
-                            if !view_caps.with_untracked(|c| c.can_write) { return; }
-                            if let Ok(id) = key.parse::<i32>()
-                                && let Some(key) = crate::list_doc::adapter::key_of(id)
-                                && let Some(handle) = handle.get_untracked()
-                                && let Err(error) = handle.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta.max(0)) })
-                            { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
-                        })
-                        on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
-                        can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
-                </Suspense>
-            </Show>
+            // Shop mounts the first time it is opened and then stays mounted
+            // but hidden, so returning to Build keeps the chosen trip, its
+            // recorded stacks and an open companion. The first server render
+            // is unchanged: without `?buy=true` nothing is mounted yet.
+            <div class:hidden=move || !buying_view.get()>
+                <Show when=move || shop_mounted.get()>
+                    <Suspense fallback=move || view! { <Loading /> }>
+                        <crate::components::list_shop::ListShop input=shop_input
+                            on_purchase=Callback::new(move |(key, delta): (String, i32)| {
+                                if !view_caps.with_untracked(|c| c.can_write) { return; }
+                                if let Ok(id) = key.parse::<i32>()
+                                    && let Some(key) = crate::list_doc::adapter::key_of(id)
+                                    && let Some(handle) = handle.get_untracked()
+                                    && let Err(error) = handle.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta.max(0)) })
+                                { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
+                            })
+                            on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
+                            can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
+                    </Suspense>
+                </Show>
+            </div>
 
             {move || match menu() {
                 MenuState::None => None,
