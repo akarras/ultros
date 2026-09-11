@@ -41,3 +41,27 @@ The previous on-demand implementation and its measured capacity are preserved at
 Record the repaired head's full CI, real database tests, fresh SSR/WASM build, API/browser probes and representative producer/read result before merge. No result has been asserted in this document in advance of execution.
 
 Keep #1342 open for actual deployed throughput/skew, concurrent replica load, cold and repeated request latency, generation failure rates, fresh-snapshot availability, retention/seed continuity, writer/drop health and floor consistency. Receipt maturity needs elapsed actual observations; synthetic timestamps cannot fill missing history. Merging this implementation does not establish production capacity or mature 7/30/90-day coverage.
+
+## Production observation, 2026-09-11 04:00 UTC
+
+Measured against the deployed image at main `55b422cb` (both #1397 and #1416 live) on the
+production ClickHouse (`ultros` database), the production Postgres `active_listing` table,
+the app's Prometheus counters and the public API. These are observations of one point in
+time, not an SLA.
+
+| Check | Observed |
+| --- | --- |
+| Listing-event history | `listing_events` starts 2026-09-07 18:31 UTC (11.45M-row seed, marker `_listing_events_seed`), 22.2M rows, ~3.4M websocket + ~60k catch-up rows/day since. TTL 365 days confirmed on the table. |
+| Receipt history | `sale_receipts` starts 2026-09-10 04:01 UTC (the #1397 deploy). 1.37M receipts in the last 24h against 1.38M sales inserted: receipts cover sales. TTL 365 days. |
+| Writer health | `ultros_clickhouse_writer_dropped_rows_total`, `..._flush_failures_total`, `ultros_listing_events_seed_failures_total`, `ultros_floor_changes_bulk_failures_total` have never incremented (no series). `..._written_rows_total` ≈ 7.46M rows/24h, queue depth 0. |
+| Seed continuity | One upstream outage: 2026-09-08 06:00–19:00 UTC listing events fell to 3–30% of baseline and `sales` fell in lockstep, with worlds recovering in stages (7 → 49 → 125). Not an app or writer fault; the app did not restart. It breaks 7-day continuity for every key until 2026-09-15 19:00 UTC. `continuity_verified` is never set by the code, so this remains an out-of-band check. |
+| Snapshot producer | Cold `?window=` requests return 503 and the background worker publishes the generation in 5–8 s (Gilgamesh 1/7/30/90 days: 10k–21k keys; Aether 7 days: 22.5k keys). Warm reads return 200 in 0.85–1.15 s for 15–20 MB bodies. Both snapshot tables carry the 2-day TTL. |
+| `listing_alive` vs Postgres | Gilgamesh: `alive_count` equals the Postgres listing count for 15,356 of 15,532 keys; every residual is a key that changed after the last 15-minute rollup (max `computed_at` 03:51:55). |
+| Floor baseline | **Defect.** 1,283,843 of 1,910,023 live (world, item, hq) keys (67%) have no `floor_changes` row at all, so their floor is "unknown" for every window, and at datacenter scope one unknown world makes the whole key unknown (17,314 of 22,004 Aether keys). Cause: the analyzer snapshot restores the cheapest map before the boot rebuild, so the boot diff runs against the restored map and never writes the per-key anchor `floor_diff` was designed to write; `reason='resync'` totals 60k rows across 15 boots. Fixed by diffing the boot rebuild against ClickHouse's latest floor per key instead. |
+| Floor tie-break | 812 Gilgamesh keys have two different non-zero prices in the same latest second (a `listing` and a `refill` row). The reader's `argMax(price, (event_time, -price))` picks the cheaper one, which matched Postgres in the sampled cases. |
+
+Observed coverage at that time: 1 day of receipt-matched sale ages, 3.4 days of listing
+turnover and floor history, with one 13-hour upstream gap inside it. 7-day windows are not
+mature before 2026-09-15 19:00 UTC (listings) and 2026-09-17 (receipts); 30/90-day windows
+report their observed span and remain incomplete by construction until that much history has
+elapsed.
