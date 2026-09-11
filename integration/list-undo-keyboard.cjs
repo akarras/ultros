@@ -88,9 +88,6 @@ async function main() {
     await page.keyboard.press("Escape");
     await focusDocument();
   }
-  // Two edits closer together than `ListUndo::MERGE_INTERVAL_MS` collapse
-  // into one step; keep the steps under test distinct.
-  const separateSteps = () => new Promise(resolve => setTimeout(resolve, 1200));
 
   try {
     await load("/list?lang=en");
@@ -114,7 +111,6 @@ async function main() {
     await waitValue(NEEDED, 3);
     console.log("[ok] Ctrl+Shift+Z redoes it");
 
-    await separateSteps();
     await replace(NEEDED, 8);
     await page.keyboard.press("Enter");
     await waitValue(NEEDED, 8);
@@ -125,7 +121,6 @@ async function main() {
     await waitValue(NEEDED, 8);
     console.log("[ok] a committed cell edit undoes and redoes");
 
-    await separateSteps();
     const removeButton = await page.evaluateHandle(() =>
       [...document.querySelectorAll("tr[data-item-id]")]
         .find(row => row.textContent.includes("Bronze Ingot"))
@@ -164,7 +159,6 @@ async function main() {
       "the second list opened without a document reload");
     await addBronzeIngot(3);
     await waitValue(NEEDED, 3);
-    await separateSteps();
     await addBronzeIngot(3);
     await waitValue(NEEDED, 6);
     await saved();
@@ -174,6 +168,95 @@ async function main() {
     assert.equal(await neededValue(), "3",
       "one Ctrl+Z reverts exactly one step: a second listener would have reverted both adds");
     console.log("[ok] shortcuts reach the navigated-to list through a single listener");
+    await saved();
+
+    // ---- #1430: undo while an editor has focus ----
+    // Contract in docs/superpowers/specs/2026-09-10-list-undo-keyboard-and-editing-design.md:
+    // an editor with a draft keeps native text undo; a clean editor, a
+    // select, a checkbox and focus outside the grid all reach document undo.
+    console.log("[step] editor-focus rules on the navigated-to list");
+    const QUALITY = 'tr[data-item-id] select[aria-label="Item quality"]';
+    const CHECKBOX = 'tr[data-item-id] input[type="checkbox"]';
+    const FEEDBACK = `${testId("inline-list-add")} [role="status"]`;
+    const committed = () => page.$eval(NEEDED, input => input.getAttribute("data-committed"));
+    const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? null);
+    const settle = () => new Promise(resolve => setTimeout(resolve, 400));
+
+    await page.click(SEARCH);
+    await page.keyboard.press("Escape");
+    await undo();
+    await waitGone(NEEDED);
+    console.log("[ok] Ctrl+Z in the empty catalog search undoes the document");
+    await redoY();
+    await waitValue(NEEDED, 3);
+    await page.type(SEARCH, "Bronze");
+    await undo();
+    await settle();
+    assert.equal(await neededValue(), "3", "Ctrl+Z inside a search draft leaves the document alone");
+    assert.equal(await focusedLabel(), "Add an item", "focus stays in the search draft");
+    await page.keyboard.press("Escape");
+    console.log("[ok] a catalog search draft keeps native text undo");
+
+    await replace(NEEDED, 5);
+    await page.keyboard.press("Tab");
+    await waitValue(NEEDED, 5);
+    assert.equal(await focusedLabel(), "Owned for Bronze Ingot", "Tab moved focus into the next cell");
+    await undo();
+    await waitValue(NEEDED, 3);
+    console.log("[ok] Ctrl+Z in the next clean cell undoes the Tab-committed edit");
+    await redoY();
+    await waitValue(NEEDED, 5);
+
+    await replace(NEEDED, 44);
+    await undo();
+    await settle();
+    assert.equal(await committed(), "5", "Ctrl+Z inside a numeric draft leaves the document alone");
+    assert.equal(await focusedLabel(), "Needed for Bronze Ingot", "focus stays in the drafting cell");
+    await page.keyboard.press("Escape");
+    await waitValue(NEEDED, 5);
+    await undo();
+    await waitValue(NEEDED, 3);
+    console.log("[ok] a numeric draft keeps native text undo; Escape discards it and Ctrl+Z then reaches the document");
+    await redoY();
+    await waitValue(NEEDED, 5);
+
+    await page.select(QUALITY, "hq");
+    await page.waitForFunction(selector => document.querySelector(selector)?.value === "hq", {}, QUALITY);
+    await page.focus(QUALITY);
+    await undo();
+    await page.waitForFunction(selector => document.querySelector(selector)?.value === "any", {}, QUALITY);
+    console.log("[ok] Ctrl+Z in the focused quality select undoes the quality change");
+    await page.click(CHECKBOX);
+    assert.equal(await page.$eval(CHECKBOX, box => box.checked), true);
+    await redoY();
+    await page.waitForFunction(selector => document.querySelector(selector)?.value === "hq", {}, QUALITY);
+    await page.click(CHECKBOX);
+    console.log("[ok] Ctrl+Y with a focused checkbox redoes the document");
+    await page.focus(QUALITY);
+    await undo();
+    await page.waitForFunction(selector => document.querySelector(selector)?.value === "any", {}, QUALITY);
+
+    await replace(NEEDED, 7);
+    await page.keyboard.press("Enter");
+    await waitValue(NEEDED, 7);
+    await replace(NEEDED, 9);
+    await page.keyboard.press("Enter");
+    await waitValue(NEEDED, 9);
+    await focusDocument();
+    await undo();
+    await waitValue(NEEDED, 7);
+    await undo();
+    await waitValue(NEEDED, 5);
+    console.log("[ok] two immediate commits undo one at a time");
+    await redoY();
+    await waitValue(NEEDED, 7);
+    await redoY();
+    await waitValue(NEEDED, 9);
+    await page.waitForFunction(selector => document.querySelector(selector)?.disabled === true, {}, testId("list-redo"));
+    assert.equal(await page.$eval(testId("list-undo"), button => button.disabled), false, "Undo stays available");
+    await redoY();
+    await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes("Nothing to redo"), {}, FEEDBACK);
+    console.log("[ok] an exhausted redo stack disables the button and the shortcut explains itself");
     await saved();
 
     await page.evaluate(token => { window.__undoDocument = token; }, token);
@@ -188,7 +271,7 @@ async function main() {
     assert.equal(await neededValue(), "8",
       "a freshly reopened document has nothing to undo; the previous list's history does not leak");
     await load(listB);
-    await waitValue(NEEDED, 3);
+    await waitValue(NEEDED, 9);
     console.log("[ok] leaving a list disposes its listener and its history");
 
     assert.deepEqual(errors, [], "no uncaught browser errors");

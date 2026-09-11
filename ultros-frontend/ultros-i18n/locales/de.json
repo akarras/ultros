@@ -90,6 +90,8 @@
     "lists_workspace_added": "Hinzugefügt. Bei gleichem Gegenstand und gleicher Qualität erhöht sich die benötigte Menge. Mit Rückgängig kannst du dies zurücknehmen.",
     "lists_workspace_undo": "Letzte Änderung rückgängig machen",
     "lists_workspace_redo": "Wiederholen",
+    "lists_workspace_nothing_to_undo": "Nichts rückgängig zu machen",
+    "lists_workspace_nothing_to_redo": "Nichts zu wiederholen",
     "lists_workspace_selected": "{{count}} ausgewählt",
     "lists_workspace_preview_row": "{{quantity}} × {{name}}{{quality}}",
     "lists_workspace_document_closed": "Diese Liste ist geschlossen. Öffne sie erneut, um Änderungen vorzunehmen.",

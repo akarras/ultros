@@ -10,15 +10,22 @@ pub struct ListUndo {
 }
 
 impl ListUndo {
-    /// Edits closer together than this merge into one undo step.
-    pub const MERGE_INTERVAL_MS: i64 = 1000;
+    /// Edits closer together than this merge into one undo step. Zero: every
+    /// committed action is its own step, however quickly it followed the
+    /// previous one. Loro's time-based merge applies across explicit groups
+    /// too, so any positive interval would fold two quick cell commits (or
+    /// two Enter presses in the catalog search) into one Ctrl+Z, which is
+    /// exactly the unpredictability issue #1430 removes. Multi-row edits
+    /// still become one step through [`Self::group`].
+    pub const MERGE_INTERVAL_MS: i64 = 0;
     pub const MAX_STEPS: usize = 100;
 
     pub fn new(doc: &ListDocument) -> Self {
         Self::with_merge_interval(doc, Self::MERGE_INTERVAL_MS)
     }
 
-    /// Tests pass `0` so consecutive edits stay separate steps.
+    /// The default interval is already `0`; this stays for callers that
+    /// want to opt back into time-based merging.
     pub fn with_merge_interval(doc: &ListDocument, interval_ms: i64) -> Self {
         let mut inner = UndoManager::new(doc.inner());
         inner.set_merge_interval(interval_ms);
@@ -107,6 +114,35 @@ mod tests {
         assert!(!undo.undo().unwrap());
         assert!(undo.redo().unwrap());
         assert_eq!(doc.row(&key).unwrap().need, 5);
+    }
+
+    /// The production constructor: two commits in the same millisecond are
+    /// still two steps, and a group is still one.
+    #[test]
+    fn default_manager_keeps_rapid_commits_as_separate_steps() {
+        let (doc, key) = doc();
+        let mut undo = ListUndo::new(&doc);
+        undo.group(|| doc.set_need(&key, 5)).unwrap();
+        undo.group(|| doc.set_need(&key, 9)).unwrap();
+        let other = RowKey::new(11, None);
+        undo.group(|| {
+            doc.add_row(other, 2, None)?;
+            doc.set_target(&other, Some(30))
+        })
+        .unwrap();
+        assert!(undo.undo().unwrap());
+        assert!(doc.row(&other).is_none(), "the grouped add is one step");
+        assert_eq!(doc.row(&key).unwrap().need, 9);
+        assert!(undo.undo().unwrap());
+        assert_eq!(
+            doc.row(&key).unwrap().need,
+            5,
+            "rapid commits undo one at a time"
+        );
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&key).unwrap().need, 1);
+        assert!(!undo.can_undo());
+        assert!(undo.can_redo());
     }
 
     #[test]

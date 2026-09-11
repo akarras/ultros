@@ -305,6 +305,15 @@ impl GuestListHandle {
     pub fn redo(&self) -> bool {
         self.history(true)
     }
+    /// Reactive on `revision`, which every document change bumps (#1430).
+    pub fn can_undo(&self) -> bool {
+        self.revision.track();
+        !self.inner.closed.get() && self.inner.undo.borrow().can_undo()
+    }
+    pub fn can_redo(&self) -> bool {
+        self.revision.track();
+        !self.inner.closed.get() && self.inner.undo.borrow().can_redo()
+    }
     fn history(&self, redo: bool) -> bool {
         if self.inner.closed.get() {
             return false;

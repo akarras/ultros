@@ -335,11 +335,9 @@ async function main() {
     }
 
     console.log("[step] owner edits offline, then reconnects");
-    // `ListUndo::MERGE_INTERVAL_MS` is 1000: two edits closer together than
-    // that collapse into one undo step, and the Ctrl+Z below would then
-    // revert both. Space them so the undo step under test is the offline
-    // edit alone.
-    await new Promise((r) => setTimeout(r, 1500));
+    // Every committed edit is its own undo step (`ListUndo::MERGE_INTERVAL_MS`
+    // is 0, #1430), so the Ctrl+Z below reverts the offline edit alone even
+    // though it follows the previous edit immediately.
     await ownerPage.setOfflineMode(true);
     await setAcquired(ownerPage, false);
     const offline = await waitForState(ownerPage, (s) => s.acquired === 0, 10000);
@@ -368,18 +366,17 @@ async function main() {
       pass("A: server agrees (all rows unacquired)");
     }
 
-    console.log("[step] Ctrl+Z on the owner");
-    // The undo must not race the reconnect's own resync: a snapshot import
-    // landing on top of it would silently swallow the revert.
+    console.log("[step] Ctrl+Z on the owner immediately after reconnect");
+    // Issued as soon as the page reports live, with no settle delay (#1430):
+    // the undo is a local operation on top of whatever the reconnect merged,
+    // so a snapshot import landing after it must not swallow the revert. If
+    // this ever fails, the reconnect path is dropping local operations and
+    // that is the bug to fix, not the timing here.
     if (!(await waitForLive(ownerPage, TIMEOUT_MS))) {
       fail(failures, "A: owner did not return to live after reconnect");
     } else {
       pass("A: owner is live again after reconnect");
     }
-    // "live" is set when the handshake reply lands; the snapshot import that
-    // follows it can still be in flight, and an undo issued into that window
-    // is overwritten by the import. Let the resync settle first.
-    await new Promise((r) => setTimeout(r, 3000));
     await ownerPage.keyboard.down("Control");
     await ownerPage.keyboard.press("KeyZ");
     await ownerPage.keyboard.up("Control");
