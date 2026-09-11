@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Datacenter and region floor history no longer voided by quiet worlds",
+  "blurb": "The windowed floor min/max for a datacenter or region treated any world that had never listed an item as unknown, which blanked the whole scope, so most Europe and Aether keys showed no floor even after every world's own floors were filled in. Each restart now records when it last checked every world, and from then on a world with no listing counts as an empty board instead of a gap."
+}

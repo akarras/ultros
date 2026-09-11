@@ -406,6 +406,28 @@ fn resync_rows(
     floor_diff(old, fresh, world_id, at)
 }
 
+/// One `floor_anchors` row per world for a resync whose diff ran against
+/// ClickHouse's own baseline: once that diff is stored, a key with no
+/// `floor_changes` row on the world had no listing there at `at`. A diff
+/// against the in-memory map proves nothing about absent keys, so it anchors
+/// nothing.
+fn anchor_rows(
+    baseline_from_clickhouse: bool,
+    worlds: impl IntoIterator<Item = i32>,
+    at: chrono::DateTime<Utc>,
+) -> Vec<ultros_clickhouse::rows::FloorAnchorRow> {
+    if !baseline_from_clickhouse {
+        return Vec::new();
+    }
+    worlds
+        .into_iter()
+        .map(|world_id| ultros_clickhouse::rows::FloorAnchorRow {
+            anchored_at: at,
+            world_id,
+        })
+        .collect()
+}
+
 /// Estimate what an item will actually **sell** for on the target world.
 ///
 /// This is intentionally the same formula the Flip Finder uses client-side
@@ -940,6 +962,7 @@ impl AnalyzerService {
         )
         .increment(1);
         let mut rows = Vec::new();
+        let mut worlds = Vec::new();
         for (selector, listings) in fresh {
             if let Some(lock) = self.cheapest_items.get(&selector) {
                 let mut current = lock.write().await;
@@ -951,11 +974,13 @@ impl AnalyzerService {
                         world_id,
                         at,
                     ));
+                    worlds.push(world_id);
                 }
                 *current = listings;
             }
         }
-        self.spawn_floor_resync_insert(rows);
+        let anchors = anchor_rows(baseline.is_some(), worlds, at);
+        self.spawn_floor_resync_insert(rows, anchors);
         Ok(())
     }
 
@@ -963,9 +988,15 @@ impl AnalyzerService {
     /// row per key — millions — which would swamp the bounded writer queue, so
     /// it goes straight to ClickHouse in chunks. Never awaited by the caller:
     /// the analyzer must go live whether or not ClickHouse is up. Not retried:
-    /// the next resync re-derives the same state.
-    fn spawn_floor_resync_insert(&self, rows: Vec<ultros_clickhouse::rows::FloorChangeRow>) {
-        if rows.is_empty() {
+    /// the next resync re-derives the same state. The per-world anchors are
+    /// written only after every diff chunk landed: an anchor claims that the
+    /// stored series is complete at that instant.
+    fn spawn_floor_resync_insert(
+        &self,
+        rows: Vec<ultros_clickhouse::rows::FloorChangeRow>,
+        anchors: Vec<ultros_clickhouse::rows::FloorAnchorRow>,
+    ) {
+        if rows.is_empty() && anchors.is_empty() {
             return;
         }
         let client = self.ch_client.clone();
@@ -992,6 +1023,19 @@ impl AnalyzerService {
                         ?error,
                         rows = rows.len(),
                         "floor resync bulk insert failed; the next resync re-derives it"
+                    );
+                    return;
+                }
+            }
+            match ultros_clickhouse::writer::insert_all(&client, &anchors, 10_000).await {
+                Ok(written) => info!(worlds = written, "recorded floor anchors"),
+                Err(error) => {
+                    metrics::counter!("ultros_floor_changes_bulk_failures_total", "reason" => "anchor_insert_failed")
+                        .increment(anchors.len() as u64);
+                    warn!(
+                        ?error,
+                        worlds = anchors.len(),
+                        "floor anchor insert failed; the next resync re-derives it"
                     );
                 }
             }
@@ -2346,8 +2390,8 @@ mod test {
     use std::collections::BTreeMap;
 
     use super::{
-        SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
-        floor_baseline, floor_diff, resync_rows,
+        SaleHistory, SaleSummary, SoldAmount, SoldWithin, anchor_rows, estimate_sale_price,
+        flip_profit_and_roi, floor_baseline, floor_diff, resync_rows,
     };
     use ultros_api_types::ActiveListing;
     use ultros_db::listings::ListingSummary;
@@ -2999,6 +3043,21 @@ mod test {
 
         // ClickHouse unreachable: fall back to the in-memory map as before.
         assert!(resync_rows(None, &restored, &fresh, 40, Utc::now()).is_empty());
+    }
+
+    /// Only a diff against ClickHouse's own baseline proves that a key with
+    /// no row had no listing; a diff against the in-memory map anchors nothing.
+    #[test]
+    fn anchor_rows_record_every_world_only_for_a_clickhouse_baseline() {
+        let at = Utc::now();
+        let rows = anchor_rows(true, [40, 41], at);
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.world_id, r.anchored_at))
+                .collect::<Vec<_>>(),
+            vec![(40, at), (41, at)]
+        );
+        assert!(anchor_rows(false, [40, 41], at).is_empty());
     }
 
     #[test]

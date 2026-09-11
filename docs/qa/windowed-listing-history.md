@@ -65,3 +65,41 @@ turnover and floor history, with one 13-hour upstream gap inside it. 7-day windo
 mature before 2026-09-15 19:00 UTC (listings) and 2026-09-17 (receipts); 30/90-day windows
 report their observed span and remain incomplete by construction until that much history has
 elapsed.
+
+## Production observation, 2026-09-11 15:00 UTC (after #1453)
+
+Measured against the deployed image at main `0a18f436` (#1453 live; container restarted
+13:36 UTC) on the production ClickHouse and the public API.
+
+| Check | Observed |
+| --- | --- |
+| Boot anchor | The first #1453 boot wrote 1,285,184 `reason='resync'` rows in the 09:00 UTC hour, against ~5–9k per hour for the periodic drift resync. |
+| Live-key floor coverage | 1,909,035 of 1,909,035 live (world, item, hq) keys (from `listing_alive`, `alive_count > 0`) now have a `floor_changes` row, up from 33%. |
+| World scope | Gilgamesh `?window=7`: 16,303 of 17,492 keys (93%) report a `floor_min`; 16,862 have any known interval. |
+| Datacenter scope | Aether `?window=7`: 9,581 of 22,538 keys (42.5%) report a `floor_min`, up from ~21%, and only 20 keys report any `floor_empty_secs`. |
+
+The datacenter residual is the second half of the same defect. `bounds` only counts an
+interval as known when every world in the scope has a floor row in effect, and a world that
+has never listed an item has no `floor_changes` row at all, so it reads as unknown for the
+whole window and makes the datacenter key unknown with it. The boot resync does prove such
+keys empty (it diffs Postgres's complete listing set against ClickHouse's latest floor per
+key), but nothing recorded *when* that proof happened. Shadow (four new EU worlds with a few
+hundred listings each) makes the Europe region scope unknown for almost every key for the
+same reason.
+
+### Floor anchors
+
+`floor_anchors (anchored_at, world_id)` records one row per world each time the analyzer's
+resync completes against a ClickHouse baseline and its bulk insert succeeds. A resync that
+fell back to the in-memory map (ClickHouse unreachable or slow) records nothing, because it
+proves nothing about absent keys. Readers take the earliest anchor per world and seed a
+synthetic empty row at that instant for any world with no observation at or before it; a real
+row at the same second wins. Before a world's earliest anchor nothing is claimed, so a window
+that starts before the anchor still reports that stretch as unknown.
+
+This is what "aggregate only over active servers" means here: a world with no listings is a
+known-empty board that contributes nothing to the scope minimum, not an unknown one that
+voids it. The world set itself is still Universalis's (`regions_and_datacenters.rs`); the
+Cloud DC test worlds sit in their own `NA-Cloud-DC` region, so they never enter a North
+America scope. Expect datacenter `floor_min` coverage to converge on world coverage one
+anchor after this deploys, and the Aether count above is the before-figure to compare it to.
