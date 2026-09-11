@@ -22,6 +22,7 @@ use ultros_api_types::{
 
 use crate::api::{get_list_activity, get_list_items_with_listings};
 use crate::components::{
+    cart::{ListCart, use_legacy_cart},
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases,
@@ -419,6 +420,10 @@ pub struct ListWorkspaceSource {
     pub add_many: Callback<Vec<ListItem>>,
     pub undo: Callback<()>,
     pub redo: Callback<()>,
+    /// Whether `undo` / `redo` would change the document right now. Read
+    /// by the cart to disable the controls; Track A owns what a step is.
+    pub can_undo: Signal<bool>,
+    pub can_redo: Signal<bool>,
     pub pending: Signal<bool>,
     pub feedback: Signal<String>,
     pub recipe_open: Signal<bool>,
@@ -1443,6 +1448,18 @@ pub fn ListViewSync() -> impl IntoView {
                 handle.redo();
             }
         }),
+        can_undo: Signal::derive(move || {
+            handle.get().is_some_and(|handle| {
+                handle.revision.track();
+                handle.can_undo()
+            })
+        }),
+        can_redo: Signal::derive(move || {
+            handle.get().is_some_and(|handle| {
+                handle.revision.track();
+                handle.can_redo()
+            })
+        }),
         pending: add_item.pending().into(),
         feedback: Signal::derive(move || {
             add_item
@@ -1467,6 +1484,8 @@ pub fn ListViewSync() -> impl IntoView {
             delete_item.dispatch(id);
         }),
     };
+
+    let legacy_cart = use_legacy_cart();
 
     let drawer_refresh = Signal::derive(move || {
         last_update_at
@@ -2074,7 +2093,11 @@ pub fn ListViewSync() -> impl IntoView {
 
             <div class:hidden=move || buying_view.get()>
                 <Transition fallback=move || view! { <Loading /> }>
-                    <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) />
+                    {move || if legacy_cart.get() {
+                        view! { <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                    } else {
+                        view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                    }}
                     <div class="panel rounded-lg p-4 mt-3">
                         {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
                         <ActivityFeed activity=activity_view />

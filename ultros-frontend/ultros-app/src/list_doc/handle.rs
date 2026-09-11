@@ -238,6 +238,21 @@ impl ListDocHandle {
         done
     }
 
+    /// Whether `undo` would change anything. Not reactive on its own: read it
+    /// under `revision.track()` so it follows the document.
+    pub fn can_undo(&self) -> bool {
+        self.undo
+            .try_with_value(|undo| undo.can_undo())
+            .unwrap_or(false)
+    }
+
+    /// Whether `redo` would change anything. See [`Self::can_undo`].
+    pub fn can_redo(&self) -> bool {
+        self.undo
+            .try_with_value(|undo| undo.can_redo())
+            .unwrap_or(false)
+    }
+
     /// Only a real change notifies: the sync loop reports "live" on every
     /// relayed update, and re-notifying an unchanged status would re-render
     /// everything that shows it.

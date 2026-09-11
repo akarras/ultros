@@ -305,6 +305,14 @@ impl GuestListHandle {
     pub fn redo(&self) -> bool {
         self.history(true)
     }
+    /// Whether `undo` would change anything; read under `revision.track()`.
+    pub fn can_undo(&self) -> bool {
+        !self.inner.closed.get() && self.inner.undo.borrow().can_undo()
+    }
+    /// Whether `redo` would change anything; read under `revision.track()`.
+    pub fn can_redo(&self) -> bool {
+        !self.inner.closed.get() && self.inner.undo.borrow().can_redo()
+    }
     fn history(&self, redo: bool) -> bool {
         if self.inner.closed.get() {
             return false;
