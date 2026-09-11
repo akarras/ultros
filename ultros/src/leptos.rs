@@ -119,7 +119,10 @@ async fn custom_handler(
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
 ) -> Response {
-    render_leptos(
+    // Detached so a client that leaves mid-render cannot cancel the render
+    // and tear the reactive owner down under leptos' still-running Suspense
+    // tasks — see `ssr_drain`.
+    crate::ssr_drain::detach_render(render_leptos(
         worlds,
         options,
         region,
@@ -127,7 +130,7 @@ async fn custom_handler(
         req,
         StreamMode::OutOfOrder,
         api,
-    )
+    ))
     .await
 }
 
@@ -149,7 +152,16 @@ async fn in_order_handler(
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
 ) -> Response {
-    render_leptos(worlds, options, region, user, req, StreamMode::InOrder, api).await
+    crate::ssr_drain::detach_render(render_leptos(
+        worlds,
+        options,
+        region,
+        user,
+        req,
+        StreamMode::InOrder,
+        api,
+    ))
+    .await
 }
 
 pub(crate) async fn create_leptos_app(
