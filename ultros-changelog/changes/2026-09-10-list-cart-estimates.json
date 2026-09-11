@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Lists (Labs) estimate what your cart will cost",
+  "blurb": "The Labs list builder now shows an estimated total for everything you still need to buy, priced from the cheapest listed units for each quantity and quality. When the market can't cover part of the list, the total is marked incomplete and says how many items and units have no listed price, instead of quietly showing a smaller number.",
+  "link": "/list?labs=lists-sync"
+}
