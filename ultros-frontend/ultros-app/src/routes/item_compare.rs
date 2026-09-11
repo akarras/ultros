@@ -405,6 +405,8 @@ pub(crate) fn FlipRouteCard(
                                                 </span>
                                             </div>
                                             <button
+                                                type="button"
+                                                class="btn-ghost p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
                                                 aria-label=t_string!(i18n, item_compare_dismiss).to_string()
                                                 on:click=move |_| set_compare_world.set(None)
                                             >

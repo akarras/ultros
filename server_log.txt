@@ -1,0 +1,1 @@
+-bash: /home/jules/.cargo/bin/cargo-leptos: No such file or directory
