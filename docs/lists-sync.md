@@ -112,6 +112,9 @@ item, with the checks that exercised each one, in
 [`qa/lists-2-shop-companion-evidence.md`](qa/lists-2-shop-companion-evidence.md);
 its open rows (physical game validation, purchase-specific undo, the
 per-hop savings ladder) are not promotion blockers but must stay visible.
+The Build side (compact cart, estimates, undo) is reconciled the same way in
+[`qa/lists-2-delivery-reconciliation.md`](qa/lists-2-delivery-reconciliation.md),
+which also records the deployed build and the browser verification still owed.
 New UI strings, including companion labels and offline boot messages, must
 remain translated in all seven supported locales. Verify keyboard focus
 through a committed row edit on both device and account lists before promotion.
