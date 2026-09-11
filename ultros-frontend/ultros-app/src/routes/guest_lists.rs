@@ -47,6 +47,7 @@ mod browser {
     use crate::routes::list_view_sync::{ListBuildWorkspace, ListWorkspaceSource};
     use leptos_router::hooks::{use_navigate, use_params_map};
     use std::collections::HashSet;
+    use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
 
     fn prepare_offline() {
         if let (Some(window), Ok(event)) = (
@@ -201,6 +202,12 @@ mod browser {
             i32,
             Vec<ultros_api_types::ActiveListing>,
         >::new());
+        // A device list has no prices until the player looks them up in
+        // Shop; the estimate says so rather than reading as free. The scope
+        // is the one the *offers* were fetched for, so changing the picker
+        // without a new lookup never relabels old prices.
+        let feed = RwSignal::new(PriceFeed::Missing(MissingReason::NotRequested));
+        let offers_scope = RwSignal::new(None::<String>);
         let shop = RwSignal::new(false);
         let (home, _) = crate::global_state::home_world::use_home_world();
         let scope = RwSignal::new(
@@ -251,6 +258,8 @@ mod browser {
                         .collect()
                 })
             }),
+            market: feed.into(),
+            scope_name: offers_scope.into(),
             can_write: Signal::derive(|| true),
             edit: Callback::new(move |item| apply.run(Edit::Edit(item))),
             remove: Callback::new(move |id| apply.run(Edit::Remove(id))),
@@ -279,7 +288,7 @@ mod browser {
                 </header>
                 <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
                 <crate::routes::list_view_sync::ListWorkspaceModes shop=shop.into() set_shop=Callback::new(move |value| shop.set(value)) />
-                <Show when=move || shop.get()><DeviceShop handle=handle.get_value() offers scope /></Show>
+                <Show when=move || shop.get()><DeviceShop handle=handle.get_value() offers scope feed offers_scope /></Show>
                 <div class:hidden=move || shop.get()>
                 <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_build_prices)}</p>
                 <ListBuildWorkspace source selected_items=selected />
@@ -331,10 +340,17 @@ mod browser {
         handle: GuestListHandle,
         offers: RwSignal<std::collections::HashMap<i32, Vec<ultros_api_types::ActiveListing>>>,
         scope: RwSignal<Option<ultros_api_types::world_helper::AnySelector>>,
+        feed: RwSignal<PriceFeed>,
+        offers_scope: RwSignal<Option<String>>,
     ) -> impl IntoView {
         use crate::components::list_shop::{ListShop, ShopInput, ShopRow};
         let i18n = use_i18n();
         let handle = StoredValue::new_local(handle);
+        // Every lookup takes a ticket; a response whose ticket is no longer
+        // the newest — the player changed scope and looked up again while it
+        // was in flight — is dropped, so old-scope prices never land on top
+        // of the ones they asked for last.
+        let ticket = StoredValue::new(LookupTicket::default());
         let revision = handle.with_value(|h| h.revision);
         let (home, _) = crate::global_state::home_world::use_home_world();
         let worlds = StoredValue::new(
@@ -396,15 +412,32 @@ mod browser {
                         busy.set(true); error.set(String::new());
                         let Some(scope) = scope.get_untracked().and_then(|scope| crate::global_state::use_world_helper().ok()?.lookup_selector(scope).map(|world| world.get_name().to_string())) else { busy.set(false); return; };
                         let ids: Vec<_> = handle.with_value(|h| h.rows()).into_iter().map(|r| r.key.item_id).collect();
+                        let request = ticket.try_update_value(|ticket| ticket.begin()).unwrap_or_default();
+                        feed.update(|feed| *feed = feed.begin_fetch());
                         leptos::task::spawn_local(async move {
-                            match crate::api::get_bulk_listings(scope.trim(), ids.into_iter()).await {
+                            let result = crate::api::get_bulk_listings(scope.trim(), ids.into_iter()).await;
+                            if !ticket.try_with_value(|ticket| ticket.accepts(request)).unwrap_or(false) {
+                                // A newer lookup owns the offers, the feed and `busy` now.
+                                return;
+                            }
+                            match result {
                                 Ok(data) => {
                                     let _ = offers.try_set(data.into_iter().map(|(id, rows)| (id, rows.into_iter().map(|(listing, _)| listing).collect())).collect());
+                                    let _ = offers_scope.try_set(Some(scope));
+                                    // The estimate's freshness is the instant this
+                                    // response arrived: a fetch time, documented as
+                                    // such, never a listing's seller review time.
+                                    let _ = feed.try_update(|feed| *feed = feed.after_fetch(Some(chrono::Utc::now())));
                                     // This endpoint carries seller review times, not ingest times.
                                     // Do not label this fetch time as a market observation.
                                     let _ = observed.try_set(None);
                                 }
-                                Err(e) => { let _ = error.try_set(e.to_string()); }
+                                Err(e) => {
+                                    let _ = error.try_set(e.to_string());
+                                    // Earlier prices stay usable and are marked; with
+                                    // none, the estimate says prices are unavailable.
+                                    let _ = feed.try_update(|feed| *feed = feed.after_fetch(None));
+                                }
                             }
                             let _ = busy.try_set(false);
                         });
