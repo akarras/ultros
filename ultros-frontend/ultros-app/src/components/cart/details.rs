@@ -10,8 +10,8 @@ use leptos::prelude::*;
 use thousands::Separable;
 use ultros_api_types::{ActiveListing, list::ListItem, world_helper::AnySelector};
 
-use super::estimate::{Coverage, LineEstimate, matching_listings};
-use super::row::{gil_text, numeric_editor};
+use super::estimate::{LineEstimate, LineStatus, matching_listings};
+use super::row::{NumericField, gil_text, numeric_editor};
 use crate::global_state::LocalWorldData;
 use crate::i18n::*;
 
@@ -45,22 +45,26 @@ pub fn CartRowDetails(
     let owned = numeric_editor(
         item,
         name.clone(),
-        t_string!(i18n, lists_workspace_owned).to_string(),
-        1,
+        NumericField {
+            field: 1,
+            label: t_string!(i18n, lists_workspace_owned).to_string(),
+            class: "input w-24 text-right tabular-nums",
+            id: None,
+        },
         can_write,
         on_edit,
-        "input w-24 text-right tabular-nums",
-        None,
     );
     let target = numeric_editor(
         item,
         name,
-        t_string!(i18n, lists_workspace_target_price).to_string(),
-        2,
+        NumericField {
+            field: 2,
+            label: t_string!(i18n, lists_workspace_target_price).to_string(),
+            class: "input w-32 text-right tabular-nums",
+            id: None,
+        },
         can_write,
         on_edit,
-        "input w-32 text-right tabular-nums",
-        None,
     );
     let cheapest = Memo::new(move |_| {
         let item = item.get();
@@ -77,21 +81,19 @@ pub fn CartRowDetails(
         listings.with(|listings| matching_listings(&item, listings).len())
     });
     let pricing = move || {
-        let Some(line) = line.get() else {
-            return None;
-        };
-        if line.requested == 0 {
+        let line = line.get()?;
+        if line.remaining == 0 {
             return Some(t_string!(i18n, cart_nothing_to_buy).to_string());
         }
-        Some(match (line.coverage, line.unit_price) {
-            (Coverage::None, _) | (_, None) => {
+        Some(match (line.status, line.unit_price) {
+            (LineStatus::NoSupply, _) | (_, None) => {
                 t_string!(i18n, cart_no_matching_listings).to_string()
             }
             (_, Some(price)) => t_string!(
                 i18n,
                 cart_pricing_detail,
-                covered = line.covered,
-                requested = line.requested,
+                covered = line.priced_units,
+                requested = line.remaining,
                 listings = matching_count.get(),
                 price = gil_text(i18n, i64::from(price))
             )

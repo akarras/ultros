@@ -104,7 +104,10 @@ async function main() {
   }
   async function replace(selector, value) {
     await page.waitForSelector(selector, { visible: true });
-    await page.click(selector, { clickCount: 3 });
+    // Triple-click never selects a number input, and a right-aligned cell
+    // puts the caret before the digits; select explicitly instead.
+    await page.click(selector);
+    await page.$eval(selector, input => input.select());
     await page.keyboard.press("Backspace");
     await page.type(selector, String(value));
   }
@@ -174,9 +177,9 @@ async function main() {
       "duplicate additions increase a single row's need");
     await page.keyboard.press("Escape");
     assert.equal(await page.$('[aria-label="Catalog results"]'), null, "Escape dismisses catalog results");
-    await page.waitForSelector(testId("cart-total"));
-    assert.match(await page.$eval(testId("cart-coverage"), element => element.textContent), /units|listings|Nothing left/,
-      "the cart summary explains what its estimated total covers");
+    await page.waitForSelector(testId("list-estimate-total"));
+    assert.match(await page.$eval(testId("list-estimate-status"), element => element.textContent), /prices|units|Nothing left/i,
+      "the cart summary explains what its estimated total covers (or why there is none yet)");
     await page.select(quality, "nq");
     await page.waitForFunction(selector => document.querySelector(selector)?.value === "nq", {}, quality);
     await saved();
@@ -207,10 +210,18 @@ async function main() {
     await page.click('input[aria-label="Select Maple Log"]');
     await page.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid="cart-selection-bar"]')?.textContent || ""));
     await page.click(testId("cart-bulk-hq"));
-    await page.waitForFunction((a, b) => document.querySelector(a)?.value === "hq" && document.querySelector(b)?.value === "hq", {}, quality, mapleQuality);
+    // Set HQ only touches rows whose item can be HQ: Bronze Ingot flips,
+    // Maple Log (no HQ variant since 7.0) keeps "any".
+    await page.waitForFunction((a, b) => document.querySelector(a)?.value === "hq" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
     await page.click(testId("cart-bulk-any"));
     await page.waitForFunction((a, b) => document.querySelector(a)?.value === "any" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
     await saved();
+    // Both rows stay selected across the quality edits (the edit re-keys
+    // the rows; the cart carries the selection over). Clear it for the
+    // scenarios below, which select rows one at a time.
+    await page.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid="cart-selection-bar"]')?.textContent || ""));
+    await page.evaluate(() => [...document.querySelectorAll('[data-testid="cart-selection-bar"] button')].find(b => /Clear selection/.test(b.textContent))?.click());
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-selection-bar"]') === null);
     console.log("[ok] selecting rows reveals bulk quality actions that apply to every selected row");
 
     // Sorting by quantity must not relocate a row whose editor holds a draft.
@@ -219,7 +230,8 @@ async function main() {
     await page.click('button[aria-label="Sort by Qty"]');
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="cart-rows"] > li')[0]?.textContent.includes("Maple Log"));
     assert.equal(await rowIndex("Bronze Ingot"), 1, "ascending quantity puts the 2-unit row first");
-    await page.click(needed, { clickCount: 3 });
+    await page.click(needed);
+    await page.$eval(needed, input => input.select());
     await page.keyboard.type("1");
     await page.$eval(mapleNeeded, input => { input.value = "9"; input.dispatchEvent(new Event("change", { bubbles: true })); });
     await waitValue(mapleNeeded, 9);
@@ -249,8 +261,9 @@ async function main() {
     await page.click(testId("cart-undo-removal"));
     await waitValue(mapleNeeded, 9);
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, testId("cart-removal-toast"));
-    assert.equal(await page.$eval(mapleNeeded, input => document.activeElement === input), true,
-      "undo focuses the restored row's quantity");
+    // Focus recovery lands on the next frame once the restored row renders.
+    await page.waitForFunction(selector => document.activeElement === document.querySelector(selector), {}, mapleNeeded)
+      .catch(() => assert.fail("undo focuses the restored row's quantity"));
     console.log("[ok] bulk delete announces the removal and its Undo restores the row");
 
     // Keyboard removal: Enter on the trash button removes, focus moves to a
@@ -259,8 +272,8 @@ async function main() {
     await page.keyboard.press("Enter");
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
     await page.waitForSelector(testId("cart-removal-toast"), { visible: true });
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Remove Bronze Ingot",
-      "focus lands on the neighbouring row's remove button after a keyboard removal");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Remove Bronze Ingot")
+      .catch(() => assert.fail("focus lands on the neighbouring row's remove button after a keyboard removal"));
     await page.waitForSelector(testId("cart-undo-removal"), { visible: true });
     await replace(needed, 7);
     await page.keyboard.press("Enter");
@@ -303,11 +316,18 @@ async function main() {
     fs.mkdirSync(shots, { recursive: true });
     await capture(page, { path: path.join(shots, "cart-desktop.png"), fullPage: true }).catch(() => {});
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    // Changing isMobile/hasTouch reloads the page: wait for the cart itself
+    // so the width assertion and the capture see rows, not the loading screen.
+    await waitValue(needed, 8);
     await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
     await capture(page, { path: path.join(shots, "cart-mobile.png"), fullPage: true }).catch(() => {});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       "the compact cart fits a 390px viewport without horizontal scroll");
     await page.setViewport({ width: 1280, height: 900 });
+    // Toggling isMobile/hasTouch makes puppeteer reload the page, which
+    // closes the details panel the cross-tab check reads Owned from.
+    await waitValue(needed, 8);
+    await openDetails();
 
     console.log("[step] opening a second guest editor for the cross-tab focus check");
     const secondEditor = await browser.newPage();
@@ -386,8 +406,52 @@ async function main() {
     await waitValue(target, 125);
     console.log("[ok] portable backup restores into a distinct device list");
 
+    // ===== Build → Shop → Build handoff (#1437), with unknown prices =====
+    // The restored list needs 8 Bronze Ingots and owns 3; no prices were
+    // looked up, so every trip reports the 5 remaining units as missing.
+    const visible = selector => page.$eval(selector, element => !element.closest(".hidden"));
     await page.click(testId("guest-shop-mode"));
-    await page.waitForSelector(testId("shop-cheapest"));
+    await page.waitForSelector(testId("shop-cart-summary"), { visible: true });
+    assert.match(await page.$eval(testId("shop-cart-summary"), element => element.textContent),
+      /1 items · 5 units left to buy · 0 priced/, "handoff counts remaining units of a partially acquired row");
+    assert.equal(await visible(testId("shop-no-prices")), true, "unknown prices are called out before a trip exists");
+    await page.click(testId("shop-cheapest"));
+    await page.waitForSelector(testId("shop-totals"));
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /0 gil · 0 surplus · 5 missing/);
+    await page.$eval(testId("shop-estimate"), details => { details.open = true; });
+    assert.match(await page.$eval(testId("shop-estimate"), element => element.textContent),
+      /Build estimate: 0 gil \(0 of 1 items priced/, "Shop explains the whole-stack total against the Build estimate");
+    assert.equal(await visible(testId("shop-drift")), false, "a fresh trip reports no drift");
+    await page.click(testId("guest-build-mode"));
+    await page.waitForSelector(needed, { visible: true });
+    assert.equal(await visible(testId("shop-totals")), false, "Shop stays mounted but hidden in Build");
+    await replace(needed, 9);
+    await page.keyboard.press("Enter");
+    await waitValue(needed, 9);
+    await saved();
+    await page.click(testId("guest-shop-mode"));
+    await page.waitForSelector(testId("shop-totals"), { visible: true });
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /5 missing/,
+      "returning to Shop keeps the chosen trip as it was planned");
+    await page.waitForFunction(selector => {
+      const element = document.querySelector(selector);
+      return element && !element.closest(".hidden") && /1 quantity change/.test(element.textContent);
+    }, {}, testId("shop-drift"));
+    await page.click(testId("shop-refresh"));
+    await page.waitForSelector(testId("shop-review"));
+    assert.match(await page.$eval(testId("shop-review-next"), element => element.textContent), /6 missing/);
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /5 missing/,
+      "a refresh is reviewed before it replaces the trip");
+    await page.click(testId("shop-review-keep"));
+    await page.waitForFunction(selector => !document.querySelector(selector), {}, testId("shop-review"));
+    assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /5 missing/);
+    await page.click(testId("shop-refresh"));
+    await page.waitForSelector(testId("shop-review-apply"));
+    await page.click(testId("shop-review-apply"));
+    await page.waitForFunction(selector => /6 missing/.test(document.querySelector(selector)?.textContent), {}, testId("shop-totals"));
+    await page.waitForFunction(selector => !!document.querySelector(selector)?.closest(".hidden"), {}, testId("shop-drift"));
+    console.log("[ok] Build edits keep the chosen trip; a refresh is reviewed before it replaces it");
+
     await page.click(testId("shop-cheapest"));
     await page.waitForSelector(testId("open-shopping-companion"));
     const popupPromise = new Promise((resolve, reject) => {

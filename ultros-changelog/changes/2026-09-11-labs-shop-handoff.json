@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Shop keeps your trip while you edit the cart",
+  "blurb": "In Labs lists, switching back to Build no longer resets a shopping trip. Shop now explains why whole-stack totals differ from the Build estimate, flags cart or price changes since the trip was planned, and lets you review a refreshed trip before it replaces the one you are following.",
+  "link": "/list?labs=lists-sync"
+}

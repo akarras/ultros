@@ -232,6 +232,34 @@ async fn load_changes(
     Ok(ch.client().query(&sql).fetch_all::<WindowChange>().await?)
 }
 
+/// The floor ClickHouse currently believes for one (item, hq, world) key.
+/// `price == 0` is an emptied board; a key with no row at all is absent.
+#[derive(Clone, Debug, PartialEq, Eq, Row, Deserialize)]
+pub struct LatestFloor {
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    pub price: u32,
+}
+
+/// Every key's latest floor, resolved exactly as `load_changes` resolves a
+/// window's baseline (latest event, cheaper of same-second rows). The boot
+/// resync diffs Postgres against this so keys ClickHouse has never seen get
+/// their anchor row regardless of what the analyzer snapshot restored.
+pub async fn latest_floors(ch: &ClickHouseClient) -> Result<Vec<LatestFloor>, ClickHouseError> {
+    Ok(ch
+        .client()
+        .query(
+            "SELECT item_id, hq, world_id,
+            argMax(price_per_unit, tuple(event_time, -toInt64(price_per_unit))) AS price
+            FROM floor_changes GROUP BY item_id, hq, world_id
+            SETTINGS optimize_aggregation_in_order=1, max_execution_time=60,
+            max_memory_usage=1073741824",
+        )
+        .fetch_all::<LatestFloor>()
+        .await?)
+}
+
 /// Replay simultaneous changes together. A partial scope cannot establish a
 /// known floor (or emptiness); unknown worlds may hold a cheaper listing.
 pub(crate) fn bounds(

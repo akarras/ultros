@@ -14,7 +14,6 @@ pub mod estimate;
 pub mod feedback;
 pub mod row;
 pub mod selection;
-pub mod summary;
 
 use std::collections::{HashMap, HashSet};
 
@@ -31,7 +30,49 @@ use crate::routes::list_view_sync::{InlineListAdd, InlineRecipeAdd, ListWorkspac
 use feedback::{CartFeedback, Removal, focus_after_removal};
 use row::{CartRow, ROW_GRID, focus_element, quantity_input_id, remove_button_id};
 use selection::{CartSelectionBar, retain_present};
-use summary::CartSummary;
+
+/// Whether an event target is one of the cart's editors (a control whose
+/// row must stay visible while it has focus), as opposed to a button.
+#[cfg(feature = "hydrate")]
+fn is_editor(target: Option<web_sys::EventTarget>) -> bool {
+    use wasm_bindgen::JsCast;
+    target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .is_some_and(|element| {
+            matches!(
+                element.tag_name().to_ascii_uppercase().as_str(),
+                "INPUT" | "SELECT" | "TEXTAREA"
+            )
+        })
+}
+
+/// Whether the event target is the element that currently has focus.
+#[cfg(feature = "hydrate")]
+fn target_is_active(target: Option<web_sys::EventTarget>) -> bool {
+    use wasm_bindgen::JsCast;
+    let active = leptos::prelude::document().active_element();
+    target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .is_some_and(|element| active.is_some_and(|active| active == element))
+}
+
+/// Whether an event target is a cart editor holding a draft: a text input
+/// whose live value differs from the `data-committed` value the document
+/// holds. That is the only state the order pin protects — a clean cell, a
+/// select, a sort header or a toggle taking focus must not freeze the
+/// order, and a commit (which makes the cell clean) releases it so the
+/// re-sort the commit asked for can apply.
+#[cfg(feature = "hydrate")]
+fn editor_drafting(target: Option<web_sys::EventTarget>) -> bool {
+    use wasm_bindgen::JsCast;
+    target
+        .and_then(|target| target.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .is_some_and(|input| {
+            input
+                .get_attribute("data-committed")
+                .is_some_and(|committed| input.value().trim() != committed.trim())
+        })
+}
 
 /// `?cart=legacy` mounts the previous Labs grid (`ListBuildWorkspace`) so a
 /// tester can compare the two presentations on the same list. The
@@ -57,9 +98,13 @@ pub fn sort_cart_rows<'a>(
                 .cmp(name_of(b.item_id).unwrap_or_default()),
             SortKey::Price => {
                 let cost = |item: &ListItem, listings: &[ActiveListing]| {
-                    estimate::estimate_line(item, listings)
-                        .total
-                        .unwrap_or(i64::MAX)
+                    let line = estimate::estimate_line(item, listings);
+                    // Nothing priced sorts last, after every known cost.
+                    if line.status == estimate::LineStatus::NoSupply {
+                        i64::MAX
+                    } else {
+                        line.total
+                    }
                 };
                 cost(a, a_listings).cmp(&cost(b, b_listings))
             }
@@ -147,10 +192,14 @@ pub fn ListCart(
     let filter = RwSignal::new(String::new());
     // Row ids with an open details panel. Keyed by id, not position.
     let expanded: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
-    // While an editor inside the list has focus, rows keep their order and
-    // an acquired row stays visible, so committing an edit never moves the
-    // control the player is typing in — including under an active sort.
+    // While an editor inside the list has focus, an acquired row stays
+    // visible, so completing a row never yanks focus out from under the
+    // player. While that editor also holds a *draft*, rows keep their order
+    // — including under an active sort — so a change elsewhere cannot move
+    // the control being typed in; the commit itself releases the order pin
+    // so the re-sort it asked for can apply.
     let editing = RwSignal::new(false);
+    let drafting = RwSignal::new(false);
     let grid = NodeRef::<leptos::html::Div>::new();
     let visible = Memo::new(
         move |previous: Option<&Vec<(ListItem, Vec<ActiveListing>)>>| {
@@ -188,7 +237,7 @@ pub fn ListCart(
                     data.items.get(&ItemId(id)).map(|item| item.name.as_str())
                 });
             }
-            if editing.get()
+            if drafting.get()
                 && let Some(previous) = previous
             {
                 let positions: HashMap<_, _> = previous
@@ -349,9 +398,23 @@ pub fn ListCart(
         bump();
         source.add_many.run(items);
     });
-    let on_set_quality_many = Callback::new(move |edit| {
+    let on_set_quality_many = Callback::new(move |(ids, hq): (Vec<i32>, Option<bool>)| {
         bump();
-        source.set_quality_many.run(edit);
+        // A row's id encodes its quality (`adapter::row_id`), so this edit
+        // re-keys every row it touches. Carry the selection and any open
+        // panel over to the new ids; the pruning effect below drops whichever
+        // of the old or new ids the document ends up not holding (a row the
+        // host declined to change keeps its old id).
+        let renamed: Vec<i32> = ids
+            .iter()
+            .filter_map(|id| crate::list_doc::adapter::key_of(*id))
+            .filter_map(|key| {
+                crate::list_doc::adapter::row_id(&ultros_list_doc::RowKey::new(key.item_id, hq))
+            })
+            .collect();
+        selected_items.update(|s| s.extend(renamed.iter().copied()));
+        expanded.update(|s| s.extend(renamed.iter().copied()));
+        source.set_quality_many.run((ids, hq));
     });
     let on_undo = Callback::new(move |()| {
         bump();
@@ -364,7 +427,7 @@ pub fn ListCart(
         source.redo.run(());
     });
     let on_remove = Callback::new(move |id| request_removal(vec![id]));
-    let on_remove_many = Callback::new(move |ids| request_removal(ids));
+    let on_remove_many = Callback::new(request_removal);
     // A row that left the document (deleted here, by a collaborator or by
     // undo) leaves the selection and the open-panel set with it.
     Effect::new(move |_| {
@@ -383,6 +446,14 @@ pub fn ListCart(
         }
     });
     let is_empty = Memo::new(move |_| source.rows.with(|rows| rows.is_empty()));
+    // The whole cart, not the filtered view, priced by the shared estimator
+    // (#1431/#1432): a filter narrows what the list shows, never what it
+    // costs, and both Labs presentations must agree on the total.
+    let estimate = Memo::new(move |_| {
+        source
+            .rows
+            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
+    });
     let all_visible_selected = Memo::new(move |_| {
         let ids = visible_ids.get();
         !ids.is_empty() && selected_items.with(|s| ids.iter().all(|id| s.contains(id)))
@@ -412,12 +483,12 @@ pub fn ListCart(
                 <div class="flex flex-wrap items-center gap-2 text-sm">
                     <button type="button" class="btn-ghost" aria-expanded=move || source.recipe_open.get().to_string() on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
-                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-undo" disabled=move || !source.can_undo.get() on:click=move |_| on_undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button type="button" class="btn-ghost disabled:cursor-not-allowed disabled:opacity-40" data-testid="list-redo" disabled=move || !source.can_redo.get() on:click=move |_| on_redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| on_undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
+                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| on_redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=on_add_many /></Show>
             </Show>
-            <CartSummary rows=source.rows />
+            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <div class="flex flex-wrap items-center gap-2">
                 <input class="input min-w-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
@@ -435,12 +506,35 @@ pub fn ListCart(
                 </label>
             </div>
             <CartSelectionBar selected_items visible_ids=visible_ids.into() can_write=source.can_write pending=source.bulk_pending on_remove_many=on_remove_many on_set_quality=on_set_quality_many />
-            <div class="panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
+            // The order pin follows a *drafting* editor only (see
+            // `editor_drafting`): it engages as the player types and releases
+            // on commit, focus loss or Escape.
+            <div class="panel rounded-xl" node_ref=grid on:focusin=move |ev| {
+                #[cfg(feature = "hydrate")]
+                { editing.set(is_editor(ev.target())); drafting.set(editor_drafting(ev.target())); }
+                #[cfg(not(feature = "hydrate"))]
+                { let _ = ev; }
+            } on:input=move |ev| {
+                #[cfg(feature = "hydrate")]
+                { drafting.set(editor_drafting(ev.target())); }
+                #[cfg(not(feature = "hydrate"))]
+                { let _ = ev; }
+            } on:change=move |ev| {
+                // Only the focused editor's own commit releases the pin; a
+                // change dispatched on another row while this one drafts (a
+                // remote or scripted edit) must not.
+                #[cfg(feature = "hydrate")]
+                { if target_is_active(ev.target()) { drafting.set(false); } }
+                #[cfg(not(feature = "hydrate"))]
+                { let _ = ev; }
+            } on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {
                 use wasm_bindgen::JsCast;
-                let inside = ev.related_target().and_then(|target| target.dyn_into::<web_sys::Node>().ok()).is_some_and(|target| grid.get().is_some_and(|grid| grid.contains(Some(&target))));
-                if !inside { editing.set(false); }
+                let next = ev.related_target();
+                let inside = next.clone().and_then(|target| target.dyn_into::<web_sys::Node>().ok()).is_some_and(|target| grid.get().is_some_and(|grid| grid.contains(Some(&target))));
+                editing.set(inside && is_editor(next.clone()));
+                drafting.set(inside && editor_drafting(next));
                 }
                 #[cfg(not(feature = "hydrate"))]
                 { let _ = ev; }
@@ -537,8 +631,14 @@ mod tests {
     fn sort_by_estimate_puts_unknown_lines_last_and_is_stable_by_id() {
         let mut rows = vec![
             (item(3, 30, 2, 0), vec![]),
-            (item(1, 10, 2, 0), vec![fixture_listing(1, 50, 5, false)]),
-            (item(2, 20, 2, 0), vec![fixture_listing(2, 20, 5, false)]),
+            (
+                item(1, 10, 2, 0),
+                vec![fixture_listing(1, 10, 50, 5, false)],
+            ),
+            (
+                item(2, 20, 2, 0),
+                vec![fixture_listing(2, 20, 20, 5, false)],
+            ),
             (item(4, 40, 2, 0), vec![]),
         ];
         sort_cart_rows(

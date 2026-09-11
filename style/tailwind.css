@@ -1250,6 +1250,22 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         0 0 0 1px color-mix(in srgb, var(--brand-ring) 40%, transparent);
 }
 
+/* Recipe-planner route cards whose plan cannot finish the recipe: a faint
+   diagonal hatch and a dashed border mark the card as partial, so its lower
+   gil total is not read as a saving (#1334). A single gradient with no
+   blend mode keeps it cheap on software rasterisation. Listed with the
+   light-theme selector too so the `[data-theme="light"] .panel`
+   `background-image: none` override does not erase the hatch. */
+.panel-incomplete,
+[data-theme="light"] .panel-incomplete {
+    border-style: dashed;
+    background-image: repeating-linear-gradient(
+        135deg,
+        transparent 0 10px,
+        color-mix(in srgb, var(--color-text) 6%, transparent) 10px 12px
+    );
+}
+
 @utility card {
     @apply rounded-xl p-4 transition-all duration-300 border;
     border-color: color-mix(

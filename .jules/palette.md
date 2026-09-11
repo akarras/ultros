@@ -27,3 +27,6 @@
 ## 2026-09-10 - Missing ARIA Labels in Inline Edit Forms
 **Learning:** Icon-only buttons used in inline editing forms (like renaming a role) often miss `aria-label`s, which can make the UI inaccessible to screen reader users who can't see the visual context of the form.
 **Action:** Always check inline edit forms (like rename inputs) for icon-only buttons (e.g. save or cancel icons) and ensure they have descriptive `aria-label`s.
+## 2026-09-11 - Adding button hover styling and button type
+**Learning:** Dismiss buttons on item comparison cards were missing proper hover states, `text-muted` styling and `type="button"`, leading to worse UX and potential form submission if placed within a form.
+**Action:** Consistently use the `.btn-ghost` class with `p-1`, `text-[color:var(--color-text-muted)]`, and `hover:text-[color:var(--color-text)]` for icon-only dismiss buttons to provide keyboard focusability, proper padding, and intuitive interactive styling, and always add `type="button"`.

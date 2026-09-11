@@ -61,3 +61,47 @@ async fn floor_history_carries_state_and_preserves_empty_markets() {
         .await
         .unwrap();
 }
+
+/// The boot resync anchors keys ClickHouse has never seen, so it must read the
+/// floor ClickHouse currently believes: latest event wins, the cheaper of two
+/// same-second rows wins (matching the history reader), and 0 is kept so the
+/// caller can tell an emptied board from a key with no row at all.
+#[tokio::test]
+async fn latest_floors_reports_the_floor_the_history_reader_would_carry() {
+    if std::env::var("ULTROS_CH_INTEGRATION").is_err() {
+        eprintln!("skipped: set ULTROS_CH_INTEGRATION=1 against a disposable ClickHouse");
+        return;
+    }
+    let ch = ClickHouseClient::from_env();
+    ch.migrate().await.unwrap();
+    let item = -(std::process::id() as i32) - 1_000_000;
+    ch.client()
+        .query(&format!(
+            r#"
+        INSERT INTO floor_changes VALUES
+        (1000,{item},0,1,100,'listing'), (1200,{item},0,1,120,'refill'),
+        (1200,{item},0,1,115,'listing'),
+        (1000,{item},1,1,300,'listing'), (1500,{item},1,1,0,'refill'),
+        (1000,{item},0,2,50,'resync')
+    "#
+        ))
+        .execute()
+        .await
+        .unwrap();
+    let mut rows = ultros_clickhouse::floor_history::latest_floors(&ch)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.item_id == item)
+        .map(|r| (r.world_id, r.hq, r.price))
+        .collect::<Vec<_>>();
+    rows.sort();
+    assert_eq!(rows, vec![(1, 0, 115), (1, 1, 0), (2, 0, 50)]);
+    ch.client()
+        .query(&format!(
+            "ALTER TABLE floor_changes DELETE WHERE item_id = {item} SETTINGS mutations_sync = 1"
+        ))
+        .execute()
+        .await
+        .unwrap();
+}
