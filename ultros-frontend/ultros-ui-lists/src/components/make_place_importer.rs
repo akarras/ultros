@@ -98,12 +98,13 @@ where
             ></textarea>
             {parsed_items}
             <button
+                type="button"
                 on:click=move |_| {
                     if let Ok(list) = parse_list(&list()) {
                         add_items_to_list.dispatch(list);
                     }
                 }
-
+                prop:disabled=move || add_items_to_list.pending().get() || parse_list(&list()).is_err()
                 class="btn"
             >
                 {t!(i18n, make_place_bulk_add)}

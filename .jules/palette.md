@@ -30,3 +30,6 @@
 ## 2026-09-11 - Adding button hover styling and button type
 **Learning:** Dismiss buttons on item comparison cards were missing proper hover states, `text-muted` styling and `type="button"`, leading to worse UX and potential form submission if placed within a form.
 **Action:** Consistently use the `.btn-ghost` class with `p-1`, `text-[color:var(--color-text-muted)]`, and `hover:text-[color:var(--color-text)]` for icon-only dismiss buttons to provide keyboard focusability, proper padding, and intuitive interactive styling, and always add `type="button"`.
+## 2024-05-14 - Add type="button" and disabled prop to MakePlaceImporter button
+**Learning:** Some buttons handling component state logic (like adding items from a textarea list) missed a reactive disabled state, letting the user accidentally click them repeatedly or when there is an invalid input string.
+**Action:** Always add `type="button"` for interactive buttons that execute JS and provide a `prop:disabled` state for better user feedback and interaction blocking.
