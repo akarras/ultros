@@ -80,12 +80,22 @@ where
             result
         }
     });
-    let parsed_items = move || match parse_list(&list()) {
-        Ok(l) => Either::Left(
-            view! { <span>{t_string!(i18n, make_place_items_ready, count = l.len()).to_string()}</span> },
-        ),
-        Err(e) => Either::Right(view! { <span>{format!("{e:?}")}</span> }),
+    // Parse once per edit: every line does a linear name lookup over the
+    // whole item table, so the status line, the disabled state and the
+    // click handler all read this memo instead of re-parsing.
+    let parsed = Memo::new(move |_| parse_list(&list()).map_err(|e| format!("{e:?}")));
+    let parsed_items = move || {
+        parsed.with(|parsed| match parsed {
+            Ok(l) => Either::Left(
+                view! { <span>{t_string!(i18n, make_place_items_ready, count = l.len()).to_string()}</span> },
+            ),
+            Err(e) => Either::Right(view! { <span>{e.clone()}</span> }),
+        })
     };
+    let can_add = Memo::new(move |_| {
+        !add_items_to_list.pending().get()
+            && parsed.with(|p| p.as_ref().is_ok_and(|l| !l.is_empty()))
+    });
     view! {
         <div class="flex-column">
             <label for="make-place-textarea">
@@ -98,12 +108,13 @@ where
             ></textarea>
             {parsed_items}
             <button
+                type="button"
                 on:click=move |_| {
-                    if let Ok(list) = parse_list(&list()) {
+                    if let Ok(list) = parsed.get_untracked() {
                         add_items_to_list.dispatch(list);
                     }
                 }
-
+                prop:disabled=move || !can_add.get()
                 class="btn"
             >
                 {t!(i18n, make_place_bulk_add)}
