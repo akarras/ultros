@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "One consistent cart estimate",
+  "blurb": "The Labs Build cart now shows only the estimate for the items you still need, removing the conflicting total below it."
+}
