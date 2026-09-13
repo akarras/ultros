@@ -18,6 +18,22 @@ use std::{
 };
 
 #[test]
+fn a_panicking_computation_can_be_retried() {
+    let owner = Owner::new();
+    owner.set();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let memo = ArcMemo::new(move |_| {
+        assert_ne!(calls.fetch_add(1, Ordering::SeqCst), 0, "first call fails");
+        7
+    });
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || memo.get()
+    ))
+    .is_err());
+    assert_eq!(memo.get(), 7);
+}
+
+#[test]
 fn concurrent_reads_during_recompute_never_panic() {
     let owner = Owner::new();
     owner.set();

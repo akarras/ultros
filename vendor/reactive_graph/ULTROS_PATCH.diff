@@ -1,5 +1,5 @@
---- a/src/computed/inner.rs	2006-07-23 19:21:28.000000000 -0600
-+++ b/src/computed/inner.rs	2026-09-13 07:32:20.293812900 -0600
+--- a/src/computed/inner.rs
++++ b/src/computed/inner.rs
 @@ -8,7 +8,8 @@
  use or_poisoned::OrPoisoned;
  use std::{
@@ -10,7 +10,7 @@
  };
  
  pub struct MemoInner<T, S>
-@@ -21,6 +22,84 @@
+@@ -21,6 +22,96 @@
      pub(crate) fun: Arc<dyn Fn(Option<T>) -> (T, bool) + Send + Sync>,
      pub(crate) owner: Owner,
      pub(crate) reactivity: RwLock<MemoInnerReactivity>,
@@ -87,6 +87,18 @@
 +    lock: &'a ComputeLock,
 +}
 +
++/// Mark a failed computation dirty so the next read can retry. Setting Clean
++/// before the closure must not leave an empty cache permanently marked Clean.
++struct RecomputeUnwindGuard<'a>(&'a RwLock<MemoInnerReactivity>);
++
++impl Drop for RecomputeUnwindGuard<'_> {
++    fn drop(&mut self) {
++        if thread::panicking() {
++            self.0.write().or_poisoned().state = ReactiveNodeState::Dirty;
++        }
++    }
++}
++
 +impl Drop for ComputeGuard<'_> {
 +    fn drop(&mut self) {
 +        *self.lock.owner.lock().or_poisoned() = None;
@@ -95,7 +107,7 @@
  }
  
  pub(crate) struct MemoInnerReactivity {
-@@ -58,6 +137,7 @@
+@@ -58,6 +149,7 @@
                  subscribers: SubscriberSet::new(),
                  any_subscriber,
              }),
@@ -103,7 +115,7 @@
          }
      }
  }
-@@ -117,8 +197,35 @@
+@@ -117,8 +209,36 @@
          }
  
          if needs_update(&self.reactivity) {
@@ -136,10 +148,11 @@
 +            // stale value until the next change.
 +            self.reactivity.write().or_poisoned().state =
 +                ReactiveNodeState::Clean;
++            let _unwind = RecomputeUnwindGuard(&self.reactivity);
  
              /// codegen optimisation:
              fn inner_1(
-@@ -148,10 +255,10 @@
+@@ -148,10 +268,10 @@
              /// codegen optimisation:
              fn inner_2(
                  changed: bool,
@@ -153,7 +166,7 @@
                  if changed {
                      let subs = reactivity_lock.subscribers.clone();
                      drop(reactivity_lock);
-@@ -168,13 +275,21 @@
+@@ -168,13 +288,21 @@
                  }
              }
              inner_2(changed, reactivity_lock);
@@ -176,8 +189,8 @@
                  false
              }
              inner(&self.reactivity)
---- a/src/computed/arc_memo.rs	2006-07-23 19:21:28.000000000 -0600
-+++ b/src/computed/arc_memo.rs	2026-09-13 07:27:21.208976400 -0600
+--- a/src/computed/arc_memo.rs
++++ b/src/computed/arc_memo.rs
 @@ -328,12 +328,52 @@
      fn try_read_untracked(&self) -> Option<Self::Value> {
          self.update_if_necessary();
@@ -237,9 +250,9 @@
      }
  }
  
---- /dev/null	2026-09-13 07:32:32.000000000 -0600
-+++ b/tests/memo_concurrent.rs	2026-09-13 07:27:59.406346400 -0600
-@@ -0,0 +1,118 @@
+--- a/tests/memo_concurrent.rs
++++ b/tests/memo_concurrent.rs
+@@ -0,0 +1,134 @@
 +//! Regression test: reading a memo from several threads while one of its
 +//! sources changes must never observe the "hole" left while another thread
 +//! is recomputing it (`arc_memo.rs: called Option::unwrap() on a None value`).
@@ -258,6 +271,22 @@
 +    thread,
 +    time::{Duration, Instant},
 +};
++
++#[test]
++fn a_panicking_computation_can_be_retried() {
++    let owner = Owner::new();
++    owner.set();
++    let calls = Arc::new(AtomicUsize::new(0));
++    let memo = ArcMemo::new(move |_| {
++        assert_ne!(calls.fetch_add(1, Ordering::SeqCst), 0, "first call fails");
++        7
++    });
++    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
++        || memo.get()
++    ))
++    .is_err());
++    assert_eq!(memo.get(), 7);
++}
 +
 +#[test]
 +fn concurrent_reads_during_recompute_never_panic() {

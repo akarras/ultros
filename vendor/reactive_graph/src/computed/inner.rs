@@ -95,6 +95,18 @@ struct ComputeGuard<'a> {
     lock: &'a ComputeLock,
 }
 
+/// Mark a failed computation dirty so the next read can retry. Setting Clean
+/// before the closure must not leave an empty cache permanently marked Clean.
+struct RecomputeUnwindGuard<'a>(&'a RwLock<MemoInnerReactivity>);
+
+impl Drop for RecomputeUnwindGuard<'_> {
+    fn drop(&mut self) {
+        if thread::panicking() {
+            self.0.write().or_poisoned().state = ReactiveNodeState::Dirty;
+        }
+    }
+}
+
 impl Drop for ComputeGuard<'_> {
     fn drop(&mut self) {
         *self.lock.owner.lock().or_poisoned() = None;
@@ -226,6 +238,7 @@ where
             // stale value until the next change.
             self.reactivity.write().or_poisoned().state =
                 ReactiveNodeState::Clean;
+            let _unwind = RecomputeUnwindGuard(&self.reactivity);
 
             /// codegen optimisation:
             fn inner_1(

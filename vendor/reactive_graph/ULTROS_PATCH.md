@@ -55,6 +55,8 @@ connection's thread — and both read the memos the resource just dirtied
 - Marks the memo `Clean` *before* running the closure (under the compute
   lock) and never overwrites a `Dirty` that arrived meanwhile, so no update
   is lost. The non-recompute path likewise only settles `Check` → `Clean`.
+- Restores `Dirty` if the closure unwinds, allowing a later read to retry
+  instead of leaving an empty cache marked `Clean`.
 - `ArcMemo::try_read_untracked` no longer `unwrap()`s: if it finds the value
   taken out, it waits for the computing thread and retries under the same
   read lock it hands out. A read from *inside the memo's own closure*
@@ -64,7 +66,7 @@ connection's thread — and both read the memos the resource just dirtied
 
 `tests/memo_concurrent.rs` reproduces the race (it fails on pristine 0.2.14
 with tens of thousands of panics in two seconds and a stale final value) and
-pins the reentrancy behaviour.
+pins the reentrancy behaviour and recovery after a panicking computation.
 
 ## Upstream status
 
