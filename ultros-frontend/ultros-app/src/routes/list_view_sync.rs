@@ -554,9 +554,24 @@ pub fn ListBuildWorkspace(
                     <For each=move || { visible.get().into_iter().map(|(item, _)| item).collect::<Vec<_>>() } key=|item| item.id children=move |initial| {
                         let id = initial.id;
                         let fallback = StoredValue::new(initial);
-                        let item = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(item, _)| item.clone())).unwrap_or_else(|| fallback.get_value()));
-                        let price = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).and_then(|(item, listings)| listings.iter().filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq)).map(|listing| listing.price_per_unit).min())));
-                        view! { <BuildListRow item=item.into() current_price=price.into() selected_items on_edit=source.edit on_delete=source.remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
+                        // ⚡ Bolt Optimization: Batch O(N) searches into a single Memo and use Signal::derive for projections
+                        let row_data = Memo::new(move |_| {
+                            source.rows.with(|rows| {
+                                rows.iter()
+                                    .find(|(item, _)| item.id == id)
+                                    .map(|(item, listings)| {
+                                        let min_price = listings
+                                            .iter()
+                                            .filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq))
+                                            .map(|listing| listing.price_per_unit)
+                                            .min();
+                                        (item.clone(), min_price)
+                                    })
+                            })
+                        });
+                        let item = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(item, _)| item.clone()).unwrap_or_else(|| fallback.get_value())));
+                        let price = Signal::derive(move || row_data.with(|data| data.as_ref().and_then(|(_, price)| *price)));
+                        view! { <BuildListRow item=item current_price=price selected_items on_edit=source.edit on_delete=source.remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
                     } />
                 </tbody></table>
             </div>
