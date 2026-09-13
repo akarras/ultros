@@ -1,0 +1,360 @@
+--- a/src/computed/inner.rs	2006-07-23 19:21:28.000000000 -0600
++++ b/src/computed/inner.rs	2026-09-13 07:32:20.293812900 -0600
+@@ -8,7 +8,8 @@
+ use or_poisoned::OrPoisoned;
+ use std::{
+     fmt::Debug,
+-    sync::{Arc, RwLock, RwLockWriteGuard},
++    sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard},
++    thread::{self, ThreadId},
+ };
+ 
+ pub struct MemoInner<T, S>
+@@ -21,6 +22,84 @@
+     pub(crate) fun: Arc<dyn Fn(Option<T>) -> (T, bool) + Send + Sync>,
+     pub(crate) owner: Owner,
+     pub(crate) reactivity: RwLock<MemoInnerReactivity>,
++    /// Serializes recomputation across threads. See [`MemoInner::update_if_necessary`].
++    pub(crate) compute: ComputeLock,
++}
++
++/// Tracks which thread (if any) is currently running a memo's closure.
++///
++/// `update_if_necessary` `take()`s the cached value out of `value` while the
++/// closure runs and only puts the new value back afterwards. Without this
++/// lock two threads could both observe the memo as needing an update and race
++/// through that window, or one thread could read the memo *between* the other
++/// thread's `take()` and its store and find nothing there -- which is what
++/// `ArcMemo::try_read_untracked` used to `unwrap()` on. On a multi-threaded
++/// server (tokio + streaming SSR, where `Suspense` spawns effects onto worker
++/// threads) that race is hit routinely.
++///
++/// The owning thread id is recorded so a reentrant read from inside the
++/// memo's own closure is still detected (and reported) rather than deadlocking.
++#[derive(Default)]
++pub(crate) struct ComputeLock {
++    owner: Mutex<Option<ThreadId>>,
++    released: Condvar,
++}
++
++impl ComputeLock {
++    /// Blocks until no *other* thread is computing, then claims the lock.
++    ///
++    /// Returns `None` when the current thread already holds it (a reentrant
++    /// recompute), in which case the caller proceeds without a guard.
++    fn acquire(&self) -> Option<ComputeGuard<'_>> {
++        let me = thread::current().id();
++        let mut owner = self.owner.lock().or_poisoned();
++        loop {
++            match *owner {
++                Some(id) if id == me => return None,
++                // Single-threaded targets (wasm32-unknown-unknown) can never
++                // reach this arm, so `Condvar::wait` being unsupported there
++                // is not a concern.
++                Some(_) => owner = self.released.wait(owner).or_poisoned(),
++                None => {
++                    *owner = Some(me);
++                    return Some(ComputeGuard { lock: self });
++                }
++            }
++        }
++    }
++
++    /// Whether *another* thread currently holds the lock.
++    pub(crate) fn held_by_other_thread(&self) -> bool {
++        matches!(*self.owner.lock().or_poisoned(), Some(id) if id != thread::current().id())
++    }
++
++    /// Whether the current thread holds the lock (i.e. we are inside this
++    /// memo's own closure).
++    pub(crate) fn held_by_current_thread(&self) -> bool {
++        matches!(*self.owner.lock().or_poisoned(), Some(id) if id == thread::current().id())
++    }
++
++    /// Blocks until whichever other thread holds the lock releases it.
++    pub(crate) fn wait_for_release(&self) {
++        let me = thread::current().id();
++        let mut owner = self.owner.lock().or_poisoned();
++        while matches!(*owner, Some(id) if id != me) {
++            owner = self.released.wait(owner).or_poisoned();
++        }
++    }
++}
++
++/// Releases the [`ComputeLock`] on drop, including during a panic unwind, so
++/// a closure that panics never leaves other threads waiting forever.
++struct ComputeGuard<'a> {
++    lock: &'a ComputeLock,
++}
++
++impl Drop for ComputeGuard<'_> {
++    fn drop(&mut self) {
++        *self.lock.owner.lock().or_poisoned() = None;
++        self.lock.released.notify_all();
++    }
+ }
+ 
+ pub(crate) struct MemoInnerReactivity {
+@@ -58,6 +137,7 @@
+                 subscribers: SubscriberSet::new(),
+                 any_subscriber,
+             }),
++            compute: ComputeLock::default(),
+         }
+     }
+ }
+@@ -117,8 +197,35 @@
+         }
+ 
+         if needs_update(&self.reactivity) {
++            // Another thread may already be recomputing this memo. Wait for
++            // it rather than racing it: once it finishes, the memo is `Clean`
++            // and the re-check below skips the redundant (and, with the value
++            // already taken, `None`-seeded) second run.
++            //
++            // `None` means *this* thread is already inside the closure -- a
++            // memo reading itself. That was never supported (it used to
++            // recurse until the stack overflowed); now the nested read finds
++            // no value and fails the way a disposed memo does.
++            let Some(compute_guard) = self.compute.acquire() else {
++                return false;
++            };
++            if !needs_update(&self.reactivity) {
++                let mut lock = self.reactivity.write().or_poisoned();
++                if lock.state == ReactiveNodeState::Check {
++                    lock.state = ReactiveNodeState::Clean;
++                }
++                return false;
++            }
++
+             // No deadlock risk, because we only hold the value lock.
+             let value = self.value.write().or_poisoned().take();
++            // Mark `Clean` *before* running the closure rather than after
++            // it: a source that changes on another thread while the closure
++            // is running marks this memo `Dirty` again, and stamping `Clean`
++            // afterwards would silently discard that update and serve the
++            // stale value until the next change.
++            self.reactivity.write().or_poisoned().state =
++                ReactiveNodeState::Clean;
+ 
+             /// codegen optimisation:
+             fn inner_1(
+@@ -148,10 +255,10 @@
+             /// codegen optimisation:
+             fn inner_2(
+                 changed: bool,
+-                mut reactivity_lock: RwLockWriteGuard<'_, MemoInnerReactivity>,
++                reactivity_lock: RwLockWriteGuard<'_, MemoInnerReactivity>,
+             ) {
+-                reactivity_lock.state = ReactiveNodeState::Clean;
+-
++                // `state` was set to `Clean` before the closure ran and is
++                // deliberately left alone here: see above.
+                 if changed {
+                     let subs = reactivity_lock.subscribers.clone();
+                     drop(reactivity_lock);
+@@ -168,13 +275,21 @@
+                 }
+             }
+             inner_2(changed, reactivity_lock);
++            // Only now -- with the value stored and the state `Clean` -- may
++            // waiting readers proceed.
++            drop(compute_guard);
+ 
+             changed
+         } else {
+             /// codegen optimisation:
+             fn inner(reactivity: &RwLock<MemoInnerReactivity>) -> bool {
+                 let mut lock = reactivity.write().or_poisoned();
+-                lock.state = ReactiveNodeState::Clean;
++                // Only settle a `Check` we just walked. Overwriting a `Dirty`
++                // that another thread stamped in the meantime would drop that
++                // update on the floor.
++                if lock.state == ReactiveNodeState::Check {
++                    lock.state = ReactiveNodeState::Clean;
++                }
+                 false
+             }
+             inner(&self.reactivity)
+--- a/src/computed/arc_memo.rs	2006-07-23 19:21:28.000000000 -0600
++++ b/src/computed/arc_memo.rs	2026-09-13 07:27:21.208976400 -0600
+@@ -328,12 +328,52 @@
+     fn try_read_untracked(&self) -> Option<Self::Value> {
+         self.update_if_necessary();
+ 
+-        Mapped::try_new(Arc::clone(&self.inner.value), |t| {
+-            // safe to unwrap here because update_if_necessary
+-            // guarantees the value is Some
+-            t.as_ref().unwrap().as_borrowed()
+-        })
+-        .map(ReadGuard::new)
++        // `update_if_necessary` takes the cached value out while the memo's
++        // closure runs, so a concurrent reader on another thread can observe
++        // `None` here even though the memo is neither disposed nor broken:
++        // it saw the memo as `Clean` just before a source change made another
++        // thread start recomputing it. Wait for that recompute to land instead
++        // of unwrapping the hole. The `Some` check and the mapped guard share
++        // one read lock, so a recompute cannot slip in between them.
++        let mut retried = false;
++        loop {
++            match Plain::try_new(Arc::clone(&self.inner.value)) {
++                Some(guard) if guard.is_some() => {
++                    return Some(ReadGuard::new(Mapped::new_with_guard(
++                        guard,
++                        |t| {
++                            // checked above under the same lock
++                            t.as_ref().unwrap().as_borrowed()
++                        },
++                    )));
++                }
++                // The value has been taken out for a recompute.
++                Some(_) => {}
++                // `try_read` lost to the recomputing thread's brief write
++                // lock (or the lock is poisoned, which `update_if_necessary`
++                // below turns into a panic).
++                None => {}
++            }
++
++            if self.inner.compute.held_by_other_thread() {
++                self.inner.compute.wait_for_release();
++                continue;
++            }
++            if self.inner.compute.held_by_current_thread() {
++                // A read of the memo from inside its own closure: there is no
++                // value to hand out yet, and nothing to wait for.
++                return None;
++            }
++            // Nobody is computing and there is still no value: the closure
++            // must have panicked on an earlier run (which leaves the memo
++            // `Dirty`). Give it one more chance, then report it as
++            // unavailable rather than spinning.
++            if retried {
++                return None;
++            }
++            retried = true;
++            self.update_if_necessary();
++        }
+     }
+ }
+ 
+--- /dev/null	2026-09-13 07:32:32.000000000 -0600
++++ b/tests/memo_concurrent.rs	2026-09-13 07:27:59.406346400 -0600
+@@ -0,0 +1,118 @@
++//! Regression test: reading a memo from several threads while one of its
++//! sources changes must never observe the "hole" left while another thread
++//! is recomputing it (`arc_memo.rs: called Option::unwrap() on a None value`).
++
++use reactive_graph::{
++    computed::ArcMemo,
++    owner::Owner,
++    signal::ArcRwSignal,
++    traits::{Get, Set},
++};
++use std::{
++    sync::{
++        atomic::{AtomicBool, AtomicUsize, Ordering},
++        Arc,
++    },
++    thread,
++    time::{Duration, Instant},
++};
++
++#[test]
++fn concurrent_reads_during_recompute_never_panic() {
++    let owner = Owner::new();
++    owner.set();
++
++    let source = ArcRwSignal::new(0u64);
++    let memo = ArcMemo::new({
++        let source = source.clone();
++        move |_| {
++            let value = source.get();
++            // Widen the window in which the cached value is taken out.
++            let start = Instant::now();
++            while start.elapsed() < Duration::from_micros(20) {}
++            value
++        }
++    });
++
++    let panics = Arc::new(AtomicUsize::new(0));
++    let stop = Arc::new(AtomicBool::new(false));
++    let readers = (0..4)
++        .map(|_| {
++            let memo = memo.clone();
++            let stop = Arc::clone(&stop);
++            let panics = Arc::clone(&panics);
++            thread::spawn(move || {
++                while !stop.load(Ordering::Relaxed) {
++                    let read = std::panic::catch_unwind(
++                        std::panic::AssertUnwindSafe(|| memo.get()),
++                    );
++                    if read.is_err() {
++                        panics.fetch_add(1, Ordering::Relaxed);
++                    }
++                }
++            })
++        })
++        .collect::<Vec<_>>();
++
++    // Silence the default hook so a failure prints once, from the assert.
++    let prev_hook = std::panic::take_hook();
++    std::panic::set_hook(Box::new(|_| {}));
++
++    let deadline = Instant::now() + Duration::from_secs(2);
++    let mut writes = 0u64;
++    while Instant::now() < deadline {
++        writes += 1;
++        source.set(writes);
++        thread::sleep(Duration::from_micros(30));
++    }
++    stop.store(true, Ordering::Relaxed);
++    for reader in readers {
++        reader.join().unwrap();
++    }
++    std::panic::set_hook(prev_hook);
++
++    assert_eq!(
++        panics.load(Ordering::Relaxed),
++        0,
++        "memo reads panicked while another thread was recomputing"
++    );
++    assert_eq!(memo.get(), writes);
++}
++
++#[test]
++fn reentrant_read_is_reported_not_deadlocked() {
++    use reactive_graph::traits::GetUntracked;
++
++    let owner = Owner::new();
++    owner.set();
++
++    // A memo whose closure reads itself. Never supported; it must fail fast
++    // (an `Option` from `try_get`, a panic from `get`) rather than hang.
++    let slot: Arc<std::sync::Mutex<Option<ArcMemo<u32>>>> =
++        Arc::new(std::sync::Mutex::new(None));
++    let memo = ArcMemo::new({
++        let slot = Arc::clone(&slot);
++        move |_| {
++            let me = slot.lock().unwrap().clone();
++            me.and_then(|m| m.try_get_untracked()).unwrap_or(7)
++        }
++    });
++    *slot.lock().unwrap() = Some(memo.clone());
++
++    let done = Arc::new(AtomicBool::new(false));
++    let worker = thread::spawn({
++        let memo = memo.clone();
++        let done = Arc::clone(&done);
++        move || {
++            let value = memo.get();
++            done.store(true, Ordering::Relaxed);
++            value
++        }
++    });
++    let deadline = Instant::now() + Duration::from_secs(5);
++    while !done.load(Ordering::Relaxed) {
++        assert!(Instant::now() < deadline, "reentrant memo read deadlocked");
++        thread::sleep(Duration::from_millis(5));
++    }
++    assert_eq!(worker.join().unwrap(), 7);
++}

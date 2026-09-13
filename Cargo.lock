@@ -7617,8 +7617,6 @@ dependencies = [
 [[package]]
 name = "reactive_graph"
 version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00c5a025366836190c7030e883cc2bcd9e384ff555336e3c7954741ca411b177"
 dependencies = [
  "any_spawner",
  "async-lock",
