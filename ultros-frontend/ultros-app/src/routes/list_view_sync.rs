@@ -2252,7 +2252,11 @@ pub fn ListViewSync() -> impl IntoView {
                         view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
                     }}
                     <div class="panel rounded-lg p-4 mt-3">
-                        {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
+                        // The compact cart owns its remaining-unit estimate. Only
+                        // the legacy grid uses the whole-stack per-world summary.
+                        <Show when=move || legacy_cart.get()>
+                            {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
+                        </Show>
                         <ActivityFeed activity=activity_view />
                     </div>
                 </Transition>
