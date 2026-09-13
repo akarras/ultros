@@ -2364,5 +2364,8 @@
     "cart_removed_count": "Removed {{count}} items",
     "cart_undo_removal": "Undo",
     "cart_dismiss": "Dismiss",
-    "cart_undo_unavailable": "Undo is no longer available for this removal"
+    "cart_undo_unavailable": "Undo is no longer available for this removal",
+    "account_list_save_failed": "Changes are not saved on this device. Keep this page open; retry or download a recovery copy.",
+    "account_list_save_retry": "Retry save",
+    "account_list_save_export": "Download recovery copy"
 }

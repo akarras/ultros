@@ -34,6 +34,8 @@
     "test:list-shop-handoff": "node ./list-shop-handoff.cjs",
     "test:list-adoption": "node ./list-adoption.cjs",
     "test:guest-list-store": "node ./guest-list-store.cjs",
+    "test:account-list-storage": "node ./account-list-storage.cjs",
+    "test:account-list-ui": "node ./account-list-ui.cjs",
     "test:list-sync": "node ./list-sync.cjs",
     "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",
     "test:list-companion": "node ./list-companion.cjs",

@@ -20,6 +20,35 @@ use ultros_list_doc::{
 use crate::list_doc::adapter::{self, Edit};
 use crate::list_doc::store::{self, BrowserStorage};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveState {
+    Pending,
+    Saved,
+    Failed,
+}
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/../../ultros/static/account-list-store.mjs")]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountSaveLocked)]
+    fn save_locked(
+        user: &str,
+        list: i32,
+        token: f64,
+        callback: &js_sys::Function,
+    ) -> js_sys::Promise;
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRemember)]
+    fn remember(user: &str, list: i32, snapshot: &js_sys::Uint8Array) -> f64;
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRecovery)]
+    fn recovery(user: &str, list: i32) -> wasm_bindgen::JsValue;
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountForget)]
+    fn forget(user: &str, list: i32);
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountPending)]
+    fn pending(user: &str, list: i32, token: f64) -> bool;
+    #[wasm_bindgen::prelude::wasm_bindgen(catch, js_name = accountDownload)]
+    fn download(name: &str, snapshot: &js_sys::Uint8Array) -> Result<(), wasm_bindgen::JsValue>;
+}
+
 #[cfg(feature = "hydrate")]
 const SAVE_DEBOUNCE_MS: u32 = 500;
 
@@ -49,6 +78,10 @@ pub struct ListDocHandle {
     pub status: RwSignal<String>,
     /// Last known `ListPermission` as `i16`, cached beside the snapshot.
     pub permission: RwSignal<i16>,
+    pub save_state: RwSignal<SaveState>,
+    generation: StoredValue<String, LocalStorage>,
+    replacement_source: StoredValue<Option<Vec<u8>>, LocalStorage>,
+    revoked: StoredValue<std::rc::Rc<std::cell::Cell<bool>>, LocalStorage>,
     /// Set by `purge`. Once true, this handle is inert for persistence: no
     /// more debounced or immediate saves happen for this user+list, since
     /// the local copy has been explicitly discarded. The page constructs a
@@ -80,6 +113,21 @@ impl ListDocHandle {
                 }
             });
         let doc = doc.unwrap_or_default();
+        #[cfg(feature = "hydrate")]
+        let doc = {
+            // Failed saves survive client-side navigation. Each account has
+            // its own recovery slot; nothing is exposed through another login.
+            let pending = recovery(&user_id.to_string(), list_id);
+            if !pending.is_null() {
+                let bytes = js_sys::Uint8Array::new(&pending).to_vec();
+                match doc.import(&bytes) {
+                    Ok(report) if !report.pending => doc,
+                    _ => ListDocument::from_snapshot(&bytes).unwrap_or(doc),
+                }
+            } else {
+                doc
+            }
+        };
         let permission = loaded.map(|l| l.permission).unwrap_or(0);
         let undo = ListUndo::new(&doc);
         let revision = RwSignal::new(0u64);
@@ -100,6 +148,14 @@ impl ListDocHandle {
             outbox,
             status: RwSignal::new("connecting".to_string()),
             permission: RwSignal::new(permission),
+            save_state: RwSignal::new(SaveState::Pending),
+            generation: StoredValue::new_local(store::generation(
+                &BrowserStorage,
+                user_id,
+                list_id,
+            )),
+            replacement_source: StoredValue::new_local(None),
+            revoked: StoredValue::new_local(std::rc::Rc::new(std::cell::Cell::new(false))),
             purged: RwSignal::new(false),
             closed: RwSignal::new(false),
         };
@@ -284,23 +340,132 @@ impl ListDocHandle {
     }
 
     pub fn save_now(&self) {
-        // A disposed `purged` signal reads as `None`; treat that as "nothing
-        // worth saving" rather than panicking (see `is_closed`).
         if self.purged.try_get_untracked().unwrap_or(true) {
             return;
         }
         let Some(snapshot) = self.with_doc(|doc| doc.export_snapshot()) else {
             return;
         };
-        if let Ok(snapshot) = snapshot {
-            let _ = store::save(
-                &BrowserStorage,
-                self.user_id,
+        let Ok(snapshot) = snapshot else {
+            let _ = self.save_state.try_set(SaveState::Failed);
+            return;
+        };
+        let _ = self.save_state.try_set(SaveState::Pending);
+        #[cfg(feature = "hydrate")]
+        {
+            use wasm_bindgen::{JsCast, prelude::*};
+            let handle = *self;
+            let permission = self.permission.get_untracked();
+            let generation = self.generation.get_value();
+            let replacement_source = self.replacement_source.get_value();
+            let revoked = self.revoked.get_value();
+            let token = remember(
+                &self.user_id.to_string(),
                 self.list_id,
-                &snapshot,
-                self.permission.get_untracked(),
-                store::now_ms(),
+                &js_sys::Uint8Array::from(snapshot.as_slice()),
             );
+            // Snapshot and revocation token outlive the page. Navigation can
+            // dispose the reactive handle while this task waits for another tab.
+            leptos::task::spawn_local(async move {
+                let callback = Closure::<dyn FnMut() -> JsValue>::new(move || {
+                    if revoked.get() {
+                        return JsValue::FALSE;
+                    }
+                    let result = if let Some(source_version) = replacement_source.as_deref() {
+                        let (next, result) = store::replace_save(
+                            &BrowserStorage,
+                            handle.user_id,
+                            handle.list_id,
+                            &snapshot,
+                            permission,
+                            &generation,
+                            source_version,
+                        );
+                        if !handle.is_closed_or_disposed()
+                            && handle.generation.get_value() == generation
+                        {
+                            handle.generation.set_value(next);
+                            if result.is_ok() {
+                                handle.replacement_source.set_value(None);
+                            }
+                        }
+                        result
+                    } else {
+                        store::merge_save(
+                            &BrowserStorage,
+                            handle.user_id,
+                            handle.list_id,
+                            &snapshot,
+                            permission,
+                            &generation,
+                        )
+                    };
+                    match result {
+                        Ok(merged) => {
+                            if !handle.is_closed_or_disposed() {
+                                let before = handle.try_version();
+                                match handle.import(&merged) {
+                                    Ok(report) if !report.pending => {
+                                        if handle.is_ahead_of(&before) {
+                                            // Imported peer operations are not undoable local edits,
+                                            // but still need relaying when this tab is connected.
+                                            handle
+                                                .outbox
+                                                .update(|queue| queue.push(merged.clone()));
+                                        }
+                                        let saved = ListDocument::from_snapshot(&merged)
+                                            .is_ok_and(|doc| !handle.is_ahead_of(&doc.version()));
+                                        if saved {
+                                            handle.save_state.set(SaveState::Saved);
+                                        }
+                                    }
+                                    _ => {
+                                        handle.save_state.set(SaveState::Failed);
+                                        return JsValue::FALSE;
+                                    }
+                                }
+                            }
+                            JsValue::TRUE
+                        }
+                        Err(_) => JsValue::FALSE,
+                    }
+                });
+                let result = wasm_bindgen_futures::JsFuture::from(save_locked(
+                    &handle.user_id.to_string(),
+                    handle.list_id,
+                    token,
+                    callback.as_ref().unchecked_ref(),
+                ))
+                .await;
+                if !matches!(result, Ok(value) if value == JsValue::TRUE)
+                    && pending(&handle.user_id.to_string(), handle.list_id, token)
+                {
+                    let _ = handle.save_state.try_set(SaveState::Failed);
+                }
+            });
+        }
+        #[cfg(not(feature = "hydrate"))]
+        {
+            let _ = snapshot;
+            let _ = self.save_state.try_set(SaveState::Failed);
+        }
+    }
+
+    pub fn download_recovery(&self) {
+        #[cfg(feature = "hydrate")]
+        {
+            if self.is_closed_or_disposed() || self.purged.get_untracked() {
+                return;
+            }
+            if let Some(Ok(snapshot)) = self.with_doc(|doc| doc.export_snapshot())
+                && download(
+                    &self.meta().name,
+                    &js_sys::Uint8Array::from(snapshot.as_slice()),
+                )
+                .is_err()
+            {
+                self.save_state.set(SaveState::Failed);
+            }
         }
     }
 
@@ -316,6 +481,8 @@ impl ListDocHandle {
     /// inert until it is dropped; the page opens a fresh `ListDocHandle` if
     /// it re-opens the list.
     pub fn purge(&self) {
+        #[cfg(feature = "hydrate")]
+        forget(&self.user_id.to_string(), self.list_id);
         // The browser copy still has to go even for a closed handle, but the
         // in-memory swap below would touch disposed nodes, so stop after the
         // storage half.
@@ -323,6 +490,7 @@ impl ListDocHandle {
             store::purge(&BrowserStorage, self.user_id, self.list_id);
             return;
         }
+        self.revoked.with_value(|revoked| revoked.set(true));
         self.purged.set(true);
         store::purge(&BrowserStorage, self.user_id, self.list_id);
         // Clear the outbox before swapping documents so a subscription
@@ -368,6 +536,7 @@ impl ListDocHandle {
         let local_rows = self.rows();
         let local_meta = self.meta();
         let fresh = ListDocument::from_snapshot(snapshot)?;
+        self.replacement_source.set_value(Some(self.try_version()));
         let undo = ListUndo::new(&fresh);
         let revision = self.revision;
         let outbox = self.outbox;
@@ -448,6 +617,10 @@ impl ListDocHandle {
         self.outbox.dispose();
         self.status.dispose();
         self.permission.dispose();
+        self.save_state.dispose();
+        self.generation.dispose();
+        self.replacement_source.dispose();
+        self.revoked.dispose();
         self.purged.dispose();
         self.closed.dispose();
     }
@@ -470,6 +643,15 @@ impl ListDocHandle {
             if handle.purged.try_get_untracked().unwrap_or(true) {
                 return;
             }
+            let _ = handle.save_state.try_set(SaveState::Pending);
+            // Keep the latest edit recoverable during the debounce window too.
+            if let Some(Ok(snapshot)) = handle.with_doc(|doc| doc.export_snapshot()) {
+                remember(
+                    &handle.user_id.to_string(),
+                    handle.list_id,
+                    &js_sys::Uint8Array::from(snapshot.as_slice()),
+                );
+            }
             let timeout = gloo_timers::callback::Timeout::new(SAVE_DEBOUNCE_MS, move || {
                 handle.save_now();
             });
@@ -477,6 +659,21 @@ impl ListDocHandle {
                 .save_timer
                 .try_update_value(move |timer| *timer = Some(timeout));
         });
+        let handle = *self;
+        let key = format!("ultros.listdoc.v1.{}.{}", self.user_id, self.list_id);
+        let _ = leptos_use::use_event_listener(
+            leptos_use::use_window(),
+            leptos::ev::storage,
+            move |event| {
+                if !handle.is_closed_or_disposed() && event.key().as_deref() == Some(key.as_str()) {
+                    if event.new_value().is_none() {
+                        handle.purge();
+                    } else {
+                        handle.save_now();
+                    }
+                }
+            },
+        );
         let handle = *self;
         let _ = leptos_use::use_event_listener(
             leptos_use::use_document(),

@@ -2364,5 +2364,8 @@
     "cart_removed_count": "{{count}} Gegenstände entfernt",
     "cart_undo_removal": "Rückgängig",
     "cart_dismiss": "Schließen",
-    "cart_undo_unavailable": "Dieses Entfernen lässt sich nicht mehr rückgängig machen"
+    "cart_undo_unavailable": "Dieses Entfernen lässt sich nicht mehr rückgängig machen",
+    "account_list_save_failed": "Änderungen sind auf diesem Gerät nicht gespeichert. Lass diese Seite geöffnet; versuche es erneut oder lade eine Sicherung herunter.",
+    "account_list_save_retry": "Erneut speichern",
+    "account_list_save_export": "Sicherung herunterladen"
 }

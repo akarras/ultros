@@ -2364,5 +2364,8 @@
     "cart_removed_count": "已移除{{count}}件物品",
     "cart_undo_removal": "復原",
     "cart_dismiss": "關閉",
-    "cart_undo_unavailable": "此次移除已無法復原"
+    "cart_undo_unavailable": "此次移除已無法復原",
+    "account_list_save_failed": "變更尚未儲存在此裝置上。請保持此頁面開啟，重試或下載復原副本。",
+    "account_list_save_retry": "重試儲存",
+    "account_list_save_export": "下載復原副本"
 }
