@@ -23,7 +23,7 @@ const http = require('node:http');
     await page.evaluate(async () => {
       window.api = await import('/companion.mjs');
       window.events = [];
-      window.data = { title: '<img src=x onerror=alert(1)>', world: 'Gilgamesh', progress: '0 of 3', canEdit: true, hasNext: true,
+      window.data = { title: '<img src=x onerror=alert(1)>', world: 'Gilgamesh', progress: '0 of 3', canEdit: true, canUndoPurchase: true, hasNext: true,
         rows: [{ key: 'item:1', name: '<script>unsafe()</script>', quality: 'HQ', quantity: 3, cost: 100, done: false }] };
       // Explicitly exercise the unsupported-browser fallback, independently of host PiP support.
       Object.defineProperty(window, 'documentPictureInPicture', { value: undefined, configurable: true });
@@ -50,6 +50,10 @@ const http = require('node:http');
     await popup.click('[data-testid="companion-next"]');
     await popup.click('[data-testid="companion-undo"]');
     assert.deepEqual(await page.evaluate(() => events.slice(1)), [['next', '', 0], ['undo', '', 0]]);
+    await page.evaluate(() => { data.canUndoPurchase = false; api.updateCompanion(JSON.stringify(data)); });
+    assert.equal(await popup.$eval('[data-testid="companion-undo"]', node => node.disabled), true);
+    await popup.click('[data-testid="companion-undo"]');
+    assert.equal(await page.evaluate(() => events.length), 3, 'no purchase means no undo action');
     await page.evaluate(() => { data.rows[0].canBuy = false; api.updateCompanion(JSON.stringify(data)); });
     assert.equal(await popup.$eval('[data-testid="companion-buy"]', (node) => node.disabled), true);
     await popup.click('[data-testid="companion-buy"]');

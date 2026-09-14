@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Undo purchases without losing cart edits",
+  "blurb": "Undo purchase in the Labs Shop and shopping companion now reverses your last available purchase while keeping later cart quantity edits. It also works when the purchase completed an item."
+}

@@ -123,6 +123,12 @@ pub enum Edit {
     Add(ListItem),
     /// Recipe previews add their complete ingredient set in one undo step.
     AddMany(Vec<ListItem>),
+    /// Shop purchases have their own reversible history, alongside Ctrl+Z.
+    RecordPurchase {
+        key: RowKey,
+        quantity: i64,
+    },
+    UndoPurchase,
     /// The caller must keep the ORIGINAL `id` on the mutated `ListItem`: ids
     /// are derived from the row key (see `row_id`/`find_key`), so an id that
     /// reflects the edit's new `hq`/`item_id` would fail to locate the row
@@ -178,6 +184,8 @@ fn apply_edit(doc: &ListDocument, before: &RowSnapshot, item: &ListItem) -> Resu
 
 pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), DocError> {
     match edit {
+        Edit::RecordPurchase { key, quantity } => undo.record_purchase(key, quantity),
+        Edit::UndoPurchase => undo.undo_purchase().map(|_| ()),
         Edit::Add(item) => {
             let key = RowKey::new(item.item_id, item.hq);
             let acquired = item.acquired.unwrap_or(0) as i64;

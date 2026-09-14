@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use loro::{
-    Container, ExportMode, LoroCounter, LoroDoc, LoroMap, LoroValue, Subscription,
+    Container, ContainerTrait, ExportMode, LoroCounter, LoroDoc, LoroMap, LoroValue, Subscription,
     ValueOrContainer, VersionVector,
 };
 use ultros_api_types::world_helper::AnySelector;
@@ -181,6 +181,11 @@ impl ListDocument {
             ValueOrContainer::Container(Container::Map(map)) => Some(map),
             _ => None,
         }
+    }
+
+    /// Distinguishes a purchased row from a later replacement at the same key.
+    pub(crate) fn row_identity(&self, key: &RowKey) -> Option<loro::ContainerID> {
+        self.row_container(key).map(|row| row.id())
     }
 
     fn read_row(key: RowKey, row: &LoroMap) -> RowSnapshot {

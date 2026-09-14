@@ -496,10 +496,12 @@ mod browser {
                 <ListShop input on_purchase=Callback::new(move |(key, delta): (String, i32)| {
                     if let Ok(id) = key.parse::<i32>()
                         && let Some(key) = adapter::key_of(id)
-                        && let Err(e) = handle.with_value(|h| h.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta) })) {
+                        && let Err(e) = handle.with_value(|h| h.apply(Edit::RecordPurchase { key, quantity: i64::from(delta) })) {
                         error.set(e);
                     }
-                }) on_undo=Callback::new(move |()| { handle.with_value(|h| { h.undo(); }); }) can_edit=Signal::derive(|| true) />
+                }) on_undo=Callback::new(move |()| {
+                    if let Err(e) = handle.with_value(|h| h.apply(Edit::UndoPurchase)) { error.set(e); }
+                }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) />
             </div>
         }
     }
