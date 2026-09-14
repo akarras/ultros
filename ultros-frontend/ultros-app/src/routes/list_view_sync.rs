@@ -1851,10 +1851,16 @@ pub fn ListViewSync() -> impl IntoView {
                                 if let Ok(id) = key.parse::<i32>()
                                     && let Some(key) = crate::list_doc::adapter::key_of(id)
                                     && let Some(handle) = handle.get_untracked()
-                                    && let Err(error) = handle.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta.max(0)) })
+                                    && let Err(error) = handle.apply(Edit::RecordPurchase { key, quantity: i64::from(delta.max(0)) })
                                 { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
                             })
-                            on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
+                            on_undo=Callback::new(move |()| {
+                                if let Some(handle) = handle.get_untracked()
+                                    && let Err(error) = handle.apply(Edit::UndoPurchase) {
+                                    mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string())));
+                                }
+                            })
+                            can_undo_purchase=Signal::derive(move || handle.get().is_some_and(|h| h.can_undo_purchase()))
                             can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
                     </Suspense>
                 </Show>

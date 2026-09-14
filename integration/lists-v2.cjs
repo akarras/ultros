@@ -417,6 +417,8 @@ async function main() {
     assert.equal(await visible(testId("shop-no-prices")), true, "unknown prices are called out before a trip exists");
     await page.click(testId("shop-cheapest"));
     await page.waitForSelector(testId("shop-totals"));
+    assert.equal(await page.$eval(testId("shop-undo-purchase"), button => button.disabled), true,
+      "manual Owned edits do not become Shop purchases on a device list");
     assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /0 gil · 0 surplus · 5 missing/);
     await page.$eval(testId("shop-estimate"), details => { details.open = true; });
     assert.match(await page.$eval(testId("shop-estimate"), element => element.textContent),

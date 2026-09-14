@@ -314,6 +314,10 @@ impl GuestListHandle {
         self.revision.track();
         !self.inner.closed.get() && self.inner.undo.borrow().can_redo()
     }
+    pub fn can_undo_purchase(&self) -> bool {
+        self.revision.track();
+        !self.inner.closed.get() && self.inner.undo.borrow().can_undo_purchase()
+    }
     fn history(&self, redo: bool) -> bool {
         if self.inner.closed.get() {
             return false;

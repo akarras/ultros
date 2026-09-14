@@ -256,6 +256,15 @@ impl ListDocHandle {
             .unwrap_or(false)
     }
 
+    pub fn can_undo_purchase(&self) -> bool {
+        let _ = self.revision.try_get();
+        !self.is_closed_or_disposed()
+            && self
+                .undo
+                .try_with_value(|undo| undo.can_undo_purchase())
+                .unwrap_or(false)
+    }
+
     /// Only a real change notifies: the sync loop reports "live" on every
     /// relayed update, and re-notifying an unchanged status would re-render
     /// everything that shows it.

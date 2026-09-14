@@ -68,6 +68,16 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   toolbar disables an unavailable action and a shortcut that finds nothing
   to do says so in the workspace feedback line. A snapshot rebase restarts
   the stack.
+- Shop's **Undo purchase** reverses the most recent available local Shop
+  purchase as a new grouped counter delta, preserving later Build edits.
+  Account, device, and companion controls share this behavior. The receipt
+  journal retains up to 100 purchases for the open document and resets on
+  reload or snapshot rebase. Ctrl+Z/redo tracks purchases and their reversals,
+  so a purchase already undone from Build cannot be reversed twice. A
+  removed, replaced, or quality-moved row is skipped, as is a receipt whose
+  quantity is no longer owned; Undo purchase never redirects to a different
+  quality or makes Owned negative. The button is disabled without an
+  available receipt.
 
 ## Debugging
 
@@ -110,7 +120,7 @@ preference; its product contract is in
 The Shop and companion requirements from that contract are tracked item by
 item, with the checks that exercised each one, in
 [`qa/lists-2-shop-companion-evidence.md`](qa/lists-2-shop-companion-evidence.md);
-its open rows (physical game validation, purchase-specific undo, the
+its open rows (physical game validation, the
 per-hop savings ladder) are not promotion blockers but must stay visible.
 The Build side (compact cart, estimates, undo) is reconciled the same way in
 [`qa/lists-2-delivery-reconciliation.md`](qa/lists-2-delivery-reconciliation.md),
