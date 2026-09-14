@@ -4,18 +4,19 @@ use crate::analysis::{
     median_in_place_i32, price_drift_pct, profit_per_day_from_rate, return_on_investment,
     roi_badge_class, sale_tax, signed_delta_class, sniper_clamp, velocity_per_day,
 };
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
 };
 use crate::analyzer_kit::filters::{
     duration_value, price_control, register_filters, toggle_control,
 };
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
+use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
@@ -1874,7 +1875,7 @@ fn AnalyzerTable(
                     market.window,
                     t_string!(i18n, market_conservative_estimate).to_string(),
                 ),
-                toggle_control(FILTER_PRE_TAX, filter_label(FILTER_PRE_TAX)),
+                crate::analyzer_kit::filters::tax_control(FILTER_PRE_TAX),
                 toggle_control(FILTER_SHOW_SUSPICIOUS, filter_label(FILTER_SHOW_SUSPICIOUS)),
                 {
                     let mut control = toggle_control(
@@ -2055,14 +2056,32 @@ fn AnalyzerTable(
         .partial(),
     ];
     let worlds_for_measure = worlds.clone();
+    let calculation = Calculation::provide(
+        registry,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, analyzer_col_profit).to_string(),
+                Some("profit"),
+            ),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "sale_estimate"),
+            CalculationTerm::input(TermRole::Tax, "tax", "tax"),
+            CalculationTerm::fixed(
+                TermRole::Cost,
+                t_string!(i18n, analyzer_col_buy_price).to_string(),
+                Some("buy_price"),
+            ),
+        ],
+        Some("revenue"),
+    );
+
     view! {
         <div class="flex flex-col gap-4" data-testid="flip-finder-table">
             <div class="flex flex-wrap items-start gap-3">
-                <MarketWindowControl window=market.window />
+                <CalculationStrip calculation window=market.window />
 
             </div>
             {move || (revenue_pending.get() || rate_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}
-            <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_conservative_note)}</p>
             <ControlBar sticky=false
                 summary=move || {
                     view! {

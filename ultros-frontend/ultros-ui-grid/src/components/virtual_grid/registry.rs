@@ -208,6 +208,12 @@ impl FilterRegistry {
         self.count.set(Some(count));
     }
 
+    /// Route inputs independent of the grid's resolved columns. Formula
+    /// headings may read these while those columns are being computed.
+    pub fn controls(self) -> Vec<ColumnFilter> {
+        self.controls.get()
+    }
+
     pub fn row_count(self) -> usize {
         self.count
             .get()
@@ -341,6 +347,9 @@ impl FilterRegistry {
     }
 
     pub fn active(self, filter: &ColumnFilter, query: &ParamsMap) -> bool {
+        if filter.calculation {
+            return false;
+        }
         if let Some(kind) = filter.metric {
             self.filters(query)
                 .get(filter.key)
@@ -357,7 +366,10 @@ impl FilterRegistry {
         let mut next = self.canonical(query);
         next.remove("gf");
         for entry in self.entries() {
-            if entry.filter.metric.is_none() && entry.filter.clear_with_filters {
+            if entry.filter.metric.is_none()
+                && entry.filter.clear_with_filters
+                && !entry.filter.calculation
+            {
                 clear_key(&mut next, entry.filter.key);
             }
         }
@@ -464,7 +476,7 @@ pub fn RegisteredFilterMenu(registry: FilterRegistry, on_select: Callback<()>) -
         let mut entries: Vec<_> = registry
             .entries()
             .into_iter()
-            .filter(|e| !registry.active(&e.filter, &query))
+            .filter(|e| !e.filter.calculation && !registry.active(&e.filter, &query))
             .collect();
         // A host's column table may interleave groups; the picker shows each
         // heading once, so the menu keeps each group together too. Ungrouped
@@ -519,6 +531,31 @@ pub fn RegisteredFilterEditor(registry: FilterRegistry) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn calculation_inputs_never_become_row_filters_or_get_cleared_with_them() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let mut basis = ColumnFilter::new("revenue", "Sale estimate".into(), false);
+            basis.default_value = Some("listing-min".into());
+            basis.calculation = true;
+            let control = basis.clone();
+            let registry =
+                FilterRegistry::provide(aliases(), Signal::derive(move || vec![control.clone()]));
+            let query = params(&[
+                ("revenue", "sale-median"),
+                ("min-buy", "100"),
+                ("window", "30"),
+            ]);
+            assert!(!registry.active(&basis, &ParamsMap::new()));
+            assert!(!registry.active(&basis, &query));
+            assert_eq!(registry.controls(), vec![basis.clone()]);
+            let cleared = registry.clear_all(&query);
+            assert!(registry.filters(&cleared).is_empty());
+            assert_eq!(cleared.get("revenue").as_deref(), Some("sale-median"));
+            assert_eq!(cleared.get("window").as_deref(), Some("30"));
+            assert_eq!(super::super::filter::cleared_query(&query, &[basis]), query);
+        });
+    }
     fn params(pairs: &[(&str, &str)]) -> ParamsMap {
         let mut query = ParamsMap::new();
         for (key, value) in pairs {

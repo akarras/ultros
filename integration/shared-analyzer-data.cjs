@@ -468,36 +468,62 @@ async function main() {
           await page.waitForSelector(calculated);
           const before = await page.$eval(calculated, cell => cell.textContent);
           const basisKey = ['leve-analyzer', 'fc-crafting-analyzer', 'scrip-sources'].includes(tool) ? 'cost-basis' : 'revenue';
-          // A window change can briefly replace the toolbar while rows refresh.
-          await page.waitForSelector(`[data-registered-filter="${basisKey}"] .filter-chip-value`, { visible: true });
-          await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
-          await page.waitForSelector('[data-registered-editor]');
-          const controls = await page.$$('[data-registered-editor] select');
-          let basis;
-          for (const select of controls) {
-            if (await select.evaluate(element => !!element.querySelector('option[value="sale-median"]') && !!element.getClientRects().length)) {
-              basis = select; break;
-            }
-          }
-          assert(basis, `${tool} exposes selectable median pricing`);
-          await basis.select('sale-median');
-          await page.click('[data-registered-editor] button[type="submit"]');
+          const basisSelector = tool === 'recipe-analyzer'
+            ? '[aria-label="Change revenue signal"]'
+            : `[data-calculation-input="${basisKey}"]`;
+          await page.waitForSelector(basisSelector, { visible: true });
+          assert.equal(await page.$$eval(`[data-registered-filter="${basisKey}"]`, els => els.length), 0,
+            `${tool} never repeats its price input in the filter bar`);
+          assert.equal(await page.$$eval(basisSelector, els => els.length), 1,
+            `${tool} exposes exactly one direct price selector`);
+          await page.select(basisSelector, 'sale-median');
           await page.waitForFunction(() => [...new URL(location.href).searchParams.values()].includes('sale-median'));
           await page.waitForFunction((selector, before) => {
             const cell = document.querySelector(selector);
             return cell && cell.textContent !== before;
           }, { timeout: 90000 }, calculated, before);
           const sevenDayPrice = await page.$eval(calculated, cell => cell.textContent);
+          if (tool !== 'recipe-analyzer') {
+            await page.select(basisSelector, 'listing-min');
+            const useSelector = '.virtual-grid-heading[data-column="market-sale-median"] [data-use-price-signal="sale-median"]';
+            const width = await page.$eval('.virtual-grid', el => el.scrollWidth);
+            for (let left = 0; left <= width; left += 400) {
+              await page.$eval('.virtual-grid', (el, left) => { el.scrollLeft = left; }, left);
+              await new Promise(resolve => setTimeout(resolve, 60));
+              if (await page.$(useSelector)) break;
+            }
+            await page.waitForSelector(useSelector, {visible: true});
+            await page.click(useSelector);
+            await page.waitForFunction(selector => document.querySelector(selector)?.value === 'sale-median', {}, basisSelector);
+            assert.equal(await page.$eval(useSelector, el => el.getAttribute('aria-pressed')), 'true');
+            assert(await page.$eval(useSelector, el => {
+              const button = el.getBoundingClientRect();
+              const header = el.closest('.virtual-grid-heading').getBoundingClientRect();
+              return button.top >= header.top && button.bottom <= header.bottom;
+            }), `${tool}: Use stays inside the header, above the result rows`);
+            await page.$eval('.virtual-grid', el => { el.scrollLeft = 0; });
+          }
+          await page.setViewport({width: 390, height: 844});
+          await page.waitForFunction(() => {
+            const nav = document.querySelector('.app-shell > .side-nav');
+            return !nav || nav.getBoundingClientRect().right <= 1;
+          });
+          assert(await page.$$eval('[data-analyzer-price-controls] .filter-chip', chips => chips.length > 0 && chips.every(chip => {
+            const rect = chip.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth;
+          })), `${tool}: formula chips fit a mobile screen`);
+          await page.screenshot({path: path.join(artifacts, `${tool}-formula-mobile.png`)});
+          await page.setViewport({width: 1600, height: 1000});
+          await page.screenshot({path: path.join(artifacts, `${tool}-formula-desktop.png`)});
+
           await page.select('[data-market-window]', '30');
           await page.waitForFunction((selector, before) => document.querySelector(selector)?.textContent !== before,
             {}, calculated, sevenDayPrice);
           assert.equal(new URL(page.url()).searchParams.get('window'), '30');
-          // A window change can briefly replace the toolbar while rows refresh.
-          await page.waitForSelector(`[data-registered-filter="${basisKey}"] .filter-chip-value`, { visible: true });
-          await page.click(`[data-registered-filter="${basisKey}"] .filter-chip-value`);
-          await page.waitForSelector('[data-registered-editor]');
-          assert.match(await page.$eval('[data-registered-editor] option[value="sale-median"]', el => el.textContent), /30d/);
-          await page.keyboard.press('Escape');
+          await page.waitForSelector(basisSelector, { visible: true });
+          assert.match(await page.$eval(`${basisSelector} option[value="sale-median"]`, el => el.textContent), /30d/);
+          await page.click('[aria-label="Clear all filters"]');
+          await page.waitForFunction(selector => document.querySelector(selector)?.value === 'sale-median', {}, basisSelector);
+          assert.equal(new URL(page.url()).searchParams.get('window'), '30');
           if (tool === 'recipe-analyzer') {
             // The fixture doubles 30-day prices. A follow-window shared
             // column and native revenue signal must use that body, while the
@@ -564,9 +590,8 @@ async function main() {
         if (fixture) {
           await page.click('[aria-label="Clear all filters"]');
           await page.waitForFunction(() => !new URL(location.href).searchParams.has('gf'));
-          // Recipe has no history-window control; its pricing inputs are
-          // preserved the same way the other tools' price basis is.
-          if (tool !== 'recipe-analyzer') assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
+          // Every tool preserves its calculation window when clearing rows.
+          assert.equal(new URL(page.url()).searchParams.get('window'), '30', `${tool}: Clear all preserves window`);
           assert([...new URL(page.url()).searchParams.values()].includes('sale-median'), `${tool}: Clear all preserves price basis`);
         }
         assert.deepEqual(errors, [], `${tool}: browser errors`);

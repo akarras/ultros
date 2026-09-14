@@ -1003,6 +1003,7 @@ where
                         <strong>{columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.label.clone()).unwrap_or_default())}</strong>
                         {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.query_sort)).then(||view! {<filter::MetricSortControls column=m.id/>})}
                         {columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.filters.clone()).unwrap_or_default()).into_iter()
+                            .filter(|filter| !filter.calculation)
                             .map(|filter|view! {<filter::ColumnFilterEditor filter/>}).collect_view()}
                         <button type="button" on:click=move |_| {fit(m.id);close_menu();}>{t!(i18n,grid_auto_fit)}</button>
                         <label>{t!(i18n,grid_width)}<input type="number" min="60" max="800" prop:value=move || width_input.get() on:input=move |e|width_input.set(event_target_value(&e))/></label>

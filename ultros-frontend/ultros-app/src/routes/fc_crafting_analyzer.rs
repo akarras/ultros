@@ -1,7 +1,7 @@
 use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -13,6 +13,7 @@ use crate::components::crafting_cost::{
     compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
+use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
@@ -580,11 +581,25 @@ fn FCCraftingAnalyzerTable(
 
     let presets = Signal::derive(move || fc_crafting_presets(i18n));
 
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(),
+                Some("profit"),
+            ),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "market-price"),
+            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost"),
+        ],
+        Some("cost-basis"),
+    );
+
     view! {
             <div class="flex flex-col gap-6">
                 <ActiveListBanner />
                 <div class="flex flex-wrap gap-3">
-                    <MarketWindowControl window=market.window />
+                    <CalculationStrip calculation window=market.window />
 
                 </div>
 

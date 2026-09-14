@@ -1,11 +1,12 @@
 use super::world_nav::use_analyzer_world;
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
@@ -573,7 +574,7 @@ fn LeveAnalyzerTable(
                 ),
                 price_control(
                     "revenue",
-                    t_string!(i18n, market_reward_value).to_string(),
+                    t_string!(i18n, calculation_reward_value).to_string(),
                     market.window,
                     t_string!(i18n, market_listing_basis).to_string(),
                 ),
@@ -589,10 +590,29 @@ fn LeveAnalyzerTable(
 
     let presets = Signal::derive(move || leve_analyzer_presets(i18n));
 
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, leve_analyzer_col_profit).to_string(),
+                Some("profit"),
+            ),
+            CalculationTerm::fixed(
+                TermRole::Revenue,
+                t_string!(i18n, calculation_fixed_gil).to_string(),
+                None,
+            ),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "revenue"),
+            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost"),
+        ],
+        Some("cost-basis"),
+    );
+
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap gap-3">
-                    <MarketWindowControl window=market.window />
+                    <CalculationStrip calculation window=market.window />
 
                 </div>
 

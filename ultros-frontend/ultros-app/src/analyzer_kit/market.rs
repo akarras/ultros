@@ -821,6 +821,17 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
 /// Adapts custom analyzer rows to the same grid, preserving native cell
 /// renderers and all layout/view interactions. Custom metrics take the
 /// same GridMetric path as these common market metrics.
+fn signal_for_metric(id: &str) -> Option<&'static str> {
+    match metric_by_id(id)? {
+        MarketMetric::Listing => Some("listing-min"),
+        MarketMetric::Follow(StatKind::Min) => Some("sale-min"),
+        MarketMetric::Follow(StatKind::Median) => Some("sale-median"),
+        MarketMetric::Follow(StatKind::Average) => Some("sale-avg"),
+        // Fixed-window columns cannot select a basis for a different window.
+        _ => None,
+    }
+}
+
 #[component]
 pub fn MarketGrid<T, K, KF, H, F, M>(
     #[prop(into)] each: Signal<Vec<T>>,
@@ -848,6 +859,7 @@ where
     F: Fn(T, &'static str) -> AnyView + Send + Sync + 'static,
     M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
 {
+    let calculation = use_context::<super::calculation::Calculation>();
     let worlds: WorldNames = Arc::new(
         use_context::<LocalWorldData>()
             .and_then(|v| v.0.ok())
@@ -914,6 +926,23 @@ where
                 MarketMetric::Listings(_) => Some(market_picker_group_listings()),
                 _ => None,
             };
+        }
+        for column in &mut result {
+            if let Some((calculation, term)) =
+                calculation.and_then(|c| c.term(column.id).map(|term| (c, term)))
+            {
+                column.heading_adornments += 24.0;
+                if let Some(key) = term.key {
+                    column
+                        .heading_lines
+                        .push((calculation.selected_label(key), 0.0));
+                }
+            }
+            if calculation.and_then(|c| c.market_input).is_some()
+                && signal_for_metric(column.id).is_some()
+            {
+                column.heading_lines.push((String::new(), 60.0));
+            }
         }
         result
     });
@@ -1053,7 +1082,8 @@ where
     });
     view! {
         <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
-            header=move |id| match metric_by_id(id) {
+            header=move |id| {
+                let header = match metric_by_id(id) {
                 Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {
                     <span title=metric_title(metric)>
                         <MetricSortHeader column=id label=Signal::derive(move || metric_label(metric, market.window.selected.get())) />
@@ -1061,6 +1091,17 @@ where
                 }.into_any(),
                 Some(metric) => (move || metric_label(metric, market.window.selected.get())).into_any(),
                 None => native_header.with_value(|header| header(id)),
+                };
+                let header = super::calculation::decorate_header(calculation, id, header);
+                match calculation.and_then(|c| c.market_input.map(|key| (c, key))).zip(signal_for_metric(id)) {
+                    Some(((calculation, key), value)) => view! {
+                        <div class="flex flex-col items-start gap-1 min-w-0">
+                            {header}
+                            <super::calculation::UsePriceSignal calculation key value />
+                        </div>
+                    }.into_any(),
+                    None => header,
+                }
             }
             view=move |row: T, id| {
                 let Some(metric) = metric_by_id(id) else {
@@ -1103,6 +1144,34 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_compatible_follow_window_price_columns_offer_use_shortcuts() {
+        assert_eq!(
+            super::signal_for_metric("market-listing"),
+            Some("listing-min")
+        );
+        assert_eq!(
+            super::signal_for_metric("market-sale-median"),
+            Some("sale-median")
+        );
+        assert_eq!(
+            super::signal_for_metric("market-sale-min"),
+            Some("sale-min")
+        );
+        assert_eq!(
+            super::signal_for_metric("market-sale-avg"),
+            Some("sale-avg")
+        );
+        for id in [
+            "market-sale-median-7",
+            "market-vwap",
+            "market-sales-per-day",
+            "profit",
+            "cost",
+        ] {
+            assert_eq!(super::signal_for_metric(id), None, "{id}");
+        }
+    }
     #[test]
     fn on_demand_market_data_wants_no_window_until_asked() {
         let _ = any_spawner::Executor::init_futures_executor();
