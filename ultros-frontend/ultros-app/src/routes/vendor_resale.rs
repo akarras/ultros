@@ -1,14 +1,15 @@
 use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{
     duration_value, price_control, register_filters, toggle_control,
 };
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
 use crate::components::app_link::use_query_map_or_default;
+use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
@@ -606,12 +607,6 @@ fn VendorResaleTable(
             .map(|(id, name)| (category_id_token(id), name))
             .collect::<Vec<_>>()
     };
-    let on_off_options = move || {
-        vec![
-            ("true", t_string!(i18n, vendor_resale_tax_post).to_string()),
-            ("false", t_string!(i18n, vendor_resale_tax_pre).to_string()),
-        ]
-    };
 
     // Menu label for a filter: the long, explanatory label the old toolbar
     // fields carried.
@@ -680,7 +675,7 @@ fn VendorResaleTable(
     // runs in a render effect, and `t_string!` is tracked, so resolving the
     // labels there would subscribe the whole slot to the locale and rebuild
     // `RealtimeStatus` and this menu on every language switch.
-    register_filters(
+    let filters = register_filters(
         vendor_filter_aliases(),
         Signal::derive(move || {
             vec![
@@ -690,11 +685,7 @@ fn VendorResaleTable(
                     market.window,
                     t_string!(i18n, market_listing_basis).to_string(),
                 ),
-                {
-                    let mut f = toggle_control(FILTER_TAX, filter_label(FILTER_TAX));
-                    f.options = on_off_options();
-                    f
-                },
+                crate::analyzer_kit::filters::tax_control(FILTER_TAX),
                 toggle_control(FILTER_SUSPICIOUS, filter_label(FILTER_SUSPICIOUS)),
                 ColumnFilter::new(FILTER_SALES, filter_label(FILTER_SALES), true),
                 {
@@ -709,10 +700,29 @@ fn VendorResaleTable(
 
     let presets = Signal::derive(move || vendor_resale_presets(i18n));
 
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, vendor_resale_profit).to_string(),
+                Some("profit"),
+            ),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "market-price"),
+            CalculationTerm::input(TermRole::Tax, "tax", "tax"),
+            CalculationTerm::fixed(
+                TermRole::Cost,
+                t_string!(i18n, vendor_resale_vendor_price).to_string(),
+                Some("vendor-price"),
+            ),
+        ],
+        Some("revenue"),
+    );
+
     view! {
         <div class="flex flex-col gap-6">
             <div class="flex flex-wrap items-start gap-3">
-                <MarketWindowControl window=market.window />
+                <CalculationStrip calculation window=market.window />
 
             </div>
             {move || (revenue_pending.get()).then(|| view! { <p role="status" class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, market_loading_prices)}</p> })}

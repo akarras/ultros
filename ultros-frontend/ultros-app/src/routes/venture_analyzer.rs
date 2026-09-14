@@ -1,12 +1,13 @@
 use super::world_nav::use_analyzer_world;
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
@@ -443,10 +444,28 @@ fn VentureAnalyzerTable(
 
     let presets = Signal::derive(move || venture_analyzer_presets(i18n));
 
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, venture_analyzer_col_profit).to_string(),
+                Some("profit"),
+            ),
+            CalculationTerm::input(TermRole::Value, "revenue", "unit-price"),
+            CalculationTerm::fixed(
+                TermRole::Multiply,
+                t_string!(i18n, calculation_quantity).to_string(),
+                None,
+            ),
+        ],
+        Some("revenue"),
+    );
+
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap items-start gap-3">
-                    <MarketWindowControl window=market.window />
+                    <CalculationStrip calculation window=market.window />
 
                 </div>
 

@@ -3,6 +3,7 @@
 //! the cell renderer (`cells`), the grid host (`grid`), the hop maths (`hop`),
 //! the visible-window enrichment store and hook (`enrichment`), and more.
 //! See docs/superpowers/specs/2026-09-01-analyzer-kit-design.md.
+pub mod calculation;
 pub mod cells;
 pub mod columns;
 pub mod enrichment;

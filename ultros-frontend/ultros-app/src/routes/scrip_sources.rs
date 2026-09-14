@@ -1,11 +1,12 @@
 use super::world_nav::use_analyzer_world;
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters};
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
@@ -706,14 +707,32 @@ fn ScripSourceTable(
 
     let presets = Signal::derive(move || scrip_sources_presets(i18n));
 
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, scrip_sources_cost_per_scrip).to_string(),
+                Some("cost-per-scrip"),
+            ),
+            CalculationTerm::input(TermRole::Value, "cost-basis", "cost"),
+            CalculationTerm::fixed(
+                TermRole::Divide,
+                t_string!(i18n, scrip_sources_scrips).to_string(),
+                Some("scrip-amount"),
+            ),
+        ],
+        Some("cost-basis"),
+    );
+
     view! {
             <div class="flex flex-col gap-6">
                 <div class="flex flex-wrap items-start gap-3">
-                    <MarketWindowControl window=market.window />
+                    <CalculationStrip calculation window=market.window />
 
                 </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">
-                    {t!(i18n, market_collectable_note)}
+                    {t!(i18n, calculation_collectable_subject)}
                 </p>
 
                 <ControlBar sticky=false
@@ -955,9 +974,6 @@ pub fn ScripSources() -> impl IntoView {
                     </span>
                 </ToolHeader>
 
-                <div class="text-sm text-[color:var(--color-text-muted)]">
-                    {t!(i18n, scrip_sources_description)}
-                </div>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();

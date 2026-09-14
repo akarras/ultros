@@ -2778,6 +2778,9 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); border-right: 1px solid var(--color-outline-strong); }
 .grid-heading-content { flex: 1; min-width: 0; overflow: clip; }
 .grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
+/* A price signal has two actions in the 56px header: sort and Use. Keep both
+   targets inside that band instead of stacking a 44px sort target above Use. */
+.grid-heading-content:has([data-use-price-signal]) [data-metric-sort] { min-height: 24px; }
 /* A column that feeds Profit (SortableHeaderCell's `emphasized`) tints its
    whole heading cell. This was an inset bottom hairline, which landed on the
    10px sub-label's descenders once headings grew a second line; a rounded

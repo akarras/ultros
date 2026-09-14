@@ -40,15 +40,16 @@ including the `/__test/shared-analyzer-data` fixtures, is registered.
   already calculated result. `options` supports fixed tokens; `choices` supports
   owned dynamic tokens and labels; `multiple` edits a comma-separated selection.
 - Register additional controls in the registry's `controls` signal. Existing
-  nonmetric column controls are collected automatically and deduplicated. These
-  controls use the same editor in a header, toolbar menu, or chip.
+  nonmetric column controls are collected automatically and deduplicated. Row
+  controls use the same editor in a header, toolbar menu, or chip. Calculation
+  controls set `calculation = true` and are excluded from those surfaces.
 - Some legacy selectors measure something different from the displayed metric:
   recent-buffer sale count and duration are not a seven-day rate; the confidence
   floor includes a derived fallback unlike the deep-scan confidence column.
   They remain explicit registered controls with their original predicate and
   coverage semantics rather than silently changing the meaning of a bookmark.
-- `price_control` registers a window-aware calculation selector with a visible
-  default chip. Its `clear_with_filters = false` policy preserves the selected
+- `price_control` registers a window-aware calculation selector for the formula
+  strip. Defaults do not become active row filters. Its `clear_with_filters = false` policy preserves the selected
   price basis during Clear all. Clearing that individual override restores the
   default. `MarketWindowControl` continues to own the selected history window.
   The older `MarketPriceControls` component remains available to unconverted
@@ -100,7 +101,7 @@ filters may evaluate known rows without claiming complete data or a global sort.
 All ten grid hosts use this registry: the six MarketGrid tools (Flip Finder,
 Vendor Resale, Ventures, Leves, FC Crafting, Scrip Sources), Trends, Currency
 Exchange, Item Explorer, and the Recipe Analyzer's `AnalyzerGrid` host. There
-is no other filter surface; issue #1351 is complete.
+is one row-filter surface; calculation assumptions have their own formula strip.
 
 - Recipe keeps its legacy `profit`, `roi` and `min-sales` keys as aliases of
   its `profit`, `roi` and `daily-sales` metrics (`min-sales=0` still means "no
@@ -137,3 +138,30 @@ by the existing seven-tool market probes and the Trends probe (old sort and
 chip links, header sorting, the Columns picker, window changes, the
 suspicious-sales control, request behavior and reload) when
 `CHECK_ANALYZER_ROUTES=1`.
+
+## Calculation presentation
+
+`analyzer_kit::calculation::Calculation` is provided in the route owner, beside
+its registry and before constructing either the strip or grid. Its inputs read
+`FilterRegistry::controls()` directly: reading resolved grid columns while
+building formula headings would create a reactive cycle. Setters are created
+once, outside rendering closures. The strip and header Use shortcuts write the
+same existing URL keys, using replacement navigation and preserving scroll.
+
+`CalculationStrip` presents direct selects with arithmetic roles, followed by
+Window. Recipe keeps its specialized `FormulaStrip` for the dual buy/sell scopes
+and fallback indicators; the same four controls remain registered for URL
+semantics but never render a second chip or filter editor. `calculation = true`
+excludes an input from active predicates, the Filter menu, column filter editors,
+and both global and per-column filter clearing. A direct select restores its
+default by removing the override. Tax remains in the formula when row filters
+are cleared, just like the price basis and window.
+
+`MarketGrid` decorates native headers using each route's role mapping. Shared
+listing and selected-window minimum/median/average headers may offer Use for the
+market subject's compatible input. Fixed-window statistics, VWAP, volume and
+other unrelated metrics never offer this shortcut. Leves target turn-in cost;
+FC Crafting and Scrip Sources target ingredient pricing. These shortcuts change
+the input methodology, not the arithmetic identity of the individual ingredient
+statistic. Currency Exchange presents total gil = unit value × quantity received;
+Trends and Item Explorer have no profit assumptions to show.

@@ -15,6 +15,8 @@ pub struct ColumnFilter {
     pub default_value: Option<String>,
     /// False for view-level calculation choices preserved by Clear all.
     pub clear_with_filters: bool,
+    /// Edited in the calculation strip, never counted or cleared as a row filter.
+    pub calculation: bool,
 }
 
 impl ColumnFilter {
@@ -29,6 +31,7 @@ impl ColumnFilter {
             multiple: false,
             default_value: None,
             clear_with_filters: true,
+            calculation: false,
         }
     }
 

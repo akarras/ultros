@@ -19,13 +19,17 @@ pub enum TermRole {
     Revenue,
     Tax,
     Cost,
+    Value,
+    Multiply,
+    Divide,
 }
 
 impl TermRole {
     fn chip_class(self) -> &'static str {
         match self {
             TermRole::Result => "term-badge term-badge-result",
-            TermRole::Revenue => "term-badge term-badge-add",
+            TermRole::Revenue | TermRole::Value => "term-badge term-badge-add",
+            TermRole::Multiply | TermRole::Divide => "term-badge term-badge-sub",
             TermRole::Tax | TermRole::Cost => "term-badge term-badge-sub",
         }
     }
@@ -38,8 +42,10 @@ impl TermRole {
     fn strokes(self) -> &'static [&'static str] {
         match self {
             TermRole::Result => &["M2.5 4.5h7", "M2.5 7.5h7"],
-            TermRole::Revenue => &["M6 2.5v7", "M2.5 6h7"],
+            TermRole::Revenue | TermRole::Value => &["M6 2.5v7", "M2.5 6h7"],
             TermRole::Tax | TermRole::Cost => &["M2.5 6h7"],
+            TermRole::Multiply => &["M3 3l6 6", "M9 3L3 9"],
+            TermRole::Divide => &["M2.5 6h7", "M6 2.5v0.1", "M6 9.4v0.1"],
         }
     }
 }
@@ -52,6 +58,9 @@ pub fn TermBadge(role: TermRole) -> impl IntoView {
         TermRole::Revenue => t_string!(i18n, formula_role_revenue).to_string(),
         TermRole::Tax => t_string!(i18n, formula_role_tax).to_string(),
         TermRole::Cost => t_string!(i18n, formula_role_cost).to_string(),
+        TermRole::Value => t_string!(i18n, formula_role_value).to_string(),
+        TermRole::Multiply => t_string!(i18n, formula_role_multiply).to_string(),
+        TermRole::Divide => t_string!(i18n, formula_role_divide).to_string(),
     };
     view! {
         <span class=role.chip_class()>
