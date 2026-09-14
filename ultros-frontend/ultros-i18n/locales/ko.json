@@ -2364,5 +2364,8 @@
     "cart_removed_count": "아이템 {{count}}개 제거됨",
     "cart_undo_removal": "실행 취소",
     "cart_dismiss": "닫기",
-    "cart_undo_unavailable": "이 제거는 더 이상 실행 취소할 수 없습니다"
+    "cart_undo_unavailable": "이 제거는 더 이상 실행 취소할 수 없습니다",
+    "account_list_save_failed": "변경 사항이 이 기기에 저장되지 않았습니다. 이 페이지를 열어 둔 채 다시 시도하거나 복구용 사본을 다운로드하세요.",
+    "account_list_save_retry": "저장 다시 시도",
+    "account_list_save_export": "복구용 사본 다운로드"
 }

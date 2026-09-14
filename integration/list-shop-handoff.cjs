@@ -25,6 +25,7 @@ async function main() {
     headless: process.env.HEADLESS !== "false", args: ["--no-sandbox"],
   });
   const page = await browser.newPage();
+  await page.setCacheEnabled(false);
   page.setDefaultTimeout(TIMEOUT_MS);
   await page.setViewport({ width: 1280, height: 900 });
   const errors = [];
@@ -119,6 +120,8 @@ async function main() {
     // A row added locally shows no price until the listings cache is bumped
     // (docs/lists-sync.md). Reload straight into Shop so the server render
     // and the hydrated client both start from the synced row.
+    // A full reload must follow durable storage, not just server receipt.
+    await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Saved on this device"));
     await page.goto(new URL(`/list/${listId}?buy=true`, BASE_URL).href, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(testId("inline-list-add"));
     await page.waitForSelector(testId("shop-cart-summary"), { visible: true });

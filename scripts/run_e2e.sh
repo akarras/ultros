@@ -241,6 +241,13 @@ if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
 fi
 
 if [ "${RUN_LISTS_V2:-1}" != "0" ]; then
+    log "running account storage locking and recovery module E2E"
+    account_storage_exit=0
+    ( cd integration && npm run test:account-list-storage ) || account_storage_exit=$?
+    if [ "$account_storage_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$account_storage_exit"
+    fi
+
     log "running anonymous Lists 2.0, offline reload and companion E2E"
     lists_v2_exit=0
     ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-v2 ) || lists_v2_exit=$?
@@ -334,6 +341,12 @@ case " ${LEPTOS_FEATURES:-} " in
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-sync ) || list_sync_exit=$?
         if [ "$list_sync_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_sync_exit"
+        fi
+        log "running account offline storage and recovery E2E"
+        account_ui_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:account-list-ui ) || account_ui_exit=$?
+        if [ "$account_ui_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$account_ui_exit"
         fi
         log "running list-flow E2E under Labs lists-sync"
         list_flow_labs_exit=0

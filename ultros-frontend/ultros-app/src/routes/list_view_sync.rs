@@ -2063,6 +2063,23 @@ pub fn ListViewSync() -> impl IntoView {
                                                                         status=realtime_status
                                                                         last_update=last_update_at
                                                                     />
+                                                                    {move || handle.get().map(|doc| {
+                                                                        use crate::list_doc::handle::SaveState;
+                                                                        view! {
+                                                                            <div data-testid="account-list-save-state" role="status" aria-live="polite" class="mt-2 text-sm">
+                                                                                {move || match doc.save_state.try_get().unwrap_or(SaveState::Pending) {
+                                                                                    SaveState::Saved => t_string!(i18n, device_runtime_saved).to_string(),
+                                                                                    SaveState::Pending => t_string!(i18n, device_runtime_saving).to_string(),
+                                                                                    SaveState::Failed => t_string!(i18n, account_list_save_failed).to_string(),
+                                                                                }}
+                                                                                <Show when=move || doc.save_state.try_get() == Some(SaveState::Failed)>
+                                                                                    <button type="button" class="btn-secondary ml-2" on:click=move |_| doc.save_now()>{t!(i18n, account_list_save_retry)}</button>
+                                                                                    <button type="button" class="btn-secondary ml-2" on:click=move |_| doc.download_recovery()>{t!(i18n, account_list_save_export)}</button>
+                                                                                </Show>
+                                                                            </div>
+                                                                        }
+                                                                    })}
+
                                                                 </div>
                                                                 <div class="mt-3 flex items-center gap-3 text-sm">
                                                                     {if total_quantity > 0 {

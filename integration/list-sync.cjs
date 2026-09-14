@@ -33,8 +33,16 @@ const USERS = {
 };
 
 const DOC_PREFIX = "ultros.listdoc.v1.";
+const dialogPages = new WeakSet();
 
 async function login(page, baseUrl, user, labs) {
+  if (!dialogPages.has(page)) {
+    await page.setCacheEnabled(false);
+    page.setDefaultNavigationTimeout(60000);
+    // Account-switch scenarios intentionally leave this fixture's current page.
+    page.on("dialog", (dialog) => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
+    dialogPages.add(page);
+  }
   const url = new URL("/test/login", baseUrl);
   url.searchParams.set("user_id", String(user.id));
   url.searchParams.set("username", user.username);

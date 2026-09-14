@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "Keep account list edits safe on your device",
+  "blurb": "Account lists now merge changes saved from multiple tabs and keep older lists when you open more projects. If your browser cannot save, you can retry or download a recovery copy."
+}

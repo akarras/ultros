@@ -2364,5 +2364,8 @@
     "cart_removed_count": "{{count}}件のアイテムを削除しました",
     "cart_undo_removal": "元に戻す",
     "cart_dismiss": "閉じる",
-    "cart_undo_unavailable": "この削除は元に戻せなくなりました"
+    "cart_undo_unavailable": "この削除は元に戻せなくなりました",
+    "account_list_save_failed": "変更はこの端末に保存されていません。このページを開いたまま、再試行するか復元用コピーをダウンロードしてください。",
+    "account_list_save_retry": "保存を再試行",
+    "account_list_save_export": "復元用コピーをダウンロード"
 }

@@ -2364,5 +2364,8 @@
     "cart_removed_count": "{{count}} objets retirés",
     "cart_undo_removal": "Annuler",
     "cart_dismiss": "Fermer",
-    "cart_undo_unavailable": "Ce retrait ne peut plus être annulé"
+    "cart_undo_unavailable": "Ce retrait ne peut plus être annulé",
+    "account_list_save_failed": "Les modifications ne sont pas enregistrées sur cet appareil. Gardez cette page ouverte, réessayez ou téléchargez une copie de secours.",
+    "account_list_save_retry": "Réessayer",
+    "account_list_save_export": "Télécharger une copie de secours"
 }

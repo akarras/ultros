@@ -11,6 +11,10 @@ async function main() {
   const timeout = Number(process.env.TIMEOUT_MS || 30000);
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage();
+  await page.setCacheEnabled(false);
+  page.setDefaultNavigationTimeout(Math.max(timeout, 60000));
+  // These navigations are intentional and this fixture has no player edits.
+  page.on("dialog", (dialog) => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
   page.setDefaultTimeout(timeout);
   await page.setViewport({ width: 1280, height: 900 });
   await page.setCookie({ name: "HIDE_ADS", value: "true", url: base, path: "/" });
@@ -47,6 +51,12 @@ async function main() {
     const path = `/list/${listId}?lang=en`;
     const marker = '[data-testid="list-view-sync"]';
 
+    async function waitForAccountSave() {
+      await page.waitForSelector('[data-testid="account-list-save-state"]');
+      await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')
+        ?.textContent.includes('Saved on this device'));
+    }
+
     async function loadAndCheck(suffix, expected) {
       const response = await page.goto(new URL(path + suffix, base).toString(), { waitUntil: "domcontentloaded" });
       assert(response.ok(), "list SSR must succeed");
@@ -55,6 +65,9 @@ async function main() {
       await page.waitForFunction(() => window.__labsHydrated);
       await page.waitForSelector('[data-testid="list-settings-btn"]');
       assert.equal(await page.$(marker) !== null, expected, "hydration preserves the SSR branch");
+      // Account persistence is asynchronous. Reloading before its first save
+      // intentionally triggers the unsaved-work guard rather than navigating.
+      if (expected) await waitForAccountSave();
     }
 
     await loadAndCheck("", false);
@@ -90,6 +103,7 @@ async function main() {
     await clickAppLink("/list");
     await clickAppLink(`/list/${listId}`);
     await page.waitForSelector(marker);
+    await waitForAccountSave();
     assert.equal(await page.evaluate(() => window.__labsDocumentToken), documentToken,
       "list navigation uses the current hydrated document");
     console.log("[ok] Settings cookie selects the Labs branch during client-side list navigation");
