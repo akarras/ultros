@@ -554,9 +554,24 @@ pub fn ListBuildWorkspace(
                     <For each=move || { visible.get().into_iter().map(|(item, _)| item).collect::<Vec<_>>() } key=|item| item.id children=move |initial| {
                         let id = initial.id;
                         let fallback = StoredValue::new(initial);
-                        let item = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(item, _)| item.clone())).unwrap_or_else(|| fallback.get_value()));
-                        let price = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).and_then(|(item, listings)| listings.iter().filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq)).map(|listing| listing.price_per_unit).min())));
-                        view! { <BuildListRow item=item.into() current_price=price.into() selected_items on_edit=source.edit on_delete=source.remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
+                        // ⚡ Bolt Optimization: Batch O(N) searches into a single Memo and use Signal::derive for projections
+                        let row_data = Memo::new(move |_| {
+                            source.rows.with(|rows| {
+                                rows.iter()
+                                    .find(|(item, _)| item.id == id)
+                                    .map(|(item, listings)| {
+                                        let min_price = listings
+                                            .iter()
+                                            .filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq))
+                                            .map(|listing| listing.price_per_unit)
+                                            .min();
+                                        (item.clone(), min_price)
+                                    })
+                            })
+                        });
+                        let item = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(item, _)| item.clone()).unwrap_or_else(|| fallback.get_value())));
+                        let price = Signal::derive(move || row_data.with(|data| data.as_ref().and_then(|(_, price)| *price)));
+                        view! { <BuildListRow item=item current_price=price selected_items on_edit=source.edit on_delete=source.remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
                     } />
                 </tbody></table>
             </div>
@@ -1836,10 +1851,16 @@ pub fn ListViewSync() -> impl IntoView {
                                 if let Ok(id) = key.parse::<i32>()
                                     && let Some(key) = crate::list_doc::adapter::key_of(id)
                                     && let Some(handle) = handle.get_untracked()
-                                    && let Err(error) = handle.apply(Edit::AddAcquired { item_id: key.item_id, hq: key.hq(), delta: i64::from(delta.max(0)) })
+                                    && let Err(error) = handle.apply(Edit::RecordPurchase { key, quantity: i64::from(delta.max(0)) })
                                 { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
                             })
-                            on_undo=Callback::new(move |()| { if let Some(handle) = handle.get_untracked() { handle.undo(); } })
+                            on_undo=Callback::new(move |()| {
+                                if let Some(handle) = handle.get_untracked()
+                                    && let Err(error) = handle.apply(Edit::UndoPurchase) {
+                                    mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string())));
+                                }
+                            })
+                            can_undo_purchase=Signal::derive(move || handle.get().is_some_and(|h| h.can_undo_purchase()))
                             can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
                     </Suspense>
                 </Show>
@@ -2269,7 +2290,11 @@ pub fn ListViewSync() -> impl IntoView {
                         view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
                     }}
                     <div class="panel rounded-lg p-4 mt-3">
-                        {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
+                        // The compact cart owns its remaining-unit estimate. Only
+                        // the legacy grid uses the whole-stack per-world summary.
+                        <Show when=move || legacy_cart.get()>
+                            {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
+                        </Show>
                         <ActivityFeed activity=activity_view />
                     </div>
                 </Transition>

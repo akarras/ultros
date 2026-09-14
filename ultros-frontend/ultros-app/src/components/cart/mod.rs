@@ -563,10 +563,20 @@ pub fn ListCart(
                     <For each=move || { visible.get().into_iter().map(|(item, _)| item).collect::<Vec<_>>() } key=|item| item.id children=move |initial| {
                         let id = initial.id;
                         let fallback = StoredValue::new(initial);
-                        let item = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(item, _)| item.clone())).unwrap_or_else(|| fallback.get_value()));
-                        let listings = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(_, listings)| listings.clone()).unwrap_or_default()));
-                        let line = Memo::new(move |_| source.rows.with(|rows| rows.iter().find(|(item, _)| item.id == id).map(|(item, listings)| estimate::estimate_line(item, listings))));
-                        view! { <CartRow item=item.into() listings=listings.into() line=line.into() selected_items expanded removing=removing.into() on_edit=on_edit on_delete=on_remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
+                        // ⚡ Bolt Optimization: Batch O(N) searches into a single Memo and use Signal::derive for projections
+                        let row_data = Memo::new(move |_| {
+                            source.rows.with(|rows| {
+                                rows.iter()
+                                    .find(|(item, _)| item.id == id)
+                                    .map(|(item, listings)| {
+                                        (item.clone(), listings.clone(), estimate::estimate_line(item, listings))
+                                    })
+                            })
+                        });
+                        let item = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(item, _, _)| item.clone()).unwrap_or_else(|| fallback.get_value())));
+                        let listings = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(_, listings, _)| listings.clone()).unwrap_or_default()));
+                        let line = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(_, _, line)| line.clone())));
+                        view! { <CartRow item=item listings=listings line=line selected_items expanded removing=removing.into() on_edit=on_edit on_delete=on_remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
                     } />
                 </ul>
                 <Show when=move || is_empty.get()>

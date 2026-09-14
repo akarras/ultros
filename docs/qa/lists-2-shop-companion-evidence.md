@@ -31,7 +31,7 @@ until someone fills it in from an actual execution.
 | S8 | Missing supply shown explicitly, never as zero cost | implemented | `ShoppingPlan.missing`; `list_shop_totals`, `list_shop_estimate_missing`, `shop-no-prices` | unit `no_supply_is_explicitly_missing`; browser `lists-v2.cjs` asserts `0 gil · 0 surplus · 5 missing` and the no-prices notice |
 | S9 | Active trip grouped by world with stack sizes, expected cost, copy-name and partial-purchase controls | implemented | `snapshot`; `shop-stack`, `shop-stack-quantity`, `shop-stack-bought` | browser `list-shop-handoff.cjs` records 1 unit of a stack |
 | S10 | Purchase progress immediately updates remaining work | implemented | `snapshot` reads the live `acquired` count against the frozen plan | unit `live_prices_do_not_move_active_trip_and_partial_purchase_updates_it`; browser `list-shop-handoff.cjs` (Build shows Owned = 1) |
-| S11 | Undo for a purchase | partial | `on_undo` runs the document's undo | It undoes the **last document operation**, which is a Build edit if one happened after the purchase. A Shop-local reverse delta cannot replace it: `Edit::AddAcquired` with a negative delta is a no-op once the row has no room (`list_doc/adapter.rs`, `has_room`). Undo boundaries belong to Track A (#1430) |
+| S11 | Undo for a purchase | implemented | `ListUndo::record_purchase` / `undo_purchase`, shared by account, device and companion | #1458 adds a bounded local receipt journal and an explicit reverse delta, including full rows. Keyboard undo/redo tracks receipt state. The priced `integration/list-shop-handoff.cjs` path passed on 2026-09-13: buy 1, change Needed from 4 to 6, undo the purchase, confirm Owned 0 and Needed 6 in the UI and server state. Deleted/replaced/quality-moved rows and insufficient Owned quantities are skipped; see `docs/lists-sync.md` for the session-history contract. |
 | S12 | Freeze the active trip while market data changes | implemented | `Trip.source` snapshot | unit `live_prices_do_not_move_active_trip…`; browser journeys keep the trip across a Build edit |
 | S13 | Reviewable refresh | implemented (PR #1442) | `refresh`, `Review`; `shop-drift`, `shop-review`, `shop-review-apply`, `shop-review-keep` | unit `a_review_leaves_the_active_trip_untouched_until_adopted`; browser journeys keep then adopt a refresh |
 | S14 | "Listing is gone" replacement | implemented | `unavailable`; `shop-stack-gone` | unit `later_stack_is_disabled_until_earlier_stack_is_recorded` (replan excludes ids); browser `list-shop-handoff.cjs` (priced path) excludes a stack and adopts the reviewed replacement |
@@ -85,6 +85,5 @@ reviewed build; the tables above then describe coverage, not results.
 ## Open items
 
 - #1444 — physical FFXIV companion validation (C3, C5 real PiP, C11, C12).
-- #1430 (Track A) — purchase-specific undo so "Undo purchase" cannot undo a Build edit (S11).
 - #1334 — per-hop marginal savings ladder; Shop should reuse the planner's presentation rather than duplicate it (S3).
 - Browser coverage still owed: excluded worlds/datacenters reaching Shop (S7); sign-out and permission-loss companion close (C7).

@@ -113,7 +113,7 @@ function render() {
   }
   if (!snapshot.rows.length) main.append(element('p', label('nothingLeft', 'Nothing left to buy at this stop.')));
   const footer = element('footer');
-  if (snapshot.canEdit) footer.append(button(label('undo', 'Undo'), () => dispatch('undo')));
+  if (snapshot.canEdit) footer.append(button(label('undo', 'Undo'), () => dispatch('undo'), !snapshot.canUndoPurchase));
   if (snapshot.hasNext) footer.append(button(label('nextWorld', 'Next world'), () => dispatch('next')));
   main.append(footer);
   doc.body.replaceChildren(main);

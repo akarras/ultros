@@ -38,6 +38,10 @@ members = [
     "game-data-pack",
     "icon-extract",
 ]
+# Vendored, patched copy of `reactive_graph` (see `[patch.crates-io]` and
+# vendor/reactive_graph/ULTROS_PATCH.md). Not a workspace member: it keeps
+# upstream's own lint/test configuration and is only built through the patch.
+exclude = ["vendor/reactive_graph"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -143,6 +147,10 @@ web-push = { version = "0.11.0", default-features = false }
 
 [patch.crates-io]
 ironworks = { git = "https://github.com/ackwell/ironworks", rev = "3d5db8ff" }
+# reactive_graph 0.2.14 + a fix for a cross-thread memo recompute race that
+# panics SSR renders (`arc_memo.rs:334: called Option::unwrap() on a None
+# value`). Details and the upstream-shaped diff: vendor/reactive_graph/ULTROS_PATCH.md
+reactive_graph = { path = "vendor/reactive_graph" }
 #leptos = { path = "../leptos/leptos" }
 # leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
 #leptos_reactive = {path = "../leptos/leptos_reactive"}

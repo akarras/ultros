@@ -43,6 +43,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ---- Builder: cook deps first (cached), then compile the project -------------
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
+# Path patches are not included in cargo-chef's generated workspace skeleton.
+# Supply their real sources before either native or WASM dependency cook.
+COPY --from=planner /app/vendor /app/vendor
 # leptos_config and leptos embed LEPTOS_OUTPUT_NAME at compile time. Cook with
 # the same value cargo-leptos supplies or Cargo rebuilds their dependency tree.
 ENV LEPTOS_OUTPUT_NAME=ultros \

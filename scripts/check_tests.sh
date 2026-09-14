@@ -41,3 +41,8 @@ cargo test --locked -p xiv-gen --features csv_to_rkyv
 
 # Validate the committed game-data pack alongside the pure unit tests.
 cargo test --locked -p game-data-pack --test pack_sanity
+
+# The vendored `reactive_graph` patch (vendor/reactive_graph/ULTROS_PATCH.md)
+# fixes a cross-thread memo recompute race that panicked streaming SSR. It is
+# not a workspace member, so gate its regression test explicitly.
+cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --test memo_concurrent

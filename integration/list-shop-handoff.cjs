@@ -131,6 +131,8 @@ async function main() {
     await click(testId("shop-cheapest"));
     await page.waitForSelector(testId("shop-totals"));
     const planned = await text(testId("shop-totals"));
+    assert.equal(await page.$eval(testId("shop-undo-purchase"), button => button.disabled), true,
+      "Build edits alone do not enable Undo purchase");
     if (priced) {
       assert.doesNotMatch(planned, /^0 gil/, planned);
       await page.$eval(testId("shop-estimate"), details => { details.open = true; });
@@ -165,6 +167,24 @@ async function main() {
     await shopMode(true);
     await page.waitForSelector(testId("shop-totals"), { visible: true });
     assert.equal(await text(testId("shop-totals")), planned, "returning to Shop keeps the trip exactly as planned");
+    if (priced) {
+      console.log("[step] Undo purchase after a later Build quantity edit");
+      await page.waitForFunction(selector => !document.querySelector(selector)?.disabled, {}, testId("shop-undo-purchase"));
+      await click(testId("shop-undo-purchase"));
+      await page.waitForFunction(selector => document.querySelector(selector)?.disabled, {}, testId("shop-undo-purchase"));
+      await shopMode(false);
+      await waitValue(needed, 6);
+      await waitValue(owned, 0);
+      await page.waitForFunction(async id => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        if (!response.ok) return false;
+        const rows = (await response.json())[1];
+        return rows.length === 1 && rows[0][0].quantity === 6 && rows[0][0].acquired === 0;
+      }, {}, listId);
+      await shopMode(true);
+      assert.equal(await text(testId("shop-totals")), planned, "undo preserves the chosen trip");
+      console.log("[ok] Undo purchase reverted acquisition and preserved the later quantity edit");
+    }
     await page.waitForFunction(selector => {
       const element = document.querySelector(selector);
       return element && !element.closest(".hidden") && /1 quantity change/.test(element.textContent);
@@ -180,7 +200,7 @@ async function main() {
     await click(testId("shop-review-apply"));
     await page.waitForFunction(selector => !!document.querySelector(selector)?.closest(".hidden"), {}, testId("shop-drift"));
     const adopted = await text(testId("shop-totals"));
-    // 6 needed; the priced journey owns 1 by now, the unknown one nothing.
+    // 6 needed; the priced journey reversed its purchase, so both own nothing.
     assert.match(adopted, priced ? /gil/ : /6 missing/, `${adopted} after adopting ${refreshed}`);
     console.log("[ok] Build edits keep the chosen trip; the refresh was reviewed, kept, then adopted");
 

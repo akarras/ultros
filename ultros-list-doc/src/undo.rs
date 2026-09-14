@@ -1,12 +1,45 @@
 //! Local undo over one document (spec section 3.3). Remote imports are not
 //! local operations, so they never enter the stack.
 
-use loro::UndoManager;
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicI64, Ordering},
+    },
+};
+
+use loro::{ContainerID, LoroValue, UndoItemMeta, UndoManager};
 
 use crate::document::{DocError, ListDocument};
+use crate::key::RowKey;
+
+#[derive(Clone)]
+struct Purchase {
+    id: i64,
+    key: RowKey,
+    row: ContainerID,
+    quantity: i64,
+    active: bool,
+}
+
+// Undo/redo creates the inverse operation and transfers its tag to the other
+// stack. Positive tags record purchases; negative tags reverse them.
+struct PurchaseTag(Arc<AtomicI64>);
+
+impl Drop for PurchaseTag {
+    fn drop(&mut self) {
+        self.0.store(0, Ordering::Relaxed);
+    }
+}
 
 pub struct ListUndo {
     inner: UndoManager,
+    doc: ListDocument,
+    purchases: VecDeque<Purchase>,
+    next_purchase: i64,
+    tag: Arc<AtomicI64>,
+    popped: Arc<Mutex<Vec<i64>>>,
 }
 
 impl ListUndo {
@@ -30,16 +63,133 @@ impl ListUndo {
         let mut inner = UndoManager::new(doc.inner());
         inner.set_merge_interval(interval_ms);
         inner.set_max_undo_steps(Self::MAX_STEPS);
-        Self { inner }
+        let tag = Arc::new(AtomicI64::new(0));
+        let current = tag.clone();
+        inner.set_on_push(Some(Box::new(move |_, _, _| {
+            let mut meta = UndoItemMeta::new();
+            meta.set_value(LoroValue::I64(current.load(Ordering::Relaxed)));
+            meta
+        })));
+        // Loro may skip an undo step whose row was removed remotely. Use
+        // each actual pop, not just the tag that was on top before undo.
+        let popped = Arc::new(Mutex::new(Vec::new()));
+        let changes = popped.clone();
+        let current = tag.clone();
+        inner.set_on_pop(Some(Box::new(move |_, _, meta| {
+            let inverse = match meta.value {
+                LoroValue::I64(tag) => -tag,
+                _ => 0,
+            };
+            current.store(inverse, Ordering::Relaxed);
+            if inverse != 0 {
+                changes.lock().expect("purchase history lock").push(inverse);
+            }
+        })));
+        Self {
+            inner,
+            doc: doc.clone(),
+            purchases: VecDeque::new(),
+            next_purchase: 1,
+            tag,
+            popped,
+        }
     }
 
     /// `Ok(false)` when there was nothing to undo.
     pub fn undo(&mut self) -> Result<bool, DocError> {
-        Ok(self.inner.undo()?)
+        self.history(false)
     }
 
     pub fn redo(&mut self) -> Result<bool, DocError> {
-        Ok(self.inner.redo()?)
+        self.history(true)
+    }
+
+    fn tagged(&self, tag: i64) -> PurchaseTag {
+        self.tag.store(tag, Ordering::Relaxed);
+        PurchaseTag(self.tag.clone())
+    }
+
+    fn history(&mut self, redo: bool) -> Result<bool, DocError> {
+        let _tag = self.tagged(0);
+        let changed = if redo {
+            self.inner.redo()
+        } else {
+            self.inner.undo()
+        };
+        for tag in self.popped.lock().expect("purchase history lock").drain(..) {
+            if let Some(purchase) = self.purchases.iter_mut().find(|p| p.id == tag.abs()) {
+                purchase.active = tag > 0;
+            }
+        }
+        Ok(changed?)
+    }
+
+    /// A Shop purchase targets the exact cart row, even when other qualities
+    /// of the same item exist. Auto-mark's fallback-to-another-row is separate.
+    pub fn record_purchase(&mut self, key: RowKey, quantity: i64) -> Result<(), DocError> {
+        let Some(before) = self.doc.row(&key) else {
+            return Ok(());
+        };
+        if quantity <= 0 || before.acquired >= before.need {
+            return Ok(());
+        }
+        let row = self
+            .doc
+            .row_identity(&key)
+            .ok_or(DocError::MissingRow(key))?;
+        let id = self.next_purchase;
+        self.next_purchase = id.checked_add(1).ok_or(DocError::QuantityOverflow)?;
+        let _tag = self.tagged(id);
+        let doc = self.doc.clone();
+        self.group(|| doc.add_acquired(&key, quantity))?;
+        self.purchases.push_back(Purchase {
+            id,
+            key,
+            row,
+            quantity,
+            active: true,
+        });
+        if self.purchases.len() > Self::MAX_STEPS {
+            self.purchases.pop_front();
+        }
+        Ok(())
+    }
+
+    fn reversible(&self, purchase: &Purchase) -> bool {
+        purchase.active
+            && self.doc.row_identity(&purchase.key).as_ref() == Some(&purchase.row)
+            && self
+                .doc
+                .row(&purchase.key)
+                .is_some_and(|row| row.acquired >= purchase.quantity)
+    }
+
+    /// Purchase history has the same lifetime as ordinary local undo. A removed,
+    /// replaced, or quality-moved row is never resurrected or redirected to a
+    /// different row. Insufficient owned quantity cannot be made negative.
+    pub fn can_undo_purchase(&self) -> bool {
+        self.purchases.iter().rev().any(|p| self.reversible(p))
+    }
+
+    /// Record an explicit reverse delta as a new undo step, preserving all
+    /// intervening edits. Unlike auto-mark, a full row is eligible for reversal.
+    pub fn undo_purchase(&mut self) -> Result<bool, DocError> {
+        let Some(purchase) = self
+            .purchases
+            .iter()
+            .rev()
+            .find(|p| self.reversible(p))
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        let _tag = self.tagged(-purchase.id);
+        let doc = self.doc.clone();
+        self.group(|| doc.add_acquired(&purchase.key, -purchase.quantity))?;
+        if let Some(entry) = self.purchases.iter_mut().find(|p| p.id == purchase.id) {
+            entry.active = false;
+        }
+        Ok(true)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -98,6 +248,131 @@ mod tests {
             }],
         );
         (doc, key)
+    }
+
+    #[test]
+    fn skipped_purchase_steps_do_not_tag_the_next_document_edit() {
+        let (doc, key) = doc();
+        let mut undo = ListUndo::new(&doc);
+        doc.rename("later name").unwrap();
+        undo.record_purchase(key, 1).unwrap();
+        let remote = ListDocument::from_snapshot(&doc.export_snapshot().unwrap()).unwrap();
+        remote.remove_row(&key).unwrap();
+        doc.import(&remote.export_since(&doc.version()).unwrap())
+            .unwrap();
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.meta().name, "t");
+        assert_eq!(undo.inner.top_redo_value(), Some(LoroValue::I64(0)));
+        assert!(!undo.purchases[0].active);
+        assert!(undo.redo().unwrap());
+        assert_eq!(doc.meta().name, "later name");
+        assert!(!undo.purchases[0].active);
+    }
+
+    #[test]
+    fn purchase_undo_preserves_later_edits_and_reverses_a_full_row() {
+        let (doc, key) = doc();
+        let mut undo = ListUndo::new(&doc);
+        undo.record_purchase(key, 1).unwrap();
+        assert!(undo.can_undo_purchase());
+        doc.set_target(&key, Some(500)).unwrap();
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 0);
+        assert_eq!(doc.row(&key).unwrap().target, Some(500));
+        assert!(!undo.undo_purchase().unwrap());
+    }
+
+    #[test]
+    fn purchase_history_tracks_keyboard_undo_and_redo() {
+        let (doc, key) = doc();
+        let mut undo = ListUndo::new(&doc);
+        undo.record_purchase(key, 1).unwrap();
+        doc.set_need(&key, 5).unwrap();
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().need, 5);
+        assert_eq!(doc.row(&key).unwrap().acquired, 0);
+        assert!(!undo.can_undo_purchase());
+        // Ctrl+Z reverses the purchase reversal as one step.
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 1);
+        assert!(undo.can_undo_purchase());
+        assert!(undo.redo().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 0);
+        assert!(!undo.can_undo_purchase());
+        assert!(undo.undo().unwrap());
+        assert!(undo.undo().unwrap()); // quantity edit
+        assert_eq!(doc.row(&key).unwrap().need, 1);
+        assert!(undo.undo().unwrap()); // original purchase
+        assert_eq!(doc.row(&key).unwrap().acquired, 0);
+        assert!(!undo.can_undo_purchase());
+        assert!(!undo.undo_purchase().unwrap());
+        assert!(undo.redo().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 1);
+        assert!(undo.can_undo_purchase());
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 0);
+    }
+
+    #[test]
+    fn purchases_are_separate_steps_and_reverse_most_recent_first() {
+        let (doc, key) = doc();
+        doc.set_need(&key, 10).unwrap();
+        let mut undo = ListUndo::new(&doc);
+        undo.record_purchase(key, 2).unwrap();
+        undo.record_purchase(key, 3).unwrap();
+        doc.rename("later name").unwrap();
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 2);
+        assert_eq!(doc.meta().name, "later name");
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 0);
+        assert!(!undo.can_undo_purchase());
+    }
+
+    #[test]
+    fn purchase_undo_never_uses_a_different_quality_or_replacement_row() {
+        let (doc, key) = doc();
+        let hq = RowKey::new(key.item_id, Some(true));
+        doc.add_row(hq, 3, None).unwrap();
+        doc.set_acquired(&hq, 2).unwrap();
+        let mut undo = ListUndo::new(&doc);
+        undo.record_purchase(key, 1).unwrap();
+        doc.remove_row(&key).unwrap();
+        doc.add_row(key, 4, None).unwrap();
+        doc.set_acquired(&key, 3).unwrap();
+        assert!(!undo.can_undo_purchase());
+        assert!(!undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 3);
+        assert_eq!(doc.row(&hq).unwrap().acquired, 2);
+    }
+
+    #[test]
+    fn purchase_reversal_preserves_remote_acquisitions() {
+        let (doc, key) = doc();
+        doc.set_need(&key, 10).unwrap();
+        let remote = ListDocument::from_snapshot(&doc.export_snapshot().unwrap()).unwrap();
+        let mut undo = ListUndo::new(&doc);
+        undo.record_purchase(key, 2).unwrap();
+        remote.add_acquired(&key, 3).unwrap();
+        doc.import(&remote.export_since(&doc.version()).unwrap())
+            .unwrap();
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 3);
+    }
+
+    #[test]
+    fn empty_and_insufficient_purchase_history_are_no_ops() {
+        let (doc, key) = doc();
+        let mut undo = ListUndo::new(&doc);
+        doc.rename("keep me").unwrap();
+        assert!(!undo.undo_purchase().unwrap());
+        assert_eq!(doc.meta().name, "keep me");
+        undo.record_purchase(key, 0).unwrap();
+        assert!(!undo.can_undo_purchase());
+        undo.record_purchase(key, 2).unwrap();
+        doc.set_acquired(&key, 1).unwrap();
+        assert!(!undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&key).unwrap().acquired, 1);
     }
 
     #[test]

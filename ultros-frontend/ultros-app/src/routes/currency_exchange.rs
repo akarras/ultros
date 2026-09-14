@@ -1,4 +1,6 @@
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::components::app_link::AppLink;
+use crate::components::term_badge::TermRole;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -8,7 +10,6 @@ use std::sync::Arc;
 use crate::analyzer_kit::filters::register_filters;
 use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
 use crate::analyzer_kit::stat_columns::{market_picker_options, shared_cols_in, toggle_shared_col};
-use crate::analyzer_kit::window::MarketWindowControl;
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
@@ -489,6 +490,27 @@ fn ExchangeItemContent() -> impl IntoView {
     }));
     let filters = register_filters(exchange_filter_aliases(), Signal::derive(Vec::new));
     provide_grid_saved_views("currency-exchange-grid");
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, calculation_currency_return).to_string(),
+                Some("total_profit"),
+            ),
+            CalculationTerm::fixed(
+                TermRole::Value,
+                t_string!(i18n, calculation_price_per_item).to_string(),
+                Some(COL_PRICE_PER_ITEM),
+            ),
+            CalculationTerm::fixed(
+                TermRole::Multiply,
+                t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
+                Some("number_received"),
+            ),
+        ],
+        None,
+    );
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
     let column_label = move |id| -> String {
         match id {
@@ -615,6 +637,7 @@ fn ExchangeItemContent() -> impl IntoView {
                     }
                 />
             </ToolHeader>
+            <CalculationStrip calculation window=market.window />
             <ControlBar
                 sticky=false
                 summary=move || {
@@ -633,7 +656,6 @@ fn ExchangeItemContent() -> impl IntoView {
                     t_string!(i18n, currency_exchange_no_filters_hint).to_string()
                 })
             />
-            <MarketWindowControl window=market.window />
             <div>
                 <Show when=move || home_world().is_none()>
                             <div class="bg-red-900/50 p-4 rounded-lg text-white">

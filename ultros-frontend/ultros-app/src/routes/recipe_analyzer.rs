@@ -369,49 +369,10 @@ fn short_signal(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal, window: Win
 /// window every sale signal reads beside them.
 #[component]
 fn RecipePriceControls(terms: Callback<(), Vec<StripTerm>>, window: MarketWindow) -> impl IntoView {
-    let i18n = use_i18n();
-    let days = move || window.selected.get().days().to_string();
     view! {
-        <div class="flex flex-col gap-2" data-analyzer-price-controls>
+        <div class="flex flex-wrap items-center gap-2" data-analyzer-price-controls>
             <FormulaStrip terms=terms.run(()) />
-            <div class="flex flex-wrap gap-3">
-                <MarketWindowControl window=window />
-            </div>
-            // What each price basis actually means, so the
-            // strip's selects are choosable without leaving
-            // the page. Each line opens with the picker label
-            // it explains, so a sentence can be matched to the
-            // option it belongs to.
-            <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
-                <span>
-                    <span class="font-medium text-[color:var(--color-text)]">
-                        {t!(i18n, price_basis_listing_min)}
-                    </span>
-                    " "
-                    {t!(i18n, price_basis_listing_min_help)}
-                </span>
-                <span>
-                    <span class="font-medium text-[color:var(--color-text)]">
-                        {move || stat_label(StatKind::Median, window.selected.get())}
-                    </span>
-                    " "
-                    {move || t_string!(i18n, price_basis_sale_median_help, days = days()).to_string()}
-                </span>
-                <span>
-                    <span class="font-medium text-[color:var(--color-text)]">
-                        {move || stat_label(StatKind::Min, window.selected.get())}
-                    </span>
-                    " "
-                    {move || t_string!(i18n, price_basis_sale_min_help, days = days()).to_string()}
-                </span>
-                <span>
-                    <span class="font-medium text-[color:var(--color-text)]">
-                        {move || stat_label(StatKind::Average, window.selected.get())}
-                    </span>
-                    " "
-                    {move || t_string!(i18n, price_basis_sale_avg_help, days = days()).to_string()}
-                </span>
-            </div>
+            <MarketWindowControl window=window />
         </div>
     }
 }
@@ -503,6 +464,7 @@ fn recipe_filter_controls(
         let mut f = ColumnFilter::new(key, label, false);
         f.default_value = Some(default.into());
         f.clear_with_filters = false;
+        f.calculation = true;
         f.options = options;
         f
     };
@@ -4100,8 +4062,8 @@ fn RecipeAnalyzerTable(
                     column_filters=Callback::new(move |kind| {
                         let keys: &[&str] = match kind {
                             ColumnKind::Item => &[FILTER_JOB],
-                            ColumnKind::CostSlot => &[FILTER_COST_BASIS, FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
-                            ColumnKind::RevenueSlot => &[FILTER_REVENUE, FILTER_SELL_SCOPE],
+                            ColumnKind::CostSlot => &[FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
+                            ColumnKind::RevenueSlot => &[],
                             _ => &[],
                         };
                         let controls = recipe_filter_controls(i18n, window);
@@ -5143,6 +5105,10 @@ mod test {
                 let control = controls.iter().find(|c| c.key == key).expect(key);
                 assert_eq!(control.default_value.as_deref(), Some(default), "{key}");
                 assert!(!control.clear_with_filters, "{key} survives Clear all");
+                assert!(
+                    control.calculation,
+                    "{key} belongs only to the formula strip"
+                );
                 assert!(!control.options.is_empty(), "{key} is a select");
             }
             // The toggles are row-shaping choices and clear with the rest.
@@ -5375,8 +5341,8 @@ mod test {
     #[test]
     fn the_sell_scope_is_counted_and_cleared_like_the_other_market_params() {
         let production = production_source();
-        // The scope is a registered calculation control: a chip at its
-        // default, offered in `+ Filter`, kept by Clear all.
+        // The scope is a registered calculation input, edited in the formula
+        // strip and preserved by Clear all.
         let _ = any_spawner::Executor::init_futures_executor();
         let owner = Owner::new();
         owner.with(|| {

@@ -270,6 +270,7 @@ struct CompanionSnapshot {
     progress: String,
     rows: Vec<CompanionRow>,
     can_edit: bool,
+    can_undo_purchase: bool,
     has_next: bool,
     labels: BTreeMap<String, String>,
     #[serde(skip)]
@@ -393,6 +394,7 @@ fn snapshot(trip: &Trip, live: &ShopInput, stop: usize, can_edit: bool) -> Compa
         }
     }
     CompanionSnapshot {
+        can_undo_purchase: false,
         title: live.title.clone(),
         world: current
             .map(|(world, _)| {
@@ -435,6 +437,7 @@ pub fn ListShop(
     input: Signal<ShopInput>,
     on_purchase: Callback<(String, i32)>,
     on_undo: Callback<()>,
+    can_undo_purchase: Signal<bool>,
     can_edit: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -554,6 +557,7 @@ pub fn ListShop(
     let live_snapshot = move || {
         trip.get().map(|trip| {
             let mut view = snapshot(&trip, &input.get(), stop.get(), can_edit.get());
+            view.can_undo_purchase = can_edit.get() && can_undo_purchase.get();
             if let Some(world) = view.unknown_world {
                 view.world = t_string!(i18n, list_shop_world, world = world).to_string();
             } else if view.world.is_empty() {
@@ -668,6 +672,9 @@ pub fn ListShop(
             return;
         }
         if action == "undo" {
+            if !can_undo_purchase.get_untracked() {
+                return;
+            }
             on_undo.run(());
             stop.set(0);
             return;
@@ -851,7 +858,7 @@ pub fn ListShop(
                         }
                     }).collect_view()}
                     <div class="flex flex-wrap gap-2">
-                        <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !can_edit.get() on:click=move |_| action.run(("undo".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_undo_purchase)}</button>
+                        <button data-testid="shop-undo-purchase" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !can_edit.get() || !can_undo_purchase.get() on:click=move |_| action.run(("undo".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_undo_purchase)}</button>
                         <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled= !view.has_next on:click=move |_| action.run(("next".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_next)}</button>
                     </div>
                 </div>

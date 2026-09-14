@@ -37,6 +37,7 @@ pub fn price_control(
     let mut filter = ColumnFilter::new(key, label, false);
     filter.default_value = Some("listing-min".into());
     filter.clear_with_filters = false;
+    filter.calculation = true;
     filter.options = vec![
         ("listing-min", listing_label),
         ("sale-min", stat_label(StatKind::Min, window.selected.get())),
@@ -48,6 +49,20 @@ pub fn price_control(
             "sale-avg",
             stat_label(StatKind::Average, window.selected.get()),
         ),
+    ];
+    filter
+}
+
+/// Both resale tools use `tax=true` for post-tax profit (the default).
+pub fn tax_control(key: &'static str) -> ColumnFilter {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let mut filter = ColumnFilter::new(key, t_string!(i18n, calculation_tax).to_string(), false);
+    filter.default_value = Some("true".into());
+    filter.clear_with_filters = false;
+    filter.calculation = true;
+    filter.options = vec![
+        ("true", t_string!(i18n, calculation_tax_on).to_string()),
+        ("false", t_string!(i18n, calculation_tax_off).to_string()),
     ];
     filter
 }

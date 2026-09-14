@@ -14,6 +14,9 @@ pub fn cleared_query(query: &ParamsMap, filters: &[ColumnFilter]) -> ParamsMap {
     let mut metrics = parse_filters(query.get("gf").as_deref());
     let mut touched_metrics = false;
     for filter in filters {
+        if filter.calculation {
+            continue;
+        }
         if filter.metric.is_some() {
             touched_metrics |= metrics.remove(filter.key).is_some();
         } else {

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "See what goes into your profit",
+  "blurb": "Compact calculation chips now show what adds to or subtracts from your results, with matching symbols on table headers. Change price estimates directly, use a compatible price column as an input, and filter your results without duplicate pricing controls.",
+  "link": "/recipe-analyzer"
+}
