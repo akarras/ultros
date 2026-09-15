@@ -47,9 +47,16 @@ extern "C" {
         callback: &js_sys::Function,
     ) -> js_sys::Promise;
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRemember)]
-    fn remember(user: &str, list: i32, snapshot: &js_sys::Uint8Array) -> f64;
+    fn remember(
+        user: &str,
+        list: i32,
+        snapshot: &js_sys::Uint8Array,
+        replacement_source: &wasm_bindgen::JsValue,
+    ) -> f64;
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRecovery)]
     fn recovery(user: &str, list: i32) -> wasm_bindgen::JsValue;
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRecoverySource)]
+    fn recovery_source(user: &str, list: i32) -> wasm_bindgen::JsValue;
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountForget)]
     fn forget(user: &str, list: i32);
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountPending)]
@@ -90,6 +97,10 @@ pub struct ListDocHandle {
     pub save_state: RwSignal<SaveState>,
     pub recovery_state: RwSignal<RecoveryState>,
     pub recovery_retry: RwSignal<u64>,
+    pub recovery_saved: RwSignal<u64>,
+    /// Rebased operation IDs must be durable before the server accepts them.
+    /// Otherwise an old disk copy could replay the same intent under new IDs.
+    pub recovery_persisting: RwSignal<bool>,
     recovery_snapshot: StoredValue<Option<Vec<u8>>, LocalStorage>,
     generation: StoredValue<String, LocalStorage>,
     replacement_source: StoredValue<Option<Vec<u8>>, LocalStorage>,
@@ -125,21 +136,36 @@ impl ListDocHandle {
                 }
             });
         let doc = doc.unwrap_or_default();
+        #[cfg(not(feature = "hydrate"))]
+        let replacement_source: Option<Vec<u8>> = None;
         #[cfg(feature = "hydrate")]
-        let doc = {
-            // Failed saves survive client-side navigation. Each account has
-            // its own recovery slot; nothing is exposed through another login.
+        let (doc, replacement_source) = {
+            // A failed replacement survives SPA navigation with its source
+            // fence. Never merge it with the abandoned history on disk or send
+            // its new operation IDs before completing the guarded save.
             let pending = recovery(&user_id.to_string(), list_id);
+            let source = recovery_source(&user_id.to_string(), list_id);
             if !pending.is_null() {
                 let bytes = js_sys::Uint8Array::new(&pending).to_vec();
-                match doc.import(&bytes) {
-                    Ok(report) if !report.pending => doc,
-                    _ => ListDocument::from_snapshot(&bytes).unwrap_or(doc),
+                if !source.is_null() {
+                    match ListDocument::from_snapshot(&bytes) {
+                        Ok(replacement) => {
+                            (replacement, Some(js_sys::Uint8Array::new(&source).to_vec()))
+                        }
+                        Err(_) => (doc, None),
+                    }
+                } else {
+                    let doc = match doc.import(&bytes) {
+                        Ok(report) if !report.pending => doc,
+                        _ => ListDocument::from_snapshot(&bytes).unwrap_or(doc),
+                    };
+                    (doc, None)
                 }
             } else {
-                doc
+                (doc, None)
             }
         };
+        let recovery_persisting = replacement_source.is_some();
         let permission = loaded.map(|l| l.permission).unwrap_or(0);
         let undo = ListUndo::new(&doc);
         let revision = RwSignal::new(0u64);
@@ -161,15 +187,23 @@ impl ListDocHandle {
             status: RwSignal::new("connecting".to_string()),
             permission: RwSignal::new(permission),
             save_state: RwSignal::new(SaveState::Pending),
-            recovery_state: RwSignal::new(RecoveryState::None),
+            recovery_state: RwSignal::new(if recovery_persisting {
+                RecoveryState::Recovered {
+                    dropped_meta: false,
+                }
+            } else {
+                RecoveryState::None
+            }),
             recovery_retry: RwSignal::new(0),
+            recovery_saved: RwSignal::new(0),
+            recovery_persisting: RwSignal::new(recovery_persisting),
             recovery_snapshot: StoredValue::new_local(None),
             generation: StoredValue::new_local(store::generation(
                 &BrowserStorage,
                 user_id,
                 list_id,
             )),
-            replacement_source: StoredValue::new_local(None),
+            replacement_source: StoredValue::new_local(replacement_source),
             revoked: StoredValue::new_local(std::rc::Rc::new(std::cell::Cell::new(false))),
             purged: RwSignal::new(false),
             closed: RwSignal::new(false),
@@ -404,6 +438,21 @@ impl ListDocHandle {
         Some(snapshot)
     }
 
+    #[cfg(feature = "hydrate")]
+    fn remember_snapshot(&self, snapshot: &[u8]) -> f64 {
+        let source = self
+            .replacement_source
+            .get_value()
+            .map(|bytes| wasm_bindgen::JsValue::from(js_sys::Uint8Array::from(bytes.as_slice())))
+            .unwrap_or(wasm_bindgen::JsValue::NULL);
+        remember(
+            &self.user_id.to_string(),
+            self.list_id,
+            &js_sys::Uint8Array::from(snapshot),
+            &source,
+        )
+    }
+
     pub fn save_now(&self) {
         let Some(snapshot) = self.prepare_save(ListDocument::export_snapshot) else {
             return;
@@ -416,11 +465,7 @@ impl ListDocHandle {
             let generation = self.generation.get_value();
             let replacement_source = self.replacement_source.get_value();
             let revoked = self.revoked.get_value();
-            let token = remember(
-                &self.user_id.to_string(),
-                self.list_id,
-                &js_sys::Uint8Array::from(snapshot.as_slice()),
-            );
+            let token = self.remember_snapshot(&snapshot);
             // Snapshot and revocation token outlive the page. Navigation can
             // dispose the reactive handle while this task waits for another tab.
             leptos::task::spawn_local(async move {
@@ -459,7 +504,13 @@ impl ListDocHandle {
                     };
                     match result {
                         Ok(merged) => {
-                            if !handle.is_closed_or_disposed() {
+                            // A pre-rebase save can finish while the replacement
+                            // waits for the lock. Its old operations must never
+                            // be imported into the new document a second time.
+                            if !(handle.is_closed_or_disposed()
+                                || handle.recovery_persisting.get_untracked()
+                                    && replacement_source.is_none())
+                            {
                                 let before = handle.try_version();
                                 match handle.import(&merged) {
                                     Ok(report) if !report.pending => {
@@ -474,6 +525,13 @@ impl ListDocHandle {
                                             .is_ok_and(|doc| !handle.is_ahead_of(&doc.version()));
                                         if saved {
                                             handle.save_state.set(SaveState::Saved);
+                                        }
+                                        if replacement_source.is_some()
+                                            && handle.replacement_source.get_value().is_none()
+                                            && handle.recovery_persisting.get_untracked()
+                                        {
+                                            handle.recovery_persisting.set(false);
+                                            handle.recovery_saved.update(|n| *n += 1);
                                         }
                                     }
                                     _ => {
@@ -567,6 +625,7 @@ impl ListDocHandle {
         self.undo.set_value(undo);
         self.subscriptions.set_value(vec![on_change, on_local]);
         self.recovery_state.set(RecoveryState::None);
+        self.recovery_persisting.set(false);
         self.recovery_snapshot.set_value(None);
         self.permission.set(0);
         self.revision.update(|r| *r += 1);
@@ -641,11 +700,11 @@ impl ListDocHandle {
             });
             self.set_status("reconnecting");
             self.save_now();
-            self.recovery_retry.update(|n| *n += 1);
         }
     }
 
     fn replace_document(&self, fresh: ListDocument) {
+        self.recovery_persisting.set(true);
         self.replacement_source.set_value(Some(self.try_version()));
         let undo = ListUndo::new(&fresh);
         let revision = self.revision;
@@ -701,6 +760,8 @@ impl ListDocHandle {
         self.save_state.dispose();
         self.recovery_state.dispose();
         self.recovery_retry.dispose();
+        self.recovery_saved.dispose();
+        self.recovery_persisting.dispose();
         self.recovery_snapshot.dispose();
         self.generation.dispose();
         self.replacement_source.dispose();
@@ -730,11 +791,7 @@ impl ListDocHandle {
             let _ = handle.save_state.try_set(SaveState::Pending);
             // Keep the latest edit recoverable during the debounce window too.
             if let Some(Ok(snapshot)) = handle.with_doc(|doc| doc.export_snapshot()) {
-                remember(
-                    &handle.user_id.to_string(),
-                    handle.list_id,
-                    &js_sys::Uint8Array::from(snapshot.as_slice()),
-                );
+                handle.remember_snapshot(&snapshot);
             }
             let timeout = gloo_timers::callback::Timeout::new(SAVE_DEBOUNCE_MS, move || {
                 handle.save_now();
@@ -816,6 +873,10 @@ mod tests {
             let source = handle.try_version();
             let compact = compact_after(&server);
             assert!(handle.rebase_onto_snapshot(&compact, true).unwrap());
+            assert!(
+                handle.recovery_persisting.get_untracked(),
+                "recovered operations wait for durable storage before sync"
+            );
             assert_eq!(handle.rows()[0].need, 15);
             assert_eq!(handle.rows()[0].acquired, 4);
             assert!(!handle.can_undo());

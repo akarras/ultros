@@ -129,48 +129,31 @@ fn defer(task: impl FnOnce() + 'static) {
 ///
 /// # The handshake state machine
 ///
-/// Per `ListDocSubscribed { version: V, payload }`, first import the payload
-/// (a failed import is fatal for this reply: status `"offline"`, logged,
-/// nothing sent). A **pending** import (`ImportReport::pending`, F1) means
-/// the bytes were parked on history this document doesn't have and the doc
-/// was *not* actually brought up to date:
+/// Snapshot payloads are probed before touching the live document. If the
+/// server compacted the client's base, or an import would park operations
+/// (F1), recovery reconstructs local intent on a separate server snapshot.
+/// Conflicts or missing history pause sync for review with both copies intact.
+/// A pending Updates payload instead requests a full snapshot.
 ///
-/// - payload was `Snapshot` and pending — replace the document outright
-///   with that snapshot and replay verified local intent as fresh ops
-///   (`ListDocHandle::rebase_onto_snapshot`), then fall through into the
-///   logic below with the same `V` (the snapshot is treated as consumed, so
-///   the `(same_version, Some(bytes))` branch below cannot fire a second
-///   time for it).
-/// - payload was `Updates` and pending — an `Updates` payload alone can't
-///   rebuild the document. Arm `force_empty_version` and resubscribe
-///   (deferred) so the next handshake asks for a full `Snapshot`; status
-///   `"reconnecting"`, return without reaching "live".
+/// A successful rebase remembers `rebased_for = V` and waits for a guarded
+/// durable replacement before sending ANY recovered operations. Re-expressing
+/// intent creates new operation IDs: sending them before saving would let an
+/// older disk copy replay that intent twice after a quota failure and reload.
+/// Persistence completion requests a normal handshake, preserving the rejection
+/// guard. Its Updates/UpToDate reply sends the now-durable `export_since(V)`.
 ///
-/// Otherwise (not pending, or `UpToDate`):
+/// For ordinary handshakes, a client ahead of V sends its diff and remembers
+/// `last_diff_version = V`. A Snapshot repeating that version means the server
+/// rejected the diff, so recover as above (dropping forbidden owner metadata).
+/// A Snapshot repeating `rebased_for = V` means recovery was rejected too (F2):
+/// stop rather than repeatedly inventing operations. Updates/UpToDate for that
+/// same V can follow a lost send and still retry the diff. A new server version
+/// clears the recovery guard; convergence clears both guards.
 ///
-/// - not ahead of `V` — converged; both guards below are cleared.
-/// - ahead of `V`, and `V` is not the version we last diffed against — send
-///   `export_since(V)` and remember `last_diff_version = V`.
-/// - ahead of `V`, `V` *is* `last_diff_version`, and the payload was a
-///   (non-pending) `Snapshot` — the server rejected our diff for exactly
-///   this version and answered with a fresh snapshot, so resending the same
-///   bytes would loop forever, each cycle costing the server a whole
-///   snapshot. Recover local intent onto that snapshot
-///   (`ListDocHandle::rebase_onto_snapshot`), dropping a local meta change
-///   if a `MetaForbidden` was seen since the last successful handshake,
-///   send `export_since(V)` once more, and remember `rebased_for = V`.
-/// - ahead of `V`, `rebased_for == V`, **and the payload was a `Snapshot`**
-///   (F2) — the rebased operations were rejected too (a `MissingHistory`
-///   resync always answers with a fresh Snapshot, so this is the only way
-///   to legitimately see the same `V` twice with `rebased_for` already set).
-///   Give up: status `"offline"`, logged, nothing sent. This bounds the
-///   exchange at two rounds per server version. The same `V` arriving again
-///   with `Updates`/`UpToDate` instead — e.g. a lost send followed by a
-///   reconnect replaying the same version — is not a rejection and falls
-///   through to the normal diff-send branch above instead of giving up.
-///
-/// A `ListDocSubscribed` for a different version clears `rebased_for`, so a
-/// document that recovers is not stuck in the give-up state.
+/// Explicit review retry requests a fresh Snapshot and resets the attempt
+/// guards. It differs from persistence completion, which must preserve them.
+/// While review or replacement persistence is pending, ordinary document
+/// traffic pauses; access-revocation and account-lifecycle errors still apply.
 ///
 /// A pending relayed `ListDocUpdate` (outside a handshake) gets the same
 /// F1 treatment: force a snapshot resync instead of calling
@@ -229,6 +212,8 @@ pub fn start(
     let sender = realtime.clone();
     let version_flag = force_empty_version.clone();
     let retry_flag = force_empty_version.clone();
+    let retry_last_diff = last_diff_version.clone();
+    let retry_rebased = rebased_for.clone();
     let subscription = realtime.subscribe_list_doc(
         list_id,
         move || {
@@ -249,15 +234,13 @@ pub fn start(
             ServerClient::ListDocSubscribed {
                 version, payload, ..
             } => {
-                if handle.recovery_paused() { return; }
+                if handle.recovery_paused() || handle.recovery_persisting.get_untracked() { return; }
                 // `snapshot` is `Some(bytes)` only when the reply carried a
                 // Snapshot AND that snapshot fully merged (not pending) —
                 // i.e. it's still available for the "server rejected our
                 // diff" rebase branch below. A pending Snapshot is handled
                 // right here instead (F1) and does not flow into that
                 // branch a second time.
-                // Set when a pending Snapshot import replaced the document (F1).
-                let mut pending_rebased = false;
                 let snapshot = match payload {
                     ListDocPayload::Snapshot(bytes) => {
                         let report = match handle.import_server_snapshot(&bytes) {
@@ -277,10 +260,8 @@ pub fn start(
                             // the doc was NOT brought up to date by that
                             // import. Recover the same way a rejected diff
                             // does: replace the document outright with the
-                            // server's snapshot and replay verified local intent as
-                            // fresh ops, then fall through into the normal
-                            // "am I ahead" logic with this same `version` so
-                            // the freshly rebased rows still get sent.
+                            // server snapshot and replay verified local intent.
+                            // Sending waits for the replacement to be durable.
                             let keep_meta = handle.permission.get_untracked() >= 3 && !meta_forbidden.get();
                             if let Err(error) = handle.rebase_onto_snapshot(&bytes, keep_meta) {
                                 handle.set_status("offline");
@@ -290,8 +271,12 @@ pub fn start(
                                 return;
                             }
                             meta_forbidden.set(false);
-                            pending_rebased = true;
-                            None
+                            // Resume with a normal handshake only after the
+                            // replacement operation IDs are durable. Remember
+                            // this version so a rejected recovery stays bounded.
+                            *rebased_for.borrow_mut() = Some(version.clone());
+                            handle.set_status("reconnecting");
+                            return;
                         } else {
                             Some(bytes)
                         }
@@ -331,15 +316,8 @@ pub fn start(
                 if handle.is_ahead_of(&version) {
                     let same_version =
                         last_diff_version.borrow().as_deref() == Some(version.as_slice());
-                    if !same_version {
-                        // A different server version is a fresh start.
+                    if rebased_for.borrow().as_ref().is_some_and(|previous| previous != &version) {
                         *rebased_for.borrow_mut() = None;
-                    }
-                    if pending_rebased {
-                        // This handshake already rebased onto `version`, so a
-                        // later rejection at the same version gives up instead
-                        // of rebasing again: two rounds per server version.
-                        *rebased_for.borrow_mut() = Some(version.clone());
                     }
                     // F2: only give up when the server has actually
                     // rejected our history — signalled by answering the
@@ -366,25 +344,9 @@ pub fn start(
                                 return;
                             }
                             meta_forbidden.set(false);
-                            // M4: only record the rebase (and clear the
-                            // outbox) once the diff for it actually went
-                            // out — an export failure here must not make a
-                            // later reply believe this version was already
-                            // answered.
-                            let diff = match handle.export_since(&version) {
-                                Ok(diff) => diff,
-                                Err(error) => {
-                                    handle.set_status("offline");
-                                    log::error!(
-                                        "list {list_id}: export_since after rebase failed: {error}"
-                                    );
-                                    return;
-                                }
-                            };
-                            sender.send_list_doc_update(list_id, diff);
                             *rebased_for.borrow_mut() = Some(version.clone());
-                            // That diff covers every re-applied operation.
-                            handle.outbox.set(Vec::new());
+                            handle.set_status("reconnecting");
+                            return;
                         }
                         _ => {
                             // M4: same ordering — don't record
@@ -415,7 +377,7 @@ pub fn start(
                 handle.save_now();
             }
             ServerClient::ListDocUpdate { update, .. } => {
-                if handle.recovery_paused() { return; }
+                if handle.recovery_paused() || handle.recovery_persisting.get_untracked() { return; }
                 let report = match handle.import(&update) {
                     Ok(report) => report,
                     Err(error) => {
@@ -499,12 +461,25 @@ pub fn start(
     *slot.borrow_mut() = Some(subscription);
 
     let retry_slot = Rc::downgrade(&slot);
-    let recovery_retry = Effect::new(move |_| {
-        if handle.recovery_retry.try_get().unwrap_or(0) > 0 {
+    let recovery_retry = Effect::new(move |previous: Option<(u64, u64)>| {
+        let retry = handle.recovery_retry.try_get().unwrap_or(0);
+        let saved = handle.recovery_saved.try_get().unwrap_or(0);
+        let previous = previous.unwrap_or_default();
+        if retry != previous.0 {
+            *retry_last_diff.borrow_mut() = None;
+            *retry_rebased.borrow_mut() = None;
             let slot = retry_slot.clone();
             let flag = retry_flag.clone();
             defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+        } else if saved != previous.1 {
+            // A normal reply is Updates/UpToDate because the persisted doc
+            // descends from the server root. Keep the rejection-loop guard.
+            let slot = retry_slot.clone();
+            defer(move || {
+                resubscribe(&slot);
+            });
         }
+        (retry, saved)
     });
     let sender = realtime;
     let drain = Effect::new(move |_| {
@@ -515,6 +490,7 @@ pub fn start(
             return;
         };
         if pending.is_empty()
+            || handle.recovery_persisting.try_get().unwrap_or(true)
             || handle.recovery_state.try_get()
                 == Some(crate::list_doc::handle::RecoveryState::Review)
             || handle.status.try_get().as_deref() != Some("live")

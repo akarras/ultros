@@ -2077,7 +2077,6 @@ pub fn ListViewSync() -> impl IntoView {
                                                                                     <button type="button" class="btn-secondary ml-2" on:click=move |_| doc.download_recovery()>{t!(i18n, account_list_save_export)}</button>
                                                                                 </Show>
                                                                             </div>
-                                                                            <crate::list_doc::recovery_ui::ListRecovery doc=doc />
                                                                         }
                                                                     })}
 
@@ -2127,6 +2126,7 @@ pub fn ListViewSync() -> impl IntoView {
                                                                 </Tooltip>
                                                             </div>
                                                         </div>
+                                                        {move || handle.get().map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
                                                     </div>
 
                                                     <Show when=move || legacy_cart.get() && view_caps.with(|c| c.can_write)>

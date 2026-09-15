@@ -17,3 +17,22 @@ test("account recovery is readable by the existing anonymous restore decoder", a
   assert.equal("user" in result, false);
   assert.equal("id" in result, false);
 });
+
+
+test("a pending replacement keeps its source fence with the account-scoped recovery snapshot", async () => {
+  const api = await import("../ultros/static/account-list-store.mjs");
+  const snapshot = new Uint8Array([1, 2]);
+  const source = new Uint8Array([3, 4]);
+  const first = api.accountRemember("recovery-user", 7, snapshot, source);
+  source[0] = 99;
+  snapshot[0] = 99;
+  assert.deepEqual(api.accountRecovery("recovery-user", 7), new Uint8Array([1, 2]));
+  assert.deepEqual(api.accountRecoverySource("recovery-user", 7), new Uint8Array([3, 4]));
+  assert.equal(api.accountRecoverySource("another-user", 7), null);
+  const second = api.accountRemember("recovery-user", 7, new Uint8Array([5]));
+  assert.equal(api.accountPending("recovery-user", 7, first), false);
+  assert.equal(api.accountPending("recovery-user", 7, second), true);
+  assert.equal(api.accountRecoverySource("recovery-user", 7), null);
+  api.accountForget("recovery-user", 7);
+  assert.equal(api.accountRecovery("recovery-user", 7), null);
+});

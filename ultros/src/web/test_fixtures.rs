@@ -168,7 +168,7 @@ async fn compact_list_fixture(
     }
     db.list_doc_snapshot(id, user.id as i64).await?;
     db.get_connection()
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE list_doc SET changes_since_compaction = $1 WHERE list_id = $2",
             [ultros_db::list_doc::COMPACT_AFTER_CHANGES.into(), id.into()],

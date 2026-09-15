@@ -4,13 +4,20 @@
 const recovery = new Map();
 let serial = 0;
 const key = (user, list) => `${user}:${list}`;
-export function accountRemember(user, list, snapshot) {
-  const record = { snapshot: snapshot.slice(), token: ++serial };
+export function accountRemember(user, list, snapshot, replacementSource = null) {
+  const record = {
+    snapshot: snapshot.slice(),
+    replacementSource: replacementSource?.slice() ?? null,
+    token: ++serial,
+  };
   recovery.set(key(user, list), record);
   return record.token;
 }
 export function accountRecovery(user, list) {
   return recovery.get(key(user, list))?.snapshot ?? null;
+}
+export function accountRecoverySource(user, list) {
+  return recovery.get(key(user, list))?.replacementSource ?? null;
 }
 export function accountForget(user, list) {
   recovery.delete(key(user, list));
