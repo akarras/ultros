@@ -348,6 +348,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_allocation_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_allocation_exit"
         fi
+        log "running partial Build subtotal E2E"
+        list_subtotal_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-partial-subtotal ) || list_subtotal_exit=$?
+        if [ "$list_subtotal_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_subtotal_exit"
+        fi
         log "running list compaction recovery E2E"
         list_recovery_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-compaction-recovery ) || list_recovery_exit=$?
