@@ -1,10 +1,12 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     error::Error,
+    pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
+    task::{Context, Poll},
 };
 
 use axum::{
@@ -16,12 +18,12 @@ use axum::{
 };
 
 use futures::{
-    SinkExt, StreamExt,
+    SinkExt, Stream, StreamExt,
     future::{Either, select},
-    stream::{BoxStream, SelectAll},
+    stream::BoxStream,
 };
 
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{StreamMap, wrappers::BroadcastStream};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use ultros_api_types::websocket::{
@@ -51,6 +53,35 @@ fn relay_for(event: &ListDocEvent, list_id: i32, socket_id: u64) -> Option<Vec<u
         return None;
     }
     Some(event.update.clone())
+}
+
+fn list_doc_relay<F, A>(
+    receiver: tokio::sync::broadcast::Receiver<EventType<Arc<ListDocEvent>>>,
+    subscription_id: u64,
+    list_id: i32,
+    socket_id: u64,
+    mut authorize: A,
+) -> BoxStream<'static, ServerClient>
+where
+    A: FnMut(ServerClient) -> F + Send + 'static,
+    F: std::future::Future<Output = Option<ServerClient>> + Send + 'static,
+{
+    Box::pin(BroadcastStream::new(receiver).filter_map(move |event| {
+        let lagged = event.is_err();
+        let authorization = event.ok().and_then(|event| {
+            relay_for(event.as_ref(), list_id, socket_id)
+                .map(|update| authorize(ServerClient::ListDocUpdate { list_id, update }))
+        });
+        async move {
+            if lagged {
+                Some(ServerClient::Stale { subscription_id })
+            } else if let Some(authorization) = authorization {
+                authorization.await
+            } else {
+                None
+            }
+        }
+    }))
 }
 
 pub(crate) async fn real_time_data(
@@ -161,16 +192,8 @@ async fn handle_socket(
     } = events;
     let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
     let (mut sender, mut receiver) = socket.split();
-    let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
-    let active_subscriptions = Arc::new(Mutex::new(HashSet::new()));
+    let mut subscriptions = SocketSubscriptions::default();
     let mut next_subscription_id = 1u64;
-    // Tracks which subscription_id this socket used to subscribe to each
-    // list document, so an unsolicited resync (ListDocError::MissingHistory)
-    // can be routed back to the client's handler for that list — the
-    // frontend dispatches `ListDocSubscribed` strictly by subscription_id.
-    let mut list_doc_subscriptions: std::collections::HashMap<i32, u64> =
-        std::collections::HashMap::new();
-    subscriptions.push(Box::pin(futures::stream::pending()));
     sender
         .send(Message::Text(
             serde_json::to_string(&ServerClient::SocketConnected)?.into(),
@@ -209,10 +232,7 @@ async fn handle_socket(
                                                 next_subscription_id += 1;
                                                 id
                                             });
-                                        if !activate_subscription(
-                                            &active_subscriptions,
-                                            subscription_id,
-                                        ) {
+                                        if !subscriptions.begin(subscription_id) {
                                             sender
                                             .send(Message::Text(
                                                 serde_json::to_string(&ServerClient::Error {
@@ -228,78 +248,58 @@ async fn handle_socket(
                                         match msg_type {
                                             SocketMessageType::Listings => {
                                                 let l_worlds = world_cache.clone();
-                                                let active = active_subscriptions.clone();
                                                 let stream =
                                                     BroadcastStream::new(listings.resubscribe())
-                                                        .map(move |map| {
-                                                            if !is_subscription_active(
-                                                                &active,
+                                                        .map(move |map| match map {
+                                                            Ok(map) => {
+                                                                let filter = &filter;
+                                                                let worlds = &l_worlds;
+                                                                wrap_subscription_event(
+                                                                    subscription_id,
+                                                                    process_listings(
+                                                                        Some(map),
+                                                                        filter,
+                                                                        worlds,
+                                                                    ),
+                                                                )
+                                                            }
+                                                            Err(_) => Some(ServerClient::Stale {
                                                                 subscription_id,
-                                                            ) {
-                                                                return None;
-                                                            }
-                                                            match map {
-                                                                Ok(map) => {
-                                                                    let filter = &filter;
-                                                                    let worlds = &l_worlds;
-                                                                    wrap_subscription_event(
-                                                                        subscription_id,
-                                                                        process_listings(
-                                                                            Some(map),
-                                                                            filter,
-                                                                            worlds,
-                                                                        ),
-                                                                    )
-                                                                }
-                                                                Err(_) => {
-                                                                    Some(ServerClient::Stale {
-                                                                        subscription_id,
-                                                                    })
-                                                                }
-                                                            }
+                                                            }),
                                                         })
                                                         .filter_map(move |f| async move { f });
 
-                                                subscriptions.push(Box::pin(stream));
+                                                subscriptions
+                                                    .insert(subscription_id, Box::pin(stream));
                                             }
                                             SocketMessageType::Sales => {
                                                 let s_worlds = world_cache.clone();
-                                                let active = active_subscriptions.clone();
                                                 info!(
                                                     "Adding sales subscription with filter {filter:?}"
                                                 );
                                                 let stream =
                                                     BroadcastStream::new(history.resubscribe())
-                                                        .map(move |map| {
-                                                            if !is_subscription_active(
-                                                                &active,
+                                                        .map(move |map| match map {
+                                                            Ok(map) => {
+                                                                let filter = &filter;
+                                                                let worlds = &s_worlds;
+                                                                wrap_subscription_event(
+                                                                    subscription_id,
+                                                                    process_sales(
+                                                                        Some(map),
+                                                                        filter,
+                                                                        worlds,
+                                                                    ),
+                                                                )
+                                                            }
+                                                            Err(_) => Some(ServerClient::Stale {
                                                                 subscription_id,
-                                                            ) {
-                                                                return None;
-                                                            }
-                                                            match map {
-                                                                Ok(map) => {
-                                                                    let filter = &filter;
-                                                                    let worlds = &s_worlds;
-                                                                    wrap_subscription_event(
-                                                                        subscription_id,
-                                                                        process_sales(
-                                                                            Some(map),
-                                                                            filter,
-                                                                            worlds,
-                                                                        ),
-                                                                    )
-                                                                }
-                                                                Err(_) => {
-                                                                    Some(ServerClient::Stale {
-                                                                        subscription_id,
-                                                                    })
-                                                                }
-                                                            }
+                                                            }),
                                                         })
                                                         .filter_map(move |l| async move { l });
 
-                                                subscriptions.push(Box::pin(stream));
+                                                subscriptions
+                                                    .insert(subscription_id, Box::pin(stream));
                                             }
                                         }
                                         sender
@@ -312,12 +312,7 @@ async fn handle_socket(
                                             .await?;
                                     }
                                     ClientMessage::Unsubscribe { subscription_id } => {
-                                        deactivate_subscription(
-                                            &active_subscriptions,
-                                            subscription_id,
-                                        );
-                                        list_doc_subscriptions
-                                            .retain(|_list_id, id| *id != subscription_id);
+                                        subscriptions.remove(subscription_id);
                                         sender
                                             .send(Message::Text(
                                                 serde_json::to_string(
@@ -337,10 +332,7 @@ async fn handle_socket(
                                                 next_subscription_id += 1;
                                                 id
                                             });
-                                        if !activate_subscription(
-                                            &active_subscriptions,
-                                            subscription_id,
-                                        ) {
+                                        if !subscriptions.begin(subscription_id) {
                                             sender
                                             .send(Message::Text(
                                                 serde_json::to_string(&ServerClient::Error {
@@ -358,19 +350,11 @@ async fn handle_socket(
                                         let permission =
                                             db.get_permission(list_id, user_id).await?;
                                         if permission >= ListPermission::Read {
-                                            let active = active_subscriptions.clone();
                                             let relay_db = db.clone();
                                             let stream = BroadcastStream::new(lists.resubscribe())
                                                 .filter_map(move |l| {
-                                                    let active = active.clone();
                                                     let db = relay_db.clone();
                                                     async move {
-                                                        if !is_subscription_active(
-                                                            &active,
-                                                            subscription_id,
-                                                        ) {
-                                                            return None;
-                                                        }
                                                         let l = match l {
                                                             Ok(l) => l,
                                                             Err(_) => {
@@ -410,7 +394,6 @@ async fn handle_socket(
                                                             };
                                                             authorize_list_event(
                                                                 &db,
-                                                                &active,
                                                                 subscription_id,
                                                                 list_id,
                                                                 user_id,
@@ -422,7 +405,7 @@ async fn handle_socket(
                                                         }
                                                     }
                                                 });
-                                            subscriptions.push(Box::pin(stream));
+                                            subscriptions.insert(subscription_id, Box::pin(stream));
                                             sender
                                                 .send(Message::Text(
                                                     serde_json::to_string(
@@ -434,10 +417,7 @@ async fn handle_socket(
                                                 ))
                                                 .await?;
                                         } else {
-                                            deactivate_subscription(
-                                                &active_subscriptions,
-                                                subscription_id,
-                                            );
+                                            subscriptions.remove(subscription_id);
                                             sender
                                                 .send(Message::Text(
                                                     serde_json::to_string(&ServerClient::Error {
@@ -461,10 +441,7 @@ async fn handle_socket(
                                                 next_subscription_id += 1;
                                                 id
                                             });
-                                        if !activate_subscription(
-                                            &active_subscriptions,
-                                            subscription_id,
-                                        ) {
+                                        if !subscriptions.begin(subscription_id) {
                                             sender
                                             .send(Message::Text(
                                                 serde_json::to_string(&ServerClient::Error {
@@ -497,51 +474,30 @@ async fn handle_socket(
                                             .await
                                         {
                                             Ok((server_version, payload)) => {
-                                                list_doc_subscriptions
+                                                subscriptions
+                                                    .list_docs
                                                     .insert(list_id, subscription_id);
-                                                let active = active_subscriptions.clone();
                                                 let relay_db = db.clone();
-                                                let stream = BroadcastStream::new(doc_relay)
-                                                    .filter_map(move |event| {
-                                                        let active = active.clone();
+                                                let stream = list_doc_relay(
+                                                    doc_relay,
+                                                    subscription_id,
+                                                    list_id,
+                                                    socket_id,
+                                                    move |event| {
                                                         let db = relay_db.clone();
                                                         async move {
-                                                            if !is_subscription_active(
-                                                                &active,
-                                                                subscription_id,
-                                                            ) {
-                                                                return None;
-                                                            }
-                                                            let event = match event {
-                                                                Ok(event) => event,
-                                                                Err(_) => {
-                                                                    return Some(
-                                                                        ServerClient::Stale {
-                                                                            subscription_id,
-                                                                        },
-                                                                    );
-                                                                }
-                                                            };
-                                                            let update = relay_for(
-                                                                event.as_ref(),
-                                                                list_id,
-                                                                socket_id,
-                                                            )?;
                                                             authorize_list_event(
                                                                 &db,
-                                                                &active,
                                                                 subscription_id,
                                                                 list_id,
                                                                 user_id,
-                                                                ServerClient::ListDocUpdate {
-                                                                    list_id,
-                                                                    update,
-                                                                },
+                                                                event,
                                                             )
                                                             .await
                                                         }
-                                                    });
-                                                subscriptions.push(Box::pin(stream));
+                                                    },
+                                                );
+                                                subscriptions.insert(subscription_id, stream);
                                                 sender
                                                     .send(Message::Text(
                                                         serde_json::to_string(
@@ -557,10 +513,7 @@ async fn handle_socket(
                                                     .await?;
                                             }
                                             Err(e) => {
-                                                deactivate_subscription(
-                                                    &active_subscriptions,
-                                                    subscription_id,
-                                                );
+                                                subscriptions.remove(subscription_id);
                                                 sender
                                                     .send(Message::Text(
                                                         serde_json::to_string(&scoped_event(
@@ -588,7 +541,7 @@ async fn handle_socket(
                                         // frontend). If this socket has no such
                                         // subscription, fall back to a bare Error.
                                         let resync_subscription_id =
-                                            list_doc_subscriptions.get(&list_id).copied();
+                                            subscriptions.list_docs.get(&list_id).copied();
                                         let Some(user) = user.as_ref() else {
                                             let error = ServerClient::Error {
                                                 message: "sign in to edit lists".to_string(),
@@ -716,7 +669,8 @@ async fn handle_socket(
                                 info!("{pong:?}");
                             }
                             Message::Close(_close) => {
-                                info!("real time socket closed")
+                                info!("real time socket closed");
+                                break;
                             }
                         }
                     } else {
@@ -751,67 +705,100 @@ async fn handle_socket(
     Ok(())
 }
 
-fn activate_subscription(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u64) -> bool {
-    let Ok(mut active) = active_subscriptions.lock() else {
-        return false;
-    };
-    if !active.contains(&id) && active.len() >= MAX_SUBSCRIPTIONS_PER_SOCKET {
-        return false;
+/// A socket owns exactly one stream (and any pending authorization future) per
+/// subscription ID. There are no detached tasks or shared ID-based active flags:
+/// replacing/removing an ID drops that generation synchronously, so its pending
+/// database result can neither emit data nor retire a later generation.
+#[derive(Default)]
+struct SocketSubscriptions {
+    streams: StreamMap<u64, BoxStream<'static, ServerClient>>,
+    // Route unsolicited document resync replies to the current handler only.
+    list_docs: HashMap<i32, u64>,
+}
+
+impl SocketSubscriptions {
+    /// Retire the previous generation before even starting the new handshake.
+    /// A failed handshake therefore cannot leave the old relay or route alive.
+    fn begin(&mut self, id: u64) -> bool {
+        if !self.streams.contains_key(&id) && self.streams.len() >= MAX_SUBSCRIPTIONS_PER_SOCKET {
+            return false;
+        }
+        self.remove(id);
+        true
     }
-    active.insert(id);
-    true
-}
 
-fn deactivate_subscription(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u64) {
-    if let Ok(mut active) = active_subscriptions.lock() {
-        active.remove(&id);
+    fn insert(&mut self, id: u64, stream: BoxStream<'static, ServerClient>) {
+        self.streams.insert(id, stream);
+    }
+
+    fn remove(&mut self, id: u64) {
+        self.streams.remove(&id);
+        self.list_docs
+            .retain(|_, subscription_id| *subscription_id != id);
     }
 }
 
-fn is_subscription_active(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u64) -> bool {
-    active_subscriptions
-        .lock()
-        .map(|active| active.contains(&id))
-        .unwrap_or(false)
+impl Stream for SocketSubscriptions {
+    type Item = ServerClient;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let result = Pin::new(&mut this.streams).poll_next(cx);
+        // StreamMap also removes exhausted/closed sources during polling.
+        this.list_docs.retain(|_, id| this.streams.contains_key(id));
+        match result {
+            Poll::Ready(Some((id, event))) => {
+                // A relay's scoped error is a terminal authorization failure.
+                // Drop its receiver and future before sending the error frame.
+                if matches!(&event, ServerClient::SubscriptionEvent { event, .. }
+                    if matches!(event.as_ref(), ServerClient::Error { .. }))
+                {
+                    this.remove(id);
+                }
+                Poll::Ready(Some(event))
+            }
+            // An empty subscription collection must not close the socket. The
+            // client receiver remains polled and can install the next stream.
+            Poll::Ready(None) | Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
-/// A successful handshake is not a permanent grant. Direct shares, group
-/// shares and group membership can all disappear while the socket stays open.
+/// A successful handshake is not a permanent grant. This future is owned by
+/// its relay stream and is canceled on replacement, unsubscribe or socket close.
 async fn authorize_list_event(
     db: &UltrosDb,
-    active: &Arc<Mutex<HashSet<u64>>>,
     subscription_id: u64,
     list_id: i32,
     user_id: i64,
     event: ServerClient,
 ) -> Option<ServerClient> {
     let permission = db.get_permission(list_id, user_id).await;
-    finish_list_authorization(active, subscription_id, list_id, permission, event)
+    Some(finish_list_authorization(
+        subscription_id,
+        list_id,
+        permission,
+        event,
+    ))
 }
 
 fn finish_list_authorization(
-    active: &Arc<Mutex<HashSet<u64>>>,
     subscription_id: u64,
     list_id: i32,
     permission: anyhow::Result<ListPermission>,
     event: ServerClient,
-) -> Option<ServerClient> {
-    // The subscription may have been removed while the database query awaited.
-    if !is_subscription_active(active, subscription_id) {
-        return None;
-    }
+) -> ServerClient {
     if matches!(permission, Ok(value) if value >= ListPermission::Read) {
-        return Some(scoped_event(subscription_id, event));
+        return scoped_event(subscription_id, event);
     }
-    // Fail closed on lookup errors too. Only this subscription is retired;
-    // unrelated lists and public market subscriptions remain live.
-    deactivate_subscription(active, subscription_id);
-    Some(scoped_event(
+    // Fail closed on lookup errors too. The owner drops only this relay when
+    // it polls the error; unrelated lists and market subscriptions remain live.
+    scoped_event(
         subscription_id,
         ServerClient::Error {
             message: format!("forbidden: no verified read access to list {list_id}"),
         },
-    ))
+    )
 }
 
 fn wrap_subscription_event(
@@ -838,52 +825,245 @@ fn scoped_event(subscription_id: u64, event: ServerClient) -> ServerClient {
 mod tests {
     use super::*;
     use crate::event::ListDocEvent;
+    use futures::FutureExt;
+    use std::sync::atomic::AtomicUsize;
+    use tokio::sync::{broadcast, oneshot};
 
-    #[test]
-    fn list_relay_denial_and_lookup_failure_retire_only_the_affected_subscription() {
+    fn update(list_id: i32) -> EventType<Arc<ListDocEvent>> {
+        EventType::Update(Arc::new(ListDocEvent {
+            list_id,
+            update: vec![99],
+            origin_socket: Some(2),
+        }))
+    }
+
+    fn install(
+        subscriptions: &mut SocketSubscriptions,
+        bus: &broadcast::Sender<EventType<Arc<ListDocEvent>>>,
+        id: u64,
+        calls: &Arc<AtomicUsize>,
+    ) {
+        assert!(subscriptions.begin(id));
+        let calls = calls.clone();
+        subscriptions.insert(
+            id,
+            list_doc_relay(bus.subscribe(), id, 7, 1, move |event| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                futures::future::ready(Some(finish_list_authorization(
+                    id,
+                    7,
+                    Ok(ListPermission::Read),
+                    event,
+                )))
+            }),
+        );
+        subscriptions.list_docs.insert(7, id);
+    }
+
+    #[tokio::test]
+    async fn repeated_resubscribe_and_navigation_keep_one_receiver_and_authorization() {
+        let (bus, _) = broadcast::channel(16);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut subscriptions = SocketSubscriptions::default();
+        for _ in 0..200 {
+            install(&mut subscriptions, &bus, 11, &calls);
+            assert_eq!(subscriptions.streams.len(), 1);
+            assert_eq!(bus.receiver_count(), 1, "retirement needs no polling");
+        }
+        bus.send(update(7)).unwrap();
+        assert!(matches!(subscriptions.next().await,
+            Some(ServerClient::SubscriptionEvent { subscription_id: 11, event })
+                if matches!(*event, ServerClient::ListDocUpdate { .. })));
+        assert!(subscriptions.next().now_or_never().is_none());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        for id in 100..300 {
+            subscriptions.remove(11);
+            install(&mut subscriptions, &bus, id, &calls);
+            subscriptions.remove(id);
+            assert!(subscriptions.streams.is_empty());
+            assert!(subscriptions.list_docs.is_empty());
+            assert_eq!(bus.receiver_count(), 0);
+        }
+        // No subscriptions means idle, not EOF. A later navigation still works.
+        assert!(subscriptions.next().now_or_never().is_none());
+        install(&mut subscriptions, &bus, 11, &calls);
+        bus.send(update(7)).unwrap();
+        assert!(subscriptions.next().await.is_some());
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn replacement_cancels_pending_authorization_before_id_reuse() {
         for permission in [
+            Ok(ListPermission::Read),
             Ok(ListPermission::None),
-            Err(anyhow::anyhow!("database unavailable")),
+            Err(anyhow::anyhow!("lookup failed")),
         ] {
-            let active = Arc::new(Mutex::new(HashSet::from([11, 22])));
-            let result = finish_list_authorization(
-                &active,
+            let (bus, _) = broadcast::channel(16);
+            let (reply, response) = oneshot::channel();
+            let mut response = Some(response);
+            let mut subscriptions = SocketSubscriptions::default();
+            assert!(subscriptions.begin(11));
+            subscriptions.insert(
                 11,
-                7,
-                permission,
-                ServerClient::ListDocUpdate {
-                    list_id: 7,
-                    update: vec![99],
-                },
+                list_doc_relay(bus.subscribe(), 11, 7, 1, move |event| {
+                    let response = response.take().unwrap();
+                    async move {
+                        Some(finish_list_authorization(
+                            11,
+                            7,
+                            response.await.unwrap(),
+                            event,
+                        ))
+                    }
+                }),
             );
-            assert!(matches!(result, Some(ServerClient::SubscriptionEvent {
-                subscription_id: 11, event,
-            }) if matches!(*event, ServerClient::Error { .. })));
-            assert!(!is_subscription_active(&active, 11));
-            assert!(is_subscription_active(&active, 22));
+            bus.send(update(7)).unwrap();
+            assert!(subscriptions.next().now_or_never().is_none());
+            let calls = Arc::new(AtomicUsize::new(0));
+            install(&mut subscriptions, &bus, 11, &calls);
+            assert!(
+                reply.send(permission).is_err(),
+                "old lookup future was dropped"
+            );
+            assert_eq!(bus.receiver_count(), 1);
+            bus.send(update(7)).unwrap();
+            assert!(matches!(subscriptions.next().await,
+                Some(ServerClient::SubscriptionEvent { event, .. })
+                    if matches!(*event, ServerClient::ListDocUpdate { .. })));
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            assert_eq!(subscriptions.streams.len(), 1);
         }
     }
 
-    #[test]
-    fn list_relay_allows_current_readers_but_does_not_revive_unsubscribed_ids() {
-        let active = Arc::new(Mutex::new(HashSet::from([11])));
-        let event = || ServerClient::ListDocUpdate {
-            list_id: 7,
-            update: vec![99],
-        };
+    #[tokio::test]
+    async fn denial_and_lookup_failure_drop_only_the_affected_relay() {
+        for permission in [
+            Ok(ListPermission::None),
+            Err(anyhow::anyhow!("lookup failed")),
+        ] {
+            let (bus, _) = broadcast::channel(16);
+            let mut subscriptions = SocketSubscriptions::default();
+            let mut permission = Some(permission);
+            subscriptions.insert(
+                11,
+                list_doc_relay(bus.subscribe(), 11, 7, 1, move |event| {
+                    futures::future::ready(Some(finish_list_authorization(
+                        11,
+                        7,
+                        permission.take().unwrap(),
+                        event,
+                    )))
+                }),
+            );
+            subscriptions.list_docs.insert(7, 11);
+            subscriptions.insert(22, Box::pin(futures::stream::pending()));
+            bus.send(update(7)).unwrap();
+            assert!(matches!(subscriptions.next().await,
+                Some(ServerClient::SubscriptionEvent { subscription_id: 11, event })
+                    if matches!(*event, ServerClient::Error { .. })));
+            assert_eq!(bus.receiver_count(), 0);
+            assert!(subscriptions.list_docs.is_empty());
+            assert!(subscriptions.streams.contains_key(&22));
+            assert!(!subscriptions.streams.contains_key(&11));
+        }
+    }
+
+    #[tokio::test]
+    async fn lag_resync_replaces_receiver_and_preserves_updates_during_handshake() {
+        let (bus, _) = broadcast::channel(2);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut subscriptions = SocketSubscriptions::default();
+        install(&mut subscriptions, &bus, 11, &calls);
+        for _ in 0..5 {
+            bus.send(update(7)).unwrap();
+        }
         assert!(matches!(
-            finish_list_authorization(&active, 11, 7, Ok(ListPermission::Read), event()),
-            Some(ServerClient::SubscriptionEvent {
-                subscription_id: 11,
-                event,
-            }) if matches!(*event, ServerClient::ListDocUpdate { .. })
+            subscriptions.next().await,
+            Some(ServerClient::Stale {
+                subscription_id: 11
+            })
         ));
-        assert!(is_subscription_active(&active, 11));
-        deactivate_subscription(&active, 11);
-        assert!(
-            finish_list_authorization(&active, 11, 7, Ok(ListPermission::Owner), event()).is_none()
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(subscriptions.begin(11));
+        let receiver = bus.subscribe();
+        // The actual handshake acquires its receiver before awaiting a snapshot.
+        bus.send(update(7)).unwrap();
+        let relay_calls = calls.clone();
+        subscriptions.insert(
+            11,
+            list_doc_relay(receiver, 11, 7, 1, move |event| {
+                relay_calls.fetch_add(1, Ordering::Relaxed);
+                futures::future::ready(Some(scoped_event(11, event)))
+            }),
         );
-        assert!(!is_subscription_active(&active, 11));
+        assert_eq!(bus.receiver_count(), 1);
+        assert!(subscriptions.next().await.is_some());
+        assert!(subscriptions.next().now_or_never().is_none());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn failed_handshake_id_reuse_and_limit_retire_routes_and_bound_streams() {
+        let (bus, _) = broadcast::channel(16);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut subscriptions = SocketSubscriptions::default();
+        install(&mut subscriptions, &bus, 11, &calls);
+        assert!(subscriptions.begin(11));
+        // A denied/failed handshake adds no replacement; the old one is gone.
+        assert_eq!(bus.receiver_count(), 0);
+        assert!(subscriptions.list_docs.is_empty());
+        install(&mut subscriptions, &bus, 11, &calls);
+        assert!(subscriptions.begin(11));
+        subscriptions.insert(11, Box::pin(futures::stream::pending()));
+        assert!(
+            subscriptions.list_docs.is_empty(),
+            "reuse for market data clears doc routing"
+        );
+        for id in 100..163 {
+            install(&mut subscriptions, &bus, id, &calls);
+        }
+        assert_eq!(subscriptions.streams.len(), MAX_SUBSCRIPTIONS_PER_SOCKET);
+        assert!(!subscriptions.begin(999));
+        install(&mut subscriptions, &bus, 100, &calls);
+        assert_eq!(subscriptions.streams.len(), MAX_SUBSCRIPTIONS_PER_SOCKET);
+        drop(subscriptions);
+        assert_eq!(bus.receiver_count(), 0, "socket close drops every relay");
+    }
+
+    #[test]
+    fn socket_close_cancels_pending_permission_lookup() {
+        let (bus, _) = broadcast::channel(16);
+        let (reply, response) = oneshot::channel::<()>();
+        let mut response = Some(response);
+        let mut subscriptions = SocketSubscriptions::default();
+        subscriptions.insert(
+            11,
+            list_doc_relay(bus.subscribe(), 11, 7, 1, move |_| {
+                let response = response.take().unwrap();
+                async move {
+                    response.await.unwrap();
+                    None
+                }
+            }),
+        );
+        bus.send(update(7)).unwrap();
+        assert!(subscriptions.next().now_or_never().is_none());
+        drop(subscriptions);
+        assert!(reply.send(()).is_err());
+        assert_eq!(bus.receiver_count(), 0);
+    }
+
+    #[test]
+    fn closed_source_releases_its_route_without_closing_the_socket() {
+        let (bus, _) = broadcast::channel(16);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut subscriptions = SocketSubscriptions::default();
+        install(&mut subscriptions, &bus, 11, &calls);
+        drop(bus);
+        assert!(subscriptions.next().now_or_never().is_none());
+        assert!(subscriptions.streams.is_empty());
+        assert!(subscriptions.list_docs.is_empty());
     }
 
     #[test]
