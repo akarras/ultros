@@ -124,9 +124,9 @@ pub enum Coverage {
     Empty,
     /// Every line that needs units is fully priced.
     Complete,
-    /// At least one line is priced and at least one is short.
+    /// Some units are priced, but at least one needed unit is unpriced.
     Partial,
-    /// Every line that needs units is short.
+    /// Units are needed, but none has a listed price.
     None,
 }
 
@@ -328,11 +328,11 @@ where
             .saturating_add(i64::from(line.unpriced_units));
         cart.lines.push(line);
     }
-    cart.coverage = match (cart.lines_priced, cart.lines_short) {
-        (0, 0) => Coverage::Empty,
+    cart.coverage = match (cart.lines_needing_units(), cart.unpriced_units) {
+        (0, _) => Coverage::Empty,
         (_, 0) => Coverage::Complete,
-        (0, _) => Coverage::None,
-        _ => Coverage::Partial,
+        _ if cart.lines.iter().any(|line| line.priced_units > 0) => Coverage::Partial,
+        _ => Coverage::None,
     };
     cart
 }
@@ -703,6 +703,71 @@ mod tests {
         assert_eq!(cart.total, 0);
         assert_eq!(cart.unpriced_units, 1 + 2);
         assert!(cart.is_incomplete());
+    }
+
+    #[test]
+    fn coverage_distinguishes_partial_units_from_fully_priced_lines() {
+        type StockRows = &'static [(i32, i32, i32)];
+        let cases: &[(&str, StockRows, Coverage, i64, i64, usize)] = &[
+            ("one partial", &[(5, 0, 2)], Coverage::Partial, 20, 3, 0),
+            (
+                "all partial",
+                &[(5, 0, 2), (4, 0, 1)],
+                Coverage::Partial,
+                30,
+                6,
+                0,
+            ),
+            (
+                "partial and no supply",
+                &[(5, 0, 2), (4, 0, 0)],
+                Coverage::Partial,
+                20,
+                7,
+                0,
+            ),
+            (
+                "complete and partial",
+                &[(2, 0, 2), (4, 0, 1)],
+                Coverage::Partial,
+                30,
+                3,
+                1,
+            ),
+            ("no supply", &[(5, 0, 0)], Coverage::None, 0, 5, 0),
+            ("acquired", &[(5, 5, 2)], Coverage::Empty, 0, 0, 0),
+            ("empty", &[], Coverage::Empty, 0, 0, 0),
+            ("complete", &[(2, 0, 2)], Coverage::Complete, 20, 0, 1),
+        ];
+        for &(name, rows, coverage, total, missing, fully_priced) in cases {
+            let offers: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .map(|(index, &(_, _, stock))| {
+                    let id = index as i32 + 1;
+                    vec![listing(id, id, false, 10, stock)]
+                })
+                .collect();
+            let cart = estimate_cart(rows.iter().enumerate().map(
+                |(index, &(need, acquired, _))| {
+                    let id = index as i32 + 1;
+                    (
+                        request(id, id, None, need, acquired),
+                        offers[index].as_slice(),
+                    )
+                },
+            ));
+            assert_eq!(
+                (
+                    cart.coverage,
+                    cart.total,
+                    cart.unpriced_units,
+                    cart.lines_priced
+                ),
+                (coverage, total, missing, fully_priced),
+                "{name}"
+            );
+        }
     }
 
     #[test]

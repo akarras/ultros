@@ -101,7 +101,7 @@
     "lists_estimate_heading": "推定合計",
     "lists_estimate_incomplete": "不完全",
     "lists_estimate_basis": "残りの必要数を最安の出品単価で計算しています。予約ではなく見積もりです。購入モードではスタック単位で計画します。",
-    "lists_estimate_partial": "{{lines}}件中{{priced}}件に価格あり · {{units}}個は出品価格がありません。",
+    "lists_estimate_partial": "価格が分かる分のみの小計 · あと{{units}}個は価格不明 · {{lines}}件中{{priced}}件は必要数すべてに価格あり。",
     "lists_estimate_none": "これらのアイテムにはまだ出品価格がありません。",
     "lists_estimate_empty": "購入するものは残っていません。",
     "lists_estimate_saturated": "金額が大きすぎて正確に合計できません。",
