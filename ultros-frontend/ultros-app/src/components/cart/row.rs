@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use icondata as i;
 use leptos::prelude::*;
 use thousands::Separable;
-use ultros_api_types::{ActiveListing, list::ListItem};
+use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
 use super::details::CartRowDetails;
@@ -138,7 +138,6 @@ pub fn quantity_input_id(row_id: i32) -> String {
 #[component]
 pub fn CartRow(
     item: Signal<ListItem>,
-    listings: Signal<Vec<ActiveListing>>,
     line: Signal<Option<LineEstimate>>,
     selected_items: RwSignal<HashSet<i32>>,
     /// Row ids whose details panel is open; keyed by id so a reactive
@@ -225,7 +224,7 @@ pub fn CartRow(
                 <ItemIcon item_id=initial.item_id icon_size=IconSize::Small />
                 <span class="truncate font-semibold" title=name.clone()>{name.clone()}</span>
             </div>
-            <div class="order-3 text-right tabular-nums text-sm sm:order-5">
+            <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate">
                 <span class="sr-only">{t!(i18n, cart_est_cost)}</span>
                 {estimate_text}
             </div>
@@ -244,7 +243,7 @@ pub fn CartRow(
                 </button>
             </div>
             <Show when=move || is_open.get()>
-                <CartRowDetails id=panel_controls.clone() item=row listings line name=panel_name.clone() can_write on_edit on_close=close_details />
+                <CartRowDetails id=panel_controls.clone() item=row line name=panel_name.clone() can_write on_edit on_close=close_details />
             </Show>
         </li>
     }

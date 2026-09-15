@@ -2352,13 +2352,13 @@
     "cart_sort_cost_asc": "Moins chers d'abord",
     "cart_sort_cost_desc": "Plus chers d'abord",
     "cart_sort_column": "Trier par {{column}}",
-    "cart_listings_heading": "Annonces correspondantes les moins chères",
+    "cart_listings_heading": "Unités utilisées dans cette estimation",
     "cart_nothing_to_buy": "Plus rien à acheter",
-    "cart_no_matching_listings": "Aucune annonce de cette qualité dans le périmètre de la liste.",
+    "cart_no_matching_listings": "Aucune unité en vente n’est disponible pour l’estimation de cette ligne.",
     "cart_pricing_detail": "L'estimation couvre {{covered}} unités sur {{requested}} à partir de {{listings}} annonces, la moins chère à {{price}} l'unité.",
     "cart_listing_world": "Monde",
     "cart_listing_unit_price": "Prix unitaire",
-    "cart_listing_stack": "Lot",
+    "cart_listing_stack": "Unités chiffrées",
     "cart_close_details": "Fermer les détails",
     "cart_removed_named": "{{name}} retiré",
     "cart_removed_count": "{{count}} objets retirés",
@@ -2379,5 +2379,6 @@
     "list_recovery_retry": "Réessayer avec les modifications actuelles",
     "list_recovery_use_server": "Abandonner les modifications locales et utiliser la version du serveur",
     "list_recovery_reset": "Liste récupérée. L’historique Annuler et Rétablir a été réinitialisé ; les nouvelles modifications peuvent être annulées.",
-    "list_recovery_meta_dropped": "Vos modifications du nom ou de la zone de marché n’ont pas été appliquées : seul le propriétaire peut modifier ces paramètres."
+    "list_recovery_meta_dropped": "Vos modifications du nom ou de la zone de marché n’ont pas été appliquées : seul le propriétaire peut modifier ces paramètres.",
+    "cart_allocation_help": "Les unités disponibles sont réparties sur toute la liste. Les lignes HQ et NQ sont chiffrées avant celles acceptant les deux qualités. Les estimations ne réservent aucune annonce."
 }

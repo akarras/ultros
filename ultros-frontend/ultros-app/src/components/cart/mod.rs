@@ -90,23 +90,23 @@ pub fn sort_cart_rows<'a>(
     rows: &mut [(ListItem, Vec<ActiveListing>)],
     spec: SortSpec,
     name_of: impl Fn(i32) -> Option<&'a str>,
+    lines: &HashMap<i32, estimate::LineEstimate>,
 ) {
-    rows.sort_by(|(a, a_listings), (b, b_listings)| {
+    rows.sort_by(|(a, _), (b, _)| {
         let ordering = match spec.key {
             SortKey::Name => name_of(a.item_id)
                 .unwrap_or_default()
                 .cmp(name_of(b.item_id).unwrap_or_default()),
             SortKey::Price => {
-                let cost = |item: &ListItem, listings: &[ActiveListing]| {
-                    let line = estimate::estimate_line(item, listings);
+                let cost = |item: &ListItem| {
                     // Nothing priced sorts last, after every known cost.
-                    if line.status == estimate::LineStatus::NoSupply {
-                        i64::MAX
-                    } else {
-                        line.total
-                    }
+                    lines
+                        .get(&item.id)
+                        .filter(|line| line.status != estimate::LineStatus::NoSupply)
+                        .map(|line| line.total)
+                        .unwrap_or(i64::MAX)
                 };
-                cost(a, a_listings).cmp(&cost(b, b_listings))
+                cost(a).cmp(&cost(b))
             }
             SortKey::Acquired => remaining_quantity(a).cmp(&remaining_quantity(b)),
         };
@@ -201,6 +201,14 @@ pub fn ListCart(
     let editing = RwSignal::new(false);
     let drafting = RwSignal::new(false);
     let grid = NodeRef::<leptos::html::Div>::new();
+    // Allocate before filtering or sorting. Hidden rows still need their
+    // units; every visible cost, detail and total uses this same result.
+    let estimate = Memo::new(move |_| {
+        source
+            .rows
+            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
+    });
+    let allocated_lines = Memo::new(move |_| estimate.with(estimate::lines_by_id));
     let visible = Memo::new(
         move |previous: Option<&Vec<(ListItem, Vec<ActiveListing>)>>| {
             let query = filter.get().to_lowercase();
@@ -233,8 +241,13 @@ pub fn ListCart(
                 })
                 .collect::<Vec<_>>();
             if let Some(spec) = source.sort.get() {
-                sort_cart_rows(&mut rows, spec, |id| {
-                    data.items.get(&ItemId(id)).map(|item| item.name.as_str())
+                allocated_lines.with(|lines| {
+                    sort_cart_rows(
+                        &mut rows,
+                        spec,
+                        |id| data.items.get(&ItemId(id)).map(|item| item.name.as_str()),
+                        lines,
+                    )
                 });
             }
             if drafting.get()
@@ -446,14 +459,6 @@ pub fn ListCart(
         }
     });
     let is_empty = Memo::new(move |_| source.rows.with(|rows| rows.is_empty()));
-    // The whole cart, not the filtered view, priced by the shared estimator
-    // (#1431/#1432): a filter narrows what the list shows, never what it
-    // costs, and both Labs presentations must agree on the total.
-    let estimate = Memo::new(move |_| {
-        source
-            .rows
-            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
-    });
     let all_visible_selected = Memo::new(move |_| {
         let ids = visible_ids.get();
         !ids.is_empty() && selected_items.with(|s| ids.iter().all(|id| s.contains(id)))
@@ -568,15 +573,12 @@ pub fn ListCart(
                             source.rows.with(|rows| {
                                 rows.iter()
                                     .find(|(item, _)| item.id == id)
-                                    .map(|(item, listings)| {
-                                        (item.clone(), listings.clone(), estimate::estimate_line(item, listings))
-                                    })
+                                    .map(|(item, _)| item.clone())
                             })
                         });
-                        let item = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(item, _, _)| item.clone()).unwrap_or_else(|| fallback.get_value())));
-                        let listings = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(_, listings, _)| listings.clone()).unwrap_or_default()));
-                        let line = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(_, _, line)| line.clone())));
-                        view! { <CartRow item=item listings=listings line=line selected_items expanded removing=removing.into() on_edit=on_edit on_delete=on_remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
+                        let item = Signal::derive(move || row_data.with(|data| data.clone().unwrap_or_else(|| fallback.get_value())));
+                        let line = Signal::derive(move || allocated_lines.with(|lines| lines.get(&id).cloned()));
+                        view! { <CartRow item=item line=line selected_items expanded removing=removing.into() on_edit=on_edit on_delete=on_remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
                     } />
                 </ul>
                 <Show when=move || is_empty.get()>
@@ -651,6 +653,7 @@ mod tests {
             ),
             (item(4, 40, 2, 0), vec![]),
         ];
+        let lines = estimate::lines_by_id(&ultros_calc::list_estimate::estimate_list_items(&rows));
         sort_cart_rows(
             &mut rows,
             SortSpec {
@@ -658,8 +661,10 @@ mod tests {
                 descending: false,
             },
             |_| None,
+            &lines,
         );
         assert_eq!(ids(&rows), [2, 1, 3, 4]);
+        let lines = estimate::lines_by_id(&ultros_calc::list_estimate::estimate_list_items(&rows));
         sort_cart_rows(
             &mut rows,
             SortSpec {
@@ -667,6 +672,7 @@ mod tests {
                 descending: true,
             },
             |_| None,
+            &lines,
         );
         assert_eq!(
             ids(&rows),
@@ -683,6 +689,7 @@ mod tests {
             _ => None,
         };
         let mut rows = vec![(item(1, 10, 5, 4), vec![]), (item(2, 20, 3, 0), vec![])];
+        let lines = estimate::lines_by_id(&ultros_calc::list_estimate::estimate_list_items(&rows));
         sort_cart_rows(
             &mut rows,
             SortSpec {
@@ -690,8 +697,10 @@ mod tests {
                 descending: false,
             },
             names,
+            &lines,
         );
         assert_eq!(ids(&rows), [2, 1]);
+        let lines = estimate::lines_by_id(&ultros_calc::list_estimate::estimate_list_items(&rows));
         sort_cart_rows(
             &mut rows,
             SortSpec {
@@ -699,8 +708,45 @@ mod tests {
                 descending: false,
             },
             names,
+            &lines,
         );
         assert_eq!(ids(&rows), [1, 2], "one unit left sorts before three");
+    }
+
+    #[test]
+    fn cost_sort_uses_full_cart_allocation_even_when_a_competing_row_is_hidden() {
+        let offers = vec![fixture_listing(1, 10, 10, 2, true)];
+        let any = item(1, 10, 2, 0);
+        let mut hq = item(2, 10, 2, 0);
+        hq.hq = Some(true);
+        let mut rows = vec![
+            (any, offers.clone()),
+            (hq, offers),
+            (
+                item(3, 20, 2, 0),
+                vec![fixture_listing(2, 20, 15, 2, false)],
+            ),
+        ];
+        let estimate = ultros_calc::list_estimate::estimate_list_items(&rows);
+        let lines = estimate::lines_by_id(&estimate);
+        assert_eq!(estimate.total, 50);
+        assert_eq!(lines[&1].status, estimate::LineStatus::NoSupply);
+        assert_eq!(lines[&2].allocations[0].units, 2);
+        rows.retain(|(item, _)| item.id != 2);
+        sort_cart_rows(
+            &mut rows,
+            SortSpec {
+                key: SortKey::Price,
+                descending: false,
+            },
+            |_| None,
+            &lines,
+        );
+        assert_eq!(
+            ids(&rows),
+            [3, 1],
+            "hiding HQ must not price Any from HQ's units"
+        );
     }
 
     #[test]

@@ -1,41 +1,19 @@
-//! The compact cart's per-row estimate: the cost of the units the player
-//! still has to buy, filled from the cheapest listings the page already
-//! holds for the row. The arithmetic lives in `ultros_calc::list_estimate`
-//! (#1431), the same engine that totals the cart above the rows, so a row
-//! and the summary never disagree; this only adapts a document row to it.
+//! The compact cart consumes one allocation for its entire source, then
+//! shares those exact line results with costs, details and sorting.
 
-use ultros_api_types::{ActiveListing, list::ListItem};
-use ultros_calc::list_estimate::LineRequest;
+use std::collections::HashMap;
+#[cfg(test)]
+use ultros_api_types::ActiveListing;
+use ultros_calc::list_estimate::CartEstimate;
 
 pub use ultros_calc::list_estimate::{LineEstimate, LineStatus};
 
-/// Estimate one row from the listings the page holds for its item.
-pub fn estimate_line(item: &ListItem, listings: &[ActiveListing]) -> LineEstimate {
-    ultros_calc::list_estimate::estimate_line(LineRequest::from(item), listings)
-}
-
-/// The listings the engine would draw from for this row, in the order it
-/// takes them: the row's item and quality (an "Any" row takes both), empty
-/// stacks and free listings ignored, cheapest first, larger stack then
-/// lower id on ties. The details panel shows the head of this list.
-pub fn matching_listings<'a>(
-    item: &ListItem,
-    listings: &'a [ActiveListing],
-) -> Vec<&'a ActiveListing> {
-    let mut matching: Vec<&ActiveListing> = listings
+pub fn lines_by_id(estimate: &CartEstimate) -> HashMap<i32, LineEstimate> {
+    estimate
+        .lines
         .iter()
-        .filter(|listing| listing.item_id == item.item_id)
-        .filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq))
-        .filter(|listing| listing.quantity > 0 && listing.price_per_unit > 0)
-        .collect();
-    matching.sort_by_key(|listing| {
-        (
-            listing.price_per_unit,
-            std::cmp::Reverse(listing.quantity),
-            listing.id,
-        )
-    });
-    matching
+        .map(|line| (line.row_id, line.clone()))
+        .collect()
 }
 
 /// Test fixture: `quantity` units of `item_id` at `price` gil per unit.
@@ -56,46 +34,5 @@ pub fn fixture_listing(
         quantity,
         hq,
         timestamp: chrono::NaiveDateTime::default(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn item(quantity: i32, acquired: i32, hq: Option<bool>) -> ListItem {
-        ListItem {
-            id: 7,
-            item_id: 1,
-            list_id: 1,
-            hq,
-            quantity: Some(quantity),
-            acquired: Some(acquired),
-            target_price: None,
-        }
-    }
-
-    fn listing(id: i32, price: i32, quantity: i32, hq: bool) -> ActiveListing {
-        fixture_listing(id, 1, price, quantity, hq)
-    }
-
-    /// The row adapter carries the document row's identity, need and owned
-    /// units into the shared engine; the engine's own tests own the rest.
-    #[test]
-    fn a_row_prices_its_remaining_units_cheapest_first() {
-        let listings = [listing(1, 30, 5, false), listing(2, 10, 2, false)];
-        let line = estimate_line(&item(5, 1, None), &listings);
-        assert_eq!(line.row_id, 7);
-        assert_eq!(line.remaining, 4);
-        assert_eq!(line.total, 2 * 10 + 2 * 30);
-        assert_eq!(line.unit_price, Some(10));
-        assert_eq!(line.status, LineStatus::Priced);
-        let hq = estimate_line(&item(2, 0, Some(true)), &listings);
-        assert_eq!(hq.status, LineStatus::NoSupply);
-        assert_eq!(hq.unit_price, None);
-        assert_eq!(
-            estimate_line(&item(3, 3, None), &listings).status,
-            LineStatus::Acquired
-        );
     }
 }

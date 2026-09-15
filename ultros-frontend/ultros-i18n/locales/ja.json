@@ -2352,13 +2352,13 @@
     "cart_sort_cost_asc": "安い順",
     "cart_sort_cost_desc": "高い順",
     "cart_sort_column": "{{column}}で並べ替え",
-    "cart_listings_heading": "条件に合う最安の出品",
+    "cart_listings_heading": "この見積もりに使用する出品数",
     "cart_nothing_to_buy": "購入するものはありません",
-    "cart_no_matching_listings": "このリストの範囲内に、この品質の出品はありません。",
+    "cart_no_matching_listings": "この行の見積もりに使用できる出品数がありません。",
     "cart_pricing_detail": "概算は{{listings}}件の出品から{{requested}}個中{{covered}}個を計上（最安は1個あたり{{price}}）。",
     "cart_listing_world": "ワールド",
     "cart_listing_unit_price": "単価",
-    "cart_listing_stack": "個数",
+    "cart_listing_stack": "見積もり数量",
     "cart_close_details": "詳細を閉じる",
     "cart_removed_named": "{{name}}を削除しました",
     "cart_removed_count": "{{count}}件のアイテムを削除しました",
@@ -2379,5 +2379,6 @@
     "list_recovery_retry": "現在の変更で再試行",
     "list_recovery_use_server": "ローカルの変更を破棄してサーバーの版を使用",
     "list_recovery_reset": "リストを復元しました。以前の「元に戻す」「やり直す」の履歴はリセットされました。新しい編集は元に戻せます。",
-    "list_recovery_meta_dropped": "名前やマーケット範囲を変更できるのは所有者のみのため、これらの変更は適用されませんでした。"
+    "list_recovery_meta_dropped": "名前やマーケット範囲を変更できるのは所有者のみのため、これらの変更は適用されませんでした。",
+    "cart_allocation_help": "出品数はリスト全体で共有されます。品質を問わない行より先にHQ・NQ指定の行を見積もります。見積もりで出品を予約することはできません。"
 }

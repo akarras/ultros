@@ -2365,13 +2365,13 @@
     "cart_sort_cost_asc": "Cheapest first",
     "cart_sort_cost_desc": "Most expensive first",
     "cart_sort_column": "Sort by {{column}}",
-    "cart_listings_heading": "Cheapest matching listings",
+    "cart_listings_heading": "Listed units used in this estimate",
     "cart_nothing_to_buy": "Nothing left to buy",
-    "cart_no_matching_listings": "No listings match this quality in the list's scope.",
+    "cart_no_matching_listings": "No listed units are available for this row’s estimate.",
     "cart_pricing_detail": "Estimate covers {{covered}} of {{requested}} units from {{listings}} listings, cheapest at {{price}} per unit.",
     "cart_listing_world": "World",
     "cart_listing_unit_price": "Unit price",
-    "cart_listing_stack": "Stack",
+    "cart_listing_stack": "Units priced",
     "cart_close_details": "Close details",
     "cart_removed_named": "Removed {{name}}",
     "cart_removed_count": "Removed {{count}} items",
@@ -2392,5 +2392,6 @@
     "list_recovery_retry": "Retry with current edits",
     "list_recovery_use_server": "Discard local changes and use server version",
     "list_recovery_reset": "List recovered. Earlier Undo and Redo history has been reset; new edits can be undone.",
-    "list_recovery_meta_dropped": "Your name or market-scope changes were not applied because only the owner can change these settings."
+    "list_recovery_meta_dropped": "Your name or market-scope changes were not applied because only the owner can change these settings.",
+    "cart_allocation_help": "Available units are shared across the whole list. HQ and NQ rows are priced before rows accepting either quality. Estimates do not reserve listings."
 }
