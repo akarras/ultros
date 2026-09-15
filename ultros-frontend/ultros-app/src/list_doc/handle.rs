@@ -32,8 +32,12 @@ pub enum SaveState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecoveryState {
     None,
-    Recovered { dropped_meta: bool },
+    Recovered {
+        dropped_meta: bool,
+    },
     Review,
+    /// The original cache cannot be interpreted safely by this app version.
+    Incompatible,
 }
 
 #[cfg(feature = "hydrate")]
@@ -102,6 +106,7 @@ pub struct ListDocHandle {
     /// Otherwise an old disk copy could replay the same intent under new IDs.
     pub recovery_persisting: RwSignal<bool>,
     recovery_snapshot: StoredValue<Option<Vec<u8>>, LocalStorage>,
+    incompatible_snapshot: StoredValue<Option<Vec<u8>>, LocalStorage>,
     generation: StoredValue<String, LocalStorage>,
     replacement_source: StoredValue<Option<Vec<u8>>, LocalStorage>,
     revoked: StoredValue<std::rc::Rc<std::cell::Cell<bool>>, LocalStorage>,
@@ -125,17 +130,22 @@ impl ListDocHandle {
     /// ids. Browser-only — see the module doc comment.
     pub fn open(user_id: i64, list_id: i32) -> Self {
         let loaded = store::load(&BrowserStorage, user_id, list_id);
+        Self::open_loaded(user_id, list_id, loaded)
+    }
+
+    fn open_loaded(user_id: i64, list_id: i32, loaded: Option<store::Loaded>) -> Self {
+        let mut incompatible_snapshot = None;
         let doc = loaded
             .as_ref()
             .and_then(|l| match ListDocument::from_snapshot(&l.snapshot) {
                 Ok(doc) => Some(doc),
-                Err(_) => {
-                    tracing::warn!(user_id, list_id, "corrupt list snapshot; purging");
-                    store::purge(&BrowserStorage, user_id, list_id);
+                Err(error) => {
+                    tracing::warn!(user_id, list_id, %error, "list snapshot preserved for recovery");
+                    incompatible_snapshot = Some(l.snapshot.clone());
                     None
                 }
             });
-        let doc = doc.unwrap_or_default();
+        let doc = doc.unwrap_or_else(ListDocument::empty_peer);
         #[cfg(not(feature = "hydrate"))]
         let replacement_source: Option<Vec<u8>> = None;
         #[cfg(feature = "hydrate")]
@@ -145,28 +155,35 @@ impl ListDocHandle {
             // its new operation IDs before completing the guarded save.
             let pending = recovery(&user_id.to_string(), list_id);
             let source = recovery_source(&user_id.to_string(), list_id);
-            if !pending.is_null() {
+            if incompatible_snapshot.is_none() && !pending.is_null() {
                 let bytes = js_sys::Uint8Array::new(&pending).to_vec();
-                if !source.is_null() {
-                    match ListDocument::from_snapshot(&bytes) {
-                        Ok(replacement) => {
-                            (replacement, Some(js_sys::Uint8Array::new(&source).to_vec()))
-                        }
-                        Err(_) => (doc, None),
+                match ListDocument::from_snapshot(&bytes) {
+                    Err(_) => {
+                        incompatible_snapshot = Some(bytes);
+                        (doc, None)
                     }
-                } else {
-                    let doc = match doc.import(&bytes) {
-                        Ok(report) if !report.pending => doc,
-                        _ => ListDocument::from_snapshot(&bytes).unwrap_or(doc),
-                    };
-                    (doc, None)
+                    Ok(replacement) if !source.is_null() => {
+                        (replacement, Some(js_sys::Uint8Array::new(&source).to_vec()))
+                    }
+                    Ok(replacement) => {
+                        let doc = match doc.import(&bytes) {
+                            Ok(report) if !report.pending => doc,
+                            _ => replacement,
+                        };
+                        (doc, None)
+                    }
                 }
             } else {
                 (doc, None)
             }
         };
         let recovery_persisting = replacement_source.is_some();
-        let permission = loaded.map(|l| l.permission).unwrap_or(0);
+        let incompatible = incompatible_snapshot.is_some();
+        let permission = if incompatible {
+            0
+        } else {
+            loaded.map(|l| l.permission).unwrap_or(0)
+        };
         let undo = ListUndo::new(&doc);
         let revision = RwSignal::new(0u64);
         let outbox = RwSignal::new(Vec::new());
@@ -186,8 +203,14 @@ impl ListDocHandle {
             outbox,
             status: RwSignal::new("connecting".to_string()),
             permission: RwSignal::new(permission),
-            save_state: RwSignal::new(SaveState::Pending),
-            recovery_state: RwSignal::new(if recovery_persisting {
+            save_state: RwSignal::new(if incompatible {
+                SaveState::Failed
+            } else {
+                SaveState::Pending
+            }),
+            recovery_state: RwSignal::new(if incompatible {
+                RecoveryState::Incompatible
+            } else if recovery_persisting {
                 RecoveryState::Recovered {
                     dropped_meta: false,
                 }
@@ -198,6 +221,7 @@ impl ListDocHandle {
             recovery_saved: RwSignal::new(0),
             recovery_persisting: RwSignal::new(recovery_persisting),
             recovery_snapshot: StoredValue::new_local(None),
+            incompatible_snapshot: StoredValue::new_local(incompatible_snapshot),
             generation: StoredValue::new_local(store::generation(
                 &BrowserStorage,
                 user_id,
@@ -278,6 +302,11 @@ impl ListDocHandle {
     /// One user action, one undo step. The document commits inside, which
     /// bumps `revision` and pushes the update onto `outbox`.
     pub fn apply(&self, edit: Edit) -> Result<(), DocError> {
+        if self.incompatible() {
+            return Err(DocError::InvalidStructure(
+                "saved copy; export recovery and update Ultros".into(),
+            ));
+        }
         // A closed (or disposed) handle has no live subscriptions and no
         // page to show a result: mutating it would be invisible. The page
         // guards this with `is_closed_or_disposed` and reports "document is
@@ -302,19 +331,29 @@ impl ListDocHandle {
         .unwrap_or(Ok(()))
     }
 
-    /// Surfaces `ImportReport::pending`: a `true` value means the imported
-    /// bytes were parked because they depend on history this document
+    /// Surfaces `ImportReport::pending`: a `true` value means the incoming
+    /// bytes were not imported because they depend on history this document
     /// hasn't seen yet, so the document was NOT brought up to date by this
     /// call. Callers must not treat a pending import as having converged
     /// the document (F1) — see `list_doc::sync`'s handshake arm.
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        if self.incompatible() {
+            return Err(DocError::InvalidStructure(
+                "saved copy; export recovery and update Ultros".into(),
+            ));
+        }
         // `pending: false` is the neutral answer for a closed handle: the
         // caller must not schedule a resync for a document that is gone.
         if self.is_closed_or_disposed() {
             return Ok(ImportReport { pending: false });
         }
-        self.with_doc(|doc| doc.import(bytes))
-            .unwrap_or(Ok(ImportReport { pending: false }))
+        let result = self
+            .with_doc(|doc| doc.import(bytes))
+            .unwrap_or(Ok(ImportReport { pending: false }));
+        if let Err(error) = &result {
+            self.pause_incompatible_import(error);
+        }
+        result
     }
 
     /// Probe snapshot imports away from the live document. A parked/partial
@@ -335,8 +374,36 @@ impl ListDocHandle {
             Some(Ok(ImportReport { pending: true }) | Err(DocError::OutdatedDependency)) => {
                 Ok(ImportReport { pending: true })
             }
-            Some(Err(error)) => Err(error),
+            Some(Err(error)) => {
+                self.pause_incompatible_import(&error);
+                Err(error)
+            }
             _ => self.import(bytes),
+        }
+    }
+
+    fn pause_incompatible_import(&self, error: &DocError) {
+        if matches!(
+            error,
+            DocError::UnsupportedSchema(_)
+                | DocError::InvalidStructure(_)
+                | DocError::IncompleteSnapshot
+        ) && !self.is_closed_or_disposed()
+            && !self.incompatible()
+        {
+            // Keep the valid local state (including unsent work), not the
+            // rejected peer payload. The durable copy is never overwritten.
+            let original = self.with_doc(|doc| doc.export_snapshot().ok()).flatten();
+            #[cfg(feature = "hydrate")]
+            if let Some(snapshot) = &original {
+                // A peer error may arrive before the local save debounce.
+                // Keep those unsent edits across SPA navigation as well.
+                self.remember_snapshot(snapshot);
+            }
+            self.incompatible_snapshot.set_value(original);
+            self.recovery_state.set(RecoveryState::Incompatible);
+            self.permission.set(0);
+            self.set_status("offline");
         }
     }
 
@@ -351,6 +418,9 @@ impl ListDocHandle {
     }
 
     pub fn undo(&self) -> bool {
+        if self.incompatible() {
+            return false;
+        }
         let mut done = false;
         let _ = self
             .undo
@@ -359,6 +429,9 @@ impl ListDocHandle {
     }
 
     pub fn redo(&self) -> bool {
+        if self.incompatible() {
+            return false;
+        }
         let mut done = false;
         let _ = self
             .undo
@@ -372,6 +445,10 @@ impl ListDocHandle {
     /// undo.
     pub fn can_undo(&self) -> bool {
         let _ = self.revision.try_get();
+        let _ = self.recovery_state.try_get();
+        if self.incompatible() {
+            return false;
+        }
         self.undo
             .try_with_value(|undo| undo.can_undo())
             .unwrap_or(false)
@@ -379,6 +456,10 @@ impl ListDocHandle {
 
     pub fn can_redo(&self) -> bool {
         let _ = self.revision.try_get();
+        let _ = self.recovery_state.try_get();
+        if self.incompatible() {
+            return false;
+        }
         self.undo
             .try_with_value(|undo| undo.can_redo())
             .unwrap_or(false)
@@ -386,7 +467,9 @@ impl ListDocHandle {
 
     pub fn can_undo_purchase(&self) -> bool {
         let _ = self.revision.try_get();
+        let _ = self.recovery_state.try_get();
         !self.is_closed_or_disposed()
+            && !self.incompatible()
             && self
                 .undo
                 .try_with_value(|undo| undo.can_undo_purchase())
@@ -407,7 +490,7 @@ impl ListDocHandle {
     }
 
     pub fn remember_permission(&self, permission: i16) {
-        if self.is_closed_or_disposed() {
+        if self.is_closed_or_disposed() || self.incompatible() {
             return;
         }
         let _ = self.permission.try_set(permission);
@@ -426,7 +509,7 @@ impl ListDocHandle {
         &self,
         export: impl FnOnce(&ListDocument) -> Result<Vec<u8>, DocError>,
     ) -> Option<Vec<u8>> {
-        if self.purged.try_get_untracked().unwrap_or(true) {
+        if self.purged.try_get_untracked().unwrap_or(true) || self.incompatible() {
             return None;
         }
         let snapshot = self.with_doc(export)?;
@@ -572,12 +655,17 @@ impl ListDocHandle {
             if self.is_closed_or_disposed() || self.purged.get_untracked() {
                 return;
             }
-            if let Some(Ok(snapshot)) = self.with_doc(|doc| doc.export_snapshot())
-                && download(
-                    &self.meta().name,
-                    &js_sys::Uint8Array::from(snapshot.as_slice()),
-                )
-                .is_err()
+            let original = self.incompatible_snapshot.get_value();
+            let snapshot =
+                original.or_else(|| self.with_doc(|doc| doc.export_snapshot().ok()).flatten());
+            let name = self.meta().name;
+            let name = if name.trim().is_empty() {
+                format!("List {}", self.list_id)
+            } else {
+                name
+            };
+            if let Some(snapshot) = snapshot
+                && download(&name, &js_sys::Uint8Array::from(snapshot.as_slice())).is_err()
             {
                 self.save_state.set(SaveState::Failed);
             }
@@ -627,6 +715,7 @@ impl ListDocHandle {
         self.recovery_state.set(RecoveryState::None);
         self.recovery_persisting.set(false);
         self.recovery_snapshot.set_value(None);
+        self.incompatible_snapshot.set_value(None);
         self.permission.set(0);
         self.revision.update(|r| *r += 1);
     }
@@ -638,7 +727,7 @@ impl ListDocHandle {
         snapshot: &[u8],
         keep_local_meta: bool,
     ) -> Result<bool, RecoveryError> {
-        if self.is_closed_or_disposed() {
+        if self.is_closed_or_disposed() || self.incompatible() {
             return Ok(false);
         }
         let recovered = self.with_doc(|doc| recovery::recover(doc, snapshot, keep_local_meta));
@@ -664,7 +753,14 @@ impl ListDocHandle {
     }
 
     pub fn recovery_paused(&self) -> bool {
-        self.recovery_state.try_get_untracked() == Some(RecoveryState::Review)
+        matches!(
+            self.recovery_state.try_get_untracked(),
+            Some(RecoveryState::Review | RecoveryState::Incompatible)
+        )
+    }
+
+    pub fn incompatible(&self) -> bool {
+        self.recovery_state.try_get_untracked() == Some(RecoveryState::Incompatible)
     }
 
     pub fn recovery_server(&self) -> Option<ListDocument> {
@@ -679,7 +775,7 @@ impl ListDocHandle {
 
     /// The player can correct their local values and request a fresh comparison.
     pub fn retry_recovery(&self) {
-        if !self.is_closed_or_disposed() {
+        if !self.is_closed_or_disposed() && !self.incompatible() {
             self.recovery_state.set(RecoveryState::None);
             self.set_status("reconnecting");
             self.recovery_retry.update(|n| *n += 1);
@@ -763,6 +859,7 @@ impl ListDocHandle {
         self.recovery_saved.dispose();
         self.recovery_persisting.dispose();
         self.recovery_snapshot.dispose();
+        self.incompatible_snapshot.dispose();
         self.generation.dispose();
         self.replacement_source.dispose();
         self.revoked.dispose();
@@ -785,7 +882,7 @@ impl ListDocHandle {
             }
             // Dropping the previous timeout cancels it.
             let _ = handle.save_timer.try_update_value(|timer| *timer = None);
-            if handle.purged.try_get_untracked().unwrap_or(true) {
+            if handle.purged.try_get_untracked().unwrap_or(true) || handle.incompatible() {
                 return;
             }
             let _ = handle.save_state.try_set(SaveState::Pending);
@@ -842,6 +939,55 @@ impl ListDocHandle {
 mod tests {
     use super::*;
 
+    #[test]
+    fn incompatible_cached_document_stays_exportable_and_cannot_be_overwritten() {
+        Owner::new().with(|| {
+            let future = ListDocument::new();
+            future
+                .inner()
+                .get_map("meta")
+                .insert("schema", 999_i64)
+                .unwrap();
+            future.commit();
+            for original in [
+                future.export_snapshot().unwrap(),
+                b"damaged Loro bytes".to_vec(),
+            ] {
+                let handle = ListDocHandle::open_loaded(
+                    1,
+                    1,
+                    Some(store::Loaded {
+                        snapshot: original.clone(),
+                        permission: 3,
+                    }),
+                );
+                assert!(handle.incompatible());
+                assert!(handle.recovery_paused());
+                assert_eq!(handle.permission.get_untracked(), 0);
+                assert_eq!(
+                    handle.incompatible_snapshot.get_value(),
+                    Some(original.clone())
+                );
+                assert!(
+                    handle
+                        .prepare_save(|_| panic!("must not export replacement"))
+                        .is_none()
+                );
+                assert!(
+                    handle
+                        .import(&ListDocument::new().export_snapshot().unwrap())
+                        .is_err()
+                );
+                handle.retry_recovery();
+                handle.remember_permission(3);
+                assert!(handle.incompatible());
+                assert_eq!(handle.permission.get_untracked(), 0);
+                assert_eq!(handle.incompatible_snapshot.get_value(), Some(original));
+                handle.close();
+            }
+        });
+    }
+
     fn recovery_peers() -> (ListDocHandle, ListDocument, ultros_list_doc::RowKey) {
         let key = ultros_list_doc::RowKey::new(1, None);
         let server = ListDocument::new();
@@ -850,6 +996,40 @@ mod tests {
         let handle = ListDocHandle::open(1, 1);
         handle.import(&server.export_snapshot().unwrap()).unwrap();
         (handle, server, key)
+    }
+
+    #[test]
+    fn incompatible_peer_snapshot_preserves_local_work_and_pauses_undo() {
+        Owner::new().with(|| {
+            let (handle, server, key) = recovery_peers();
+            handle
+                .with_doc(|doc| doc.set_need(&key, 15))
+                .unwrap()
+                .unwrap();
+            assert!(handle.can_undo());
+            let before = handle.try_version();
+            server
+                .inner()
+                .get_map("meta")
+                .insert("schema", 999_i64)
+                .unwrap();
+            server.commit();
+            assert!(matches!(
+                handle.import_server_snapshot(&server.export_snapshot().unwrap()),
+                Err(DocError::UnsupportedSchema(999))
+            ));
+            assert!(handle.incompatible());
+            assert_eq!(handle.try_version(), before);
+            let saved =
+                ListDocument::from_snapshot(&handle.incompatible_snapshot.get_value().unwrap())
+                    .unwrap();
+            assert_eq!(saved.version(), before);
+            assert_eq!(saved.row(&key).unwrap().need, 15);
+            assert!(!handle.can_undo());
+            assert!(!handle.undo());
+            assert!(!handle.redo());
+            assert_eq!(handle.try_version(), before);
+        });
     }
 
     fn compact_after(server: &ListDocument) -> Vec<u8> {

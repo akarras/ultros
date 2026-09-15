@@ -328,6 +328,9 @@ async fn merge_loaded(
     let meta_before = doc.meta();
     let report = doc.import(update).map_err(|error| match error {
         DocError::OutdatedDependency => ListDocError::MissingHistory,
+        error @ (DocError::UnsupportedSchema(_)
+        | DocError::InvalidStructure(_)
+        | DocError::IncompleteSnapshot) => ListDocError::Doc(error),
         _ => ListDocError::InvalidUpdate,
     })?;
     // Loro parked ops whose dependencies this document lacks: the stored
@@ -679,6 +682,59 @@ mod tests {
         assert_eq!(
             (outcome.list.name.as_str(), outcome.list.world_id),
             ("renamed by owner", Some(79))
+        );
+        db.delete_list(list_id, OWNER).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn unsupported_schema_rejects_every_projection_and_preserves_stored_bytes() {
+        let db = db().await;
+        let list_id = scratch_list(&db).await;
+        let peer = peer(&db, list_id, OWNER).await;
+        let before_doc = list_doc::Entity::find_by_id(list_id)
+            .one(db.get_connection())
+            .await
+            .unwrap()
+            .unwrap();
+        let before_list = db.get_list(list_id, OWNER).await.unwrap();
+        let before_rows = list_item::Entity::find()
+            .filter(list_item::Column::ListId.eq(list_id))
+            .all(db.get_connection())
+            .await
+            .unwrap();
+        let version = peer.version();
+        peer.rename("Do not project this").unwrap();
+        peer.add_row(RowKey::new(5, None), 8, Some(100)).unwrap();
+        peer.inner()
+            .get_map("meta")
+            .insert("schema", 999_i64)
+            .unwrap();
+        peer.commit();
+        let error = db
+            .apply_list_update(list_id, OWNER, &peer.export_since(&version).unwrap())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ListDocError::Doc(DocError::UnsupportedSchema(999))
+        ));
+        assert_eq!(db.get_list(list_id, OWNER).await.unwrap(), before_list);
+        assert_eq!(
+            list_item::Entity::find()
+                .filter(list_item::Column::ListId.eq(list_id))
+                .all(db.get_connection())
+                .await
+                .unwrap(),
+            before_rows
+        );
+        assert_eq!(
+            list_doc::Entity::find_by_id(list_id)
+                .one(db.get_connection())
+                .await
+                .unwrap()
+                .unwrap(),
+            before_doc
         );
         db.delete_list(list_id, OWNER).await.unwrap();
     }

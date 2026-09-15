@@ -2066,7 +2066,7 @@ pub fn ListViewSync() -> impl IntoView {
                                                                     {move || handle.get().map(|doc| {
                                                                         use crate::list_doc::handle::SaveState;
                                                                         view! {
-                                                                            <div data-testid="account-list-save-state" role="status" aria-live="polite" class="mt-2 text-sm">
+                                                                            <div data-testid="account-list-save-state" role="status" aria-live="polite" class="mt-2 text-sm" hidden=move || doc.recovery_state.try_get() == Some(crate::list_doc::handle::RecoveryState::Incompatible)>
                                                                                 {move || match doc.save_state.try_get().unwrap_or(SaveState::Pending) {
                                                                                     SaveState::Saved => t_string!(i18n, device_runtime_saved).to_string(),
                                                                                     SaveState::Pending => t_string!(i18n, device_runtime_saving).to_string(),

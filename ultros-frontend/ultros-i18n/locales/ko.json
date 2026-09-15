@@ -2382,6 +2382,8 @@
     "account_list_save_failed": "변경 사항이 이 기기에 저장되지 않았습니다. 이 페이지를 열어 둔 채 다시 시도하거나 복구용 사본을 다운로드하세요.",
     "account_list_save_retry": "저장 다시 시도",
     "account_list_save_export": "복구용 사본 다운로드",
+    "list_compatibility_title": "저장된 목록을 복구해야 합니다",
+    "list_compatibility_help": "이 버전의 Ultros에서는 이 목록을 안전하게 읽을 수 없습니다. 원본 데이터는 보존되어 있습니다. 복구 사본을 내보낸 뒤 Ultros를 업데이트하고 다시 열어 주세요.",
     "list_recovery_title": "동기화 전 변경 사항 검토",
     "list_recovery_help": "변경 사항이 충돌하거나 공통 기록을 사용할 수 없어 동기화가 일시 중지되었습니다. 두 복사본은 모두 보존됩니다. 아래 차이를 비교하고 복구용 복사본을 다운로드하거나 이 기기의 값을 수정한 후 다시 시도하세요. 로컬 변경을 삭제하면 실행 취소 기록이 초기화됩니다.",
     "list_recovery_field": "아이템 또는 설정",

@@ -255,6 +255,13 @@ impl From<ultros_db::list_doc::ListDocError> for ApiError {
             ListDocError::InvalidUpdate => ApiError::from(anyhow::Error::from(
                 ListError::BadRequest("invalid document update"),
             )),
+            ListDocError::Doc(
+                DocError::UnsupportedSchema(_)
+                | DocError::InvalidStructure(_)
+                | DocError::IncompleteSnapshot,
+            ) => ApiError::from(anyhow::Error::from(ListError::BadRequest(
+                "unsupported or invalid list document; update Ultros and keep the original backup for recovery",
+            ))),
             ListDocError::MissingHistory => {
                 ApiError::from(anyhow::Error::from(ListError::BadRequest(
                     "update depends on history this server does not have; resync from a snapshot",

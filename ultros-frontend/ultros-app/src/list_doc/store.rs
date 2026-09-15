@@ -144,6 +144,7 @@ pub fn merge_save(
     // Read the raw key so corrupt bytes fail safely instead of looking absent.
     if let Some(text) = storage.get_checked(&doc_key(user, list))? {
         let previous = STANDARD.decode(text).map_err(|_| "corrupt")?;
+        ultros_list_doc::ListDocument::from_snapshot(&previous).map_err(|_| "corrupt")?;
         let report = doc.import(&previous).map_err(|_| "history")?;
         if report.pending {
             return Err("history".into());
@@ -544,6 +545,28 @@ mod tests {
         storage.set(&doc_key(1, 7), "bad base64");
         assert!(merge_save(&storage, 1, 7, &a, 2, "").is_err());
         assert_eq!(storage.get(&doc_key(1, 7)).unwrap(), "bad base64");
+    }
+
+    #[test]
+    fn unsupported_schema_preserves_both_existing_bytes_and_index() {
+        let storage = MemoryStorage::default();
+        let supported = snapshot(10);
+        let future = ultros_list_doc::ListDocument::from_snapshot(&supported).unwrap();
+        future
+            .inner()
+            .get_map("meta")
+            .insert("schema", 999_i64)
+            .unwrap();
+        future.commit();
+        let future = future.export_snapshot().unwrap();
+        save(&storage, 1, 7, &supported, 2, 123.0);
+        let before = storage.0.borrow().clone();
+        assert!(merge_save(&storage, 1, 7, &future, 3, "").is_err());
+        assert_eq!(*storage.0.borrow(), before);
+        save(&storage, 1, 7, &future, 2, 456.0);
+        let before = storage.0.borrow().clone();
+        assert!(merge_save(&storage, 1, 7, &supported, 3, "").is_err());
+        assert_eq!(*storage.0.borrow(), before);
     }
 
     #[test]
