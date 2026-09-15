@@ -342,6 +342,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_sync_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_sync_exit"
         fi
+        log "running list compaction recovery E2E"
+        list_recovery_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-compaction-recovery ) || list_recovery_exit=$?
+        if [ "$list_recovery_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_recovery_exit"
+        fi
         log "running account offline storage and recovery E2E"
         account_ui_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:account-list-ui ) || account_ui_exit=$?

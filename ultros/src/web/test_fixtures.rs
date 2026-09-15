@@ -148,5 +148,41 @@ pub async fn create_group_fixture(
 }
 
 pub fn routes() -> Router<WebState> {
-    Router::new().route("/test/group/fixture", post(create_group_fixture))
+    Router::new()
+        .route("/test/group/fixture", post(create_group_fixture))
+        .route("/test/list/{id}/compact", post(compact_list_fixture))
+}
+
+/// Reach the production compaction path without manufacturing 5,000 browser
+/// edits. Only the authenticated owner can compact this fixture's list. This
+/// entire module is absent from builds without `test-auth`.
+async fn compact_list_fixture(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+) -> Result<Json<Vec<u8>>, ApiError> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use ultros_api_types::list::ListPermission;
+    if db.get_permission(id, user.id as i64).await? != ListPermission::Owner {
+        return Err(anyhow::anyhow!("Only the list owner can compact this fixture").into());
+    }
+    db.list_doc_snapshot(id, user.id as i64).await?;
+    db.get_connection()
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE list_doc SET changes_since_compaction = $1 WHERE list_id = $2",
+            [ultros_db::list_doc::COMPACT_AFTER_CHANGES.into(), id.into()],
+        ))
+        .await?;
+    // Put the boundary strictly after the preceding edits, including when
+    // their last change would otherwise be retained by the shallow snapshot.
+    db.edit_list_doc(id, user.id as i64, |doc| {
+        let name = doc.meta().name;
+        doc.rename(&format!("{name} (compaction fixture)"))?;
+        doc.rename(&name)
+    })
+    .await?;
+    Ok(Json(
+        db.list_doc_snapshot(id, user.id as i64).await?.snapshot,
+    ))
 }

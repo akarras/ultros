@@ -2367,5 +2367,17 @@
     "cart_undo_unavailable": "此次移除已无法撤销",
     "account_list_save_failed": "更改尚未保存在此设备上。请保持此页面打开，重试或下载恢复副本。",
     "account_list_save_retry": "重试保存",
-    "account_list_save_export": "下载恢复副本"
+    "account_list_save_export": "下载恢复副本",
+    "list_recovery_title": "同步前检查更改",
+    "list_recovery_help": "部分更改存在冲突或无法获取共同历史，同步已暂停。两个副本均已保留。请比较下方差异，下载恢复副本，或编辑此设备上的值后重试。放弃本地更改会重置撤销记录。",
+    "list_recovery_field": "物品或设置",
+    "list_recovery_local": "此设备",
+    "list_recovery_server": "服务器副本",
+    "list_recovery_scope": "市场范围",
+    "list_recovery_values": "需要 {{needed}} · 已有 {{owned}} · 目标 {{target}} 金币",
+    "list_recovery_absent": "此副本中不存在",
+    "list_recovery_retry": "使用当前更改重试",
+    "list_recovery_use_server": "放弃本地更改并使用服务器版本",
+    "list_recovery_reset": "清单已恢复。之前的撤销和重做记录已重置；新编辑仍可撤销。",
+    "list_recovery_meta_dropped": "只有所有者可以更改名称或市场范围，因此未应用您的这些更改。"
 }

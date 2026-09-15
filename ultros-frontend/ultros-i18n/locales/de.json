@@ -2367,5 +2367,17 @@
     "cart_undo_unavailable": "Dieses Entfernen lässt sich nicht mehr rückgängig machen",
     "account_list_save_failed": "Änderungen sind auf diesem Gerät nicht gespeichert. Lass diese Seite geöffnet; versuche es erneut oder lade eine Sicherung herunter.",
     "account_list_save_retry": "Erneut speichern",
-    "account_list_save_export": "Sicherung herunterladen"
+    "account_list_save_export": "Sicherung herunterladen",
+    "list_recovery_title": "Änderungen vor dem Synchronisieren prüfen",
+    "list_recovery_help": "Die Synchronisierung pausiert, weil Änderungen im Konflikt stehen oder ihr gemeinsamer Verlauf fehlt. Beide Kopien bleiben erhalten. Vergleiche die Unterschiede, lade eine Wiederherstellungskopie herunter oder bearbeite die Werte auf diesem Gerät und versuche es erneut. Das Verwerfen lokaler Änderungen setzt Rückgängig zurück.",
+    "list_recovery_field": "Gegenstand oder Einstellung",
+    "list_recovery_local": "Dieses Gerät",
+    "list_recovery_server": "Serverkopie",
+    "list_recovery_scope": "Marktgebiet",
+    "list_recovery_values": "{{needed}} benötigt · {{owned}} vorhanden · Ziel {{target}} Gil",
+    "list_recovery_absent": "In dieser Kopie nicht vorhanden",
+    "list_recovery_retry": "Mit aktuellen Änderungen erneut versuchen",
+    "list_recovery_use_server": "Lokale Änderungen verwerfen und Serverversion verwenden",
+    "list_recovery_reset": "Liste wiederhergestellt. Der bisherige Verlauf für Rückgängig und Wiederholen wurde zurückgesetzt; neue Änderungen können rückgängig gemacht werden.",
+    "list_recovery_meta_dropped": "Deine Änderungen an Name oder Marktgebiet wurden nicht übernommen, da nur der Besitzer diese Einstellungen ändern darf."
 }

@@ -2126,6 +2126,7 @@ pub fn ListViewSync() -> impl IntoView {
                                                                 </Tooltip>
                                                             </div>
                                                         </div>
+                                                        {move || handle.get().map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
                                                     </div>
 
                                                     <Show when=move || legacy_cart.get() && view_caps.with(|c| c.can_write)>

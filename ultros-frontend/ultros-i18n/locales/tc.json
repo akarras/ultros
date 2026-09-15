@@ -2367,5 +2367,17 @@
     "cart_undo_unavailable": "此次移除已無法復原",
     "account_list_save_failed": "變更尚未儲存在此裝置上。請保持此頁面開啟，重試或下載復原副本。",
     "account_list_save_retry": "重試儲存",
-    "account_list_save_export": "下載復原副本"
+    "account_list_save_export": "下載復原副本",
+    "list_recovery_title": "同步前檢查變更",
+    "list_recovery_help": "部分變更發生衝突或無法取得共同歷史，同步已暫停。兩個副本均已保留。請比較下方差異，下載復原副本，或編輯此裝置上的值後重試。捨棄本機變更會重設復原紀錄。",
+    "list_recovery_field": "物品或設定",
+    "list_recovery_local": "此裝置",
+    "list_recovery_server": "伺服器副本",
+    "list_recovery_scope": "市場範圍",
+    "list_recovery_values": "需要 {{needed}} · 已有 {{owned}} · 目標 {{target}} 金幣",
+    "list_recovery_absent": "此副本中不存在",
+    "list_recovery_retry": "使用目前變更重試",
+    "list_recovery_use_server": "捨棄本機變更並使用伺服器版本",
+    "list_recovery_reset": "清單已復原。先前的復原與重做紀錄已重設；新編輯仍可復原。",
+    "list_recovery_meta_dropped": "只有擁有者可以變更名稱或市場範圍，因此未套用您的這些變更。"
 }

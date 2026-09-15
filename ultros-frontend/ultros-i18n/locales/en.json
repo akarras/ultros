@@ -2380,5 +2380,17 @@
     "cart_undo_unavailable": "Undo is no longer available for this removal",
     "account_list_save_failed": "Changes are not saved on this device. Keep this page open; retry or download a recovery copy.",
     "account_list_save_retry": "Retry save",
-    "account_list_save_export": "Download recovery copy"
+    "account_list_save_export": "Download recovery copy",
+    "list_recovery_title": "Review changes before syncing",
+    "list_recovery_help": "Sync is paused because some changes conflict or their shared history is unavailable. Both copies are preserved. Compare the differences below, download a recovery copy, or edit this device’s values and retry. Discarding local changes resets Undo.",
+    "list_recovery_field": "Item or setting",
+    "list_recovery_local": "This device",
+    "list_recovery_server": "Server copy",
+    "list_recovery_scope": "Market scope",
+    "list_recovery_values": "{{needed}} needed · {{owned}} owned · target {{target}} gil",
+    "list_recovery_absent": "Not in this copy",
+    "list_recovery_retry": "Retry with current edits",
+    "list_recovery_use_server": "Discard local changes and use server version",
+    "list_recovery_reset": "List recovered. Earlier Undo and Redo history has been reset; new edits can be undone.",
+    "list_recovery_meta_dropped": "Your name or market-scope changes were not applied because only the owner can change these settings."
 }
