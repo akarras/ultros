@@ -2008,6 +2008,7 @@
     "changelog_improvements": "Verbesserungen",
     "changelog_bug_fixes": "Fehlerbehebungen",
     "changelog_try_it": "Ausprobieren",
+    "changelog_labs_hint": "Teil eines Experiments. Aktiviere es in den Einstellungen, um es auszuprobieren.",
     "help_all_topics_link": "Alle Hilfe-Themen",
     "help_section_inputs": "Eingaben",
     "help_section_assumptions": "Annahmen",

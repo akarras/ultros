@@ -8,7 +8,7 @@ use leptos::{
 };
 
 use super::cookies::{Cookies, get_now};
-use ultros_changelog::latest_changelog_date;
+use ultros_changelog::{latest_announced_changelog_date, latest_changelog_date};
 
 const CHANGELOG_SEEN_COOKIE: &str = "CHANGELOG_SEEN";
 
@@ -54,6 +54,11 @@ pub fn has_unseen_entries(seen: Option<&str>, latest: &str) -> bool {
 
 /// Drives the sidebar's what's-new dot.
 ///
+/// Only changes everyone can use count: a day that shipped nothing but Labs
+/// entries never turns the dot on, because most visitors cannot see those
+/// changes yet. Seeding and clearing still record the overall latest date, so
+/// the Labs entries count as seen too.
+///
 /// The returned signal is `false` during SSR and during the first client
 /// render, and only becomes true once an `Effect` has run — effects are
 /// client-only and run after hydration, so the server HTML and the client's
@@ -72,7 +77,8 @@ pub fn use_whats_new_indicator() -> Signal<bool> {
     });
     Signal::derive(move || {
         hydrated.get()
-            && seen.with(|seen| has_unseen_entries(seen.as_deref(), latest_changelog_date()))
+            && seen
+                .with(|seen| has_unseen_entries(seen.as_deref(), latest_announced_changelog_date()))
     })
 }
 

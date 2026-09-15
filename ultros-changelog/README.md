@@ -21,6 +21,10 @@ hyphens. Each change adds its own file; never append to a shared daily file.
   or `low` for minor polish. This field is required.
 - `title` and `blurb`: concise, player-facing plain text.
 - `link`: optional internal app route.
+- `labs`: optional, `true` when the change only exists behind a Labs toggle.
+  The page shows a Labs badge next to it, and it never turns on the sidebar's
+  what's-new dot, since most players cannot see the change yet. Use the
+  badge instead of writing "(Labs)" in the title.
 
 `build.rs` validates these files and generates a static
 `CHANGELOG: &[ChangelogEntry]`, newest day first, then high/medium/low importance,

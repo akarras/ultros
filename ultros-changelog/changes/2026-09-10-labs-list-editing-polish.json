@@ -3,5 +3,6 @@
   "importance": "low",
   "title": "Smoother list editing in Labs",
   "blurb": "Move between list quantities with Tab, compare current prices while building, and use the new list tools in your chosen language.",
-  "link": "/list"
+  "link": "/list",
+  "labs": true
 }
