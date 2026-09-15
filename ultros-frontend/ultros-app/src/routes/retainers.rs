@@ -92,7 +92,15 @@ impl From<&ActiveListing> for ItemSortKey {
 /// the header, the body rows and the empty state's `colspan` can no longer
 /// disagree about which columns exist or what order they come in (the debt
 /// #1080 retired for the item explorer and the currency exchange).
+///
+/// The row is also its own `<For>` key: every field a cell renders is in
+/// here, so a refetch re-creates exactly the rows whose listing changed and
+/// leaves every other `<tr>` untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct RetainerRow {
+    /// The listing's own id, so two otherwise identical listings on one
+    /// retainer stay two rows.
+    listing_id: i32,
     hq: bool,
     item_id: i32,
     price_per_unit: i32,
@@ -105,6 +113,7 @@ struct RetainerRow {
 impl From<&ActiveListing> for RetainerRow {
     fn from(listing: &ActiveListing) -> Self {
         Self {
+            listing_id: listing.id,
             hq: listing.hq,
             item_id: listing.item_id,
             price_per_unit: listing.price_per_unit,
@@ -118,6 +127,7 @@ impl From<&UndercutData> for RetainerRow {
     fn from(undercut_data: &UndercutData) -> Self {
         let listing = &undercut_data.current;
         Self {
+            listing_id: listing.id,
             hq: listing.hq,
             item_id: listing.item_id,
             price_per_unit: listing.price_per_unit,
@@ -125,6 +135,20 @@ impl From<&UndercutData> for RetainerRow {
             undercut_by_one: Some(undercut_data.cheapest - 1),
         }
     }
+}
+
+/// The rows of a [`RetainerTable`], in display order.
+fn listing_rows(listings: &[ActiveListing]) -> Vec<RetainerRow> {
+    let mut listings: Vec<&ActiveListing> = listings.iter().collect();
+    listings.sort_by_key(|listing| ItemSortKey::from(*listing));
+    listings.into_iter().map(RetainerRow::from).collect()
+}
+
+/// The rows of a [`RetainerUndercutTable`], in display order.
+fn undercut_rows(undercuts: &[UndercutData]) -> Vec<RetainerRow> {
+    let mut undercuts: Vec<&UndercutData> = undercuts.iter().collect();
+    undercuts.sort_by_key(|undercut| ItemSortKey::from(&undercut.current));
+    undercuts.into_iter().map(RetainerRow::from).collect()
 }
 
 /// The five columns every retainer listing table shows, in DOM order. The
@@ -226,16 +250,20 @@ fn base_retainer_columns(
 /// the body and the empty state's `colspan`. Shared by [`RetainerTable`] and
 /// [`RetainerUndercutTable`] so the panel/table chrome can't drift between
 /// them.
+///
+/// The body is a keyed `<For>` over `rows`: when the page refetches after a
+/// listing event, only the rows whose [`RetainerRow`] changed are re-created.
 fn retainer_table_panel(
     retainer_name: String,
     retainer_id: i32,
     world_id: i32,
     columns: Vec<Column<RetainerRow>>,
-    rows: Vec<RetainerRow>,
-    empty_message: impl IntoView + 'static,
+    rows: Signal<Vec<RetainerRow>>,
+    empty_message: impl Fn() -> AnyView + Send + Sync + 'static,
 ) -> impl IntoView {
-    let is_empty = rows.is_empty();
+    let columns = Arc::new(columns);
     let column_count = visible_column_count(&columns).to_string();
+    let is_empty = Memo::new(move |_| rows.with(|rows| rows.is_empty()));
     view! {
         <div id=format!("retainer-{retainer_id}") class="panel p-4 rounded-xl scroll-mt-20">
             <span class="content-title">
@@ -247,29 +275,24 @@ fn retainer_table_panel(
                         <tr class="border-b border-white/5">{header_cells(&columns)}</tr>
                     </thead>
                     <tbody class="divide-y divide-white/5">
-                        {is_empty
-                            .then(|| {
-                                view! {
-                                    <tr>
-                                        <td
-                                            colspan=column_count.clone()
-                                            class="p-4 text-center opacity-70"
-                                        >
-                                            {empty_message}
-                                        </td>
-                                    </tr>
-                                }
-                            })}
-                        {rows
-                            .into_iter()
-                            .map(|row| {
+                        <Show when=move || is_empty.get()>
+                            <tr>
+                                <td colspan=column_count.clone() class="p-4 text-center opacity-70">
+                                    {empty_message()}
+                                </td>
+                            </tr>
+                        </Show>
+                        <For
+                            each=move || rows.get()
+                            key=|row| *row
+                            children=move |row| {
                                 view! {
                                     <tr class="hover:bg-white/5 transition-colors">
                                         {body_cells(&columns, &row)}
                                     </tr>
                                 }
-                            })
-                            .collect::<Vec<_>>()}
+                            }
+                        />
                     </tbody>
                 </table>
             </div>
@@ -278,10 +301,8 @@ fn retainer_table_panel(
 }
 
 #[component]
-fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> impl IntoView {
+fn RetainerUndercutTable(retainer: Retainer, listings: Signal<Vec<UndercutData>>) -> impl IntoView {
     let i18n = use_i18n();
-    let mut listings = listings;
-    listings.sort_by_key(|u| ItemSortKey::from(&u.current));
     let world_name: Arc<str> = use_world_display_name(AnySelector::World(retainer.world_id))
         .unwrap_or_default()
         .into();
@@ -308,86 +329,147 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
         )
         .header_class(TH),
     );
-    let rows = listings.iter().map(RetainerRow::from).collect();
+    let rows = Memo::new(move |_| listings.with(|listings| undercut_rows(listings)));
 
     retainer_table_panel(
         retainer.name.clone(),
         retainer.id,
         retainer.world_id,
         columns,
-        rows,
-        view! { {t!(i18n, retainers_undercuts_empty)} }.into_any(),
+        rows.into(),
+        move || view! { {t!(i18n, retainers_undercuts_empty)} }.into_any(),
     )
 }
 
 #[component]
-fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
+fn RetainerTable(retainer: Retainer, listings: Signal<Vec<ActiveListing>>) -> impl IntoView {
     let i18n = use_i18n();
-    let mut listings = listings;
-    listings.sort_by_key(|u| ItemSortKey::from(u));
     let world_name: Arc<str> = use_world_display_name(AnySelector::World(retainer.world_id))
         .unwrap_or_default()
         .into();
 
     let columns = base_retainer_columns(i18n, world_name);
-    let rows = listings.iter().map(RetainerRow::from).collect();
+    let rows = Memo::new(move |_| listings.with(|listings| listing_rows(listings)));
 
     retainer_table_panel(
         retainer.name.clone(),
         retainer.id,
         retainer.world_id,
         columns,
-        rows,
-        view! { {t!(i18n, retainers_listings_empty)} }.into_any(),
+        rows.into(),
+        move || view! { {t!(i18n, retainers_listings_empty)} }.into_any(),
     )
 }
 
-#[component]
-pub(crate) fn CharacterRetainerList(
-    character: Option<FfxivCharacter>,
-    retainers: Vec<(Retainer, Vec<ActiveListing>)>,
-) -> impl IntoView {
-    let listings: Vec<_> = retainers
-        .into_iter()
-        .map(|(retainer, listings)| view! { <RetainerTable retainer listings /> })
-        .collect();
+/// The user's retainers grouped by character, as both retainer pages'
+/// resources deliver them: `T` is the per-listing payload each page shows.
+type RetainerGroups<T> = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<T>)>)>;
+
+/// Every character heading and retainer panel in `groups`, keyed at each
+/// level so a refetch that changes one listing touches one row: characters
+/// and retainers keep their DOM nodes, `table` runs only for a retainer new
+/// to the list, and the listings it is handed narrow `groups` down to that
+/// one retainer.
+fn retainer_groups_view<T>(
+    groups: Memo<RetainerGroups<T>>,
+    table: impl Fn(Retainer, Signal<Vec<T>>) -> AnyView + Send + Sync + Clone + 'static,
+) -> impl IntoView
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+{
     view! {
-        <div class="flex flex-col gap-2">
-            {character
-                .map(|character| {
-                    view! {
-                        <span class="content-title font-semibold mt-2">
-                            {character.first_name} " " {character.last_name}
-                        </span>
-                    }
-                })} {listings}
-        </div>
+        <For
+            each=move || {
+                groups
+                    .with(|groups| {
+                        groups.iter().map(|(character, _)| character.clone()).collect::<Vec<_>>()
+                    })
+            }
+            key=|character| {
+                character
+                    .as_ref()
+                    .map(|character| {
+                        (character.id, character.first_name.clone(), character.last_name.clone())
+                    })
+            }
+            children=move |character| {
+                let table = table.clone();
+                let group = character.clone();
+                let retainers = Memo::new(move |_| {
+                    groups
+                        .with(|groups| {
+                            groups
+                                .iter()
+                                .find(|(character, _)| *character == group)
+                                .map(|(_, retainers)| {
+                                    retainers
+                                        .iter()
+                                        .map(|(retainer, _)| retainer.clone())
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default()
+                        })
+                });
+                let group = character.clone();
+                view! {
+                    <div class="flex flex-col gap-2">
+                        {character
+                            .map(|character| {
+                                view! {
+                                    <span class="content-title font-semibold mt-2">
+                                        {character.first_name} " " {character.last_name}
+                                    </span>
+                                }
+                            })}
+                        <For
+                            each=move || retainers.get()
+                            key=|retainer| (retainer.id, retainer.name.clone(), retainer.world_id)
+                            children=move |retainer| {
+                                let group = group.clone();
+                                let retainer_id = retainer.id;
+                                let listings = Memo::new(move |_| {
+                                    groups
+                                        .with(|groups| {
+                                            groups
+                                                .iter()
+                                                .find(|(character, _)| *character == group)
+                                                .and_then(|(_, retainers)| {
+                                                    retainers
+                                                        .iter()
+                                                        .find(|(retainer, _)| retainer.id == retainer_id)
+                                                })
+                                                .map(|(_, listings)| listings.clone())
+                                                .unwrap_or_default()
+                                        })
+                                });
+                                table(retainer, listings.into())
+                            }
+                        />
+                    </div>
+                }
+            }
+        />
     }
-    .into_any()
 }
 
-#[component]
-pub(crate) fn CharacterRetainerUndercutList(
-    character: Option<FfxivCharacter>,
-    retainers: Vec<(Retainer, Vec<UndercutData>)>,
-) -> impl IntoView {
-    let listings: Vec<_> = retainers
-        .into_iter()
-        .map(|(retainer, listings)| view! { <RetainerUndercutTable retainer listings /> })
-        .collect();
-    view! {
-        <div class="flex flex-col gap-2">
-            {character
-                .map(|character| {
-                    view! {
-                        <span class="content-title font-semibold mt-2">
-                            {character.first_name} " " {character.last_name}
-                        </span>
-                    }
-                })} {listings}
-        </div>
+/// Where a retainer page's resource is, with the payload left out so a
+/// refetch that only changes listings does not change the phase — the
+/// loaded view is gated on this and so survives the refetch intact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Phase {
+    Loading,
+    Loaded,
+    Failed(String),
+}
+
+impl Phase {
+    fn of<T>(value: Option<Result<T, crate::error::AppError>>) -> Self {
+        match value {
+            None => Self::Loading,
+            Some(Ok(_)) => Self::Loaded,
+            Some(Err(e)) => Self::Failed(e.to_string()),
+        }
     }
-    .into_any()
 }
 
 #[component]
@@ -415,6 +497,13 @@ pub fn RetainerUndercuts() -> impl IntoView {
             .and_then(|result| result.ok().map(|report| report.listed))
     });
     let live = use_retainer_live(listed_pairs, move || retainers.refetch());
+    let phase = Memo::new(move |_| Phase::of(retainers.get()));
+    let groups = Memo::new(move |_| {
+        retainers
+            .get()
+            .and_then(|result| result.ok().map(|report| report.undercuts))
+            .unwrap_or_default()
+    });
     let (drawer_visible, set_drawer_visible) = signal(false);
     view! {
         <MetaTitle title=t_string!(i18n, retainers_undercuts_title).to_string() />
@@ -462,31 +551,37 @@ pub fn RetainerUndercuts() -> impl IntoView {
                             <span>
                                 {t!(i18n, retainers_undercuts_description)}
                             </span>
+                            // Registers the resource with the boundary so SSR
+                            // awaits it; the `phase` memo below reads it under
+                            // its own owner and would not.
                             {move || {
-                                match retainers.get() {
-                                    None => {
+                                let _ = retainers.get();
+                            }}
+                            {move || {
+                                match phase.get() {
+                                    Phase::Loading => {
                                         view! {
                                             <TableSkeleton columns=undercut_skeleton_columns() rows=5 />
                                         }
                                             .into_any()
                                     }
-                                    Some(Ok(report)) => {
-                                        let retainers: Vec<_> = report
-                                            .undercuts
-                                            .into_iter()
-                                            .map(|(character, retainers)| {
-                                                view! {
-                                                    <CharacterRetainerUndercutList character retainers />
-                                                }
-                                            })
-                                            .collect();
-                                        view! { <div>{retainers}</div> }.into_any()
-                                    }
-                                    Some(Err(e)) => {
+                                    Phase::Loaded => {
                                         view! {
                                             <div>
-                                                {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
+                                                {retainer_groups_view(
+                                                    groups,
+                                                    |retainer, listings| {
+                                                        view! { <RetainerUndercutTable retainer listings /> }
+                                                            .into_any()
+                                                    },
+                                                )}
                                             </div>
+                                        }
+                                            .into_any()
+                                    }
+                                    Phase::Failed(e) => {
+                                        view! {
+                                            <div>{t!(i18n, retainers_unable_to_get)} <br /> {e}</div>
                                         }
                                             .into_any()
                                     }
@@ -586,7 +681,10 @@ pub fn SingleRetainerListings() -> impl IntoView {
                                             &r.retainer.name,
                                             world_name,
                                         ) />
-                                        <RetainerTable retainer=r.retainer listings=r.listings />
+                                        <RetainerTable
+                                            retainer=r.retainer
+                                            listings=Signal::stored(r.listings)
+                                        />
                                     }
                                 })
                         })
@@ -627,6 +725,14 @@ pub fn RetainerListings() -> impl IntoView {
         })
     });
     let live = use_retainer_live(listed_pairs, move || retainers.refetch());
+    let phase = Memo::new(move |_| Phase::of(retainers.get()));
+    let groups = Memo::new(move |_| {
+        retainers
+            .get()
+            .and_then(|result| result.ok().map(|data| data.retainers))
+            .unwrap_or_default()
+    });
+    let has_none = Memo::new(move |_| groups.with(|groups| groups.is_empty()));
     view! {
         <MetaTitle title=t_string!(i18n, retainers_all_listings_title).to_string() />
         <MetaDescription text=t_string!(i18n, retainers_all_listings_desc).to_string() />
@@ -680,37 +786,39 @@ pub fn RetainerListings() -> impl IntoView {
                                     set_visible=set_drawer_visible.into()
                                 />
                             </Show>
+                            // Registers the resource with the boundary so SSR
+                            // awaits it; the `phase` memo below reads it under
+                            // its own owner and would not.
                             {move || {
-                                match retainers.get() {
-                                    None => {
+                                let _ = retainers.get();
+                            }}
+                            {move || {
+                                match phase.get() {
+                                    Phase::Loading => {
                                         view! {
                                             <TableSkeleton columns=listing_skeleton_columns() rows=5 />
                                         }
                                             .into_any()
                                     }
-                                    Some(Ok(retainers)) => {
-                                        let retainers: Vec<_> = retainers
-                                            .retainers
-                                            .into_iter()
-                                            .map(|(character, retainers)| {
-                                                view! { <CharacterRetainerList character retainers /> }
-                                            })
-                                            .collect();
+                                    Phase::Loaded => {
                                         view! {
-                                            {retainers
-                                                .is_empty()
-                                                .then(|| {
-                                                    view! { <span>{t!(i18n, retainers_add_to_start)}</span> }
-                                                })}
-                                            <div>{retainers}</div>
+                                            <Show when=move || has_none.get()>
+                                                <span>{t!(i18n, retainers_add_to_start)}</span>
+                                            </Show>
+                                            <div>
+                                                {retainer_groups_view(
+                                                    groups,
+                                                    |retainer, listings| {
+                                                        view! { <RetainerTable retainer listings /> }.into_any()
+                                                    },
+                                                )}
+                                            </div>
                                         }
                                             .into_any()
                                     }
-                                    Some(Err(e)) => {
+                                    Phase::Failed(e) => {
                                         view! {
-                                            <div>
-                                                {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
-                                            </div>
+                                            <div>{t!(i18n, retainers_unable_to_get)} <br /> {e}</div>
                                         }
                                             .into_any()
                                     }
@@ -790,6 +898,45 @@ mod test {
         let original = item_vec.clone();
         item_vec.sort_by_key(|i| ItemSortKey::from(i));
         assert_eq!(original, item_vec);
+    }
+
+    /// A row is its own `<For>` key, so two listings of the same item must
+    /// still be two rows, and a price change must change exactly that row's
+    /// key — that is what keeps a refetch from re-creating the other rows.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn row_key_follows_its_own_listing() {
+        use super::{listing_rows, undercut_rows};
+        use crate::api::UndercutData;
+        use chrono::NaiveDateTime;
+        use std::collections::HashSet;
+        use ultros_api_types::ActiveListing;
+        let listing = |id: i32, price_per_unit: i32| ActiveListing {
+            id,
+            world_id: 34,
+            item_id: 30842,
+            retainer_id: 1,
+            price_per_unit,
+            quantity: 1,
+            hq: true,
+            timestamp: NaiveDateTime::MIN,
+        };
+        let before = listing_rows(&[listing(1, 1000), listing(2, 1000)]);
+        assert_eq!(before.iter().collect::<HashSet<_>>().len(), 2);
+
+        let after = listing_rows(&[listing(1, 1000), listing(2, 900)]);
+        assert_eq!(after[0], before[0]);
+        assert_ne!(after[1], before[1]);
+
+        let undercut = |id, price_per_unit, cheapest| UndercutData {
+            current: listing(id, price_per_unit),
+            cheapest,
+        };
+        let before = undercut_rows(&[undercut(1, 1000, 999), undercut(2, 1000, 999)]);
+        let after = undercut_rows(&[undercut(1, 1000, 999), undercut(2, 1000, 950)]);
+        assert_eq!(after[0], before[0]);
+        assert_ne!(after[1], before[1]);
+        assert_eq!(after[1].undercut_by_one, Some(949));
     }
 
     #[cfg(feature = "ssr")]
