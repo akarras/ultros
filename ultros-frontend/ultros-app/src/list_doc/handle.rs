@@ -348,18 +348,28 @@ impl ListDocHandle {
         );
     }
 
-    pub fn save_now(&self) {
+    // Keep export failure handling before the persistence boundary. The caller
+    // receives bytes only after export succeeds; retry must not claim durability.
+    fn prepare_save(
+        &self,
+        export: impl FnOnce(&ListDocument) -> Result<Vec<u8>, DocError>,
+    ) -> Option<Vec<u8>> {
         if self.purged.try_get_untracked().unwrap_or(true) {
-            return;
+            return None;
         }
-        let Some(snapshot) = self.with_doc(|doc| doc.export_snapshot()) else {
-            return;
-        };
+        let snapshot = self.with_doc(export)?;
         let Ok(snapshot) = snapshot else {
             let _ = self.save_state.try_set(SaveState::Failed);
-            return;
+            return None;
         };
         let _ = self.save_state.try_set(SaveState::Pending);
+        Some(snapshot)
+    }
+
+    pub fn save_now(&self) {
+        let Some(snapshot) = self.prepare_save(ListDocument::export_snapshot) else {
+            return;
+        };
         #[cfg(feature = "hydrate")]
         {
             use wasm_bindgen::{JsCast, prelude::*};
@@ -704,4 +714,56 @@ impl ListDocHandle {
     /// place.
     #[cfg(not(feature = "hydrate"))]
     fn install_persistence(&self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_failure_keeps_edits_and_retry_does_not_claim_durability() {
+        // Native tests keep this browser-style handle on one thread under an
+        // explicit owner; it is never constructed by an SSR render.
+        let owner = Owner::new();
+        owner.with(|| {
+            let handle = ListDocHandle::open(1, 1);
+            handle
+                .with_doc(|doc| doc.rename("Offline title"))
+                .unwrap()
+                .unwrap();
+            let version = handle.try_version();
+            let outbox = handle.outbox.get_untracked();
+            assert!(!outbox.is_empty());
+            handle.save_state.set(SaveState::Saved);
+
+            // Fault-inject the exporter, not the storage writer: no snapshot
+            // may cross the persistence boundary on this path.
+            assert!(handle.prepare_save(|_| Err(DocError::Version)).is_none());
+            assert_eq!(handle.save_state.get_untracked(), SaveState::Failed);
+            assert_eq!(handle.try_version(), version);
+            assert_eq!(handle.outbox.get_untracked(), outbox);
+            assert_eq!(handle.meta().name, "Offline title");
+
+            let snapshot = handle.prepare_save(ListDocument::export_snapshot).unwrap();
+            let recovered = ListDocument::from_snapshot(&snapshot).unwrap();
+            assert_eq!(recovered.meta().name, "Offline title");
+            assert!(!recovered.is_ahead_of(&version));
+            assert!(!handle.is_ahead_of(&recovered.version()));
+            assert_eq!(handle.save_state.get_untracked(), SaveState::Pending);
+            assert_eq!(handle.outbox.get_untracked(), outbox);
+            handle.dispose();
+        });
+    }
+
+    #[test]
+    fn revoked_or_disposed_handle_never_attempts_export() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let handle = ListDocHandle::open(1, 1);
+            handle.purged.set(true);
+            assert!(handle.prepare_save(|_| panic!("revoked export")).is_none());
+            handle.dispose();
+            assert!(handle.prepare_save(|_| panic!("disposed export")).is_none());
+        });
+    }
 }
