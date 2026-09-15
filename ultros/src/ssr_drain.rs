@@ -30,7 +30,8 @@ use std::{
 
 use axum::{
     body::{Body, Bytes},
-    http::StatusCode,
+    extract::State,
+    http::{Request, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use http_body::{Body as HttpBody, Frame, SizeHint};
@@ -149,10 +150,35 @@ where
     match task.await {
         Ok(response) => response,
         Err(join) => {
-            tracing::error!(error = %join, "SSR render task failed");
+            // `warn!`, not `error!`: the panic hook has already reported the
+            // panic itself (with its location), and an `error!` here became a
+            // second GlitchTip issue per URL ("SSR render task failed",
+            // #7339–#7386) that only ever restated the panic message.
+            tracing::warn!(error = %join, "SSR render task failed");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// The shape of `leptos_axum::file_and_error_handler_with_context`'s handler.
+pub type FallbackFuture = Pin<Box<dyn Future<Output = Response> + Send + 'static>>;
+
+/// Wraps the file/404 fallback handler so its render runs through
+/// [`detach_render`] like every leptos route handler does.
+///
+/// The fallback renders the whole app in-order (collecting it to a `String`
+/// before the first byte goes out), so a scanner that gives up on an unknown
+/// path cancels the handler future mid-render and tears the owner down under
+/// the Suspense tasks — the not-found variant of #7269 (GlitchTip #7382,
+/// #7383).
+pub fn detach_fallback<S, H>(
+    inner: H,
+) -> impl Fn(Uri, State<S>, Request<Body>) -> FallbackFuture + Clone + Send + Sync + 'static
+where
+    S: Clone + Send + Sync + 'static,
+    H: Fn(Uri, State<S>, Request<Body>) -> FallbackFuture + Clone + Send + Sync + 'static,
+{
+    move |uri, state, req| Box::pin(detach_render(inner(uri, state, req)))
 }
 
 #[cfg(test)]
@@ -167,11 +193,18 @@ mod tests {
         time::Duration,
     };
 
-    use axum::body::Body;
+    use axum::{
+        Router,
+        body::Body,
+        extract::State,
+        http::{Request, StatusCode, Uri},
+        response::IntoResponse,
+    };
     use futures::{StreamExt, stream};
     use http_body_util::BodyExt;
+    use tower::ServiceExt;
 
-    use super::{DrainOnDrop, detach_render};
+    use super::{DrainOnDrop, FallbackFuture, detach_fallback, detach_render};
 
     /// A body of `chunks` that bumps `completed` once its last chunk has been
     /// pulled — the stand-in for leptos' end-of-stream owner cleanup.
@@ -269,5 +302,67 @@ mod tests {
             response.status(),
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    /// A stand-in for leptos' file/404 fallback: renders for 30ms, then
+    /// answers 404 with a body whose end-of-stream hook bumps `completed`.
+    fn slow_fallback(
+        rendered: Arc<AtomicUsize>,
+        completed: Arc<AtomicUsize>,
+    ) -> impl Fn(Uri, State<()>, Request<Body>) -> FallbackFuture + Clone + Send + Sync + 'static
+    {
+        move |_uri, State(()), _req| {
+            let rendered = rendered.clone();
+            let completed = completed.clone();
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                rendered.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::NOT_FOUND, tracked_body(3, completed)).into_response()
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_fallback_still_finishes_rendering() {
+        let completed = Arc::new(AtomicUsize::new(0));
+        let rendered = Arc::new(AtomicUsize::new(0));
+        let fallback = detach_fallback(slow_fallback(rendered.clone(), completed.clone()));
+        let mut handler = fallback(
+            Uri::from_static("/missing"),
+            State(()),
+            Request::new(Body::empty()),
+        );
+        let pending = poll_fn(|cx| Poll::Ready(handler.as_mut().poll(cx).is_pending())).await;
+        assert!(pending, "render should not have finished on the first poll");
+        drop(handler);
+        assert!(
+            wait_for(&rendered, 1).await,
+            "fallback render was cancelled"
+        );
+        assert!(
+            wait_for(&completed, 1).await,
+            "the abandoned fallback body was dropped instead of drained"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn detached_fallback_is_an_axum_handler() {
+        let completed = Arc::new(AtomicUsize::new(0));
+        let rendered = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .fallback(detach_fallback(slow_fallback(rendered, completed)))
+            .with_state(());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"chunkchunkchunk");
     }
 }

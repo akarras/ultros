@@ -3647,17 +3647,20 @@ pub(crate) async fn start_web(
                 .await
                 .unwrap(),
         )
-        .fallback(leptos_axum::file_and_error_handler_with_context::<
-            WebState,
-            _,
-        >(
-            move || {
-                provide_context(LocalWorldData(Ok(worlds.clone())));
-                provide_context(ssr_api.clone());
-            },
-            // The file/404 fallback doesn't have per-request bootstrap data; an
-            // empty script tag is harmless and the client falls back to HTTP.
-            |options| shell(options, String::new()),
+        // Detached like the leptos route handlers: the 404 page renders the
+        // whole app, and a scanner that gives up on an unknown path would
+        // otherwise cancel the render and tear the owner down under it
+        // (GlitchTip #7382, #7383) — see `ssr_drain`.
+        .fallback(crate::ssr_drain::detach_fallback(
+            leptos_axum::file_and_error_handler_with_context::<WebState, _>(
+                move || {
+                    provide_context(LocalWorldData(Ok(worlds.clone())));
+                    provide_context(ssr_api.clone());
+                },
+                // The file/404 fallback doesn't have per-request bootstrap data; an
+                // empty script tag is harmless and the client falls back to HTTP.
+                |options| shell(options, String::new()),
+            ),
         ))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
