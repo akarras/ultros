@@ -2367,5 +2367,17 @@
     "cart_undo_unavailable": "この削除は元に戻せなくなりました",
     "account_list_save_failed": "変更はこの端末に保存されていません。このページを開いたまま、再試行するか復元用コピーをダウンロードしてください。",
     "account_list_save_retry": "保存を再試行",
-    "account_list_save_export": "復元用コピーをダウンロード"
+    "account_list_save_export": "復元用コピーをダウンロード",
+    "list_recovery_title": "同期前に変更を確認",
+    "list_recovery_help": "変更が競合しているか、共通の履歴を利用できないため同期を一時停止しています。両方のコピーは保持されています。以下の差分を比較し、復元用コピーをダウンロードするか、この端末の値を編集して再試行してください。ローカルの変更を破棄すると「元に戻す」の履歴がリセットされます。",
+    "list_recovery_field": "アイテムまたは設定",
+    "list_recovery_local": "この端末",
+    "list_recovery_server": "サーバーのコピー",
+    "list_recovery_scope": "マーケット範囲",
+    "list_recovery_values": "必要 {{needed}} · 所持 {{owned}} · 目標 {{target}} ギル",
+    "list_recovery_absent": "このコピーにはありません",
+    "list_recovery_retry": "現在の変更で再試行",
+    "list_recovery_use_server": "ローカルの変更を破棄してサーバーの版を使用",
+    "list_recovery_reset": "リストを復元しました。以前の「元に戻す」「やり直す」の履歴はリセットされました。新しい編集は元に戻せます。",
+    "list_recovery_meta_dropped": "名前やマーケット範囲を変更できるのは所有者のみのため、これらの変更は適用されませんでした。"
 }

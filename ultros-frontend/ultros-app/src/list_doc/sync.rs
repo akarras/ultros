@@ -92,10 +92,14 @@ pub struct SyncSubscription {
     /// dropping `SyncSubscription` still unsubscribes immediately.
     _subscription: Rc<RefCell<Option<RealtimeSubscription>>>,
     drain: Option<Effect<LocalStorage>>,
+    recovery_retry: Option<Effect<LocalStorage>>,
 }
 
 impl Drop for SyncSubscription {
     fn drop(&mut self) {
+        if let Some(effect) = self.recovery_retry.take() {
+            effect.dispose();
+        }
         if let Some(effect) = self.drain.take() {
             effect.dispose();
         }
@@ -132,7 +136,7 @@ fn defer(task: impl FnOnce() + 'static) {
 /// was *not* actually brought up to date:
 ///
 /// - payload was `Snapshot` and pending — replace the document outright
-///   with that snapshot and re-apply local rows as fresh ops
+///   with that snapshot and replay verified local intent as fresh ops
 ///   (`ListDocHandle::rebase_onto_snapshot`), then fall through into the
 ///   logic below with the same `V` (the snapshot is treated as consumed, so
 ///   the `(same_version, Some(bytes))` branch below cannot fire a second
@@ -151,7 +155,7 @@ fn defer(task: impl FnOnce() + 'static) {
 ///   (non-pending) `Snapshot` — the server rejected our diff for exactly
 ///   this version and answered with a fresh snapshot, so resending the same
 ///   bytes would loop forever, each cycle costing the server a whole
-///   snapshot. Rebase the local rows onto that snapshot
+///   snapshot. Recover local intent onto that snapshot
 ///   (`ListDocHandle::rebase_onto_snapshot`), dropping a local meta change
 ///   if a `MetaForbidden` was seen since the last successful handshake,
 ///   send `export_since(V)` once more, and remember `rebased_for = V`.
@@ -224,6 +228,7 @@ pub fn start(
 
     let sender = realtime.clone();
     let version_flag = force_empty_version.clone();
+    let retry_flag = force_empty_version.clone();
     let subscription = realtime.subscribe_list_doc(
         list_id,
         move || {
@@ -244,6 +249,7 @@ pub fn start(
             ServerClient::ListDocSubscribed {
                 version, payload, ..
             } => {
+                if handle.recovery_paused() { return; }
                 // `snapshot` is `Some(bytes)` only when the reply carried a
                 // Snapshot AND that snapshot fully merged (not pending) —
                 // i.e. it's still available for the "server rejected our
@@ -254,7 +260,7 @@ pub fn start(
                 let mut pending_rebased = false;
                 let snapshot = match payload {
                     ListDocPayload::Snapshot(bytes) => {
-                        let report = match handle.import(&bytes) {
+                        let report = match handle.import_server_snapshot(&bytes) {
                             Ok(report) => report,
                             Err(error) => {
                                 handle.set_status("offline");
@@ -271,15 +277,15 @@ pub fn start(
                             // the doc was NOT brought up to date by that
                             // import. Recover the same way a rejected diff
                             // does: replace the document outright with the
-                            // server's snapshot and re-apply local rows as
+                            // server's snapshot and replay verified local intent as
                             // fresh ops, then fall through into the normal
                             // "am I ahead" logic with this same `version` so
                             // the freshly rebased rows still get sent.
-                            let keep_meta = !meta_forbidden.get();
+                            let keep_meta = handle.permission.get_untracked() >= 3 && !meta_forbidden.get();
                             if let Err(error) = handle.rebase_onto_snapshot(&bytes, keep_meta) {
                                 handle.set_status("offline");
-                                log::error!(
-                                    "list {list_id}: rebase onto pending snapshot failed: {error}"
+                                log::warn!(
+                                    "list {list_id}: rebase onto pending snapshot needs review: {error}"
                                 );
                                 return;
                             }
@@ -353,10 +359,10 @@ pub fn start(
                     }
                     match (same_version, snapshot) {
                         (true, Some(bytes)) => {
-                            let keep_meta = !meta_forbidden.get();
+                            let keep_meta = handle.permission.get_untracked() >= 3 && !meta_forbidden.get();
                             if let Err(error) = handle.rebase_onto_snapshot(&bytes, keep_meta) {
                                 handle.set_status("offline");
-                                log::error!("list {list_id}: rebase onto snapshot failed: {error}");
+                                log::warn!("list {list_id}: rebase onto snapshot needs review: {error}");
                                 return;
                             }
                             meta_forbidden.set(false);
@@ -409,6 +415,7 @@ pub fn start(
                 handle.save_now();
             }
             ServerClient::ListDocUpdate { update, .. } => {
+                if handle.recovery_paused() { return; }
                 let report = match handle.import(&update) {
                     Ok(report) => report,
                     Err(error) => {
@@ -491,6 +498,14 @@ pub fn start(
     );
     *slot.borrow_mut() = Some(subscription);
 
+    let retry_slot = Rc::downgrade(&slot);
+    let recovery_retry = Effect::new(move |_| {
+        if handle.recovery_retry.try_get().unwrap_or(0) > 0 {
+            let slot = retry_slot.clone();
+            let flag = retry_flag.clone();
+            defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+        }
+    });
     let sender = realtime;
     let drain = Effect::new(move |_| {
         // `try_get`, not `get`: the page disposes a handle once it has been
@@ -499,7 +514,11 @@ pub fn start(
         let Some(pending) = handle.outbox.try_get() else {
             return;
         };
-        if pending.is_empty() {
+        if pending.is_empty()
+            || handle.recovery_state.try_get()
+                == Some(crate::list_doc::handle::RecoveryState::Review)
+            || handle.status.try_get().as_deref() != Some("live")
+        {
             return;
         }
         for update in pending {
@@ -519,6 +538,7 @@ pub fn start(
     SyncSubscription {
         _subscription: slot,
         drain: Some(drain),
+        recovery_retry: Some(recovery_retry),
     }
 }
 

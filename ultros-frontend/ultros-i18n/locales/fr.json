@@ -2367,5 +2367,17 @@
     "cart_undo_unavailable": "Ce retrait ne peut plus être annulé",
     "account_list_save_failed": "Les modifications ne sont pas enregistrées sur cet appareil. Gardez cette page ouverte, réessayez ou téléchargez une copie de secours.",
     "account_list_save_retry": "Réessayer",
-    "account_list_save_export": "Télécharger une copie de secours"
+    "account_list_save_export": "Télécharger une copie de secours",
+    "list_recovery_title": "Vérifier les modifications avant la synchronisation",
+    "list_recovery_help": "La synchronisation est suspendue : certaines modifications sont en conflit ou leur historique commun est indisponible. Les deux copies sont conservées. Comparez les différences, téléchargez une copie de récupération ou modifiez les valeurs de cet appareil et réessayez. Abandonner les modifications locales réinitialise Annuler.",
+    "list_recovery_field": "Objet ou paramètre",
+    "list_recovery_local": "Cet appareil",
+    "list_recovery_server": "Copie du serveur",
+    "list_recovery_scope": "Zone de marché",
+    "list_recovery_values": "{{needed}} nécessaires · {{owned}} possédés · objectif {{target}} gils",
+    "list_recovery_absent": "Absent de cette copie",
+    "list_recovery_retry": "Réessayer avec les modifications actuelles",
+    "list_recovery_use_server": "Abandonner les modifications locales et utiliser la version du serveur",
+    "list_recovery_reset": "Liste récupérée. L’historique Annuler et Rétablir a été réinitialisé ; les nouvelles modifications peuvent être annulées.",
+    "list_recovery_meta_dropped": "Vos modifications du nom ou de la zone de marché n’ont pas été appliquées : seul le propriétaire peut modifier ces paramètres."
 }

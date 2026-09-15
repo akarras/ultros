@@ -2367,5 +2367,17 @@
     "cart_undo_unavailable": "이 제거는 더 이상 실행 취소할 수 없습니다",
     "account_list_save_failed": "변경 사항이 이 기기에 저장되지 않았습니다. 이 페이지를 열어 둔 채 다시 시도하거나 복구용 사본을 다운로드하세요.",
     "account_list_save_retry": "저장 다시 시도",
-    "account_list_save_export": "복구용 사본 다운로드"
+    "account_list_save_export": "복구용 사본 다운로드",
+    "list_recovery_title": "동기화 전 변경 사항 검토",
+    "list_recovery_help": "변경 사항이 충돌하거나 공통 기록을 사용할 수 없어 동기화가 일시 중지되었습니다. 두 복사본은 모두 보존됩니다. 아래 차이를 비교하고 복구용 복사본을 다운로드하거나 이 기기의 값을 수정한 후 다시 시도하세요. 로컬 변경을 삭제하면 실행 취소 기록이 초기화됩니다.",
+    "list_recovery_field": "아이템 또는 설정",
+    "list_recovery_local": "이 기기",
+    "list_recovery_server": "서버 복사본",
+    "list_recovery_scope": "시장 범위",
+    "list_recovery_values": "필요 {{needed}} · 보유 {{owned}} · 목표 {{target}}길",
+    "list_recovery_absent": "이 복사본에 없음",
+    "list_recovery_retry": "현재 변경으로 다시 시도",
+    "list_recovery_use_server": "로컬 변경을 삭제하고 서버 버전 사용",
+    "list_recovery_reset": "목록을 복구했습니다. 이전 실행 취소 및 다시 실행 기록이 초기화되었습니다. 새 편집은 실행 취소할 수 있습니다.",
+    "list_recovery_meta_dropped": "이름과 시장 범위는 소유자만 변경할 수 있으므로 해당 변경 사항은 적용되지 않았습니다."
 }

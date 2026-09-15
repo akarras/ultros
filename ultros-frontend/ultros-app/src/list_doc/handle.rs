@@ -17,6 +17,8 @@ use ultros_list_doc::{
     DocError, ImportReport, ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription,
 };
 
+use ultros_list_doc::recovery::{self, RecoveryError};
+
 use crate::list_doc::adapter::{self, Edit};
 use crate::list_doc::store::{self, BrowserStorage};
 
@@ -25,6 +27,13 @@ pub enum SaveState {
     Pending,
     Saved,
     Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecoveryState {
+    None,
+    Recovered { dropped_meta: bool },
+    Review,
 }
 
 #[cfg(feature = "hydrate")]
@@ -79,6 +88,9 @@ pub struct ListDocHandle {
     /// Last known `ListPermission` as `i16`, cached beside the snapshot.
     pub permission: RwSignal<i16>,
     pub save_state: RwSignal<SaveState>,
+    pub recovery_state: RwSignal<RecoveryState>,
+    pub recovery_retry: RwSignal<u64>,
+    recovery_snapshot: StoredValue<Option<Vec<u8>>, LocalStorage>,
     generation: StoredValue<String, LocalStorage>,
     replacement_source: StoredValue<Option<Vec<u8>>, LocalStorage>,
     revoked: StoredValue<std::rc::Rc<std::cell::Cell<bool>>, LocalStorage>,
@@ -149,6 +161,9 @@ impl ListDocHandle {
             status: RwSignal::new("connecting".to_string()),
             permission: RwSignal::new(permission),
             save_state: RwSignal::new(SaveState::Pending),
+            recovery_state: RwSignal::new(RecoveryState::None),
+            recovery_retry: RwSignal::new(0),
+            recovery_snapshot: StoredValue::new_local(None),
             generation: StoredValue::new_local(store::generation(
                 &BrowserStorage,
                 user_id,
@@ -266,6 +281,29 @@ impl ListDocHandle {
         }
         self.with_doc(|doc| doc.import(bytes))
             .unwrap_or(Ok(ImportReport { pending: false }))
+    }
+
+    /// Probe snapshot imports away from the live document. A parked/partial
+    /// import must not alter the history or projection used to recover intent.
+    pub fn import_server_snapshot(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        let probe = self.with_doc(|doc| -> Result<ImportReport, DocError> {
+            let server = ListDocument::from_snapshot(bytes)?;
+            if !server.can_export_since(&doc.version()) {
+                // Recover before importing: even an apparently successful
+                // shallow merge could resolve a same-field conflict and erase
+                // the local value the player needs to review.
+                return Ok(ImportReport { pending: true });
+            }
+            let copy = ListDocument::from_snapshot(&doc.export_snapshot()?)?;
+            copy.import(bytes)
+        });
+        match probe {
+            Some(Ok(ImportReport { pending: true }) | Err(DocError::OutdatedDependency)) => {
+                Ok(ImportReport { pending: true })
+            }
+            Some(Err(error)) => Err(error),
+            _ => self.import(bytes),
+        }
     }
 
     pub fn export_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
@@ -528,77 +566,101 @@ impl ListDocHandle {
         self.doc.set_value(fresh);
         self.undo.set_value(undo);
         self.subscriptions.set_value(vec![on_change, on_local]);
+        self.recovery_state.set(RecoveryState::None);
+        self.recovery_snapshot.set_value(None);
         self.permission.set(0);
         self.revision.update(|r| *r += 1);
     }
 
-    /// Replace the document with `snapshot` (the server's truth) and re-apply
-    /// the local rows on top as NEW operations, so edits the server could not
-    /// accept (history it compacted, or a forbidden meta change) are
-    /// re-expressed against the server's history. `keep_local_meta = false`
-    /// drops a local name/scope change. Returns whether anything local had to
-    /// be re-applied.
-    ///
-    /// This is the escape from the resync loop: after a rebase the local
-    /// document descends only from history the server has, so the next
-    /// `export_since(server_version)` is something it can actually merge.
-    /// Undo history restarts — the operations the stack pointed at no longer
-    /// exist — and the local rows survive as ordinary new edits.
+    /// Reconstruct local intent from durable history before replacing anything.
+    /// A failed recovery keeps the old document, undo stack and disk copy intact.
     pub fn rebase_onto_snapshot(
         &self,
         snapshot: &[u8],
         keep_local_meta: bool,
-    ) -> Result<bool, DocError> {
+    ) -> Result<bool, RecoveryError> {
         if self.is_closed_or_disposed() {
             return Ok(false);
         }
-        let local_rows = self.rows();
-        let local_meta = self.meta();
-        let fresh = ListDocument::from_snapshot(snapshot)?;
+        let recovered = self.with_doc(|doc| recovery::recover(doc, snapshot, keep_local_meta));
+        match recovered {
+            Some(Ok(recovered)) => {
+                let changed = recovered.changed;
+                self.replace_document(recovered.document);
+                self.recovery_snapshot.set_value(None);
+                self.recovery_state.set(RecoveryState::Recovered {
+                    dropped_meta: recovered.dropped_meta,
+                });
+                self.save_now();
+                Ok(changed)
+            }
+            Some(Err(error)) => {
+                self.recovery_snapshot.set_value(Some(snapshot.to_vec()));
+                self.recovery_state.set(RecoveryState::Review);
+                self.set_status("offline");
+                Err(error)
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub fn recovery_paused(&self) -> bool {
+        self.recovery_state.try_get_untracked() == Some(RecoveryState::Review)
+    }
+
+    pub fn recovery_server(&self) -> Option<ListDocument> {
+        self.recovery_snapshot
+            .try_with_value(|snapshot| {
+                snapshot
+                    .as_ref()
+                    .and_then(|bytes| ListDocument::from_snapshot(bytes).ok())
+            })
+            .flatten()
+    }
+
+    /// The player can correct their local values and request a fresh comparison.
+    pub fn retry_recovery(&self) {
+        if !self.is_closed_or_disposed() {
+            self.recovery_state.set(RecoveryState::None);
+            self.set_status("reconnecting");
+            self.recovery_retry.update(|n| *n += 1);
+        }
+    }
+
+    /// Explicit, labelled UI action after reviewing both copies. The stored
+    /// replacement is still fenced against unseen changes from another tab.
+    pub fn use_server_version(&self) {
+        if self.is_closed_or_disposed() || !self.recovery_paused() {
+            return;
+        }
+        if let Some(server) = self.recovery_server() {
+            self.replace_document(server);
+            self.recovery_snapshot.set_value(None);
+            self.recovery_state.set(RecoveryState::Recovered {
+                dropped_meta: false,
+            });
+            self.set_status("reconnecting");
+            self.save_now();
+            self.recovery_retry.update(|n| *n += 1);
+        }
+    }
+
+    fn replace_document(&self, fresh: ListDocument) {
         self.replacement_source.set_value(Some(self.try_version()));
         let undo = ListUndo::new(&fresh);
         let revision = self.revision;
         let outbox = self.outbox;
         let on_change = fresh.on_change(move || revision.update(|r| *r += 1));
         let on_local = fresh.on_local_update(move |bytes| {
-            let bytes = bytes.to_vec();
-            outbox.update(|queue| queue.push(bytes));
+            outbox.update(|queue| queue.push(bytes.to_vec()));
         });
-        // Cleared before the swap, like `purge`: whatever the abandoned
-        // document had queued depends on history the server rejected, and
-        // the re-applied mutations below refill the outbox with operations
-        // it can accept.
+        // Old operations depend on history the server rejected. The handshake
+        // sends the replacement's diff, including the recovered local intent.
         self.outbox.set(Vec::new());
         self.doc.set_value(fresh);
         self.undo.set_value(undo);
         self.subscriptions.set_value(vec![on_change, on_local]);
-
-        let Some(reapplied) = self.with_doc(|doc| ultros_list_doc::rebase_rows(doc, &local_rows))
-        else {
-            return Ok(false);
-        };
-        let mut reapplied = reapplied?;
-        if keep_local_meta {
-            let applied_meta = self.with_doc(|doc| -> Result<bool, DocError> {
-                let server_meta = doc.meta();
-                let mut applied = false;
-                if server_meta.name != local_meta.name {
-                    doc.rename(&local_meta.name)?;
-                    applied = true;
-                }
-                if let Some(scope) = local_meta.scope
-                    && server_meta.scope != Some(scope)
-                {
-                    doc.set_scope(scope)?;
-                    applied = true;
-                }
-                Ok(applied)
-            });
-            reapplied |= applied_meta.unwrap_or(Ok(false))?;
-        }
         self.revision.update(|r| *r += 1);
-        self.save_now();
-        Ok(reapplied)
     }
 
     /// Stop this handle from doing any more background work: flushes any
@@ -637,6 +699,9 @@ impl ListDocHandle {
         self.status.dispose();
         self.permission.dispose();
         self.save_state.dispose();
+        self.recovery_state.dispose();
+        self.recovery_retry.dispose();
+        self.recovery_snapshot.dispose();
         self.generation.dispose();
         self.replacement_source.dispose();
         self.revoked.dispose();
@@ -719,6 +784,120 @@ impl ListDocHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn recovery_peers() -> (ListDocHandle, ListDocument, ultros_list_doc::RowKey) {
+        let key = ultros_list_doc::RowKey::new(1, None);
+        let server = ListDocument::new();
+        server.rename("Shared").unwrap();
+        server.add_row(key, 10, None).unwrap();
+        let handle = ListDocHandle::open(1, 1);
+        handle.import(&server.export_snapshot().unwrap()).unwrap();
+        (handle, server, key)
+    }
+
+    fn compact_after(server: &ListDocument) -> Vec<u8> {
+        let tip = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+        let name = tip.meta().name;
+        tip.rename(&format!("{name} (compaction fixture)")).unwrap();
+        tip.rename(&name).unwrap();
+        tip.export_shallow().unwrap()
+    }
+
+    #[test]
+    fn compaction_recovery_swaps_only_after_success_and_resets_undo() {
+        Owner::new().with(|| {
+            let (handle, server, key) = recovery_peers();
+            handle
+                .with_doc(|doc| doc.set_need(&key, 15))
+                .unwrap()
+                .unwrap();
+            assert!(handle.can_undo());
+            server.add_acquired(&key, 4).unwrap();
+            let source = handle.try_version();
+            let compact = compact_after(&server);
+            assert!(handle.rebase_onto_snapshot(&compact, true).unwrap());
+            assert_eq!(handle.rows()[0].need, 15);
+            assert_eq!(handle.rows()[0].acquired, 4);
+            assert!(!handle.can_undo());
+            assert!(!handle.can_redo());
+            assert_eq!(handle.replacement_source.get_value(), Some(source));
+            assert_eq!(
+                handle.recovery_state.get_untracked(),
+                RecoveryState::Recovered {
+                    dropped_meta: false
+                }
+            );
+            let compact = ListDocument::from_snapshot(&compact).unwrap();
+            assert!(
+                !compact
+                    .import(&handle.export_since(&compact.version()).unwrap())
+                    .unwrap()
+                    .pending
+            );
+            assert_eq!(compact.rows(), handle.rows());
+            handle
+                .with_doc(|doc| doc.set_need(&key, 16))
+                .unwrap()
+                .unwrap();
+            assert!(handle.undo());
+            assert_eq!(handle.rows()[0].need, 15);
+            assert_eq!(handle.rows()[0].acquired, 4);
+            handle.dispose();
+        });
+    }
+
+    #[test]
+    fn conflict_keeps_local_history_and_allows_retry_or_explicit_server_choice() {
+        Owner::new().with(|| {
+            let (handle, server, key) = recovery_peers();
+            handle
+                .with_doc(|doc| doc.set_need(&key, 15))
+                .unwrap()
+                .unwrap();
+            server.set_need(&key, 20).unwrap();
+            let source = handle.try_version();
+            let outbox = handle.outbox.get_untracked();
+            let compact = compact_after(&server);
+            assert!(handle.import_server_snapshot(&compact).unwrap().pending);
+            assert_eq!(handle.try_version(), source);
+            assert_eq!(handle.rows()[0].need, 15);
+            assert!(handle.rebase_onto_snapshot(&compact, true).is_err());
+            assert_eq!(handle.try_version(), source);
+            assert_eq!(handle.outbox.get_untracked(), outbox);
+            assert!(handle.can_undo());
+            assert!(handle.recovery_paused());
+            assert_eq!(handle.recovery_server().unwrap().rows()[0].need, 20);
+            assert!(handle.replacement_source.get_value().is_none());
+            handle
+                .with_doc(|doc| doc.set_need(&key, 20))
+                .unwrap()
+                .unwrap();
+            handle.retry_recovery();
+            assert!(!handle.recovery_paused());
+            assert_eq!(handle.recovery_retry.get_untracked(), 1);
+            assert!(!handle.rebase_onto_snapshot(&compact, true).unwrap());
+            assert_eq!(handle.rows()[0].need, 20);
+            handle
+                .with_doc(|doc| doc.set_need(&key, 25))
+                .unwrap()
+                .unwrap();
+            let server = ListDocument::from_snapshot(&compact).unwrap();
+            server.set_need(&key, 30).unwrap();
+            assert!(
+                handle
+                    .rebase_onto_snapshot(&server.export_shallow().unwrap(), true)
+                    .is_err()
+            );
+            handle.use_server_version();
+            assert!(!handle.recovery_paused());
+            assert_eq!(handle.rows()[0].need, 30);
+            assert!(!handle.can_undo());
+            assert!(handle.outbox.get_untracked().is_empty());
+            handle.purge();
+            assert!(handle.recovery_server().is_none());
+            handle.dispose();
+        });
+    }
 
     #[test]
     fn export_failure_keeps_edits_and_retry_does_not_claim_durability() {
