@@ -68,6 +68,20 @@ connection's thread — and both read the memos the resource just dirtied
 with tens of thousands of panics in two seconds and a stale final value) and
 pins the reentrancy behaviour and recovery after a panicking computation.
 
+The follow-up in #1494 fixes a second race in the original retry logic: a
+writer can publish and release compute between a cache miss and the reader's
+ownership checks. Two such misses exhausted the one-retry limit and reported
+an undisposed memo as disposed. The slow read path now claims compute and
+checks the cache again before releasing it. A later panicking computation is
+retried after releasing both locks; contention has no arbitrary retry limit.
+The uncontended cached read still takes only its existing value read lock.
+
+The unit tests in `src/computed/arc_memo.rs` use thread-local, test-only
+scheduling hooks and channels to force the publish-before-owner-check
+interleaving (fails before the repair) and a computation unwind in the same
+window. The stress test retains caught panic messages and no longer replaces
+the process-wide panic hook, so a future failure preserves its cause.
+
 ## Upstream status
 
 Not yet reported upstream as of 2026-09-13; `reactive_graph` on `main` still
@@ -84,4 +98,4 @@ and `leptos` picks up the new version, delete this directory and the
 - Format with the crate's own `rustfmt.toml` (`cargo fmt` inside this
   directory); the root `cargo fmt --all` does not touch it.
 - Run its tests with `cargo test --manifest-path vendor/reactive_graph/Cargo.toml`;
-  `scripts/check_tests.sh` runs the regression test in CI.
+  `scripts/check_tests.sh` runs the unit and concurrency regression tests in CI.
