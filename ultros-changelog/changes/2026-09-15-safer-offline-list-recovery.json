@@ -2,6 +2,7 @@
   "category": "bug_fixes",
   "importance": "high",
   "title": "Offline list edits preserve shared progress",
-  "blurb": "Reconnecting an older list now keeps other players\u2019 purchases and edits. If changes conflict, compare both copies and choose how to recover before syncing continues.",
-  "link": "/list"
+  "blurb": "Reconnecting an older list now keeps other players’ purchases and edits. If changes conflict, compare both copies and choose how to recover before syncing continues.",
+  "link": "/list",
+  "labs": true
 }

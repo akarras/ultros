@@ -2008,6 +2008,7 @@
     "changelog_improvements": "改善",
     "changelog_bug_fixes": "錯誤修正",
     "changelog_try_it": "去看看",
+    "changelog_labs_hint": "屬於實驗室功能。在設定中開啟即可體驗。",
     "help_all_topics_link": "所有說明主題",
     "help_section_inputs": "輸入",
     "help_section_assumptions": "前提假設",

@@ -2008,6 +2008,7 @@
     "changelog_improvements": "改善",
     "changelog_bug_fixes": "不具合修正",
     "changelog_try_it": "使ってみる",
+    "changelog_labs_hint": "ラボの実験機能の一部です。設定でオンにすると試せます。",
     "help_all_topics_link": "ヘルプの全トピック",
     "help_section_inputs": "入力",
     "help_section_assumptions": "前提条件",
