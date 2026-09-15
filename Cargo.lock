@@ -11419,6 +11419,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "http 0.2.12",
  "metrics",
  "reqwest 0.11.27",
  "rustls 0.23.43",
