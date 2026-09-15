@@ -243,7 +243,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="cart-rows"] > li')[0]?.textContent.includes("Bronze Ingot"));
     await page.click('button[aria-label="Sort by Qty"]');
     await page.click('button[aria-label="Sort by Qty"]');
-    await page.waitForFunction(() => document.querySelector('button[aria-label="Sort by Qty"]')?.closest('[role="columnheader"]')?.getAttribute("aria-sort") === "none");
+    await page.waitForFunction(() => document.querySelector('button[aria-label="Sort by Qty"]')?.getAttribute("aria-pressed") === "false");
     await replace(needed, 6);
     await page.keyboard.press("Enter");
     await waitValue(needed, 6);

@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Clearer list sorting",
+  "blurb": "Sort lists by the quantity shown in each row, keep unpriced items last in either cost order, and hear the selected sort order with a screen reader.",
+  "link": "/list"
+}
