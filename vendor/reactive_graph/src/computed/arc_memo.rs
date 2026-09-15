@@ -335,8 +335,9 @@ where
         // thread start recomputing it. Wait for that recompute to land instead
         // of unwrapping the hole. The `Some` check and the mapped guard share
         // one read lock, so a recompute cannot slip in between them.
-        let mut retried = false;
         loop {
+            #[cfg(test)]
+            tests::read_stage(false);
             match Plain::try_new(Arc::clone(&self.inner.value)) {
                 Some(guard) if guard.is_some() => {
                     return Some(ReadGuard::new(Mapped::new_with_guard(
@@ -350,28 +351,32 @@ where
                 // The value has been taken out for a recompute.
                 Some(_) => {}
                 // `try_read` lost to the recomputing thread's brief write
-                // lock (or the lock is poisoned, which `update_if_necessary`
-                // below turns into a panic).
+                // lock. A poisoned value lock is reported as unavailable by
+                // the protected read below.
                 None => {}
             }
 
-            if self.inner.compute.held_by_other_thread() {
-                self.inner.compute.wait_for_release();
-                continue;
+            #[cfg(test)]
+            tests::read_stage(true);
+            // The cache miss and a later ownership observation are not one
+            // snapshot: the writer may already have published and released.
+            // Claim compute before checking the cache again, so another writer
+            // cannot take the value between these observations. None is only
+            // reentrancy (the current thread is computing this memo).
+            let compute_guard = self.inner.compute.acquire()?;
+            let guard = Plain::try_new(Arc::clone(&self.inner.value))?;
+            if guard.is_some() {
+                return Some(ReadGuard::new(Mapped::new_with_guard(
+                    guard,
+                    |t| t.as_ref().unwrap().as_borrowed(),
+                )));
             }
-            if self.inner.compute.held_by_current_thread() {
-                // A read of the memo from inside its own closure: there is no
-                // value to hand out yet, and nothing to wait for.
-                return None;
-            }
-            // Nobody is computing and there is still no value: the closure
-            // must have panicked on an earlier run (which leaves the memo
-            // `Dirty`). Give it one more chance, then report it as
-            // unavailable rather than spinning.
-            if retried {
-                return None;
-            }
-            retried = true;
+            // A computation may have unwound between our initial update and
+            // claiming compute. Its unwind guard restored Dirty. Release both
+            // locks before retrying; the update either publishes or propagates
+            // the computation's panic. Contention is never a retry budget.
+            drop(guard);
+            drop(compute_guard);
             self.update_if_necessary();
         }
     }
@@ -394,5 +399,122 @@ where
     #[track_caller]
     fn from(value: ArcRwSignal<T>) -> Self {
         ArcMemo::new(move |_| value.get())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{owner::Owner, traits::Set};
+    use std::{
+        cell::RefCell,
+        sync::{mpsc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    // Local to the reading thread, so the schedule cannot affect other tests
+    // or the writer's own memo reads. Entirely absent from production builds.
+    type ReadSchedule = Box<dyn FnMut(bool)>;
+    thread_local! {
+        static READ_SCHEDULE: RefCell<Option<ReadSchedule>> = RefCell::new(None);
+    }
+
+    pub(super) fn read_stage(after_miss: bool) {
+        READ_SCHEDULE.with_borrow_mut(|schedule| {
+            if let Some(schedule) = schedule {
+                schedule(after_miss);
+            }
+        });
+    }
+
+    #[test]
+    fn recompute_finishing_after_cache_miss_does_not_dispose_memo() {
+        finish_after_cache_miss(false);
+    }
+
+    #[test]
+    fn recompute_panicking_after_cache_miss_can_be_retried() {
+        finish_after_cache_miss(true);
+    }
+
+    fn finish_after_cache_miss(panic_after_miss: bool) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let pause_next = Arc::new(AtomicBool::new(false));
+        let owner = Owner::new();
+        owner.set();
+        let source = ArcRwSignal::new(0);
+        let (start_tx, start_rx) = mpsc::channel();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let finish_rx = Mutex::new(finish_rx);
+        let memo = ArcMemo::new({
+            let source = source.clone();
+            let pause_next = Arc::clone(&pause_next);
+            move |_| {
+                let value = source.get();
+                if pause_next.swap(false, Ordering::SeqCst) {
+                    entered_tx.send(()).unwrap();
+                    finish_rx
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                    assert!(!panic_after_miss, "scheduled computation failure");
+                }
+                value
+            }
+        });
+        assert_eq!(memo.get(), 0);
+        let writer = thread::spawn({
+            let memo = memo.clone();
+            move || {
+                for value in start_rx {
+                    source.set(value);
+                    let computed = std::panic::catch_unwind(
+                        std::panic::AssertUnwindSafe(|| memo.get()),
+                    );
+                    if panic_after_miss {
+                        assert!(computed.is_err());
+                    } else {
+                        assert_eq!(computed.unwrap(), value);
+                    }
+                    done_tx.send(()).unwrap();
+                }
+            }
+        });
+        let mut attempt = 0;
+        READ_SCHEDULE.with_borrow_mut(|schedule| {
+            *schedule = Some(Box::new(move |after_miss| {
+                if after_miss {
+                    // Publish the value AND release compute after the cache
+                    // miss, before the reader checks who owns compute.
+                    finish_tx.send(()).unwrap();
+                    done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                } else if !panic_after_miss || attempt == 0 {
+                    attempt += 1;
+                    pause_next.store(true, Ordering::SeqCst);
+                    assert!(
+                        attempt <= 2,
+                        "reader did not obtain the published value"
+                    );
+                    start_tx.send(attempt).unwrap();
+                    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                }
+            }));
+        });
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                memo.get()
+            }));
+        READ_SCHEDULE.with_borrow_mut(|schedule| *schedule = None);
+        writer.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "a completed recompute was mistaken for a disposed memo"
+        );
+        assert!(result.unwrap() > 0);
     }
 }
