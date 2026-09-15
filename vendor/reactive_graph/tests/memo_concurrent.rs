@@ -15,7 +15,7 @@ use reactive_graph::{
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -54,7 +54,7 @@ fn concurrent_reads_during_recompute_never_panic() {
         }
     });
 
-    let panics = Arc::new(AtomicUsize::new(0));
+    let panics = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
     let readers = (0..4)
         .map(|_| {
@@ -66,17 +66,22 @@ fn concurrent_reads_during_recompute_never_panic() {
                     let read = std::panic::catch_unwind(
                         std::panic::AssertUnwindSafe(|| memo.get()),
                     );
-                    if read.is_err() {
-                        panics.fetch_add(1, Ordering::Relaxed);
+                    if let Err(payload) = read {
+                        let message = payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| {
+                                payload
+                                    .downcast_ref::<&str>()
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "non-string panic".to_string());
+                        panics.lock().unwrap().push(message);
                     }
                 }
             })
         })
         .collect::<Vec<_>>();
-
-    // Silence the default hook so a failure prints once, from the assert.
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
 
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut writes = 0u64;
@@ -89,12 +94,11 @@ fn concurrent_reads_during_recompute_never_panic() {
     for reader in readers {
         reader.join().unwrap();
     }
-    std::panic::set_hook(prev_hook);
 
-    assert_eq!(
-        panics.load(Ordering::Relaxed),
-        0,
-        "memo reads panicked while another thread was recomputing"
+    let panics = panics.lock().unwrap();
+    assert!(
+        panics.is_empty(),
+        "memo reads panicked during recompute: {panics:?}"
     );
     assert_eq!(memo.get(), writes);
 }
@@ -112,7 +116,7 @@ fn signal_reads_during_concurrent_writes_never_panic() {
     owner.set();
 
     let signal = ArcRwSignal::new(0u64);
-    let panics = Arc::new(AtomicUsize::new(0));
+    let panics = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
     let readers = (0..4)
         .map(|_| {
@@ -124,16 +128,22 @@ fn signal_reads_during_concurrent_writes_never_panic() {
                     let read = std::panic::catch_unwind(
                         std::panic::AssertUnwindSafe(|| signal.get()),
                     );
-                    if read.is_err() {
-                        panics.fetch_add(1, Ordering::Relaxed);
+                    if let Err(payload) = read {
+                        let message = payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| {
+                                payload
+                                    .downcast_ref::<&str>()
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "non-string panic".to_string());
+                        panics.lock().unwrap().push(message);
                     }
                 }
             })
         })
         .collect::<Vec<_>>();
-
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
 
     let deadline = Instant::now() + Duration::from_secs(1);
     let mut writes = 0u64;
@@ -145,12 +155,11 @@ fn signal_reads_during_concurrent_writes_never_panic() {
     for reader in readers {
         reader.join().unwrap();
     }
-    std::panic::set_hook(prev_hook);
 
-    assert_eq!(
-        panics.load(Ordering::Relaxed),
-        0,
-        "signal reads panicked while another thread was writing"
+    let panics = panics.lock().unwrap();
+    assert!(
+        panics.is_empty(),
+        "signal reads panicked during writes: {panics:?}"
     );
     assert_eq!(signal.get(), writes);
 }

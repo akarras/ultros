@@ -7,7 +7,7 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
-use ultros_list_doc::{ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription};
+use ultros_list_doc::{DocError, ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription};
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 
@@ -70,11 +70,20 @@ fn message(code: &str) -> String {
         "history" => td_string!(locale, device_runtime_history).to_string(),
         "conflict" => td_string!(locale, device_runtime_conflict).to_string(),
         "backup" => td_string!(locale, device_runtime_backup).to_string(),
+        "compatibility" => td_string!(locale, list_compatibility_help).to_string(),
         "invalid" => td_string!(locale, device_runtime_invalid).to_string(),
         "unavailable" => td_string!(locale, device_runtime_unavailable).to_string(),
         "blocked" => td_string!(locale, device_runtime_blocked).to_string(),
         "QuotaExceededError" => td_string!(locale, device_runtime_quota).to_string(),
         _ => td_string!(locale, device_runtime_unsaved).to_string(),
+    }
+}
+fn document_error(error: DocError) -> String {
+    match error {
+        DocError::UnsupportedSchema(_)
+        | DocError::InvalidStructure(_)
+        | DocError::IncompleteSnapshot => message("compatibility"),
+        _ => message("corrupt"),
     }
 }
 fn error_message(error: JsValue) -> String {
@@ -170,7 +179,7 @@ impl GuestListHandle {
     pub async fn restore(text: &str) -> Result<Self, String> {
         let decoded = JsFuture::from(decode(text)).await.map_err(error_message)?;
         let snapshot = bytes(&decoded)?;
-        let doc = ListDocument::from_snapshot(&snapshot).map_err(|_| message("backup"))?;
+        let doc = ListDocument::from_snapshot(&snapshot).map_err(document_error)?;
         let name = property(&decoded, "name")?
             .as_string()
             .ok_or_else(|| message("corrupt"))?;
@@ -185,7 +194,7 @@ impl GuestListHandle {
         Self::from_record(record)
     }
     fn from_record(record: JsValue) -> Result<Self, String> {
-        let doc = ListDocument::from_snapshot(&bytes(&record)?).map_err(|_| message("corrupt"))?;
+        let doc = ListDocument::from_snapshot(&bytes(&record)?).map_err(document_error)?;
         let revision = RwSignal::new(0u64);
         let subscription = doc.on_change(move || {
             let _ = revision.try_update(|n| *n += 1);
@@ -380,11 +389,9 @@ impl GuestListHandle {
                 .ok_or_else(|| message("corrupt"))?;
             let dirty = *self.inner.saved_version.borrow() != self.inner.doc.version();
             if stored_revision != self.inner.storage_revision.get() {
-                let report = self
-                    .inner
-                    .doc
-                    .import(&bytes(&record)?)
-                    .map_err(|_| message("invalid"))?;
+                let snapshot = bytes(&record)?;
+                ListDocument::from_snapshot(&snapshot).map_err(document_error)?;
+                let report = self.inner.doc.import(&snapshot).map_err(document_error)?;
                 if report.pending {
                     return Err(message("history"));
                 }
