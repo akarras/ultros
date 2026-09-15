@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More accurate list price estimates",
+  "blurb": "Lists now count each listed unit once when you mix Any, HQ and NQ rows. Row details show the units included in each estimate.",
+  "link": "/list"
+}

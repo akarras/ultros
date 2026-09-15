@@ -2352,13 +2352,13 @@
     "cart_sort_cost_asc": "最便宜优先",
     "cart_sort_cost_desc": "最贵优先",
     "cart_sort_column": "按{{column}}排序",
-    "cart_listings_heading": "最便宜的匹配在售",
+    "cart_listings_heading": "此估价使用的在售数量",
     "cart_nothing_to_buy": "没有需要购买的物品",
-    "cart_no_matching_listings": "此清单范围内没有该品质的在售商品。",
+    "cart_no_matching_listings": "没有可用于此行估价的在售数量。",
     "cart_pricing_detail": "预估从{{listings}}条在售中计入{{requested}}个中的{{covered}}个，最低单价{{price}}。",
     "cart_listing_world": "服务器",
     "cart_listing_unit_price": "单价",
-    "cart_listing_stack": "数量",
+    "cart_listing_stack": "估价数量",
     "cart_close_details": "关闭详情",
     "cart_removed_named": "已移除{{name}}",
     "cart_removed_count": "已移除{{count}}件物品",
@@ -2379,5 +2379,6 @@
     "list_recovery_retry": "使用当前更改重试",
     "list_recovery_use_server": "放弃本地更改并使用服务器版本",
     "list_recovery_reset": "清单已恢复。之前的撤销和重做记录已重置；新编辑仍可撤销。",
-    "list_recovery_meta_dropped": "只有所有者可以更改名称或市场范围，因此未应用您的这些更改。"
+    "list_recovery_meta_dropped": "只有所有者可以更改名称或市场范围，因此未应用您的这些更改。",
+    "cart_allocation_help": "整个清单共享在售数量。先为指定HQ和NQ的行估价，再为接受任意品质的行估价。估价不会预订商品。"
 }

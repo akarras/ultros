@@ -2352,13 +2352,13 @@
     "cart_sort_cost_asc": "最便宜優先",
     "cart_sort_cost_desc": "最貴優先",
     "cart_sort_column": "按{{column}}排序",
-    "cart_listings_heading": "最便宜的相符在售",
+    "cart_listings_heading": "此估價使用的在售數量",
     "cart_nothing_to_buy": "沒有需要購買的物品",
-    "cart_no_matching_listings": "此清單範圍內沒有該品質的在售商品。",
+    "cart_no_matching_listings": "沒有可用於此行估價的在售數量。",
     "cart_pricing_detail": "預估從{{listings}}筆在售中計入{{requested}}個中的{{covered}}個，最低單價{{price}}。",
     "cart_listing_world": "伺服器",
     "cart_listing_unit_price": "單價",
-    "cart_listing_stack": "數量",
+    "cart_listing_stack": "估價數量",
     "cart_close_details": "關閉詳情",
     "cart_removed_named": "已移除{{name}}",
     "cart_removed_count": "已移除{{count}}件物品",
@@ -2379,5 +2379,6 @@
     "list_recovery_retry": "使用目前變更重試",
     "list_recovery_use_server": "捨棄本機變更並使用伺服器版本",
     "list_recovery_reset": "清單已復原。先前的復原與重做紀錄已重設；新編輯仍可復原。",
-    "list_recovery_meta_dropped": "只有擁有者可以變更名稱或市場範圍，因此未套用您的這些變更。"
+    "list_recovery_meta_dropped": "只有擁有者可以變更名稱或市場範圍，因此未套用您的這些變更。",
+    "cart_allocation_help": "整個清單共享在售數量。先為指定HQ和NQ的行估價，再為接受任意品質的行估價。估價不會預訂商品。"
 }

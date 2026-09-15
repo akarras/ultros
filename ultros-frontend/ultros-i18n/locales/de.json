@@ -2352,13 +2352,13 @@
     "cart_sort_cost_asc": "Günstigste zuerst",
     "cart_sort_cost_desc": "Teuerste zuerst",
     "cart_sort_column": "Nach {{column}} sortieren",
-    "cart_listings_heading": "Günstigste passende Angebote",
+    "cart_listings_heading": "Für diese Schätzung verwendete Einheiten",
     "cart_nothing_to_buy": "Nichts mehr zu kaufen",
-    "cart_no_matching_listings": "Keine Angebote dieser Qualität im Bereich der Liste.",
+    "cart_no_matching_listings": "Für die Schätzung dieser Zeile sind keine angebotenen Einheiten verfügbar.",
     "cart_pricing_detail": "Die Schätzung deckt {{covered}} von {{requested}} Einheiten aus {{listings}} Angeboten, das günstigste zu {{price}} pro Einheit.",
     "cart_listing_world": "Welt",
     "cart_listing_unit_price": "Stückpreis",
-    "cart_listing_stack": "Stapel",
+    "cart_listing_stack": "Berechnete Einheiten",
     "cart_close_details": "Details schließen",
     "cart_removed_named": "{{name}} entfernt",
     "cart_removed_count": "{{count}} Gegenstände entfernt",
@@ -2379,5 +2379,6 @@
     "list_recovery_retry": "Mit aktuellen Änderungen erneut versuchen",
     "list_recovery_use_server": "Lokale Änderungen verwerfen und Serverversion verwenden",
     "list_recovery_reset": "Liste wiederhergestellt. Der bisherige Verlauf für Rückgängig und Wiederholen wurde zurückgesetzt; neue Änderungen können rückgängig gemacht werden.",
-    "list_recovery_meta_dropped": "Deine Änderungen an Name oder Marktgebiet wurden nicht übernommen, da nur der Besitzer diese Einstellungen ändern darf."
+    "list_recovery_meta_dropped": "Deine Änderungen an Name oder Marktgebiet wurden nicht übernommen, da nur der Besitzer diese Einstellungen ändern darf.",
+    "cart_allocation_help": "Verfügbare Einheiten werden auf die gesamte Liste verteilt. HQ- und NQ-Zeilen werden vor Zeilen mit beliebiger Qualität berechnet. Schätzungen reservieren keine Angebote."
 }

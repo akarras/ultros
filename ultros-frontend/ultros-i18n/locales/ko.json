@@ -2352,13 +2352,13 @@
     "cart_sort_cost_asc": "저렴한 순",
     "cart_sort_cost_desc": "비싼 순",
     "cart_sort_column": "{{column}} 기준 정렬",
-    "cart_listings_heading": "조건에 맞는 가장 저렴한 판매 목록",
+    "cart_listings_heading": "이 견적에 사용된 판매 수량",
     "cart_nothing_to_buy": "더 구매할 것이 없습니다",
-    "cart_no_matching_listings": "이 목록의 범위에 해당 품질의 판매 목록이 없습니다.",
+    "cart_no_matching_listings": "이 행의 견적에 사용할 수 있는 판매 수량이 없습니다.",
     "cart_pricing_detail": "예상 금액은 판매 목록 {{listings}}건에서 {{requested}}개 중 {{covered}}개를 계산했으며, 최저 단가는 {{price}}입니다.",
     "cart_listing_world": "서버",
     "cart_listing_unit_price": "단가",
-    "cart_listing_stack": "수량",
+    "cart_listing_stack": "견적 수량",
     "cart_close_details": "상세 닫기",
     "cart_removed_named": "{{name}} 제거됨",
     "cart_removed_count": "아이템 {{count}}개 제거됨",
@@ -2379,5 +2379,6 @@
     "list_recovery_retry": "현재 변경으로 다시 시도",
     "list_recovery_use_server": "로컬 변경을 삭제하고 서버 버전 사용",
     "list_recovery_reset": "목록을 복구했습니다. 이전 실행 취소 및 다시 실행 기록이 초기화되었습니다. 새 편집은 실행 취소할 수 있습니다.",
-    "list_recovery_meta_dropped": "이름과 시장 범위는 소유자만 변경할 수 있으므로 해당 변경 사항은 적용되지 않았습니다."
+    "list_recovery_meta_dropped": "이름과 시장 범위는 소유자만 변경할 수 있으므로 해당 변경 사항은 적용되지 않았습니다.",
+    "cart_allocation_help": "판매 수량은 목록 전체에서 나누어 계산합니다. HQ 및 NQ 지정 행을 품질 무관 행보다 먼저 계산합니다. 견적은 매물을 예약하지 않습니다."
 }

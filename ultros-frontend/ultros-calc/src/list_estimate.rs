@@ -12,7 +12,8 @@
 //!   clamped to zero. A row with nothing remaining is [`LineStatus::Acquired`]
 //!   and contributes nothing.
 //! - NQ prices only NQ listings, HQ only HQ listings, `None` (Any) prices both
-//!   together without preferring either.
+//!   together without preferring either. The cart allocates restrictive HQ/NQ
+//!   requests first, then Any, counting each physical listing's units once.
 //! - Units are taken from matching listings in ascending unit-price order
 //!   until the remaining quantity is covered. When the board runs out the
 //!   line is short ([`LineStatus::PartialSupply`] or [`LineStatus::NoSupply`]),
@@ -23,6 +24,7 @@
 //!   [`CartEstimate::saturated`] set rather than wrapping.
 
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use ultros_api_types::{ActiveListing, list::ListItem};
@@ -82,6 +84,17 @@ impl LineStatus {
     }
 }
 
+/// Units of one physical listing assigned to a row's estimate. Build can
+/// price part of a stack; these units are neither a reservation nor a purchase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListingAllocation {
+    pub id: i32,
+    pub world_id: i32,
+    pub price_per_unit: i32,
+    pub hq: bool,
+    pub units: i32,
+}
+
 /// One row's estimate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineEstimate {
@@ -96,9 +109,11 @@ pub struct LineEstimate {
     pub unpriced_units: i32,
     /// Gil for the priced units only.
     pub total: i64,
-    /// Cheapest matching unit price — what the existing price column shows.
+    /// Cheapest unit available to this row after earlier allocations.
     pub unit_price: Option<i32>,
     pub status: LineStatus,
+    /// The same allocated units that contribute to `total`, cheapest first.
+    pub allocations: Vec<ListingAllocation>,
 }
 
 /// Coverage of the whole cart.
@@ -154,35 +169,44 @@ impl CartEstimate {
 /// prices prefer the larger stack and then the lower listing id so the
 /// result is stable across renders.
 pub fn estimate_line(request: LineRequest, listings: &[ActiveListing]) -> LineEstimate {
-    let remaining = request.remaining();
-    let mut matching: Vec<&ActiveListing> = listings
-        .iter()
-        .filter(|listing| listing.item_id == request.item_id)
-        .filter(|listing| request.hq.is_none_or(|hq| listing.hq == hq))
-        .filter(|listing| listing.quantity > 0 && listing.price_per_unit > 0)
-        .collect();
-    matching.sort_by_key(|listing| {
-        (
-            listing.price_per_unit,
-            Reverse(listing.quantity),
-            listing.id,
-        )
-    });
-    let unit_price = matching.first().map(|listing| listing.price_per_unit);
+    estimate_cart([(request, listings)]).lines.remove(0)
+}
 
-    let mut left = i64::from(remaining);
+struct Capacity<'a> {
+    listing: &'a ActiveListing,
+    left: i32,
+}
+
+fn allocate_line(request: LineRequest, listings: &mut [Capacity<'_>]) -> LineEstimate {
+    let remaining = request.remaining();
+    let mut matching = listings
+        .iter_mut()
+        .filter(|offer| offer.left > 0 && request.hq.is_none_or(|hq| offer.listing.hq == hq))
+        .peekable();
+    let unit_price = matching.peek().map(|offer| offer.listing.price_per_unit);
+    let mut left = remaining;
     let mut total: i64 = 0;
-    for listing in &matching {
+    let mut allocations = Vec::new();
+    for offer in matching {
         if left == 0 {
             break;
         }
-        let take = i64::from(listing.quantity).min(left);
+        let listing = offer.listing;
+        let take = offer.left.min(left);
         // `i32 × i32` fits `i64`, and the running sum is bounded by
         // `remaining × max unit price`, which also fits.
-        total += i64::from(listing.price_per_unit) * take;
+        total += i64::from(listing.price_per_unit) * i64::from(take);
         left -= take;
+        offer.left -= take;
+        allocations.push(ListingAllocation {
+            id: listing.id,
+            world_id: listing.world_id,
+            price_per_unit: listing.price_per_unit,
+            hq: listing.hq,
+            units: take,
+        });
     }
-    let unpriced_units = left as i32;
+    let unpriced_units = left;
     let priced_units = remaining - unpriced_units;
     let status = if remaining == 0 {
         LineStatus::Acquired
@@ -204,17 +228,89 @@ pub fn estimate_line(request: LineRequest, listings: &[ActiveListing]) -> LineEs
         total,
         unit_price,
         status,
+        allocations,
     }
 }
 
-/// Estimate every row and aggregate the cart.
+/// Share physical supply across the whole cart. HQ and NQ rows allocate
+/// first, then Any rows use the remaining capacity. Stable row identities
+/// break ties; input order and UI filtering must not decide who gets supply.
+/// Results retain input order so callers can associate them with their rows.
 pub fn estimate_cart<'a, I>(rows: I) -> CartEstimate
 where
     I: IntoIterator<Item = (LineRequest, &'a [ActiveListing])>,
 {
+    let rows: Vec<_> = rows.into_iter().collect();
+    // A listing is repeated in each matching row's fetched offers. Keep one
+    // capacity per physical id, using the newest observation if copies differ.
+    // The remaining tie-breakers make even inconsistent copies deterministic.
+    let mut unique: BTreeMap<(i32, i32), &ActiveListing> = BTreeMap::new();
+    let observation = |listing: &ActiveListing| {
+        (
+            listing.timestamp,
+            listing.price_per_unit,
+            Reverse(listing.quantity),
+            listing.world_id,
+            listing.hq,
+            listing.retainer_id,
+        )
+    };
+    for (request, listings) in &rows {
+        for listing in *listings {
+            if listing.item_id != request.item_id {
+                continue;
+            }
+            unique
+                .entry((listing.item_id, listing.id))
+                .and_modify(|current| {
+                    if observation(listing) > observation(current) {
+                        *current = listing;
+                    }
+                })
+                .or_insert(listing);
+        }
+    }
+    let mut supply: BTreeMap<i32, Vec<Capacity<'_>>> = BTreeMap::new();
+    for listing in unique.into_values() {
+        // Select the observation first: a newer empty/invalid offer must not
+        // leave an older positive copy contributing phantom capacity.
+        if listing.quantity <= 0 || listing.price_per_unit <= 0 {
+            continue;
+        }
+        supply.entry(listing.item_id).or_default().push(Capacity {
+            listing,
+            left: listing.quantity,
+        });
+    }
+    for offers in supply.values_mut() {
+        offers.sort_by_key(|offer| {
+            (
+                offer.listing.price_per_unit,
+                Reverse(offer.listing.quantity),
+                offer.listing.id,
+            )
+        });
+    }
+    let mut order: Vec<_> = (0..rows.len()).collect();
+    order.sort_by_key(|&index| {
+        let request = rows[index].0;
+        (
+            request.item_id,
+            request.hq.is_none(),
+            request.hq,
+            request.row_id,
+            request.requested,
+            request.acquired,
+        )
+    });
+    let mut allocated = vec![None; rows.len()];
+    for index in order {
+        let request = rows[index].0;
+        let offers = supply.entry(request.item_id).or_default();
+        allocated[index] = Some(allocate_line(request, offers));
+    }
     let mut cart = CartEstimate::default();
-    for (request, listings) in rows {
-        let line = estimate_line(request, listings);
+    for line in allocated.into_iter().flatten() {
         match line.status {
             LineStatus::Acquired => cart.lines_acquired += 1,
             LineStatus::Priced => cart.lines_priced += 1,
@@ -663,20 +759,153 @@ mod tests {
 
     #[test]
     fn cart_sum_saturates_instead_of_wrapping() {
-        let listings = [listing(1, 10, false, i32::MAX, i32::MAX)];
-        let maximal = request(1, 10, None, i32::MAX, 0);
-        let two = estimate_cart([(maximal, &listings[..]), (maximal, &listings[..])]);
+        // Independent physical supply, rather than counting one stack again.
+        let listings: Vec<_> = (1..=3)
+            .map(|id| vec![listing(id, id, false, i32::MAX, i32::MAX)])
+            .collect();
+        let rows: Vec<_> = listings
+            .iter()
+            .enumerate()
+            .map(|(index, offers)| {
+                let id = index as i32 + 1;
+                (request(id, id, None, i32::MAX, 0), offers.as_slice())
+            })
+            .collect();
+        let two = estimate_cart(rows[..2].iter().copied());
         assert!(!two.saturated, "two maximal lines still fit an i64");
-        let three = estimate_cart([
-            (maximal, &listings[..]),
-            (maximal, &listings[..]),
-            (maximal, &listings[..]),
-        ]);
+        let three = estimate_cart(rows);
         assert!(three.saturated);
         assert_eq!(three.total, i64::MAX);
         assert!(three.is_incomplete());
         // Coverage is still reported from the lines themselves.
         assert_eq!(three.coverage, Coverage::Complete);
+    }
+
+    #[test]
+    fn restrictive_quality_demand_gets_supply_before_any() {
+        for hq in [false, true] {
+            let offers = [listing(1, 10, hq, 10, 2)];
+            let any = request(1, 10, None, 2, 0);
+            let restricted = request(2, 10, Some(hq), 2, 0);
+            for requests in [[any, restricted], [restricted, any]] {
+                let cart = estimate_cart(requests.map(|row| (row, offers.as_slice())));
+                assert_eq!(cart.total, 20);
+                assert_eq!(cart.unpriced_units, 2);
+                assert_eq!(cart.coverage, Coverage::Partial);
+                assert_eq!(
+                    cart.lines
+                        .iter()
+                        .find(|line| line.hq.is_none())
+                        .unwrap()
+                        .status,
+                    LineStatus::NoSupply
+                );
+                let supplied = cart.lines.iter().find(|line| line.hq.is_some()).unwrap();
+                assert_eq!(supplied.priced_units, 2);
+                assert_eq!(supplied.allocations[0].units, 2);
+            }
+        }
+    }
+
+    #[test]
+    fn all_qualities_share_partial_stacks_after_acquired_units() {
+        let offers = [listing(1, 10, true, 10, 3), listing(2, 10, false, 20, 4)];
+        let requests = [
+            request(1, 10, None, 5, 1),
+            request(2, 10, Some(true), 3, 1),
+            request(3, 10, Some(false), 2, 0),
+        ];
+        let mut expected = None;
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            for supply in [offers.to_vec(), offers.iter().rev().cloned().collect()] {
+                let mut cart =
+                    estimate_cart(order.map(|index| (requests[index], supply.as_slice())));
+                assert_eq!(cart.total, 110);
+                assert_eq!(cart.unpriced_units, 1);
+                assert_eq!(cart.coverage, Coverage::Partial);
+                cart.lines.sort_by_key(|line| line.row_id);
+                let any = &cart.lines[0];
+                assert_eq!(
+                    (any.total, any.priced_units, any.unpriced_units),
+                    (50, 3, 1)
+                );
+                assert_eq!(
+                    any.allocations
+                        .iter()
+                        .map(|part| (part.id, part.units))
+                        .collect::<Vec<_>>(),
+                    [(1, 1), (2, 2)]
+                );
+                for offer in &offers {
+                    let used: i32 = cart
+                        .lines
+                        .iter()
+                        .flat_map(|line| &line.allocations)
+                        .filter(|part| part.id == offer.id)
+                        .map(|part| part.units)
+                        .sum();
+                    assert_eq!(used, offer.quantity);
+                }
+                if let Some(expected) = &expected {
+                    assert_eq!(&cart, expected);
+                } else {
+                    expected = Some(cart);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn acquired_rows_leave_supply_and_build_only_prices_needed_units() {
+        let offers = [listing(1, 10, true, 10, 99)];
+        let cart = estimate_cart([
+            (request(1, 10, Some(true), 50, 50), offers.as_slice()),
+            (request(2, 10, None, 4, 1), offers.as_slice()),
+        ]);
+        assert_eq!(cart.total, 30, "Build does not buy the whole 99-unit stack");
+        assert!(cart.lines[0].allocations.is_empty());
+        assert_eq!(cart.lines[1].allocations[0].units, 3);
+        assert_eq!(cart.coverage, Coverage::Complete);
+    }
+
+    #[test]
+    fn repeated_offer_ids_and_inconsistent_copies_are_counted_once() {
+        let original = listing(1, 10, true, 10, 2);
+        let mut newer = original.clone();
+        newer.timestamp += chrono::Duration::seconds(1);
+        newer.quantity = 1;
+        let copies = [vec![original.clone(), original], vec![newer]];
+        let rows = [request(1, 10, None, 2, 0), request(2, 10, Some(true), 2, 0)];
+        for order in [[0, 1], [1, 0]] {
+            let cart = estimate_cart(order.map(|index| (rows[index], copies[index].as_slice())));
+            assert_eq!(cart.total, 10);
+            assert_eq!(cart.unpriced_units, 3);
+            assert_eq!(
+                cart.lines.iter().map(|line| line.priced_units).sum::<i32>(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn a_newer_empty_offer_retires_its_older_positive_copy() {
+        let old = listing(1, 10, true, 10, 2);
+        let mut empty = old.clone();
+        empty.timestamp += chrono::Duration::seconds(1);
+        empty.quantity = 0;
+        for offers in [vec![old.clone(), empty.clone()], vec![empty, old]] {
+            let cart = estimate_cart([(request(1, 10, None, 2, 0), offers.as_slice())]);
+            assert_eq!(cart.total, 0);
+            assert_eq!(cart.unpriced_units, 2);
+            assert!(cart.lines[0].allocations.is_empty());
+        }
     }
 
     #[test]
