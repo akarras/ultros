@@ -395,6 +395,54 @@
         "defaults": { "unit": "opm", "custom": { "fillOpacity": 10 } },
         "overrides": []
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Universalis REST requests/min by endpoint",
+      "description": "Outbound HTTP calls this process makes to universalis.app, by route family. 'current' is the catch-up sweep's board fetch (one call per 100 items), 'aggregated' the price-drift probe, 'recently_updated' the per-world 5-minute recency poll, 'history' sale backfills. Non-2xx statuses are broken out separately: a rising 429 line means Universalis is shedding our load.",
+      "id": 15,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (endpoint) (rate(ultros_universalis_requests_total[5m])) * 60",
+          "legendFormat": "{{endpoint}}/min"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (status) (rate(ultros_universalis_requests_total{status!~\"2..\"}[5m])) * 60",
+          "legendFormat": "status {{status}}/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "opm", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Universalis REST latency p50 / p95",
+      "description": "Round-trip time of outbound Universalis calls. A climbing p95 alongside a flat request rate is Universalis slowing down, not us sending more.",
+      "id": 16,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ultros_universalis_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ultros_universalis_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      }
     }
   ]
 }

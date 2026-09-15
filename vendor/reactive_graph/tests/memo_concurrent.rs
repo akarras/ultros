@@ -1,6 +1,10 @@
-//! Regression test: reading a memo from several threads while one of its
-//! sources changes must never observe the "hole" left while another thread
-//! is recomputing it (`arc_memo.rs: called Option::unwrap() on a None value`).
+//! Regression tests for cross-thread reads racing writes.
+//!
+//! Reading a memo from several threads while one of its sources changes must
+//! never observe the "hole" left while another thread is recomputing it
+//! (`arc_memo.rs: called Option::unwrap() on a None value`), and reading a
+//! signal while another thread is writing it must wait for that write rather
+//! than report the signal as disposed.
 
 use reactive_graph::{
     computed::ArcMemo,
@@ -97,6 +101,67 @@ fn concurrent_reads_during_recompute_never_panic() {
         "memo reads panicked during recompute: {panics:?}"
     );
     assert_eq!(memo.get(), writes);
+}
+
+/// A signal's `get` on one thread that coincides with a `set` on another
+/// used to fail as "already been disposed", because the read is a plain
+/// `try_read` and the writer holds the lock (for as long as the scheduler
+/// lets it). This is what actually tripped
+/// `concurrent_reads_during_recompute_never_panic` on CI
+/// (akarras/ultros#1491): the memo's closure read its source signal at the
+/// moment the test's writer thread was setting it.
+#[test]
+fn signal_reads_during_concurrent_writes_never_panic() {
+    let owner = Owner::new();
+    owner.set();
+
+    let signal = ArcRwSignal::new(0u64);
+    let panics = Arc::new(Mutex::new(Vec::new()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let readers = (0..4)
+        .map(|_| {
+            let signal = signal.clone();
+            let stop = Arc::clone(&stop);
+            let panics = Arc::clone(&panics);
+            thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let read = std::panic::catch_unwind(
+                        std::panic::AssertUnwindSafe(|| signal.get()),
+                    );
+                    if let Err(payload) = read {
+                        let message = payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| {
+                                payload
+                                    .downcast_ref::<&str>()
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "non-string panic".to_string());
+                        panics.lock().unwrap().push(message);
+                    }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut writes = 0u64;
+    while Instant::now() < deadline {
+        writes += 1;
+        signal.set(writes);
+    }
+    stop.store(true, Ordering::Relaxed);
+    for reader in readers {
+        reader.join().unwrap();
+    }
+
+    let panics = panics.lock().unwrap();
+    assert!(
+        panics.is_empty(),
+        "signal reads panicked during writes: {panics:?}"
+    );
+    assert_eq!(signal.get(), writes);
 }
 
 #[test]

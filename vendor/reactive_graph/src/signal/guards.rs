@@ -12,6 +12,7 @@ use std::{
     marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
 
 /// A wrapper type for any kind of guard returned by [`Read`](crate::traits::Read).
@@ -102,11 +103,50 @@ impl<T: 'static> Debug for Plain<T> {
 }
 
 impl<T: 'static> Plain<T> {
+    /// How long a read waits for a writer on another thread to let go of the
+    /// lock before giving up. A `set`/`update` holds the lock only for the
+    /// duration of the assignment or the closure, but a thread that is
+    /// preempted while holding it can keep it for a scheduler quantum or
+    /// more on a loaded machine, so this is generous.
+    const WRITER_GRACE: Duration = Duration::from_secs(1);
+
     /// Takes a reference-counted read guard on the given lock.
+    ///
+    /// Returns `None` if the lock is poisoned, or if it stays held for writing
+    /// (or with a writer queued) for longer than [`Self::WRITER_GRACE`].
+    ///
+    /// A plain `try_read` would fail the moment a `get` on this thread
+    /// coincides with a `set` on another, and `get` would then report a live
+    /// signal as disposed. Waiting for the writer rides that out. A writer on
+    /// *this* thread (a signal read from inside its own `update` closure) can
+    /// never release the lock while we wait, so the wait is bounded rather
+    /// than blocking and such a read still fails the way it always has, just
+    /// later. Single-threaded targets skip the wait: there, a failed
+    /// `try_read` is always that reentrant case.
     pub fn try_new(inner: Arc<RwLock<T>>) -> Option<Self> {
-        ArcRwLockReadGuardian::try_take(inner)?
-            .ok()
-            .map(|guard| Plain { guard })
+        let mut waiting_since = None;
+        let mut attempts = 0u32;
+        loop {
+            match ArcRwLockReadGuardian::try_take(Arc::clone(&inner)) {
+                Some(guard) => return guard.ok().map(|guard| Plain { guard }),
+                None if cfg!(target_arch = "wasm32") => return None,
+                None => {
+                    let since = *waiting_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= Self::WRITER_GRACE {
+                        return None;
+                    }
+                    // The writer usually only needs nanoseconds; spin briefly
+                    // before backing off to sleeps so a preempted writer is
+                    // not starved by readers burning the CPU.
+                    attempts += 1;
+                    if attempts <= 16 {
+                        std::thread::yield_now();
+                    } else {
+                        std::thread::sleep(Duration::from_micros(50));
+                    }
+                }
+            }
+        }
     }
 }
 

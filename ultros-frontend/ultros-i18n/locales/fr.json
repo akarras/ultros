@@ -101,7 +101,7 @@
     "lists_estimate_heading": "Total estimé",
     "lists_estimate_incomplete": "Incomplet",
     "lists_estimate_basis": "Unités en vente les moins chères pour ce qu’il vous reste à acheter. Des estimations, pas des réservations ; Acheter planifie des piles entières.",
-    "lists_estimate_partial": "{{priced}} objets sur {{lines}} ont un prix · {{units}} unités n’ont aucun prix en vente.",
+    "lists_estimate_partial": "Sous-total connu uniquement · {{units}} unités encore sans prix · {{priced}} objets sur {{lines}} entièrement chiffrés.",
     "lists_estimate_none": "Aucun prix en vente pour ces objets pour le moment.",
     "lists_estimate_empty": "Plus rien à acheter.",
     "lists_estimate_saturated": "Trop élevé pour un total exact.",

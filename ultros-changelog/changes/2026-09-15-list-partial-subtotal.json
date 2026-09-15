@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Keep partial list estimates visible",
+  "blurb": "Lists now show the known subtotal even when no item has enough listed stock, with a clear count of the units still missing a price.",
+  "link": "/list"
+}
