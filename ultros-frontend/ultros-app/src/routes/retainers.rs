@@ -553,9 +553,14 @@ pub fn RetainerUndercuts() -> impl IntoView {
                             </span>
                             // Registers the resource with the boundary so SSR
                             // awaits it; the `phase` memo below reads it under
-                            // its own owner and would not.
+                            // its own owner and would not. Returns a real
+                            // element: an erased closure returning `()` leaves an
+                            // extra SSR placeholder the client never consumes
+                            // during hydration (#1280). `hidden` keeps it out of
+                            // the layout.
                             {move || {
                                 let _ = retainers.get();
+                                view! { <span hidden aria-hidden="true"></span> }
                             }}
                             {move || {
                                 match phase.get() {
@@ -788,9 +793,14 @@ pub fn RetainerListings() -> impl IntoView {
                             </Show>
                             // Registers the resource with the boundary so SSR
                             // awaits it; the `phase` memo below reads it under
-                            // its own owner and would not.
+                            // its own owner and would not. Returns a real
+                            // element: an erased closure returning `()` leaves an
+                            // extra SSR placeholder the client never consumes
+                            // during hydration (#1280). `hidden` keeps it out of
+                            // the layout.
                             {move || {
                                 let _ = retainers.get();
+                                view! { <span hidden aria-hidden="true"></span> }
                             }}
                             {move || {
                                 match phase.get() {
