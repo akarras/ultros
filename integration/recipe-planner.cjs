@@ -57,11 +57,18 @@ async function main() {
     let homeUnavailable = false;
     let denseMarket = false;
     let vendorMarket = false;
+    let marginalMarket = false;
     page.on('request', request => {
       const match = new URL(request.url()).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
       if (!match) return request.continue();
       const item = Number(match[1]);
-      const marketRows = vendorMarket
+      const marketRows = marginalMarket
+        ? [
+          { id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 100 },
+          { id: item * 10 + 2, world_id: 79, quantity: 99, price_per_unit: item % 2 ? 100 : 40 },
+          { id: item * 10 + 3, world_id: 40, quantity: 99, price_per_unit: item % 2 ? 20 : 100 },
+        ]
+        : vendorMarket
         ? [{ id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 1000 }]
         : denseMarket
         ? [63, 79].flatMap(world => Array.from({ length: 90 }, (_, n) => ({
@@ -191,6 +198,51 @@ async function main() {
     await page.$$eval('button', buttons => buttons.find(b => b.textContent === 'Add remaining materials to a list').click());
     await page.waitForFunction(() => document.body.textContent.includes('Sign in to save this plan to a list.'));
     assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('owned')), new URL(shared).searchParams.get('owned'), 'opening Save must preserve the public plan');
+    // Each added route has its own marginal saving, distinct from the
+    // accumulated saving against home. Two ingredients have different cheap
+    // worlds, so the fixture must offer home, one-hop and two-hop alternatives.
+    marginalMarket = true;
+    await page.goto(`${BASE}/recipe/2?world=Gilgamesh&shards-exclude=false&include-vendors=false&route=79`, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    const marginalCards = await page.$$eval(cardSelector, buttons => buttons.map(button => ({
+      cost: Number(button.querySelector('strong').textContent.replace(/\D/g, '')),
+      incomplete: button.dataset.incomplete === 'true',
+      marginal: button.querySelector('[data-testid="route-marginal-saving"]')?.textContent || '',
+      basis: button.querySelector('[data-testid="route-saving"]')?.textContent || '',
+      destinations: button.title,
+      hiddenDestinations: button.querySelector('.sr-only')?.textContent,
+    })));
+    assert.ok(marginalCards.length >= 3, 'fixture supplies at least three travel alternatives');
+    assert.ok(marginalCards.every(card => !card.incomplete), 'every comparison route is complete');
+    assert.equal(marginalCards[0].marginal, '');
+    for (let index = 1; index < marginalCards.length; index++) {
+      const current = marginalCards[index];
+      const difference = marginalCards[index - 1].cost - current.cost;
+      assert.match(current.marginal, /previous route/);
+      if (difference !== 0) {
+        assert.equal(Number(current.marginal.replace(/\D/g, '')), Math.abs(difference), 'marginal comparison subtracts the adjacent route cost');
+        assert.match(current.marginal, difference > 0 ? /saved/ : /more/);
+      } else {
+        assert.match(current.marginal, /Same|same/);
+      }
+      assert.ok(current.destinations.length > 0);
+      assert.equal(current.destinations, current.hiddenDestinations, 'destinations remain available to assistive technology');
+    }
+    const lastCard = marginalCards.at(-1);
+    assert.equal(Number(lastCard.basis.replace(/\D/g, '')), marginalCards[0].cost - lastCard.cost, 'accumulated savings still use the complete home basis');
+    assert.notEqual(Number(lastCard.marginal.replace(/\D/g, '')), Number(lastCard.basis.replace(/\D/g, '')), 'fixture distinguishes marginal from accumulated savings');
+    const itineraryWorlds = await page.$$eval('[data-itinerary-world]', stops => stops.map(stop => Number(stop.dataset.itineraryWorld)));
+    assert.ok(itineraryWorlds.length > 1, 'pinned one-hop fixture includes purchases on home and another world');
+    assert.equal(itineraryWorlds[0], 63, 'starting world precedes alphabetically earlier Cactuar');
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: 1000 });
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.equal(await page.$eval('[data-itinerary-world]', stop => Number(stop.dataset.itineraryWorld)), 63, 'starting-world order survives hydration/reload');
+      await page.screenshot({ path: path.join(OUT, `marginal-routes-${width}.png`), fullPage: true });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth) <= 1);
+    }
+    marginalMarket = false;
     // Dense itinerary regression: checking a purchase must preserve stable
     // listing identity/order, including native input focus. No timing threshold:
     // DOM retention directly catches the expensive full-itinerary rebuild.

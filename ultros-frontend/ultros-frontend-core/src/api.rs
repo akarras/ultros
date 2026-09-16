@@ -393,7 +393,7 @@ pub async fn get_user_retainer_listings() -> AppResult<UserRetainerListings> {
     fetch_api("/api/v1/user/retainer/listings").await
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct UndercutData {
     pub current: ActiveListing,
     pub cheapest: i32,

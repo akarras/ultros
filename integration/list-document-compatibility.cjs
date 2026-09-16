@@ -37,10 +37,13 @@ async function prepare(page, errors) {
   page.setDefaultTimeout(60000);
   page.setDefaultNavigationTimeout(60000);
   page.on("pageerror", error => { if (!String(error.stack).includes("googlesyndication")) errors.push(String(error.stack || error)); });
+  page.on("console", message => { if (["warn", "error"].includes(message.type()) && /list snapshot|list schema|invalid list document/.test(message.text())) console.log(`Browser ${message.type()}: ${message.text()}`); });
   await page.setCookie({ name: "LABS", value: "lists-sync", url: base }, { name: "HIDE_ADS", value: "true", url: base });
   await page.setRequestInterception(true);
   page.on("request", request => /(^|\.)(googlesyndication\.com|doubleclick\.net|googleadservices\.com)$/.test(new URL(request.url()).hostname) ? request.abort() : request.continue());
   await page.evaluateOnNewDocument(() => {
+    window.compatibilityHydrated = false;
+    window.addEventListener("ultros:hydrated", () => { window.compatibilityHydrated = true; });
     const create = URL.createObjectURL;
     URL.createObjectURL = function (blob) { window.compatibilityExport = blob; return create.call(this, blob); };
     document.addEventListener("click", event => {
@@ -96,11 +99,15 @@ async function main() {
     assert.equal(await guest.$eval('input[aria-label^="Needed for "]', input => input.value), "5");
     console.log("PASS supported restore and future/malformed backup rejection without record changes");
 
-    const context = await browser.createBrowserContext();
+    // Incognito Cache Storage cannot hold the large debug WASM. This browser
+    // already has a disposable regular profile; guest checks are complete.
+    await guest.close();
+    const context = browser.defaultBrowserContext();
     control = await context.newPage();
     await prepare(control, errors);
-    const response = await control.goto(`${base}/test/login?user_id=${user}&username=SchemaCompatibilityQA&redirect=/list`);
+    const response = await control.goto(`${base}/test/login?user_id=${user}&username=SchemaCompatibilityQA&redirect=/list`, { waitUntil: "domcontentloaded" });
     assert(response.ok(), "fresh test-auth build required");
+    await control.waitForFunction(() => window.compatibilityHydrated);
     const worlds = await api(control, "GET", "/api/v1/world_data");
     const name = `Schema compatibility ${Date.now()}`;
     await api(control, "POST", "/api/v1/list/create", { name, wdr_filter: { World: worlds.regions[0].datacenters[0].worlds[0].id } });
@@ -115,17 +122,20 @@ async function main() {
       const original = Buffer.from(kind === "damaged" ? "not a Loro document" : fixtures[kind]).toString("base64");
       await control.evaluate(({ key, original }) => localStorage.setItem(key, original), { key, original });
       await page.goto(`${base}/list/${listId}?lang=en`, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => window.compatibilityHydrated);
       await page.waitForSelector(testId("list-compatibility-export"));
       await page.click(testId("list-compatibility-export"));
       const backup = await page.evaluate(async () => JSON.parse(await window.compatibilityExport.text()));
       assert.equal(backup.snapshot, original, `${kind}: export must contain the original bytes`);
       // Allow the save debounce and handshake callbacks to run before checking.
       await new Promise(resolve => setTimeout(resolve, 900));
+      assert.equal(await page.$eval(testId("realtime-status-indicator"), badge => badge.dataset.status), "offline", "incompatible data must not appear to be connecting or live");
       assert.equal(await page.evaluate(key => localStorage.getItem(key), key), original);
       assert.deepEqual(await page.evaluate(() => window.compatibilityUpdates), []);
       assert.deepEqual(projection(await api(control, "GET", `/api/v1/list/${listId}/listings`)), serverBefore);
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.waitForSelector(testId("list-compatibility-export"));
+      assert.equal(await page.$eval(testId("realtime-status-indicator"), badge => badge.dataset.status), "offline");
       assert.equal(await page.evaluate(key => localStorage.getItem(key), key), original);
       console.log(`PASS ${kind} account open: recovery export, reload, unchanged cache and server projection`);
     }
@@ -134,6 +144,14 @@ async function main() {
     await page.screenshot({ path: path.join(artifacts, "account-recovery-mobile.png"), fullPage: true });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     assert.deepEqual(errors, [], "no browser panics");
+  } catch (error) {
+    for (const [index, page] of (await browser.pages()).entries()) {
+      if (!page.url().startsWith(base)) continue;
+      console.error("Failure page", page.url(), await page.evaluate(() => ({ body: document.body.innerText.slice(-6000), recovery: document.querySelector('[data-testid="list-recovery"]')?.textContent, save: document.querySelector('[data-testid="account-list-save-state"]')?.textContent })).catch(String));
+      await page.screenshot({ path: path.join(artifacts, `failure-${index}.png`), fullPage: true }).catch(() => {});
+    }
+    console.error("Browser errors", errors);
+    throw error;
   } finally {
     if (control && listId) await api(control, "DELETE", `/api/v1/list/${listId}/delete`).catch(error => console.error("Fixture cleanup:", error));
     await browser.close();

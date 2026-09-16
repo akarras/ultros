@@ -201,7 +201,14 @@ impl ListDocHandle {
             save_timer: StoredValue::new_local(None),
             revision,
             outbox,
-            status: RwSignal::new("connecting".to_string()),
+            status: RwSignal::new(
+                if incompatible {
+                    "offline"
+                } else {
+                    "connecting"
+                }
+                .to_string(),
+            ),
             permission: RwSignal::new(permission),
             save_state: RwSignal::new(if incompatible {
                 SaveState::Failed
@@ -480,6 +487,13 @@ impl ListDocHandle {
     /// relayed update, and re-notifying an unchanged status would re-render
     /// everything that shows it.
     pub fn set_status(&self, status: &str) {
+        // Transport reconnects cannot resume a document awaiting compatibility
+        // recovery. Keep its badge consistent with the paused outbox.
+        let status = if self.incompatible() {
+            "offline"
+        } else {
+            status
+        };
         if self
             .status
             .try_with_untracked(|s| s != status)
@@ -963,6 +977,10 @@ mod tests {
                 );
                 assert!(handle.incompatible());
                 assert!(handle.recovery_paused());
+                assert_eq!(handle.status.get_untracked(), "offline");
+                handle.set_status("connecting");
+                handle.set_status("live");
+                assert_eq!(handle.status.get_untracked(), "offline");
                 assert_eq!(handle.permission.get_untracked(), 0);
                 assert_eq!(
                     handle.incompatible_snapshot.get_value(),

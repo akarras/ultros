@@ -148,9 +148,16 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   snapshots can exceed it when the live document is large. Clients that
   start from a shallow snapshot still sync both ways.
 - Bus lag: the socket answers a lagged relay with `Stale` and the client
-  re-runs the handshake with its current version. Every client resubscribe
-  adds a relay stream on the server for that socket; merges are idempotent,
-  so this costs bandwidth, not correctness.
+  re-runs the handshake with its current version. Resubscribing with the same ID
+  replaces and immediately drops the previous relay, including any pending
+  permission lookup. Unsubscribe, denied access and socket close also dispose
+  their relays; the 64-subscription limit bounds retained streams.
+  Run `BASE_URL=http://127.0.0.1:8080 node integration/list-socket-lifecycle.cjs`
+  against an isolated `test-auth` build to check repeated handshakes,
+  unsubscribe/navigation churn, cross-list ID reuse and failed replacements
+  over a real socket.
+  Native `real_time_data::tests` additionally count receivers/authorization
+  calls and cover pending lookups, failed handshakes, access denial and lag.
 - Browser side: `localStorage.getItem("ultros.listdoc.index.v1.<user_id>")`
   lists the cached lists, their last use and last known permission.
 - Divergence query for the soak:

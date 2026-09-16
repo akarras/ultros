@@ -2309,6 +2309,7 @@
     "recipe_planner_route_home_only": "全部在起始服务器购买",
     "recipe_planner_route_best_value": "最划算",
     "recipe_planner_route_cheapest": "最便宜",
+    "recipe_planner_route_basis_previous": "上一条路线",
     "recipe_planner_route_saved_vs": "比{{basis}}节省 {{gil}}",
     "recipe_planner_route_dearer_than": "比{{basis}}多花 {{gil}}",
     "recipe_planner_route_same_as": "与{{basis}}花费相同",

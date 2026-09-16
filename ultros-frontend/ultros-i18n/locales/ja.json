@@ -2309,6 +2309,7 @@
     "recipe_planner_route_home_only": "すべて開始ワールドで購入",
     "recipe_planner_route_best_value": "バランス最良",
     "recipe_planner_route_cheapest": "最安",
+    "recipe_planner_route_basis_previous": "直前のルート",
     "recipe_planner_route_saved_vs": "{{basis}}より {{gil}} の節約",
     "recipe_planner_route_dearer_than": "{{basis}}より {{gil}} 高い",
     "recipe_planner_route_same_as": "{{basis}}と同じ費用",

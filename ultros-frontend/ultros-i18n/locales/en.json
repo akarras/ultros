@@ -2309,6 +2309,7 @@
     "recipe_planner_route_home_only": "Everything from your starting world",
     "recipe_planner_route_best_value": "Best value",
     "recipe_planner_route_cheapest": "Cheapest",
+    "recipe_planner_route_basis_previous": "previous route",
     "recipe_planner_route_saved_vs": "{{gil}} saved vs {{basis}}",
     "recipe_planner_route_dearer_than": "{{gil}} more than {{basis}}",
     "recipe_planner_route_same_as": "Same cost as {{basis}}",
