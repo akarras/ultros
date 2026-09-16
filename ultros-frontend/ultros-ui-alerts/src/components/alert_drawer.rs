@@ -14,6 +14,7 @@
 
 use icondata as i;
 use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_local};
+use leptos_i18n::I18nContext;
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use ultros_api_types::{
@@ -30,10 +31,11 @@ use crate::components::{
 };
 use crate::global_state::guest_alerts::{GuestAlertRule, use_guest_alerts};
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::local_world_data::use_world_display_name;
 use crate::global_state::toasts::use_toast;
 use crate::global_state::user::BootstrapUser;
 use crate::global_state::xiv_data::tracked_data;
-use crate::i18n::{t, t_string, use_i18n};
+use crate::i18n::{Locale, t, t_string, use_i18n};
 
 /// Which alert shape the drawer is currently configuring.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -93,6 +95,40 @@ fn active_alert_row(
             </button>
         </li>
     }
+}
+
+/// "Active" list description for an item-price alert row: item name, price
+/// threshold, world/datacenter/region and the HQ-only marker. Shared by the
+/// guest list (built from a [`GuestAlertRule`]) and the signed-in list
+/// (built from an `AlertTrigger::BelowThreshold`), which carry the same four
+/// fields — factoring this out both gets the world/HQ text onto the guest
+/// rows (without it, two rules on the same item that differ only by world or
+/// HQ render identical text) and removes what was a duplicated item-name
+/// lookup between the two branches.
+fn item_price_row_description(
+    i18n: I18nContext<Locale, crate::i18n::I18nKeys>,
+    item_id: i32,
+    price_threshold: i32,
+    world_selector: AnySelector,
+    hq_only: bool,
+) -> String {
+    let name = tracked_data()
+        .items
+        .get(&ItemId(item_id))
+        .map(|it| it.name.as_str().to_string())
+        .unwrap_or_else(|| format!("Item {item_id}"));
+    let threshold = t_string!(i18n, alert_drawer_threshold_below, price = price_threshold);
+    let world = use_world_display_name(world_selector).unwrap_or_else(|| {
+        let (AnySelector::World(id) | AnySelector::Datacenter(id) | AnySelector::Region(id)) =
+            world_selector;
+        format!("#{id}")
+    });
+    let hq = if hq_only {
+        t_string!(i18n, alerts_hq_any).to_string()
+    } else {
+        t_string!(i18n, alerts_any).to_string()
+    };
+    format!("{name} · {threshold} · {world} · {hq}")
 }
 
 #[component]
@@ -540,14 +576,12 @@ pub fn AlertDrawer(
                                     <ul class="divide-y divide-[color:var(--color-outline)] rounded border border-[color:var(--color-outline)]">
                                         {rows.into_iter().map(|rule| {
                                             let row_id = rule.id.clone();
-                                            let name = tracked_data()
-                                                .items
-                                                .get(&ItemId(rule.item_id))
-                                                .map(|it| it.name.as_str().to_string())
-                                                .unwrap_or_else(|| format!("Item {}", rule.item_id));
-                                            let description = format!(
-                                                "{name} · {}",
-                                                t_string!(i18n, alert_drawer_threshold_below, price = rule.price_threshold)
+                                            let description = item_price_row_description(
+                                                i18n,
+                                                rule.item_id,
+                                                rule.price_threshold,
+                                                rule.world_selector,
+                                                rule.hq_only,
                                             );
                                             active_alert_row(description, device_label.clone(), delete_aria.clone(), move || {
                                                 if let Some(guest) = guest {
@@ -583,15 +617,13 @@ pub fn AlertDrawer(
                                                 {rows.into_iter().map(|a| {
                                                     let id = a.id;
                                                     let description = match &a.trigger {
-                                                        AlertTrigger::BelowThreshold { item_id, price_threshold, .. } => {
-                                                            let name = tracked_data()
-                                                                .items
-                                                                .get(&ItemId(*item_id))
-                                                                .map(|it| it.name.as_str().to_string())
-                                                                .unwrap_or_else(|| format!("Item {item_id}"));
-                                                            format!(
-                                                                "{name} · {}",
-                                                                t_string!(i18n, alert_drawer_threshold_below, price = *price_threshold)
+                                                        AlertTrigger::BelowThreshold { item_id, price_threshold, world_selector, hq_only } => {
+                                                            item_price_row_description(
+                                                                i18n,
+                                                                *item_id,
+                                                                *price_threshold,
+                                                                *world_selector,
+                                                                *hq_only,
                                                             )
                                                         }
                                                         AlertTrigger::RetainerUndercut { margin_percent } => {
