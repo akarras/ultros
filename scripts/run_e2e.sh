@@ -279,6 +279,14 @@ fi
 # is independently valuable.
 case " ${LEPTOS_FEATURES:-} " in
     *" test-auth "*)
+        if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
+            log "running recipe root Buy/Craft flow (test-auth feature detected)"
+            recipe_root_exit=0
+            ( cd integration && BASE_URL="$BASE_URL" npm run test:recipe-root-source ) || recipe_root_exit=$?
+            if [ "$recipe_root_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+                test_exit="$recipe_root_exit"
+            fi
+        fi
         log "running device-list account adoption (test-auth feature detected)"
         list_adoption_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-adoption ) || list_adoption_exit=$?
