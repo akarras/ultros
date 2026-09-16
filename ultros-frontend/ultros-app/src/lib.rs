@@ -32,14 +32,15 @@ use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     app_update::provide_app_update_context, cheapest_prices::CheapestPrices,
-    clipboard_text::GlobalLastCopiedText, cookies::Cookies, platform::provide_platform_hotkeys,
+    clipboard_text::GlobalLastCopiedText, cookies::Cookies, guest_alerts::provide_guest_alerts,
+    notifications::provide_inbox, platform::provide_platform_hotkeys,
     side_nav::provide_side_nav_settings, theme::provide_theme_settings,
     toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
-        app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
-        update_banner::UpdateBanner,
+        app_shell::AppShell, inbox_live::InboxLive, on_hand_input::provide_on_hand_context,
+        patreon::*, toast::*, update_banner::UpdateBanner,
     },
     routes::{
         about::*,
@@ -531,6 +532,8 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_xiv_data_revision();
     provide_on_hand_context();
     ws::realtime::provide_realtime_context();
+    provide_inbox();
+    provide_guest_alerts();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
@@ -559,6 +562,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
+            <InboxLive />
             <UpdateBanner />
             <Router>
                 <SentryRouteTag />
