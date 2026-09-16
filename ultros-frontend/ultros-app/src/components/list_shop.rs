@@ -262,7 +262,7 @@ fn scoped_candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<Shop
     vec![home, fewest, cheapest]
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompanionSnapshot {
     title: String,
@@ -280,7 +280,7 @@ struct CompanionSnapshot {
     #[serde(skip)]
     unknown_world: Option<i32>,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct CompanionRow {
     key: String,
     name: String,
@@ -429,6 +429,8 @@ mod browser {
         pub fn update(snapshot: &str);
         #[wasm_bindgen(js_name = closeCompanion)]
         pub fn close();
+        #[wasm_bindgen(js_name = watchShopFocus)]
+        pub fn watch_focus(root: &web_sys::HtmlElement) -> js_sys::Function;
     }
 }
 
@@ -554,7 +556,7 @@ pub fn ListShop(
         )
         .to_string()
     };
-    let live_snapshot = move || {
+    let live_snapshot = Memo::new(move |_| {
         trip.get().map(|trip| {
             let mut view = snapshot(&trip, &input.get(), stop.get(), can_edit.get());
             view.can_undo_purchase = can_edit.get() && can_undo_purchase.get();
@@ -660,10 +662,10 @@ pub fn ListShop(
             }
             view
         })
-    };
+    });
     let action = Callback::new(move |(action, key, quantity): (String, String, i32)| {
         if action == "next" {
-            if live_snapshot().is_some_and(|view| view.has_next) {
+            if live_snapshot.get().is_some_and(|view| view.has_next) {
                 stop.update(|stop| *stop += 1);
             }
             return;
@@ -685,7 +687,7 @@ pub fn ListShop(
         let Some(active) = trip.get_untracked() else {
             return;
         };
-        let Some(available) = live_snapshot().and_then(|view| {
+        let Some(available) = live_snapshot.get().and_then(|view| {
             view.rows
                 .into_iter()
                 .find(|row| row.key == key && row.can_buy)
@@ -733,7 +735,7 @@ pub fn ListShop(
     };
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
-        if let Some(view) = live_snapshot() {
+        if let Some(view) = live_snapshot.get() {
             let changed_list = trip.get().is_some_and(|active| {
                 let live = input.get();
                 active.source.title != live.title
@@ -752,7 +754,7 @@ pub fn ListShop(
     });
     let pop_out = move |_| {
         #[cfg(feature = "hydrate")]
-        if let Some(view) = live_snapshot()
+        if let Some(view) = live_snapshot.get()
             && let Ok(json) = serde_json::to_string(&view)
         {
             // Call before awaiting anything: PiP requires transient activation.
@@ -764,6 +766,27 @@ pub fn ListShop(
             });
         }
     };
+    let stacks = NodeRef::<leptos::html::Div>::new();
+    #[cfg(feature = "hydrate")]
+    {
+        let cleanup = StoredValue::new_local(None::<js_sys::Function>);
+        Effect::new(move |_| {
+            let root = stacks.get();
+            cleanup.update_value(|cleanup| {
+                if let Some(previous) = cleanup.take() {
+                    let _ = previous.call0(&wasm_bindgen::JsValue::NULL);
+                }
+                *cleanup = root.map(|root| browser::watch_focus(&root));
+            });
+        });
+        on_cleanup(move || {
+            cleanup.with_value(|cleanup| {
+                if let Some(cleanup) = cleanup {
+                    let _ = cleanup.call0(&wasm_bindgen::JsValue::NULL);
+                }
+            })
+        });
+    }
     view! {
         <section class="space-y-4" aria-label=move || t_string!(i18n, list_shop_trip).to_string()>
             <div class="rounded-xl border border-white/10 p-4 space-y-2" data-testid="shop-handoff">
@@ -831,38 +854,75 @@ pub fn ListShop(
                     </div>
                 }
             })}
-            {move || live_snapshot().map(|view| view! {
-                <div class="rounded-xl border border-white/10 p-4 space-y-3">
-                    <h3 class="text-lg font-semibold">{view.world}</h3>
-                    <p aria-live="polite" data-testid="shop-progress">{view.progress}</p>
-                    {view.rows.into_iter().map(|row| {
-                        let key = row.key.clone();
-                        let gone_key = row.key.clone();
-                        let amount = RwSignal::new(row.quantity.min(i64::from(i32::MAX)) as i32);
+            <div node_ref=stacks class="rounded-xl border border-white/10 p-4 space-y-3" class:hidden=move || live_snapshot.get().is_none()>
+                <h3 class="text-lg font-semibold" tabindex="-1" data-testid="shop-stop-title">{move || live_snapshot.get().map(|view| view.world)}</h3>
+                <p aria-live="polite" data-testid="shop-progress">{move || live_snapshot.get().map(|view| view.progress)}</p>
+                <For
+                    each=move || live_snapshot.get().map(|view| view.rows).unwrap_or_default()
+                    key=|row| row.key.clone()
+                    children=move |initial| {
+                        let key = initial.key.clone();
+                        let find_key = key.clone();
+                        let gone_key = key.clone();
+                        // The row's owner and draft outlive snapshots. Only its
+                        // live values change when another purchase arrives.
+                        let row = Memo::new(move |_| live_snapshot.get().and_then(|view| view.rows.into_iter().find(|row| row.key == find_key)).unwrap_or_else(|| initial.clone()));
+                        let limit = Memo::new(move |_| row.get().quantity.min(i64::from(i32::MAX)));
+                        let amount = RwSignal::new(limit.get_untracked().to_string());
+                        let dirty = RwSignal::new(false);
+                        Effect::new(move |_| {
+                            let quantity = limit.get();
+                            // A completed stack no longer has an actionable
+                            // purchase draft. Retire it so a disabled editor
+                            // cannot hold a Make online transition open.
+                            if row.get().done {
+                                dirty.set(false);
+                                amount.set(quantity.to_string());
+                            } else if !dirty.get() {
+                                amount.set(quantity.to_string());
+                            }
+                        });
+                        let buy_key = key.clone();
                         view! {
-                            <div class="rounded-lg border border-white/10 p-3 space-y-2" data-testid="shop-stack">
+                            <div class="rounded-lg border border-white/10 p-3 space-y-2" data-testid="shop-stack" data-shop-key=key>
                                 <div class="flex items-center justify-between gap-3">
-                                    <strong>{row.name.clone()}</strong>
-                                    <span class="[&_button]:min-h-11 [&_button]:min-w-11"><crate::components::clipboard::Clipboard clipboard_text=Signal::stored(row.name.clone())/></span>
+                                    <strong>{move || row.get().name}</strong>
+                                    <span class="[&_button]:min-h-11 [&_button]:min-w-11"><crate::components::clipboard::Clipboard clipboard_text=Signal::derive(move || row.get().name)/></span>
                                 </div>
-                                <p data-testid="shop-stack-description">{row.description.clone()}</p>
+                                <p data-testid="shop-stack-description">{move || row.get().description}</p>
                                 <div class="flex flex-wrap gap-2">
-                                    <input class="input max-w-20 min-h-11" type="number" min="1" max=row.quantity aria-label=row.quantity_label.clone() data-testid="shop-stack-quantity" prop:value=move || amount.get() on:input=move |event| amount.set(event_target_value(&event).parse().unwrap_or(0))/>
-                                    <button class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-bought" disabled=move || !row.can_buy || !can_edit.get() on:click=move |_| action.run(("bought".into(),key.clone(),amount.get_untracked()))>{if row.done { t_string!(i18n, list_shop_recorded).to_string() } else { t_string!(i18n, list_shop_bought).to_string() }}</button>
-                                    <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-gone" disabled=row.done on:click=move |_| {
+                                    <input class="input max-w-20 min-h-11" type="number" min="1" max=move || limit.get() aria-label=move || row.get().quantity_label data-testid="shop-stack-quantity" data-handoff-committed=move || limit.get() disabled=move || row.get().done || !can_edit.get() prop:value=move || amount.get() on:input=move |event| { dirty.set(true); amount.set(event_target_value(&event)); } on:keydown=move |event| {
+                                        if event.key() == "Escape" {
+                                            event.prevent_default();
+                                            event.stop_propagation();
+                                            dirty.set(false);
+                                            amount.set(limit.get_untracked().to_string());
+                                        }
+                                    }/>
+                                    <button class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-bought" disabled=move || !row.get().can_buy || !can_edit.get() on:click=move |_| {
+                                        let live = row.get_untracked();
+                                        match amount.get_untracked().parse::<i32>() {
+                                            Ok(quantity) if quantity > 0 && i64::from(quantity) <= live.quantity => {
+                                                dirty.set(false);
+                                                action.run(("bought".into(), buy_key.clone(), quantity));
+                                            }
+                                            _ => notice.set(live.invalid_quantity),
+                                        }
+                                    }>{move || if row.get().done { t_string!(i18n, list_shop_recorded).to_string() } else { t_string!(i18n, list_shop_bought).to_string() }}</button>
+                                    <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-gone" disabled=move || row.get().done on:click=move |_| {
                                         if let Ok(id) = gone_key.parse() { unavailable.update(|ids| { ids.insert(id); }); }
                                         notice.set(t_string!(i18n, list_shop_excluded).to_string());
                                     }>{move || t_string!(i18n, list_shop_gone)}</button>
                                 </div>
                             </div>
                         }
-                    }).collect_view()}
-                    <div class="flex flex-wrap gap-2">
-                        <button data-testid="shop-undo-purchase" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !can_edit.get() || !can_undo_purchase.get() on:click=move |_| action.run(("undo".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_undo_purchase)}</button>
-                        <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled= !view.has_next on:click=move |_| action.run(("next".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_next)}</button>
-                    </div>
+                    }
+                />
+                <div class="flex flex-wrap gap-2">
+                    <button data-testid="shop-undo-purchase" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !can_edit.get() || !can_undo_purchase.get() on:click=move |_| action.run(("undo".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_undo_purchase)}</button>
+                    <button data-testid="shop-next-world" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !live_snapshot.get().is_some_and(|view| view.has_next) on:click=move |_| action.run(("next".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_next)}</button>
                 </div>
-            })}
+            </div>
             <details class="rounded-xl border border-white/10 p-4 text-sm">
                 <summary class="cursor-pointer font-medium">{move || t_string!(i18n, list_shop_compare)}</summary>
                 <div class="space-y-3 pt-3">

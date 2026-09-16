@@ -142,6 +142,51 @@ async function main() {
       return [code, lists.length, Boolean(lists.find((list) => list.id === id).error)];
     }, id), ['corrupt', 27, true]);
 
+    const promotion = await first.evaluate(async () => {
+      const source = await store.create({name:'Online continuation',snapshot:new Uint8Array([11,12])});
+      await store.connect(source.id,'1500',{Region:1});
+      return source.id;
+    });
+    await second.evaluate(async id => store.connect(id,'1500',{World:79}), promotion);
+    assert.equal(await first.evaluate(async id => {
+      const record = await store.load(id);
+      let calls = 0;
+      const stop = api.guestWatch(id, () => record.revision, () => calls++);
+      window.dispatchEvent(new Event('focus'));
+      await new Promise(resolve => setTimeout(resolve, 40));
+      stop();
+      return calls;
+    }, promotion), 1, 'focus discovers a continuation even if its broadcast was missed and the document revision is unchanged');
+    assert.deepEqual(await first.evaluate(async id => {
+      let record = await store.load(id);
+      const originalScope = record.online.scope;
+      // Another tab edits while the network request holds revision one.
+      record = await store.save(id,record.revision,{name:'Newer edit',snapshot:new Uint8Array([13,14])});
+      await store.acknowledge(id,'1500',1500,1);
+      record = await store.load(id);
+      return [originalScope, record.revision, record.online.acknowledged, [...record.snapshot]];
+    }, promotion), [{Region:1},2,1,[13,14]]);
+    assert.deepEqual(await second.evaluate(async id => {
+      await store.acknowledge(id,'1500',1500,2);
+      await store.acknowledge(id,'1500',1500,1); // delayed older response
+      const failures=[];
+      for (const action of [() => store.connect(id,'1501',{Region:1}), () => store.acknowledge(id,'1501',1500,2), () => store.acknowledge(id,'1500',1501,2), () => store.acknowledge(id,'1500',1500,3)]) {
+        try {await action(); failures.push('accepted');} catch(e) {failures.push(e.code);}
+      }
+      const record=await store.load(id);
+      return [failures,record.online.acknowledged,record.online.list_id,[...record.snapshot]];
+    },promotion), [['account','account','account','invalid'],2,1500,[13,14]]);
+    assert.deepEqual(await first.evaluate(async id => {
+      const source=await store.load(id);
+      const backup=api.encodeGuestListBackup(source);
+      const restored=await store.create(api.decodeGuestListBackup(backup));
+      const before=[...restored.snapshot];
+      await store.continueLegacy(restored.id,'1500',1499);
+      const legacy=await store.load(restored.id);
+      return [Object.hasOwn(JSON.parse(backup), 'online'),legacy.online.legacy,legacy.online.list_id,before,[...legacy.snapshot]];
+    },promotion), [false,true,1499,[13,14],[13,14]]);
+    console.log('Online continuation storage passed: two tabs share one intent; exact-revision and out-of-order acknowledgements; later edits, account binding, destination fencing and legacy recovery bytes preserved.');
+
     await context.close();
     console.log('Guest storage passed: reload, concurrent CAS, stale delete, failed/aborted writes, no eviction, account separation, backup restore and corruption isolation.');
   } finally {

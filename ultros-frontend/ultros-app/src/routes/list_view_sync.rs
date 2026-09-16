@@ -135,8 +135,11 @@ pub fn InlineListAdd(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let search = RwSignal::new(String::new());
+    let committed_search = RwSignal::new(String::new());
     let quantity = RwSignal::new("1".to_string());
     let quality = RwSignal::new("any".to_string());
+    let committed_quantity = RwSignal::new("1".to_string());
+    let committed_quality = RwSignal::new("any".to_string());
     let input = NodeRef::<leptos::html::Input>::new();
     let index = Memo::new(move |_| {
         std::sync::Arc::new(
@@ -178,6 +181,9 @@ pub fn InlineListAdd(
             hq,
             ..Default::default()
         });
+        committed_quantity.set(quantity.get_untracked());
+        committed_quality.set(quality.get_untracked());
+        committed_search.set(search.get_untracked());
         if let Some(input) = input.get() {
             let _ = input.focus();
             input.select();
@@ -187,17 +193,21 @@ pub fn InlineListAdd(
         <section class="panel rounded-xl p-4 sm:p-5" aria-label=t_string!(i18n, lists_workspace_add_items_label) data-testid="inline-list-add">
             <div class="mb-3"><h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_build_hint)}</p></div>
             <div class="flex flex-wrap gap-2">
-                <input node_ref=input id="list-cart-add-input" class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed=""
+                <input node_ref=input id="list-cart-add-input" class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed="" data-handoff-committed=move || committed_search.get()
                     on:input=move |ev| search.set(event_target_value(&ev))
                     on:keydown=move |ev| {
-                        if ev.key() == "Escape" { search.set(String::new()); ev.stop_propagation(); }
+                        if ev.key() == "Escape" { search.set(String::new()); committed_search.set(String::new()); ev.stop_propagation(); }
                         if ev.key() == "Enter" {
                             ev.prevent_default();
                             if let Some((id, _, can_hq, _)) = results.get_untracked().first() { add.run((*id, *can_hq)); }
                         }
                     } />
-                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity data-committed=move || quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) />
-                <select class="input" aria-label=t_string!(i18n, lists_workspace_add_quality) prop:value=quality on:change=move |ev| quality.set(event_target_value(&ev))><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
+                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity data-committed=move || quantity.get() data-handoff-committed=move || committed_quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) on:keydown=move |ev| {
+                    if ev.key() == "Escape" { quantity.set(committed_quantity.get_untracked()); ev.stop_propagation(); }
+                } />
+                <select class="input" aria-label=t_string!(i18n, lists_workspace_add_quality) prop:value=quality data-handoff-committed=move || committed_quality.get() on:change=move |ev| quality.set(event_target_value(&ev)) on:keydown=move |ev| {
+                    if ev.key() == "Escape" { quality.set(committed_quality.get_untracked()); ev.stop_propagation(); }
+                }><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
             </div>
             <p class="text-sm mt-2 text-[color:var(--color-text-muted)]" role="status">{feedback}</p>
             <Show when=move || !search.get().trim().is_empty()>
@@ -1383,6 +1393,7 @@ pub fn ListViewSync() -> impl IntoView {
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
     let (settings_open, set_settings_open) = signal(false);
+    let (access_open, set_access_open) = signal(false);
     let (rename_open, set_rename_open) = signal(false);
     let (rename_value, set_rename_value) = signal(String::new());
     let (confirm_bulk_delete, set_confirm_bulk_delete) = signal(false);
@@ -1393,8 +1404,9 @@ pub fn ListViewSync() -> impl IntoView {
     // `StoredValue::new_local`s that must never exist on the SSR half
     // (#1332), and `SyncSubscription` owns `Rc`s, so it can only live in a
     // thread-local slot.
-    let modal_open =
-        Signal::derive(move || subscribe_open() || settings_open() || confirm_bulk_delete());
+    let modal_open = Signal::derive(move || {
+        subscribe_open() || settings_open() || access_open() || confirm_bulk_delete()
+    });
     let (resync, set_resync) = signal(0u32);
     #[cfg(feature = "hydrate")]
     {
@@ -1924,6 +1936,12 @@ pub fn ListViewSync() -> impl IntoView {
                             </button>
                         </Tooltip>
                         <ListWorkspaceModes shop=buying_view.into() set_shop=Callback::new(move |shop: bool| set_buying_view_param.set(shop.then_some(true))) />
+                        <Show when=move || view_caps.with(|c|c.can_admin)>
+                            <button class="sticky-bar-button" data-testid="list-access-btn" on:click=move |_|set_access_open(true)>
+                                <Icon icon=i::BiShareAltRegular />
+                                <span>{t!(i18n,online_access)}</span>
+                            </button>
+                        </Show>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
                             <button
                                 class="sticky-bar-button sticky-bar-button-shrink"
@@ -2439,6 +2457,14 @@ pub fn ListViewSync() -> impl IntoView {
                     }
                     .into_any()
                 }}
+            </Show>
+            <Show when=move || access_open() && view_caps.with(|c|c.can_admin)>
+                // Capture the list only when this guarded dialog opens. A
+                // document or price refresh must not remount its live form.
+                // The outer capability guard still dismisses it on denial.
+                {move || list_view.get_untracked().and_then(Result::ok).map(|(list,_)|view! {
+                    <crate::components::list::share_list_modal::ShareListModal list=list.list set_visible=set_access_open />
+                })}
             </Show>
         </div>
     }.into_any()

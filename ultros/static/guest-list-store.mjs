@@ -5,7 +5,8 @@
 // ListDocument. Compare-and-swap prevents stale tabs overwriting newer data:
 // on conflict, load, merge the latest snapshot, and retry its revision.
 // Promise success means the IndexedDB transaction committed, not just that
-// an individual request succeeded. No account credentials or IDs belong here.
+// an individual request succeeded. Credentials never belong here. An explicit
+// Make online action records its destination account separately from the bytes.
 
 const DATABASE = "ultros-device-lists-v1";
 const STORE = "lists";
@@ -56,6 +57,13 @@ function validateRecord(record) {
   }
   try {
     validateDocument(record);
+    const binding = record.online;
+    if (binding !== undefined && (!binding || !/^\d+$/.test(binding.owner)
+      || !Number.isSafeInteger(binding.acknowledged) || binding.acknowledged < 0 || binding.acknowledged > record.revision
+      || (binding.list_id !== null && (!Number.isSafeInteger(binding.list_id) || binding.list_id <= 0))
+      || (binding.legacy !== true && (!binding.scope || typeof binding.scope !== 'object')))) {
+      fail('corrupt', 'Invalid online continuation.');
+    }
   } catch {
     fail("corrupt", "The saved device list is damaged; it has not been removed.");
   }
@@ -149,7 +157,7 @@ export async function openGuestListStore() {
         store.getAll().onsuccess = (event) => done(event.target.result.map((record) => {
           try {
             validateRecord(record);
-            return { id: record.id, name: record.name, revision: record.revision };
+            return { id: record.id, name: record.name, revision: record.revision, online: record.online };
           } catch (error) {
             return { id: record.id, error: error.code || "corrupt" };
           }
@@ -166,7 +174,7 @@ export async function openGuestListStore() {
         store.get(id).onsuccess = guard((event) => {
           const previous = event.target.result;
           checkRevision(previous, expectedRevision);
-          const record = { id, revision: previous.revision + 1, name, snapshot };
+          const record = { ...previous, id, revision: previous.revision + 1, name, snapshot };
           store.put(record);
           done(record);
         });
@@ -179,6 +187,57 @@ export async function openGuestListStore() {
           checkRevision(event.target.result, expectedRevision);
           store.delete(id);
           done();
+        });
+      });
+    },
+
+    async connect(id, owner, scope) {
+      if (!/^\d+$/.test(owner) || !scope) fail('invalid', 'Invalid online destination.');
+      return transaction(db, 'readwrite', (store, done, guard) => {
+        store.get(id).onsuccess = guard(event => {
+          const record = validateRecord(event.target.result);
+          if (record.online && record.online.owner !== owner) {
+            fail('account', 'Sign in to the account connected to this list.');
+          }
+          record.online ||= { owner, scope, list_id: null, acknowledged: 0 };
+          store.put(record);
+          done(record);
+        });
+      });
+    },
+
+    async acknowledge(id, owner, listId, revision) {
+      if (!Number.isSafeInteger(listId) || listId <= 0 || !Number.isSafeInteger(revision) || revision < 1) {
+        fail('invalid', 'Invalid online acknowledgement.');
+      }
+      return transaction(db, 'readwrite', (store, done, guard) => {
+        store.get(id).onsuccess = guard(event => {
+          const record = validateRecord(event.target.result);
+          if (record.online?.owner !== owner || (record.online.list_id && record.online.list_id !== listId)) {
+            fail('account', 'The online destination changed.');
+          }
+          if (revision > record.revision) fail('invalid', 'Unknown device revision.');
+          record.online.list_id = listId;
+          record.online.acknowledged = Math.max(record.online.acknowledged, revision);
+          store.put(record);
+          done(record);
+        });
+      });
+    },
+
+    async continueLegacy(id, owner, listId) {
+      if (!/^\d+$/.test(owner) || !Number.isSafeInteger(listId) || listId <= 0) fail('invalid', 'Invalid continuation.');
+      return transaction(db, 'readwrite', (store, done, guard) => {
+        store.get(id).onsuccess = guard(event => {
+          const record = validateRecord(event.target.result);
+          if (record.online) {
+            if (record.online.legacy && record.online.owner === owner && record.online.list_id === listId) { done(record); return; }
+            fail('conflict', 'This list already has an online destination.');
+          }
+          // Explicit choice only. Never merge independently edited legacy copies.
+          record.online = { owner, list_id: listId, scope: null, acknowledged: record.revision, legacy: true };
+          store.put(record);
+          done(record);
         });
       });
     },
@@ -232,6 +291,9 @@ export async function guestLoad(id) { return (await db()).load(id); }
 export async function guestCreate(name, snapshot) { const r = await (await db()).create({name, snapshot}); announce(r.id); return r; }
 export async function guestSave(id, revision, name, snapshot) { const r = await (await db()).save(id, revision, {name, snapshot}); announce(id); return r; }
 export async function guestRemove(id, revision) { await (await db()).remove(id, revision); announce(id); }
+export async function guestConnect(id, owner, scope) { const r = await (await db()).connect(id, owner, JSON.parse(scope)); announce(id); return r; }
+export async function guestAcknowledge(id, owner, listId, revision) { const r = await (await db()).acknowledge(id, owner, listId, revision); announce(id); return r; }
+export async function guestContinueLegacy(id, owner, listId) { const r = await (await db()).continueLegacy(id, owner, listId); announce(id); return r; }
 export async function guestEncode(name, snapshot) { return encodeGuestListBackup({name, snapshot}); }
 export async function guestDecode(text) { return decodeGuestListBackup(text); }
 export function guestWatch(id, revision, callback) {
@@ -241,7 +303,9 @@ export function guestWatch(id, revision, callback) {
   const focus = async () => {
     if (checking) return;
     checking = true;
-    try { const record = await (await db()).load(id); if (active && (!record || record.revision !== revision())) callback(); }
+    // Continuation metadata changes without changing document bytes/revision.
+    // Recheck it on focus even when a suspended tab missed the broadcast.
+    try { const record = await (await db()).load(id); if (active && (!record || record.online || record.revision !== revision())) callback(); }
     catch { if (active) callback(); } finally { checking = false; }
   };
   const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ultros-device-lists') : null;

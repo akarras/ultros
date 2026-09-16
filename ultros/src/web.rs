@@ -1762,6 +1762,57 @@ pub(crate) async fn adopt_guest_list(
     Ok(Json(outcome.response))
 }
 
+pub(crate) async fn make_list_online(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
+    user: AuthDiscordUser,
+    Json(request): Json<ultros_api_types::list::MakeListOnline>,
+) -> Result<Json<ultros_api_types::list::AdoptGuestListResponse>, ApiError> {
+    if request.snapshot.len() > 512 * 1024 {
+        return Err(ApiError::BadRequest("list document exceeds the size limit"));
+    }
+    let doc = ultros_list_doc::ListDocument::from_snapshot(&request.snapshot)
+        .map_err(|_| ApiError::BadRequest("unsupported or damaged list document"))?;
+    if doc.rows().iter().any(|row| {
+        !xiv_gen_db::data()
+            .items
+            .contains_key(&xiv_gen::ItemId(row.key.item_id))
+    }) {
+        return Err(ApiError::BadRequest("list contains an unknown item"));
+    }
+    let owner = db
+        .get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
+    let outcome = db.make_list_online(owner.id, &request).await?;
+    if let Some((list, items, activity)) = outcome.created {
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::List(List::try_from(list)?)),
+        );
+        for item in items {
+            send_list_event(
+                &senders,
+                EventType::added(ListEventData::ListItem(item.into())),
+            );
+        }
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::Activity(activity.into())),
+        );
+    }
+    // One canonical write path publishes projection, activity and realtime events.
+    // A lost response can safely repeat this merge: CRDT operations are idempotent.
+    list_sync
+        .apply_update(
+            outcome.response.list_id,
+            &Actor::from_user(&user, Origin::Rest),
+            &request.snapshot,
+        )
+        .await?;
+    Ok(Json(outcome.response))
+}
+
 pub(crate) async fn edit_list(
     State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
@@ -3476,6 +3527,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/list", get(get_lists))
         .route("/api/v1/list/create", post(create_list))
         .route("/api/v1/list/adopt", post(adopt_guest_list))
+        .route("/api/v1/list/online", post(make_list_online))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
         .route("/api/v1/list/{id}", get(get_list))

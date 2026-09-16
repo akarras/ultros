@@ -150,17 +150,11 @@ async function main() {
   const shot = (page, name) =>
     capture(page, { path: path.join(ARTIFACT_DIR, `${name}.png`), fullPage: true });
 
-  // The share modal has four <select>s and only the role one is labelled, so
-  // the group picker is found by the placeholder option it alone carries.
+  // Manage access exposes an accessible name for the group picker.
   // Re-queried per call: the nested boundary around the role select
   // re-suspends whenever the group changes.
   async function groupSelect(page) {
-    for (const select of await page.$$("select")) {
-      const isGroupPicker = await select.evaluate(node => node.getAttribute("aria-label") === null
-        && [...node.options].some(option => /Choose a group|no groups/i.test(option.textContent)));
-      if (isGroupPicker) return select;
-    }
-    throw new Error("share modal has no group picker");
+    return page.waitForSelector('[role="dialog"] select[aria-label="Group"]', { visible: true });
   }
 
   const roleOptions = page =>
@@ -361,11 +355,14 @@ async function main() {
       .some(card => card.innerText.includes(name)), {}, listName);
     await owner.evaluate(name => [...document.querySelectorAll(".panel.rounded-xl")]
       .find(card => card.innerText.includes(name))
-      .querySelector('button[aria-label="Share list"]').click(), listName);
+      .querySelector('button[aria-label="Manage access"]').click(), listName);
+    await owner.waitForSelector('[role="group"][aria-label="Invite someone"]');
+    await owner.evaluate(() => [...document.querySelectorAll('[role="group"][aria-label="Invite someone"] button')]
+      .find(button => button.textContent.trim() === 'Group').click());
 
     // Until a group is picked the role select is disabled and offers only the
     // "everyone" option, so a stale pick can never share the wrong group's role.
-    await owner.waitForSelector(ROLE_SELECT);
+    await owner.waitForSelector(ROLE_SELECT, { visible: true });
     assert.equal(await owner.$eval(ROLE_SELECT, select => select.disabled), true,
       "the role select is disabled until a group is chosen");
     assert.deepEqual(await roleOptions(owner), ["Everyone in the group"],

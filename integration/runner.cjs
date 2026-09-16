@@ -473,13 +473,6 @@ async function main() {
           for (const f of fails) failures.push(`${r} [${DEVICE_LABEL}]: ${f}`);
         }
 
-        if (STRICT_CONSOLE) {
-          const newConsole = consoleErrors.slice(beforeConsole);
-          const newPage = pageErrors.slice(beforePage);
-          for (const e of newConsole) failures.push(`${r}: console.error: ${e.text}`);
-          for (const e of newPage) failures.push(`${r}: page error: ${e.text}`);
-        }
-
         const safe = sanitizeFileComponent(r);
         const filename = `${safe}-${DEVICE_LABEL}.png`;
         const file = path.join(outdir, filename);
@@ -502,6 +495,16 @@ async function main() {
           } catch (e2) {
             console.warn(`[warn] ${r}: viewport screenshot also failed (${e2 && e2.message})`);
           }
+        }
+
+        // Capture can wait behind other pages and can itself trigger browser
+        // lifecycle events. Keep the whole visit in the strict error window,
+        // including a failed full-page capture and its viewport fallback.
+        if (STRICT_CONSOLE) {
+          const newConsole = consoleErrors.slice(beforeConsole);
+          const newPage = pageErrors.slice(beforePage);
+          for (const e of newConsole) failures.push(`${r}: console.error: ${e.text}`);
+          for (const e of newPage) failures.push(`${r}: page error: ${e.text}`);
         }
       }
       await page.close();

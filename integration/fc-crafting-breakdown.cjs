@@ -12,13 +12,27 @@ async function main() {
     for (const mobile of [false,true]) {
       const page = await browser.newPage();
       const errors=[];
+      // Exercise the actual hydrated grid and dialog with the same complete
+      // market rows used by the FC world probe, even when the dev DB is empty.
+      const fixture=require('./shared-analyzer-market-fixture.cjs').marketFixture();
+      await page.setRequestInterception(true);
+      page.on('request',request=>{
+        const response=fixture.reply(request);
+        (response?request.respond(response):request.continue()).catch(error=>errors.push(error.message));
+      });
       page.on('pageerror', e=>errors.push(e.message));
       page.on('console', m=>{if(m.type()==='error' && !/favicon|ERR_BLOCKED_BY_CLIENT|net::ERR_ABORTED/.test(m.text())) errors.push(m.text());});
       await page.setViewport({width:mobile?393:1280,height:800,isMobile:mobile,hasTouch:mobile});
       await page.setCookie({name:'HIDE_ADS',value:'true',url:BASE},{name:'HOME_WORLD',value:WORLD,url:BASE});
       await page.evaluateOnNewDocument(()=>window.addEventListener('ultros:hydrated',()=>window.__hydrated=true));
-      await page.goto(`${BASE}/fc-crafting-analyzer/${encodeURIComponent(WORLD)}?min-sales=0`,{waitUntil:'domcontentloaded',timeout:90000});
+      // Enter through the hydrated router so market requests use the fixture;
+      // a direct SSR load legitimately seeds empty server-side market data.
+      await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:90000});
       await page.waitForFunction(()=>window.__hydrated,{timeout:90000});
+      await page.evaluate(route=>{
+        const link=document.createElement('a');link.href=route;
+        document.querySelector('main').append(link);link.click();link.remove();
+      },`/fc-crafting-analyzer/${encodeURIComponent(WORLD)}?min-sales=0`);
       const selector='.virtual-grid-cell button[aria-haspopup="dialog"]';
       await page.waitForSelector(selector,{timeout:90000});
       const url=page.url();
@@ -53,7 +67,7 @@ async function main() {
       assert.deepEqual(errors,[]);
       await page.close();
     }
-    console.log('PASS: FC material details open, close and reopen on desktop and touch without clipping or navigation.');
+    console.log('PASS (deterministic browser market fixtures): FC material details open, close and reopen on desktop and touch without clipping or navigation.');
   } finally {await browser.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
