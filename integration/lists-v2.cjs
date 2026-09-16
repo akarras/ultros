@@ -466,7 +466,7 @@ async function main() {
     popup.setDefaultTimeout(timeout);
     await popup.waitForSelector("main h1");
     assert.match(await popup.$eval("body", body => body.innerText), /Keep the Ultros tab open/);
-    assert.match(await popup.$eval("#notice", element => element.textContent), /always.on.top|normal|regular|standard/i,
+    assert.match(await popup.$eval("#window-mode", element => element.textContent), /always.on.top|normal|regular|standard/i,
       "fallback explains that a normal browser window is not always on top");
     // Use the router link rather than a document navigation: component
     // cleanup must close the companion even when pagehide never fires.
