@@ -847,7 +847,9 @@ pub fn ListShop(
                                 </div>
                                 <p data-testid="shop-stack-description">{row.description.clone()}</p>
                                 <div class="flex flex-wrap gap-2">
-                                    <input class="input max-w-20 min-h-11" type="number" min="1" max=row.quantity aria-label=row.quantity_label.clone() data-testid="shop-stack-quantity" prop:value=move || amount.get() on:input=move |event| amount.set(event_target_value(&event).parse().unwrap_or(0))/>
+                                    <input class="input max-w-20 min-h-11" type="number" min="1" max=row.quantity aria-label=row.quantity_label.clone() data-testid="shop-stack-quantity" data-handoff-committed=row.quantity.min(i64::from(i32::MAX)).to_string() prop:value=move || amount.get() on:input=move |event| amount.set(event_target_value(&event).parse().unwrap_or(0)) on:keydown=move |event| {
+                                        if event.key() == "Escape" { amount.set(row.quantity.min(i64::from(i32::MAX)) as i32); event.stop_propagation(); }
+                                    }/>
                                     <button class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-bought" disabled=move || !row.can_buy || !can_edit.get() on:click=move |_| action.run(("bought".into(),key.clone(),amount.get_untracked()))>{if row.done { t_string!(i18n, list_shop_recorded).to_string() } else { t_string!(i18n, list_shop_bought).to_string() }}</button>
                                     <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-gone" disabled=row.done on:click=move |_| {
                                         if let Ok(id) = gone_key.parse() { unavailable.update(|ids| { ids.insert(id); }); }

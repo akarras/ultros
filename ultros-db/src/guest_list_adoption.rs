@@ -60,6 +60,42 @@ pub fn validate_adoption(request: &AdoptGuestList) -> Result<(), ListError> {
     Ok(())
 }
 
+fn prepare_online(
+    owner: i64,
+    request: &ultros_api_types::list::MakeListOnline,
+) -> anyhow::Result<(AdoptGuestList, ListDocument)> {
+    if request.snapshot.len() > 512 * 1024 {
+        return Err(ListError::BadRequest("list document exceeds the size limit").into());
+    }
+    let doc = ListDocument::from_snapshot(&request.snapshot)?;
+    let scope = doc.meta().scope.unwrap_or(request.wdr_filter);
+    let items = doc
+        .rows()
+        .into_iter()
+        .map(|row| {
+            Ok(ultros_api_types::list::GuestListItem {
+                item_id: row.key.item_id,
+                hq: row.key.hq(),
+                quantity: i32::try_from(row.need.max(0))?,
+                acquired: i32::try_from(row.acquired.max(0))?,
+                target_price: row.target,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let adoption = AdoptGuestList {
+        expected_owner: request.expected_owner,
+        adoption_key: format!("online:{}:{}", owner, request.device_list_id),
+        device_list_id: format!("online:{}", request.device_list_id),
+        source_revision: request.source_revision.clone(),
+        name: doc.meta().name,
+        wdr_filter: scope,
+        items,
+    };
+    validate_adoption(&adoption)?;
+    doc.set_scope(scope)?;
+    Ok((adoption, doc))
+}
+
 impl UltrosDb {
     pub async fn adopt_guest_list(
         &self,
@@ -76,6 +112,30 @@ impl UltrosDb {
         &self,
         owner: i64,
         request: AdoptGuestList,
+    ) -> anyhow::Result<AdoptionOutcome> {
+        self.adopt_document(owner, request, None).await
+    }
+
+    /// A separate receipt namespace avoids treating a legacy, independently
+    /// reconstructed account copy as the same CRDT document.
+    pub async fn make_list_online(
+        &self,
+        owner: i64,
+        request: &ultros_api_types::list::MakeListOnline,
+    ) -> anyhow::Result<AdoptionOutcome> {
+        let (adoption, doc) = prepare_online(owner, request)?;
+        let mut outcome = self.adopt_document(owner, adoption, Some(doc)).await?;
+        outcome.response.device_list_id = request.device_list_id.clone();
+        // The web handler acknowledges this revision only after its merge commits.
+        outcome.response.source_revision = request.source_revision.clone();
+        Ok(outcome)
+    }
+
+    async fn adopt_document(
+        &self,
+        owner: i64,
+        request: AdoptGuestList,
+        original: Option<ListDocument>,
     ) -> anyhow::Result<AdoptionOutcome> {
         validate_adoption(&request)?;
         if request.expected_owner != owner {
@@ -160,13 +220,15 @@ impl UltrosDb {
                 target: row.target_price,
             })
             .collect();
-        let doc = ListDocument::from_rows(
-            MetaSnapshot {
-                name: request.name.clone(),
-                scope: Some(scope),
-            },
-            &rows,
-        );
+        let doc = original.unwrap_or_else(|| {
+            ListDocument::from_rows(
+                MetaSnapshot {
+                    name: request.name.clone(),
+                    scope: Some(scope),
+                },
+                &rows,
+            )
+        });
         // Batch the projection while holding the account lock.
         let inserted = if request.items.is_empty() {
             Vec::new()
@@ -230,6 +292,56 @@ mod tests {
     use super::*;
     use sea_orm::{ColumnTrait, QueryFilter};
     use ultros_api_types::list::GuestListItem;
+    #[test]
+    fn online_promotion_retains_counter_identity_across_retries_and_late_edits() {
+        let source = ListDocument::new();
+        source.rename("Supplies").unwrap();
+        let key = RowKey::new(5056, None);
+        source.add_row(key, 10, None).unwrap();
+        source.add_acquired(&key, 2).unwrap();
+        let request = ultros_api_types::list::MakeListOnline {
+            expected_owner: 1,
+            device_list_id: "device:online-test".into(),
+            source_revision: "1".into(),
+            wdr_filter: AnySelector::Region(1),
+            snapshot: source.export_snapshot().unwrap(),
+        };
+        let (projection, destination) = prepare_online(1, &request).unwrap();
+        assert_eq!(projection.items[0].acquired, 2);
+        assert_eq!(destination.meta().scope, Some(AnySelector::Region(1)));
+        // The online editor and the still-open local editor change the same
+        // acquired counter from a common identity. Replaying either is harmless.
+        destination.add_acquired(&key, 4).unwrap();
+        source.add_acquired(&key, 3).unwrap();
+        let late = source.export_snapshot().unwrap();
+        destination.import(&late).unwrap();
+        destination.import(&late).unwrap();
+        assert_eq!(destination.rows()[0].acquired, 9);
+        let repeated =
+            ListDocument::from_snapshot(&destination.export_snapshot().unwrap()).unwrap();
+        repeated.import(&request.snapshot).unwrap();
+        assert_eq!(repeated.rows()[0].acquired, 9);
+        assert_eq!(repeated.rows().len(), 1);
+    }
+
+    #[test]
+    fn promotion_rejects_unbounded_or_invalid_sources_before_opening_a_transaction() {
+        let mut request = ultros_api_types::list::MakeListOnline {
+            expected_owner: 1,
+            device_list_id: "device:test".into(),
+            source_revision: "1".into(),
+            wdr_filter: AnySelector::Region(1),
+            snapshot: vec![0; 512 * 1024 + 1],
+        };
+        assert!(prepare_online(1, &request).is_err());
+        request.snapshot = vec![1, 2, 3];
+        assert!(prepare_online(1, &request).is_err());
+        let doc = ListDocument::new();
+        doc.rename(" ").unwrap();
+        request.snapshot = doc.export_snapshot().unwrap();
+        assert!(prepare_online(1, &request).is_err());
+    }
+
     fn request() -> AdoptGuestList {
         AdoptGuestList {
             expected_owner: 1,

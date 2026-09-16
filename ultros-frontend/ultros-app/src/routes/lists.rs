@@ -142,7 +142,7 @@ fn PermissionPill(permission: ListPermission) -> impl IntoView {
 }
 
 #[component]
-fn ListCard(
+pub(crate) fn ListCard(
     list: ListWithPermission,
     edit_list: Action<List, Result<(), crate::error::AppError>>,
     delete_list: Action<i32, Result<(), crate::error::AppError>>,
@@ -174,7 +174,7 @@ fn ListCard(
     let list_for_share = list.clone();
 
     view! {
-        <div class="panel p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
+        <div class="panel min-w-0 p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
             {move || {
                 let list = list_for_render.clone();
                 if is_edit() && (caps.can_admin || caps.can_leave) {
@@ -261,13 +261,14 @@ fn ListCard(
                     view! {
                         <>
                             <div class="flex justify-between items-start gap-2">
-                                <div class="flex flex-col gap-1 overflow-hidden">
+                                <div class="flex min-w-0 flex-col gap-1 overflow-hidden">
                                     <a href=format!("/list/{}", list.id) class="text-xl font-bold hover:underline truncate text-[color:var(--link-color)]">
                                         {move || name()}
                                     </a>
                                     <div class="text-sm text-gray-400 flex items-center gap-1 flex-wrap">
                                         <Icon icon=i::BiWorldRegular />
                                         <WorldName id=list.wdr_filter />
+                                        <span class="text-xs">{t!(i18n,online_connected)}</span>
                                         <PermissionPill permission />
                                     </div>
                                     <Show when=move || !caps.can_admin>
@@ -279,13 +280,13 @@ fn ListCard(
                                         </div>
                                     </Show>
                                 </div>
-                                <div class="flex items-center gap-1">
+                                <div class="flex shrink-0 items-center gap-1">
                                     <Show when=move || { caps.can_admin }>
-                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, lists_share_list).to_string())>
+                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, online_access).to_string())>
                                             <button
                                                 class="btn-ghost btn-sm text-gray-400 hover:text-white"
                                                 on:click=move |_| set_share_open(true)
-                                                aria-label=move || t_string!(i18n, lists_share_list).to_string()
+                                                aria-label=move || t_string!(i18n, online_access).to_string()
                                             >
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
@@ -353,6 +354,20 @@ fn ListCard(
 
 #[component]
 pub fn EditLists() -> impl IntoView {
+    let enabled = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
+    let i18n = use_i18n();
+    view! {
+        <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
+        <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
+        <MetaRobotsNoIndex />
+        <Show when=move || enabled.get() fallback=|| view! { <LegacyEditLists /> }>
+            <crate::routes::guest_lists::DeviceLists />
+        </Show>
+    }
+}
+
+#[component]
+fn LegacyEditLists() -> impl IntoView {
     let device_lists =
         crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
     let i18n = crate::i18n::use_i18n();
@@ -402,7 +417,6 @@ pub fn EditLists() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
-            <Show when=move || device_lists.get()><crate::routes::guest_lists::DeviceLists /></Show>
             <Suspense fallback=move || view! { <BoxSkeleton rows=1 /> }>
                 {move || match user_resource.get() {
                     None => view! { <BoxSkeleton rows=1 /> }.into_any(),
