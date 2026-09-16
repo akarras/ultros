@@ -15,7 +15,7 @@ use ultros_api_types::{
     user::OwnedRetainer,
     websocket::{ListingEventData, SaleEventData},
 };
-use ultros_db::{UltrosDb, entity::alert};
+use ultros_db::{NewAlertEvent, UltrosDb, entity::alert};
 
 use crate::{
     alerts::{
@@ -249,14 +249,17 @@ async fn fire_all(
                 );
             }
             if let Err(e) = db
-                .record_alert_event(
-                    rule.alert_id,
-                    event.key.item_id,
-                    None,
-                    Some(event.key.price_per_unit),
+                .record_alert_event(NewAlertEvent {
+                    alert_id: rule.alert_id,
+                    item_id: event.key.item_id,
+                    matched_listing_id: None,
+                    matched_price: Some(event.key.price_per_unit),
                     delivered,
                     delivery_error,
-                )
+                    title: title.clone(),
+                    body: body.clone(),
+                    click_url: click_url.clone(),
+                })
                 .await
             {
                 error!(

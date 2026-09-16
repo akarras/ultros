@@ -9,7 +9,7 @@ use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tracing::{debug, error, instrument, warn};
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
-use ultros_db::UltrosDb;
+use ultros_db::{NewAlertEvent, UltrosDb};
 
 use crate::{
     alerts::delivery::{DispatchOutcome, dispatch_alert_detailed, permanent_failure_reason},
@@ -458,14 +458,17 @@ impl RetainerAlertListener {
                                             }
                                         }
                                         if let Err(e) = ultros_db
-                                            .record_alert_event(
+                                            .record_alert_event(NewAlertEvent {
                                                 alert_id,
                                                 item_id,
-                                                None,
-                                                None,
+                                                matched_listing_id: None,
+                                                matched_price: None,
                                                 delivered,
-                                                delivery_error.clone(),
-                                            )
+                                                delivery_error: delivery_error.clone(),
+                                                title: title.to_string(),
+                                                body: undercut_msg.clone(),
+                                                click_url: click_url.clone(),
+                                            })
                                             .await
                                         {
                                             error!("failed to record undercut alert event: {e}");

@@ -574,7 +574,7 @@ pub(crate) async fn list_alert_events(
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<ApiAlertEvent>>, ApiError> {
     let rows = db
-        .get_recent_alert_events_for_user(user.id as i64, 50)
+        .get_recent_alert_events_for_user(user.id as i64, 50, None)
         .await
         .map_err(ApiError::from)?;
     Ok(Json(

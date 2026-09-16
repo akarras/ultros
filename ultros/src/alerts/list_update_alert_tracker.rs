@@ -6,7 +6,7 @@ use poise::serenity_prelude;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use ultros_api_types::websocket::ListEventData;
-use ultros_db::{UltrosDb, entity::alert};
+use ultros_db::{NewAlertEvent, UltrosDb, entity::alert};
 
 use crate::{
     alerts::{delivery::dispatch_alert, price_alert_tracker::is_off_cooldown_at},
@@ -176,14 +176,17 @@ async fn handle_list_event(
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
         if let Err(e) = db
-            .record_alert_event(
-                rule.alert_id,
-                item_id.unwrap_or_default(),
-                None,
-                None,
+            .record_alert_event(NewAlertEvent {
+                alert_id: rule.alert_id,
+                item_id: item_id.unwrap_or_default(),
+                matched_listing_id: None,
+                matched_price: None,
                 delivered,
                 delivery_error,
-            )
+                title,
+                body,
+                click_url,
+            })
             .await
         {
             error!(

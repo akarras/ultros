@@ -14,7 +14,7 @@ use ultros_api_types::{
     world_helper::AnySelector as ApiAnySelector,
 };
 use ultros_db::{
-    UltrosDb,
+    NewAlertEvent, UltrosDb,
     entity::{alert, alert_item_threshold, alert_list_threshold},
     world_data::world_cache::{AnySelector as DbAnySelector, WorldCache},
 };
@@ -482,14 +482,17 @@ async fn handle_added(
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
         if let Err(e) = db
-            .record_alert_event(
-                rule.alert_id,
-                rule.item_id,
-                None,
-                Some(matched_price),
+            .record_alert_event(NewAlertEvent {
+                alert_id: rule.alert_id,
+                item_id: rule.item_id,
+                matched_listing_id: None,
+                matched_price: Some(matched_price),
                 delivered,
                 delivery_error,
-            )
+                title,
+                body,
+                click_url,
+            })
             .await
         {
             error!(
@@ -523,14 +526,17 @@ async fn handle_added(
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
         if let Err(e) = db
-            .record_alert_event(
-                rule.alert_id,
-                rule.item_id,
-                None,
-                Some(matched_price),
+            .record_alert_event(NewAlertEvent {
+                alert_id: rule.alert_id,
+                item_id: rule.item_id,
+                matched_listing_id: None,
+                matched_price: Some(matched_price),
                 delivered,
                 delivery_error,
-            )
+                title,
+                body,
+                click_url,
+            })
             .await
         {
             error!(
