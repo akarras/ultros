@@ -62,6 +62,7 @@ pub use ultros_ui_market::components::sales_cadence_badge;
 pub use ultros_ui_query::components::query_button;
 pub use ultros_ui_query::components::saved_views;
 pub use ultros_ui_shell::components::mobile_bar;
+pub use ultros_ui_shell::components::notification_inbox;
 pub use ultros_ui_shell::components::region_menu;
 pub use ultros_ui_shell::components::search_overlay;
 pub mod section_nav;

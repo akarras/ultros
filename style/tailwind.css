@@ -2408,6 +2408,47 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     .app-shell-collapsed .side-nav-home-world-panel {
         bottom: 8.3rem;
     }
+    /* The inbox row is mounted directly above the home-world row (the
+       first row of the pinned bottom cluster), so its panel clears one
+       more ~2.3rem trigger again. Declared after `.side-nav-home-world-panel`
+       so this bottom wins. The panel already gets `position: fixed` from
+       `.app-shell-collapsed .side-nav-account-panel` above — only `bottom`
+       and `width` are overridden here. */
+    .app-shell-collapsed .side-nav-inbox-panel {
+        bottom: 10.6rem;
+        width: 18rem;
+    }
+}
+
+/* ----- Sidebar notification inbox row + drop-up ----- */
+/* Same wrapper role as `.side-nav-region`: a hairline border-top separating
+   it from the informational nav above, positioned so its drop-up panel can
+   anchor off it. */
+.side-nav-inbox {
+    position: relative;
+    border-top: 1px solid var(--color-outline);
+}
+.side-nav-inbox-panel {
+    width: auto;
+}
+/* List rows stack title/body/time vertically instead of the single-line
+   `.menu-item` layout every other drop-up entry uses. */
+.inbox-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+}
+.inbox-item-unread {
+    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent);
+}
+.inbox-item-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+.inbox-item-body,
+.inbox-item-time {
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
 }
 
 /* ----- Mobile bottom bar (below 1024px only) ----- */
@@ -3098,6 +3139,25 @@ dialog.panel { color: var(--color-text); margin: auto; }
     flex-shrink: 0;
 }
 
+/* Unread-count pill for the notification inbox row — a numeric sibling of
+   `.side-nav-badge`'s plain dot, since the inbox needs a count rather than
+   just a presence marker. */
+.side-nav-count {
+    margin-left: auto;
+    min-width: 1.25rem;
+    height: 1.1rem;
+    padding: 0 0.35rem;
+    border-radius: 9999px;
+    background-color: var(--brand-ring);
+    color: var(--color-background);
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.1rem;
+    text-align: center;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
 .side-nav-rule {
     height: 1px;
     background-color: var(--color-outline);
@@ -3121,6 +3181,21 @@ dialog.panel { color: var(--color-text); margin: auto; }
         position: absolute;
         top: 0.3rem;
         right: 0.35rem;
+        margin-left: 0;
+    }
+    /* Same overlay treatment for the inbox row's unread-count pill: kept
+       inline it would add icon + gap + pill width to the 56px rail, so it
+       overlays the row's top-right corner instead (mirrors `.side-nav-badge`
+       above). The trigger needs its own `position: relative` anchor since
+       `.side-nav-inbox` (the wrapper `.side-nav-item` doesn't cover) isn't
+       already one. */
+    .app-shell-collapsed .side-nav-inbox .side-nav-account-trigger {
+        position: relative;
+    }
+    .app-shell-collapsed .side-nav-count {
+        position: absolute;
+        top: 0.25rem;
+        right: 0.3rem;
         margin-left: 0;
     }
 }
