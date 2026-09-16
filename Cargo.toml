@@ -163,6 +163,15 @@ reactive_graph = { path = "vendor/reactive_graph" }
 opt-level = "z"
 strip = "debuginfo"
 
+# Keep browser-only size tuning out of the native server profile.
+[profile.wasm-release]
+inherits = "release"
+
+# The controlled Lists bundle experiment saved 20,883 gzip bytes with this
+# setting. Keep Loro's counter feature for acquired quantities and undo.
+[profile.wasm-release.package.loro-internal]
+codegen-units = 1
+
 # Server binary profile. cargo-leptos builds the bin with this when set as
 # bin-profile-release in workspace.metadata.leptos.
 #
@@ -221,9 +230,9 @@ bin-package = "ultros"
 bin-target = "ultros"
 lib-package = "ultros-client"
 output-name = "ultros"
-# Server binary built with the speed-optimized server-release profile;
-# WASM client keeps the size-optimized default release profile.
+# Separate profiles keep browser size tuning out of the server build.
 bin-profile-release = "server-release"
+lib-profile-release = "wasm-release"
 # Enable the jemalloc global allocator in release builds — better throughput
 # and lower RSS fragmentation under sustained tokio/axum load.
 bin-features = ["jemalloc"]

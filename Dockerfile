@@ -57,13 +57,13 @@ ENV LEPTOS_OUTPUT_NAME=ultros \
 # (`ultros-client`, cdylib for wasm32). Cross-compiling the server crate for
 # wasm32 fails on mio; building the WASM cdylib for native x86_64 fails too.
 #  - bin-package = "ultros"        → server-release profile, native
-#  - lib-package = "ultros-client" → release profile, wasm32-unknown-unknown
+#  - lib-package = "ultros-client" → wasm-release profile, wasm32-unknown-unknown
 # Edits to source code below this line won't invalidate these layers.
 RUN cargo chef cook --locked --profile server-release -p ultros --bin ultros \
     --no-default-features --features jemalloc --recipe-path recipe.json
 # cargo-leptos isolates its frontend artifacts in target/front. Match that
-# directory and its exact feature selection, not Cargo's default target/.
-RUN cargo chef cook --locked --release --target wasm32-unknown-unknown \
+# directory, profile and feature selection, not Cargo's default target/.
+RUN cargo chef cook --locked --profile wasm-release --target wasm32-unknown-unknown \
     --target-dir target/front -p ultros-client --no-default-features \
     --recipe-path recipe.json
 # Now the actual source.

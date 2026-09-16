@@ -90,9 +90,15 @@ These are historical measurements reported for the listed revisions. The
 baseline predates unrelated frontend changes, so the difference cannot be
 attributed solely to Loro or certify the final Phase 4 bundle budget. The
 reported isolated Loro measurement is 1.99 MB raw and 703 KB compressed.
-Before promotion, rebuild Phase 4's direct base and final reviewed head with
-the same release pipeline, toolchain, features and data. Record commands,
-artifact checksums and raw/gzip sizes; compare that delta with the budget.
+The subsequent controlled direct-base/reviewed-head comparison exceeded the
+conservative 750,000-byte budget by **8,900 bytes**. A frontend-only Loro
+compiler-setting experiment saved **20,883 gzip bytes** on that same head.
+The dedicated `wasm-release` profile was then exercised on both historical
+revisions: **738,272 bytes** of gzip growth, **11,728 below the budget**.
+Commands, exact revisions, checksums and the distinction between historical
+failure, candidate evidence and final integrated validation are recorded in
+[`qa/lists-bundle-budget.md`](qa/lists-bundle-budget.md). This does not certify
+the final integrated build or complete the production soak.
 
 ## How it works
 
