@@ -63,6 +63,17 @@ pub struct AdoptGuestListResponse {
     pub source_revision: String,
 }
 
+/// Preserve a device document's identity when connecting it privately online.
+/// Repeating this request merges the same CRDT history into the same destination.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MakeListOnline {
+    pub expected_owner: i64,
+    pub device_list_id: String,
+    pub source_revision: String,
+    pub wdr_filter: AnySelector,
+    pub snapshot: Vec<u8>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct List {
     pub id: i32,

@@ -77,6 +77,7 @@ async function main() {
   const redoY = () => chord("Control", "KeyY");
   const redoShiftZ = () => chord("Control", "Shift", "KeyZ");
   async function createList(name) {
+    await page.click(testId("list-new"));
     await replace(testId("device-list-name"), name);
     await page.click(testId("device-list-create"));
     await page.waitForFunction(() => location.pathname.startsWith("/list/device/"));
@@ -94,7 +95,7 @@ async function main() {
 
   try {
     await load("/list?lang=en");
-    await page.waitForSelector(testId("device-list-create"));
+    await page.waitForSelector(testId("list-new"));
     const listA = await createList(`Undo direct ${Date.now()}`);
     await load(listA);
     console.log("[step] device list opened by direct load");
@@ -147,13 +148,14 @@ async function main() {
     await page.$eval(testId("device-list-confirm-delete"), button =>
       button.parentElement.querySelector("button.btn-secondary").click());
     await waitGone(testId("device-list-confirm-delete"));
+    await page.click('button[aria-label="Close modal"]');
     console.log("[ok] the delete confirmation guards the shortcut");
 
     console.log("[step] client-side navigation to a second device list");
     const token = `undo-nav-${Date.now()}`;
     await page.evaluate(token => { window.__undoDocument = token; }, token);
     await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
-    await page.waitForSelector(testId("device-list-create"));
+    await page.waitForSelector(testId("list-new"));
     const listB = await createList(`Undo navigated ${Date.now()}`);
     assert.equal(await page.evaluate(() => window.__undoDocument), token,
       "the second list opened without a document reload");
@@ -263,7 +265,7 @@ async function main() {
 
     await page.evaluate(token => { window.__undoDocument = token; }, token);
     await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
-    await page.waitForSelector(testId("device-list-create"));
+    await page.waitForSelector(testId("list-new"));
     await page.$eval(`a[href^="${new URL(listA).pathname}"]`, link => link.click());
     await waitValue(NEEDED, 8);
     assert.equal(await page.evaluate(() => window.__undoDocument), token,

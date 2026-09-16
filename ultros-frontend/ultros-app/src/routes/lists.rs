@@ -142,7 +142,7 @@ fn PermissionPill(permission: ListPermission) -> impl IntoView {
 }
 
 #[component]
-fn ListCard(
+pub(crate) fn ListCard(
     list: ListWithPermission,
     edit_list: Action<List, Result<(), crate::error::AppError>>,
     delete_list: Action<i32, Result<(), crate::error::AppError>>,
@@ -268,6 +268,7 @@ fn ListCard(
                                     <div class="text-sm text-gray-400 flex items-center gap-1 flex-wrap">
                                         <Icon icon=i::BiWorldRegular />
                                         <WorldName id=list.wdr_filter />
+                                        <span class="text-xs">{t!(i18n,online_connected)}</span>
                                         <PermissionPill permission />
                                     </div>
                                     <Show when=move || !caps.can_admin>
@@ -281,11 +282,11 @@ fn ListCard(
                                 </div>
                                 <div class="flex items-center gap-1">
                                     <Show when=move || { caps.can_admin }>
-                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, lists_share_list).to_string())>
+                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, online_access).to_string())>
                                             <button
                                                 class="btn-ghost btn-sm text-gray-400 hover:text-white"
                                                 on:click=move |_| set_share_open(true)
-                                                aria-label=move || t_string!(i18n, lists_share_list).to_string()
+                                                aria-label=move || t_string!(i18n, online_access).to_string()
                                             >
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
@@ -353,6 +354,20 @@ fn ListCard(
 
 #[component]
 pub fn EditLists() -> impl IntoView {
+    let enabled = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
+    let i18n = use_i18n();
+    view! {
+        <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
+        <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
+        <MetaRobotsNoIndex />
+        <Show when=move || enabled.get() fallback=|| view! { <LegacyEditLists /> }>
+            <crate::routes::guest_lists::DeviceLists />
+        </Show>
+    }
+}
+
+#[component]
+fn LegacyEditLists() -> impl IntoView {
     let device_lists =
         crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
     let i18n = crate::i18n::use_i18n();
@@ -402,7 +417,6 @@ pub fn EditLists() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
-            <Show when=move || device_lists.get()><crate::routes::guest_lists::DeviceLists /></Show>
             <Suspense fallback=move || view! { <BoxSkeleton rows=1 /> }>
                 {move || match user_resource.get() {
                     None => view! { <BoxSkeleton rows=1 /> }.into_any(),

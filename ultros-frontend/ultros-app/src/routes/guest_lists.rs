@@ -40,6 +40,7 @@ pub fn GuestListRoute() -> impl IntoView {
 #[cfg(feature = "hydrate")]
 mod browser {
     use super::*;
+    use crate::components::app_link::use_query_map_or_default;
     use crate::components::cart::{ListCart, use_legacy_cart};
     use crate::components::list::filter_row::SortSpec;
     use crate::list_doc::{
@@ -50,6 +51,37 @@ mod browser {
     use leptos_router::hooks::{use_navigate, use_params_map};
     use std::collections::HashSet;
     use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
+
+    /// The document cannot see uncommitted browser text. Use the same
+    /// committed-value boundary as native text Undo, including composer drafts.
+    fn editor_has_drafts() -> bool {
+        use wasm_bindgen::JsCast;
+        let Ok(inputs) = document().query_selector_all(
+            "[data-testid='device-list-editor'] input[data-committed], [data-testid='device-list-editor'] [data-handoff-committed]",
+        ) else { return true; };
+        (0..inputs.length()).any(|index| {
+            let Some(element) = inputs
+                .item(index)
+                .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+            else {
+                return false;
+            };
+            let value = element
+                .dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|input| input.value())
+                .or_else(|| {
+                    element
+                        .dyn_ref::<web_sys::HtmlSelectElement>()
+                        .map(|select| select.value())
+                });
+            let committed = element
+                .get_attribute("data-handoff-committed")
+                .or_else(|| element.get_attribute("data-committed"));
+            value
+                .zip(committed)
+                .is_some_and(|(value, committed)| value.trim() != committed.trim())
+        })
+    }
 
     fn prepare_offline() {
         if let (Some(window), Ok(event)) = (
@@ -62,27 +94,96 @@ mod browser {
 
     #[component]
     pub fn DeviceDirectory() -> impl IntoView {
+        use crate::api::{
+            delete_list, edit_list, get_lists_with_permissions, get_login, leave_list,
+            use_list_invite,
+        };
+        use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+        use crate::components::modal::Modal;
+        use crate::routes::lists::ListCard;
+        use ultros_api_types::list::List;
         let i18n = use_i18n();
         prepare_offline();
         let name = RwSignal::new(String::new());
+        let filter = RwSignal::new(String::new());
         let error = RwSignal::new(String::new());
         let busy = RwSignal::new(false);
-        let summaries = RwSignal::new(Vec::new());
+        let summaries = RwSignal::new(Vec::<crate::list_doc::guest::GuestListSummary>::new());
+        let local_loaded = RwSignal::new(false);
         let backup = RwSignal::new(String::new());
-        let navigate = use_navigate();
+        let (creating, set_creating) = signal(false);
+        let (restoring, set_restoring) = signal(false);
+        let (joining, set_joining) = signal(false);
+        let invite = RwSignal::new(String::new());
+        let login = Resource::new(|| (), |_| get_login());
+        let user_id = Signal::derive(move || login.get().and_then(Result::ok).map(|u| u.id));
+        let delete_list = Action::new(|id: &i32| delete_list(*id));
+        let edit_list = Action::new(|list: &List| edit_list(list.clone()));
+        let leave_list_action = Action::new(|(id, user): &(i32, u64)| leave_list(*id, *user));
+        let redeem = Action::new(|code: &String| use_list_invite(code.clone()));
         Effect::new(move |_| {
+            if let Some(result) = redeem.value().get() {
+                match result {
+                    Ok(_) => {
+                        set_joining(false);
+                        invite.set(String::new());
+                    }
+                    Err(e) => error.set(e.to_string()),
+                }
+            }
+        });
+        let accounts = Resource::new(
+            move || {
+                (
+                    user_id.get(),
+                    delete_list.version().get(),
+                    edit_list.version().get(),
+                    leave_list_action.version().get(),
+                    redeem.version().get(),
+                )
+            },
+            |(user, ..)| async move {
+                if user.is_some() {
+                    get_lists_with_permissions().await
+                } else {
+                    Ok(Vec::new())
+                }
+            },
+        );
+        Effect::new(move |_| {
+            let owner = user_id.get();
             leptos::task::spawn_local(async move {
                 match GuestListHandle::list().await {
                     Ok(lists) => {
-                        let _ = summaries.try_set(lists);
+                        let _ = summaries.try_set(lists.clone());
+                        // Resume only work explicitly bound to this account.
+                        // Preserve an offline/error entry rather than hiding it.
+                        for list in lists {
+                            if list.online.as_ref().is_some_and(|b| {
+                                !b.legacy
+                                    && owner.is_some_and(|id| id.to_string() == b.owner)
+                                    && b.acknowledged < list.revision
+                            }) && let Ok(h) = GuestListHandle::open(&list.id).await
+                            {
+                                let _ = h.flush().await;
+                                h.close();
+                            }
+                        }
+                        if let Ok(lists) = GuestListHandle::list().await {
+                            let _ = summaries.try_set(lists);
+                        }
+                        if !accounts.is_disposed() {
+                            accounts.refetch();
+                        }
                     }
                     Err(e) => {
                         let _ = error.try_set(e);
                     }
                 }
+                let _ = local_loaded.try_set(true);
             });
         });
-        let go = StoredValue::new_local(navigate);
+        let go = StoredValue::new_local(use_navigate());
         let create = move |_| {
             if busy.get_untracked() || name.get_untracked().trim().is_empty() {
                 return;
@@ -109,43 +210,120 @@ mod browser {
                 let _ = busy.try_set(false);
             });
         };
+        let local_cards = Signal::derive(move || {
+            let text = filter.get().to_lowercase();
+            let owner = user_id.get();
+            let account_loaded = accounts.get().is_some_and(|r| r.is_ok());
+            summaries
+                .get()
+                .into_iter()
+                .filter(|l| match &l.online {
+                    None => true,
+                    Some(b) => {
+                        owner.is_some_and(|id| id.to_string() == b.owner)
+                            && !(account_loaded && (b.legacy || b.acknowledged >= l.revision))
+                    }
+                })
+                .filter(|l| l.name.to_lowercase().contains(&text))
+                .collect::<Vec<_>>()
+        });
+        let online_cards = Signal::derive(move || {
+            let text = filter.get().to_lowercase();
+            let owner = user_id.get();
+            let linked: HashSet<i32> = summaries
+                .get()
+                .iter()
+                .filter(|l| {
+                    l.online
+                        .as_ref()
+                        .is_some_and(|b| !b.legacy && b.acknowledged < l.revision)
+                })
+                .filter_map(|l| l.online.as_ref())
+                .filter(|b| owner.is_some_and(|id| id.to_string() == b.owner))
+                .filter_map(|b| b.list_id)
+                .collect();
+            accounts
+                .get()
+                .and_then(Result::ok)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|l| {
+                    !linked.contains(&l.list.id) && l.list.name.to_lowercase().contains(&text)
+                })
+                .collect::<Vec<_>>()
+        });
         view! {
-            <section class="panel rounded-xl p-5 space-y-4" aria-label={move || t_string!(i18n, guest_workspace_directory_label).to_string()}>
-                <h1 class="text-2xl font-bold">{t!(i18n, guest_workspace_heading)}</h1>
-                <p>{t!(i18n, guest_workspace_intro)}</p>
-                <div class="flex flex-wrap gap-2">
-                    <input class="input grow" data-testid="device-list-name" aria-label={move || t_string!(i18n, guest_workspace_new_name).to_string()} placeholder={move || t_string!(i18n, guest_workspace_placeholder).to_string()} prop:value=move || name.get() on:input=move |ev| name.set(event_target_value(&ev)) maxlength="100" />
-                    <button class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty() on:click=create>{t!(i18n, guest_workspace_create)}</button>
+            <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
+            <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
+            <MetaRobotsNoIndex />
+            <section class="space-y-4" data-testid="lists-workspace">
+                <header class="flex flex-wrap items-center justify-between gap-3">
+                    <h1 class="text-2xl font-bold">{t!(i18n, lists_page_title)}</h1>
+                    <div class="flex flex-wrap gap-2">
+                        <button class="btn-secondary" data-testid="list-restore-open" on:click=move |_| {error.set(String::new());set_restoring(true);} >{t!(i18n, online_restore)}</button>
+                        <Show when=move || user_id.get().is_some()><button class="btn-secondary" data-testid="list-join-open" on:click=move |_| {error.set(String::new());set_joining(true);} >{t!(i18n, lists_redeem_invite_label)}</button></Show>
+                        <button class="btn-primary" data-testid="list-new" on:click=move |_| {error.set(String::new());set_creating(true);} >{t!(i18n, online_new)}</button>
+                    </div>
+                </header>
+                <input type="search" class="input w-full" data-testid="lists-search" aria-label=move || t_string!(i18n, search_your_lists).to_string() placeholder=move || t_string!(i18n, search_your_lists).to_string() prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
+                <Show when=move || !creating() && !restoring() && !joining() && !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                {move || accounts.get().and_then(Result::err).map(|error|view! {
+                    <p role="alert" class="text-red-400">{t!(i18n,error_loading_lists,error=error.to_string())}</p>
+                })}
+                <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="lists-grid">
+                    <For each=move || local_cards.get() key=move |l| (l.id.clone(),l.revision,l.online.as_ref().map(|b|(b.list_id,b.acknowledged,b.owner.clone())),user_id.get()) children=move |list| {
+                        let id=StoredValue::new(list.id.clone());
+                        let binding=list.online.clone();
+                        let matching=binding.as_ref().filter(|b| user_id.get_untracked().is_some_and(|u|u.to_string()==b.owner));
+                        let destination=matching.filter(|b| b.legacy || b.acknowledged>=list.revision).and_then(|b|b.list_id);
+                        let link=destination.map(|id|format!("/list/{id}?labs=lists-sync")).unwrap_or_else(||format!("/list/device/{}?labs=lists-sync",list.id));
+                        let local=list.online.is_none();
+                        view! {
+                            <article class="panel rounded-xl p-4 flex flex-col gap-3" data-testid="list-card">
+                                <a class="text-lg font-semibold hover:underline break-words" href=link>{list.name.clone()}</a>
+                                <p class="text-sm text-[color:var(--color-text-muted)]">{list.error.clone().unwrap_or_else(|| if destination.is_some() {t_string!(i18n,online_connected).to_string()} else if binding.is_some() {t_string!(i18n,online_pending).to_string()} else {t_string!(i18n,guest_workspace_saved).to_string()})}</p>
+                                <Show when=move || local><a class="btn-secondary self-start" data-testid="list-card-make-online" href=format!("/list/device/{}?labs=lists-sync&make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
+                                {destination.map(|dest|view! { <a class="btn-secondary self-start" href=format!("/list/{dest}?labs=lists-sync")>{t!(i18n,online_open)}</a> })}
+                            </article>
+                        }
+                    } />
+                    <For each=move || online_cards.get() key=|l|l.list.id children=move |list| view! { <ListCard list edit_list delete_list leave_list_action user_id /> } />
                 </div>
-                <p role="alert" class="text-red-400">{move || error.get()}</p>
-                <div class="grid gap-3 md:grid-cols-2">
-                    {move || summaries.get().into_iter().map(|list| view! {
-                        <a class="panel rounded-lg p-4 hover:border-blue-400" href=format!("/list/device/{}?labs=lists-sync", list.id)>
-                            <strong>{if list.name.is_empty() { t_string!(i18n, guest_workspace_damaged).to_string() } else { list.name }}</strong><p class="text-sm opacity-70">{list.error.unwrap_or_else(|| t_string!(i18n, guest_workspace_saved).to_string())}</p>
-                        </a>
-                    }).collect_view()}
-                </div>
-                <crate::routes::guest_list_adoption::DeviceListsAdoption summaries />
-                <details>
-                    <summary class="cursor-pointer">{t!(i18n, guest_workspace_restore_heading)}</summary>
-                    <p class="text-sm my-3">{t!(i18n, guest_workspace_storage_warning)}</p>
-                    <label class="block" for="device-restore">{t!(i18n, guest_workspace_paste_backup)}</label>
-                    <textarea id="device-restore" class="input w-full h-24" data-testid="device-list-backup" prop:value=move || backup.get() on:input=move |ev| backup.set(event_target_value(&ev)) />
-                    <button class="btn-secondary" data-testid="device-list-restore" disabled=move || busy.get() || backup.get().trim().is_empty() on:click=move |_| {
-                        busy.set(true);
-                        let text = backup.get_untracked();
+                <Show when=move || local_loaded.get() && accounts.get().is_some_and(|r|r.is_ok()) && local_cards.get().is_empty() && online_cards.get().is_empty()>
+                    <p class="py-8 text-center text-[color:var(--color-text-muted)]">{t!(i18n,online_empty)}</p>
+                </Show>
+                <Show when=move || user_id.get().is_none()><p class="text-sm"><a class="underline" rel="external" href="/login?next=/list%3Flabs%3Dlists-sync">{t!(i18n,lists_device_sign_in)}</a></p></Show>
+                <Show when=creating><Modal set_visible=set_creating>
+                    <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_new)}</h2>
+                    <input class="input w-full" data-testid="device-list-name" aria-label=move || t_string!(i18n,list_name).to_string() placeholder=move || t_string!(i18n,guest_workspace_placeholder).to_string() prop:value=move || name.get() on:input=move |ev| name.set(event_target_value(&ev)) maxlength="100" />
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                    <button class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty() on:click=create>{t!(i18n,create_list)}</button></div>
+                </Modal></Show>
+                <Show when=restoring><Modal set_visible=set_restoring>
+                    <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_restore)}</h2>
+                    <div class="flex flex-col gap-2">{move || summaries.get().into_iter().filter(|l|l.online.as_ref().is_some_and(|b|user_id.get().is_some_and(|id|id.to_string()==b.owner))).map(|l|view! {
+                        <a class="underline" href=format!("/list/device/{}?labs=lists-sync&recovery=1",l.id)>{t!(i18n,guest_workspace_export)}": "{l.name}</a>
+                    }).collect_view()}</div>
+                    <label for="device-restore">{t!(i18n,guest_workspace_paste_backup)}</label>
+                    <textarea id="device-restore" class="input w-full h-32" data-testid="device-list-backup" prop:value=move || backup.get() on:input=move |ev|backup.set(event_target_value(&ev)) />
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                    <button class="btn-primary" data-testid="device-list-restore" disabled=move || busy.get() || backup.get().trim().is_empty() on:click=move |_| {
+                        busy.set(true); error.set(String::new()); let text=backup.get_untracked();
                         leptos::task::spawn_local(async move {
                             match GuestListHandle::restore(&text).await {
-                                Ok(handle) => {
-                                    let id = handle.id(); handle.close();
-                                    go.try_with_value(|go| go(&format!("/list/device/{id}?labs=lists-sync"), Default::default()));
-                                }
-                                Err(e) => { let _ = error.try_set(e); },
+                                Ok(h) => {let id=h.id();h.close();go.try_with_value(|go|go(&format!("/list/device/{id}?labs=lists-sync"),Default::default()));}
+                                Err(e) => {let _=error.try_set(e);}
                             }
-                            let _ = busy.try_set(false);
+                            let _=busy.try_set(false);
                         });
-                    }>{t!(i18n, guest_workspace_restore)}</button>
-                </details>
+                    }>{t!(i18n,guest_workspace_restore)}</button></div>
+                </Modal></Show>
+                <Show when=joining><Modal set_visible=set_joining><div class="space-y-3">
+                    <h2 class="text-xl font-bold">{t!(i18n,lists_redeem_invite_label)}</h2>
+                    <input class="input w-full" data-testid="list-join-code" aria-label=move ||t_string!(i18n,lists_invite_code_placeholder).to_string() prop:value=move ||invite.get() disabled=move ||redeem.pending().get() on:input=move |e|invite.set(event_target_value(&e)) />
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                    <button class="btn-primary" data-testid="list-join-submit" disabled=move ||invite.get().trim().is_empty() || redeem.pending().get() on:click=move |_|{error.set(String::new());redeem.dispatch(invite.get_untracked());}>{t!(i18n,lists_redeem_button)}</button>
+                </div></Modal></Show>
             </section>
         }
     }
@@ -158,6 +336,7 @@ mod browser {
         let loaded = RwSignal::new_local(None::<GuestListHandle>);
         let generation = RwSignal::new(0u64);
         let error = RwSignal::new(String::new());
+        let account_required = RwSignal::new(false);
         Effect::new(move |_| {
             let id = params.with(|p| p.get("device_id").unwrap_or_default());
             if let Some(old) = loaded.get_untracked() {
@@ -166,10 +345,23 @@ mod browser {
             loaded.set(None);
             generation.update(|n| *n += 1);
             let request = generation.get_untracked();
+            account_required.set(false);
             error.set(String::new());
             leptos::task::spawn_local(async move {
                 match GuestListHandle::open(&id).await {
                     Ok(handle) => {
+                        if let Some(binding) = handle.online() {
+                            let allowed = crate::api::get_login_fresh()
+                                .await
+                                .is_ok_and(|u| u.id.to_string() == binding.owner);
+                            if !allowed {
+                                if generation.try_get_untracked() == Some(request) {
+                                    account_required.set(true);
+                                }
+                                handle.close();
+                                return;
+                            }
+                        }
                         if generation.try_get_untracked() == Some(request) {
                             loaded.set(Some(handle));
                         } else {
@@ -187,6 +379,10 @@ mod browser {
         view! {
             <a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline mb-2" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a>
             <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+            <Show when=move ||account_required.get()><div class="panel rounded-xl p-5 space-y-3" data-testid="list-online-account-required">
+                <p>{t!(i18n,online_account_required)}</p>
+                <a class="btn-primary" rel="external" href=move || format!("/login?next={}",String::from(js_sys::encode_uri_component(&format!("/list/device/{}?labs=lists-sync",params.with(|p|p.get("device_id").unwrap_or_default())))))>{t!(i18n,lists_device_sign_in)}</a>
+            </div></Show>
             {move || loaded.get().map(|handle| view! { <DeviceEditor handle /> })}
         }
     }
@@ -194,6 +390,9 @@ mod browser {
     #[component]
     fn DeviceEditor(handle: GuestListHandle) -> impl IntoView {
         let i18n = use_i18n();
+        let query = use_query_map_or_default();
+        let recovery =
+            Memo::new(move |_| query.with(|q| q.get("recovery").as_deref() == Some("1")));
         let handle = StoredValue::new_local(handle);
         let revision = handle.with_value(|h| h.revision);
         let status = handle.with_value(|h| h.status);
@@ -220,20 +419,118 @@ mod browser {
                 .map(|world| ultros_api_types::world_helper::AnySelector::World(world.id)),
         );
         let recipe_open = RwSignal::new(false);
+        let (storage_open, set_storage_open) = signal(recovery.get_untracked());
         let confirm_delete = RwSignal::new(false);
         let deleting = RwSignal::new(false);
         let navigate = StoredValue::new_local(use_navigate());
+        let following = RwSignal::new(false);
+        let follow_retry = RwSignal::new(0u64);
+        let draft_changed = RwSignal::new(0u64);
+        Effect::new(move |_| {
+            follow_retry.track();
+            draft_changed.track();
+            status.track();
+            revision.track();
+            // Keep these dependencies while an auth check is in flight, so
+            // closing a dialog can resume a handoff it temporarily deferred.
+            let recipe_visible = recipe_open.get();
+            let storage_visible = storage_open();
+            if recovery.get()
+                || following.get_untracked()
+                || recipe_visible
+                || storage_visible
+                || editor_has_drafts()
+                || !handle.with_value(|h| h.is_saved() && !h.is_saving())
+            {
+                return;
+            }
+            let Some(binding) = handle.with_value(|h| h.online()) else {
+                return;
+            };
+            let Some(id) = binding.list_id else {
+                return;
+            };
+            if !binding.legacy
+                && binding.acknowledged.to_string() != handle.with_value(|h| h.storage_revision())
+            {
+                return;
+            }
+            let h = handle.get_value();
+            let observed_revision = revision.get_untracked();
+            let observed_storage_revision = h.storage_revision();
+            following.set(true);
+            leptos::task::spawn_local(async move {
+                let user = crate::api::get_login_fresh().await;
+                if following.is_disposed() {
+                    return;
+                }
+                // Do not navigate on an earlier acknowledgement: the player
+                // may have edited again while the session request was pending.
+                let current_matches = h.online().is_some_and(|current| {
+                    current.owner == binding.owner
+                        && current.list_id == Some(id)
+                        && current.legacy == binding.legacy
+                        && (current.legacy
+                            || current.acknowledged.to_string() == h.storage_revision())
+                });
+                let can_follow = !recovery.get_untracked()
+                    && !recipe_open.get_untracked()
+                    && !storage_open.get_untracked()
+                    && !editor_has_drafts()
+                    && h.is_saved()
+                    && !h.is_saving()
+                    && current_matches;
+                if let Ok(user) = user
+                    && user.id.to_string() == binding.owner
+                    && can_follow
+                {
+                    navigate.try_with_value(|go| {
+                        let mode = if shop.get_untracked() {
+                            "&buy=true"
+                        } else {
+                            ""
+                        };
+                        go(
+                            &format!("/list/{id}?labs=lists-sync{mode}"),
+                            Default::default(),
+                        )
+                    });
+                    return;
+                }
+                let _ = following.try_set(false);
+                // Effects may have observed a completed save while following
+                // was true. Give changed state one fresh attempt, but never
+                // poll an unchanged failed/account-mismatched session.
+                if revision.try_get_untracked() != Some(observed_revision)
+                    || h.storage_revision() != observed_storage_revision
+                {
+                    let _ = follow_retry.try_update(|value| *value += 1);
+                }
+            });
+        });
+        // Old device URLs and a reload after a lost acknowledgement drain their
+        // durable continuation before the effect above follows the destination.
+        let initial = handle.get_value();
+        leptos::task::spawn_local(async move {
+            let _ = initial.flush().await;
+        });
         on_cleanup(move || handle.with_value(|h| h.close()));
         // Explains a shortcut that found nothing to do (#1430); any later
         // edit clears it. Errors take precedence in the feedback line.
         let notice = RwSignal::new(String::new());
         let apply = Callback::new(move |edit| {
+            if recovery.get_untracked() {
+                return;
+            }
             notice.set(String::new());
             if let Err(e) = handle.with_value(|h| h.apply(edit)) {
                 error.set(e);
             }
         });
         let undo = Callback::new(move |()| {
+            if recovery.get_untracked() {
+                return;
+            }
             if handle.with_value(|h| h.undo()) {
                 notice.set(String::new());
             } else {
@@ -241,6 +538,9 @@ mod browser {
             }
         });
         let redo = Callback::new(move |()| {
+            if recovery.get_untracked() {
+                return;
+            }
             if handle.with_value(|h| h.redo()) {
                 notice.set(String::new());
             } else {
@@ -255,7 +555,9 @@ mod browser {
         crate::list_doc::undo::install(crate::list_doc::undo::UndoBindings {
             undo,
             redo,
-            modal_open: confirm_delete.into(),
+            modal_open: Signal::derive(move || {
+                confirm_delete.get() || storage_open() || recovery.get()
+            }),
         });
         let sort = RwSignal::new(None::<SortSpec>);
         let source = ListWorkspaceSource {
@@ -295,7 +597,7 @@ mod browser {
             }),
             market: feed.into(),
             scope_name: offers_scope.into(),
-            can_write: Signal::derive(|| true),
+            can_write: Signal::derive(move || !recovery.get()),
             edit: Callback::new(move |item| apply.run(Edit::Edit(item))),
             remove: Callback::new(move |id| apply.run(Edit::Remove(id))),
             remove_many: Callback::new(move |ids| apply.run(Edit::RemoveMany(ids))),
@@ -306,13 +608,19 @@ mod browser {
         };
         let legacy_cart = use_legacy_cart();
         view! {
-            <section class="space-y-3">
+            <section class="space-y-3" data-testid="device-list-editor"
+                on:input=move |_| draft_changed.update(|value| *value += 1)
+                on:change=move |_| draft_changed.update(|value| *value += 1)
+                on:keyup=move |_| draft_changed.update(|value| *value += 1)
+                on:focusout=move |_| draft_changed.update(|value| *value += 1)>
                 <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <div class="min-w-0 flex-1 basis-56">
-                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
+                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} readonly=move || recovery.get() prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:keydown=move |ev| { if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&handle.with_value(|h| h.meta().name)); ev.stop_propagation(); } else if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); } } on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
                         <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
+                    <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() /></Show>
+                    <button class="btn-secondary" data-testid="device-list-storage-toggle" on:click=move |_|set_storage_open(true)>{t!(i18n,online_more)}</button>
                     <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
                         <button class="btn-secondary" on:click=move |_| {
                             apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
@@ -327,8 +635,12 @@ mod browser {
                     </Show>
                     </div>
                 </header>
-                <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
-                <crate::routes::list_view_sync::ListWorkspaceModes shop=shop.into() set_shop=Callback::new(move |value| shop.set(value)) />
+                <Show when=move || !storage_open() && !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                <Show when=move || {
+                    draft_changed.track();
+                    handle.with_value(|h| h.online().is_some_and(|online| online.list_id.is_some())) && editor_has_drafts()
+                }><p class="text-sm" role="status">{t!(i18n, online_finish_edit)}</p></Show>
+                <Show when=move || !recovery.get()><crate::routes::list_view_sync::ListWorkspaceModes shop=shop.into() set_shop=Callback::new(move |value| shop.set(value)) /></Show>
                 // Mounted on first use and then only hidden, so a return to
                 // Build keeps the chosen trip and its recorded stacks.
                 <div class:hidden=move || !shop.get()>
@@ -342,10 +654,10 @@ mod browser {
                     view! { <ListCart source selected_items=selected /> }.into_any()
                 }}
                 </div>
-                <details class="panel rounded-lg p-3" data-testid="device-list-storage-details">
-                    <summary class="cursor-pointer text-sm font-medium" data-testid="device-list-storage-toggle">{t!(i18n, guest_workspace_storage_heading)}</summary>
+                <Show when=storage_open><crate::components::modal::Modal set_visible=set_storage_open>
+                    <h2 class="text-xl font-bold">{t!(i18n,online_more)}</h2>
                     <div class="space-y-3 pt-3">
-                        <crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() />
+                        <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
                         <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_backup_warning)}</p>
                         <div class="flex flex-wrap gap-2">
                             <button class="btn-secondary" data-testid="device-list-export" on:click=move |_| {
@@ -379,7 +691,7 @@ mod browser {
                             </div>
                         </Show>
                     </div>
-                </details>
+                </crate::components::modal::Modal></Show>
             </section>
         }
     }

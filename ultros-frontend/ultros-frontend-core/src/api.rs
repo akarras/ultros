@@ -160,6 +160,12 @@ pub async fn get_login() -> AppResult<UserData> {
     fetch_api("/api/v1/current_user").await
 }
 
+/// Check the current session for an account-bound transition. Bootstrap data
+/// describes page load and can be stale after signing in from another tab.
+pub async fn get_login_fresh() -> AppResult<UserData> {
+    fetch_api("/api/v1/current_user").await
+}
+
 pub async fn delete_user() -> AppResult<()> {
     delete_api("/api/v1/current_user").await
 }
@@ -577,6 +583,12 @@ pub async fn adopt_guest_list(
     list: ultros_api_types::list::AdoptGuestList,
 ) -> AppResult<ultros_api_types::list::AdoptGuestListResponse> {
     post_api("/api/v1/list/adopt", list).await
+}
+
+pub async fn make_list_online(
+    list: ultros_api_types::list::MakeListOnline,
+) -> AppResult<ultros_api_types::list::AdoptGuestListResponse> {
+    post_api("/api/v1/list/online", list).await
 }
 
 pub async fn edit_list(list: List) -> AppResult<()> {

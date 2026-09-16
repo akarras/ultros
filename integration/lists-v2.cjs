@@ -130,7 +130,8 @@ async function main() {
       .some(link => new URL(link.href).pathname === "/list"));
     await page.evaluate(() => Array.from(document.querySelectorAll("a[href]"))
       .find(link => new URL(link.href).pathname === "/list").click());
-    await page.waitForSelector(testId("device-list-create"));
+    await page.waitForSelector(testId("list-new"));
+    await page.click(testId("list-new"));
     assert.equal(await page.evaluate(() => window.__guestEntryDocument), documentToken,
       "homepage entry opens the guest directory through client-side navigation");
     const name = `Browser guest project ${Date.now()}`;
@@ -243,7 +244,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="cart-rows"] > li')[0]?.textContent.includes("Bronze Ingot"));
     await page.click('button[aria-label="Sort by Qty"]');
     await page.click('button[aria-label="Sort by Qty"]');
-    await page.waitForFunction(() => document.querySelector('button[aria-label="Sort by Qty"]')?.closest('[role="columnheader"]')?.getAttribute("aria-sort") === "none");
+    await page.waitForFunction(() => document.querySelector('button[aria-label="Sort by Qty"]')?.getAttribute("aria-pressed") === "false");
     await replace(needed, 6);
     await page.keyboard.press("Enter");
     await waitValue(needed, 6);
@@ -394,7 +395,7 @@ async function main() {
     const backup = await page.$eval(testId("device-list-backup"), input => input.value);
     assert.equal(JSON.parse(backup).format, "ultros-device-list");
     await load("/list?lang=en");
-    await page.$eval(testId("device-list-backup"), element => { element.closest("details").open = true; });
+    await page.click(testId("list-restore-open"));
     await replace(testId("device-list-backup"), backup);
     await page.click(testId("device-list-restore"));
     await page.waitForFunction(original => location.pathname.startsWith("/list/device/") && location.href !== original,

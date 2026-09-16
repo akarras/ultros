@@ -99,16 +99,21 @@ pub fn sort_cart_rows<'a>(
                 .cmp(name_of(b.item_id).unwrap_or_default()),
             SortKey::Price => {
                 let cost = |item: &ListItem| {
-                    // Nothing priced sorts last, after every known cost.
                     lines
                         .get(&item.id)
                         .filter(|line| line.status != estimate::LineStatus::NoSupply)
                         .map(|line| line.total)
-                        .unwrap_or(i64::MAX)
                 };
-                cost(a).cmp(&cost(b))
+                match (cost(a), cost(b)) {
+                    // Unknown placement is independent of direction.
+                    (None, Some(_)) => return std::cmp::Ordering::Greater,
+                    (Some(_), None) => return std::cmp::Ordering::Less,
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
             }
-            SortKey::Acquired => remaining_quantity(a).cmp(&remaining_quantity(b)),
+            // Preserve the query key, but compare the Qty editor's value.
+            SortKey::Acquired => a.quantity.unwrap_or(1).cmp(&b.quantity.unwrap_or(1)),
         };
         let ordering = if spec.descending {
             ordering.reverse()
@@ -465,16 +470,29 @@ pub fn ListCart(
     });
     let sort_header = move |key: SortKey, label: Signal<String>, align_right: bool| {
         let active = Memo::new(move |_| source.sort.get().filter(|spec| spec.key == key));
+        let state_id = match key {
+            SortKey::Name => "cart-sort-name-state",
+            SortKey::Acquired => "cart-sort-quantity-state",
+            SortKey::Price => "cart-sort-cost-state",
+        };
+        let description = move || match active.get() {
+            None => String::new(),
+            Some(spec) => match (spec.key, spec.descending) {
+                (SortKey::Name, false) => t_string!(i18n, cart_sort_name_asc).to_string(),
+                (SortKey::Name, true) => t_string!(i18n, cart_sort_name_desc).to_string(),
+                (SortKey::Acquired, false) => t_string!(i18n, cart_sort_qty_asc).to_string(),
+                (SortKey::Acquired, true) => t_string!(i18n, cart_sort_qty_desc).to_string(),
+                (SortKey::Price, false) => t_string!(i18n, cart_sort_cost_asc).to_string(),
+                (SortKey::Price, true) => t_string!(i18n, cart_sort_cost_desc).to_string(),
+            },
+        };
         view! {
-            <div role="columnheader" class=if align_right { "text-right" } else { "" } aria-sort=move || match active.get() {
-                Some(spec) if spec.descending => "descending",
-                Some(_) => "ascending",
-                None => "none",
-            }>
-                <button type="button" class="inline-flex items-center gap-1 rounded px-1 uppercase tracking-wide hover:text-[color:var(--color-text)]" class:text-brand-300=move || active.get().is_some() aria-label=move || t_string!(i18n, cart_sort_column, column = label.get()).to_string() on:click=move |_| source.set_sort.run(next_sort(source.sort.get_untracked(), key))>
+            <div class=if align_right { "text-right" } else { "" }>
+                <button type="button" class="inline-flex items-center gap-1 rounded px-1 uppercase tracking-wide hover:text-[color:var(--color-text)]" class:text-brand-300=move || active.get().is_some() aria-label=move || t_string!(i18n, cart_sort_column, column = label.get()).to_string() aria-pressed=move || active.get().is_some().to_string() aria-describedby=move || active.get().is_some().then_some(state_id) aria-controls="cart-row-list" on:click=move |_| source.set_sort.run(next_sort(source.sort.get_untracked(), key))>
                     <span>{move || label.get()}</span>
                     <span aria-hidden="true">{move || match active.get() { Some(spec) if spec.descending => "▼", Some(_) => "▲", None => "" }}</span>
                 </button>
+                <span id=state_id class="sr-only" role="status">{description}</span>
             </div>
         }
     };
@@ -544,8 +562,8 @@ pub fn ListCart(
                 #[cfg(not(feature = "hydrate"))]
                 { let _ = ev; }
             }>
-                <div role="row" class=format!("{ROW_GRID} hidden sm:grid border-b border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)]")>
-                    <div role="columnheader" class="justify-self-center">
+                <div role="group" aria-label=t_string!(i18n, cart_sort_by) class=format!("{ROW_GRID} hidden sm:grid border-b border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)]")>
+                    <div class="justify-self-center">
                         <Show when=move || source.can_write.get()>
                             <input type="checkbox" class="h-5 w-5" aria-label=t_string!(i18n, cart_select_all_visible) prop:checked=move || all_visible_selected.get() disabled=move || visible_ids.with(|ids| ids.is_empty()) on:change=move |_| {
                                 let ids = visible_ids.get_untracked();
@@ -559,12 +577,12 @@ pub fn ListCart(
                     </div>
                     {sort_header(SortKey::Name, item_label, false)}
                     {sort_header(SortKey::Acquired, qty_label, true)}
-                    <div role="columnheader" class="uppercase tracking-wide">{t!(i18n, lists_workspace_quality)}</div>
+                    <div class="uppercase tracking-wide">{t!(i18n, lists_workspace_quality)}</div>
                     {sort_header(SortKey::Price, cost_label, true)}
-                    <div role="columnheader"></div>
-                    <div role="columnheader"></div>
+                    <div></div>
+                    <div></div>
                 </div>
-                <ul class="text-sm" data-testid="cart-rows">
+                <ul id="cart-row-list" class="text-sm" data-testid="cart-rows">
                     <For each=move || { visible.get().into_iter().map(|(item, _)| item).collect::<Vec<_>>() } key=|item| item.id children=move |initial| {
                         let id = initial.id;
                         let fallback = StoredValue::new(initial);
@@ -676,13 +694,13 @@ mod tests {
         );
         assert_eq!(
             ids(&rows),
-            [3, 4, 1, 2],
+            [1, 2, 3, 4],
             "ties keep ascending row id in either direction"
         );
     }
 
     #[test]
-    fn sort_by_name_and_remaining_quantity() {
+    fn sort_by_name_and_displayed_requested_quantity() {
         let names = |id: i32| match id {
             10 => Some("Maple Log"),
             20 => Some("Bronze Ingot"),
@@ -710,7 +728,78 @@ mod tests {
             names,
             &lines,
         );
-        assert_eq!(ids(&rows), [1, 2], "one unit left sorts before three");
+        assert_eq!(
+            ids(&rows),
+            [2, 1],
+            "requested three sorts before five, despite ownership"
+        );
+        sort_cart_rows(
+            &mut rows,
+            SortSpec {
+                key: SortKey::Acquired,
+                descending: true,
+            },
+            names,
+            &lines,
+        );
+        assert_eq!(ids(&rows), [1, 2]);
+    }
+
+    #[test]
+    fn quantity_sort_uses_editor_default_and_keeps_ties_stable() {
+        let mut default_quantity = item(2, 20, 9, 0);
+        default_quantity.quantity = None;
+        let rows = vec![
+            (item(3, 30, 1, 99), vec![]),
+            (item(1, 10, 2, 0), vec![]),
+            (default_quantity, vec![]),
+        ];
+        for (descending, expected) in [(false, [2, 3, 1]), (true, [1, 2, 3])] {
+            let mut sorted = rows.clone();
+            sort_cart_rows(
+                &mut sorted,
+                SortSpec {
+                    key: SortKey::Acquired,
+                    descending,
+                },
+                |_| None,
+                &HashMap::new(),
+            );
+            assert_eq!(ids(&sorted), expected);
+        }
+    }
+
+    #[test]
+    fn cost_sort_orders_partial_and_acquired_totals_before_missing_estimates() {
+        let rows = vec![
+            (item(5, 50, 2, 0), vec![]),
+            (item(4, 40, 2, 0), vec![]),
+            (
+                item(3, 30, 2, 0),
+                vec![fixture_listing(3, 30, 10, 1, false)],
+            ),
+            (
+                item(2, 20, 1, 0),
+                vec![fixture_listing(2, 20, 10, 1, false)],
+            ),
+            (item(1, 10, 2, 2), vec![]),
+        ];
+        let mut lines =
+            estimate::lines_by_id(&ultros_calc::list_estimate::estimate_list_items(&rows));
+        lines.remove(&5); // Missing allocation is unknown, like NoSupply.
+        for (descending, expected) in [(false, [1, 2, 3, 4, 5]), (true, [2, 3, 1, 4, 5])] {
+            let mut sorted = rows.clone();
+            sort_cart_rows(
+                &mut sorted,
+                SortSpec {
+                    key: SortKey::Price,
+                    descending,
+                },
+                |_| None,
+                &lines,
+            );
+            assert_eq!(ids(&sorted), expected);
+        }
     }
 
     #[test]

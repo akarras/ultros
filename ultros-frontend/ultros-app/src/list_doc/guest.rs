@@ -23,6 +23,12 @@ extern "C" {
     fn save(id: &str, revision: f64, name: &str, snapshot: &js_sys::Uint8Array) -> js_sys::Promise;
     #[wasm_bindgen(js_name = guestRemove)]
     fn remove(id: &str, revision: f64) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = guestConnect)]
+    fn connect(id: &str, owner: &str, scope: &str) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = guestAcknowledge)]
+    fn acknowledge(id: &str, owner: &str, list_id: i32, revision: f64) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = guestContinueLegacy)]
+    fn continue_legacy(id: &str, owner: &str, list_id: i32) -> js_sys::Promise;
     #[wasm_bindgen(js_name = guestEncode)]
     fn encode(name: &str, snapshot: &js_sys::Uint8Array) -> js_sys::Promise;
     #[wasm_bindgen(js_name = guestDecode)]
@@ -45,6 +51,29 @@ pub struct GuestListSummary {
     #[serde(default)]
     pub revision: u64,
     pub error: Option<String>,
+    #[serde(default)]
+    pub online: Option<OnlineContinuation>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct OnlineContinuation {
+    pub owner: String,
+    pub scope: Option<ultros_api_types::world_helper::AnySelector>,
+    pub list_id: Option<i32>,
+    pub acknowledged: u64,
+    #[serde(default)]
+    pub legacy: bool,
+}
+
+fn online(record: &JsValue) -> Result<Option<OnlineContinuation>, String> {
+    let value = property(record, "online")?;
+    if value.is_null() || value.is_undefined() {
+        return Ok(None);
+    }
+    let json = js_sys::JSON::stringify(&value).map_err(error_message)?;
+    serde_json::from_str(&String::from(json))
+        .map(Some)
+        .map_err(|_| message("corrupt"))
 }
 
 fn property(value: &JsValue, key: &str) -> Result<JsValue, String> {
@@ -74,6 +103,7 @@ fn message(code: &str) -> String {
         "invalid" => td_string!(locale, device_runtime_invalid).to_string(),
         "unavailable" => td_string!(locale, device_runtime_unavailable).to_string(),
         "blocked" => td_string!(locale, device_runtime_blocked).to_string(),
+        "account" => td_string!(locale, online_account_required).to_string(),
         "QuotaExceededError" => td_string!(locale, device_runtime_quota).to_string(),
         _ => td_string!(locale, device_runtime_unsaved).to_string(),
     }
@@ -122,6 +152,7 @@ struct Inner {
     lock: Mutex<()>,
     closed: Cell<bool>,
     removed: Cell<bool>,
+    online: RefCell<Option<OnlineContinuation>>,
     _subscription: Subscription,
     watcher: RefCell<Option<GuestWatcher>>,
 }
@@ -219,6 +250,7 @@ impl GuestListHandle {
                 lock: Mutex::new(()),
                 closed: Cell::new(false),
                 removed: Cell::new(false),
+                online: RefCell::new(online(&record)?),
                 _subscription: subscription,
                 watcher: RefCell::new(None),
             }),
@@ -260,6 +292,48 @@ impl GuestListHandle {
     }
     pub fn storage_revision(&self) -> String {
         self.inner.storage_revision.get().to_string()
+    }
+    pub fn online(&self) -> Option<OnlineContinuation> {
+        self.status.track();
+        self.inner.online.borrow().clone()
+    }
+    pub async fn make_online(
+        &self,
+        owner: u64,
+        scope: ultros_api_types::world_helper::AnySelector,
+    ) -> Result<(), String> {
+        let current = crate::api::get_login_fresh()
+            .await
+            .map_err(|e| e.to_string())?;
+        if current.id != owner {
+            return Err(message("account"));
+        }
+        // Persist consent before the first request. An interrupted transition is
+        // resumed by flush/open; source saves always retain this record.
+        let record = JsFuture::from(connect(
+            &self.id(),
+            &owner.to_string(),
+            &serde_json::to_string(&scope).map_err(|e| e.to_string())?,
+        ))
+        .await
+        .map_err(error_message)?;
+        *self.inner.online.borrow_mut() = online(&record)?;
+        self.flush().await
+    }
+    pub async fn continue_legacy(&self, owner: u64, list_id: i32) -> Result<(), String> {
+        self.flush().await?;
+        let current = crate::api::get_login_fresh()
+            .await
+            .map_err(|e| e.to_string())?;
+        if current.id != owner {
+            return Err(message("account"));
+        }
+        let record = JsFuture::from(continue_legacy(&self.id(), &owner.to_string(), list_id))
+            .await
+            .map_err(error_message)?;
+        *self.inner.online.borrow_mut() = online(&record)?;
+        let _ = self.status.try_set(message("saved"));
+        Ok(())
     }
     pub fn needs_save_retry(&self) -> bool {
         self.save_failed.get() && !self.is_saving()
@@ -364,7 +438,7 @@ impl GuestListHandle {
     pub async fn flush(&self) -> Result<(), String> {
         let _guard = self.inner.lock.lock().await;
         let _ = self.saving.try_set(true);
-        let result = self.flush_locked().await;
+        let result = self.flush_online_locked().await;
         let _ = self.saving.try_set(false);
         let _ = self.save_failed.try_set(result.is_err());
         let _ = self.status.try_set(match &result {
@@ -372,6 +446,59 @@ impl GuestListHandle {
             Err(e) => format!("{} {e}", message("unsaved")),
         });
         result
+    }
+    async fn flush_online_locked(&self) -> Result<(), String> {
+        // A save queued before deletion must not promote the removed source.
+        if self.inner.removed.get() {
+            return Ok(());
+        }
+        for _ in 0..16 {
+            self.flush_locked().await?;
+            let Some(binding) = self.inner.online.borrow().clone() else {
+                return Ok(());
+            };
+            if binding.legacy {
+                return Ok(());
+            }
+            let revision = self.inner.storage_revision.get();
+            if binding.acknowledged as f64 >= revision {
+                return Ok(());
+            }
+            let current = crate::api::get_login_fresh()
+                .await
+                .map_err(|e| e.to_string())?;
+            if current.id.to_string() != binding.owner {
+                return Err(message("account"));
+            }
+            let owner = i64::try_from(current.id).map_err(|e| e.to_string())?;
+            let response = crate::api::make_list_online(ultros_api_types::list::MakeListOnline {
+                expected_owner: owner,
+                device_list_id: self.id(),
+                source_revision: revision.to_string(),
+                wdr_filter: binding.scope.ok_or_else(|| message("invalid"))?,
+                snapshot: self.snapshot()?,
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            if response.owner != owner
+                || response.device_list_id != self.id()
+                || response.source_revision != revision.to_string()
+            {
+                return Err(message("invalid"));
+            }
+            let record = JsFuture::from(acknowledge(
+                &self.id(),
+                &binding.owner,
+                response.list_id,
+                revision,
+            ))
+            .await
+            .map_err(error_message)?;
+            *self.inner.online.borrow_mut() = online(&record)?;
+            // Flush again before returning: this tab or another may have edited
+            // during HTTP. The receipt acknowledges only the uploaded revision.
+        }
+        Err(message("conflict"))
     }
     async fn flush_locked(&self) -> Result<(), String> {
         if self.inner.removed.get() {
@@ -384,6 +511,7 @@ impl GuestListHandle {
             if record.is_null() || record.is_undefined() {
                 return Err(message("removed"));
             }
+            *self.inner.online.borrow_mut() = online(&record)?;
             let stored_revision = property(&record, "revision")?
                 .as_f64()
                 .ok_or_else(|| message("corrupt"))?;
