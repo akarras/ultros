@@ -2,6 +2,7 @@
 //! ultros-frontend-core — extracted frontend modules with explicit SSR/hydration features.
 
 pub mod api;
+pub mod components;
 pub mod global_state;
 pub mod ws;
 pub use ultros_api_client::error;

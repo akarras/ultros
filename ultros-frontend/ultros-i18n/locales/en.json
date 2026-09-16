@@ -1330,6 +1330,8 @@
     "alert_drawer_webhook_url_label": "Discord webhook URL",
     "alert_drawer_webhook_hint": "Get a webhook URL from a channel's Integrations settings in Discord.",
     "alert_drawer_submit": "Create alert",
+    "inbox_fallback_price_body": "Matched at {{price}} gil",
+    "inbox_fallback_generic_body": "Your price alert matched",
     "crafter_levels_title": "Crafter Levels",
     "crafter_levels_help": "Set your crafter levels to filter recipes in the Recipe Analyzer.",
     "make_place_items_ready": "{{count}} items ready to add",

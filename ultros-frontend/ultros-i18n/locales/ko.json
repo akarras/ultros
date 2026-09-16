@@ -1327,6 +1327,8 @@
     "alert_drawer_webhook_url_label": "Discord 웹훅 URL",
     "alert_drawer_webhook_hint": "Discord에서 채널의 연동 설정에서 웹훅 URL을 가져오세요.",
     "alert_drawer_submit": "알림 만들기",
+    "inbox_fallback_price_body": "{{price}}길에 도달했습니다",
+    "inbox_fallback_generic_body": "가격 알림이 일치했습니다",
     "crafter_levels_title": "제작자 레벨",
     "crafter_levels_help": "제작법 분석기에서 제작법을 필터링하려면 제작자 레벨을 설정하세요.",
     "make_place_items_ready": "추가 준비된 아이템 {{count}}개",

@@ -1327,6 +1327,8 @@
     "alert_drawer_webhook_url_label": "Discord Webhook URL",
     "alert_drawer_webhook_hint": "可从 Discord 中频道的「整合」设置获取 Webhook URL。",
     "alert_drawer_submit": "创建提醒",
+    "inbox_fallback_price_body": "以{{price}}金币匹配",
+    "inbox_fallback_generic_body": "您的价格提醒已触发",
     "crafter_levels_title": "制作职业等级",
     "crafter_levels_help": "设置您的制作职业等级，以在配方分析器中筛选配方。",
     "make_place_items_ready": "{{count}} 件物品已准备添加",

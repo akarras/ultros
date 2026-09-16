@@ -1327,6 +1327,8 @@
     "alert_drawer_webhook_url_label": "URL du webhook Discord",
     "alert_drawer_webhook_hint": "Obtiens une URL de webhook depuis les paramètres d'intégrations d'un canal dans Discord.",
     "alert_drawer_submit": "Créer l'alerte",
+    "inbox_fallback_price_body": "Atteint à {{price}} gils",
+    "inbox_fallback_generic_body": "Votre alerte de prix s'est déclenchée",
     "crafter_levels_title": "Niveaux d'artisan",
     "crafter_levels_help": "Définis tes niveaux d'artisan pour filtrer les recettes dans l'Analyseur de recettes.",
     "make_place_items_ready": "{{count}} objets prêts à ajouter",

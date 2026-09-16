@@ -8,6 +8,7 @@ pub mod crafter_levels;
 pub mod home_world;
 pub mod labs;
 pub mod local_world_data;
+pub mod notifications;
 pub mod platform;
 pub mod region_for_world;
 pub mod search_overlay;
