@@ -409,6 +409,16 @@ mod threshold_tests {
     }
 
     #[test]
+    fn threshold_nq_rule_accepts_hq_and_nq_listings() {
+        let h = helper();
+        let r = rule(AnySelector::World(100), 100, false);
+        let l_hq = listing(100, 42, 50, true);
+        let l_nq = listing(100, 42, 50, false);
+        assert!(threshold_listing_matches(&r, &l_hq, &h, Utc::now()));
+        assert!(threshold_listing_matches(&r, &l_nq, &h, Utc::now()));
+    }
+
+    #[test]
     fn threshold_matches_at_exact_price() {
         let h = helper();
         let r = rule(AnySelector::World(100), 100, false);

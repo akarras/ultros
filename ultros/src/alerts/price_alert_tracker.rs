@@ -169,7 +169,11 @@ struct TrackerState {
 }
 
 impl TrackerState {
-    fn refresh_from(&mut self, alerts: &[(alert::Model, alert_item_threshold::Model)]) {
+    fn refresh_from(
+        &mut self,
+        alerts: &[(alert::Model, alert_item_threshold::Model)],
+        world_helper: &WorldHelper,
+    ) {
         self.by_item.clear();
         for (a, t) in alerts {
             if !a.enabled {
@@ -177,7 +181,12 @@ impl TrackerState {
             }
             // World containment is resolved lazily at match time (see
             // `ActiveRule::threshold_rule`), so we only need to deserialize the
-            // selector here, not flatten it against the world cache.
+            // selector here, not flatten it against the world cache. We still
+            // do a one-off resolve check now so a stale/nonexistent world,
+            // datacenter, or region id gets logged at refresh time rather than
+            // failing silently on every future listing (it would otherwise
+            // never match, since an unresolvable selector fails closed in
+            // `threshold_listing_matches`).
             let world_selector =
                 match serde_json::from_value::<ApiAnySelector>(t.world_selector.clone()) {
                     Ok(selector) => selector,
@@ -189,6 +198,13 @@ impl TrackerState {
                         continue;
                     }
                 };
+            if world_helper.lookup_selector(world_selector).is_none() {
+                warn!(
+                    alert_id = a.id,
+                    ?world_selector,
+                    "world_selector for alert does not resolve against known world data; rule will never match"
+                );
+            }
             self.by_item.entry(t.item_id).or_default().push(ActiveRule {
                 alert_id: a.id,
                 owner: a.owner,
@@ -324,7 +340,7 @@ impl PriceAlertListener {
         } = services;
         let state = Arc::new(Mutex::new(TrackerState::default()));
         let (initial, initial_list) =
-            refresh_state_from_db(&state, &ultros_db, &world_cache).await?;
+            refresh_state_from_db(&state, &ultros_db, &world_cache, &world_helper).await?;
         info!(
             "price-alert tracker started with {} item-rules and {} list-alerts",
             initial.len(),
@@ -343,13 +359,13 @@ impl PriceAlertListener {
                     msg = alert_events.recv() => {
                         match msg {
                             Ok(_) => {
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after alert change: {e}");
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 error!("price-alert tracker lagged, dropped {n} alert events");
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after alert lag: {e}");
                                 }
                             }
@@ -359,13 +375,13 @@ impl PriceAlertListener {
                     msg = list_events.recv() => {
                         match msg {
                             Ok(_) => {
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after list change: {e}");
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 error!("price-alert tracker lagged, dropped {n} list events");
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after list lag: {e}");
                                 }
                             }
@@ -405,6 +421,7 @@ async fn refresh_state_from_db(
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
     world_cache: &WorldCache,
+    world_helper: &WorldHelper,
 ) -> Result<(
     Vec<(alert::Model, alert_item_threshold::Model)>,
     Vec<(alert::Model, alert_list_threshold::Model)>,
@@ -413,7 +430,7 @@ async fn refresh_state_from_db(
     let list_threshold_alerts = db.get_all_active_list_threshold_alerts().await?;
     {
         let mut guard = state.lock().await;
-        guard.refresh_from(&threshold_alerts);
+        guard.refresh_from(&threshold_alerts, world_helper);
         guard
             .refresh_list_rules_from(&list_threshold_alerts, db, world_cache)
             .await;
