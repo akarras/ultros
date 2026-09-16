@@ -416,6 +416,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$push_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$push_exit"
         fi
+        log "running notification inbox (test-auth feature detected)"
+        notification_inbox_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:notification-inbox ) || notification_inbox_exit=$?
+        if [ "$notification_inbox_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$notification_inbox_exit"
+        fi
         ;;
 esac
 
