@@ -227,7 +227,12 @@ impl Inbox {
             .iter()
             .map(|event| inbox_item_from_event(event, &item_name, &fallback_body))
             .collect();
-        self.server.update(|server| {
+        // `try_update`, not `update`: this runs inside `InboxLive`'s
+        // `spawn_local` after the initial page fetch's `.await`, by which
+        // point the owning component may already be disposed (e.g. the
+        // visitor navigated away before the fetch resolved) — `update`
+        // would panic on a disposed signal, `try_update` just no-ops.
+        let _ = self.server.try_update(|server| {
             for item in new_items {
                 match server.iter_mut().find(|existing| existing.id == item.id) {
                     Some(existing) => *existing = item,
@@ -239,8 +244,9 @@ impl Inbox {
 
     /// Adds a client-only entry (e.g. a guest alert rule firing locally).
     pub fn push_local(&self, item: InboxItem) {
-        self.local_write
-            .update(|local| push_local_bounded(local, item, LOCAL_INBOX_CAP));
+        let _ = self
+            .local_write
+            .try_update(|local| push_local_bounded(local, item, LOCAL_INBOX_CAP));
     }
 
     /// Marks the listed ids read. `Server` ids are flipped optimistically
@@ -257,7 +263,7 @@ impl Inbox {
             .collect();
 
         if !server_ids.is_empty() {
-            self.server.update(|items| mark_read(items, &ids));
+            let _ = self.server.try_update(|items| mark_read(items, &ids));
             spawn_local(async move {
                 let request = MarkAlertEventsReadRequest {
                     ids: server_ids,
@@ -270,7 +276,7 @@ impl Inbox {
         }
 
         if ids.iter().any(|id| matches!(id, InboxId::Local(_))) {
-            self.local_write.update(|items| mark_read(items, &ids));
+            let _ = self.local_write.try_update(|items| mark_read(items, &ids));
         }
     }
 
@@ -287,12 +293,12 @@ impl Inbox {
                 .max()
         });
 
-        self.server.update(|items| {
+        let _ = self.server.try_update(|items| {
             for item in items.iter_mut() {
                 item.read = true;
             }
         });
-        self.local_write.update(|items| {
+        let _ = self.local_write.try_update(|items| {
             for item in items.iter_mut() {
                 item.read = true;
             }

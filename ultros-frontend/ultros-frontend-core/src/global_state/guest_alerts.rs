@@ -186,21 +186,28 @@ impl GuestAlerts {
 
     /// Adds `rule` unless the guest is already at [`GUEST_ALERTS_CAP`].
     /// Returns whether it was added.
+    ///
+    /// `try_update` throughout this impl, not `update`: callers include the
+    /// realtime evaluator (built in a later task), which reacts to websocket
+    /// events and may run after this store's owner has been disposed (e.g.
+    /// mid-navigation) — `try_update` no-ops instead of panicking in that
+    /// case, same reasoning as `Inbox`'s mutators.
     pub fn add(&self, rule: GuestAlertRule) -> bool {
         let mut added = false;
-        self.local_write.update(|rules| {
+        let _ = self.local_write.try_update(|rules| {
             added = add_rule_bounded(rules, rule, GUEST_ALERTS_CAP);
         });
         added
     }
 
     pub fn remove(&self, id: &str) {
-        self.local_write
-            .update(|rules| rules.retain(|rule| rule.id != id));
+        let _ = self
+            .local_write
+            .try_update(|rules| rules.retain(|rule| rule.id != id));
     }
 
     pub fn set_enabled(&self, id: &str, enabled: bool) {
-        self.local_write.update(|rules| {
+        let _ = self.local_write.try_update(|rules| {
             if let Some(rule) = rules.iter_mut().find(|rule| rule.id == id) {
                 rule.enabled = enabled;
             }
@@ -208,7 +215,7 @@ impl GuestAlerts {
     }
 
     pub fn touch_fired(&self, id: &str, at: DateTime<Utc>) {
-        self.local_write.update(|rules| {
+        let _ = self.local_write.try_update(|rules| {
             if let Some(rule) = rules.iter_mut().find(|rule| rule.id == id) {
                 rule.last_fired_at = Some(at);
             }
