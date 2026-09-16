@@ -49,6 +49,16 @@ pub struct InboxItem {
     pub item_id: i32,
     pub at: DateTime<Utc>,
     pub read: bool,
+    /// Identifies the real-world firing a `Local` item came from, so
+    /// [`merge_inbox`] can collapse an optimistic local hit against the
+    /// server-persisted version of the *same* firing without guessing from
+    /// timing. The guest alert evaluator sets this to `"{rule_id}:{listing_id}"`
+    /// when it pushes a local hit; server-sourced items (via
+    /// [`inbox_item_from_event`]) always leave it `None`. Additive field:
+    /// defaults to `None` for entries written to `localStorage` before this
+    /// field existed.
+    #[serde(default)]
+    pub source_key: Option<String>,
 }
 
 /// Builds an [`InboxItem`] from a server `AlertEvent`.
@@ -80,6 +90,7 @@ pub fn inbox_item_from_event(
         item_id: event.item_id,
         at: event.fired_at,
         read: event.read_at.is_some(),
+        source_key: None,
     }
 }
 
@@ -91,11 +102,18 @@ pub fn inbox_item_from_event(
 ///   happens to share an id — which can't normally happen since the two
 ///   variants don't overlap, but keeps the function well-defined if callers
 ///   ever pass overlapping input).
-/// - A `Local` entry is dropped outright when an already-accepted entry
-///   (almost always the server-persisted version of the same alert firing)
-///   matches it on `(item_id, body)` and lands within 2 seconds of it — the
-///   optimistic local hit and the event that later arrives from the server
-///   are the same real-world firing and should show up once, not twice.
+/// - Two `Local` entries collapse when they carry the same `Some(source_key)`
+///   — the earliest `at` is kept and `read` is widened (`existing.read ||
+///   item.read`). This is deliberately narrow: only `Local` vs. `Local`, and
+///   only on an explicit shared key (never inferred from `item_id`/`body`
+///   timing, which could — and did — collapse two genuinely distinct hits
+///   that happened to land close together). A `Local` item without a
+///   `source_key` never collapses with anything, and a `Local` item is never
+///   collapsed against a `Server` item; the two staying separate until the
+///   server's own copy of that firing arrives is expected, not a bug — a
+///   caller that wants "this local hit became a server event" to read as one
+///   row needs to give both the same `source_key` (or otherwise reconcile
+///   them) rather than rely on this function to guess.
 pub fn merge_inbox(server: &[InboxItem], local: &[InboxItem]) -> Vec<InboxItem> {
     let mut merged: Vec<InboxItem> = Vec::with_capacity(server.len() + local.len());
     let mut seen_ids: HashSet<InboxId> = HashSet::with_capacity(server.len() + local.len());
@@ -104,13 +122,16 @@ pub fn merge_inbox(server: &[InboxItem], local: &[InboxItem]) -> Vec<InboxItem> 
         if !seen_ids.insert(item.id.clone()) {
             continue;
         }
-        if matches!(item.id, InboxId::Local(_))
-            && merged.iter().any(|existing| {
-                existing.item_id == item.item_id
-                    && existing.body == item.body
-                    && (existing.at - item.at).num_seconds().abs() <= 2
+        if let (InboxId::Local(_), Some(key)) = (&item.id, item.source_key.as_deref())
+            && let Some(existing) = merged.iter_mut().find(|existing| {
+                matches!(existing.id, InboxId::Local(_))
+                    && existing.source_key.as_deref() == Some(key)
             })
         {
+            existing.read = existing.read || item.read;
+            if item.at < existing.at {
+                existing.at = item.at;
+            }
             continue;
         }
         merged.push(item.clone());
@@ -131,6 +152,28 @@ pub fn push_local_bounded(local: &mut Vec<InboxItem>, item: InboxItem, cap: usiz
     local.insert(0, item);
     if local.len() > cap {
         local.truncate(cap);
+    }
+}
+
+/// Upserts `incoming` into `existing` by id.
+///
+/// `read` is widened (`existing.read || incoming.read`), not overwritten —
+/// otherwise an optimistic `mark_read`/`mark_all_read` flip on a `Server`
+/// item gets silently reverted the next time that same event is re-ingested
+/// (the initial page fetch racing the websocket subscription, or a
+/// reconnect replaying the subscribe handshake, are both ordinary ways for
+/// the "same" event to arrive twice before the server's own `read_at`
+/// catches up). Every other field takes the incoming value, since that's the
+/// freshest copy of everything else about the event.
+pub fn upsert_server_items(existing: &mut Vec<InboxItem>, incoming: Vec<InboxItem>) {
+    for mut item in incoming {
+        match existing.iter_mut().find(|current| current.id == item.id) {
+            Some(current) => {
+                item.read = current.read || item.read;
+                *current = item;
+            }
+            None => existing.push(item),
+        }
     }
 }
 
@@ -232,14 +275,9 @@ impl Inbox {
         // point the owning component may already be disposed (e.g. the
         // visitor navigated away before the fetch resolved) — `update`
         // would panic on a disposed signal, `try_update` just no-ops.
-        let _ = self.server.try_update(|server| {
-            for item in new_items {
-                match server.iter_mut().find(|existing| existing.id == item.id) {
-                    Some(existing) => *existing = item,
-                    None => server.push(item),
-                }
-            }
-        });
+        let _ = self
+            .server
+            .try_update(|server| upsert_server_items(server, new_items));
     }
 
     /// Adds a client-only entry (e.g. a guest alert rule firing locally).
@@ -357,6 +395,7 @@ mod tests {
             item_id,
             at,
             read,
+            source_key: None,
         }
     }
 
@@ -461,31 +500,107 @@ mod tests {
     }
 
     #[test]
-    fn merge_collapses_near_duplicate_local_hits() {
-        let server = vec![item(InboxId::Server(1), 42, "matched", t(100), false)];
-        let local = vec![item(
-            InboxId::Local("guest-hit".to_string()),
+    fn merge_collapses_local_hits_with_same_source_key() {
+        let mut earlier = item(
+            InboxId::Local("guest-hit-1".to_string()),
+            42,
+            "matched",
+            t(100),
+            false,
+        );
+        earlier.source_key = Some("rule-1:listing-7".to_string());
+        let mut later = item(
+            InboxId::Local("guest-hit-2".to_string()),
             42,
             "matched",
             t(101),
-            false,
-        )];
-        let merged = merge_inbox(&server, &local);
+            true,
+        );
+        later.source_key = Some("rule-1:listing-7".to_string());
+
+        let merged = merge_inbox(&[], &[earlier, later]);
         assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].id, InboxId::Server(1));
+        // Earliest `at` is kept...
+        assert_eq!(merged[0].at, t(100));
+        // ...and `read` widens to true because the later duplicate was read.
+        assert!(merged[0].read);
     }
 
     #[test]
-    fn merge_keeps_local_hit_when_not_a_near_duplicate() {
+    fn merge_keeps_distinct_local_hits_same_item_without_key() {
+        // Same item_id and body, 1 second apart, but neither carries a
+        // source_key — under the old timing heuristic these would have
+        // collapsed; they must not anymore.
+        let local = vec![
+            item(
+                InboxId::Local("a".to_string()),
+                42,
+                "matched",
+                t(100),
+                false,
+            ),
+            item(
+                InboxId::Local("b".to_string()),
+                42,
+                "matched",
+                t(101),
+                false,
+            ),
+        ];
+        let merged = merge_inbox(&[], &local);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_never_collapses_server_against_local() {
+        // Even if a Local item somehow carried a source_key equal to
+        // something else, it must never collapse against a Server item —
+        // only Local-vs-Local collapses.
         let server = vec![item(InboxId::Server(1), 42, "matched", t(100), false)];
-        let local = vec![item(
+        let mut local_hit = item(
             InboxId::Local("guest-hit".to_string()),
-            43,
-            "different item",
-            t(101),
+            42,
+            "matched",
+            t(100),
+            false,
+        );
+        local_hit.source_key = Some("rule-1:listing-7".to_string());
+
+        let merged = merge_inbox(&server, &[local_hit]);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn ingest_preserves_locally_flipped_read() {
+        // Simulates: server event ingested once, then the user marks it read
+        // (optimistic local flip via `mark_read`), then the *same* event is
+        // ingested again (e.g. the initial page fetch resolving after the
+        // websocket already delivered it) before the server's own
+        // `read_at` has caught up.
+        let mut existing = vec![item(InboxId::Server(1), 42, "matched", t(100), true)];
+        let incoming = vec![item(
+            InboxId::Server(1),
+            42,
+            "matched-updated",
+            t(100),
             false,
         )];
-        let merged = merge_inbox(&server, &local);
-        assert_eq!(merged.len(), 2);
+        upsert_server_items(&mut existing, incoming);
+        assert!(
+            existing[0].read,
+            "optimistic read flip must survive re-ingest"
+        );
+        assert_eq!(
+            existing[0].body, "matched-updated",
+            "other fields still take the incoming copy"
+        );
+    }
+
+    #[test]
+    fn upsert_appends_unknown_ids() {
+        let mut existing = vec![item(InboxId::Server(1), 42, "a", t(100), false)];
+        let incoming = vec![item(InboxId::Server(2), 43, "b", t(101), false)];
+        upsert_server_items(&mut existing, incoming);
+        assert_eq!(existing.len(), 2);
     }
 }
