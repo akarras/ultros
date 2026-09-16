@@ -1,18 +1,60 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
+use serde::Deserialize;
 use ultros_api_types::alert::{
     Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, CreateAlertRequest,
-    ResendResult, UpdateAlertRequest,
+    MarkAlertEventsReadRequest, MarkAlertEventsReadResponse, ResendResult, UnreadAlertEventCount,
+    UpdateAlertRequest,
 };
 use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
 
+use crate::alerts::inbox;
 use crate::event::{EventSenders, EventType};
 use crate::web::api::endpoint_validation::validate_discord_webhook_url;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
+
+/// Default number of alert events returned by `GET /api/v1/alerts/events`
+/// when the caller doesn't supply `limit`.
+const DEFAULT_ALERT_EVENTS_LIMIT: u64 = 50;
+/// Smallest `limit` accepted for `GET /api/v1/alerts/events`.
+const MIN_ALERT_EVENTS_LIMIT: u64 = 1;
+/// Largest `limit` accepted for `GET /api/v1/alerts/events` — caps a single
+/// page so a client can't force an unbounded scan.
+const MAX_ALERT_EVENTS_LIMIT: u64 = 200;
+/// Largest number of ids `POST /api/v1/alerts/events/read` accepts in one
+/// request.
+const MAX_MARK_READ_IDS: usize = 500;
+
+/// Resolve a user-supplied `limit` query param into the actual page size used
+/// for `GET /api/v1/alerts/events`. Missing → default (50). Out-of-range →
+/// clamped to `[1, 200]`.
+pub(crate) fn resolve_events_limit(requested: Option<u64>) -> u64 {
+    requested
+        .unwrap_or(DEFAULT_ALERT_EVENTS_LIMIT)
+        .clamp(MIN_ALERT_EVENTS_LIMIT, MAX_ALERT_EVENTS_LIMIT)
+}
+
+/// Reject an oversized `ids` list for `POST /api/v1/alerts/events/read`.
+#[allow(clippy::result_large_err)]
+pub(crate) fn validate_mark_read_ids_len(len: usize) -> Result<(), ApiError> {
+    if len > MAX_MARK_READ_IDS {
+        Err(ApiError::BadRequest(
+            "too many ids: at most 500 per request",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AlertEventsQuery {
+    limit: Option<u64>,
+    before_id: Option<i64>,
+}
 
 /// Default cooldown when the user doesn't supply one (1 hour).
 pub(crate) const DEFAULT_COOLDOWN_SECONDS: i32 = 3600;
@@ -572,31 +614,55 @@ pub(crate) async fn delete_alert(
 pub(crate) async fn list_alert_events(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
+    Query(query): Query<AlertEventsQuery>,
 ) -> Result<Json<Vec<ApiAlertEvent>>, ApiError> {
+    let limit = resolve_events_limit(query.limit);
     let rows = db
-        .get_recent_alert_events_for_user(user.id as i64, 50, None)
+        .get_recent_alert_events_for_user(user.id as i64, limit, query.before_id)
         .await
         .map_err(ApiError::from)?;
     Ok(Json(
-        rows.into_iter()
-            .map(|r| ApiAlertEvent {
-                id: r.id,
-                alert_id: r.alert_id,
-                fired_at: r.fired_at.with_timezone(&chrono::Utc),
-                item_id: r.item_id,
-                matched_listing_id: r.matched_listing_id,
-                matched_price: r.matched_price,
-                delivered: r.delivered,
-                delivery_error: r.delivery_error,
-                // Task 8 wires these from the DB (read state + message text);
-                // for now every row reports as unread with no inbox message.
-                read_at: None,
-                title: None,
-                body: None,
-                click_url: None,
-            })
-            .collect(),
+        rows.into_iter().map(inbox::alert_event_to_api).collect(),
     ))
+}
+
+/// Mark alert events read, either by explicit id list or `up_to_id`. Returns
+/// the number of rows actually flipped plus the caller's new unread count, so
+/// the frontend can update its badge from the response without a second
+/// round trip.
+///
+/// Path: `POST /api/v1/alerts/events/read`.
+pub(crate) async fn mark_alert_events_read(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(req): Json<MarkAlertEventsReadRequest>,
+) -> Result<Json<MarkAlertEventsReadResponse>, ApiError> {
+    validate_mark_read_ids_len(req.ids.len())?;
+    let owner = user.id as i64;
+    let updated = db
+        .mark_alert_events_read_for_user(owner, &req.ids, req.up_to_id)
+        .await
+        .map_err(ApiError::from)?;
+    let unread_count = db
+        .count_unread_alert_events_for_user(owner)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(MarkAlertEventsReadResponse {
+        updated,
+        unread_count,
+    }))
+}
+
+/// Path: `GET /api/v1/alerts/events/unread_count`.
+pub(crate) async fn unread_alert_event_count(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<Json<UnreadAlertEventCount>, ApiError> {
+    let unread = db
+        .count_unread_alert_events_for_user(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(UnreadAlertEventCount { unread }))
 }
 
 /// Resend an alert event through every endpoint linked to its alert. Returns
@@ -721,5 +787,44 @@ mod tests {
         assert!(validate_price_threshold(0).is_err());
         assert!(validate_price_threshold(-1).is_err());
         assert!(validate_price_threshold(i32::MIN).is_err());
+    }
+
+    // ---------- resolve_events_limit ----------
+
+    #[test]
+    fn events_limit_defaults_to_50_when_unset() {
+        assert_eq!(resolve_events_limit(None), 50);
+    }
+
+    #[test]
+    fn events_limit_clamps_zero_up_to_1() {
+        assert_eq!(resolve_events_limit(Some(0)), 1);
+    }
+
+    #[test]
+    fn events_limit_clamps_above_200_down_to_200() {
+        assert_eq!(resolve_events_limit(Some(500)), 200);
+        assert_eq!(resolve_events_limit(Some(u64::MAX)), 200);
+    }
+
+    #[test]
+    fn events_limit_passes_in_range_values_through() {
+        assert_eq!(resolve_events_limit(Some(1)), 1);
+        assert_eq!(resolve_events_limit(Some(100)), 100);
+        assert_eq!(resolve_events_limit(Some(200)), 200);
+    }
+
+    // ---------- validate_mark_read_ids_len ----------
+
+    #[test]
+    fn mark_read_ids_guard_allows_up_to_500() {
+        assert!(validate_mark_read_ids_len(0).is_ok());
+        assert!(validate_mark_read_ids_len(500).is_ok());
+    }
+
+    #[test]
+    fn mark_read_ids_guard_rejects_over_500() {
+        assert!(validate_mark_read_ids_len(501).is_err());
+        assert!(validate_mark_read_ids_len(10_000).is_err());
     }
 }
