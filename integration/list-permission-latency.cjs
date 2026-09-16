@@ -56,7 +56,8 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
       };
       window.fetch = async function(input, init) {
         const url = new URL(typeof input === "string" ? input : input.url, location.href);
-        if (url.pathname === `/api/v1/list/${id}/listings`) {
+        const isProbe = url.pathname === `/api/v1/list/${id}/listings`;
+        if (isProbe) {
           probe.requests.push(performance.now());
           if (probe.outcome !== "ok") {
             const expired = probe.outcome === "expired";
@@ -67,7 +68,21 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
             });
           }
         }
-        return original.call(this, input, init);
+        const hold = isProbe && probe.holdNext;
+        const heldStatus = probe.holdStatus;
+        if (hold) probe.holdNext = false;
+        const response = await original.call(this, input, init);
+        if (hold) {
+          probe.heldPermission = (await response.clone().json())[0].permission;
+          await new Promise(resolve => { probe.release = resolve; });
+          probe.released = true;
+          if (heldStatus) return new Response(JSON.stringify({ ApiError:
+            heldStatus === 403 ? "Forbidden" : "NotFound" }), {
+            status: heldStatus, headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (isProbe) probe.completed = (probe.completed || 0) + 1;
+        return response;
       };
       probe.restore = () => { window.fetch = original; };
     }, id);
@@ -130,6 +145,11 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
     popup = await opened;
     await popup.waitForSelector("main h1");
     await editorPage.bringToFront();
+    // Capture a real Write response before downgrading, but deliver it only
+    // after a newer Read response has applied on the SAME route and handle.
+    await editorPage.evaluate(() => { window.__permissionLatency.holdNext = true; });
+    await editorPage.waitForFunction(() => window.__permissionLatency.heldPermission === "Write",
+      { timeout: 2500 });
     const changedAt = Date.now();
     assert.equal((await api(ownerPage, "POST", `/api/v1/list/${id}/share/user`, {
       user_id: editorId, permission: "Read",
@@ -148,6 +168,57 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
       "read-only access retains the readable document");
     console.log("  + downgrade retires editing and companion during sustained updates; errors retain data");
 
+    // A subsequent outage must not hide the race by quickly fetching Read
+    // again after the stale response overwrites the cache with Write.
+    await editorPage.evaluate(() => {
+      window.__permissionLatency.outcome = "outage";
+      window.__permissionLatency.release();
+    });
+    await editorPage.waitForFunction(() => window.__permissionLatency.released);
+    await sleep(500);
+    const afterStale = await editorPage.evaluate(({ editorId, id }) => ({
+      readonly: document.querySelector('input[aria-label="Needed for Bronze Ingot"]')?.readOnly,
+      permission: JSON.parse(localStorage.getItem(`ultros.listdoc.index.v1.${editorId}`) || "{}")
+        .lists?.[id]?.permission,
+    }), { editorId, id });
+    console.log(`  . after held old Write response: ${JSON.stringify(afterStale)}`);
+    assert.deepEqual(afterStale, { readonly: true, permission: 1 },
+      "an older Write response cannot undo a newer Read response on the same document");
+    assert(popup.isClosed(), "stale permission response cannot restore the editable companion");
+    await editorPage.evaluate(() => { window.__permissionLatency.outcome = "ok"; });
+    console.log("  + held old Write response cannot overwrite newer Read access");
+
+    for (const status of [403, 404]) {
+      await editorPage.evaluate(status => {
+        const probe = window.__permissionLatency;
+        probe.outcome = "ok";
+        probe.heldPermission = undefined;
+        probe.holdStatus = status;
+        probe.released = false;
+        probe.holdNext = true;
+      }, status);
+      await editorPage.waitForFunction(() => window.__permissionLatency.heldPermission === "Read",
+        { timeout: 2500 });
+      const completed = await editorPage.evaluate(() => window.__permissionLatency.completed || 0);
+      await editorPage.waitForFunction(completed =>
+        (window.__permissionLatency.completed || 0) > completed, { timeout: 2500 }, completed);
+      // Give the completed JSON response and WASM continuation their next turns
+      // before releasing the older synthetic denial on the same open document.
+      await sleep(100);
+      await editorPage.evaluate(() => {
+        window.__permissionLatency.outcome = "outage";
+        window.__permissionLatency.release();
+      });
+      await editorPage.waitForFunction(() => window.__permissionLatency.released);
+      await sleep(500);
+      assert((await waitForDocKey(editorPage, editorId, id, true, 1000)).length > 0,
+        `stale ${status} cannot purge a document with newer confirmed access`);
+      assert(await editorPage.$eval('input[aria-label="Needed for Bronze Ingot"]', input => input.readOnly),
+        `stale ${status} preserves the current readable view`);
+      console.log(`  + held stale ${status} cannot purge newer confirmed Read access`);
+    }
+    await editorPage.evaluate(() => { window.__permissionLatency.outcome = "ok"; });
+
     // Full sign-out tears down the route while the continuous stream can have
     // another permission timer pending. It must retain this user's snapshot.
     await editorPage.goto(`${baseUrl}/logout`, { waitUntil: "domcontentloaded" });
@@ -161,6 +232,7 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
   } finally {
     stop = true;
     if (broadcastLoop) await broadcastLoop;
+    await editorPage.evaluate(() => window.__permissionLatency?.release?.()).catch(() => {});
     await editorPage.evaluate(() => window.__permissionLatency?.restore()).catch(() => {});
     await editorPage.removeScriptToEvaluateOnNewDocument(preload.identifier);
     editorPage.off("pageerror", onError);

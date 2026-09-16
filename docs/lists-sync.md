@@ -103,6 +103,10 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   Fired timers release their slot and route cleanup cancels pending timers.
   Results still require the active route and the exact open document; transport
   failures or an expired session never purge the saved copy as a denial.
+  Price loads and permission probes also share a response watermark: a reply
+  older than the latest applied authoritative reply cannot restore stale write
+  access or apply an obsolete denial. Merely starting a newer request does not
+  discard useful responses, so slow overlapping requests cannot starve updates.
 - Undo is Loro's undo manager: local operations only, 100 steps, per open
   page. Every committed action (an applied `Edit`, a rename, a purchase) is
   exactly one step; there is no time-based merging, and multi-row edits are
