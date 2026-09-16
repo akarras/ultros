@@ -2,6 +2,7 @@ pub mod alert_drawer;
 pub mod alert_rules_panel;
 pub mod endpoint_picker;
 pub mod endpoints_panel;
+pub mod guest_alert_adoption;
 pub mod history_panel;
 pub mod list_subscribe_drawer;
 pub mod push_subscribe;

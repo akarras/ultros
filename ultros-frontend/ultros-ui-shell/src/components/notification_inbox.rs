@@ -24,6 +24,7 @@ use icondata as i;
 use leptos::html;
 use leptos::prelude::*;
 use ultros_ui::components::relative_time::RelativeToNow;
+use ultros_ui_alerts::components::guest_alert_adoption::GuestAlertAdoptionBanner;
 
 /// Caps the unread-count pill's label at `"99+"` so a very active inbox
 /// never blows out the width of the sidebar row.
@@ -103,11 +104,7 @@ pub fn NotificationInbox() -> impl IntoView {
                         </button>
                     </div>
 
-                    // Task 21 (B9): the guest-rule adoption banner mounts
-                    // here, shown when the visitor is signed in and still
-                    // has local guest alert rules to adopt into their
-                    // account. Not built yet — this is only the marked
-                    // spot.
+                    <GuestAlertAdoptionBanner compact=true />
 
                     {move || {
                         let list = items.get();

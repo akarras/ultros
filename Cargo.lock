@@ -11269,6 +11269,7 @@ dependencies = [
  "ultros-frontend-core",
  "ultros-i18n",
  "ultros-ui",
+ "ultros-ui-alerts",
  "ultros-ui-game",
  "ultros-ui-grid",
  "wasm-bindgen",

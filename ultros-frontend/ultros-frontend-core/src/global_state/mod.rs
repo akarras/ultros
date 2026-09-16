@@ -1,3 +1,4 @@
+pub mod adoption_receipts;
 pub mod app_update;
 pub mod changelog;
 pub mod cheapest_prices;
