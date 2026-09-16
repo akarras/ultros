@@ -2383,6 +2383,8 @@
     "account_list_save_failed": "Les modifications ne sont pas enregistrées sur cet appareil. Gardez cette page ouverte, réessayez ou téléchargez une copie de secours.",
     "account_list_save_retry": "Réessayer",
     "account_list_save_export": "Télécharger une copie de secours",
+    "list_compatibility_title": "Cette liste enregistrée doit être récupérée",
+    "list_compatibility_help": "Cette version d’Ultros ne peut pas lire cette liste en toute sécurité. Les données d’origine sont conservées. Exportez une copie de récupération, puis mettez Ultros à jour avant de la rouvrir.",
     "list_recovery_title": "Vérifier les modifications avant la synchronisation",
     "list_recovery_help": "La synchronisation est suspendue : certaines modifications sont en conflit ou leur historique commun est indisponible. Les deux copies sont conservées. Comparez les différences, téléchargez une copie de récupération ou modifiez les valeurs de cet appareil et réessayez. Abandonner les modifications locales réinitialise Annuler.",
     "list_recovery_field": "Objet ou paramètre",

@@ -47,10 +47,19 @@ pub enum DocError {
     MissingRow(RowKey),
     #[error("quantity arithmetic exceeds the supported i64 range")]
     QuantityOverflow,
+    #[error(
+        "list schema {0} is not supported by this version of Ultros; update Ultros and keep the original backup"
+    )]
+    UnsupportedSchema(i64),
+    #[error("invalid list document at {0}; keep the original backup for recovery")]
+    InvalidStructure(String),
+    #[error("list snapshot is missing required history; keep the original backup and sync again")]
+    IncompleteSnapshot,
 }
 
-/// What an import did. `pending` means the bytes depend on history this
-/// document has not seen; Loro applies them once that history arrives.
+/// What an import did. `pending` means the bytes depend on missing history.
+/// Nothing is imported in that case: callers must request a complete snapshot.
+/// Unvalidated pending operations must never enter the live document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportReport {
     pub pending: bool,
@@ -125,9 +134,20 @@ impl ListDocument {
         }
     }
 
+    /// An operation-free receiver for an existing list. Unlike `new`, this
+    /// must not invent a current schema before learning the server's schema:
+    /// doing so would mislabel a schema-less legacy snapshot during merge.
+    /// Use `new` when creating a new list, and this only while awaiting sync.
+    pub fn empty_peer() -> Self {
+        Self::blank()
+    }
+
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
         let document = Self::blank();
-        document.doc.import(bytes)?;
+        if document.doc.import(bytes)?.pending.is_some() {
+            return Err(DocError::IncompleteSnapshot);
+        }
+        crate::validation::validate(&document.doc)?;
         Ok(document)
     }
 
@@ -477,7 +497,11 @@ impl ListDocument {
     }
 
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
-        let status = self.doc.import(bytes).map_err(|error| match error {
+        // Never validate after mutating the live document: observers, undo and
+        // persistence would already have seen a rejected partial projection.
+        // Snapshot cloning also works for shallow documents (fork does not).
+        let candidate = Self::from_snapshot(&self.export_snapshot()?)?;
+        let status = candidate.doc.import(bytes).map_err(|error| match error {
             // The bytes are well formed but hang off history a shallow
             // snapshot dropped. The caller answers with a fresh snapshot.
             loro::LoroError::ImportUpdatesThatDependsOnOutdatedVersion => {
@@ -485,9 +509,12 @@ impl ListDocument {
             }
             other => DocError::Loro(other),
         })?;
-        Ok(ImportReport {
-            pending: status.pending.is_some(),
-        })
+        if status.pending.is_some() {
+            return Ok(ImportReport { pending: true });
+        }
+        crate::validation::validate(&candidate.doc)?;
+        self.doc.import(bytes)?;
+        Ok(ImportReport { pending: false })
     }
 
     /// True when `version` decodes and is at or after this document's shallow

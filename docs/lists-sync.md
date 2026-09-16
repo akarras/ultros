@@ -4,7 +4,54 @@
 stored in the browser and merged through the server. Spec:
 `docs/superpowers/specs/2026-09-07-lists-local-first-sync-design.md`.
 
-## Bundle
+## Document compatibility
+
+`ListDocument::from_snapshot` is the shared boundary for account cache opens,
+device backups/opens, server stored documents and recovery snapshots. It accepts
+schema 1 or the schema-less legacy layout; every other explicit version is an
+actionable compatibility error. Legacy rows may omit `item`, `quality`, `need`
+and `acquired`: identity comes from the key and missing quantities read as zero.
+Loading a legacy document adds no operations and does not rewrite its schema.
+An account handle without a cache starts as an operation-free `empty_peer`, so
+it does not label the incoming legacy document as schema 1 before the handshake.
+Present fields must still have their declared types. Schema 1 requires these
+row fields. `name`, `scope`, and row `target` remain optional.
+
+Only root maps `meta` and `rows`, their documented fields, canonical row keys
+and matching item/quality metadata are accepted. Item ids are positive and fit
+the browser's reversible `item * 4 + quality` row id. Scope ids are canonical
+nonnegative i32 values; existence in today's world catalog is a separate concern.
+Need and target are signed i64 integers. Acquired must be a finite integral Loro
+counter total within the f64 representation of the i64 endpoints. Negative
+acquired values from concurrent undo and historical signed quantities are valid:
+the document preserves them, while relational/display projection continues to
+clamp need/acquired to 0..i32::MAX. Targets retain their signed i64 value. There
+is no floating-point rounding of malformed quantity fields on import. Unknown
+fields are rejected instead of silently dropping an unsupported extension.
+
+Peer updates are first applied to an isolated snapshot copy and validated there.
+Rejected updates never reach the live document, its observers, undo history,
+durable snapshot or relational projection. Dependency-incomplete updates return
+`ImportReport { pending: true }` without parking any operations in the live
+document; callers must fetch a complete snapshot. This prevents a later valid
+dependency from activating unvalidated queued data. Snapshot loads reject missing
+history outright. Full and shallow snapshots use the same validation.
+
+An unsupported or damaged account cache is retained exactly, with edits, sync and
+saves paused. The actual failure displays an export-recovery action; ordinary
+lists have no additional controls. Device restore validates before creating a
+record and leaves the source backup and existing records intact. Device conflicts
+and account merge-save validate the stored snapshot independently before merging,
+so newer valid operations cannot conceal an incompatible saved version.
+
+Regressions: `ultros-list-doc/tests/validation.rs`, account handle/store unit tests,
+and the opt-in database test
+`unsupported_schema_rejects_every_projection_and_preserves_stored_bytes`.
+The browser probe is `node integration/list-document-compatibility.cjs` against
+a fresh test-auth build. Its byte fixtures can be regenerated with
+`cargo run -p ultros-list-doc --example compatibility_fixtures`.
+
+## Bundle measurements
 
 | build | raw | gzip -9 |
 |---|---|---|

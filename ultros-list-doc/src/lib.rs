@@ -6,6 +6,7 @@ pub mod key;
 pub mod recovery;
 pub mod snapshot;
 pub mod undo;
+mod validation;
 
 pub use document::{DocError, ImportReport, ListDocument, SCHEMA_VERSION, SyncPayload};
 pub use key::{KeyError, Quality, RowKey};

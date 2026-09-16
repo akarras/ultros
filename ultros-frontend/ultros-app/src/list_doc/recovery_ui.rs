@@ -13,7 +13,13 @@ pub fn ListRecovery(doc: ListDocHandle) -> impl IntoView {
     view! {
         <Show when=move || doc.recovery_state.try_get().is_some_and(|state| state != RecoveryState::None)>
             <section data-testid="list-recovery" class="mt-3 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-                {move || if doc.recovery_state.try_get() == Some(RecoveryState::Review) {
+                {move || if doc.recovery_state.try_get() == Some(RecoveryState::Incompatible) {
+                    view! {
+                        <h3 role="alert" class="font-semibold">{t!(i18n, list_compatibility_title)}</h3>
+                        <p class="mt-2">{t!(i18n, list_compatibility_help)}</p>
+                        <button type="button" class="btn-secondary mt-3" data-testid="list-compatibility-export" on:click=move |_| doc.download_recovery()>{t!(i18n, account_list_save_export)}</button>
+                    }.into_any()
+                } else if doc.recovery_state.try_get() == Some(RecoveryState::Review) {
                     view! {
                         <h3 role="alert" class="font-semibold">{t!(i18n, list_recovery_title)}</h3>
                         <p class="mt-2">{t!(i18n, list_recovery_help)}</p>

@@ -2383,6 +2383,8 @@
     "account_list_save_failed": "變更尚未儲存在此裝置上。請保持此頁面開啟，重試或下載復原副本。",
     "account_list_save_retry": "重試儲存",
     "account_list_save_export": "下載復原副本",
+    "list_compatibility_title": "此已儲存清單需要復原",
+    "list_compatibility_help": "此版本的 Ultros 無法安全讀取此清單。原始資料已保留。請匯出復原副本，然後更新 Ultros 再嘗試開啟。",
     "list_recovery_title": "同步前檢查變更",
     "list_recovery_help": "部分變更發生衝突或無法取得共同歷史，同步已暫停。兩個副本均已保留。請比較下方差異，下載復原副本，或編輯此裝置上的值後重試。捨棄本機變更會重設復原紀錄。",
     "list_recovery_field": "物品或設定",

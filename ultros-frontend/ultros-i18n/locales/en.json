@@ -2383,6 +2383,8 @@
     "account_list_save_failed": "Changes are not saved on this device. Keep this page open; retry or download a recovery copy.",
     "account_list_save_retry": "Retry save",
     "account_list_save_export": "Download recovery copy",
+    "list_compatibility_title": "This saved list needs recovery",
+    "list_compatibility_help": "This version of Ultros cannot safely read this list. Your original data has been kept. Export a recovery copy, then update Ultros before trying to open it again.",
     "list_recovery_title": "Review changes before syncing",
     "list_recovery_help": "Sync is paused because some changes conflict or their shared history is unavailable. Both copies are preserved. Compare the differences below, download a recovery copy, or edit this device’s values and retry. Discarding local changes resets Undo.",
     "list_recovery_field": "Item or setting",

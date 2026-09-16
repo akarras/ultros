@@ -48,9 +48,9 @@ async function prepare(page) {
 }
 
 async function disconnect(page) {
-  await page.setOfflineMode(true);
   // Chromium's offline emulation need not close already-open WebSockets.
-  // Wait for their close before editing so no queued operation can escape.
+  // Finish the close handshake while online: switching offline first can
+  // leave it waiting forever. Then disable reconnects before editing.
   await page.evaluate(async () => {
     await Promise.all([...window.compactionSockets].map(socket => new Promise(resolve => {
       if (socket.readyState === WebSocket.CLOSED) return resolve();
@@ -58,6 +58,7 @@ async function disconnect(page) {
       socket.close();
     })));
   });
+  await page.setOfflineMode(true);
 }
 
 async function saved(page) {

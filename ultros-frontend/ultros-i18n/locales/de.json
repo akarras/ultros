@@ -2383,6 +2383,8 @@
     "account_list_save_failed": "Änderungen sind auf diesem Gerät nicht gespeichert. Lass diese Seite geöffnet; versuche es erneut oder lade eine Sicherung herunter.",
     "account_list_save_retry": "Erneut speichern",
     "account_list_save_export": "Sicherung herunterladen",
+    "list_compatibility_title": "Diese gespeicherte Liste muss wiederhergestellt werden",
+    "list_compatibility_help": "Diese Version von Ultros kann diese Liste nicht sicher lesen. Die Originaldaten bleiben erhalten. Exportiere eine Wiederherstellungskopie und aktualisiere Ultros, bevor du die Liste erneut öffnest.",
     "list_recovery_title": "Änderungen vor dem Synchronisieren prüfen",
     "list_recovery_help": "Die Synchronisierung pausiert, weil Änderungen im Konflikt stehen oder ihr gemeinsamer Verlauf fehlt. Beide Kopien bleiben erhalten. Vergleiche die Unterschiede, lade eine Wiederherstellungskopie herunter oder bearbeite die Werte auf diesem Gerät und versuche es erneut. Das Verwerfen lokaler Änderungen setzt Rückgängig zurück.",
     "list_recovery_field": "Gegenstand oder Einstellung",

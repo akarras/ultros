@@ -491,8 +491,13 @@ pub fn start(
         };
         if pending.is_empty()
             || handle.recovery_persisting.try_get().unwrap_or(true)
-            || handle.recovery_state.try_get()
-                == Some(crate::list_doc::handle::RecoveryState::Review)
+            || matches!(
+                handle.recovery_state.try_get(),
+                Some(
+                    crate::list_doc::handle::RecoveryState::Review
+                        | crate::list_doc::handle::RecoveryState::Incompatible
+                )
+            )
             || handle.status.try_get().as_deref() != Some("live")
         {
             return;
