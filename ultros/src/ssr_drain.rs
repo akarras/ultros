@@ -36,6 +36,7 @@ use axum::{
 };
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::BodyExt;
+use leptos::reactive::owner::Sandboxed;
 use sentry::SentryFutureExt;
 use tracing::Instrument;
 
@@ -143,7 +144,7 @@ where
     F: Future<Output = Response> + Send + 'static,
 {
     let task = tokio::spawn(
-        async move { render.await.map(DrainOnDrop::wrap) }
+        render_task(render)
             .bind_hub(sentry::Hub::current())
             .in_current_span(),
     );
@@ -157,6 +158,67 @@ where
             tracing::warn!(error = %join, "SSR render task failed");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
+    }
+}
+
+/// The future [`detach_render`] runs on its task: the render, with its body
+/// wrapped in [`DrainOnDrop`], under a [`StickyArena`].
+fn render_task<F>(render: F) -> impl Future<Output = Response> + Send + 'static
+where
+    F: Future<Output = Response> + Send + 'static,
+{
+    StickyArena::new(async move { render.await.map(DrainOnDrop::wrap) })
+}
+
+/// Keeps a render's reactive arena active across its await points.
+///
+/// leptos' arena (where every signal lives) is a thread-local that a
+/// `Sandboxed` poll sets and nothing ever restores, so it only follows the
+/// request while one of the request's `Sandboxed` futures is being polled.
+/// `leptos_integration_utils::from_app` reads reactive values *between*
+/// those polls: `inject_meta_context` evaluates every `<Title>` closure
+/// after a `tick().await`. Whatever the worker thread ran in the meantime
+/// decides which arena that read sees — another request's ("you tried to
+/// access a reactive value … already disposed") or none ("the
+/// `sandboxed-arenas` feature is active, but no Arena is active") — and the
+/// render panics. GlitchTip #7382 / #7383 (the 404 page's title) and the
+/// item page's title (`xiv_data.rs` reading the locale).
+///
+/// This wrapper re-activates, before every poll, the arena that was active
+/// when the previous poll returned: that is the request's own arena, set by
+/// the last `Sandboxed` poll inside the render. `Sandboxed` is the only
+/// public handle on the thread-local — constructing one captures the current
+/// arena, and polling it re-activates that arena before polling its inner
+/// future, which here is never ready.
+struct StickyArena<F> {
+    inner: Pin<Box<F>>,
+    arena: Option<Sandboxed<std::future::Pending<()>>>,
+}
+
+impl<F> StickyArena<F> {
+    fn new(inner: F) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            arena: None,
+        }
+    }
+}
+
+impl<F: Future> Future for StickyArena<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if let Some(arena) = this.arena.as_mut() {
+            // Only ever `Pending`; polled for its side effect of setting the
+            // arena. `Pending` registers no waker, so nothing leaks.
+            let _ = Pin::new(arena).poll(cx);
+        }
+        let polled = this.inner.as_mut().poll(cx);
+        if polled.is_pending() {
+            this.arena = Some(Sandboxed::new(std::future::pending()));
+        }
+        polled
     }
 }
 
@@ -204,7 +266,7 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use super::{DrainOnDrop, FallbackFuture, detach_fallback, detach_render};
+    use super::{DrainOnDrop, FallbackFuture, detach_fallback, detach_render, render_task};
 
     /// A body of `chunks` that bumps `completed` once its last chunk has been
     /// pulled — the stand-in for leptos' end-of-stream owner cleanup.
@@ -364,5 +426,94 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], b"chunkchunkchunk");
+    }
+
+    /// The shell for [`title_is_read_under_the_request_arena`]: a real leptos
+    /// page whose `<Title>` text is a closure over a signal, like every
+    /// `MetaTitle` in the app.
+    fn titled_shell(_options: leptos::config::LeptosOptions) -> impl leptos::IntoView {
+        use leptos::prelude::*;
+        use leptos_meta::{MetaTags, Title, provide_meta_context};
+
+        provide_meta_context();
+        let title = RwSignal::new(String::from("Into the void"));
+        view! {
+            <html>
+                <head>
+                    <MetaTags />
+                </head>
+                <body>
+                    <Title text=move || title.get() />
+                    <main>"404"</main>
+                </body>
+            </html>
+        }
+    }
+
+    /// GlitchTip #7382 / #7383: leptos evaluates `<Title>` closures in
+    /// `inject_meta_context`, after an await and outside any `Sandboxed`
+    /// scope. The reactive arena is a thread-local that a `Sandboxed` poll
+    /// sets and nothing restores, so that read sees whatever the worker
+    /// thread last ran — another request's arena ("you tried to access a
+    /// reactive value … already disposed") or none ("no Arena is active") —
+    /// and the render panics.
+    ///
+    /// The render task is driven by hand here so the test can do what a busy
+    /// worker does between two polls of it: run a different request, which
+    /// leaves that request's arena active on the thread.
+    #[tokio::test]
+    async fn title_is_read_under_the_request_arena() {
+        use leptos::prelude::Owner;
+
+        // Route handlers do this on their first request; the fallback alone
+        // does not, and leptos_meta / Suspense spawn reactive tasks.
+        let _ = any_spawner::Executor::init_tokio();
+
+        // The other request. Built off-thread so creating it doesn't touch
+        // this thread's reactive thread-locals; `with` is what a `Sandboxed`
+        // poll of that request does to the arena (the owner is restored).
+        let other = std::thread::spawn(|| Owner::new_root(None)).join().unwrap();
+
+        let options = leptos::config::LeptosOptions::builder()
+            .output_name("ssr-drain-test")
+            .site_root("/nonexistent-site-root")
+            .build();
+        let fallback = leptos_axum::file_and_error_handler_with_context::<
+            leptos::config::LeptosOptions,
+            _,
+        >(|| {}, titled_shell);
+        let request = Request::builder()
+            .uri("/missing")
+            .body(Body::empty())
+            .unwrap();
+        let mut task = Box::pin(render_task(fallback(
+            request.uri().clone(),
+            State(options),
+            request,
+        )));
+
+        let mut polls = 0usize;
+        let response = poll_fn(|cx| {
+            polls += 1;
+            let polled = task.as_mut().poll(cx);
+            if polled.is_pending() {
+                other.with(|| {});
+            }
+            polled
+        })
+        .await;
+        assert!(polls > 1, "the render never yielded, so nothing was tested");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "the 404 render panicked reading its <Title> under a foreign arena"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&body);
+        assert!(
+            html.contains("<title>Into the void</title>"),
+            "title missing from the rendered page: {html}"
+        );
     }
 }

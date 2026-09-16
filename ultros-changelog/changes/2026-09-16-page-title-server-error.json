@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Fewer server errors on busy pages",
+  "blurb": "Under load, the server could crash while writing a page's title and answer with an error instead of the page. Item pages and the not-found page were the most affected."
+}

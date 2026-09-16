@@ -120,6 +120,12 @@ tempfile = "3.6.0"
 # item_update_service.rs) needs tokio's virtual clock, which only exists
 # behind "test-util". Scoped to dev-dependencies so it never ships.
 tokio = { workspace = true, features = ["test-util"] }
+# The `ssr_drain` arena test renders a real `<Title>` through leptos_axum's
+# 404 fallback; the app crate already enables leptos_meta/ssr for every SSR build.
+leptos_meta = { workspace = true, features = ["ssr"] }
+# leptos_axum's route handlers install the tokio executor for reactive tasks
+# on their first request; the fallback used directly in that test does not.
+any_spawner = { version = "0.3", features = ["tokio"] }
 
 [features]
 profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
