@@ -1,9 +1,11 @@
 //! Labs list workspace: inline construction and a stable shopping companion,
 //! backed by the local document and account synchronization.
 
+#[cfg(any(feature = "hydrate", test))]
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+#[cfg(any(feature = "hydrate", test))]
 use std::rc::Rc;
 
 use crate::global_state::xiv_data::tracked_data;
@@ -50,9 +52,10 @@ use crate::routes::list_view::{
     list_item_table_skeleton_columns, remaining_quantity, sort_list_items,
 };
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
+#[cfg(feature = "hydrate")]
+use ultros_api_types::websocket::{EventType as WEvent, ListEventData, ServerClient};
 use ultros_api_types::websocket::{
-    EventType as WEvent, FilterPredicate, ListEventData, ServerClient, SocketMessageType,
-    is_list_market_update_relevant,
+    FilterPredicate, SocketMessageType, is_list_market_update_relevant,
 };
 use ultros_api_types::world_helper::AnySelector;
 use ultros_calc::list_estimate::PriceFeed;
@@ -779,13 +782,9 @@ fn note_fetch(prices: PriceStatus, outcome: Option<FetchedPrices<'_>>) {
 #[cfg(any(feature = "hydrate", test))]
 const REVALIDATE_MAX_WAIT_MS: u32 = 1000;
 
-/// The coalescing timer. A real `Timeout` on the client; a unit
-/// placeholder on the SSR half, where `Effect`s never run and so no
-/// subscription is ever created to schedule one.
+/// Owned client timer; dropping its document lifetime cancels it.
 #[cfg(feature = "hydrate")]
 type RevalidateTimer = gloo_timers::callback::Timeout;
-#[cfg(not(feature = "hydrate"))]
-type RevalidateTimer = ();
 
 /// Keep the first broadcast's deadline: subsequent broadcasts coalesce but
 /// cannot postpone it. In a normally scheduled foreground tab the probe starts
@@ -794,6 +793,7 @@ type RevalidateTimer = ();
 #[cfg(any(feature = "hydrate", test))]
 fn schedule_revalidate_with<T: 'static>(
     slot: &Rc<RefCell<Option<T>>>,
+    delay_ms: u32,
     create_timer: impl FnOnce(u32, Box<dyn FnOnce()>) -> T,
     probe: impl FnOnce() + 'static,
 ) {
@@ -804,7 +804,7 @@ fn schedule_revalidate_with<T: 'static>(
     // must still cancel its pending timer on navigation or sign-out.
     let pending = Rc::downgrade(slot);
     let timer = create_timer(
-        REVALIDATE_MAX_WAIT_MS,
+        delay_ms,
         Box::new(move || {
             let Some(pending) = pending.upgrade() else {
                 return;
@@ -818,13 +818,128 @@ fn schedule_revalidate_with<T: 'static>(
     *slot.borrow_mut() = Some(timer);
 }
 
-#[cfg(feature = "hydrate")]
-fn schedule_revalidate(slot: &Rc<RefCell<Option<RevalidateTimer>>>, probe: impl Fn() + 'static) {
-    schedule_revalidate_with(slot, gloo_timers::callback::Timeout::new, probe);
+// One recovery owner per exact document lifetime. Socket handlers and timers
+// only hold Weak references; dropping the owner cancels retries and makes late
+// REST completions unable to restore a successor's subscriptions.
+#[cfg(any(feature = "hydrate", test))]
+#[derive(Default)]
+struct RelayRecoveryState {
+    notices: [u64; 2],
+    restored: [u64; 2],
+    attempts: u32,
+    activity: bool,
 }
 
-#[cfg(not(feature = "hydrate"))]
-fn schedule_revalidate(_slot: &Rc<RefCell<Option<RevalidateTimer>>>, _probe: impl Fn() + 'static) {}
+#[cfg(any(feature = "hydrate", test))]
+impl RelayRecoveryState {
+    fn notice(&mut self, relay: Option<usize>) {
+        if let Some(relay) = relay {
+            self.notices[relay] += 1;
+        }
+        self.activity = true;
+    }
+
+    fn pending(&self) -> bool {
+        self.notices != self.restored
+    }
+
+    fn delay_ms(&self) -> u32 {
+        if self.pending() {
+            (1u32 << self.attempts.min(5)).min(30) * REVALIDATE_MAX_WAIT_MS
+        } else {
+            REVALIDATE_MAX_WAIT_MS
+        }
+    }
+
+    fn begin(&mut self) -> [u64; 2] {
+        self.activity = false;
+        if self.pending() {
+            self.attempts = self.attempts.saturating_add(1);
+        }
+        self.notices
+    }
+
+    fn finish(&mut self, captured: [u64; 2], restored: [bool; 2]) {
+        for relay in 0..2 {
+            // Probes may overlap; an older completion must not roll back a
+            // newer one's restoration and re-arm recovery for nothing.
+            if restored[relay] && captured[relay] > self.restored[relay] {
+                self.restored[relay] = captured[relay];
+            }
+        }
+        if !self.pending() {
+            self.attempts = 0;
+        }
+    }
+}
+
+#[cfg(feature = "hydrate")]
+type RelayProbe = dyn Fn(Box<dyn FnOnce(bool)>);
+
+#[cfg(feature = "hydrate")]
+struct ListRelayRecovery {
+    state: RefCell<RelayRecoveryState>,
+    timer: Rc<RefCell<Option<RevalidateTimer>>>,
+    current: Box<dyn Fn() -> bool>,
+    probe: Box<RelayProbe>,
+    restore: Box<dyn Fn(usize) -> bool>,
+}
+
+#[cfg(feature = "hydrate")]
+impl ListRelayRecovery {
+    fn notice(self: &Rc<Self>, relay: Option<usize>) {
+        if !(self.current)() {
+            return;
+        }
+        self.state.borrow_mut().notice(relay);
+        self.schedule();
+    }
+
+    fn schedule(self: &Rc<Self>) {
+        let state = self.state.borrow();
+        // Never gate on an outstanding probe: a held, hung or lost REST
+        // response must not stop the one-second access window that #1473
+        // guarantees under sustained broadcasts. `schedule_revalidate_with`
+        // coalesces bursts onto the first pending deadline and `ListReads`
+        // fences stale responses, so overlapping probes are safe.
+        if !(state.activity || state.pending()) || !(self.current)() {
+            return;
+        }
+        let delay = state.delay_ms();
+        drop(state);
+        let weak = Rc::downgrade(self);
+        schedule_revalidate_with(
+            &self.timer,
+            delay,
+            gloo_timers::callback::Timeout::new,
+            move || {
+                let Some(owner) = weak.upgrade().filter(|owner| (owner.current)()) else {
+                    return;
+                };
+                let captured = owner.state.borrow_mut().begin();
+                let weak = Rc::downgrade(&owner);
+                (owner.probe)(Box::new(move |success| {
+                    let Some(owner) = weak.upgrade().filter(|owner| (owner.current)()) else {
+                        return;
+                    };
+                    let mut restored = [false; 2];
+                    if success {
+                        for relay in 0..2 {
+                            let needed = captured[relay] != owner.state.borrow().restored[relay];
+                            if needed {
+                                // We are past dispatch and the REST identity/watermark fence.
+                                // Resend surviving factories, preserving native rebase guards.
+                                restored[relay] = (owner.restore)(relay);
+                            }
+                        }
+                    }
+                    owner.state.borrow_mut().finish(captured, restored);
+                    owner.schedule();
+                }));
+            },
+        );
+    }
+}
 
 /// The revalidation itself: a silent permission probe. It re-fetches the
 /// list over REST and touches the page only when the answer changes what
@@ -841,6 +956,7 @@ fn revalidate(
     reads: ListReads,
     bump: WriteSignal<u32>,
     prices: PriceStatus,
+    finished: impl FnOnce(bool) + 'static,
 ) {
     let cache = reads.cache;
     let expected = handle.try_get_untracked().flatten().map(|h| h.revision);
@@ -857,6 +973,7 @@ fn revalidate(
             return;
         }
         if !reads.accept(request, &result) {
+            finished(false);
             return;
         }
         match result {
@@ -886,6 +1003,10 @@ fn revalidate(
                 if changed {
                     bump.update(|v| *v += 1);
                 }
+                // A revoke racing the server's separate data/permission reads
+                // can produce 200 with None. It disables UI access but does not
+                // prove a surviving relay is authorized; retry without purging.
+                finished(permission >= ListPermission::Read);
             }
             Err(error) if is_denial(&error) => {
                 if let Some(doc_handle) = handle.get_untracked() {
@@ -896,22 +1017,14 @@ fn revalidate(
                 bump.update(|v| *v += 1);
             }
             // Transport or server trouble says nothing about permission;
-            // the next broadcast tries again. It *is* a refresh that failed,
+            // a terminated relay retries without needing another broadcast. It is
             // though, so the prices on the page are marked as such.
-            Err(_) => note_fetch(prices, None),
+            Err(_) => {
+                note_fetch(prices, None);
+                finished(false);
+            }
         }
     });
-}
-
-#[cfg(not(feature = "hydrate"))]
-fn revalidate(
-    _active_list: Memo<i32>,
-    _list_id: i32,
-    _handle: RwSignal<Option<ListDocHandle>>,
-    _reads: ListReads,
-    _bump: WriteSignal<u32>,
-    _prices: PriceStatus,
-) {
 }
 
 /// A failure that means the browser must stop keeping a local copy of this
@@ -1301,6 +1414,8 @@ pub fn ListViewSync() -> impl IntoView {
     // + `broadcast_list_update`; `delete_list` -> `EventType::removed`), and
     // the refetch's 403/404 is what `is_denial` turns into a purge.
     let (revalidate_version, set_revalidate_version) = signal(0u32);
+    #[cfg(not(feature = "hydrate"))]
+    let _ = (set_activity_update_version, set_revalidate_version);
     let (listings_version, set_listings_version) = signal(0u32);
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
@@ -1363,35 +1478,40 @@ pub fn ListViewSync() -> impl IntoView {
     let activity_subscription = StoredValue::new(None::<RealtimeSubscription>);
     let list_market_subscription = StoredValue::new(None::<RealtimeSubscription>);
 
-    // The legacy list subscription only drives the activity feed now; rows
-    // arrive on the document's own subscription instead.
-    let realtime_for_activity = realtime.clone();
-    Effect::new(move |_| {
-        activity_subscription.update_value(|sub| *sub = None);
-        let id = list_id.get();
-        let Some(realtime) = realtime_for_activity.clone() else {
-            return;
-        };
-        if id != 0 {
-            // Created inside the Effect body so the Effect's own closure
-            // stays `Send + Sync` (it captures no `Rc`); the handler it is
-            // moved into has no such bound.
-            let revalidate_timer: Rc<RefCell<Option<RevalidateTimer>>> =
-                Rc::new(RefCell::new(None));
-            let sub = realtime.subscribe_list(id, move |message| {
-                let ServerClient::ListUpdate(event) = message else {
-                    return;
-                };
-                if matches!(event, WEvent::Added(ListEventData::Activity(_))) {
-                    set_activity_update_version.update(|v| *v += 1);
-                }
-                // Any broadcast for this list — activity, the list row
-                // itself, a row event — is a reason to re-ask the server
-                // whether we may still read it. The page cannot tell a
-                // revocation from a rename by the payload (an unshare
-                // broadcasts an ordinary `List` update), so it revalidates
-                // on all of them and lets the REST answer decide.
-                schedule_revalidate(&revalidate_timer, move || {
+    #[cfg(feature = "hydrate")]
+    let relay_recovery: StoredValue<Option<Rc<ListRelayRecovery>>, LocalStorage> =
+        StoredValue::new_local(None);
+    #[cfg(feature = "hydrate")]
+    let sync_subscription: StoredValue<
+        Option<crate::list_doc::sync::SyncSubscription>,
+        LocalStorage,
+    > = StoredValue::new_local(None);
+
+    // Activity and document relay failures share the same authoritative REST
+    // probe. A relay error is ambiguous: database trouble uses the same text
+    // as revoked access. Only the REST 403/404 may destroy cached work.
+    #[cfg(feature = "hydrate")]
+    {
+        let realtime_for_activity = realtime.clone();
+        Effect::new(move |_| {
+            relay_recovery.set_value(None);
+            activity_subscription.set_value(None);
+            let id = list_id.get();
+            // Account readers, including read-only collaborators, have a live
+            // document handle. Wait for it initially and stay unsubscribed after
+            // denial/sign-out; a None-handle relay would repeatedly re-open itself.
+            let Some(document) = handle.get().filter(|doc| !doc.is_closed_or_disposed()) else {
+                return;
+            };
+            let expected = Some(document.revision);
+            let Some(realtime) = realtime_for_activity.clone().filter(|_| id != 0) else {
+                return;
+            };
+            let recovery = Rc::new(ListRelayRecovery {
+                state: RefCell::new(RelayRecoveryState::default()),
+                timer: Rc::new(RefCell::new(None)),
+                current: Box::new(move || request_is_current(list_id, id, handle, expected)),
+                probe: Box::new(move |finished| {
                     revalidate(
                         list_id,
                         id,
@@ -1399,12 +1519,50 @@ pub fn ListViewSync() -> impl IntoView {
                         listings_cache,
                         set_revalidate_version,
                         prices,
-                    )
-                });
+                        finished,
+                    );
+                }),
+                restore: Box::new(move |relay| {
+                    if !request_is_current(list_id, id, handle, expected) {
+                        return false;
+                    }
+                    if relay == 0 {
+                        activity_subscription.with_value(|sub| {
+                            sub.as_ref().is_some_and(RealtimeSubscription::resubscribe)
+                        })
+                    } else {
+                        sync_subscription.with_value(|sub| {
+                            sub.as_ref()
+                                .is_some_and(crate::list_doc::sync::SyncSubscription::resubscribe)
+                        })
+                    }
+                }),
+            });
+            let weak = Rc::downgrade(&recovery);
+            let sub = realtime.subscribe_list(id, move |message| {
+                let Some(recovery) = weak.upgrade() else {
+                    return;
+                };
+                match message {
+                    ServerClient::ListUpdate(event) => {
+                        if matches!(event, WEvent::Added(ListEventData::Activity(_))) {
+                            set_activity_update_version.update(|v| *v += 1);
+                        }
+                        recovery.notice(None);
+                    }
+                    ServerClient::Error { message }
+                        if crate::list_doc::sync::is_relay_authorization_error(&message, id) =>
+                    {
+                        recovery.notice(Some(0));
+                    }
+                    _ => {}
+                }
             });
             activity_subscription.set_value(Some(sub));
-        }
-    });
+            relay_recovery.set_value(Some(recovery));
+        });
+        on_cleanup(move || relay_recovery.set_value(None));
+    }
     let realtime_for_market = realtime.clone();
     Effect::new(move |_| {
         list_market_subscription.update_value(|sub| *sub = None);
@@ -1460,10 +1618,6 @@ pub fn ListViewSync() -> impl IntoView {
     let (resync, set_resync) = signal(0u32);
     #[cfg(feature = "hydrate")]
     {
-        let sync_subscription: StoredValue<
-            Option<crate::list_doc::sync::SyncSubscription>,
-            LocalStorage,
-        > = StoredValue::new_local(None);
         // The (user, list) pair the open handle belongs to, so a re-run that
         // changed neither doesn't throw the document away.
         let open_for: StoredValue<Option<(i64, i32)>> = StoredValue::new(None);
@@ -1608,6 +1762,16 @@ pub fn ListViewSync() -> impl IntoView {
                         denied.close();
                     }
                     handle.set(None);
+                },
+                move || {
+                    if !request_is_current(list_id, open.list_id, handle, Some(open.revision)) {
+                        return;
+                    }
+                    relay_recovery.with_value(|recovery| {
+                        if let Some(recovery) = recovery {
+                            recovery.notice(Some(1));
+                        }
+                    });
                 },
             );
             sync_subscription.set_value(Some(subscription));
@@ -2742,6 +2906,86 @@ mod tests {
     }
 
     #[test]
+    fn relay_recovery_retries_without_broadcasts_and_caps_backoff() {
+        let mut state = RelayRecoveryState::default();
+        state.notice(Some(0));
+        for delay in [1000, 2000, 4000, 8000, 16000, 30000, 30000] {
+            assert_eq!(state.delay_ms(), delay);
+            let captured = state.begin();
+            assert!(!state.activity);
+            state.finish(captured, [false, false]);
+            assert!(
+                state.pending(),
+                "a failed permission read cannot retire recovery"
+            );
+        }
+        let captured = state.begin();
+        state.finish(captured, [true, false]);
+        assert!(!state.pending());
+        assert!(!state.activity, "restored idle relay no longer polls");
+        state.notice(Some(1));
+        assert_eq!(
+            state.delay_ms(),
+            1000,
+            "a later independent revocation cannot inherit an old outage's backoff"
+        );
+    }
+
+    #[test]
+    fn relay_recovery_keeps_new_notices_and_separate_native_generation() {
+        let mut state = RelayRecoveryState::default();
+        state.notice(Some(0));
+        let captured = state.begin();
+        state.notice(Some(0));
+        state.notice(Some(1));
+        state.finish(captured, [true, false]);
+        assert_eq!(state.restored, [1, 0]);
+        assert_eq!(state.notices, [2, 1]);
+        assert!(
+            state.pending(),
+            "an earlier REST success cannot consume a newer error"
+        );
+        let captured = state.begin();
+        state.finish(captured, [false, true]);
+        assert!(state.pending(), "failed legacy resend still needs recovery");
+        assert_eq!(state.restored, [1, 1]);
+        let captured = state.begin();
+        state.finish(captured, [true, false]);
+        assert!(!state.pending());
+        // Probes overlap: an older completion arriving late must not roll a
+        // newer restoration back and re-arm recovery.
+        state.notice(Some(0));
+        let newer = state.begin();
+        state.finish(newer, [true, false]);
+        assert_eq!(state.restored, [3, 1]);
+        state.finish([2, 1], [true, false]);
+        assert_eq!(
+            state.restored,
+            [3, 1],
+            "a late older completion cannot regress"
+        );
+        assert!(!state.pending());
+    }
+
+    #[test]
+    fn ordinary_activity_during_a_probe_schedules_one_follow_up_without_idle_polling() {
+        let mut state = RelayRecoveryState::default();
+        state.notice(None);
+        let captured = state.begin();
+        for _ in 0..100 {
+            state.notice(None);
+        }
+        assert_eq!(state.attempts, 0);
+        state.finish(captured, [false, false]);
+        assert!(state.activity);
+        assert!(!state.pending());
+        let captured = state.begin();
+        state.finish(captured, [false, false]);
+        assert!(!state.activity);
+        assert!(!state.pending());
+    }
+
+    #[test]
     fn continuous_broadcasts_keep_the_first_deadline_and_start_new_windows() {
         use std::cell::Cell;
 
@@ -2756,6 +3000,7 @@ mod tests {
             let probes = probes.clone();
             schedule_revalidate_with(
                 &slot,
+                REVALIDATE_MAX_WAIT_MS,
                 |delay, callback| {
                     assert_eq!(delay, 1000, "maximum normal scheduling delay");
                     assert!(pending.is_none(), "bursts do not replace pending probes");
@@ -2779,6 +3024,7 @@ mod tests {
         let mut callback = None;
         schedule_revalidate_with(
             &slot,
+            REVALIDATE_MAX_WAIT_MS,
             |_, fire| callback = Some(fire),
             || panic!("a retired subscription must not probe a successor document"),
         );

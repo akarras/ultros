@@ -90,6 +90,11 @@ where
 /// [`spawn_market_reconciliation`].)
 #[poise::command(slash_command, prefix_command, owners_only)]
 pub(crate) async fn rescan_market(ctx: Context<'_>) -> Result<(), Error> {
+    #[cfg(feature = "test-auth")]
+    if crate::test_market_isolation::enabled() {
+        ctx.reply(crate::test_market_isolation::BLOCKED).await?;
+        return Ok(());
+    }
     let service = ctx.data().update_service.clone();
     // Claim the global sweep lock *before* replying, so the "a sweep is
     // already running" case can reply instead of announcing a sweep that
@@ -147,6 +152,11 @@ pub(crate) async fn rescan_market(ctx: Context<'_>) -> Result<(), Error> {
 /// Discord availability never delays the work. The advisory lease serializes
 /// automatic passes with manual sweeps and workers on other replicas.
 pub(crate) fn spawn_market_reconciliation(service: Arc<UpdateService>, token: CancellationToken) {
+    #[cfg(feature = "test-auth")]
+    if crate::test_market_isolation::enabled() {
+        tracing::warn!("test-auth market fixture isolation: automatic reconciliation disabled");
+        return;
+    }
     // QA instances can share a database without starting a broad upstream scan.
     // Manual /rescan_market and the existing recent-item loop remain available.
     if crate::env_flag_enabled(

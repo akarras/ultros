@@ -33,6 +33,8 @@
     "test:list-flow": "node ./list-flow.cjs",
     "test:lists-v2": "node ./lists-v2.cjs",
     "test:list-shop-handoff": "node ./list-shop-handoff.cjs",
+    "test:list-priced-acceptance": "node ./list-priced-acceptance.cjs",
+    "test:lists-acceptance": "node ./lists-acceptance.cjs",
     "test:list-shop-focus": "node ./list-shop-focus.cjs",
     "test:list-adoption": "node ./list-adoption.cjs",
     "test:list-access-drafts": "node ./list-access-drafts.cjs",

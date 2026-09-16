@@ -17,6 +17,8 @@ pub mod profiling;
 pub(crate) mod resale_eligibility;
 pub(crate) mod search_service;
 mod ssr_drain;
+#[cfg(feature = "test-auth")]
+mod test_market_isolation;
 pub(crate) mod trend_candidates;
 pub(crate) mod utils;
 mod web;
@@ -703,6 +705,16 @@ async fn main() -> Result<()> {
     let socket_listing_events = listing_events_writer.clone();
     let socket_token = token.clone();
     let websocket_disabled = universalis_websocket_disabled();
+    #[cfg(feature = "test-auth")]
+    let websocket_disabled = {
+        let isolated = test_market_isolation::enabled();
+        if isolated {
+            warn!(
+                "test-auth market fixture isolation enabled: upstream market writers are disabled"
+            );
+        }
+        websocket_disabled || isolated
+    };
     // Populate worlds before constructing the immutable world cache. Otherwise a
     // first boot can run reconciliation against an empty cache indefinitely.
     let world_data = startup_world_data(
@@ -718,7 +730,7 @@ async fn main() -> Result<()> {
         if websocket_disabled {
             // World/datacenter data above is still primed — the app needs it to
             // serve anything at all — we just never open the market feed.
-            warn!("{DISABLE_WEBSOCKET_ENV} is set: skipping the Universalis websocket ingest");
+            warn!("skipping Universalis websocket ingest: disabled by configuration");
             return;
         }
         info!("starting websocket");

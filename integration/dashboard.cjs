@@ -117,6 +117,7 @@ const DEFAULT_CONSOLE_ALLOW = [
   "favicon",
   "ERR_BLOCKED_BY_CLIENT",
   "net::ERR_ABORTED",
+  ...(process.env.E2E_BLOCK_EXTERNAL === "1" ? ["net::ERR_NAME_NOT_RESOLVED"] : []),
 ];
 
 async function navigateWithFallback(page, url, timeout) {
@@ -282,6 +283,16 @@ async function captureOneSurface(
   return failures;
 }
 
+// E2E_BLOCK_EXTERNAL=1 makes Chrome resolve only loopback, so third-party
+// scripts (ads, analytics, Google frames) cannot load and cannot log
+// console errors that have nothing to do with the app. This reproduces the
+// no-network sandbox that earlier strict runs relied on.
+function blockExternalArgs() {
+  return process.env.E2E_BLOCK_EXTERNAL === "1"
+    ? ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"]
+    : [];
+}
+
 async function main() {
   const puppeteer = require("puppeteer");
 
@@ -318,7 +329,7 @@ async function main() {
   try {
     browser = await puppeteer.launch({
       headless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: ["--no-sandbox", "--disable-setuid-sandbox", ...blockExternalArgs()],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     });
 

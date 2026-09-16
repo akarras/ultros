@@ -149,6 +149,7 @@ pub async fn create_group_fixture(
 
 pub fn routes() -> Router<WebState> {
     Router::new()
+        .merge(super::list_market_fixture::routes())
         .route("/test/group/fixture", post(create_group_fixture))
         .route("/test/list/{id}/compact", post(compact_list_fixture))
 }
