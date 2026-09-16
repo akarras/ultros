@@ -174,6 +174,9 @@ const DEFAULT_CONSOLE_ALLOW = [
   "ERR_BLOCKED_BY_CLIENT", // ad/tracker blockers
   "net::ERR_ABORTED",       // navigation aborts during fast clicks
   "googlesyndication.com",  // AdSense vendor script throws in headless Chrome
+  // With E2E_BLOCK_EXTERNAL=1 every third-party host resolves to nothing, so
+  // their script tags log this instead of ERR_BLOCKED_BY_CLIENT.
+  ...(process.env.E2E_BLOCK_EXTERNAL === "1" ? ["net::ERR_NAME_NOT_RESOLVED"] : []),
 ];
 
 function getRoutes() {
@@ -340,6 +343,16 @@ async function checkHorizontalOverflow(page, route, device) {
   ];
 }
 
+// E2E_BLOCK_EXTERNAL=1 makes Chrome resolve only loopback, so third-party
+// scripts (ads, analytics, Google frames) cannot load and cannot log
+// console errors that have nothing to do with the app. This reproduces the
+// no-network sandbox that earlier strict runs relied on.
+function blockExternalArgs() {
+  return process.env.E2E_BLOCK_EXTERNAL === "1"
+    ? ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"]
+    : [];
+}
+
 async function main() {
   const puppeteer = require("puppeteer");
 
@@ -391,7 +404,7 @@ async function main() {
   try {
     const launchOpts = {
       headless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: ["--no-sandbox", "--disable-setuid-sandbox", ...blockExternalArgs()],
       executablePath,
     };
 
