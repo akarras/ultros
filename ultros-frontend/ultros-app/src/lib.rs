@@ -39,8 +39,8 @@ use crate::global_state::{
 };
 use crate::{
     components::{
-        app_shell::AppShell, inbox_live::InboxLive, on_hand_input::provide_on_hand_context,
-        patreon::*, toast::*, update_banner::UpdateBanner,
+        app_shell::AppShell, guest_alert_evaluator::GuestAlertEvaluator, inbox_live::InboxLive,
+        on_hand_input::provide_on_hand_context, patreon::*, toast::*, update_banner::UpdateBanner,
     },
     routes::{
         about::*,
@@ -563,6 +563,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
             <InboxLive />
+            <GuestAlertEvaluator />
             <UpdateBanner />
             <Router>
                 <SentryRouteTag />

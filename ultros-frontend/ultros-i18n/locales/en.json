@@ -1332,6 +1332,8 @@
     "alert_drawer_submit": "Create alert",
     "inbox_fallback_price_body": "Matched at {{price}} gil",
     "inbox_fallback_generic_body": "Your price alert matched",
+    "inbox_guest_hit_title": "{{item}} hit your price",
+    "inbox_guest_hit_body": "Listed at {{price}} gil on {{world}}",
     "crafter_levels_title": "Crafter Levels",
     "crafter_levels_help": "Set your crafter levels to filter recipes in the Recipe Analyzer.",
     "make_place_items_ready": "{{count}} items ready to add",

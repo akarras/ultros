@@ -1329,6 +1329,8 @@
     "alert_drawer_submit": "建立提醒",
     "inbox_fallback_price_body": "以{{price}}金幣匹配",
     "inbox_fallback_generic_body": "您的價格提醒已觸發",
+    "inbox_guest_hit_title": "{{item}} 已達到您設定的價格",
+    "inbox_guest_hit_body": "在{{world}}以{{price}}金幣上架",
     "crafter_levels_title": "製作職人等級",
     "crafter_levels_help": "設定你的製作職人等級，以在配方分析器中篩選配方。",
     "make_place_items_ready": "{{count}} 件物品準備加入",

@@ -1329,6 +1329,8 @@
     "alert_drawer_submit": "Benachrichtigung erstellen",
     "inbox_fallback_price_body": "Erreicht bei {{price}} Gil",
     "inbox_fallback_generic_body": "Ihr Preisalarm wurde ausgelöst",
+    "inbox_guest_hit_title": "{{item}} hat deinen Preis erreicht",
+    "inbox_guest_hit_body": "Gelistet für {{price}} Gil auf {{world}}",
     "crafter_levels_title": "Handwerker-Stufen",
     "crafter_levels_help": "Setze deine Handwerker-Stufen, um Rezepte im Rezept-Analyzer zu filtern.",
     "make_place_items_ready": "{{count}} Items bereit zum Hinzufügen",

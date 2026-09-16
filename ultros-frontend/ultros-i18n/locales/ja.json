@@ -1329,6 +1329,8 @@
     "alert_drawer_submit": "アラートを作成",
     "inbox_fallback_price_body": "{{price}}ギルで一致しました",
     "inbox_fallback_generic_body": "価格アラートが一致しました",
+    "inbox_guest_hit_title": "{{item}}が設定価格に達しました",
+    "inbox_guest_hit_body": "{{world}}で{{price}}ギルで出品されています",
     "crafter_levels_title": "クラフターレベル",
     "crafter_levels_help": "クラフターレベルを設定すると、レシピアナライザーで対応するレシピが絞り込めます。",
     "make_place_items_ready": "{{count}} 件のアイテムを追加できます",

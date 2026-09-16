@@ -1329,6 +1329,8 @@
     "alert_drawer_submit": "Créer l'alerte",
     "inbox_fallback_price_body": "Atteint à {{price}} gils",
     "inbox_fallback_generic_body": "Votre alerte de prix s'est déclenchée",
+    "inbox_guest_hit_title": "{{item}} a atteint ton prix",
+    "inbox_guest_hit_body": "Listé à {{price}} gils sur {{world}}",
     "crafter_levels_title": "Niveaux d'artisan",
     "crafter_levels_help": "Définis tes niveaux d'artisan pour filtrer les recettes dans l'Analyseur de recettes.",
     "make_place_items_ready": "{{count}} objets prêts à ajouter",
