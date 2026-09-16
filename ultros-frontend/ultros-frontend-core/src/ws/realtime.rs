@@ -17,6 +17,7 @@ mod client {
     use web_sys::{CloseEvent, Event, MessageEvent, WebSocket};
 
     type Handler = Box<dyn Fn(ServerClient)>;
+    type EventClosure<E> = RefCell<Option<Closure<dyn FnMut(E)>>>;
 
     /// One entry in `subscription_messages`. Most subscriptions (market
     /// filters, legacy list subscriptions) send the same JSON on every
@@ -64,10 +65,10 @@ mod client {
         last_update: Signal<Option<DateTime<Utc>>>,
         set_status: WriteSignal<String>,
         set_last_update: WriteSignal<Option<DateTime<Utc>>>,
-        onopen: RefCell<Option<Closure<dyn FnMut(Event)>>>,
-        onmessage: RefCell<Option<Closure<dyn FnMut(MessageEvent)>>>,
-        onclose: RefCell<Option<Closure<dyn FnMut(CloseEvent)>>>,
-        onerror: RefCell<Option<Closure<dyn FnMut(Event)>>>,
+        onopen: EventClosure<Event>,
+        onmessage: EventClosure<MessageEvent>,
+        onclose: EventClosure<CloseEvent>,
+        onerror: EventClosure<Event>,
     }
 
     impl RealtimeInner {
@@ -169,6 +170,31 @@ mod client {
                 ClientMessage::SubscribeList {
                     subscription_id: Some(subscription_id),
                     list_id,
+                },
+            );
+            RealtimeSubscription {
+                client: self.clone(),
+                subscription_id,
+            }
+        }
+
+        /// Subscribe to the caller's notification inbox: fired alerts arrive
+        /// as `ServerClient::Notification` wrapped in `SubscriptionEvent`.
+        /// The subscribe message is stored as a `Static` entry so it replays
+        /// verbatim on reconnect, same as `subscribe_list`.
+        pub fn subscribe_notifications(
+            &self,
+            handler: impl Fn(ServerClient) + 'static,
+        ) -> RealtimeSubscription {
+            let subscription_id = self.next_subscription_id();
+            self.inner
+                .handlers
+                .borrow_mut()
+                .insert(subscription_id, Box::new(handler));
+            self.send_subscription(
+                subscription_id,
+                ClientMessage::SubscribeNotifications {
+                    subscription_id: Some(subscription_id),
                 },
             );
             RealtimeSubscription {
@@ -618,6 +644,13 @@ mod client {
         pub fn subscribe_list(
             &self,
             _list_id: i32,
+            _handler: impl Fn(ServerClient) + 'static,
+        ) -> RealtimeSubscription {
+            RealtimeSubscription
+        }
+
+        pub fn subscribe_notifications(
+            &self,
             _handler: impl Fn(ServerClient) + 'static,
         ) -> RealtimeSubscription {
             RealtimeSubscription

@@ -26,6 +26,7 @@
     "test:hover-card-stability": "node ./hover-card-stability.cjs",
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
+    "test:notification-inbox": "node ./notification-inbox.cjs",
     "test:app-update": "node ./app-update.cjs",
     "test:shared-list": "node ./shared-list.cjs",
     "test:list-socket-revocation": "node ./list-socket-revocation.cjs",

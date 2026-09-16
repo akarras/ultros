@@ -2,6 +2,7 @@ use crate::components::account_menu::AccountMenu;
 use crate::components::app_link::AppLink;
 use crate::components::home_world_menu::HomeWorldMenu;
 use crate::components::icon::Icon;
+use crate::components::notification_inbox::NotificationInbox;
 use crate::components::region_menu::RegionMenu;
 use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
@@ -275,20 +276,22 @@ pub fn SideNav() -> impl IntoView {
                 </SideNavItem>
             </nav>
 
+            <NotificationInbox />
             <HomeWorldMenu />
             <RegionMenu />
             <AccountMenu />
 
-            // Footer sits BELOW the home-world + region + account rows —
-            // the social links and commit hash are ambient reference, not
-            // controls, so they anchor the very bottom (#1235). Collapsed,
-            // the 56px sidebar has no room for the Discord + GitHub pair
-            // (GitHub was clipped by the right edge) and the version hash is
-            // hidden anyway, so the whole footer is hidden at that width —
-            // see `.app-shell-collapsed .side-nav-footer`. The home-world,
-            // region and account rows survive collapse as icon-only
-            // triggers, and the collapsed account panel's fixed `bottom`
-            // still holds because the footer contributes no height there.
+            // Footer sits BELOW the inbox + home-world + region + account
+            // rows — the social links and commit hash are ambient
+            // reference, not controls, so they anchor the very bottom
+            // (#1235). Collapsed, the 56px sidebar has no room for the
+            // Discord + GitHub pair (GitHub was clipped by the right edge)
+            // and the version hash is hidden anyway, so the whole footer is
+            // hidden at that width — see `.app-shell-collapsed
+            // .side-nav-footer`. The inbox, home-world, region and account
+            // rows survive collapse as icon-only triggers, and the
+            // collapsed account panel's fixed `bottom` still holds because
+            // the footer contributes no height there.
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />

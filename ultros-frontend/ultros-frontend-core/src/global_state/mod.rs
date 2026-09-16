@@ -1,3 +1,4 @@
+pub mod adoption_receipts;
 pub mod app_update;
 pub mod changelog;
 pub mod cheapest_prices;
@@ -5,9 +6,12 @@ pub use ultros_ui::global_state::clipboard_text;
 pub mod cookies;
 pub mod craft_options;
 pub mod crafter_levels;
+pub mod guest_alert_evaluator;
+pub mod guest_alerts;
 pub mod home_world;
 pub mod labs;
 pub mod local_world_data;
+pub mod notifications;
 pub mod platform;
 pub mod region_for_world;
 pub mod search_overlay;

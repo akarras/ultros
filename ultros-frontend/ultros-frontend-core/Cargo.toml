@@ -8,6 +8,9 @@ license = "MIT"
 anyhow = { workspace = true }
 axum = { workspace = true, optional = true }
 chrono = { workspace = true }
+codee = { version = "0.3.5", features = [
+    "json_serde",
+] }
 cookie = { version = "0.18.1", features = [
     "percent-encode",
 ] }
@@ -24,6 +27,7 @@ js-sys = { version = "0.3" }
 leptos = { workspace = true, features = [
     "nightly",
 ] }
+leptos-use = { workspace = true }
 leptos_i18n = { workspace = true }
 log = "0.4.29"
 percent-encoding = "2.3.2"
@@ -40,6 +44,10 @@ ultros-calc = { path = "../ultros-calc" }
 ultros-changelog = { path = "../../ultros-changelog" }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-ui = { path = "../ultros-ui", default-features = false }
+uuid = { version = "1", features = [
+    "v4",
+    "js",
+] }
 wasm-bindgen = { version = "0.2" }
 web-sys = { version = "0.3", features = [
     "AbortSignal",
@@ -53,6 +61,10 @@ web-sys = { version = "0.3", features = [
     "CloseEvent",
     "Event",
     "Storage",
+    "Notification",
+    "NotificationOptions",
+    "NotificationPermission",
+    "VisibilityState",
 ] }
 xiv-gen = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
@@ -62,6 +74,7 @@ default = []
 ssr = [
     "dep:axum",
     "leptos/ssr",
+    "leptos-use/ssr",
     "ultros-api-client/ssr",
     "ultros-i18n/ssr",
     "ultros-ui/ssr",

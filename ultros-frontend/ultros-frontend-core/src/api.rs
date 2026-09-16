@@ -9,7 +9,8 @@ use ultros_api_types::{
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
         CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
-        ResendResult, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
+        MarkAlertEventsReadRequest, MarkAlertEventsReadResponse, ResendResult,
+        UnreadAlertEventCount, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     item_stats::ItemStatsResponse,
@@ -877,6 +878,38 @@ pub async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
     fetch_api("/api/v1/alerts/events").await
 }
 
+/// Notification-inbox page fetch: newest-first, `limit` capped server-side to
+/// `1..=200` (default 50). `before_id` requests the page older than that
+/// event id, for infinite-scroll-style pagination.
+pub async fn get_alert_events_page(
+    limit: u32,
+    before_id: Option<i64>,
+) -> AppResult<Vec<AlertEvent>> {
+    fetch_api(&alert_events_page_path(limit, before_id)).await
+}
+
+fn alert_events_page_path(limit: u32, before_id: Option<i64>) -> String {
+    let mut path = format!("/api/v1/alerts/events?limit={limit}");
+    if let Some(before_id) = before_id {
+        path.push_str(&format!("&before_id={before_id}"));
+    }
+    path
+}
+
+/// Mark a set of notification-inbox events as read (by explicit ids, or every
+/// event with `id <= up_to_id`), returning the updated count and the new
+/// unread total.
+pub async fn mark_alert_events_read(
+    req: MarkAlertEventsReadRequest,
+) -> AppResult<MarkAlertEventsReadResponse> {
+    post_api("/api/v1/alerts/events/read", req).await
+}
+
+/// The notification-inbox unread badge count.
+pub async fn get_unread_alert_count() -> AppResult<UnreadAlertEventCount> {
+    fetch_api("/api/v1/alerts/events/unread_count").await
+}
+
 pub async fn list_endpoints() -> AppResult<Vec<Endpoint>> {
     fetch_api("/api/v1/endpoints").await
 }
@@ -1384,6 +1417,27 @@ mod ssr_response_tests {
         assert!(
             !err.is_api_response(),
             "a malformed 200 body is our own failure, got {err:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod alert_events_page_path_tests {
+    use super::alert_events_page_path;
+
+    #[test]
+    fn no_before_id_omits_the_param() {
+        assert_eq!(
+            alert_events_page_path(50, None),
+            "/api/v1/alerts/events?limit=50"
+        );
+    }
+
+    #[test]
+    fn before_id_is_appended() {
+        assert_eq!(
+            alert_events_page_path(20, Some(123)),
+            "/api/v1/alerts/events?limit=20&before_id=123"
         );
     }
 }

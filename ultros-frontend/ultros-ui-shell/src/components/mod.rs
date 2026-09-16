@@ -4,6 +4,7 @@ pub mod character_switcher;
 pub mod home_world_menu;
 pub mod language_picker;
 pub mod mobile_bar;
+pub mod notification_inbox;
 pub mod profile_display;
 pub mod region_menu;
 pub mod search_box;

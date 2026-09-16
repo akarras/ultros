@@ -3,10 +3,12 @@ use leptos::prelude::*;
 use crate::api::get_login;
 use crate::components::alert_rules_panel::AlertRulesPanel;
 use crate::components::endpoints_panel::EndpointsPanel;
+use crate::components::guest_alert_adoption::GuestAlertAdoptionBanner;
+use crate::components::guest_alerts_panel::GuestAlertsView;
 use crate::components::history_panel::HistoryPanel;
 use crate::components::loading::Loading;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
-use crate::components::tool_help::{ActionableEmptyState, ToolHeader};
+use crate::components::tool_help::ToolHeader;
 use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
@@ -43,15 +45,7 @@ pub fn Alerts() -> impl IntoView {
                 {move || match login.get() {
                     None => view! { <Loading /> }.into_any(),
                     Some(Err(_)) => {
-                        view! {
-                            <ActionableEmptyState
-                                title=t_string!(i18n, alerts_empty_title).to_string()
-                                body=t_string!(i18n, alerts_empty_body).to_string()
-                                action_href="/login?next=/alerts"
-                                action_label=t_string!(i18n, sign_in_discord).to_string()
-                                action_external=true
-                            />
-                        }.into_any()
+                        view! { <GuestAlertsView/> }.into_any()
                     }
                     Some(Ok(_)) => {
                         view! {
@@ -68,6 +62,8 @@ pub fn Alerts() -> impl IntoView {
                                     </a>
                                 </p>
                             </div>
+
+                            <GuestAlertAdoptionBanner compact=false />
 
                             <div class="flex gap-2 mt-4">
                                 {tab_btn("endpoints", t_string!(i18n, alerts_tab_endpoints).to_string())}

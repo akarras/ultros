@@ -26,6 +26,7 @@ ultros-api-types = { path = "../../ultros-api-types" }
 ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-ui = { path = "../ultros-ui", default-features = false }
+ultros-ui-alerts = { path = "../ultros-ui-alerts", default-features = false }
 ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
 ultros-ui-grid = { path = "../ultros-ui-grid", default-features = false }
 wasm-bindgen = { version = "0.2" }
@@ -53,6 +54,7 @@ ssr = [
     "ultros-frontend-core/ssr",
     "ultros-i18n/ssr",
     "ultros-ui/ssr",
+    "ultros-ui-alerts/ssr",
     "ultros-ui-game/ssr",
     "ultros-ui-grid/ssr",
 ]
@@ -63,6 +65,7 @@ hydrate = [
     "ultros-frontend-core/hydrate",
     "ultros-i18n/hydrate",
     "ultros-ui/hydrate",
+    "ultros-ui-alerts/hydrate",
     "ultros-ui-game/hydrate",
     "ultros-ui-grid/hydrate",
 ]
