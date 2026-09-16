@@ -660,6 +660,7 @@ mod browser {
         });
         let source = ListWorkspaceSource {
             hide_acquired: Signal::derive(|| false),
+            reset_filters: Callback::new(|()| {}),
             list_id: Signal::derive(|| 0),
             add: Callback::new(move |item| apply.run(Edit::Add(item))),
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
@@ -699,6 +700,7 @@ mod browser {
             sort: sort.into(),
             set_sort: Callback::new(move |spec| sort.set(spec)),
         };
+        let highlighted = crate::components::cart::use_changed_row_highlight(source.rows);
         let legacy_cart = use_legacy_cart();
         view! {
             <section class="space-y-3" data-testid="device-list-editor"
@@ -750,9 +752,9 @@ mod browser {
                 </div>
                 <div class:hidden=move || shop.get()>
                 {move || if legacy_cart.get() {
-                    view! { <ListBuildWorkspace source selected_items=selected /> }.into_any()
+                    view! { <ListBuildWorkspace source selected_items=selected highlighted /> }.into_any()
                 } else {
-                    view! { <ListCart source selected_items=selected /> }.into_any()
+                    view! { <ListCart source selected_items=selected highlighted /> }.into_any()
                 }}
                 </div>
                 <Show when=storage_open><crate::components::modal::Modal set_visible=set_storage_open aria_label=Signal::derive(move || t_string!(i18n,online_more).to_string())>

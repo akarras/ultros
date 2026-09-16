@@ -31,6 +31,54 @@ use feedback::{CartFeedback, Removal, focus_after_removal};
 use row::{CartRow, ROW_GRID, focus_element, quantity_input_id, remove_button_id};
 use selection::{CartSelectionBar, retain_present};
 
+/// Identify rows changed after the editor first opens, including a duplicate
+/// add that increases an existing row. Price refreshes never highlight rows.
+pub fn use_changed_row_highlight(
+    rows: Signal<Vec<(ListItem, Vec<ActiveListing>)>>,
+) -> Signal<HashSet<i32>> {
+    use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
+    type Snapshot = HashMap<i32, (Option<i32>, Option<i32>)>;
+    let previous = StoredValue::new(None::<Snapshot>);
+    let highlighted = RwSignal::new(HashSet::<i32>::new());
+    let timer = StoredValue::new(None::<TimeoutHandle>);
+    on_cleanup(move || {
+        if let Some(timer) = timer.get_value() {
+            timer.clear();
+        }
+    });
+    Effect::new(move |_| {
+        let current: Snapshot = rows.with(|rows| {
+            rows.iter()
+                .map(|(row, _)| (row.id, (row.quantity, row.acquired)))
+                .collect()
+        });
+        if let Some(previous) = previous.get_value() {
+            let changed: HashSet<i32> = current
+                .iter()
+                .filter(|(id, value)| previous.get(*id) != Some(*value))
+                .map(|(id, _)| *id)
+                .collect();
+            if !changed.is_empty() {
+                highlighted.set(changed);
+                if let Some(timer) = timer.get_value() {
+                    timer.clear();
+                }
+                timer.set_value(
+                    set_timeout_with_handle(
+                        move || {
+                            highlighted.try_update(HashSet::clear);
+                        },
+                        std::time::Duration::from_millis(1500),
+                    )
+                    .ok(),
+                );
+            }
+        }
+        previous.set_value(Some(current));
+    });
+    highlighted.into()
+}
+
 /// Whether an event target is one of the cart's editors (a control whose
 /// row must stay visible while it has focus), as opposed to a button.
 #[cfg(feature = "hydrate")]
@@ -604,6 +652,15 @@ pub fn ListCart(
                 </ul>
                 <Show when=move || is_empty.get()>
                     <p class="px-4 py-6 text-center text-sm text-[color:var(--color-text-muted)]">{t!(i18n, cart_empty)}</p>
+                </Show>
+                <Show when=move || !is_empty.get() && visible_ids.with(|ids| ids.is_empty())>
+                    <div class="space-y-2 px-4 py-6 text-center text-sm" data-testid="cart-no-matches">
+                        <p role="status">{t!(i18n, cart_no_matches)}</p>
+                        <button type="button" class="btn-ghost" on:click=move |_| {
+                            filter.set(String::new());
+                            source.reset_filters.run(());
+                        }>{t!(i18n, cart_clear_filters)}</button>
+                    </div>
                 </Show>
             </div>
         </section>

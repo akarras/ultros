@@ -151,13 +151,13 @@ async function main() {
     await waitHeld(1); assert(!new URL(held[0].url()).pathname.split("/").at(-1).split(",").includes(String(added)));
     holdBulk = false; await respondBulk(held.shift());
     await expectState(item, "priced"); await expectState(added, "not-requested"); await expectTotal("10 gil");
-    assert.match(await text(tid("list-estimate-status")), /Known subtotal only.*price lookup/);
+    assert.equal(await text(tid("list-estimate-status")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
     await capture("partial-coverage");
     await page.click(tid("guest-shop-mode"));
     await page.click(tid("shop-cheapest"));
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /10 gil/);
-    assert.match(await text(tid("shop-build-coverage")), /price lookup/);
+    assert.equal(await text(tid("shop-build-coverage")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
     await page.click(tid("guest-build-mode"));
     await page.click(tid("device-prices-refresh")); await expectState(added, "no-supply");
     await addItem("Maple Log");
@@ -247,7 +247,7 @@ async function main() {
     await page.click(tid("shop-cheapest"));
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /40 gil/);
-    assert.match(await text(tid("shop-build-coverage")), /price lookup/);
+    assert.equal(await text(tid("shop-build-coverage")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
     failAccount = false;
     // Bounded client availability fault: keep the same real document and trip,
     // temporarily expose no permission in the REST reply, then restore the
