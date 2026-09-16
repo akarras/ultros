@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable live updates after reconnecting",
+  "blurb": "Switching lists while a connection is closing no longer interrupts live updates. Reconnecting also avoids duplicate retry attempts.",
+  "link": "/list"
+}
