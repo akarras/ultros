@@ -1605,6 +1605,7 @@
     "guest_alert_adopt_done": "알림 {{count}}개를 계정에 추가했습니다",
     "guest_alert_adopt_failed": "알림을 추가할 수 없습니다: {{error}}",
     "guest_alert_adopt_no_inbox_endpoint": "계정에 아직 인앱 전송 엔드포인트가 없습니다. 새로고침 후 다시 시도하세요.",
+    "guest_alert_adopt_account_changed": "전송 중에 로그인한 계정이 변경되었습니다. 다시 로그인한 후 재시도하세요.",
     "guest_alert_intro": "계정 없이 사용하는 가격 알림: 이 브라우저에서 탭이 열려 있는 동안에만 작동하며 받은편지함에 표시됩니다.",
     "guest_alert_signin_pitch": "로그인하면 Ultros를 닫아 두어도 Discord 또는 푸시 알림으로 알림을 받을 수 있습니다.",
     "guest_alert_enable_browser": "이 탭에서 브라우저 알림 사용",

@@ -74,7 +74,9 @@ fn guest_rule_display(
         .items
         .get(&ItemId(rule.item_id))
         .map(|it| it.name.as_str().to_string())
-        .unwrap_or_else(|| format!("Item {}", rule.item_id));
+        .unwrap_or_else(|| {
+            t_string!(i18n, lists_workspace_item_fallback, id = rule.item_id).to_string()
+        });
     let threshold_str = t_string!(
         i18n,
         alert_drawer_threshold_below,
@@ -281,11 +283,20 @@ pub fn GuestAlertsView() -> impl IntoView {
                                         .into_iter()
                                         .map(|item| {
                                             let row_id = item.id.clone();
+                                            let row_id_kb = item.id.clone();
                                             view! {
                                                 <li
-                                                    class="p-2 flex items-center justify-between gap-2"
+                                                    class="p-2 flex items-center justify-between gap-2 cursor-pointer"
                                                     class:opacity-60=item.read
+                                                    role="button"
+                                                    tabindex="0"
                                                     on:click=move |_| inbox.mark_read(vec![row_id.clone()])
+                                                    on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                                                        if ev.key() == "Enter" || ev.key() == " " {
+                                                            ev.prevent_default();
+                                                            inbox.mark_read(vec![row_id_kb.clone()]);
+                                                        }
+                                                    }
                                                 >
                                                     <div class="min-w-0">
                                                         <div class="text-sm truncate">{item.title.clone()}</div>

@@ -28,7 +28,11 @@ const puppeteer = require("puppeteer");
 const base = new URL(process.env.BASE_URL || "http://127.0.0.1:8080").origin;
 const ITEM_NAME = "Bronze Ingot";
 const WORLD_NAME = "Gilgamesh";
-const THRESHOLD = 999999;
+// Deliberately tiny (predicate is `<=`, and the injected listing below sets
+// `price_per_unit: 1`, so it still matches): a threshold like 999999 makes
+// almost *any* real listing on this item match too, turning this into a
+// live-data-dependent flake instead of a deterministic synthetic-event test.
+const THRESHOLD = 1;
 const USER_ID = 990000004000 + (Date.now() % 100000);
 const USERNAME = "e2e-inbox";
 
@@ -415,11 +419,14 @@ async function main() {
       },
     );
 
-    await page.waitForFunction(
-      () => document.querySelector(".side-nav-count")?.textContent.trim() === "1",
-      { timeout: 5000 },
-    );
+    // Assert on the injected row's own title rather than an exact pill
+    // count here: this signed-in session's account alert now uses
+    // THRESHOLD (1 gil), but unlike the first pill assertion right after
+    // injection (above, before any other event could possibly have
+    // arrived), by this point in the flow a real background fire is not
+    // ruled out — the title is a precise check either way.
     await page.click('button[aria-label="Notifications"]');
+    await page.waitForSelector(".side-nav-inbox-panel", { visible: true });
     await page.waitForFunction(
       () =>
         [...document.querySelectorAll(".side-nav-inbox-panel .inbox-item-title")].some(

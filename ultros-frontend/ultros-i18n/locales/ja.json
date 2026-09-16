@@ -1605,6 +1605,7 @@
     "guest_alert_adopt_done": "{{count}} 件のアラートをアカウントに追加しました",
     "guest_alert_adopt_failed": "アラートを追加できませんでした: {{error}}",
     "guest_alert_adopt_no_inbox_endpoint": "アカウントにアプリ内配信エンドポイントがまだありません。再読み込みしてもう一度お試しください。",
+    "guest_alert_adopt_account_changed": "転送中にサインイン中のアカウントが変更されました。再度サインインしてやり直してください。",
     "guest_alert_intro": "アカウントなしの価格アラート: タブが開いている間だけこのブラウザで動作し、受信箱に届きます。",
     "guest_alert_signin_pitch": "サインインすると、Ultrosを閉じていてもDiscordやプッシュ通知でアラートを受け取れます。",
     "guest_alert_enable_browser": "このタブでブラウザ通知を有効にする",

@@ -1605,6 +1605,7 @@
     "guest_alert_adopt_done": "已将 {{count}} 条提醒添加到您的账户",
     "guest_alert_adopt_failed": "无法添加提醒：{{error}}",
     "guest_alert_adopt_no_inbox_endpoint": "您的账户尚无应用内投递端点。请刷新页面后重试。",
+    "guest_alert_adopt_account_changed": "转移过程中您登录的账户发生了变化。请重新登录后再试一次。",
     "guest_alert_intro": "无需账户的价格提醒：仅在此浏览器标签页打开时运行，命中结果会出现在您的收件箱中。",
     "guest_alert_signin_pitch": "登录后即可通过 Discord 或推送通知接收提醒，即使未打开 Ultros 也能收到。",
     "guest_alert_enable_browser": "为此标签页启用浏览器通知",

@@ -29,6 +29,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_i18n::I18nContext;
 use ultros_api_types::alert::{Endpoint, EndpointMethod};
 
 use crate::api::{create_alert, get_login, list_endpoints};
@@ -36,7 +37,7 @@ use crate::global_state::adoption_receipts::{read_receipt, write_receipt};
 use crate::global_state::guest_alerts::{GuestAlertRule, GuestAlerts, use_guest_alerts};
 use crate::global_state::toasts::use_toast;
 use crate::global_state::user::BootstrapUser;
-use crate::i18n::{t, t_string, use_i18n};
+use crate::i18n::{Locale, t, t_string, use_i18n};
 
 /// Picks the caller's `InApp` delivery endpoint id out of `endpoints`. The
 /// server auto-creates exactly one such endpoint per account and
@@ -79,19 +80,27 @@ enum AdoptFailure {
 ///      *before* deleting the guest rule (see module docs); on failure,
 ///      keeps the rule and records the error, then continues with the rest.
 ///    - After every `create_alert` attempt, re-checks `get_login()` and
-///      stops the loop early if the signed-in account changed mid-run.
-async fn adopt_all(guest: GuestAlerts, expected_user_id: u64) -> AdoptionSummary {
+///      stops the loop early if the signed-in account changed mid-run,
+///      recording a translated error (unless an earlier one already took
+///      precedence) so a partial run never reports as a silent success —
+///      the caller shows both the "done with N" and the failure toast when
+///      `created > 0` and an error was also recorded.
+async fn adopt_all(
+    guest: GuestAlerts,
+    expected_user_id: u64,
+    i18n: I18nContext<Locale, crate::i18n::I18nKeys>,
+) -> AdoptionSummary {
     let mut summary = AdoptionSummary {
         created: 0,
         first_error: None,
     };
 
+    let account_changed_message = || t_string!(i18n, guest_alert_adopt_account_changed).to_string();
+
     match get_login().await {
         Ok(user) if user.id == expected_user_id => {}
         Ok(_) => {
-            summary.first_error = Some(AdoptFailure::Message(
-                "signed-in account changed".to_string(),
-            ));
+            summary.first_error = Some(AdoptFailure::Message(account_changed_message()));
             return summary;
         }
         Err(e) => {
@@ -148,7 +157,17 @@ async fn adopt_all(guest: GuestAlerts, expected_user_id: u64) -> AdoptionSummary
 
         match get_login().await {
             Ok(user) if user.id == expected_user_id => {}
-            _ => break,
+            _ => {
+                // Unlike the initial check above, some rules in this run may
+                // already have succeeded (`summary.created > 0`) — don't
+                // overwrite a more specific error from the `create_alert`
+                // attempt that just ran, but never leave this silent: a
+                // partial run must not read as a full success.
+                if summary.first_error.is_none() {
+                    summary.first_error = Some(AdoptFailure::Message(account_changed_message()));
+                }
+                break;
+            }
         }
     }
 
@@ -189,7 +208,14 @@ pub fn GuestAlertAdoptionBanner(#[prop(optional)] compact: bool) -> impl IntoVie
     });
 
     let dismissed = RwSignal::new(false);
-    let adopting = RwSignal::new(false);
+    // Shared on `GuestAlerts`, not a component-local `RwSignal`: `compact`
+    // and the full-page variant both mount at once for a signed-in visitor
+    // with un-adopted rules (sidebar drop-up + `/alerts`), each previously
+    // with its own guard — two overlapping clicks, one per banner, both
+    // passed their own "not already adopting" check and both POSTed
+    // `create_alert` for the same rule. Claiming through the store instead
+    // makes the guard visible to every banner.
+    let adopting = guest.adoption_in_flight();
     let toasts = use_toast();
 
     let visible = Signal::derive(move || {
@@ -200,14 +226,22 @@ pub fn GuestAlertAdoptionBanner(#[prop(optional)] compact: bool) -> impl IntoVie
         let Some(user_id) = user_id else {
             return;
         };
-        if adopting.get_untracked() {
+        if !guest.try_start_adoption() {
             return;
         }
-        adopting.set(true);
         spawn_local(async move {
-            let summary = adopt_all(guest, user_id).await;
-            let _ = adopting.try_set(false);
+            let summary = adopt_all(guest, user_id, i18n).await;
+            guest.finish_adoption();
             let Some(toasts) = toasts else { return };
+            // `created > 0` and an error can both be true (a mid-run account
+            // change after some rules already succeeded) — show the success
+            // toast for what did land before the failure toast, so partial
+            // progress isn't hidden behind the error.
+            if summary.created > 0 {
+                toasts.success(
+                    t_string!(i18n, guest_alert_adopt_done, count = summary.created).to_string(),
+                );
+            }
             match summary.first_error {
                 Some(AdoptFailure::NoInAppEndpoint) => {
                     toasts.error(t_string!(i18n, guest_alert_adopt_no_inbox_endpoint).to_string());
@@ -215,12 +249,6 @@ pub fn GuestAlertAdoptionBanner(#[prop(optional)] compact: bool) -> impl IntoVie
                 Some(AdoptFailure::Message(error)) => {
                     toasts.error(
                         t_string!(i18n, guest_alert_adopt_failed, error = error).to_string(),
-                    );
-                }
-                None if summary.created > 0 => {
-                    toasts.success(
-                        t_string!(i18n, guest_alert_adopt_done, count = summary.created)
-                            .to_string(),
                     );
                 }
                 None => {}

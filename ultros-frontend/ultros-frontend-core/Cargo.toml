@@ -64,6 +64,7 @@ web-sys = { version = "0.3", features = [
     "Notification",
     "NotificationOptions",
     "NotificationPermission",
+    "VisibilityState",
 ] }
 xiv-gen = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }

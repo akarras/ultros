@@ -143,13 +143,15 @@ pub fn NotificationInbox() -> impl IntoView {
     .into_any()
 }
 
-/// Renders one inbox row. A plain `<a>` (not `AppLink`) when `url` is set —
-/// the router's global click handler intercepts same-origin anchor clicks
-/// regardless, and a plain tag keeps this free of `AppLink`'s
-/// `aria-current` bookkeeping, which makes no sense for a list of distinct
-/// notification targets. Falls back to a `<div>` when an item carries no
-/// `url` at all. Either way, clicking marks the item read and (for the
-/// anchor case) lets navigation proceed.
+/// Renders one inbox row as a plain `<a>` (not `AppLink`) — the router's
+/// global click handler intercepts same-origin anchor clicks regardless, and
+/// a plain tag keeps this free of `AppLink`'s `aria-current` bookkeeping,
+/// which makes no sense for a list of distinct notification targets.
+/// `url` falls back to `/alerts` for the rare item that carries none (every
+/// current producer — `inbox_item_from_event` and the guest evaluator —
+/// always sets one, but a stale `localStorage` entry from before `url`
+/// existed could still lack it). Clicking marks the item read and lets
+/// navigation proceed.
 fn inbox_row(item: InboxItem, inbox: Inbox) -> impl IntoView {
     let InboxItem {
         id,
@@ -161,39 +163,24 @@ fn inbox_row(item: InboxItem, inbox: Inbox) -> impl IntoView {
         ..
     } = item;
     let timestamp = at.naive_utc();
+    let href = url.unwrap_or_else(|| "/alerts".to_string());
     let on_click = move |_| inbox.mark_read(vec![id.clone()]);
 
-    match url {
-        Some(href) => view! {
-            <a
-                href=href
-                class="menu-item inbox-item"
-                class:inbox-item-unread=!read
-                on:click=on_click
-            >
-                <span class="inbox-item-title">{title}</span>
-                <span class="inbox-item-body">{body}</span>
-                <span class="inbox-item-time">
-                    <RelativeToNow timestamp=timestamp />
-                </span>
-            </a>
-        }
-        .into_any(),
-        None => view! {
-            <div
-                class="menu-item inbox-item"
-                class:inbox-item-unread=!read
-                on:click=on_click
-            >
-                <span class="inbox-item-title">{title}</span>
-                <span class="inbox-item-body">{body}</span>
-                <span class="inbox-item-time">
-                    <RelativeToNow timestamp=timestamp />
-                </span>
-            </div>
-        }
-        .into_any(),
+    view! {
+        <a
+            href=href
+            class="menu-item inbox-item"
+            class:inbox-item-unread=!read
+            on:click=on_click
+        >
+            <span class="inbox-item-title">{title}</span>
+            <span class="inbox-item-body">{body}</span>
+            <span class="inbox-item-time">
+                <RelativeToNow timestamp=timestamp />
+            </span>
+        </a>
     }
+    .into_any()
 }
 
 #[cfg(test)]

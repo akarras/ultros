@@ -143,6 +143,11 @@ pub struct GuestAlerts {
     local_write: WriteSignal<Vec<GuestAlertRule>>,
     rules: Signal<Vec<GuestAlertRule>>,
     item_ids: Memo<Vec<i32>>,
+    /// Shared across every mounted `GuestAlertAdoptionBanner` (the compact
+    /// sidebar one and the full `/alerts` one render at the same time for a
+    /// signed-in visitor with un-adopted rules) so only one `adopt_all` run
+    /// is ever in flight — see [`try_start_adoption`][Self::try_start_adoption].
+    adoption_in_flight: RwSignal<bool>,
 }
 
 impl Default for GuestAlerts {
@@ -177,11 +182,44 @@ impl GuestAlerts {
             local_write,
             rules,
             item_ids: item_ids_memo,
+            adoption_in_flight: RwSignal::new(false),
         }
     }
 
     pub fn rules(&self) -> Signal<Vec<GuestAlertRule>> {
         self.rules
+    }
+
+    /// Whether an `adopt_all` run is currently in flight, for any mounted
+    /// banner to disable its button against.
+    pub fn adoption_in_flight(&self) -> Signal<bool> {
+        self.adoption_in_flight.into()
+    }
+
+    /// Attempts to claim the adoption in-flight flag. Returns `true` if this
+    /// call claimed it (the caller may proceed with an `adopt_all` run) or
+    /// `false` if another run — from this banner or the other mounted one —
+    /// already holds it, in which case the caller must not start a second
+    /// run. `try_update`, matching every other mutator here: this can be
+    /// called from event handlers that may fire after the owning component
+    /// has been disposed.
+    pub fn try_start_adoption(&self) -> bool {
+        let mut claimed = false;
+        let _ = self.adoption_in_flight.try_update(|in_flight| {
+            if !*in_flight {
+                *in_flight = true;
+                claimed = true;
+            }
+        });
+        claimed
+    }
+
+    /// Releases the adoption in-flight flag. Idempotent — safe to call even
+    /// when nothing is currently claimed, so every `adopt_all` exit path
+    /// (success, early return, or the mid-loop break on a changed account)
+    /// can call it unconditionally.
+    pub fn finish_adoption(&self) {
+        let _ = self.adoption_in_flight.try_set(false);
     }
 
     /// Adds `rule` unless the guest is already at [`GUEST_ALERTS_CAP`].
@@ -238,6 +276,43 @@ pub fn use_guest_alerts() -> Option<GuestAlerts> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds a `GuestAlerts` around plain in-memory signals (no
+    /// `localStorage` hook), for tests that only exercise logic independent
+    /// of the rule list itself — e.g. the adoption in-flight flag.
+    fn test_guest_alerts() -> GuestAlerts {
+        let (_read, local_write) = signal(Vec::<GuestAlertRule>::new());
+        let rules = Signal::derive(Vec::<GuestAlertRule>::new);
+        let item_ids = Memo::new(|_| Vec::<i32>::new());
+        GuestAlerts {
+            local_write,
+            rules,
+            item_ids,
+            adoption_in_flight: RwSignal::new(false),
+        }
+    }
+
+    #[test]
+    fn adoption_in_flight_guards_concurrent_claims() {
+        let owner = Owner::new();
+        let guest = owner.with(test_guest_alerts);
+
+        // The compact sidebar banner claims it first...
+        assert!(guest.try_start_adoption());
+        // ...so the full `/alerts` banner (mounted at the same time for a
+        // signed-in visitor) must not also start a run.
+        assert!(!guest.try_start_adoption());
+        assert!(guest.adoption_in_flight().get_untracked());
+
+        guest.finish_adoption();
+        assert!(!guest.adoption_in_flight().get_untracked());
+        // Idempotent: releasing an already-released flag is a no-op, not a
+        // panic — every `adopt_all` exit path calls this unconditionally.
+        guest.finish_adoption();
+
+        // Released, so the next run is free to claim it.
+        assert!(guest.try_start_adoption());
+    }
 
     fn t(seconds: i64) -> DateTime<Utc> {
         DateTime::<Utc>::UNIX_EPOCH + chrono::Duration::seconds(seconds)

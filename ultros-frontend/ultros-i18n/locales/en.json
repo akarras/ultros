@@ -1621,6 +1621,7 @@
     "guest_alert_adopt_done": "Added {{count}} alerts to your account",
     "guest_alert_adopt_failed": "Could not add an alert: {{error}}",
     "guest_alert_adopt_no_inbox_endpoint": "Your account has no in-app delivery endpoint yet. Reload and try again.",
+    "guest_alert_adopt_account_changed": "Your signed-in account changed during the transfer. Sign in again and retry.",
     "guest_alert_intro": "Price alerts without an account: they run in this browser while a tab is open and land in your inbox.",
     "guest_alert_signin_pitch": "Sign in to get alerts on Discord or as push notifications, even when Ultros is closed.",
     "guest_alert_enable_browser": "Enable browser notifications for this tab",

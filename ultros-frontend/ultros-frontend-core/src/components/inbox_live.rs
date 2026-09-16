@@ -113,20 +113,37 @@ pub fn InboxLive() -> impl IntoView {
 }
 
 /// Shows a browser `Notification` for a fired alert, but only when the
-/// visitor already granted permission — this never itself prompts, since a
-/// permission prompt must come from a user gesture (see
-/// `ultros-ui-alerts/src/components/push_subscribe.rs`'s
+/// visitor already granted permission *and* the tab is not currently
+/// visible — this never itself prompts, since a permission prompt must come
+/// from a user gesture (see `ultros-ui-alerts/src/components/push_subscribe.rs`'s
 /// `enable_browser_notifications`, which is where that prompt lives).
+///
+/// The visibility check matters most for a web-push-subscribed user: with
+/// `Notification.permission == "granted"` (a precondition of having
+/// subscribed to push in the first place) and the tab open, a fire would
+/// otherwise show *both* this in-page OS notification *and* a second one
+/// delivered through the service worker's push handler — a visible tab
+/// already shows the toast and the sidebar unread pill, so the OS
+/// notification is redundant there regardless. A push-endpoint-aware skip
+/// (suppressing this entirely for a push subscriber even in a hidden tab,
+/// to avoid relying on visibility alone) is a follow-up, not done here.
 ///
 /// `pub` (rather than crate-private): the non-hydrate stub below would
 /// otherwise be unreachable dead code on every build that doesn't enable
 /// `hydrate` (i.e. both `clippy` invocations this crate is checked with), the
-/// same reason `enable_browser_notifications` above is `pub`.
+/// same reason `push_subscribe::enable_browser_notifications` is `pub`.
 #[cfg(all(feature = "hydrate", target_arch = "wasm32"))]
 pub fn maybe_show_browser_notification(title: &str, body: &str) {
-    use web_sys::{Notification, NotificationOptions, NotificationPermission};
+    use web_sys::{Notification, NotificationOptions, NotificationPermission, VisibilityState};
 
     if Notification::permission() != NotificationPermission::Granted {
+        return;
+    }
+    let tab_visible = web_sys::window()
+        .and_then(|window| window.document())
+        .map(|document| document.visibility_state() == VisibilityState::Visible)
+        .unwrap_or(false);
+    if tab_visible {
         return;
     }
     let options = NotificationOptions::new();

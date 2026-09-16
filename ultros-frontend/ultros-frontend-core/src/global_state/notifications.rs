@@ -226,8 +226,8 @@ pub fn server_mark_all_request(items: &[InboxItem]) -> Option<MarkAlertEventsRea
 pub struct Inbox {
     server: RwSignal<Vec<InboxItem>>,
     local_write: WriteSignal<Vec<InboxItem>>,
-    items: Signal<Vec<InboxItem>>,
-    unread_count: Signal<usize>,
+    items: Memo<Vec<InboxItem>>,
+    unread_count: Memo<usize>,
 }
 
 impl Default for Inbox {
@@ -250,14 +250,22 @@ impl Inbox {
             hydrated.set(true);
         });
 
-        let items = Signal::derive(move || {
+        // `Memo`, not `Signal::derive`: both `items` and `unread_count` are
+        // read on every render of the sidebar row (the unread pill) as well
+        // as the panel body, and `Signal::derive`'s closure re-runs
+        // (re-merging and re-cloning the whole list) on *every* read, not
+        // just when a dependency actually changed. A `Memo` only
+        // recomputes when `server`/`local_read`/`hydrated` change and caches
+        // the result in between — same hydration gating as before, just
+        // without the redundant work.
+        let items = Memo::new(move |_| {
             if hydrated.get() {
                 merge_inbox(&server.get(), &local_read.get())
             } else {
                 merge_inbox(&server.get(), &[])
             }
         });
-        let unread_count_signal = Signal::derive(move || items.with(|items| unread_count(items)));
+        let unread_count_signal = Memo::new(move |_| items.with(|items| unread_count(items)));
 
         Self {
             server,
@@ -267,11 +275,11 @@ impl Inbox {
         }
     }
 
-    pub fn items(&self) -> Signal<Vec<InboxItem>> {
+    pub fn items(&self) -> Memo<Vec<InboxItem>> {
         self.items
     }
 
-    pub fn unread_count(&self) -> Signal<usize> {
+    pub fn unread_count(&self) -> Memo<usize> {
         self.unread_count
     }
 
