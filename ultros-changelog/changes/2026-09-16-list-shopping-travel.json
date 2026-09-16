@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Shopping trips start at home",
+  "blurb": "List shopping trips visit your home world first when you have something to buy there, and only compare savings between complete routes.",
+  "link": "/list",
+  "labs": true
+}

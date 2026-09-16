@@ -26,7 +26,10 @@ mod browser {
     }
 
     #[component]
-    pub fn DeviceListAdoption(handle: GuestListHandle) -> impl IntoView {
+    pub fn DeviceListAdoption(
+        handle: GuestListHandle,
+        #[prop(optional)] continuation: Option<Signal<String>>,
+    ) -> impl IntoView {
         let i18n = use_i18n();
         let handle = StoredValue::new_local(handle);
         let login = Resource::new(|| (), |_| get_login());
@@ -118,7 +121,10 @@ mod browser {
                             }.into_any()
                         },
                         _ => view! {
-                            <a class="btn-primary" data-testid="device-list-make-online-sign-in" rel="external" href=handle.with_value(|h| format!("/login?next={}", String::from(js_sys::encode_uri_component(&format!("/list/device/{}?labs=lists-sync&make_online=1", h.id())))))>{t!(i18n, online_make)}</a>
+                            <a class="btn-primary" data-testid="device-list-make-online-sign-in" rel="external" href=move || {
+                                let next = continuation.map(|next| next.get()).unwrap_or_else(|| handle.with_value(|h| format!("/list/device/{}?labs=lists-sync&make_online=1", h.id())));
+                                format!("/login?next={}", String::from(js_sys::encode_uri_component(&next)))
+                            }>{t!(i18n, online_make)}</a>
                         }.into_any(),
                     }}
                 </Suspense>

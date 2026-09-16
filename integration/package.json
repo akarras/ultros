@@ -37,6 +37,7 @@
     "test:lists-acceptance": "node ./lists-acceptance.cjs",
     "test:list-shop-focus": "node ./list-shop-focus.cjs",
     "test:list-adoption": "node ./list-adoption.cjs",
+    "test:list-travel-online": "node ./list-travel-online.cjs",
     "test:list-access-drafts": "node ./list-access-drafts.cjs",
     "test:lists-preview-help": "node ./lists-preview-help.cjs",
     "test:list-modal-keyboard": "node ./list-modal-keyboard.cjs",

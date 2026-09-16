@@ -6,6 +6,7 @@
 pub mod analysis;
 pub mod formula;
 pub mod list_estimate;
+pub mod list_travel;
 pub mod math;
 pub mod recipe_planner;
 

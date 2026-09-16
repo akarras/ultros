@@ -358,6 +358,70 @@ pub struct ShoppingPlan {
     pub effective: i64,
 }
 
+/// The card's comparison line against the savings basis: the first
+/// (shortest-trip) card that completes the shopping plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SavingLine {
+    /// This card cannot finish the shopping plan; its partial cost is not compared.
+    Incomplete,
+    /// The basis card itself; `alone` when it is the only card.
+    Basis { alone: bool },
+    /// Complete and cheaper than the basis by this much gil.
+    Saved(i64),
+    /// Complete and dearer than the basis by this much gil (a pinned shared
+    /// route can cost more than the frontier).
+    Dearer(i64),
+    /// Complete and priced the same as the basis.
+    Same,
+}
+
+/// Index of the first card that completes the shopping plan. Comparing against
+/// the no-travel card is misleading when home is short: its partial cost
+/// can be lower than a route that actually finishes the shopping plan.
+pub fn savings_basis(plans: &[ShoppingPlan]) -> Option<usize> {
+    plans.iter().position(|p| p.missing == 0)
+}
+
+/// Describe a route against an explicit complete baseline. Incomplete routes
+/// report missing supply; an incomplete or absent baseline cannot claim savings.
+pub fn saving_line(
+    plans: &[ShoppingPlan],
+    basis: Option<usize>,
+    index: usize,
+) -> Option<SavingLine> {
+    let plan = plans.get(index)?;
+    if plan.missing > 0 {
+        return Some(SavingLine::Incomplete);
+    }
+    let basis = basis?;
+    let basis_plan = plans.get(basis)?;
+    if basis_plan.missing > 0 {
+        return None;
+    }
+    if basis == index {
+        return Some(SavingLine::Basis {
+            alone: plans.len() == 1,
+        });
+    }
+    Some(match basis_plan.cost - plan.cost {
+        d if d > 0 => SavingLine::Saved(d),
+        d if d < 0 => SavingLine::Dearer(-d),
+        _ => SavingLine::Same,
+    })
+}
+
+/// Compare adjacent route alternatives, not a claimed price for one added world.
+/// Frontier world sets need not be nested and pinned routes can be dearer.
+/// Never subtract a partial cost, including when a pinned incomplete route
+/// interrupts the complete frontier.
+pub fn marginal_saving_line(plans: &[ShoppingPlan], index: usize) -> Option<SavingLine> {
+    let previous = index.checked_sub(1)?;
+    if plans.get(previous)?.missing > 0 || plans.get(index)?.missing > 0 {
+        return None;
+    }
+    saving_line(plans, Some(previous), index)
+}
+
 /// Stable display order independent of the solver branch (exact, greedy,
 /// insufficient supply, or locked purchases). Listing IDs break price/stack
 /// ties so checking a purchase never changes the ordering by itself.
@@ -1440,5 +1504,132 @@ mod tests {
             &ctx(1, &[]),
         );
         assert_eq!((plan.cost, plan.missing), (0, 0));
+    }
+    #[test]
+    fn saving_line_frames_each_card_against_the_first_complete_card() {
+        let plan = |cost: i64, missing: i64| ShoppingPlan {
+            cost,
+            missing,
+            ..Default::default()
+        };
+        // Home completes the recipe, so it is the basis. Later cards are
+        // cheaper on the frontier, but a pinned shared route can be dearer
+        // or priced the same, and each still says how it compares.
+        let plans = vec![plan(1_000, 0), plan(800, 0), plan(1_200, 0), plan(1_000, 0)];
+        assert_eq!(savings_basis(&plans), Some(0));
+        assert_eq!(
+            saving_line(&plans, Some(0), 0),
+            Some(SavingLine::Basis { alone: false })
+        );
+        assert_eq!(
+            saving_line(&plans, Some(0), 1),
+            Some(SavingLine::Saved(200))
+        );
+        assert_eq!(
+            saving_line(&plans, Some(0), 2),
+            Some(SavingLine::Dearer(200))
+        );
+        assert_eq!(saving_line(&plans, Some(0), 3), Some(SavingLine::Same));
+        let alone = vec![plan(1_000, 0)];
+        assert_eq!(
+            saving_line(&alone, Some(0), 0),
+            Some(SavingLine::Basis { alone: true })
+        );
+        // Home is short: its partial cost is cheaper than any route that
+        // finishes the craft, so it is marked incomplete rather than
+        // compared, and the first complete card becomes the basis.
+        let plans = vec![plan(10, 4), plan(900, 2), plan(1_000, 0), plan(700, 0)];
+        assert_eq!(savings_basis(&plans), Some(2));
+        assert_eq!(
+            saving_line(&plans, Some(2), 0),
+            Some(SavingLine::Incomplete)
+        );
+        assert_eq!(
+            saving_line(&plans, Some(2), 1),
+            Some(SavingLine::Incomplete)
+        );
+        assert_eq!(
+            saving_line(&plans, Some(2), 2),
+            Some(SavingLine::Basis { alone: false })
+        );
+        assert_eq!(
+            saving_line(&plans, Some(2), 3),
+            Some(SavingLine::Saved(300))
+        );
+        // Nothing completes: no basis, and every card is marked incomplete.
+        let short = vec![plan(10, 4)];
+        assert_eq!(savings_basis(&short), None);
+        assert_eq!(saving_line(&short, None, 0), Some(SavingLine::Incomplete));
+    }
+
+    #[test]
+    fn marginal_savings_compare_adjacent_complete_alternatives() {
+        let plan = |cost, missing, worlds: &[i32]| ShoppingPlan {
+            cost,
+            missing,
+            worlds: worlds.iter().copied().collect(),
+            ..Default::default()
+        };
+        // The third route replaces world 79 instead of simply adding a hop.
+        let plans = vec![
+            plan(1_000, 0, &[]),
+            plan(800, 0, &[79]),
+            plan(700, 0, &[80, 81]),
+        ];
+        assert_eq!(marginal_saving_line(&plans, 0), None);
+        assert_eq!(
+            marginal_saving_line(&plans, 1),
+            Some(SavingLine::Saved(200))
+        );
+        assert_eq!(
+            marginal_saving_line(&plans, 2),
+            Some(SavingLine::Saved(100))
+        );
+        assert_eq!(
+            saving_line(&plans, savings_basis(&plans), 2),
+            Some(SavingLine::Saved(300))
+        );
+        assert_eq!(marginal_saving_line(&plans, 3), None);
+        // A pinned shared route can be dearer, equal, or incomplete. Do not
+        // skip it when claiming an adjacent comparison or compare partial costs.
+        let plans = vec![
+            plan(10, 4, &[]),
+            plan(800, 0, &[79]),
+            plan(900, 0, &[80]),
+            plan(900, 0, &[81]),
+            plan(20, 2, &[82]),
+            plan(700, 0, &[83]),
+        ];
+        assert_eq!(marginal_saving_line(&plans, 1), None);
+        assert_eq!(
+            marginal_saving_line(&plans, 2),
+            Some(SavingLine::Dearer(100))
+        );
+        assert_eq!(marginal_saving_line(&plans, 3), Some(SavingLine::Same));
+        assert_eq!(marginal_saving_line(&plans, 4), None);
+        assert_eq!(marginal_saving_line(&plans, 5), None);
+        assert_eq!(
+            saving_line(&plans, savings_basis(&plans), 5),
+            Some(SavingLine::Saved(100))
+        );
+        assert_eq!(marginal_saving_line(&[], 0), None);
+    }
+
+    #[test]
+    fn savings_reject_partial_bases_even_with_equal_missing_units() {
+        let plan = |cost, missing| ShoppingPlan {
+            cost,
+            missing,
+            ..Default::default()
+        };
+        let plans = [plan(200, 1), plan(100, 1), plan(300, 0)];
+        assert_eq!(marginal_saving_line(&plans, 1), None);
+        assert_eq!(saving_line(&plans, Some(0), 2), None);
+        assert_eq!(saving_line(&plans, Some(99), 2), None);
+        assert_eq!(savings_basis(&plans), Some(2));
+        assert_eq!(
+            saving_line(&plans, Some(2), 2),
+            Some(SavingLine::Basis { alone: false })
+        );
     }
 }
