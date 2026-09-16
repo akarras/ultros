@@ -46,8 +46,10 @@ pub(crate) fn method_to_db(m: &EndpointMethod) -> (&'static str, JsonValue) {
             "WebPush",
             serde_json::json!({ "subscription_id": subscription_id }),
         ),
-        // Not created through this generic CRUD (see `validate_endpoint_method`
-        // below) — Task 6 wires the auto-created row's real persistence.
+        // Not created through this generic CRUD — see `validate_endpoint_method`
+        // below. The row itself comes from `get_or_create_inapp_endpoint`, but
+        // this arm still needs to exist for `update_endpoint`'s rename path and
+        // for `db_to_method` round-tripping in tests.
         EndpointMethod::InApp {} => ("InApp", serde_json::json!({})),
     }
 }
@@ -89,6 +91,7 @@ pub(crate) fn db_to_method(method: &str, config: &JsonValue) -> anyhow::Result<E
                 .and_then(|v| i32::try_from(v).ok())
                 .ok_or_else(|| anyhow::anyhow!("WebPush missing subscription_id"))?,
         }),
+        "InApp" => Ok(EndpointMethod::InApp {}),
         other => Err(anyhow::anyhow!("unknown method {other}")),
     }
 }
@@ -133,6 +136,12 @@ pub(crate) async fn list_endpoints(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<Endpoint>>, ApiError> {
+    // Every user has an inbox, even one that has never touched /api/v1/endpoints
+    // before — create it lazily on first list rather than at signup so there is
+    // one place that guarantees its existence.
+    db.get_or_create_inapp_endpoint(user.id as i64, "This site")
+        .await
+        .map_err(ApiError::from)?;
     let rows = db
         .list_endpoints(user.id as i64)
         .await
@@ -277,6 +286,15 @@ pub(crate) async fn delete_endpoint(
         .get_endpoint_owned_by(user.id as i64, id)
         .await
         .map_err(ApiError::from)?;
+    // The inbox endpoint is auto-created and re-created by `list_endpoints` on
+    // every fetch — deleting it would just resurrect an identical row on the
+    // caller's next GET, so reject the delete outright instead of silently
+    // no-op-ing.
+    if endpoint.method == "InApp" {
+        return Err(ApiError::BadRequest(
+            "the in-app inbox endpoint cannot be deleted",
+        ));
+    }
     db.delete_endpoint(user.id as i64, id)
         .await
         .map_err(ApiError::from)?;
@@ -512,6 +530,24 @@ mod tests {
         assert_eq!(method, "WebPush");
         assert_eq!(config, json!({"subscription_id": 7}));
         assert_eq!(db_to_method(method, &config).unwrap(), m);
+    }
+
+    #[test]
+    fn method_to_db_round_trip_in_app() {
+        let m = EndpointMethod::InApp {};
+        let (method, config) = method_to_db(&m);
+        assert_eq!(method, "InApp");
+        assert_eq!(config, json!({}));
+        assert_eq!(db_to_method(method, &config).unwrap(), m);
+    }
+
+    #[test]
+    fn validate_method_rejects_in_app_via_generic_crud() {
+        // InApp endpoints are auto-created by `list_endpoints`; the generic CRUD
+        // must refuse to create or retarget one, or a caller could duplicate /
+        // hijack the inbox row.
+        let m = EndpointMethod::InApp {};
+        assert!(validate_endpoint_method(&m, 1).is_err());
     }
 
     #[test]
