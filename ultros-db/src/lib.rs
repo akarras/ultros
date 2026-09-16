@@ -7,6 +7,7 @@ mod ffxiv_character;
 pub mod group_roles;
 pub mod guest_list_adoption;
 pub mod list_doc;
+pub mod list_projection_check;
 pub mod listings;
 pub mod lists;
 pub mod market_sweep;
