@@ -141,6 +141,32 @@ fn write_pair(raw: Option<String>, id: i32, value: i64) -> Option<String> {
     })
 }
 
+/// Finished purchases use requested units, never rounded craft yield.
+fn output_demand(item: i32, quantity: i64) -> Vec<Material> {
+    vec![Material {
+        item,
+        needed: quantity.clamp(1, 9999),
+        ..Default::default()
+    }]
+}
+
+/// Output has an exact quality; ingredients retain the existing Any/HQ rule.
+fn plan_quality(
+    item: i32,
+    output: i32,
+    output_hq: bool,
+    ingredient_hq: bool,
+    can_be_hq: bool,
+) -> Option<bool> {
+    if item == output {
+        Some(output_hq && can_be_hq)
+    } else if ingredient_hq && can_be_hq {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 fn item_name(id: i32) -> String {
     tracked_data()
         .items
@@ -361,6 +387,8 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     let (owned, set_owned) = filter_query_signal::<String>("owned");
     let (hq, set_hq) = filter_query_signal::<bool>("require-hq");
     let (include_vendors, set_include_vendors) = filter_query_signal::<bool>("include-vendors");
+    let (source, set_source) = filter_query_signal::<String>("output-source");
+    let buy_output = Memo::new(move |_| source.get().as_deref() == Some("buy"));
     let (output_hq, set_output_hq) = filter_query_signal::<bool>("output-hq");
     let (shards, set_shards) = filter_query_signal::<bool>("shards-exclude");
     // Legacy hop budget from old links; only read, and cleared by a card click.
@@ -537,7 +565,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             .collect::<BTreeMap<_, _>>(),
     );
     let root = StoredValue::new(catalog.with_value(|c| c[&recipe.key_id.0].clone()));
-    let materials = Memo::new(move |_| {
+    let craft_materials = Memo::new(move |_| {
         let choices = pairs(craft.get())
             .into_iter()
             .filter_map(|(k, v)| i32::try_from(v).ok().map(|v| (k, v)))
@@ -565,9 +593,28 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             })
         })
     });
+    let materials = Memo::new(move |_| {
+        if buy_output.get() {
+            Ok(output_demand(recipe.item_result, quantity.get()))
+        } else {
+            craft_materials.get()
+        }
+    });
+    let quality = move |id| {
+        plan_quality(
+            id,
+            recipe.item_result,
+            output_hq.get().unwrap_or(false),
+            hq.get().unwrap_or(false),
+            tracked_data()
+                .items
+                .get(&ItemId(id))
+                .is_some_and(|i| i.can_be_hq),
+        )
+    };
     let refresh = RwSignal::new(0_u32);
     let fetch_ids = Memo::new(move |_| {
-        let mut ids: BTreeSet<_> = materials
+        let mut ids: BTreeSet<_> = craft_materials
             .get()
             .unwrap_or_default()
             .iter()
@@ -625,16 +672,12 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 m.items
                     .iter()
                     .map(|(id, item)| {
-                        let require_hq = hq.get().unwrap_or(false)
-                            && tracked_data()
-                                .items
-                                .get(&ItemId(*id))
-                                .is_some_and(|i| i.can_be_hq);
+                        let required_quality = quality(*id);
                         (
                             *id,
                             item.listings
                                 .iter()
-                                .filter(|(l, _)| !require_hq || l.hq)
+                                .filter(|(l, _)| required_quality.is_none_or(|hq| l.hq == hq))
                                 .map(|(l, _)| Offer {
                                     id: l.id,
                                     world: l.world_id,
@@ -654,13 +697,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         }
         vendor_price_map()
             .iter()
-            .filter(|(id, _)| {
-                !hq.get().unwrap_or(false)
-                    || !tracked_data()
-                        .items
-                        .get(&ItemId(**id))
-                        .is_some_and(|i| i.can_be_hq)
-            })
+            .filter(|(id, _)| quality(**id) != Some(true))
             .map(|(id, p)| (*id, i64::from(*p)))
             .collect::<BTreeMap<_, _>>()
     });
@@ -668,6 +705,28 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     // listing snapshot, so it survives re-planning and a price refresh; it is
     // dropped only when its item is no longer something to buy.
     let locks = RwSignal::new(BTreeMap::<(i32, i32), Offer>::new());
+    let locked_quality = StoredValue::new((
+        hq.get_untracked().unwrap_or(false),
+        output_hq.get_untracked().unwrap_or(false),
+    ));
+    Effect::new(move |_| {
+        let next = (hq.get().unwrap_or(false), output_hq.get().unwrap_or(false));
+        let previous = locked_quality.get_value();
+        if previous != next {
+            // A shared URL or browser Back can change quality as well as the controls.
+            // Comparing output quality must not discard purchased ingredients.
+            locks.update(|rows| {
+                rows.retain(|(item, _), _| {
+                    if *item == recipe.item_result {
+                        previous.1 == next.1
+                    } else {
+                        previous.0 == next.0
+                    }
+                })
+            });
+            locked_quality.set_value(next);
+        }
+    });
     Effect::new(move |_| {
         let leaves: BTreeSet<i32> = materials
             .get()
@@ -779,7 +838,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     let finished = Memo::new(move |_| {
         let data = loaded.get()?;
         let item = data.items.get(&recipe.item_result)?;
-        let require_hq = output_hq.get().unwrap_or(false);
+        let require_hq = quality(recipe.item_result).unwrap_or(false);
         let offers: Vec<_> = item
             .listings
             .iter()
@@ -791,11 +850,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 price: i64::from(l.price_per_unit),
             })
             .collect();
-        let demand = [Material {
-            item: recipe.item_result,
-            needed: quantity.get(),
-            ..Default::default()
-        }];
+        let demand = output_demand(recipe.item_result, quantity.get());
         // Buy the finished item within the selected route: those stops are
         // being made anyway, so they carry no extra travel.
         let mut allowed = selected.get().map(|p| p.worlds).unwrap_or_default();
@@ -807,12 +862,32 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         planner::shop(
             &demand,
             &BTreeMap::from([(recipe.item_result, offers)]),
-            &BTreeMap::new(),
+            &vendors.get(),
             &allowed,
             &ctx,
         )
         .purchases
         .remove(&recipe.item_result)
+    });
+    let craft_comparison = Memo::new(move |_| {
+        if !buy_output.get() {
+            return selected.get();
+        }
+        loaded.get()?;
+        let demand = craft_materials.get().ok()?;
+        let mut allowed = selected.get()?.worlds;
+        allowed.insert(home_id.get());
+        let ctx = planner::RouteContext {
+            locked: BTreeMap::new(),
+            ..context.get()
+        };
+        Some(planner::shop(
+            &demand,
+            &offers.get(),
+            &vendors.get(),
+            &allowed,
+            &ctx,
+        ))
     });
     let query = use_query_map_or_default();
     let resolved_query = Memo::new(move |_| {
@@ -895,8 +970,13 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <a class="btn-secondary text-sm" href=move ||format!("/item/{}/{}",selected_world.get(),recipe.item_result)>"View item market"</a>
                 <div class="flex items-center gap-2 text-sm"><span>"Share plan"</span><Clipboard clipboard_text=share_url /></div>
             </header>
+            <section aria-label="Main item" class="panel rounded-xl p-4 flex flex-wrap items-center gap-4">
+                <label class="text-sm space-y-1"><span class="block">"Main item source"</span><select aria-label="Main item source" class="input" prop:value=move ||if buy_output.get(){"buy"}else{"craft"} on:change=move |e|set_source.set(Some(event_target_value(&e)))><option value="craft" selected=move ||!buy_output.get()>"Craft this item"</option><option value="buy" selected=move ||buy_output.get()>"Buy finished item"</option></select></label>
+                <Show when=move ||tracked_data().items.get(&ItemId(recipe.item_result)).is_some_and(|i|i.can_be_hq)><label class="flex items-center gap-2 text-sm"><input aria-label="HQ finished item" type="checkbox" checked=move ||output_hq.get().unwrap_or(false) prop:checked=move ||output_hq.get().unwrap_or(false) on:change=move |e|set_output_hq.set(Some(event_target_checked(&e))) />"HQ finished item"</label></Show>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{move ||if buy_output.get(){"Your shopping plan buys the requested finished items."}else{"Your shopping plan buys materials for crafting."}}</p>
+            </section>
             <section aria-label="Plan settings" class="panel rounded-xl p-4 flex flex-wrap gap-4 items-end">
-                <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">"Items to make"</span><input aria-label="Items to make" class="input w-28" type="number" min="1" max="9999" value=move ||quantity.get() prop:value=move ||quantity.get() on:change=move |e|set_qty.set(event_target_value(&e).parse::<i64>().ok().map(|n|n.clamp(1,9999))) /></label>
+                <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">{move ||if buy_output.get(){"Items to buy"}else{"Items to make"}}</span><input aria-label=move ||if buy_output.get(){"Items to buy"}else{"Items to make"} class="input w-28" type="number" min="1" max="9999" value=move ||quantity.get() prop:value=move ||quantity.get() on:change=move |e|set_qty.set(event_target_value(&e).parse::<i64>().ok().map(|n|n.clamp(1,9999))) /></label>
                 <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">"Starting world"</span><select aria-label="Starting world" class="input" prop:value=move ||selected_world.get() on:change=move |e|set_world.set(Some(event_target_value(&e)))>{worlds.into_iter().map(|w| { let name=w.name; let selected_name=name.clone(); view!{<option value=name.clone() selected=move ||selected_world.get()==selected_name>{name.clone()}</option>} }).collect_view()}</select></label>
                 <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">"Buy from"</span><select aria-label="Buy from" class="input" prop:value=move ||scope_kind.get() on:change=move |e|set_buy_scope.set(Some(event_target_value(&e)))><option value="world" selected=move ||scope_kind.get()=="world">"Home world"</option><option value="datacenter" selected=move ||scope_kind.get()=="datacenter">"Datacenter"</option><option value="region" selected=move ||scope_kind.get()=="region">"Region"</option></select></label>
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||hq.get().unwrap_or(false) prop:checked=move ||hq.get().unwrap_or(false) on:change=move |e|set_hq.set(Some(event_target_checked(&e))) />"HQ ingredients only"</label>
@@ -905,13 +985,13 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <button class="btn-secondary text-sm" on:click=move |_|refresh.update(|n|*n=n.wrapping_add(1))>"Refresh prices"</button>
                 <button class="btn-secondary text-sm" aria-label=move ||t_string!(i18n, recipe_planner_settings).to_string() on:click=move |_|show_settings.set(true)>{t!(i18n, recipe_planner_settings)}</button>
             </section>
-            <div class="flex flex-wrap items-center gap-3 text-sm text-[color:var(--color-text-muted)]">
+            <Show when=move ||!buy_output.get()><div class="flex flex-wrap items-center gap-3 text-sm text-[color:var(--color-text-muted)]">
                 <label class="flex items-center gap-2">"Or set crafts"<input aria-label="Number of crafts" class="input w-24" type="number" min="1" max=9999_i64.div_euclid(i64::from(recipe.amount_result.max(1))).max(1) value=move ||(quantity.get()+i64::from(recipe.amount_result.max(1))-1)/i64::from(recipe.amount_result.max(1)) prop:value=move ||(quantity.get()+i64::from(recipe.amount_result.max(1))-1)/i64::from(recipe.amount_result.max(1)) on:change=move |e|{ if let Ok(n)=event_target_value(&e).parse::<i64>() {set_qty.set(Some(n.max(1).saturating_mul(i64::from(recipe.amount_result.max(1))).clamp(1,9999)));} } /></label>
                 <span>"Changing crafts updates the desired output quantity."</span>
-            </div>
+            </div></Show>
             <Show when=move ||home_id.get()==0><p role="alert" class="panel rounded-xl p-4 text-amber-300">"World data is unavailable. Recipe ingredients still work; reload the page to retry market planning."</p></Show>
             <Show when=move ||loaded.get().is_some_and(|d| !d.failed.is_empty())><p role="alert" class="panel rounded-xl p-4 text-amber-300">"Some ingredient markets could not be loaded. Costs may be incomplete. Refresh prices to retry."</p></Show>
-            <Show when=move ||selected.get().is_some_and(|p|p.missing>0)><p role="status" class="panel rounded-xl p-4 text-amber-300">"This plan has missing materials. The amount shown covers available purchases only; it is not the full cost to finish the recipe."</p></Show>
+            <Show when=move ||selected.get().is_some_and(|p|p.missing>0)><p role="status" class="panel rounded-xl p-4 text-amber-300">"This plan has missing items. The amount shown covers available purchases only; it is not the full cost of your plan."</p></Show>
             <Show when=move ||subcrafts.get().unwrap_or(false) && craft.get().is_none()><p class="text-sm text-[color:var(--color-text-muted)]">"Your analyzer estimate included subcrafts. Choose which ingredients to craft below to price whole batches and their shopping stops."</p></Show>
             {move ||materials.get().err().map(|error|view!{<p role="alert" class="panel rounded-xl p-4 text-amber-300">{error}<button class="btn-secondary ml-3" on:click=move |_|set_craft.set(None)>"Reset craft choices"</button></p>})}
             <section aria-label="World visit comparison" class="space-y-2">
@@ -975,7 +1055,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 </div>
             </section>
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_22rem] gap-5 items-start">
-                <section aria-label="Ingredients" class="panel rounded-xl overflow-hidden min-w-0">
+                <Show when=move ||!buy_output.get() fallback=move ||view!{<section aria-label="Finished items" class="panel rounded-xl p-5 space-y-2"><h2 class="text-lg font-semibold">"Buy finished items"</h2><p>{move ||format!("{} × {} · {}",quantity.get(),item_name(recipe.item_result),if quality(recipe.item_result)==Some(true){"HQ"}else{"NQ"})}</p><p class="text-sm text-[color:var(--color-text-muted)]">"Switch to Craft to adjust ingredients. Your previous choices are kept."</p></section>}><section aria-label="Ingredients" class="panel rounded-xl overflow-hidden min-w-0">
                     <div class="p-4 border-b border-[color:var(--color-outline)]"><h2 class="text-lg font-semibold">"Build your recipe"</h2><p class="text-sm text-[color:var(--color-text-muted)]">"Choose Buy or a recipe to craft. Shared ingredients are combined; owned quantities apply once."</p></div>
                     <div class="divide-y divide-[color:var(--color-outline)]">
                         <For each=move || { materials.get().unwrap_or_default().into_iter().filter(|m|m.item!=recipe.item_result).collect::<Vec<_>>() } key=|m|m.item children=move |line| {
@@ -1000,21 +1080,21 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                             }
                         } />
                     </div>
-                </section>
+                </section></Show>
                 <aside class="panel rounded-xl p-5 space-y-4 xl:sticky xl:top-4" aria-label="Plan summary">
-                    <h2 class="text-lg font-semibold">"Your crafting plan"</h2>
+                    <h2 class="text-lg font-semibold">{move ||if buy_output.get(){"Your shopping plan"}else{"Your crafting plan"}}</h2>
                     <div><span class="text-sm text-[color:var(--color-text-muted)]">"Planned purchase spend"</span><p class="text-3xl font-bold tabular-nums" data-testid="plan-total">{move ||selected.get().map(|p|gil(p.cost)).unwrap_or_else(||"Loading…".into())}</p></div>
                     <p class="text-sm text-[color:var(--color-text-muted)]">{move ||selected.get().filter(|p|p.missing==0).map(|p|format!("{} per requested item, rounded up",gil((p.cost+quantity.get()-1)/quantity.get())) )}</p>
-                    <p class="text-sm">{move ||materials.get().ok().map(|m|format!("{} crafting operations · {} finished items · {} extra output",m.iter().map(|m|m.crafts).sum::<i64>(),quantity.get(),m.first().map(|m|m.surplus).unwrap_or(0)))}</p>
+                    <p class="text-sm">{move ||if buy_output.get(){Some(format!("{} finished items requested",quantity.get()))}else{materials.get().ok().map(|m|format!("{} crafting operations · {} finished items · {} extra output",m.iter().map(|m|m.crafts).sum::<i64>(),quantity.get(),m.first().map(|m|m.surplus).unwrap_or(0)))}}</p>
                     <p class="text-sm">{move ||selected.get().map(|p|plan_summary(&route_label(p.travel,p.worlds.is_empty()),p.missing))}</p>
                     <p class="text-sm text-brand-300" data-testid="vendor-plan-summary">{move ||selected.get().as_ref().and_then(vendor_plan_summary)}</p>
-                    <p class="text-xs text-[color:var(--color-text-muted)]">"Whole stacks included. Owned materials reduce cash spend; leftovers have no assumed resale value. Vendor prices assume access. Travel time and teleport fees are excluded."</p>
+                    <p class="text-xs text-[color:var(--color-text-muted)]">{move ||if buy_output.get(){"Whole stacks included. Vendor prices assume access. Travel time and teleport fees are excluded."}else{"Whole stacks included. Owned materials reduce cash spend; leftovers have no assumed resale value. Vendor prices assume access. Travel time and teleport fees are excluded."}}</p>
                     <Show when=move ||selected.get().is_some_and(|p|p.approximate)><p class="text-xs text-amber-300">"Large batch: stack selection is a best-found estimate."</p></Show>
-                    <div class="border-t border-[color:var(--color-outline)] pt-3 space-y-2"><label class="flex items-center gap-2 text-sm"><input type="checkbox" checked=move ||output_hq.get().unwrap_or(false) prop:checked=move ||output_hq.get().unwrap_or(false) on:change=move |e|set_output_hq.set(Some(event_target_checked(&e))) />"Compare with HQ finished items"</label><p class="text-sm">{move ||finished.get().map(|p|if p.missing()>0{format!("Buy finished: {} units unavailable",p.missing())}else{format!("Buy finished in {}: {}",scope.get(),gil(p.cost))})}</p></div>
-                    <p class="text-sm font-medium text-brand-300">{move ||selected.get().zip(finished.get()).filter(|(p,f)|p.missing==0 && f.missing()==0).map(|(p,f)|if f.cost>=p.cost{format!("Crafting saves {} in purchase spend",gil(f.cost-p.cost))}else{format!("Buying finished saves {}",gil(p.cost-f.cost))})}</p>
+                    <div class="border-t border-[color:var(--color-outline)] pt-3 space-y-2" data-testid="output-comparison"><p class="text-sm">{move ||finished.get().map(|p|if p.missing()>0{format!("Buy finished: {} units unavailable",p.missing())}else{format!("Buy finished in {}: {}",scope.get(),gil(p.cost))})}</p><p class="text-sm">{move ||craft_comparison.get().map(|p|if p.missing>0{format!("Craft: {} ingredient units unavailable",p.missing)}else{format!("Craft materials: {}",gil(p.cost))})}</p></div>
+                    <p class="text-sm font-medium text-brand-300" data-testid="output-savings">{move ||craft_comparison.get().zip(finished.get()).filter(|(p,f)|p.missing==0 && f.missing()==0).map(|(p,f)|if f.cost>=p.cost{format!("Crafting saves {} in purchase spend",gil(f.cost-p.cost))}else{format!("Buying finished saves {}",gil(p.cost-f.cost))})}</p>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"Finished-item purchases use the same buying scope and the selected route's stops."</p>
                     <div class="flex flex-wrap items-center gap-2 text-sm"><span>"Copy shopping plan"</span><Clipboard clipboard_text=copy_plan /></div>
-                    <button class="btn-primary w-full" disabled=move ||selected.get().is_none() on:click=move |_|show_save.set(true)>"Add remaining materials to a list"</button>
+                    <button class="btn-primary w-full" disabled=move ||selected.get().is_none() on:click=move |_|show_save.set(true)>{move ||if buy_output.get(){"Add finished items to a list"}else{"Add remaining materials to a list"}}</button>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"No account needed to plan or share. Sign in only to save to a list."</p>
                 </aside>
             </div>
@@ -1062,14 +1142,14 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                     </div>
                 </section>
             </Show>
-            <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
+            <Show when=move ||!buy_output.get()><section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section></Show>
             <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left. Each card to the right completes more of the recipe or, when equally complete, costs less gil; the last card is the most complete plan found and, among equally complete plans, the cheapest. Savings versus the previous route compare the two complete alternatives next to each other; their worlds may differ, so this is not a price for visiting one specific extra world. No savings are claimed against an incomplete route. Shared routes can sit between frontier cards and cost more. The full scope is always evaluated, so the frontier keeps the best plan found. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
                 let mut lines=Vec::new();
                 for (id,item) in &d.items {let oldest=item.last_updated.iter().map(|u|u.updated_at).min();lines.push(format!("{}: {}",item_name(*id),oldest.map(|t|format!("oldest world update {t} UTC")).unwrap_or_else(||"freshness unknown".into())));}
                 for id in &d.failed {lines.push(format!("{}: market request failed — refresh to retry",item_name(*id)));}
                 lines.into_iter().map(|line|view!{<p>{line}</p>}).collect_view()
             })}</div></details>
-            <Show when=move ||show_save.get()><SavePlan materials=materials hq=hq set_visible=show_save /></Show>
+            <Show when=move ||show_save.get()><SavePlan materials=materials hq=hq output=recipe.item_result output_hq=output_hq buy_output=buy_output set_visible=show_save /></Show>
             <Show when=move ||show_settings.get()><PlannerSettings options=options set_options=set_options set_visible=show_settings /></Show>
         </div>
     }
@@ -1115,6 +1195,9 @@ fn PlannerSettings(
 fn SavePlan(
     materials: Memo<Result<Vec<Material>, String>>,
     hq: Memo<Option<bool>>,
+    output: i32,
+    output_hq: Memo<Option<bool>>,
+    buy_output: Memo<bool>,
     set_visible: RwSignal<bool>,
 ) -> impl IntoView {
     let lists = LocalResource::new(move || async move {
@@ -1132,16 +1215,16 @@ fn SavePlan(
                 id: 0,
                 item_id: m.item,
                 list_id: id,
-                hq: if hq.get_untracked().unwrap_or(false)
-                    && tracked_data()
+                hq: plan_quality(
+                    m.item,
+                    output,
+                    output_hq.get_untracked().unwrap_or(false),
+                    hq.get_untracked().unwrap_or(false),
+                    tracked_data()
                         .items
                         .get(&ItemId(m.item))
-                        .is_some_and(|i| i.can_be_hq)
-                {
-                    Some(true)
-                } else {
-                    None
-                },
+                        .is_some_and(|i| i.can_be_hq),
+                ),
                 quantity: Some(m.remaining() as i32),
                 acquired: None,
                 target_price: None,
@@ -1149,12 +1232,12 @@ fn SavePlan(
             .collect();
         async move { bulk_add_item_to_list(id, items).await }
     });
-    view! {<crate::components::modal::Modal set_visible=SignalSetter::map(move |v|set_visible.set(v))><div class="space-y-4"><h2 class="text-xl font-semibold">"Save remaining materials"</h2>
+    view! {<crate::components::modal::Modal set_visible=SignalSetter::map(move |v|set_visible.set(v))><div class="space-y-4"><h2 class="text-xl font-semibold">{move ||if buy_output.get(){"Save finished items"}else{"Save remaining materials"}}</h2>
         <Suspense fallback=move ||view!{<p>"Loading your lists…"</p>}>{move ||lists.get().map(|result| match result {
             Ok(lists)=>view!{<div class="space-y-2">{lists.into_iter().map(|list|view!{<button class="btn-secondary w-full" disabled=move ||action.pending().get() on:click=move |_|{action.dispatch(list.id);}>{list.name}</button>}).collect_view()}<a href="/list" class="block text-brand-300">"Manage or create lists"</a></div>}.into_any(),
             Err(_)=>view!{<p>"Sign in to save this plan to a list. Your plan is preserved in its link."</p><a href="/login" rel="external" class="btn-primary">"Sign in"</a>}.into_any(),
         })}</Suspense>
-        {move ||action.value().get().map(|result|view!{<p role="status">{if result.is_ok(){"Materials added to your list."}else{"Could not save materials. Please try again."}}</p>})}
+        {move ||action.value().get().map(|result|view!{<p role="status">{if result.is_ok(){"Items added to your list."}else{"Could not save items. Please try again."}}</p>})}
         <button class="btn-secondary" on:click=move |_|set_visible.set(false)>"Close"</button>
     </div></crate::components::modal::Modal>}
 }
@@ -1162,6 +1245,66 @@ fn SavePlan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finished_demand_buys_requested_units_without_craft_rounding() {
+        let root = Recipe {
+            id: 7,
+            output: 42,
+            yield_amount: 3,
+            ingredients: vec![(9, 2)],
+        };
+        let crafted = planner::expand(
+            &root,
+            50,
+            &BTreeMap::from([(7, root.clone())]),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(crafted[0].crafts, 17);
+        assert_eq!(crafted[0].surplus, 1);
+        assert_eq!(crafted[1].needed, 34);
+        let bought = output_demand(42, 50);
+        assert_eq!(bought.len(), 1);
+        assert_eq!(bought[0].remaining(), 50);
+        assert_eq!(bought[0].recipe, None);
+        assert_eq!(bought[0].crafts, 0);
+        let offers = BTreeMap::from([(
+            42,
+            vec![Offer {
+                id: 1,
+                world: 63,
+                quantity: 49,
+                price: 100,
+            }],
+        )]);
+        let plan = planner::shop(
+            &bought,
+            &offers,
+            &BTreeMap::new(),
+            &BTreeSet::from([63]),
+            &planner::RouteContext {
+                home: 63,
+                ..Default::default()
+            },
+        );
+        assert_eq!(plan.missing, 1);
+        assert_eq!(plan.cost, 4900);
+        assert_eq!(plan.purchases.keys().copied().collect::<Vec<_>>(), vec![42]);
+    }
+
+    #[test]
+    fn finished_quality_is_independent_of_ingredient_quality() {
+        assert_eq!(plan_quality(42, 42, false, true, true), Some(false));
+        assert_eq!(plan_quality(42, 42, true, false, true), Some(true));
+        assert_eq!(plan_quality(9, 42, true, false, true), None);
+        assert_eq!(plan_quality(9, 42, false, true, true), Some(true));
+        assert_eq!(plan_quality(42, 42, true, true, false), Some(false));
+        assert_eq!(plan_quality(9, 42, true, true, false), None);
+    }
+
     #[test]
     fn shared_choices_round_trip_and_reject_invalid_quantities() {
         let raw = write_pair(None, 42, 7);
