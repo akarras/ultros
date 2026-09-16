@@ -189,6 +189,7 @@ async fn handle_socket(
         history,
         lists,
         list_docs,
+        notifications: _,
     } = events;
     let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
     let (mut sender, mut receiver) = socket.split();
