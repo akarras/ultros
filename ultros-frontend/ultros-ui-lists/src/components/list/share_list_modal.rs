@@ -205,11 +205,8 @@ pub fn ShareListSection(
                     last_copied_invite.set(Some(invite.id));
                 }
             }
-            Err(e) => {
+            Err(_) => {
                 invite_error.set(Some(t_string!(i18n, online_invite_failed).to_string()));
-                if let Some(toasts) = toasts {
-                    toasts.error(format!("Could not create invite link: {e}"));
-                }
             }
         }
     });

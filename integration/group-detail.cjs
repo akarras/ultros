@@ -150,17 +150,11 @@ async function main() {
   const shot = (page, name) =>
     capture(page, { path: path.join(ARTIFACT_DIR, `${name}.png`), fullPage: true });
 
-  // The share modal has four <select>s and only the role one is labelled, so
-  // the group picker is found by the placeholder option it alone carries.
+  // Manage access exposes an accessible name for the group picker.
   // Re-queried per call: the nested boundary around the role select
   // re-suspends whenever the group changes.
   async function groupSelect(page) {
-    for (const select of await page.$$("select")) {
-      const isGroupPicker = await select.evaluate(node => node.getAttribute("aria-label") === null
-        && [...node.options].some(option => /Choose a group|no groups/i.test(option.textContent)));
-      if (isGroupPicker) return select;
-    }
-    throw new Error("share modal has no group picker");
+    return page.waitForSelector('[role="dialog"] select[aria-label="Group"]', { visible: true });
   }
 
   const roleOptions = page =>

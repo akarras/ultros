@@ -619,6 +619,80 @@ struct ListingsCache {
     covered: HashSet<i32>,
 }
 
+/// Both price loads and silent permission probes may be in flight together.
+/// Order their authoritative replies by request start, not arrival time. Only
+/// applied replies advance the watermark: starting another slow request must
+/// not starve replies that can already refresh the page.
+#[derive(Default)]
+struct ListResponseOrder {
+    next: u64,
+    applied: u64,
+    /// A stale resource fetch returns this result instead of publishing its
+    /// own old permission. Keep the last authoritative reply through outages.
+    latest: Option<ListViewResult>,
+}
+
+#[derive(Clone, Copy)]
+struct ListReads {
+    cache: StoredValue<Option<ListingsCache>>,
+    responses: StoredValue<ListResponseOrder>,
+}
+
+impl ListReads {
+    fn new() -> Self {
+        Self {
+            cache: StoredValue::new(None),
+            responses: StoredValue::new(ListResponseOrder::default()),
+        }
+    }
+
+    fn begin(self) -> u64 {
+        let mut request = 0;
+        self.responses.update_value(|state| {
+            state.next += 1;
+            request = state.next;
+        });
+        request
+    }
+
+    /// Call only after checking the route and exact document identity. A 401
+    /// or transport failure neither replaces nor invalidates known permission.
+    fn accept(self, request: u64, result: &ListViewResult) -> bool {
+        let mut accepted = false;
+        self.responses.update_value(|state| {
+            if request < state.applied {
+                return;
+            }
+            accepted = true;
+            if result.is_ok() || result.as_ref().is_err_and(is_denial) {
+                state.applied = request;
+                state.latest = Some(result.clone());
+            }
+        });
+        accepted
+    }
+
+    fn current_result(self, id: i32, handle: Option<ListDocHandle>) -> ListViewResult {
+        let (list, items) = self
+            .responses
+            .with_value(|state| state.latest.clone())
+            .unwrap_or_else(|| Err(AppError::ListDoc("no current list response".into())))?;
+        if list.list.id != id {
+            return Err(AppError::ListDoc("document is no longer active".into()));
+        }
+        let Some(handle) = handle else {
+            return Ok((list, items));
+        };
+        let listings = items
+            .into_iter()
+            .map(|(item, listings)| (item.item_id, listings))
+            .collect();
+        handle
+            .with_doc(|doc| crate::list_doc::adapter::view_result(&list, doc, &listings))
+            .ok_or_else(|| AppError::ListDoc("document is closed".into()))
+    }
+}
+
 /// The ids a fetch covered, built from the rows the server returned.
 fn covered_ids(items: &[(ListItem, Vec<ActiveListing>)]) -> HashSet<i32> {
     items.iter().map(|(item, _)| item.item_id).collect()
@@ -663,10 +737,10 @@ fn note_fetch(prices: PriceStatus, outcome: Option<&ListWithPermission>) {
 /// its document — the revalidation exists only so a *permission* change
 /// (Global Constraint 2) is noticed by an idle page, so paying one REST
 /// fetch per remote keystroke would be pure waste.
-#[cfg(feature = "hydrate")]
-const REVALIDATE_DEBOUNCE_MS: u32 = 1000;
+#[cfg(any(feature = "hydrate", test))]
+const REVALIDATE_MAX_WAIT_MS: u32 = 1000;
 
-/// The trailing-debounce timer. A real `Timeout` on the client; a unit
+/// The coalescing timer. A real `Timeout` on the client; a unit
 /// placeholder on the SSR half, where `Effect`s never run and so no
 /// subscription is ever created to schedule one.
 #[cfg(feature = "hydrate")]
@@ -674,14 +748,40 @@ type RevalidateTimer = gloo_timers::callback::Timeout;
 #[cfg(not(feature = "hydrate"))]
 type RevalidateTimer = ();
 
-/// Ask for a revalidation `REVALIDATE_DEBOUNCE_MS` from now, replacing any
-/// request already pending. Dropping the previous `Timeout` cancels it, so
-/// N broadcasts inside the window cost exactly one probe, fired after the
-/// last of them.
+/// Keep the first broadcast's deadline: subsequent broadcasts coalesce but
+/// cannot postpone it. In a normally scheduled foreground tab the probe starts
+/// within one second of that first broadcast; network latency is additional.
+/// Browser suspension/background timer throttling can delay execution.
+#[cfg(any(feature = "hydrate", test))]
+fn schedule_revalidate_with<T: 'static>(
+    slot: &Rc<RefCell<Option<T>>>,
+    create_timer: impl FnOnce(u32, Box<dyn FnOnce()>) -> T,
+    probe: impl FnOnce() + 'static,
+) {
+    if slot.borrow().is_some() {
+        return;
+    }
+    // Do not make slot -> timer -> slot a cycle: dropping the subscription
+    // must still cancel its pending timer on navigation or sign-out.
+    let pending = Rc::downgrade(slot);
+    let timer = create_timer(
+        REVALIDATE_MAX_WAIT_MS,
+        Box::new(move || {
+            let Some(pending) = pending.upgrade() else {
+                return;
+            };
+            // Release ownership before invoking the probe, so later updates
+            // can start a new window instead of seeing a fired timer forever.
+            pending.borrow_mut().take();
+            probe();
+        }),
+    );
+    *slot.borrow_mut() = Some(timer);
+}
+
 #[cfg(feature = "hydrate")]
 fn schedule_revalidate(slot: &Rc<RefCell<Option<RevalidateTimer>>>, probe: impl Fn() + 'static) {
-    let timer = gloo_timers::callback::Timeout::new(REVALIDATE_DEBOUNCE_MS, probe);
-    *slot.borrow_mut() = Some(timer);
+    schedule_revalidate_with(slot, gloo_timers::callback::Timeout::new, probe);
 }
 
 #[cfg(not(feature = "hydrate"))]
@@ -699,17 +799,25 @@ fn revalidate(
     active_list: Memo<i32>,
     list_id: i32,
     handle: RwSignal<Option<ListDocHandle>>,
-    cache: StoredValue<Option<ListingsCache>>,
+    reads: ListReads,
     bump: WriteSignal<u32>,
     prices: PriceStatus,
 ) {
+    let cache = reads.cache;
     let expected = handle.try_get_untracked().flatten().map(|h| h.revision);
     if !request_is_current(active_list, list_id, handle, expected) {
         return;
     }
     leptos::task::spawn_local(async move {
+        if !request_is_current(active_list, list_id, handle, expected) {
+            return;
+        }
+        let request = reads.begin();
         let result = get_list_items_with_listings(list_id).await;
         if !request_is_current(active_list, list_id, handle, expected) {
+            return;
+        }
+        if !reads.accept(request, &result) {
             return;
         }
         match result {
@@ -761,7 +869,7 @@ fn revalidate(
     _active_list: Memo<i32>,
     _list_id: i32,
     _handle: RwSignal<Option<ListDocHandle>>,
-    _cache: StoredValue<Option<ListingsCache>>,
+    _reads: ListReads,
     _bump: WriteSignal<u32>,
     _prices: PriceStatus,
 ) {
@@ -851,11 +959,12 @@ async fn load_view(
     list_id: Memo<i32>,
     id: i32,
     handle: RwSignal<Option<ListDocHandle>>,
-    cache: StoredValue<Option<ListingsCache>>,
+    reads: ListReads,
     listings_version: u32,
     revalidate_version: u32,
     prices: PriceStatus,
 ) -> ListViewResult {
+    let cache = reads.cache;
     let current = handle.try_get_untracked().flatten();
     let expected = current.map(|h| h.revision);
     let stale = || AppError::ListDoc("document is no longer active".to_string());
@@ -867,9 +976,13 @@ async fn load_view(
         // visitor). Cache what the REST read already paid for, so the first
         // handle-backed run below is a cache hit rather than a second fetch
         // of the same prices.
+        let request = reads.begin();
         let result = get_list_items_with_listings(id).await;
         if !request_is_current(list_id, id, handle, expected) {
             return Err(stale());
+        }
+        if !reads.accept(request, &result) {
+            return reads.current_result(id, None);
         }
         note_fetch(prices, result.as_ref().ok().map(|(list, _)| list));
         if let Ok((list, items)) = &result {
@@ -912,9 +1025,13 @@ async fn load_view(
     let base = match cached {
         Some(cached) => cached,
         None => {
+            let request = reads.begin();
             let result = get_list_items_with_listings(id).await;
             if !request_is_current(list_id, id, handle, expected) {
                 return Err(stale());
+            }
+            if !reads.accept(request, &result) {
+                return reads.current_result(id, Some(doc_handle));
             }
             match result {
                 Ok((list, items)) => {
@@ -1142,7 +1259,7 @@ pub fn ListViewSync() -> impl IntoView {
     let (listings_version, set_listings_version) = signal(0u32);
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
-    let listings_cache: StoredValue<Option<ListingsCache>> = StoredValue::new(None);
+    let listings_cache = ListReads::new();
     // The estimate's account of its prices (see `note_fetch`): every fetch
     // above reports here, so "prices fetched 2 minutes ago" is the arrival
     // of the last listings response and nothing else.
@@ -2342,7 +2459,10 @@ pub fn ListViewSync() -> impl IntoView {
                 }}
             </Show>
             <Show when=move || access_open() && view_caps.with(|c|c.can_admin)>
-                {move || list_view.get().and_then(Result::ok).map(|(list,_)|view! {
+                // Capture the list only when this guarded dialog opens. A
+                // document or price refresh must not remount its live form.
+                // The outer capability guard still dismisses it on denial.
+                {move || list_view.get_untracked().and_then(Result::ok).map(|(list,_)|view! {
                     <crate::components::list::share_list_modal::ShareListModal list=list.list set_visible=set_access_open />
                 })}
             </Show>
@@ -2371,6 +2491,235 @@ pub fn ListRoute() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn permission_reply(permission: ListPermission) -> ListViewResult {
+        Ok((
+            ListWithPermission {
+                list: ultros_api_types::list::List {
+                    id: 101,
+                    owner: 1,
+                    name: "Permission ordering".into(),
+                    wdr_filter: AnySelector::World(1),
+                },
+                permission,
+                owner_name: None,
+            },
+            vec![],
+        ))
+    }
+
+    #[test]
+    fn stale_write_and_denial_replies_cannot_overwrite_newer_access() {
+        Owner::new().with(|| {
+            for (old_reply, permission) in [
+                (
+                    permission_reply(ListPermission::Write),
+                    ListPermission::Read,
+                ),
+                (
+                    Err(AppError::ApiError(ApiError::Forbidden)),
+                    ListPermission::Write,
+                ),
+                (
+                    Err(AppError::ApiError(ApiError::NotFound)),
+                    ListPermission::Read,
+                ),
+            ] {
+                let reads = ListReads::new();
+                // Either the price loader or the silent probe uses this same
+                // sequence; a separate fence per caller would miss the race.
+                let old = reads.begin();
+                let newer = reads.begin();
+                assert!(reads.accept(newer, &permission_reply(permission)));
+                assert!(!reads.accept(old, &old_reply));
+                assert_eq!(
+                    reads.current_result(101, None).unwrap().0.permission,
+                    permission
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn pending_newer_requests_do_not_starve_successful_replies() {
+        Owner::new().with(|| {
+            let reads = ListReads::new();
+            let first = reads.begin();
+            let second = reads.begin();
+            for _ in 0..20 {
+                reads.begin();
+            }
+            assert!(reads.accept(first, &permission_reply(ListPermission::Read)));
+            assert_eq!(
+                reads.current_result(101, None).unwrap().0.permission,
+                ListPermission::Read
+            );
+            assert!(reads.accept(second, &permission_reply(ListPermission::Write)));
+            assert_eq!(
+                reads.current_result(101, None).unwrap().0.permission,
+                ListPermission::Write
+            );
+        });
+    }
+
+    #[test]
+    fn transient_replies_preserve_the_last_authoritative_permission() {
+        Owner::new().with(|| {
+            for error in [
+                AppError::ApiError(ApiError::NotAuthenticated),
+                AppError::ApiError(ApiError::Message("temporary outage".into())),
+                AppError::InternalApiTimeout,
+            ] {
+                let reads = ListReads::new();
+                let old = reads.begin();
+                let confirmed = reads.begin();
+                assert!(reads.accept(confirmed, &permission_reply(ListPermission::Read)));
+                let failed = reads.begin();
+                assert!(reads.accept(failed, &Err(error)));
+                assert!(!reads.accept(old, &permission_reply(ListPermission::Write)));
+                assert_eq!(
+                    reads.current_result(101, None).unwrap().0.permission,
+                    ListPermission::Read
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn newer_failures_do_not_suppress_a_pending_authoritative_reply() {
+        Owner::new().with(|| {
+            for error in [
+                AppError::ApiError(ApiError::NotAuthenticated),
+                AppError::ApiError(ApiError::Message("temporary outage".into())),
+            ] {
+                let reads = ListReads::new();
+                let old_success = reads.begin();
+                let newer_failure = reads.begin();
+                assert!(reads.accept(newer_failure, &Err(error)));
+                assert!(reads.accept(old_success, &permission_reply(ListPermission::Read)));
+                assert_eq!(
+                    reads.current_result(101, None).unwrap().0.permission,
+                    ListPermission::Read
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn stale_price_load_uses_current_permission_and_live_document_rows() {
+        Owner::new().with(|| {
+            let reads = ListReads::new();
+            let old_price_load = reads.begin();
+            let permission_probe = reads.begin();
+            assert!(reads.accept(permission_probe, &permission_reply(ListPermission::Read)));
+            assert!(!reads.accept(old_price_load, &permission_reply(ListPermission::Write)));
+
+            let document = ultros_list_doc::ListDocument::new();
+            document
+                .add_row(ultros_list_doc::RowKey::new(5056, None), 5, None)
+                .unwrap();
+            let handle = ListDocHandle::open(1, 101);
+            handle.import(&document.export_snapshot().unwrap()).unwrap();
+            let (list, items) = reads.current_result(101, Some(handle)).unwrap();
+            assert_eq!(list.permission, ListPermission::Read);
+            assert_eq!(items.len(), 1, "local rows survive a stale network reply");
+            assert_eq!(items[0].0.item_id, 5056);
+            assert_eq!(items[0].0.quantity, Some(5));
+            handle.dispose();
+        });
+    }
+
+    #[test]
+    fn continuous_broadcasts_keep_the_first_deadline_and_start_new_windows() {
+        use std::cell::Cell;
+
+        let slot = Rc::new(RefCell::new(None::<()>));
+        let probes = Rc::new(Cell::new(0));
+        let mut pending: Option<(u32, Box<dyn FnOnce()>)> = None;
+        for now in (0..=3000).step_by(100) {
+            if pending.as_ref().is_some_and(|(due, _)| *due <= now) {
+                pending.take().unwrap().1();
+                assert!(slot.borrow().is_none(), "fired timer releases its slot");
+            }
+            let probes = probes.clone();
+            schedule_revalidate_with(
+                &slot,
+                |delay, callback| {
+                    assert_eq!(delay, 1000, "maximum normal scheduling delay");
+                    assert!(pending.is_none(), "bursts do not replace pending probes");
+                    pending = Some((now + delay, callback));
+                },
+                move || probes.set(probes.get() + 1),
+            );
+        }
+        assert_eq!(
+            probes.get(),
+            3,
+            "continuous 100ms updates cannot starve probes"
+        );
+        assert_eq!(pending.as_ref().unwrap().0, 4000);
+    }
+
+    #[test]
+    fn dropping_subscription_cancels_pending_permission_probe() {
+        let slot = Rc::new(RefCell::new(None::<()>));
+        let weak = Rc::downgrade(&slot);
+        let mut callback = None;
+        schedule_revalidate_with(
+            &slot,
+            |_, fire| callback = Some(fire),
+            || panic!("a retired subscription must not probe a successor document"),
+        );
+        drop(slot);
+        assert!(
+            weak.upgrade().is_none(),
+            "timer does not retain its subscription"
+        );
+        // Even a callback queued by the browser before cancellation is harmless.
+        callback.unwrap()();
+    }
+
+    #[test]
+    fn delayed_permission_results_require_the_same_route_and_open_document() {
+        Owner::new().with(|| {
+            let route = RwSignal::new(101);
+            let active = Memo::new(move |_| route.get());
+            let original = ListDocHandle::open(1, 101);
+            let handle = RwSignal::new(Some(original));
+            let expected = Some(original.revision);
+            assert!(request_is_current(active, 101, handle, expected));
+
+            route.set(102);
+            assert!(!request_is_current(active, 101, handle, expected));
+            route.set(101);
+            let successor = ListDocHandle::open(1, 101);
+            handle.set(Some(successor));
+            assert!(
+                !request_is_current(active, 101, handle, expected),
+                "same route does not identify the same document lifetime"
+            );
+            assert!(request_is_current(
+                active,
+                101,
+                handle,
+                Some(successor.revision)
+            ));
+            successor.close();
+            assert!(!request_is_current(
+                active,
+                101,
+                handle,
+                Some(successor.revision)
+            ));
+            handle.set(None);
+            assert!(
+                !request_is_current(active, 101, handle, expected),
+                "sign-out invalidates responses captured before it"
+            );
+            original.dispose();
+            successor.dispose();
+        });
+    }
 
     #[test]
     fn recipe_preview_ignores_empty_crystal_sentinels_without_dropping_real_ingredients() {
