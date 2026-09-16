@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Shared list access stays up to date",
+  "blurb": "Editing controls now follow access changes promptly, even when a shared list is receiving continuous updates.",
+  "link": "/list",
+  "labs": true
+}

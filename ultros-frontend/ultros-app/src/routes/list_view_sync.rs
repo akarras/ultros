@@ -653,10 +653,10 @@ fn note_fetch(prices: PriceStatus, outcome: Option<&ListWithPermission>) {
 /// its document — the revalidation exists only so a *permission* change
 /// (Global Constraint 2) is noticed by an idle page, so paying one REST
 /// fetch per remote keystroke would be pure waste.
-#[cfg(feature = "hydrate")]
-const REVALIDATE_DEBOUNCE_MS: u32 = 1000;
+#[cfg(any(feature = "hydrate", test))]
+const REVALIDATE_MAX_WAIT_MS: u32 = 1000;
 
-/// The trailing-debounce timer. A real `Timeout` on the client; a unit
+/// The coalescing timer. A real `Timeout` on the client; a unit
 /// placeholder on the SSR half, where `Effect`s never run and so no
 /// subscription is ever created to schedule one.
 #[cfg(feature = "hydrate")]
@@ -664,14 +664,40 @@ type RevalidateTimer = gloo_timers::callback::Timeout;
 #[cfg(not(feature = "hydrate"))]
 type RevalidateTimer = ();
 
-/// Ask for a revalidation `REVALIDATE_DEBOUNCE_MS` from now, replacing any
-/// request already pending. Dropping the previous `Timeout` cancels it, so
-/// N broadcasts inside the window cost exactly one probe, fired after the
-/// last of them.
+/// Keep the first broadcast's deadline: subsequent broadcasts coalesce but
+/// cannot postpone it. In a normally scheduled foreground tab the probe starts
+/// within one second of that first broadcast; network latency is additional.
+/// Browser suspension/background timer throttling can delay execution.
+#[cfg(any(feature = "hydrate", test))]
+fn schedule_revalidate_with<T: 'static>(
+    slot: &Rc<RefCell<Option<T>>>,
+    create_timer: impl FnOnce(u32, Box<dyn FnOnce()>) -> T,
+    probe: impl FnOnce() + 'static,
+) {
+    if slot.borrow().is_some() {
+        return;
+    }
+    // Do not make slot -> timer -> slot a cycle: dropping the subscription
+    // must still cancel its pending timer on navigation or sign-out.
+    let pending = Rc::downgrade(slot);
+    let timer = create_timer(
+        REVALIDATE_MAX_WAIT_MS,
+        Box::new(move || {
+            let Some(pending) = pending.upgrade() else {
+                return;
+            };
+            // Release ownership before invoking the probe, so later updates
+            // can start a new window instead of seeing a fired timer forever.
+            pending.borrow_mut().take();
+            probe();
+        }),
+    );
+    *slot.borrow_mut() = Some(timer);
+}
+
 #[cfg(feature = "hydrate")]
 fn schedule_revalidate(slot: &Rc<RefCell<Option<RevalidateTimer>>>, probe: impl Fn() + 'static) {
-    let timer = gloo_timers::callback::Timeout::new(REVALIDATE_DEBOUNCE_MS, probe);
-    *slot.borrow_mut() = Some(timer);
+    schedule_revalidate_with(slot, gloo_timers::callback::Timeout::new, probe);
 }
 
 #[cfg(not(feature = "hydrate"))]
@@ -2348,6 +2374,98 @@ pub fn ListRoute() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuous_broadcasts_keep_the_first_deadline_and_start_new_windows() {
+        use std::cell::Cell;
+
+        let slot = Rc::new(RefCell::new(None::<()>));
+        let probes = Rc::new(Cell::new(0));
+        let mut pending: Option<(u32, Box<dyn FnOnce()>)> = None;
+        for now in (0..=3000).step_by(100) {
+            if pending.as_ref().is_some_and(|(due, _)| *due <= now) {
+                pending.take().unwrap().1();
+                assert!(slot.borrow().is_none(), "fired timer releases its slot");
+            }
+            let probes = probes.clone();
+            schedule_revalidate_with(
+                &slot,
+                |delay, callback| {
+                    assert_eq!(delay, 1000, "maximum normal scheduling delay");
+                    assert!(pending.is_none(), "bursts do not replace pending probes");
+                    pending = Some((now + delay, callback));
+                },
+                move || probes.set(probes.get() + 1),
+            );
+        }
+        assert_eq!(
+            probes.get(),
+            3,
+            "continuous 100ms updates cannot starve probes"
+        );
+        assert_eq!(pending.as_ref().unwrap().0, 4000);
+    }
+
+    #[test]
+    fn dropping_subscription_cancels_pending_permission_probe() {
+        let slot = Rc::new(RefCell::new(None::<()>));
+        let weak = Rc::downgrade(&slot);
+        let mut callback = None;
+        schedule_revalidate_with(
+            &slot,
+            |_, fire| callback = Some(fire),
+            || panic!("a retired subscription must not probe a successor document"),
+        );
+        drop(slot);
+        assert!(
+            weak.upgrade().is_none(),
+            "timer does not retain its subscription"
+        );
+        // Even a callback queued by the browser before cancellation is harmless.
+        callback.unwrap()();
+    }
+
+    #[test]
+    fn delayed_permission_results_require_the_same_route_and_open_document() {
+        Owner::new().with(|| {
+            let route = RwSignal::new(101);
+            let active = Memo::new(move |_| route.get());
+            let original = ListDocHandle::open(1, 101);
+            let handle = RwSignal::new(Some(original));
+            let expected = Some(original.revision);
+            assert!(request_is_current(active, 101, handle, expected));
+
+            route.set(102);
+            assert!(!request_is_current(active, 101, handle, expected));
+            route.set(101);
+            let successor = ListDocHandle::open(1, 101);
+            handle.set(Some(successor));
+            assert!(
+                !request_is_current(active, 101, handle, expected),
+                "same route does not identify the same document lifetime"
+            );
+            assert!(request_is_current(
+                active,
+                101,
+                handle,
+                Some(successor.revision)
+            ));
+            successor.close();
+            assert!(!request_is_current(
+                active,
+                101,
+                handle,
+                Some(successor.revision)
+            ));
+            handle.set(None);
+            assert!(
+                !request_is_current(active, 101, handle, expected),
+                "sign-out invalidates responses captured before it"
+            );
+            original.dispose();
+            successor.dispose();
+        });
+    }
 
     #[test]
     fn recipe_preview_ignores_empty_crystal_sentinels_without_dropping_real_ingredients() {

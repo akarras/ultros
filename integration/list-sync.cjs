@@ -16,6 +16,8 @@
  *   6. A third session without Labs sees the same rows.
  *
  * Global Constraint 2 scenarios, each on its own fresh list:
+ *   A2. Continuous updates cannot starve permission probes; downgrade retires
+ *       editing/companion, transient errors and logout retain account data.
  *   B. Permission revocation — the owner unshares the editor mid-session.
  *   C. List deletion — the owner deletes the list while the editor has it open.
  *   D. Account switch in one browser context — B has no share.
@@ -467,6 +469,13 @@ async function main() {
     } else {
       pass(`A: legacy page shows the same rows as the server (${JSON.stringify(serverNow)})`);
     }
+
+    console.log("[scenario A2] bounded access checks during continuous broadcasts");
+    await require("./list-permission-latency.cjs")({
+      ownerPage, editorPage, baseUrl: BASE_URL, editorId: USERS.editor.id, worldId,
+      createList, addItem, api, createdLists, waitForHydration, waitForLive,
+      waitForDocKey, login, editorUser: USERS.editor, timeout: TIMEOUT_MS,
+    });
 
     // ================= Scenario B: permission revocation =================
     console.log("[scenario B] permission revocation while the editor is open");
