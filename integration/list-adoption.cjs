@@ -10,11 +10,12 @@ const owned = 'input[aria-label="Owned for Bronze Ingot"]';
 const owner = 990000001501, other = 990000001502;
 
 async function main() {
-  const browser = await puppeteer.launch({headless:true});
+  const browser = await puppeteer.launch({headless:true,args:['--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows']});
   const page = await browser.newPage();
   const created = new Set();
   const errors=[];
   let mode='normal', held=[], heldLogin=[], holdFinalLogin=false, promotionResponded=false, failedUploads=0;
+  let failInvite=false, inviteRequests=0;
   async function configure(p) {
     p.setDefaultTimeout(60000);
     await p.setViewport({width:1280,height:900});
@@ -25,6 +26,10 @@ async function main() {
     p.on('request',async request=>{
       try {
         const url=new URL(request.url());
+        if(url.origin===base && /\/api\/v1\/list\/\d+\/invite\/create$/.test(url.pathname) && request.method()==='POST') {
+          inviteRequests++;
+          if(failInvite) {await request.respond({status:503,contentType:'application/json',body:JSON.stringify('Invite service unavailable')});return;}
+        }
         if(url.origin===base && url.pathname==='/api/v1/current_user' && holdFinalLogin && promotionResponded) {
           holdFinalLogin=false;heldLogin.push(request);return;
         }
@@ -32,7 +37,7 @@ async function main() {
           if(mode==='drop-once') {
             mode='normal';
             const upstream=await fetch(request.url(),{method:'POST',headers:request.headers(),body:request.postData()});
-            assert(upstream.ok(),'server commits before the simulated response loss');
+            assert(upstream.ok,'server commits before the simulated response loss');
             created.add((await upstream.json()).list_id);
             await request.respond({status:503,contentType:'application/json',body:JSON.stringify('Response lost after commit')});return;
           }
@@ -49,16 +54,16 @@ async function main() {
       }
     });
   }
-  const load=async(p,route)=>{await p.goto(new URL(route,base).href,{waitUntil:'domcontentloaded'});await p.waitForFunction(()=>window.__onlineHydrated);};
+  const load=async(p,route)=>{await p.bringToFront();await p.goto(new URL(route,base).href,{waitUntil:'domcontentloaded'});await p.waitForFunction(()=>window.__onlineHydrated);};
   const login=async(p,id,next='/list?labs=lists-sync')=>load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);
   const api=async(p,method,route,body)=>p.evaluate(async({method,route,body})=>{
     const r=await fetch(route,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
     const text=await r.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:r.status,data};
   },{method,route,body});
-  const replace=async(p,selector,value)=>{await p.waitForSelector(selector,{visible:true});await p.focus(selector);await p.keyboard.down('Control');await p.keyboard.press('KeyA');await p.keyboard.up('Control');await p.keyboard.press('Backspace');await p.type(selector,String(value));};
-  const waitValue=(p,selector,value)=>p.waitForFunction((selector,value)=>document.querySelector(selector)?.value===String(value),{},selector,value);
-  const saved=p=>p.waitForFunction(()=>document.querySelector('[data-testid="device-list-status"]')?.textContent==='Saved on this device');
-  const details=async p=>{const sel='button[aria-label="Details for Bronze Ingot"]';await p.waitForSelector(sel);if(await p.$eval(sel,b=>b.getAttribute('aria-expanded'))!=='true')await p.click(sel);await p.waitForSelector(owned,{visible:true});};
+  const replace=async(p,selector,value)=>{await p.bringToFront();await p.waitForSelector(selector,{visible:true});await p.focus(selector);await p.keyboard.down('Control');await p.keyboard.press('KeyA');await p.keyboard.up('Control');await p.keyboard.press('Backspace');await p.type(selector,String(value));};
+  const waitValue=async(p,selector,value)=>{await p.bringToFront();await p.waitForFunction((selector,value)=>document.querySelector(selector)?.value===String(value),{polling:100},selector,value);};
+  const saved=async p=>{await p.bringToFront();await p.waitForFunction(()=>document.querySelector('[data-testid="device-list-status"]')?.textContent==='Saved on this device');};
+  const details=async p=>{await p.bringToFront();const sel='button[aria-label="Details for Bronze Ingot"]';await p.waitForSelector(sel);if(await p.$eval(sel,b=>b.getAttribute('aria-expanded'))!=='true')await p.click(sel);await p.waitForSelector(owned,{visible:true});};
   async function createDevice(name, clearSearch=true) {
     await load(page,'/list?labs=lists-sync');
     await page.waitForSelector(tid('list-new'));
@@ -73,7 +78,7 @@ async function main() {
     await waitValue(page,needed,3);await saved(page);
     return new URL(page.url()).pathname;
   }
-  const online=async p=>{await p.waitForFunction(()=>/^\/list\/\d+$/.test(location.pathname));const id=Number(new URL(p.url()).pathname.split('/').at(-1));created.add(id);return id;};
+  const online=async p=>{await p.bringToFront();await p.waitForFunction(()=>/^\/list\/\d+$/.test(location.pathname));const id=Number(new URL(p.url()).pathname.split('/').at(-1));created.add(id);return id;};
   async function record(devicePath) {
     return page.evaluate(async id=>{
       const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('ultros-device-lists-v1',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
@@ -97,26 +102,58 @@ async function main() {
     await page.waitForFunction(()=>document.body.textContent.includes('Only you have access until you invite someone.'));
     await page.screenshot({path:path.join(artifacts,'access-desktop.png'),fullPage:true});
     await page.setViewport({width:390,height:844});
+    await page.waitForFunction(()=>document.querySelector('.side-nav').getBoundingClientRect().right<=1);
     await page.screenshot({path:path.join(artifacts,'access-mobile.png'),fullPage:true});
-    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    if(!await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1))errors.push('Access dialog overflows mobile viewport');
     const inviteMethods='[role="group"][aria-label="Invite someone"]';
     await page.evaluate(selector=>[...document.querySelectorAll(`${selector} button`)].find(b=>b.textContent==='Discord user').click(),inviteMethods);
     await page.waitForFunction(()=>[...document.querySelectorAll('[role="dialog"] section')].filter(s=>s.checkVisibility()).length===2);
-    assert.equal(await page.$eval(`${inviteMethods} button[aria-pressed="true"]`,b=>b.textContent),'Discord user');
+    const pressed=await page.$$eval(`${inviteMethods} button[aria-pressed="true"]`,buttons=>buttons.map(b=>b.textContent));
+    if(JSON.stringify(pressed)!==JSON.stringify(['Discord user']))errors.push(`Expected accessible selected Discord user method, received ${JSON.stringify(pressed)}`);
     await page.evaluate(selector=>[...document.querySelectorAll(`${selector} button`)].find(b=>b.textContent==='Invite link').click(),inviteMethods);
+    await page.waitForFunction(()=>document.querySelector('[role="dialog"] select[aria-label="Permission"]')?.checkVisibility());
+    const inviteLimit=tid('list-invite-max-uses'), inviteCreate=tid('list-invite-create');
+    const initialInvites=inviteRequests;
+    for(const invalid of ['0','-1','1.5','abc','2147483648']) {
+      await replace(page,inviteLimit,invalid);await page.click(inviteCreate);
+      await page.waitForSelector('#list-invite-error',{visible:true});
+      assert.equal(await page.$eval(inviteLimit,input=>input.getAttribute('aria-invalid')),'true');
+      assert.equal(inviteRequests,initialInvites,'invalid limit cannot create an unlimited invite');
+    }
+    await page.select(tid('list-invite-permission'),'Write');
+    failInvite=true;await replace(page,inviteLimit,2);await page.click(inviteCreate);
+    await page.waitForFunction(()=>document.querySelector('#list-invite-error')?.textContent.includes('Try again'));
+    assert.equal(await page.$eval(inviteLimit,input=>input.value),'2','failed invite retains the intended limit');
+    assert.equal(inviteRequests,initialInvites+1);
+    failInvite=false;await page.click(inviteCreate);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="list-invite-max-uses"]')?.value==='');
+    const newInvites=(await api(page,'GET',`/api/v1/list/${firstId}/invites`)).data;
+    assert.equal(newInvites.length,1);assert.equal(newInvites[0].max_uses,2);assert.equal(newInvites[0].permission,'Write');
+    await page.waitForFunction(()=>document.querySelector('[data-testid="list-invite-permission"]')?.value==='Write');
+    // The action refetch rebuilds this section; displayed permission must still
+    // agree with the retained signal, and the next explicit Read grant.
+    await page.select(tid('list-invite-permission'),'Read');await replace(page,inviteLimit,1);await page.click(inviteCreate);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="list-invite-max-uses"]')?.value==='');
+    const allInvites=(await api(page,'GET',`/api/v1/list/${firstId}/invites`)).data;
+    assert.equal(allInvites.length,2);assert(allInvites.some(invite=>invite.permission==='Read'&&invite.max_uses===1));
+    assert.equal(await page.$eval(tid('list-invite-permission'),select=>select.value),'Read');
+    for(const invite of allInvites)await api(page,'DELETE',`/api/v1/invite/${invite.id}`);
+    console.log('[ok] invite limits validate, failed input survives, and visible permissions match grants after refetch');
     await page.setViewport({width:1280,height:900});
     await page.click('button[aria-label="Close modal"]');
     await replace(page,needed,5);await page.keyboard.press('Enter');await waitValue(page,needed,5);
-    await page.click('button[aria-label="Undo last change"]');await waitValue(page,needed,3);
-    await page.click('button[aria-label="Redo"]');await waitValue(page,needed,5);
+    await page.click(tid('list-undo'));await waitValue(page,needed,3);
+    await page.click(tid('list-redo'));await waitValue(page,needed,5);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="account-list-save-state"]')?.textContent==='Saved on this device');
     await load(page,first+'?labs=lists-sync');assert.equal(await online(page),firstId);await waitValue(page,needed,5);
     await load(page,'/list?labs=lists-sync');await page.waitForSelector(tid('lists-grid'));
     await page.waitForFunction(id=>document.querySelectorAll(`a[href="/list/${id}"]`).length>0,{},firstId);
     assert.equal((await api(page,'GET','/api/v1/list')).data.filter(l=>l.list.id===firstId).length,1);
     await page.screenshot({path:path.join(artifacts,'directory-desktop.png'),fullPage:true});
     await page.setViewport({width:390,height:844});
+    await page.waitForFunction(()=>document.querySelector('.side-nav').getBoundingClientRect().right<=1);
     await page.screenshot({path:path.join(artifacts,'directory-mobile.png'),fullPage:true});
-    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    if(!await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1))errors.push('Lists directory overflows mobile viewport');
     await page.setViewport({width:1280,height:900});
     console.log('[ok] one workspace, exact sign-in continuation, private online destination, continued editing and old URL reload');
 
@@ -177,10 +214,13 @@ async function main() {
     // Both tabs keep their changes while the first requests are in flight.
     const concurrent=await createDevice(`Online concurrent ${Date.now()}`);
     const second=await browser.newPage();await configure(second);await load(second,concurrent+'?labs=lists-sync');await details(second);
+    console.log('[progress] both device tabs ready');
+    await page.bringToFront();
     mode='hold';await page.click(tid('device-list-adopt'));
     await page.waitForFunction(()=>document.querySelector('[data-testid="device-list-adopt"]')?.disabled);
     await replace(page,needed,7);await page.keyboard.press('Enter');
     await replace(second,owned,2);await second.keyboard.press('Enter');
+    console.log('[progress] concurrent edits made while uploads held');
     const deadline=Date.now()+60000;while(held.length<2&&Date.now()<deadline)await new Promise(r=>setTimeout(r,100));
     assert(held.length>=2,'both tabs have a pending request');
     mode='normal';await Promise.all(held.splice(0).map(r=>r.continue()));
@@ -279,7 +319,7 @@ async function main() {
     assert(held.length);
     const accountTab=await browser.newPage();await configure(accountTab);await login(accountTab,other);
     mode='normal';await Promise.all(held.splice(0).map(r=>r.continue()));
-    await page.waitForFunction(()=>!document.querySelector('[data-testid="device-list-adopt"]')?.disabled);
+    await page.waitForFunction(()=>!document.querySelector('[data-testid="device-list-adopt"]')?.disabled,{polling:100});
     assert.equal(new URL(page.url()).pathname,changing);
     assert.equal((await record(changing)).online.owner,String(owner));
     assert.equal((await api(accountTab,'GET','/api/v1/list')).data.length,0);
@@ -311,6 +351,14 @@ async function main() {
     console.log('[ok] access management is owner-only while viewers and editors retain their appropriate controls');
     assert.deepEqual(errors,[]);
     console.log('Make online regression passed.');
+  } catch(error) {
+    console.error('Scenario failed before cleanup:',error);
+    for(const tab of await browser.pages()) {
+      if(!tab.url().startsWith(base))continue;
+      console.error('Failure page:',tab.url());
+      try{console.error(await tab.evaluate(()=>({status:document.querySelector('[data-testid="device-list-status"]')?.textContent,online:document.querySelector('[data-testid="list-online-controls"]')?.textContent,drafts:[...document.querySelectorAll('[data-committed],[data-handoff-committed]')].map(input=>({label:input.getAttribute('aria-label'),value:input.value,committed:input.getAttribute('data-committed'),handoff:input.getAttribute('data-handoff-committed')}))})));}catch{}
+    }
+    throw error;
   } finally {
     mode='normal';holdFinalLogin=false;for(const request of [...held.splice(0),...heldLogin.splice(0)]){try{await request.abort();}catch{}}
     try{await login(page,owner);for(const id of created)if(Number.isInteger(id))await api(page,'DELETE',`/api/v1/list/${id}/delete`);}catch(e){console.error('Fixture cleanup failed:',e.message);}

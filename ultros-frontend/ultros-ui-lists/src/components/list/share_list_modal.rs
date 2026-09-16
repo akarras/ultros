@@ -109,6 +109,8 @@ pub fn ShareListSection(
     let (manual_user_permission, set_manual_user_permission) = signal(ListPermission::Read);
     let (invite_permission, set_invite_permission) = signal(ListPermission::Read);
     let (invite_max_uses, set_invite_max_uses) = signal(String::new());
+    let invite_error = RwSignal::new(None::<String>);
+    let invite_limit_invalid = RwSignal::new(false);
     let last_copied = use_context::<GlobalLastCopiedText>();
     let toasts = use_toast();
     let last_copied_invite = RwSignal::new(None::<String>);
@@ -194,6 +196,8 @@ pub fn ShareListSection(
         };
         match result {
             Ok(invite) => {
+                set_invite_max_uses(String::new());
+                invite_error.set(None);
                 let already_copied = last_copied_invite
                     .with_untracked(|id| id.as_deref() == Some(invite.id.as_str()));
                 if !already_copied {
@@ -202,6 +206,7 @@ pub fn ShareListSection(
                 }
             }
             Err(e) => {
+                invite_error.set(Some(t_string!(i18n, online_invite_failed).to_string()));
                 if let Some(toasts) = toasts {
                     toasts.error(format!("Could not create invite link: {e}"));
                 }
@@ -241,9 +246,9 @@ pub fn ShareListSection(
                                     />
                                 </section>
     <div class="flex flex-wrap gap-2" role="group" aria-label=move || t_string!(i18n,online_invite_method).to_string()>
-                                    <button class="btn-secondary" aria-pressed=move || method.get()=="link" on:click=move |_|method.set("link")>{t!(i18n,online_invite_link)}</button>
-                                    <button class="btn-secondary" aria-pressed=move || method.get()=="group" on:click=move |_|method.set("group")>{t!(i18n,online_invite_group)}</button>
-                                    <button class="btn-secondary" aria-pressed=move || method.get()=="user" on:click=move |_|method.set("user")>{t!(i18n,online_invite_user)}</button>
+                                    <button class=move || if method.get()=="link" { "btn-primary" } else { "btn-secondary" } aria-pressed=move || (method.get()=="link").to_string() on:click=move |_|method.set("link")>{t!(i18n,online_invite_link)}</button>
+                                    <button class=move || if method.get()=="group" { "btn-primary" } else { "btn-secondary" } aria-pressed=move || (method.get()=="group").to_string() on:click=move |_|method.set("group")>{t!(i18n,online_invite_group)}</button>
+                                    <button class=move || if method.get()=="user" { "btn-primary" } else { "btn-secondary" } aria-pressed=move || (method.get()=="user").to_string() on:click=move |_|method.set("user")>{t!(i18n,online_invite_user)}</button>
                                 </div>
     <section class="space-y-3" class:hidden=move || method.get() != "link">
                                     <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_via_link_heading)}</h3>
@@ -251,12 +256,17 @@ pub fn ShareListSection(
                                         <input
                                             class="input w-full font-mono text-sm"
                                             readonly
+                                            aria-label=move || t_string!(i18n, online_invite_link).to_string()
                                             prop:value=latest_invite_url
                                             placeholder=t_string!(i18n, lists_invite_create_placeholder)
                                             on:click=move |_| copy_latest_invite(invites_for_copy.clone())
                                         />
                                         <select
                                             class="input w-full"
+                                            aria-label=move || t_string!(i18n, online_permission).to_string()
+                                            prop:value=move || permission_label(invite_permission())
+                                            data-testid="list-invite-permission"
+                                            disabled=move || create_invite.pending().get()
                                             on:change=move |ev| set_invite_permission(editable_permission(&event_target_value(&ev)))
                                         >
                                             <option value="Read">{t!(i18n, permission_read)}</option>
@@ -265,33 +275,57 @@ pub fn ShareListSection(
                                         <input
                                             class="input w-full"
                                             inputmode="numeric"
+                                            data-testid="list-invite-max-uses"
+                                            aria-label=move || t_string!(i18n, lists_invite_max_uses_placeholder).to_string()
+                                            aria-invalid=move || invite_limit_invalid.get().to_string()
+                                            aria-describedby=move || invite_error.get().is_some().then_some("list-invite-error")
+                                            disabled=move || create_invite.pending().get()
                                             placeholder=t_string!(i18n, lists_invite_max_uses_placeholder)
                                             prop:value=invite_max_uses
-                                            on:input=move |ev| set_invite_max_uses(event_target_value(&ev))
+                                            on:input=move |ev| {
+                                                set_invite_max_uses(event_target_value(&ev));
+                                                invite_limit_invalid.set(false);
+                                                invite_error.set(None);
+                                            }
                                         />
                                         <button
                                             type="button"
                                             class="btn-primary"
+                                            data-testid="list-invite-create"
                                             prop:disabled=create_invite.pending()
                                             on:click=move |_| {
-                                                let max_uses = invite_max_uses().trim().parse::<i32>().ok();
+                                                let raw = invite_max_uses.get_untracked();
+                                                let trimmed = raw.trim();
+                                                let max_uses = if trimmed.is_empty() {
+                                                    None
+                                                } else if let Some(limit) = trimmed.parse::<i32>().ok().filter(|limit| *limit > 0) {
+                                                    Some(limit)
+                                                } else {
+                                                    invite_limit_invalid.set(true);
+                                                    invite_error.set(Some(t_string!(i18n, online_invite_limit_invalid).to_string()));
+                                                    return;
+                                                };
+                                                invite_error.set(None);
                                                 create_invite.dispatch(CreateInvite {
                                                     permission: invite_permission(),
                                                     max_uses,
                                                 });
-                                                set_invite_max_uses(String::new());
                                             }
                                         >
                                             <Icon icon=i::BsClipboard2Fill />
-                                            <span>{t!(i18n, lists_invite_copy_button)}</span>
+                                            <span>{t!(i18n, online_invite_create)}</span>
                                         </button>
                                     </div>
+                                    {move || invite_error.get().map(|message| view! {
+                                        <p id="list-invite-error" role="alert" class="text-sm text-red-300">{message}</p>
+                                    })}
                                 </section>
     <section class="space-y-3" class:hidden=move || method.get() != "group">
                                     <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_group_heading)}</h3>
                                     <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_9rem]">
                                         <select
                                             class="input w-full text-base"
+                                            aria-label=move || t_string!(i18n, online_invite_group).to_string()
                                             prop:value=selected_group_id
                                             on:change=move |ev| {
                                                 set_selected_group_id(event_target_value(&ev));
@@ -330,7 +364,7 @@ pub fn ShareListSection(
                                         // instead of blanking the whole modal.
                                         <Suspense fallback=move || {
                                             view! {
-                                                <select class="input w-full text-base" disabled>
+                                                <select class="input w-full text-base" aria-label=move || t_string!(i18n, lists_share_role_label).to_string() disabled>
                                                     <option value="">{t!(i18n, lists_share_role_everyone)}</option>
                                                 </select>
                                             }
@@ -369,6 +403,8 @@ pub fn ShareListSection(
                                         </Suspense>
                                         <select
                                             class="input w-full"
+                                            aria-label=move || t_string!(i18n, online_permission).to_string()
+                                            prop:value=move || permission_label(group_permission())
                                             on:change=move |ev| set_group_permission(editable_permission(&event_target_value(&ev)))
                                         >
                                             <option value="Read">{t!(i18n, permission_read)}</option>
@@ -416,12 +452,15 @@ pub fn ShareListSection(
                                         <input
                                             class="input w-full text-base"
                                             inputmode="numeric"
+                                            aria-label=move || t_string!(i18n, lists_share_manual_user_placeholder).to_string()
                                             placeholder=t_string!(i18n, lists_share_manual_user_placeholder)
                                             prop:value=manual_user_id
                                             on:input=move |ev| set_manual_user_id(event_target_value(&ev))
                                         />
                                         <select
                                             class="input w-full"
+                                            aria-label=move || t_string!(i18n, online_permission).to_string()
+                                            prop:value=move || permission_label(manual_user_permission())
                                             on:change=move |ev| set_manual_user_permission(editable_permission(&event_target_value(&ev)))
                                         >
                                             <option value="Read">{t!(i18n, permission_read)}</option>
@@ -462,7 +501,7 @@ pub fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoVi
     let list_name = list.name.clone();
     let list_for_section = list.clone();
     view! {
-        <Modal set_visible=set_visible max_width="max-w-5xl w-[96%] sm:w-[820px]".to_string()>
+        <Modal set_visible=set_visible max_width="max-w-5xl w-[96%] sm:w-[820px]".to_string() aria_label=Signal::derive(move || t_string!(i18n,online_access).to_string())>
             <div class="space-y-6">
                 <div class="pr-10">
                     <h2 class="text-3xl font-black text-[color:var(--color-text)]">

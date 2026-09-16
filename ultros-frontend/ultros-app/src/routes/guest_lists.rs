@@ -270,7 +270,7 @@ mod browser {
                 {move || accounts.get().and_then(Result::err).map(|error|view! {
                     <p role="alert" class="text-red-400">{t!(i18n,error_loading_lists,error=error.to_string())}</p>
                 })}
-                <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="lists-grid">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="lists-grid">
                     <For each=move || local_cards.get() key=move |l| (l.id.clone(),l.revision,l.online.as_ref().map(|b|(b.list_id,b.acknowledged,b.owner.clone())),user_id.get()) children=move |list| {
                         let id=StoredValue::new(list.id.clone());
                         let binding=list.online.clone();
@@ -293,13 +293,13 @@ mod browser {
                     <p class="py-8 text-center text-[color:var(--color-text-muted)]">{t!(i18n,online_empty)}</p>
                 </Show>
                 <Show when=move || user_id.get().is_none()><p class="text-sm"><a class="underline" rel="external" href="/login?next=/list%3Flabs%3Dlists-sync">{t!(i18n,lists_device_sign_in)}</a></p></Show>
-                <Show when=creating><Modal set_visible=set_creating>
+                <Show when=creating><Modal set_visible=set_creating aria_label=Signal::derive(move || t_string!(i18n,online_new).to_string())>
                     <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_new)}</h2>
                     <input class="input w-full" data-testid="device-list-name" aria-label=move || t_string!(i18n,list_name).to_string() placeholder=move || t_string!(i18n,guest_workspace_placeholder).to_string() prop:value=move || name.get() on:input=move |ev| name.set(event_target_value(&ev)) maxlength="100" />
                     <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
                     <button class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty() on:click=create>{t!(i18n,create_list)}</button></div>
                 </Modal></Show>
-                <Show when=restoring><Modal set_visible=set_restoring>
+                <Show when=restoring><Modal set_visible=set_restoring aria_label=Signal::derive(move || t_string!(i18n,online_restore).to_string())>
                     <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_restore)}</h2>
                     <div class="flex flex-col gap-2">{move || summaries.get().into_iter().filter(|l|l.online.as_ref().is_some_and(|b|user_id.get().is_some_and(|id|id.to_string()==b.owner))).map(|l|view! {
                         <a class="underline" href=format!("/list/device/{}?labs=lists-sync&recovery=1",l.id)>{t!(i18n,guest_workspace_export)}": "{l.name}</a>
@@ -318,7 +318,7 @@ mod browser {
                         });
                     }>{t!(i18n,guest_workspace_restore)}</button></div>
                 </Modal></Show>
-                <Show when=joining><Modal set_visible=set_joining><div class="space-y-3">
+                <Show when=joining><Modal set_visible=set_joining aria_label=Signal::derive(move || t_string!(i18n,lists_redeem_invite_label).to_string())><div class="space-y-3">
                     <h2 class="text-xl font-bold">{t!(i18n,lists_redeem_invite_label)}</h2>
                     <input class="input w-full" data-testid="list-join-code" aria-label=move ||t_string!(i18n,lists_invite_code_placeholder).to_string() prop:value=move ||invite.get() disabled=move ||redeem.pending().get() on:input=move |e|invite.set(event_target_value(&e)) />
                     <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
@@ -654,7 +654,7 @@ mod browser {
                     view! { <ListCart source selected_items=selected /> }.into_any()
                 }}
                 </div>
-                <Show when=storage_open><crate::components::modal::Modal set_visible=set_storage_open>
+                <Show when=storage_open><crate::components::modal::Modal set_visible=set_storage_open aria_label=Signal::derive(move || t_string!(i18n,online_more).to_string())>
                     <h2 class="text-xl font-bold">{t!(i18n,online_more)}</h2>
                     <div class="space-y-3 pt-3">
                         <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>

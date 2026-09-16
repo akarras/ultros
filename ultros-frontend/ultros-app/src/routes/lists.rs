@@ -174,7 +174,7 @@ pub(crate) fn ListCard(
     let list_for_share = list.clone();
 
     view! {
-        <div class="panel p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
+        <div class="panel min-w-0 p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
             {move || {
                 let list = list_for_render.clone();
                 if is_edit() && (caps.can_admin || caps.can_leave) {
@@ -261,7 +261,7 @@ pub(crate) fn ListCard(
                     view! {
                         <>
                             <div class="flex justify-between items-start gap-2">
-                                <div class="flex flex-col gap-1 overflow-hidden">
+                                <div class="flex min-w-0 flex-col gap-1 overflow-hidden">
                                     <a href=format!("/list/{}", list.id) class="text-xl font-bold hover:underline truncate text-[color:var(--link-color)]">
                                         {move || name()}
                                     </a>
@@ -280,7 +280,7 @@ pub(crate) fn ListCard(
                                         </div>
                                     </Show>
                                 </div>
-                                <div class="flex items-center gap-1">
+                                <div class="flex shrink-0 items-center gap-1">
                                     <Show when=move || { caps.can_admin }>
                                         <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, online_access).to_string())>
                                             <button
