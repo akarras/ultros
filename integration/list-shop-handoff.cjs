@@ -12,10 +12,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { capture } = require("./capture.cjs");
+const { cleanupOwnedLists, finishCleanup } = require("./list-fixture-cleanup.cjs");
+const { createMarketFixture } = require("./list-market-fixture.cjs");
 
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 60000);
-const ITEM = process.env.ITEM_NAME || "Maple Log";
+let ITEM = process.env.ITEM_NAME || "Maple Log";
+const ACCEPTANCE = process.env.LISTS_ACCEPTANCE === "1";
 const USER = { id: 990000000031, username: "ShopHandoffOwner" };
 const testId = id => `[data-testid="${id}"]`;
 
@@ -31,6 +34,8 @@ async function main() {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   let listId = null;
+  let market = null;
+  let originalError;
 
   const api = (method, route, body) => page.evaluate(async ({ method, route, body }) => {
     const response = await fetch(route, {
@@ -81,8 +86,14 @@ async function main() {
     assert(response && response.status() < 400, `test login failed: ${response?.status()}`);
     const worldData = await api("GET", "/api/v1/world_data");
     assert.equal(worldData.status, 200, "world_data");
-    const region = worldData.body.regions[0];
-    const world = region.datacenters[0].worlds[0];
+    if (ACCEPTANCE) {
+      market = await createMarketFixture(api, worldData.body);
+      ITEM = market.manifest.item_names[0];
+      assert(ITEM, "fixture must resolve item 5056 from the game catalog");
+      if (process.env.ITEM_NAME) assert.equal(process.env.ITEM_NAME, ITEM, "acceptance ITEM_NAME must match real fixture item");
+    }
+    const region = market?.region || worldData.body.regions[0];
+    const world = market?.manifest.worlds[0] || region.datacenters[0].worlds[0];
     await page.setCookie(
       { name: "LABS", value: "lists-sync", url: BASE_URL, path: "/" },
       { name: "HIDE_ADS", value: "true", url: BASE_URL, path: "/" },
@@ -115,6 +126,13 @@ async function main() {
     const listings = await api("GET", `/api/v1/list/${listId}/listings`);
     const stacks = listings.body[1][0][1].length;
     const priced = stacks > 0;
+    if (ACCEPTANCE) {
+      assert(priced, "acceptance cannot skip partial purchase/Undo/replacement on empty stock");
+      assert.equal(listings.body[1][0][0].item_id, market.manifest.item_ids[0], "UI added the exact fixture catalog item");
+      market.assertStock(listings.body[1][0][1]);
+    } else if (!priced) {
+      console.log("[SMOKE ONLY] SKIPPED: priced partial purchase, purchase Undo, listing replacement; this run is not Lists acceptance.");
+    }
     console.log(`[info] ${ITEM}: ${stacks} listings in scope → ${priced ? "priced" : "unknown-price"} journey`);
 
     // A row added locally shows no price until the listings cache is bumped
@@ -226,16 +244,21 @@ async function main() {
       console.log("[ok] the gone listing was replaced through a reviewed refresh");
     }
     assert.deepEqual(errors, [], "no uncaught browser errors");
+    if (market) market.assertStock((await api("GET", `/api/v1/list/${listId}/listings`)).body[1][0][1]);
     console.log("Shop handoff account journey passed.");
   } catch (error) {
+    originalError = error;
     const artifacts = path.join(__dirname, "artifacts", "list-shop-handoff");
     fs.mkdirSync(artifacts, { recursive: true });
     await capture(page, { path: path.join(artifacts, "failure.png"), fullPage: true }).catch(() => {});
     console.error("Page:", page.url(), await page.$eval("body", body => body.innerText.slice(0, 2000)).catch(() => "unavailable"));
     throw error;
   } finally {
-    if (listId) await api("DELETE", `/api/v1/list/${listId}/delete`).catch(() => {});
-    await browser.close();
+    await finishCleanup([
+      async () => { if (listId) await cleanupOwnedLists(api, [listId]); },
+      async () => { if (market) await market.cleanup(); },
+      () => browser.close(),
+    ], originalError);
   }
 }
 

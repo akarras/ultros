@@ -3,6 +3,8 @@ pub(crate) mod api;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
+#[cfg(feature = "test-auth")]
+mod list_market_fixture;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
@@ -1362,7 +1364,15 @@ async fn refresh_world_item_listings(
     State(listing_events): State<
         ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     >,
-) -> Result<Redirect, WebError> {
+) -> Result<axum::response::Response, WebError> {
+    #[cfg(feature = "test-auth")]
+    if crate::test_market_isolation::enabled() {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            crate::test_market_isolation::BLOCKED,
+        )
+            .into_response());
+    }
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
@@ -1435,7 +1445,7 @@ async fn refresh_world_item_listings(
         Ok(())
     });
     let _ = timeout(Duration::from_secs(1), future).await?;
-    Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
+    Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
 }
 
 pub(crate) use self::state::WebState;

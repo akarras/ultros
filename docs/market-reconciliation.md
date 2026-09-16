@@ -73,3 +73,16 @@ Still outside this change: ordered event writes, snapshot/event race protection,
 per-board verification timestamps, weighted scheduling, durable outgoing events,
 and upstream replay. A per-board retry queue would avoid replaying the successful
 suffix of a failed world and allow more precise prioritization.
+
+## Deterministic test-auth market fixtures
+
+Real-database Lists acceptance uses a separate opt-in
+`ULTROS_TEST_MARKET_ISOLATION=true` in a compile-time `test-auth` build. This
+freezes before startup and disables websocket ingest, the recent-item loop and
+automatic full reconciliation together; it also rejects manual HTTP refresh and
+Discord sweeps. Metadata initialization and database reads continue normally.
+The flag and guards are absent from production builds. Use a disposable database
+owned by the test run, with no other ingest-enabled process connected. The older
+QA flags above retain their existing independent behavior. See
+[Lists priced acceptance](qa/lists-priced-acceptance.md) for the required native
+feature checks, isolation probe and strict stock/cleanup requirements.

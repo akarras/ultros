@@ -20,6 +20,16 @@ async function main() {
   const transport = upstream.protocol === "https:" ? https : http;
   let disconnected = false;
   const sockets = new Set();
+  // Upstream sockets the proxy opens are not the server's own connections, so
+  // proxy.close() cannot end them. A forwarded websocket upgrade whose page
+  // closed before the upstream answered would otherwise keep node alive after
+  // every assertion passed (the historical guest teardown hang).
+  const upstreamSockets = new Set();
+  const track = request => request.on("socket", socket => {
+    if (upstreamSockets.has(socket)) return; // keep-alive reuse
+    upstreamSockets.add(socket);
+    socket.once("close", () => upstreamSockets.delete(socket));
+  });
   // Page.setOfflineMode does not reliably disconnect the service-worker
   // target. A private proxy lets us sever every fetch from this test's origin
   // without stopping the real app or interfering with another test session.
@@ -34,6 +44,7 @@ async function main() {
       incoming.pipe(response);
     });
     forwarded.on("error", () => { response.destroy(); });
+    track(forwarded);
     request.pipe(forwarded);
   });
   proxy.on("connection", socket => {
@@ -60,6 +71,9 @@ async function main() {
       upstreamSocket.on("close", () => socket.destroy());
     });
     forwarded.on("error", () => socket.destroy());
+    forwarded.on("response", incoming => { incoming.destroy(); socket.destroy(); forwarded.destroy(); });
+    socket.on("close", () => forwarded.destroy());
+    track(forwarded);
     forwarded.end();
   });
   await new Promise(resolve => proxy.listen(0, "127.0.0.1", resolve));
@@ -498,6 +512,7 @@ async function main() {
   } finally {
     await browser.close();
     for (const socket of sockets) socket.destroy();
+    for (const socket of upstreamSockets) socket.destroy();
     proxy.closeAllConnections();
     await new Promise(resolve => proxy.close(resolve));
   }

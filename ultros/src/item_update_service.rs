@@ -612,6 +612,11 @@ impl PartialEq<WorldItemRecencyView> for CmpListing {
 
 impl UpdateService {
     pub(crate) fn start_service(service: Arc<Self>, token: CancellationToken) {
+        #[cfg(feature = "test-auth")]
+        if crate::test_market_isolation::enabled() {
+            warn!("test-auth market fixture isolation: recent-item scheduler disabled");
+            return;
+        }
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -673,6 +678,10 @@ impl UpdateService {
     /// sweeps became resumable. Session locks die with the connection, so a
     /// replica killed mid-sweep releases it with nothing to clean up.
     pub(crate) async fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
+        #[cfg(feature = "test-auth")]
+        if crate::test_market_isolation::enabled() {
+            return None;
+        }
         let mut guard = self.sweep_lock.try_claim()?;
         let pool = self.db.get_connection().get_postgres_connection_pool();
         let mut connection = match pool.acquire().await {

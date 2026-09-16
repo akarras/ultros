@@ -438,5 +438,16 @@ if [ "${RUN_DASHBOARD:-1}" != "0" ]; then
     fi
 fi
 
+# This gate is opt-in and independent of the route screenshot smoke. It
+# requires real empty-database fixtures and all merged Lists prerequisites.
+if [ "${LISTS_ACCEPTANCE:-0}" = "1" ]; then
+    log "running required priced Lists acceptance against ${LISTS_ACCEPTANCE_BUILD:-UNNAMED BUILD}"
+    lists_acceptance_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-acceptance ) || lists_acceptance_exit=$?
+    if [ "$lists_acceptance_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$lists_acceptance_exit"
+    fi
+fi
+
 log "screenshots in integration/artifacts/ (exit=$test_exit)"
 exit "$test_exit"

@@ -688,11 +688,14 @@ async function main() {
     fail(failures, `uncaught: ${e && e.stack ? e.stack : e}`);
   } finally {
     if (ownerPage) {
-      for (const id of createdLists) {
-        await api(ownerPage, "DELETE", `/api/v1/list/${id}/delete`).catch(() => {});
-      }
+      try {
+        await require("./list-fixture-cleanup.cjs").cleanupOwnedLists(
+          (method, route, body) => api(ownerPage, method, route, body), createdLists);
+      } catch (error) { fail(failures, `owned fixture cleanup: ${error.stack || error}; ${error.errors?.map(String).join("; ") || ""}`); }
     }
-    await Promise.all(browsers.map(value => value.close()));
+    for (const result of await Promise.allSettled(browsers.map(value => value.close()))) {
+      if (result.status === "rejected") fail(failures, `browser cleanup: ${result.reason}`);
+    }
   }
 
   if (failures.length) {

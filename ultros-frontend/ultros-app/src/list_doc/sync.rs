@@ -80,6 +80,13 @@ pub fn classify_error(message: &str) -> ErrorKind {
     }
 }
 
+/// Relay termination is deliberately NOT classified as Denied: the server also
+/// emits this message when its permission lookup fails. The owning page must
+/// confirm access over REST before purging or restoring the terminated relay.
+pub fn is_relay_authorization_error(message: &str, list_id: i32) -> bool {
+    message == format!("forbidden: no verified read access to list {list_id}")
+}
+
 /// The live handles for one document's realtime sync. Dropping this stops
 /// both halves: the `RealtimeSubscription` unsubscribes on the socket, and
 /// the outbox-drain `Effect` is disposed so it never fires again. Task 8
@@ -91,8 +98,22 @@ pub struct SyncSubscription {
     /// (`Stale`, `MetaForbidden`). This is the only strong reference, so
     /// dropping `SyncSubscription` still unsubscribes immediately.
     _subscription: Rc<RefCell<Option<RealtimeSubscription>>>,
+    force_snapshot: Rc<Cell<bool>>,
     drain: Option<Effect<LocalStorage>>,
     recovery_retry: Option<Effect<LocalStorage>>,
+}
+
+impl SyncSubscription {
+    /// Called after an authoritative permission probe, outside socket dispatch.
+    /// Preserve the existing dynamic version factory and all rebase guards.
+    pub fn resubscribe(&self) -> bool {
+        preserve_snapshot_request(&self.force_snapshot, || {
+            self._subscription
+                .borrow()
+                .as_ref()
+                .is_some_and(RealtimeSubscription::resubscribe)
+        })
+    }
 }
 
 impl Drop for SyncSubscription {
@@ -164,8 +185,9 @@ fn defer(task: impl FnOnce() + 'static) {
 /// error that means this client should stop trying to sync this document
 /// (`ErrorKind::Denied` / `ErrorKind::NotFound` / `ErrorKind::NotSignedIn`);
 /// Task 8 wires the first two to `handle.purge()` and the last to a plain
-/// `close()` that keeps the snapshot, both plus dropping this subscription. **All three callbacks
-/// run after `dispatch_message` has returned**, so dropping the
+/// `close()` that keeps the snapshot, both plus dropping this subscription.
+/// Ambiguous relay termination instead calls `on_relay_error` for a REST check;
+/// **All callbacks run after `dispatch_message` has returned**, so dropping the
 /// `SyncSubscription` from inside one of them is safe.
 pub fn start(
     handle: ListDocHandle,
@@ -173,12 +195,14 @@ pub fn start(
     on_stale: impl Fn() + 'static,
     on_remote_change: impl Fn() + 'static,
     on_denied: impl Fn(ErrorKind) + 'static,
+    on_relay_error: impl Fn() + 'static,
 ) -> SyncSubscription {
     handle.set_status("connecting");
     let list_id = handle.list_id;
     let on_stale: Rc<dyn Fn()> = Rc::new(on_stale);
     let on_remote_change: Rc<dyn Fn()> = Rc::new(on_remote_change);
     let on_denied: Rc<dyn Fn(ErrorKind)> = Rc::new(on_denied);
+    let on_relay_error: Rc<dyn Fn()> = Rc::new(on_relay_error);
 
     // Filled in right after `subscribe_list_doc` returns; the handler only
     // ever sees it through a `Weak`, so the `Rc` in `SyncSubscription` stays
@@ -208,6 +232,7 @@ pub fn start(
     // Makes the next handshake message claim an empty version, which forces
     // the server to answer with a `Snapshot` rather than a diff.
     let force_empty_version = Rc::new(Cell::new(false));
+    let force_snapshot = force_empty_version.clone();
 
     let sender = realtime.clone();
     let version_flag = force_empty_version.clone();
@@ -425,6 +450,14 @@ pub fn start(
                 });
             }
             ServerClient::Error { message } => {
+                if is_relay_authorization_error(&message, list_id) {
+                    handle.set_status("reconnecting");
+                    let on_relay_error = on_relay_error.clone();
+                    defer(move || {
+                        if !handle.is_closed_or_disposed() { on_relay_error(); }
+                    });
+                    return;
+                }
                 let kind = classify_error(&message);
                 match kind {
                     ErrorKind::Denied | ErrorKind::NotFound | ErrorKind::NotSignedIn => {
@@ -519,6 +552,7 @@ pub fn start(
 
     SyncSubscription {
         _subscription: slot,
+        force_snapshot,
         drain: Some(drain),
         recovery_retry: Some(recovery_retry),
     }
@@ -537,6 +571,17 @@ fn resubscribe(slot: &Weak<RefCell<Option<RealtimeSubscription>>>) -> bool {
     } else {
         false
     }
+}
+
+/// A dynamic factory consumes its one-shot snapshot request even when the
+/// socket cannot send. Keep an already armed request for the next reconnect.
+fn preserve_snapshot_request(flag: &Cell<bool>, send: impl FnOnce() -> bool) -> bool {
+    let was_forced = flag.get();
+    let sent = send();
+    if was_forced && !sent {
+        flag.set(true);
+    }
+    sent
 }
 
 /// M2: `resubscribe` after arming `force_empty_version` (the caller must set
@@ -560,6 +605,40 @@ fn resubscribe_forcing_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_recovery_failed_send_preserves_only_an_armed_snapshot_request() {
+        for (armed, sent) in [(true, false), (true, true), (false, false), (false, true)] {
+            let flag = Cell::new(armed);
+            let result = preserve_snapshot_request(&flag, || {
+                assert_eq!(
+                    flag.replace(false),
+                    armed,
+                    "the actual dynamic factory consumes the request before send"
+                );
+                sent
+            });
+            assert_eq!(result, sent);
+            assert_eq!(
+                flag.get(),
+                armed && !sent,
+                "failed recovery must retain a pending snapshot without inventing one"
+            );
+        }
+    }
+
+    #[test]
+    fn terminated_authorization_relay_needs_exact_list_and_rest_confirmation() {
+        let message = "forbidden: no verified read access to list 9";
+        assert!(is_relay_authorization_error(message, 9));
+        assert!(!is_relay_authorization_error(message, 90));
+        assert!(!is_relay_authorization_error("unrelated socket failure", 9));
+        assert_eq!(
+            classify_error(message),
+            ErrorKind::Transient,
+            "permission lookup failure and actual revocation share this server text"
+        );
+    }
 
     #[test]
     fn classify_error_anonymous_update_is_not_signed_in() {
