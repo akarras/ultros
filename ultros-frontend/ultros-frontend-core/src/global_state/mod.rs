@@ -5,6 +5,7 @@ pub use ultros_ui::global_state::clipboard_text;
 pub mod cookies;
 pub mod craft_options;
 pub mod crafter_levels;
+pub mod guest_alerts;
 pub mod home_world;
 pub mod labs;
 pub mod local_world_data;
