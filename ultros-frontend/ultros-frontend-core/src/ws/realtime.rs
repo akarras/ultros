@@ -510,7 +510,9 @@ mod client {
                     handler(message.clone());
                 }
             }
-            ServerClient::SocketConnected | ServerClient::SubscriptionCreated => {}
+            ServerClient::SocketConnected
+            | ServerClient::SubscriptionCreated
+            | ServerClient::Notification(_) => {}
             ServerClient::Sales(_) | ServerClient::Listings(_) | ServerClient::ListUpdate(_) => {
                 for handler in inner.handlers.borrow().values() {
                     handler(message.clone());

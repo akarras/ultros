@@ -46,6 +46,9 @@ pub(crate) fn method_to_db(m: &EndpointMethod) -> (&'static str, JsonValue) {
             "WebPush",
             serde_json::json!({ "subscription_id": subscription_id }),
         ),
+        // Not created through this generic CRUD (see `validate_endpoint_method`
+        // below) — Task 6 wires the auto-created row's real persistence.
+        EndpointMethod::InApp {} => ("InApp", serde_json::json!({})),
     }
 }
 
@@ -120,6 +123,9 @@ pub(crate) fn validate_endpoint_method(m: &EndpointMethod, owner_id: i64) -> Res
                 "WebPush endpoints must be created via /api/v1/push/subscribe"
             )))
         }
+        EndpointMethod::InApp {} => Err(ApiError::AnyhowError(anyhow::anyhow!(
+            "InApp endpoints are auto-created for every user and cannot be created via this endpoint"
+        ))),
     }
 }
 

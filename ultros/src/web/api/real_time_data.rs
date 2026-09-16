@@ -656,6 +656,40 @@ async fn handle_socket(
                                             }
                                         }
                                     }
+                                    ClientMessage::SubscribeNotifications { subscription_id } => {
+                                        let subscription_id =
+                                            subscription_id.unwrap_or_else(|| {
+                                                let id = next_subscription_id;
+                                                next_subscription_id += 1;
+                                                id
+                                            });
+                                        if !subscriptions.begin(subscription_id) {
+                                            sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Error {
+                                                    message: format!(
+                                                        "too many active subscriptions, max is {MAX_SUBSCRIPTIONS_PER_SOCKET}"
+                                                    ),
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                            continue;
+                                        }
+                                        // A later task streams this user's fired alerts
+                                        // back as `ServerClient::Notification`, wrapped
+                                        // in `SubscriptionEvent`. For now the
+                                        // subscription is acknowledged but idle, so a
+                                        // client isn't left waiting on `Subscribed`.
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Subscribed {
+                                                    subscription_id,
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                    }
                                 }
                             }
                             Message::Binary(_) => {

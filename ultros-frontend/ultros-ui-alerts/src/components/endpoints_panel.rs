@@ -171,6 +171,9 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         EndpointMethod::WebPush { .. } => {
                                             t_string!(i18n, endpoints_method_web_push).to_string()
                                         }
+                                        EndpointMethod::InApp {} => {
+                                            t_string!(i18n, endpoints_method_in_app).to_string()
+                                        }
                                     };
                                     let id = e.id;
                                     // Delivery disabled this endpoint after Discord

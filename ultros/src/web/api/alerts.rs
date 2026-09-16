@@ -588,6 +588,12 @@ pub(crate) async fn list_alert_events(
                 matched_price: r.matched_price,
                 delivered: r.delivered,
                 delivery_error: r.delivery_error,
+                // Task 8 wires these from the DB (read state + message text);
+                // for now every row reports as unread with no inbox message.
+                read_at: None,
+                title: None,
+                body: None,
+                click_url: None,
             })
             .collect(),
     ))

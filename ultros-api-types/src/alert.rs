@@ -1,6 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::world_helper::AnySelector;
+use crate::ActiveListing;
+use crate::world_helper::{AnySelector, WorldHelper};
 
 /// What kind of condition the alert checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +83,47 @@ pub struct AlertEvent {
     pub matched_price: Option<i32>,
     pub delivered: bool,
     pub delivery_error: Option<String>,
+    /// When the user marked this event as read. `None` means unread.
+    /// Additive field: defaults to `None` when deserializing payloads from
+    /// older servers.
+    #[serde(default)]
+    pub read_at: Option<DateTime<Utc>>,
+    /// Notification-inbox display title. Additive field: defaults to `None`
+    /// when deserializing payloads from older servers.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Notification-inbox display body. Additive field: defaults to `None`
+    /// when deserializing payloads from older servers.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Where clicking the notification should navigate to. Additive field:
+    /// defaults to `None` when deserializing payloads from older servers.
+    #[serde(default)]
+    pub click_url: Option<String>,
+}
+
+/// Body for `POST /api/v1/alerts/events/read`. Marks either an explicit set of
+/// event ids, or every event with `id <= up_to_id`, as read. Both fields
+/// default so a caller can supply just one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarkAlertEventsReadRequest {
+    #[serde(default)]
+    pub ids: Vec<i64>,
+    #[serde(default)]
+    pub up_to_id: Option<i64>,
+}
+
+/// Response for `POST /api/v1/alerts/events/read`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarkAlertEventsReadResponse {
+    pub updated: u64,
+    pub unread_count: u64,
+}
+
+/// Response for `GET /api/v1/alerts/events/unread_count`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnreadAlertEventCount {
+    pub unread: u64,
 }
 
 /// Delivery channel for a notification endpoint. Mirrors the `method` discriminator
@@ -117,6 +160,11 @@ pub enum EndpointMethod {
     WebPush {
         subscription_id: i32,
     },
+    /// The notification inbox itself (delivered over the websocket + `GET
+    /// /api/v1/alerts/events`, not an external channel). Every user gets one
+    /// auto-created `InApp` endpoint; it is not created via the generic
+    /// endpoints CRUD.
+    InApp {},
 }
 
 /// Body for `POST /api/v1/push/subscribe`. The browser obtains `endpoint`, `p256dh`,
@@ -198,6 +246,204 @@ pub struct DiscordWritableGuild {
     pub name: String,
     pub icon_url: Option<String>,
     pub channels: Vec<DiscordWritableChannel>,
+}
+
+/// A resolved item-price-threshold alert rule, shaped for pure matching against
+/// a single [`ActiveListing`] via [`threshold_listing_matches`]. Shared between
+/// the server (`ultros/src/alerts/price_alert_tracker.rs`) and the browser, so a
+/// guest without an account can evaluate the same rule locally.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThresholdRule {
+    pub item_id: i32,
+    pub world_selector: AnySelector,
+    pub price_threshold: i32,
+    pub hq_only: bool,
+    pub cooldown_seconds: i32,
+    pub last_fired_at: Option<DateTime<Utc>>,
+}
+
+/// True when an alert with the given `last_fired_at` is free to fire again given
+/// `cooldown_seconds` as of the reference timestamp `now`. `None` (never fired)
+/// is always off cooldown.
+pub fn is_off_cooldown_at(
+    last_fired_at: Option<DateTime<Utc>>,
+    cooldown_seconds: i32,
+    now: DateTime<Utc>,
+) -> bool {
+    match last_fired_at {
+        None => true,
+        Some(t) => now.signed_duration_since(t).num_seconds() >= cooldown_seconds as i64,
+    }
+}
+
+/// Returns true if `listing` satisfies every condition of `rule` and the rule is
+/// off cooldown at `now`. Pure: no DB calls, no `Utc::now()` — so it can run
+/// identically on the server and in the browser (e.g. for guest price alerts).
+///
+/// Check order: item id match, then world containment (resolved through
+/// `worlds`), then HQ-only, then price, then cooldown. Unlike
+/// `FilterPredicate::World`'s fail-open default, an unresolvable
+/// `listing.world_id` or `rule.world_selector` never fires — deliberately
+/// matching the server's existing `rule_matches_listing` semantics.
+pub fn threshold_listing_matches(
+    rule: &ThresholdRule,
+    listing: &ActiveListing,
+    worlds: &WorldHelper,
+    now: DateTime<Utc>,
+) -> bool {
+    if rule.item_id != listing.item_id {
+        return false;
+    }
+    let listing_world = worlds.lookup_selector(AnySelector::World(listing.world_id));
+    let rule_world = worlds.lookup_selector(rule.world_selector);
+    match (listing_world, rule_world) {
+        (Some(listing_world), Some(rule_world)) => {
+            if !listing_world.is_in(&rule_world) {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+    if rule.hq_only && !listing.hq {
+        return false;
+    }
+    if listing.price_per_unit > rule.price_threshold {
+        return false;
+    }
+    is_off_cooldown_at(rule.last_fired_at, rule.cooldown_seconds, now)
+}
+
+#[cfg(test)]
+mod threshold_tests {
+    use super::*;
+    use crate::world::{Datacenter, Region, World, WorldData};
+
+    fn helper() -> WorldHelper {
+        WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "NA".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Aether".into(),
+                    region_id: 1,
+                    worlds: vec![
+                        World {
+                            id: 100,
+                            name: "Adamantoise".into(),
+                            datacenter_id: 10,
+                        },
+                        World {
+                            id: 101,
+                            name: "Cactuar".into(),
+                            datacenter_id: 10,
+                        },
+                    ],
+                }],
+            }],
+        }
+        .into()
+    }
+
+    fn listing(world_id: i32, item_id: i32, price: i32, hq: bool) -> ActiveListing {
+        ActiveListing {
+            id: 1,
+            world_id,
+            item_id,
+            retainer_id: 7,
+            price_per_unit: price,
+            quantity: 1,
+            hq,
+            timestamp: chrono::NaiveDateTime::default(),
+        }
+    }
+
+    fn rule(world_selector: AnySelector, price_threshold: i32, hq_only: bool) -> ThresholdRule {
+        ThresholdRule {
+            item_id: 42,
+            world_selector,
+            price_threshold,
+            hq_only,
+            cooldown_seconds: 3600,
+            last_fired_at: None,
+        }
+    }
+
+    #[test]
+    fn threshold_matches_world_inside_datacenter_scope() {
+        let h = helper();
+        let r = rule(AnySelector::Datacenter(10), 100, false);
+        let l = listing(101, 42, 50, false);
+        assert!(threshold_listing_matches(&r, &l, &h, Utc::now()));
+    }
+
+    #[test]
+    fn threshold_rejects_world_outside_scope() {
+        let h = helper();
+        let r = rule(AnySelector::World(100), 100, false);
+        let l = listing(101, 42, 50, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, Utc::now()));
+    }
+
+    #[test]
+    fn threshold_rejects_unknown_world_or_selector() {
+        let h = helper();
+        // Unknown listing world.
+        let r = rule(AnySelector::World(100), 100, false);
+        let l = listing(9999, 42, 50, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, Utc::now()));
+        // Unknown rule selector.
+        let r = rule(AnySelector::World(9999), 100, false);
+        let l = listing(100, 42, 50, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, Utc::now()));
+    }
+
+    #[test]
+    fn threshold_hq_only_rejects_nq() {
+        let h = helper();
+        let r = rule(AnySelector::World(100), 100, true);
+        let l = listing(100, 42, 50, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, Utc::now()));
+        let l_hq = listing(100, 42, 50, true);
+        assert!(threshold_listing_matches(&r, &l_hq, &h, Utc::now()));
+    }
+
+    #[test]
+    fn threshold_matches_at_exact_price() {
+        let h = helper();
+        let r = rule(AnySelector::World(100), 100, false);
+        let l = listing(100, 42, 100, false);
+        assert!(threshold_listing_matches(&r, &l, &h, Utc::now()));
+    }
+
+    #[test]
+    fn threshold_rejects_above_price() {
+        let h = helper();
+        let r = rule(AnySelector::World(100), 100, false);
+        let l = listing(100, 42, 101, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, Utc::now()));
+    }
+
+    #[test]
+    fn threshold_respects_cooldown() {
+        let h = helper();
+        let now = Utc::now();
+        let mut r = rule(AnySelector::World(100), 100, false);
+        r.last_fired_at = Some(now - chrono::Duration::seconds(60));
+        let l = listing(100, 42, 50, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, now));
+
+        r.last_fired_at = Some(now - chrono::Duration::seconds(7200));
+        assert!(threshold_listing_matches(&r, &l, &h, now));
+    }
+
+    #[test]
+    fn threshold_rejects_other_item() {
+        let h = helper();
+        let r = rule(AnySelector::World(100), 100, false);
+        let l = listing(100, 43, 50, false);
+        assert!(!threshold_listing_matches(&r, &l, &h, Utc::now()));
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +584,35 @@ mod endpoint_tests {
         let s = serde_json::to_string(&req).unwrap();
         let back: UpdateAlertRequest = serde_json::from_str(&s).unwrap();
         assert_eq!(req, back);
+    }
+
+    #[test]
+    fn endpoint_method_in_app_round_trips_with_method_tag_only() {
+        let m = EndpointMethod::InApp {};
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v, json!({"method": "InApp"}));
+        let back: EndpointMethod = serde_json::from_value(v).unwrap();
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn alert_event_deserializes_without_inbox_fields() {
+        // A server that predates the notification-inbox fields must still
+        // deserialize here; the new fields default to `None`.
+        let v = json!({
+            "id": 1,
+            "alert_id": 2,
+            "fired_at": "2026-01-01T00:00:00Z",
+            "item_id": 42,
+            "matched_listing_id": null,
+            "matched_price": 100,
+            "delivered": true,
+            "delivery_error": null,
+        });
+        let e: AlertEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(e.read_at, None);
+        assert_eq!(e.title, None);
+        assert_eq!(e.body, None);
+        assert_eq!(e.click_url, None);
     }
 }
