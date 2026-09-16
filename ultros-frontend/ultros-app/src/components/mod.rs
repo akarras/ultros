@@ -16,6 +16,8 @@ pub use ultros_ui::components::confidence_badge;
 pub use ultros_ui::components::gil;
 pub use ultros_ui::components::icon;
 pub use ultros_ui_alerts::components::endpoints_panel;
+pub use ultros_ui_alerts::components::guest_alert_adoption;
+pub use ultros_ui_alerts::components::guest_alerts_panel;
 pub use ultros_ui_alerts::components::history_panel;
 pub use ultros_ui_alerts::components::list_subscribe_drawer;
 pub use ultros_ui_charts::components::chart_query;
