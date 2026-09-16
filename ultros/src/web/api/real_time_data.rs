@@ -32,7 +32,7 @@ use ultros_api_types::websocket::{
 };
 use ultros_api_types::{websocket::EventType as WEvent, world_helper::WorldHelper};
 
-use crate::event::{EventReceivers, EventType, ListDocEvent};
+use crate::event::{EventReceivers, EventType, ListDocEvent, NotificationEvent};
 use crate::lists::{Actor, ListSync, Origin};
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
@@ -53,6 +53,27 @@ fn relay_for(event: &ListDocEvent, list_id: i32, socket_id: u64) -> Option<Vec<u
         return None;
     }
     Some(event.update.clone())
+}
+
+/// Relays fired alerts to the socket that owns them: `Err(_)` (lag) maps to
+/// `Stale`, `Ok(e)` for a different owner is dropped, and `Ok(e)` for this
+/// owner is wrapped in its subscription's `SubscriptionEvent`.
+fn notification_relay(
+    receiver: tokio::sync::broadcast::Receiver<EventType<Arc<NotificationEvent>>>,
+    subscription_id: u64,
+    owner: i64,
+) -> BoxStream<'static, ServerClient> {
+    Box::pin(BroadcastStream::new(receiver).filter_map(move |event| {
+        let result = match event {
+            Err(_) => Some(ServerClient::Stale { subscription_id }),
+            Ok(event) if event.as_ref().owner == owner => Some(scoped_event(
+                subscription_id,
+                ServerClient::Notification(event.as_ref().event.clone()),
+            )),
+            Ok(_) => None,
+        };
+        async move { result }
+    }))
 }
 
 fn list_doc_relay<F, A>(
@@ -189,7 +210,7 @@ async fn handle_socket(
         history,
         lists,
         list_docs,
-        notifications: _,
+        notifications,
     } = events;
     let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
     let (mut sender, mut receiver) = socket.split();
@@ -677,19 +698,37 @@ async fn handle_socket(
                                             .await?;
                                             continue;
                                         }
-                                        // A later task streams this user's fired alerts
-                                        // back as `ServerClient::Notification`, wrapped
-                                        // in `SubscriptionEvent`. For now the
-                                        // subscription is acknowledged but idle, so a
-                                        // client isn't left waiting on `Subscribed`.
-                                        sender
-                                            .send(Message::Text(
-                                                serde_json::to_string(&ServerClient::Subscribed {
+                                        match authorize_notifications(
+                                            user.as_ref(),
+                                            subscription_id,
+                                        ) {
+                                            Ok(owner) => {
+                                                let stream = notification_relay(
+                                                    notifications.resubscribe(),
                                                     subscription_id,
-                                                })?
-                                                .into(),
-                                            ))
-                                            .await?;
+                                                    owner,
+                                                );
+                                                subscriptions.insert(subscription_id, stream);
+                                                sender
+                                                    .send(Message::Text(
+                                                        serde_json::to_string(
+                                                            &ServerClient::Subscribed {
+                                                                subscription_id,
+                                                            },
+                                                        )?
+                                                        .into(),
+                                                    ))
+                                                    .await?;
+                                            }
+                                            Err(error) => {
+                                                subscriptions.remove(subscription_id);
+                                                sender
+                                                    .send(Message::Text(
+                                                        serde_json::to_string(&error)?.into(),
+                                                    ))
+                                                    .await?;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -836,6 +875,27 @@ fn finish_list_authorization(
     )
 }
 
+/// Anonymous sockets have no owner to address an inbox to, so the handshake
+/// is rejected up front rather than installing a relay that would forward
+/// nothing (mirrors `ClientMessage::ListDocUpdate`'s anonymous handling).
+///
+/// The error is boxed because `ServerClient` is large (its `ListDocSubscribed`
+/// variant carries a version vector and a document payload); clippy's
+/// `result_large_err` flags returning it by value.
+fn authorize_notifications(
+    user: Option<&AuthDiscordUser>,
+    subscription_id: u64,
+) -> Result<i64, Box<ServerClient>> {
+    user.map(|u| u.id as i64).ok_or_else(|| {
+        Box::new(scoped_event(
+            subscription_id,
+            ServerClient::Error {
+                message: "sign in to receive notifications".to_string(),
+            },
+        ))
+    })
+}
+
 fn wrap_subscription_event(
     subscription_id: u64,
     event: Option<ServerClient>,
@@ -863,6 +923,137 @@ mod tests {
     use futures::FutureExt;
     use std::sync::atomic::AtomicUsize;
     use tokio::sync::{broadcast, oneshot};
+    use ultros_api_types::alert::AlertEvent;
+
+    fn notification_event(owner: i64, alert_id: i32) -> EventType<Arc<NotificationEvent>> {
+        EventType::added(NotificationEvent {
+            owner,
+            event: AlertEvent {
+                id: 1,
+                alert_id,
+                fired_at: chrono::DateTime::<chrono::Utc>::default(),
+                item_id: 42,
+                matched_listing_id: None,
+                matched_price: Some(100),
+                delivered: true,
+                delivery_error: None,
+                read_at: None,
+                title: Some("Title".to_string()),
+                body: Some("Body".to_string()),
+                click_url: Some("/item/42".to_string()),
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn notification_relay_delivers_only_the_owners_events() {
+        let (bus, _) = broadcast::channel(16);
+        let mut relay = notification_relay(bus.subscribe(), 11, 1);
+        bus.send(notification_event(2, 99)).unwrap();
+        bus.send(notification_event(1, 7)).unwrap();
+
+        match relay.next().await {
+            Some(ServerClient::SubscriptionEvent {
+                subscription_id: 11,
+                event,
+            }) => match *event {
+                ServerClient::Notification(e) => assert_eq!(e.alert_id, 7),
+                other => panic!("expected Notification, got {other:?}"),
+            },
+            other => panic!("expected SubscriptionEvent, got {other:?}"),
+        }
+        assert!(
+            relay.next().now_or_never().is_none(),
+            "the other owner's event was dropped, not merely delayed"
+        );
+    }
+
+    #[tokio::test]
+    async fn notification_relay_reports_lag_as_stale_then_resumes() {
+        let (bus, _) = broadcast::channel(2);
+        let mut relay = notification_relay(bus.subscribe(), 11, 1);
+        for i in 0..5 {
+            bus.send(notification_event(1, i)).unwrap();
+        }
+        assert!(matches!(
+            relay.next().await,
+            Some(ServerClient::Stale {
+                subscription_id: 11
+            })
+        ));
+        // Whatever survived the ring after the lag keeps flowing.
+        match relay.next().await {
+            Some(ServerClient::SubscriptionEvent {
+                subscription_id: 11,
+                ..
+            }) => {}
+            other => panic!("expected the relay to resume, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn notification_relay_closed_bus_releases_stream_without_closing_socket() {
+        let (bus, _) = broadcast::channel::<EventType<Arc<NotificationEvent>>>(16);
+        let mut relay = notification_relay(bus.subscribe(), 11, 1);
+        drop(bus);
+        assert!(
+            relay.next().await.is_none(),
+            "a closed bus ends the relay stream"
+        );
+
+        // An empty subscription map must not look like EOF to the socket loop.
+        let mut subscriptions = SocketSubscriptions::default();
+        assert!(subscriptions.next().now_or_never().is_none());
+    }
+
+    #[test]
+    fn anonymous_notification_subscribe_gets_scoped_error() {
+        let error = match authorize_notifications(None, 11) {
+            Err(error) => *error,
+            Ok(owner) => panic!("anonymous socket should not be authorized, got owner {owner}"),
+        };
+        match error {
+            ServerClient::SubscriptionEvent {
+                subscription_id: 11,
+                event,
+            } => match *event {
+                ServerClient::Error { message } => {
+                    assert_eq!(message, "sign in to receive notifications")
+                }
+                other => panic!("expected Error, got {other:?}"),
+            },
+            other => panic!("expected a scoped SubscriptionEvent, got {other:?}"),
+        }
+
+        let user = AuthDiscordUser {
+            id: 42,
+            name: "someone".to_string(),
+            avatar_url: String::new(),
+        };
+        match authorize_notifications(Some(&user), 11) {
+            Ok(owner) => assert_eq!(owner, 42),
+            Err(e) => panic!("an authenticated user should be authorized, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn notification_relay_respects_subscription_limit() {
+        let (bus, _) = broadcast::channel(16);
+        let mut subscriptions = SocketSubscriptions::default();
+        for id in 0..MAX_SUBSCRIPTIONS_PER_SOCKET as u64 {
+            assert!(subscriptions.begin(id));
+            subscriptions.insert(id, notification_relay(bus.subscribe(), id, 1));
+        }
+        assert_eq!(subscriptions.streams.len(), MAX_SUBSCRIPTIONS_PER_SOCKET);
+        assert!(
+            !subscriptions.begin(MAX_SUBSCRIPTIONS_PER_SOCKET as u64),
+            "at the cap, a brand new id is refused"
+        );
+        // Replacing an id already held is still allowed at the cap.
+        assert!(subscriptions.begin(0));
+        subscriptions.insert(0, notification_relay(bus.subscribe(), 0, 1));
+        assert_eq!(subscriptions.streams.len(), MAX_SUBSCRIPTIONS_PER_SOCKET);
+    }
 
     fn update(list_id: i32) -> EventType<Arc<ListDocEvent>> {
         EventType::Update(Arc::new(ListDocEvent {
