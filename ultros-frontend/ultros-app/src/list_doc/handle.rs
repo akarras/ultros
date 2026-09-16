@@ -56,11 +56,14 @@ extern "C" {
         list: i32,
         snapshot: &js_sys::Uint8Array,
         replacement_source: &wasm_bindgen::JsValue,
+        content_ready: bool,
     ) -> f64;
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRecovery)]
     fn recovery(user: &str, list: i32) -> wasm_bindgen::JsValue;
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRecoverySource)]
     fn recovery_source(user: &str, list: i32) -> wasm_bindgen::JsValue;
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountRecoveryReady)]
+    fn recovery_ready(user: &str, list: i32) -> wasm_bindgen::JsValue;
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountForget)]
     fn forget(user: &str, list: i32);
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = accountPending)]
@@ -98,6 +101,9 @@ pub struct ListDocHandle {
     pub status: RwSignal<String>,
     /// Last known `ListPermission` as `i16`, cached beside the snapshot.
     pub permission: RwSignal<i16>,
+    /// Permission can arrive over REST before the document handshake. An
+    /// untouched receiver is not a known empty list.
+    content_ready: RwSignal<bool>,
     pub save_state: RwSignal<SaveState>,
     pub recovery_state: RwSignal<RecoveryState>,
     pub recovery_retry: RwSignal<u64>,
@@ -146,39 +152,53 @@ impl ListDocHandle {
                 }
             });
         let doc = doc.unwrap_or_else(ListDocument::empty_peer);
+        let content_ready = loaded
+            .as_ref()
+            .and_then(|loaded| loaded.content_ready)
+            .unwrap_or_else(|| store::causal_content_ready(&doc));
         #[cfg(not(feature = "hydrate"))]
         let replacement_source: Option<Vec<u8>> = None;
         #[cfg(feature = "hydrate")]
-        let (doc, replacement_source) = {
+        let (doc, replacement_source, content_ready) = {
             // A failed replacement survives SPA navigation with its source
             // fence. Never merge it with the abandoned history on disk or send
             // its new operation IDs before completing the guarded save.
             let pending = recovery(&user_id.to_string(), list_id);
             let source = recovery_source(&user_id.to_string(), list_id);
+            let pending_ready = recovery_ready(&user_id.to_string(), list_id).as_bool();
             if incompatible_snapshot.is_none() && !pending.is_null() {
                 let bytes = js_sys::Uint8Array::new(&pending).to_vec();
                 match ListDocument::from_snapshot(&bytes) {
                     Err(_) => {
                         incompatible_snapshot = Some(bytes);
-                        (doc, None)
+                        (doc, None, false)
                     }
                     Ok(replacement) if !source.is_null() => {
-                        (replacement, Some(js_sys::Uint8Array::new(&source).to_vec()))
+                        let ready = pending_ready
+                            .unwrap_or_else(|| store::causal_content_ready(&replacement));
+                        (
+                            replacement,
+                            Some(js_sys::Uint8Array::new(&source).to_vec()),
+                            ready,
+                        )
                     }
                     Ok(replacement) => {
-                        let doc = match doc.import(&bytes) {
-                            Ok(report) if !report.pending => doc,
-                            _ => replacement,
+                        let ready = pending_ready
+                            .unwrap_or_else(|| store::causal_content_ready(&replacement));
+                        let (doc, ready) = match doc.import(&bytes) {
+                            Ok(report) if !report.pending => (doc, content_ready || ready),
+                            _ => (replacement, ready),
                         };
-                        (doc, None)
+                        (doc, None, ready)
                     }
                 }
             } else {
-                (doc, None)
+                (doc, None, content_ready)
             }
         };
         let recovery_persisting = replacement_source.is_some();
         let incompatible = incompatible_snapshot.is_some();
+        let content_ready = !incompatible && content_ready;
         let permission = if incompatible {
             0
         } else {
@@ -210,6 +230,7 @@ impl ListDocHandle {
                 .to_string(),
             ),
             permission: RwSignal::new(permission),
+            content_ready: RwSignal::new(content_ready),
             save_state: RwSignal::new(if incompatible {
                 SaveState::Failed
             } else {
@@ -262,6 +283,21 @@ impl ListDocHandle {
     /// swallowing the edit.
     pub fn is_closed_or_disposed(&self) -> bool {
         self.is_disposed() || self.closed.try_get_untracked().unwrap_or(true)
+    }
+
+    /// Reactive readiness, independent of whether REST has granted access.
+    pub fn has_readable_content(&self) -> bool {
+        !self.is_closed_or_disposed()
+            && self.content_ready.try_get().unwrap_or(false)
+            && !self.incompatible()
+    }
+
+    /// Only the completed document handshake (including UpToDate) establishes
+    /// an initially empty receiver as authoritative contents.
+    pub fn mark_content_ready(&self) {
+        if !self.is_closed_or_disposed() && !self.incompatible() {
+            let _ = self.content_ready.try_set(true);
+        }
     }
 
     /// Runs `f` against the document, or `None` once this handle is closed
@@ -321,6 +357,11 @@ impl ListDocHandle {
         if self.is_closed_or_disposed() {
             log::debug!("list {}: edit dropped, handle closed", self.list_id);
             return Ok(());
+        }
+        if !self.has_readable_content() {
+            return Err(DocError::InvalidStructure(
+                "list contents are still loading".into(),
+            ));
         }
         self.with_doc(|doc| {
             let mut result = Ok(());
@@ -425,7 +466,7 @@ impl ListDocHandle {
     }
 
     pub fn undo(&self) -> bool {
-        if self.incompatible() {
+        if !self.has_readable_content() {
             return false;
         }
         let mut done = false;
@@ -436,7 +477,7 @@ impl ListDocHandle {
     }
 
     pub fn redo(&self) -> bool {
-        if self.incompatible() {
+        if !self.has_readable_content() {
             return false;
         }
         let mut done = false;
@@ -453,7 +494,7 @@ impl ListDocHandle {
     pub fn can_undo(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        if self.incompatible() {
+        if !self.has_readable_content() {
             return false;
         }
         self.undo
@@ -464,7 +505,7 @@ impl ListDocHandle {
     pub fn can_redo(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        if self.incompatible() {
+        if !self.has_readable_content() {
             return false;
         }
         self.undo
@@ -475,8 +516,7 @@ impl ListDocHandle {
     pub fn can_undo_purchase(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        !self.is_closed_or_disposed()
-            && !self.incompatible()
+        self.has_readable_content()
             && self
                 .undo
                 .try_with_value(|undo| undo.can_undo_purchase())
@@ -508,13 +548,69 @@ impl ListDocHandle {
             return;
         }
         let _ = self.permission.try_set(permission);
-        let _ = store::remember_permission(
-            &BrowserStorage,
-            self.user_id,
-            self.list_id,
-            permission,
-            store::now_ms(),
-        );
+        self.update_index(Some(permission));
+    }
+
+    /// All account-index writers use the same lock. Snapshot purge remains
+    /// synchronous; its delayed index cleanup cannot remove a reopened copy.
+    fn update_index(&self, permission: Option<i16>) {
+        #[cfg(feature = "hydrate")]
+        {
+            use wasm_bindgen::{JsCast, prelude::*};
+            let user = self.user_id;
+            let list = self.list_id;
+            let Ok(generation) = store::checked_generation(&BrowserStorage, user, list) else {
+                return;
+            };
+            leptos::task::spawn_local(async move {
+                let callback = Closure::<dyn FnMut() -> JsValue>::new(move || {
+                    if store::checked_generation(&BrowserStorage, user, list).as_deref()
+                        == Ok(generation.as_str())
+                    {
+                        match permission {
+                            Some(permission) => {
+                                store::remember_permission(
+                                    &BrowserStorage,
+                                    user,
+                                    list,
+                                    permission,
+                                    store::now_ms(),
+                                );
+                            }
+                            None => {
+                                store::purge_index(&BrowserStorage, user, list);
+                            }
+                        }
+                    }
+                    // Index maintenance never acknowledges a pending snapshot.
+                    JsValue::FALSE
+                });
+                let _ = wasm_bindgen_futures::JsFuture::from(save_locked(
+                    &user.to_string(),
+                    list,
+                    0.0,
+                    callback.as_ref().unchecked_ref(),
+                ))
+                .await;
+            });
+        }
+        #[cfg(not(feature = "hydrate"))]
+        {
+            match permission {
+                Some(permission) => {
+                    store::remember_permission(
+                        &BrowserStorage,
+                        self.user_id,
+                        self.list_id,
+                        permission,
+                        store::now_ms(),
+                    );
+                }
+                None => {
+                    store::purge_index(&BrowserStorage, self.user_id, self.list_id);
+                }
+            }
+        }
     }
 
     // Keep export failure handling before the persistence boundary. The caller
@@ -524,6 +620,13 @@ impl ListDocHandle {
         export: impl FnOnce(&ListDocument) -> Result<Vec<u8>, DocError>,
     ) -> Option<Vec<u8>> {
         if self.purged.try_get_untracked().unwrap_or(true) || self.incompatible() {
+            return None;
+        }
+        if !self.content_ready.try_get_untracked().unwrap_or(false)
+            && self.with_doc(|doc| doc.inner().oplog_vv().iter().next().is_none()) == Some(true)
+        {
+            // Do not turn a permission-only first open into a saved empty
+            // document. Real local intent remains recoverable before sync.
             return None;
         }
         let snapshot = self.with_doc(export)?;
@@ -547,6 +650,7 @@ impl ListDocHandle {
             self.list_id,
             &js_sys::Uint8Array::from(snapshot),
             &source,
+            self.content_ready.get_untracked(),
         )
     }
 
@@ -559,6 +663,7 @@ impl ListDocHandle {
             use wasm_bindgen::{JsCast, prelude::*};
             let handle = *self;
             let permission = self.permission.get_untracked();
+            let content_ready = self.content_ready.get_untracked();
             let generation = self.generation.get_value();
             let replacement_source = self.replacement_source.get_value();
             let revoked = self.revoked.get_value();
@@ -571,11 +676,11 @@ impl ListDocHandle {
                         return JsValue::FALSE;
                     }
                     let result = if let Some(source_version) = replacement_source.as_deref() {
-                        let (next, result) = store::replace_save(
+                        let (next, result) = store::replace_save_with_readiness(
                             &BrowserStorage,
                             handle.user_id,
                             handle.list_id,
-                            &snapshot,
+                            (&snapshot, content_ready),
                             permission,
                             &generation,
                             source_version,
@@ -590,11 +695,11 @@ impl ListDocHandle {
                         }
                         result
                     } else {
-                        store::merge_save(
+                        store::merge_save_with_readiness(
                             &BrowserStorage,
                             handle.user_id,
                             handle.list_id,
-                            &snapshot,
+                            (&snapshot, content_ready),
                             permission,
                             &generation,
                         )
@@ -704,12 +809,14 @@ impl ListDocHandle {
         // in-memory swap below would touch disposed nodes, so stop after the
         // storage half.
         if self.is_disposed() {
-            store::purge(&BrowserStorage, self.user_id, self.list_id);
+            store::purge_snapshot(&BrowserStorage, self.user_id, self.list_id);
+            self.update_index(None);
             return;
         }
         self.revoked.with_value(|revoked| revoked.set(true));
         self.purged.set(true);
-        store::purge(&BrowserStorage, self.user_id, self.list_id);
+        store::purge_snapshot(&BrowserStorage, self.user_id, self.list_id);
+        self.update_index(None);
         // Clear the outbox before swapping documents so a subscription
         // firing mid-swap cannot re-add anything from the discarded
         // document; commits from it must never reach the socket.
@@ -731,6 +838,7 @@ impl ListDocHandle {
         self.recovery_snapshot.set_value(None);
         self.incompatible_snapshot.set_value(None);
         self.permission.set(0);
+        self.content_ready.set(false);
         self.revision.update(|r| *r += 1);
     }
 
@@ -827,6 +935,7 @@ impl ListDocHandle {
         // sends the replacement's diff, including the recovered local intent.
         self.outbox.set(Vec::new());
         self.doc.set_value(fresh);
+        self.content_ready.set(true);
         self.undo.set_value(undo);
         self.subscriptions.set_value(vec![on_change, on_local]);
         self.revision.update(|r| *r += 1);
@@ -867,6 +976,7 @@ impl ListDocHandle {
         self.outbox.dispose();
         self.status.dispose();
         self.permission.dispose();
+        self.content_ready.dispose();
         self.save_state.dispose();
         self.recovery_state.dispose();
         self.recovery_retry.dispose();
@@ -897,6 +1007,12 @@ impl ListDocHandle {
             // Dropping the previous timeout cancels it.
             let _ = handle.save_timer.try_update_value(|timer| *timer = None);
             if handle.purged.try_get_untracked().unwrap_or(true) || handle.incompatible() {
+                return;
+            }
+            if !handle.content_ready.try_get().unwrap_or(false)
+                && handle.with_doc(|doc| doc.inner().oplog_vv().iter().next().is_none())
+                    == Some(true)
+            {
                 return;
             }
             let _ = handle.save_state.try_set(SaveState::Pending);
@@ -954,6 +1070,116 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rest_permission_does_not_make_an_empty_receiver_readable() {
+        Owner::new().with(|| {
+            for cached in [
+                None,
+                Some(store::Loaded {
+                    content_ready: None,
+                    snapshot: ListDocument::empty_peer().export_snapshot().unwrap(),
+                    permission: 3,
+                }),
+            ] {
+                let handle = ListDocHandle::open_loaded(1, 1, cached);
+                handle.remember_permission(3);
+                assert_eq!(handle.permission.get_untracked(), 3);
+                assert!(!handle.has_readable_content());
+                assert!(
+                    handle
+                        .prepare_save(|_| panic!("initial receiver must not be saved"))
+                        .is_none()
+                );
+                // UpToDate is authoritative too: a server may explicitly
+                // confirm an operation-free legacy empty document.
+                handle.mark_content_ready();
+                assert!(handle.has_readable_content());
+                assert!(handle.prepare_save(ListDocument::export_snapshot).is_some());
+                handle.purge();
+                assert!(!handle.has_readable_content());
+            }
+        });
+    }
+
+    #[test]
+    fn compacted_cached_empty_and_nonempty_documents_are_readable_offline() {
+        Owner::new().with(|| {
+            for with_row in [false, true] {
+                let doc = ListDocument::new();
+                // No name heuristic: an empty name is still valid metadata.
+                if with_row {
+                    doc.add_row(ultros_list_doc::RowKey::new(5056, None), 3, None)
+                        .unwrap();
+                }
+                let handle = ListDocHandle::open_loaded(
+                    1,
+                    1,
+                    Some(store::Loaded {
+                        content_ready: None,
+                        snapshot: doc.export_shallow().unwrap(),
+                        permission: 3,
+                    }),
+                );
+                handle.set_status("offline");
+                assert!(handle.has_readable_content());
+                assert_eq!(handle.rows().is_empty(), !with_row);
+                handle.close();
+                assert!(!handle.has_readable_content());
+            }
+        });
+    }
+
+    #[test]
+    fn content_readiness_requires_handshake_and_does_not_discard_local_intent() {
+        Owner::new().with(|| {
+            let handle = ListDocHandle::open_loaded(1, 1, None);
+            let doc = ListDocument::new();
+            doc.add_row(ultros_list_doc::RowKey::new(5056, None), 3, None)
+                .unwrap();
+            handle.import(&doc.export_snapshot().unwrap()).unwrap();
+            assert!(
+                !handle.has_readable_content(),
+                "ordinary imports are not handshake completion"
+            );
+            // Recovery bytes with real operations remain preservable while
+            // contents wait for the authoritative handshake.
+            assert!(handle.prepare_save(ListDocument::export_snapshot).is_some());
+            handle.mark_content_ready();
+            assert!(handle.has_readable_content());
+            handle.close();
+        });
+    }
+
+    #[test]
+    fn explicit_cache_provenance_overrides_history_and_permission() {
+        Owner::new().with(|| {
+            for ready in [false, true] {
+                let doc = if ready {
+                    ListDocument::empty_peer()
+                } else {
+                    ListDocument::new()
+                };
+                let handle = ListDocHandle::open_loaded(
+                    1,
+                    1,
+                    Some(store::Loaded {
+                        snapshot: doc.export_snapshot().unwrap(),
+                        permission: 3,
+                        content_ready: Some(ready),
+                    }),
+                );
+                assert_eq!(handle.has_readable_content(), ready);
+                if !ready {
+                    assert!(handle.apply(Edit::Remove(123)).is_err());
+                    assert!(!handle.undo());
+                    assert!(!handle.redo());
+                    assert!(!handle.can_undo());
+                }
+                handle.close();
+            }
+        });
+    }
+
+    #[test]
     fn incompatible_cached_document_stays_exportable_and_cannot_be_overwritten() {
         Owner::new().with(|| {
             let future = ListDocument::new();
@@ -971,6 +1197,7 @@ mod tests {
                     1,
                     1,
                     Some(store::Loaded {
+                        content_ready: None,
                         snapshot: original.clone(),
                         permission: 3,
                     }),
@@ -1013,6 +1240,7 @@ mod tests {
         server.add_row(key, 10, None).unwrap();
         let handle = ListDocHandle::open(1, 1);
         handle.import(&server.export_snapshot().unwrap()).unwrap();
+        handle.mark_content_ready();
         (handle, server, key)
     }
 
@@ -1025,7 +1253,10 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert!(handle.can_undo());
-            let before = handle.try_version();
+            // Version-vector encoding may order peers differently after import.
+            // Compare causal state, not its non-canonical serialization.
+            let version = || handle.with_doc(|doc| doc.inner().oplog_vv()).unwrap();
+            let before = version();
             server
                 .inner()
                 .get_map("meta")
@@ -1037,16 +1268,16 @@ mod tests {
                 Err(DocError::UnsupportedSchema(999))
             ));
             assert!(handle.incompatible());
-            assert_eq!(handle.try_version(), before);
+            assert_eq!(version(), before);
             let saved =
                 ListDocument::from_snapshot(&handle.incompatible_snapshot.get_value().unwrap())
                     .unwrap();
-            assert_eq!(saved.version(), before);
+            assert_eq!(saved.inner().oplog_vv(), before);
             assert_eq!(saved.row(&key).unwrap().need, 15);
             assert!(!handle.can_undo());
             assert!(!handle.undo());
             assert!(!handle.redo());
-            assert_eq!(handle.try_version(), before);
+            assert_eq!(version(), before);
         });
     }
 

@@ -445,6 +445,11 @@ pub struct ListWorkspaceSource {
     pub recipe_open: Signal<bool>,
     pub toggle_recipe: Callback<()>,
     pub rows: Signal<Vec<(ListItem, Vec<ActiveListing>)>>,
+    /// Shared Build result, including lookup coverage, also frozen by Shop.
+    pub estimate: Signal<ultros_calc::list_estimate::CartEstimate>,
+    /// False while no readable document exists; an unavailable document is
+    /// not an empty or fully acquired cart and must not display zero cost.
+    pub estimate_available: Signal<bool>,
     /// Where the listings in `rows` stand: loading, missing (and why), or
     /// observed at a client-clock instant, possibly marked by a failed
     /// refresh. Drives the estimate's status text; never inferred from a
@@ -530,11 +535,7 @@ pub fn ListBuildWorkspace(
     // shows, never what the list will cost. Rows already track the document
     // revision and the listings cache, so quantity, quality, list and market
     // changes all reprice through this one memo.
-    let estimate = Memo::new(move |_| {
-        source
-            .rows
-            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
-    });
+    let estimate = source.estimate;
     view! {
         <section class="space-y-3" data-testid="list-build-workspace">
             <Show when=move || source.can_write.get()>
@@ -547,7 +548,9 @@ pub fn ListBuildWorkspace(
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
-            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
+            <Show when=move || source.estimate_available.get()>
+                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name />
+            </Show>
             <div class="overflow-x-auto panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
                 #[cfg(feature = "hydrate")]
                 {
@@ -698,13 +701,26 @@ fn covered_ids(items: &[(ListItem, Vec<ActiveListing>)]) -> HashSet<i32> {
     items.iter().map(|(item, _)| item.item_id).collect()
 }
 
+/// One successful response: empty item entries are coverage too. Keep the
+/// offers and their identities together, fenced to the list that was served.
+#[derive(Clone, Debug)]
+struct ServedListings {
+    list_id: i32,
+    listings: HashMap<i32, Vec<ActiveListing>>,
+}
+
 /// The estimate's account of its prices, written by every listings fetch.
 #[derive(Clone, Copy)]
 struct PriceStatus {
+    active_list: Memo<i32>,
+    feed_list: RwSignal<Option<i32>>,
     feed: RwSignal<PriceFeed>,
     /// The scope the server priced the last successful fetch for.
     served_scope: RwSignal<Option<AnySelector>>,
+    served_listings: RwSignal<Option<ServedListings>>,
 }
+
+type FetchedPrices<'a> = (&'a ListWithPermission, &'a [(ListItem, Vec<ActiveListing>)]);
 
 /// Where a listings fetch left the price feed and the served scope. Every
 /// account-list fetch reports through here so the estimate's freshness is
@@ -716,19 +732,42 @@ struct PriceStatus {
 /// handle-backed run always fetches — its cache starts empty — so the real
 /// instant is recorded within the first client tick. A signed-in visitor
 /// always gets a handle; an anonymous one cannot read an account list at all.
-fn note_fetch(prices: PriceStatus, outcome: Option<&ListWithPermission>) {
+fn note_fetch(prices: PriceStatus, outcome: Option<FetchedPrices<'_>>) {
     #[cfg(feature = "hydrate")]
     {
+        let id = prices.active_list.get_untracked();
+        if prices.feed_list.get_untracked() != Some(id) {
+            // A failure may retain prices only from this same list. SPA route
+            // reuse must never borrow another list's timestamp or scope.
+            let _ = prices.feed.try_set(PriceFeed::Loading);
+            let _ = prices.served_scope.try_set(None);
+            let _ = prices.served_listings.try_set(None);
+            let _ = prices.feed_list.try_set(Some(id));
+        }
         let fetched_at = outcome.map(|_| chrono::Utc::now());
         let _ = prices
             .feed
             .try_update(|feed| *feed = feed.after_fetch(fetched_at));
-        if let Some(list) = outcome {
+        if let Some((list, items)) = outcome {
             let _ = prices.served_scope.try_set(Some(list.list.wdr_filter));
+            let _ = prices.served_listings.try_set(Some(ServedListings {
+                list_id: list.list.id,
+                listings: items
+                    .iter()
+                    .map(|(item, rows)| (item.item_id, rows.clone()))
+                    .collect(),
+            }));
         }
     }
     #[cfg(not(feature = "hydrate"))]
-    let _ = (prices.feed, prices.served_scope, outcome);
+    let _ = (
+        prices.active_list,
+        prices.feed_list,
+        prices.feed,
+        prices.served_scope,
+        prices.served_listings,
+        outcome,
+    );
 }
 
 /// How long a burst of relayed list broadcasts is allowed to coalesce into
@@ -833,7 +872,7 @@ fn revalidate(
                         .is_none_or(|c| c.list.permission != permission)
                 });
                 let covered = covered_ids(&items);
-                note_fetch(prices, Some(&list));
+                note_fetch(prices, Some((&list, &items)));
                 cache.update_value(|cached| {
                     if let Some(c) = cached.as_mut().filter(|c| c.list_id == list_id) {
                         c.list = list;
@@ -984,7 +1023,13 @@ async fn load_view(
         if !reads.accept(request, &result) {
             return reads.current_result(id, None);
         }
-        note_fetch(prices, result.as_ref().ok().map(|(list, _)| list));
+        note_fetch(
+            prices,
+            result
+                .as_ref()
+                .ok()
+                .map(|(list, items)| (list, items.as_slice())),
+        );
         if let Ok((list, items)) = &result {
             cache.set_value(Some(ListingsCache {
                 list_id: id,
@@ -1037,7 +1082,7 @@ async fn load_view(
                 Ok((list, items)) => {
                     doc_handle.remember_permission(list.permission as i16);
                     let covered = covered_ids(&items);
-                    note_fetch(prices, Some(&list));
+                    note_fetch(prices, Some((&list, &items)));
                     let fresh = ListingsCache {
                         list_id: id,
                         version: listings_version,
@@ -1265,9 +1310,14 @@ pub fn ListViewSync() -> impl IntoView {
     // of the last listings response and nothing else.
     let price_feed = RwSignal::new(PriceFeed::Loading);
     let served_scope = RwSignal::new(None::<AnySelector>);
+    let served_listings = RwSignal::new(None::<ServedListings>);
+    let feed_list = RwSignal::new(None::<i32>);
     let prices = PriceStatus {
+        active_list: list_id,
+        feed_list,
         feed: price_feed,
         served_scope,
+        served_listings,
     };
 
     let list_view = Resource::new(
@@ -1672,7 +1722,14 @@ pub fn ListViewSync() -> impl IntoView {
     let view_caps = RwSignal::new(ListCapabilities::default());
     Effect::new(move |_| {
         let next = match list_view.get() {
-            Some(Ok((list_with_perm, _))) => ListCapabilities::from(list_with_perm.permission),
+            Some(Ok((list_with_perm, _)))
+                if list_with_perm.list.id == list_id.get()
+                    && handle.get().is_none_or(|doc| {
+                        doc.list_id == list_id.get() && doc.has_readable_content()
+                    }) =>
+            {
+                ListCapabilities::from(list_with_perm.permission)
+            }
             _ => ListCapabilities::default(),
         };
         view_caps.set(next);
@@ -1685,14 +1742,23 @@ pub fn ListViewSync() -> impl IntoView {
         let snapshot = list_view
             .get()
             .and_then(Result::ok)
+            .filter(|(list, _)| list.list.id == list_id.get())
             .map(|(_, rows)| rows)
             .unwrap_or_default();
-        let snapshot = if let Some(doc) = handle.get() {
+        let snapshot = if let Some(doc) = handle.get().filter(|doc| doc.list_id == list_id.get()) {
             doc.revision.track();
-            let listings: HashMap<_, _> = snapshot
-                .into_iter()
-                .map(|(item, listings)| (item.item_id, listings))
-                .collect();
+            // Revalidation can deliver fresh offers without rerunning the
+            // page resource. Read the exact response that owns coverage.
+            let listings = served_listings
+                .get()
+                .filter(|prices| prices.list_id == list_id.get())
+                .map(|prices| prices.listings)
+                .unwrap_or_else(|| {
+                    snapshot
+                        .into_iter()
+                        .map(|(item, rows)| (item.item_id, rows))
+                        .collect()
+                });
             doc.rows()
                 .iter()
                 .filter_map(|row| crate::list_doc::adapter::to_list_item(list_id.get(), row))
@@ -1751,8 +1817,42 @@ pub fn ListViewSync() -> impl IntoView {
         recipe_open: recipe_modal_open.into(),
         toggle_recipe: Callback::new(move |()| set_recipe_modal_open.update(|open| *open = !*open)),
         rows: build_rows,
-        market: price_feed.into(),
+        estimate: Memo::new(move |_| {
+            let fetched = served_listings.with(|served| {
+                served
+                    .as_ref()
+                    .filter(|prices| prices.list_id == list_id.get())
+                    .map(|prices| prices.listings.keys().copied().collect())
+                    .unwrap_or_default()
+            });
+            build_rows.with(|rows| {
+                ultros_calc::list_estimate::estimate_list_items_with_coverage(rows, &fetched)
+            })
+        })
+        .into(),
+        estimate_available: Signal::derive(move || {
+            if let Some(doc) = handle.get() {
+                if doc.list_id != list_id.get() || !doc.has_readable_content() {
+                    return false;
+                }
+                doc.recovery_state.track();
+                !doc.incompatible()
+                    && ListPermission::from(doc.permission.get()) != ListPermission::None
+            } else {
+                matches!(list_view.get(), Some(Ok((list, _))) if list.list.id == list_id.get())
+            }
+        }),
+        market: Signal::derive(move || {
+            if feed_list.get() == Some(list_id.get()) {
+                price_feed.get()
+            } else {
+                PriceFeed::Loading
+            }
+        }),
         scope_name: Signal::derive(move || {
+            if feed_list.get() != Some(list_id.get()) {
+                return None;
+            }
             let scope = served_scope.get()?;
             let helper = use_context::<LocalWorldData>()?.0.ok()?;
             helper
@@ -1797,26 +1897,38 @@ pub fn ListViewSync() -> impl IntoView {
     let shop_worlds = use_context::<LocalWorldData>().and_then(|data| data.0.ok());
     let shop_input = Signal::derive(move || {
         use crate::components::list_shop::{ShopInput, ShopRow};
-        let Some(Ok((list, rows))) = list_view.get() else {
-            return ShopInput::default();
-        };
-        let rows = filter_excluded(
-            &rows,
-            &excluded_worlds.get(),
-            &excluded_datacenters.get(),
-            shop_worlds.as_deref(),
-        );
+        let server_list = list_view
+            .get()
+            .and_then(Result::ok)
+            .filter(|(list, _)| list.list.id == list_id.get())
+            .map(|(list, _)| list.list);
+        let local_meta = handle
+            .get()
+            .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
+            .map(|handle| {
+                handle.revision.track();
+                handle.meta()
+            });
+        let title = local_meta
+            .as_ref()
+            .map(|meta| meta.name.clone())
+            .or_else(|| server_list.as_ref().map(|list| list.name.clone()))
+            .unwrap_or_default();
+        let rows = build_source.rows.get();
         let mut result = ShopInput {
-            title: list.list.name,
+            title,
+            price_feed: build_source.market.get(),
+            build_estimate: build_source.estimate.get(),
+            estimate_available: build_source.estimate_available.get(),
             home_world: home_world.get().map(|world| world.id).unwrap_or_default(),
             observed_at: None,
             ..Default::default()
         };
-        if let Some(scope) = shop_worlds
-            .as_ref()
-            .and_then(|helper| helper.lookup_selector(list.list.wdr_filter))
-        {
-            for world in scope.all_worlds() {
+        if let Some(helper) = shop_worlds.as_ref() {
+            // Labels describe the actual served offers, including stale ones
+            // retained after a desired-scope change. Never narrow metadata by
+            // the new, not-yet-served document scope.
+            for world in helper.iter().filter_map(|world| world.as_world()) {
                 result.world_names.insert(world.id, world.name.clone());
                 result.datacenters.insert(world.id, world.datacenter_id);
             }

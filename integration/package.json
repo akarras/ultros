@@ -72,6 +72,7 @@
     "diag:truncation-proxy": "node ./truncation-proxy.mjs",
     "test:market-history": "node ./market-history.cjs",
     "test:market-history-themes": "node ./market-history-themes.cjs",
+    "test:device-build-prices": "node ./device-build-prices.cjs",
     "test:recipe-root-source": "node ./recipe-root-source.cjs"
   },
   "devDependencies": {

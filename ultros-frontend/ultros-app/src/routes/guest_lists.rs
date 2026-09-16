@@ -403,21 +403,105 @@ mod browser {
             i32,
             Vec<ultros_api_types::ActiveListing>,
         >::new());
-        // A device list has no prices until the player looks them up in
-        // Shop; the estimate says so rather than reading as free. The scope
-        // is the one the *offers* were fetched for, so changing the picker
-        // without a new lookup never relabels old prices.
+        // Build and Shop share fetched offers and exact item coverage. The
+        // served scope only changes with a successful replacement response.
         let feed = RwSignal::new(PriceFeed::Missing(MissingReason::NotRequested));
         let offers_scope = RwSignal::new(None::<String>);
+        let fetched_items = RwSignal::new(HashSet::<i32>::new());
+        let price_error = RwSignal::new(String::new());
+        let busy = RwSignal::new(false);
+        let pending_scope = RwSignal::new(None);
+        let ticket = StoredValue::new(LookupTicket::default());
         let shop = RwSignal::new(false);
         let shop_mounted = Memo::new(move |previous: Option<&bool>| {
             shop.get() || previous.copied().unwrap_or(false)
         });
         let (home, _) = crate::global_state::home_world::use_home_world();
-        let scope = RwSignal::new(
-            home.get_untracked()
-                .map(|world| ultros_api_types::world_helper::AnySelector::World(world.id)),
-        );
+        let scope = Signal::derive(move || {
+            revision.track();
+            handle.with_value(|h| h.meta().scope).or_else(|| {
+                home.get()
+                    .map(|world| ultros_api_types::world_helper::AnySelector::World(world.id))
+            })
+        });
+        let set_scope = move |value: Option<ultros_api_types::world_helper::AnySelector>| {
+            if recovery.get_untracked() {
+                return;
+            }
+            if let Some(value) = value
+                && let Err(e) = handle.with_value(|h| h.set_scope(value))
+            {
+                error.set(e);
+            }
+        };
+        let refresh_prices = move |_| {
+            let Some(selector) = scope.get_untracked() else {
+                return;
+            };
+            if busy.get_untracked() && pending_scope.get_untracked() == Some(selector) {
+                return;
+            }
+            let Some(scope_name) =
+                crate::global_state::use_world_helper()
+                    .ok()
+                    .and_then(|helper| {
+                        helper
+                            .lookup_selector(selector)
+                            .map(|scope| scope.get_name().to_string())
+                    })
+            else {
+                return;
+            };
+            if let Err(e) = handle.with_value(|h| h.set_scope(selector)) {
+                error.set(e);
+                return;
+            }
+            let ids: HashSet<_> = handle
+                .with_value(|h| h.rows())
+                .into_iter()
+                .map(|row| row.key.item_id)
+                .collect();
+            let request = ticket
+                .try_update_value(|ticket| ticket.begin())
+                .unwrap_or_default();
+            busy.set(true);
+            pending_scope.set(Some(selector));
+            price_error.set(String::new());
+            feed.update(|feed| *feed = feed.begin_fetch());
+            leptos::task::spawn_local(async move {
+                let result =
+                    crate::api::get_bulk_listings(scope_name.trim(), ids.iter().copied()).await;
+                if !ticket
+                    .try_with_value(|ticket| ticket.accepts(request))
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                match result {
+                    Ok(data) => {
+                        let _ = offers.try_set(
+                            data.into_iter()
+                                .filter(|(id, _)| ids.contains(id))
+                                .map(|(id, rows)| {
+                                    (id, rows.into_iter().map(|(listing, _)| listing).collect())
+                                })
+                                .collect(),
+                        );
+                        let _ = fetched_items.try_set(ids);
+                        let _ = offers_scope.try_set(Some(scope_name));
+                        let _ = feed
+                            .try_update(|feed| *feed = feed.after_fetch(Some(chrono::Utc::now())));
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = ?e, "Device list price lookup failed");
+                        let _ = price_error
+                            .try_set(t_string!(i18n, guest_workspace_prices_failed).to_string());
+                        let _ = feed.try_update(|feed| *feed = feed.after_fetch(None));
+                    }
+                }
+                let _ = busy.try_set(false);
+            });
+        };
         let recipe_open = RwSignal::new(false);
         let (storage_open, set_storage_open) = signal(recovery.get_untracked());
         let confirm_delete = RwSignal::new(false);
@@ -560,6 +644,20 @@ mod browser {
             }),
         });
         let sort = RwSignal::new(None::<SortSpec>);
+        let guest_rows = Signal::derive(move || {
+            revision.track();
+            handle.with_value(|h| {
+                h.rows()
+                    .iter()
+                    .filter_map(|row| adapter::to_list_item(0, row))
+                    .map(|item| {
+                        let prices = offers
+                            .with(|offers| offers.get(&item.item_id).cloned().unwrap_or_default());
+                        (item, prices)
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
         let source = ListWorkspaceSource {
             hide_acquired: Signal::derive(|| false),
             list_id: Signal::derive(|| 0),
@@ -580,21 +678,16 @@ mod browser {
             }),
             recipe_open: recipe_open.into(),
             toggle_recipe: Callback::new(move |()| recipe_open.update(|open| *open = !*open)),
-            rows: Signal::derive(move || {
-                revision.track();
-                handle.with_value(|h| {
-                    h.rows()
-                        .iter()
-                        .filter_map(|row| adapter::to_list_item(0, row))
-                        .map(|item| {
-                            let prices = offers.with(|offers| {
-                                offers.get(&item.item_id).cloned().unwrap_or_default()
-                            });
-                            (item, prices)
-                        })
-                        .collect()
+            rows: guest_rows,
+            estimate_available: Signal::derive(|| true),
+            estimate: Memo::new(move |_| {
+                guest_rows.with(|rows| {
+                    fetched_items.with(|fetched| {
+                        ultros_calc::list_estimate::estimate_list_items_with_coverage(rows, fetched)
+                    })
                 })
-            }),
+            })
+            .into(),
             market: feed.into(),
             scope_name: offers_scope.into(),
             can_write: Signal::derive(move || !recovery.get()),
@@ -641,13 +734,21 @@ mod browser {
                     handle.with_value(|h| h.online().is_some_and(|online| online.list_id.is_some())) && editor_has_drafts()
                 }><p class="text-sm" role="status">{t!(i18n, online_finish_edit)}</p></Show>
                 <Show when=move || !recovery.get()><crate::routes::list_view_sync::ListWorkspaceModes shop=shop.into() set_shop=Callback::new(move |value| shop.set(value)) /></Show>
+                <Show when=move || !recovery.get()>
+                    <div class="flex flex-wrap items-center gap-2" data-testid="device-price-controls">
+                        <crate::components::world_picker::WorldPicker current_world=scope set_current_world=leptos::reactive::wrappers::write::SignalSetter::map(set_scope) />
+                        <button type="button" class="btn-secondary" data-testid="device-prices-refresh" aria-busy=move || busy.get().to_string() disabled=move || scope.get().is_none() || (busy.get() && scope.get() == pending_scope.get()) on:click=refresh_prices>
+                            {move || if busy.get() && scope.get() == pending_scope.get() { t_string!(i18n, guest_workspace_refreshing).to_string() } else if feed.get().has_prices() { t_string!(i18n, guest_workspace_refresh_prices).to_string() } else { t_string!(i18n, guest_workspace_prices).to_string() }}
+                        </button>
+                    </div>
+                    <Show when=move || !price_error.get().is_empty()><p role="alert" class="text-sm text-red-400" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
+                </Show>
                 // Mounted on first use and then only hidden, so a return to
                 // Build keeps the chosen trip and its recorded stacks.
                 <div class:hidden=move || !shop.get()>
-                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() offers scope feed offers_scope /></Show>
+                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source /></Show>
                 </div>
                 <div class:hidden=move || shop.get()>
-                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_build_prices)}</p>
                 {move || if legacy_cart.get() {
                     view! { <ListBuildWorkspace source selected_items=selected /> }.into_any()
                 } else {
@@ -697,21 +798,10 @@ mod browser {
     }
 
     #[component]
-    fn DeviceShop(
-        handle: GuestListHandle,
-        offers: RwSignal<std::collections::HashMap<i32, Vec<ultros_api_types::ActiveListing>>>,
-        scope: RwSignal<Option<ultros_api_types::world_helper::AnySelector>>,
-        feed: RwSignal<PriceFeed>,
-        offers_scope: RwSignal<Option<String>>,
-    ) -> impl IntoView {
+    fn DeviceShop(handle: GuestListHandle, source: ListWorkspaceSource) -> impl IntoView {
         use crate::components::list_shop::{ListShop, ShopInput, ShopRow};
         let i18n = use_i18n();
         let handle = StoredValue::new_local(handle);
-        // Every lookup takes a ticket; a response whose ticket is no longer
-        // the newest — the player changed scope and looked up again while it
-        // was in flight — is dropped, so old-scope prices never land on top
-        // of the ones they asked for last.
-        let ticket = StoredValue::new(LookupTicket::default());
         let revision = handle.with_value(|h| h.revision);
         let (home, _) = crate::global_state::home_world::use_home_world();
         let worlds = StoredValue::new(
@@ -724,39 +814,36 @@ mod browser {
                 })
                 .unwrap_or_default(),
         );
-        let observed = RwSignal::new(None::<String>);
         let error = RwSignal::new(String::new());
-        let busy = RwSignal::new(false);
         let input = Signal::derive(move || {
             revision.track();
             let data = crate::global_state::xiv_data::tracked_data();
             ShopInput {
                 title: handle.with_value(|h| h.meta().name),
-                rows: handle
-                    .with_value(|h| h.rows())
+                price_feed: source.market.get(),
+                build_estimate: source.estimate.get(),
+                estimate_available: source.estimate_available.get(),
+                rows: source
+                    .rows
+                    .get()
                     .into_iter()
-                    .filter_map(|row| {
-                        let item = adapter::to_list_item(0, &row)?;
-                        Some(ShopRow {
-                            key: item.id.to_string(),
-                            name: data
-                                .items
-                                .get(&xiv_gen::ItemId(item.item_id))
-                                .map(|i| i.name.to_string())
-                                .unwrap_or_else(|| {
-                                    t_string!(i18n, guest_workspace_item, id = item.item_id)
-                                        .to_string()
-                                }),
-                            item_id: item.item_id,
-                            hq: item.hq,
-                            needed: item.quantity.unwrap_or(1),
-                            acquired: item.acquired.unwrap_or(0),
-                            listings: offers
-                                .with(|m| m.get(&item.item_id).cloned().unwrap_or_default()),
-                        })
+                    .map(|(item, listings)| ShopRow {
+                        key: item.id.to_string(),
+                        name: data
+                            .items
+                            .get(&xiv_gen::ItemId(item.item_id))
+                            .map(|i| i.name.to_string())
+                            .unwrap_or_else(|| {
+                                t_string!(i18n, guest_workspace_item, id = item.item_id).to_string()
+                            }),
+                        item_id: item.item_id,
+                        hq: item.hq,
+                        needed: item.quantity.unwrap_or(1),
+                        acquired: item.acquired.unwrap_or(0),
+                        listings,
                     })
                     .collect(),
-                observed_at: observed.get(),
+                observed_at: None,
                 home_world: home.get().map(|w| w.id).unwrap_or(0),
                 world_names: worlds
                     .with_value(|worlds| worlds.iter().map(|w| (w.id, w.name.clone())).collect()),
@@ -767,43 +854,6 @@ mod browser {
         view! {
             <div class="space-y-3">
                 <p>{t!(i18n, guest_workspace_shop_intro)}</p>
-                <div class="flex flex-wrap gap-2">
-                    <crate::components::world_picker::WorldPicker current_world=scope.into() set_current_world=scope.into() />
-                    <button class="btn-secondary" disabled=move || busy.get() || scope.get().is_none() on:click=move |_| {
-                        busy.set(true); error.set(String::new());
-                        let Some(scope) = scope.get_untracked().and_then(|scope| crate::global_state::use_world_helper().ok()?.lookup_selector(scope).map(|world| world.get_name().to_string())) else { busy.set(false); return; };
-                        let ids: Vec<_> = handle.with_value(|h| h.rows()).into_iter().map(|r| r.key.item_id).collect();
-                        let request = ticket.try_update_value(|ticket| ticket.begin()).unwrap_or_default();
-                        feed.update(|feed| *feed = feed.begin_fetch());
-                        leptos::task::spawn_local(async move {
-                            let result = crate::api::get_bulk_listings(scope.trim(), ids.into_iter()).await;
-                            if !ticket.try_with_value(|ticket| ticket.accepts(request)).unwrap_or(false) {
-                                // A newer lookup owns the offers, the feed and `busy` now.
-                                return;
-                            }
-                            match result {
-                                Ok(data) => {
-                                    let _ = offers.try_set(data.into_iter().map(|(id, rows)| (id, rows.into_iter().map(|(listing, _)| listing).collect())).collect());
-                                    let _ = offers_scope.try_set(Some(scope));
-                                    // The estimate's freshness is the instant this
-                                    // response arrived: a fetch time, documented as
-                                    // such, never a listing's seller review time.
-                                    let _ = feed.try_update(|feed| *feed = feed.after_fetch(Some(chrono::Utc::now())));
-                                    // This endpoint carries seller review times, not ingest times.
-                                    // Do not label this fetch time as a market observation.
-                                    let _ = observed.try_set(None);
-                                }
-                                Err(e) => {
-                                    let _ = error.try_set(e.to_string());
-                                    // Earlier prices stay usable and are marked; with
-                                    // none, the estimate says prices are unavailable.
-                                    let _ = feed.try_update(|feed| *feed = feed.after_fetch(None));
-                                }
-                            }
-                            let _ = busy.try_set(false);
-                        });
-                    }>{t!(i18n, guest_workspace_prices)}</button>
-                </div>
                 <p role="alert">{move || error.get()}</p>
                 <ListShop input on_purchase=Callback::new(move |(key, delta): (String, i32)| {
                     if let Ok(id) = key.parse::<i32>()

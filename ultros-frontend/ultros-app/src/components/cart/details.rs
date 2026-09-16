@@ -84,6 +84,7 @@ pub fn CartRowDetails(
             return Some(t_string!(i18n, cart_nothing_to_buy).to_string());
         }
         Some(match (line.status, line.unit_price) {
+            (LineStatus::NotRequested, _) => t_string!(i18n, cart_line_not_requested).to_string(),
             (LineStatus::NoSupply, _) | (_, None) => {
                 t_string!(i18n, cart_no_matching_listings).to_string()
             }

@@ -51,6 +51,33 @@ The browser probe is `node integration/list-document-compatibility.cjs` against
 a fresh test-auth build. Its byte fixtures can be regenerated with
 `cargo run -p ultros-list-doc --example compatibility_fixtures`.
 
+## Readable cached contents and price coverage
+
+REST permission alone does not initialize a document. Build estimates, Shop,
+and editing wait for a validated cached copy or a completed document handshake,
+including an explicit UpToDate response. A genuinely empty readable list costs
+zero; an operation-free receiver waiting for its first snapshot is unavailable.
+
+New account-cache index entries bind readiness to the snapshot's causal version
+and revocation generation. Saves stage at most an incoming and previous proof
+before replacing raw bytes, so a failed write preserves the previous usable
+copy. Snapshot saves, permission updates and index cleanup share the account
+Web Lock. Revocation still fences and removes raw bytes synchronously. Invalid
+or mismatched explicit provenance never falls back to assuming complete contents.
+The raw snapshot format is unchanged, and pending recovery keeps its provenance.
+
+Legacy caches without readiness metadata use causal history, which survives
+shallow compaction. An ambiguous operation-free legacy cache remains preserved
+but needs a successful handshake; a newly confirmed zero-operation empty list
+can reopen offline using its explicit readiness proof.
+
+Build and Shop share the actual Build estimate. Price coverage identifies only
+item IDs returned by a successful account response or included in a successful
+device request. An added, unfetched item is “not requested”; a successfully
+checked item with no matching offers is “no supply.” Refresh failures retain
+same-list prices and their served scope. A new desired scope never relabels an
+older response, and fully owned rows need no market request to cost zero.
+
 ## Bundle measurements
 
 | build | raw | gzip -9 |
@@ -80,8 +107,8 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
 - The browser stores one snapshot per user and list under
   `ultros.listdoc.v1.{user_id}.{list_id}` in localStorage, with a per-user
   index at `ultros.listdoc.index.v1.{user_id}` (last use and last known
-  permission). At most 20 snapshots per user; least recently used evicted
-  first. Sign-out closes the document but keeps the snapshot, so an offline
+  permission and readiness provenance). These are primary offline copies,
+  so they are not automatically evicted. Sign-out keeps the snapshot, so an offline
   edit survives a session expiry. A permission denial or a deleted list
   purges it.
 - Sync rides the existing websocket. `SubscribeListDoc` carries the

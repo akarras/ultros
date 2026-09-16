@@ -312,6 +312,7 @@ pub fn start(
                     }
                     ListDocPayload::UpToDate => None,
                 };
+                handle.mark_content_ready();
 
                 if handle.is_ahead_of(&version) {
                     let same_version =

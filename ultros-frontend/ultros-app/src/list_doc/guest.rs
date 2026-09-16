@@ -382,6 +382,26 @@ impl GuestListHandle {
         self.schedule_save();
         Ok(())
     }
+    /// Keep the selected price scope with the local document, including Undo
+    /// and its eventual online continuation. Repeated refreshes are not edits.
+    pub fn set_scope(
+        &self,
+        scope: ultros_api_types::world_helper::AnySelector,
+    ) -> Result<(), String> {
+        if self.inner.closed.get() {
+            return Err(message("closed"));
+        }
+        if self.inner.doc.meta().scope == Some(scope) {
+            return Ok(());
+        }
+        self.inner
+            .undo
+            .borrow_mut()
+            .group(|| self.inner.doc.set_scope(scope))
+            .map_err(|_| message("invalid"))?;
+        self.schedule_save();
+        Ok(())
+    }
     pub fn undo(&self) -> bool {
         self.history(false)
     }

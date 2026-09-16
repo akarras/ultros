@@ -194,7 +194,16 @@ async function main() {
     const after=await record(failed);assert.deepEqual(after.snapshot,before.snapshot);assert.equal(after.online.owner,String(owner));
     await load(page,failed+'?labs=lists-sync');await page.waitForSelector(tid('device-list-adopt'));
     assert.deepEqual((await record(failed)).snapshot,before.snapshot,'reload during a failed transition preserves original bytes');
-    mode='normal';await page.click(tid('device-list-adopt'));const retryId=await online(page);
+    mode='normal';
+    if (new URL(page.url()).pathname.startsWith('/list/device/')) {
+      try { await page.click(tid('device-list-adopt')); } catch (error) {
+        if (!/Node is detached from document/.test(String(error)) || !/^\/list\/\d+$/.test(new URL(page.url()).pathname)) throw error;
+      }
+    }
+    const retryId=await online(page);
+    const retryBinding=await record(failed);
+    assert.equal(retryBinding.online.list_id,retryId);
+    assert.equal(retryBinding.online.acknowledged,retryBinding.revision);
     await load(page,failed+'?labs=lists-sync');assert.equal(await online(page),retryId);
     console.log('[ok] failed transfer preserves the source and retry continues into one destination');
 

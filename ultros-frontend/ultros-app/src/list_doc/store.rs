@@ -38,6 +38,8 @@ pub struct IndexEntry {
     /// this `false`; they do not represent locally saved document contents.
     #[serde(default)]
     pub has_snapshot: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    readiness: Option<ReadinessStage>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -45,9 +47,24 @@ pub struct Index {
     pub lists: BTreeMap<i32, IndexEntry>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ReadinessProof {
+    version: String,
+    generations: Vec<String>,
+    ready: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ReadinessStage {
+    incoming: ReadinessProof,
+    previous: Option<ReadinessProof>,
+}
+
 pub struct Loaded {
     pub snapshot: Vec<u8>,
     pub permission: i16,
+    /// None denotes legacy provenance; explicit false forbids causal fallback.
+    pub content_ready: Option<bool>,
 }
 
 fn doc_key(user_id: i64, list_id: i32) -> String {
@@ -62,6 +79,7 @@ fn generation_key(user_id: i64, list_id: i32) -> String {
     format!("{GENERATION_PREFIX}{user_id}.{list_id}")
 }
 
+#[cfg(test)]
 pub fn read_index(storage: &impl Storage, user_id: i64) -> Index {
     storage
         .get(&index_key(user_id))
@@ -78,19 +96,32 @@ fn write_index(storage: &impl Storage, user_id: i64, index: &Index) -> bool {
 pub fn load(storage: &impl Storage, user_id: i64, list_id: i32) -> Option<Loaded> {
     let text = storage.get(&doc_key(user_id, list_id))?;
     let snapshot = STANDARD.decode(text).ok()?;
-    let permission = read_index(storage, user_id)
-        .lists
-        .get(&list_id)
+    let index = checked_index(storage, user_id);
+    let permission = index
+        .as_ref()
+        .ok()
+        .and_then(|index| index.lists.get(&list_id))
         .map(|entry| entry.permission)
         .unwrap_or(0);
+    let content_ready = match (
+        &index,
+        ultros_list_doc::ListDocument::from_snapshot(&snapshot),
+    ) {
+        (Ok(index), Ok(doc)) => checked_generation(storage, user_id, list_id)
+            .map(|generation| readiness(index, list_id, &doc, &generation))
+            .unwrap_or(Some(false)),
+        _ => Some(false),
+    };
     Some(Loaded {
         snapshot,
         permission,
+        content_ready,
     })
 }
 
 /// Save a snapshot and touch the index without evicting other documents.
 /// Browser callers must serialize the complete read/merge/write transaction.
+#[cfg(test)]
 pub fn save(
     storage: &impl Storage,
     user_id: i64,
@@ -114,11 +145,151 @@ pub fn save(
             last_used_ms: now_ms,
             permission,
             has_snapshot: true,
+            readiness: None,
         },
     );
     // Never evict primary offline data to make room for another list. A quota
     // failure is surfaced to the player with retry/export recovery instead.
     write_index(storage, user_id, &index)
+}
+
+fn checked_index(storage: &impl Storage, user: i64) -> Result<Index, &'static str> {
+    storage
+        .get_checked(&index_key(user))?
+        .map(|text| serde_json::from_str(&text).map_err(|_| "corrupt"))
+        .unwrap_or_else(|| Ok(Index::default()))
+}
+
+pub fn causal_content_ready(doc: &ultros_list_doc::ListDocument) -> bool {
+    doc.inner()
+        .oplog_vv()
+        .iter()
+        .any(|(_, counter)| *counter > 0)
+}
+
+fn readiness(
+    index: &Index,
+    list: i32,
+    doc: &ultros_list_doc::ListDocument,
+    generation: &str,
+) -> Option<bool> {
+    let stage = index.lists.get(&list)?.readiness.as_ref()?;
+    Some(
+        std::iter::once(&stage.incoming)
+            .chain(stage.previous.iter())
+            .find(|proof| {
+                proof
+                    .generations
+                    .iter()
+                    .any(|candidate| candidate == generation)
+                    && STANDARD.decode(&proof.version).is_ok_and(|version| {
+                        matches!(
+                            doc.sync_payload(&version),
+                            Ok(ultros_list_doc::SyncPayload::UpToDate)
+                        )
+                    })
+            })
+            .is_some_and(|proof| proof.ready),
+    )
+}
+
+/// Both proofs precede new bytes: failed writes preserve the previous offline
+/// copy, and failed finalization leaves a bounded proof for the new copy.
+fn save_ready(
+    storage: &impl Storage,
+    user: i64,
+    list: i32,
+    snapshot: (&[u8], bool),
+    permission: i16,
+    generations: (&str, &str),
+) -> Result<(), String> {
+    let (bytes, ready) = snapshot;
+    let (before, after) = generations;
+    let doc = ultros_list_doc::ListDocument::from_snapshot(bytes).map_err(|_| "export")?;
+    let mut index = checked_index(storage, user)?;
+    let previous = storage
+        .get_checked(&doc_key(user, list))?
+        .map(|text| {
+            let bytes = STANDARD.decode(text).map_err(|_| "corrupt")?;
+            let doc =
+                ultros_list_doc::ListDocument::from_snapshot(&bytes).map_err(|_| "corrupt")?;
+            let ready =
+                readiness(&index, list, &doc, before).unwrap_or_else(|| causal_content_ready(&doc));
+            Ok::<_, &'static str>(ReadinessProof {
+                version: STANDARD.encode(doc.version()),
+                generations: if before == after {
+                    vec![before.to_string()]
+                } else {
+                    vec![before.to_string(), after.to_string()]
+                },
+                ready,
+            })
+        })
+        .transpose()?;
+    if checked_generation(storage, user, list)? != before {
+        return Err("revoked".into());
+    }
+    let incoming = ReadinessProof {
+        version: STANDARD.encode(doc.version()),
+        generations: vec![after.to_string()],
+        ready,
+    };
+    index.lists.insert(
+        list,
+        IndexEntry {
+            last_used_ms: now_ms(),
+            permission,
+            has_snapshot: true,
+            readiness: Some(ReadinessStage {
+                incoming: incoming.clone(),
+                previous,
+            }),
+        },
+    );
+    if !write_index(storage, user, &index) {
+        return Err("storage".into());
+    }
+    if checked_generation(storage, user, list)? != before {
+        return Err("revoked".into());
+    }
+    if before != after && !storage.set(&generation_key(user, list), after) {
+        return Err("storage".into());
+    }
+    if checked_generation(storage, user, list)? != after {
+        return Err("revoked".into());
+    }
+    if !storage.set(&doc_key(user, list), &STANDARD.encode(bytes)) {
+        return Err("storage".into());
+    }
+    if checked_generation(storage, user, list).as_deref() != Ok(after) {
+        storage.remove(&doc_key(user, list));
+        return Err("revoked".into());
+    }
+    // A failed final index write leaves the staged incoming+previous pair.
+    if let Some(entry) = index.lists.get_mut(&list) {
+        entry.readiness = Some(ReadinessStage {
+            incoming,
+            previous: None,
+        });
+    }
+    if !write_index(storage, user, &index) {
+        return Err("storage".into());
+    }
+    if checked_generation(storage, user, list).as_deref() != Ok(after) {
+        storage.remove(&doc_key(user, list));
+        return Err("revoked".into());
+    }
+    Ok(())
+}
+
+pub fn checked_generation(
+    storage: &impl Storage,
+    user: i64,
+    list: i32,
+) -> Result<String, &'static str> {
+    Ok(storage
+        .get_checked(&generation_key(user, list))?
+        .unwrap_or_default())
 }
 
 /// Revocation generation. Queued saves captured before a purge cannot recreate
@@ -129,34 +300,49 @@ pub fn generation(storage: &impl Storage, user: i64, list: i32) -> String {
 
 /// Called under the browser's per-account Web Lock. Merge into a temporary
 /// document first: a failed/parked import never overwrites the durable copy.
-pub fn merge_save(
+pub fn merge_save_with_readiness(
     storage: &impl Storage,
     user: i64,
     list: i32,
-    snapshot: &[u8],
+    snapshot: (&[u8], bool),
     permission: i16,
     expected_generation: &str,
 ) -> Result<Vec<u8>, String> {
-    if generation(storage, user, list) != expected_generation {
+    let (snapshot, mut ready) = snapshot;
+    if checked_generation(storage, user, list)? != expected_generation {
         return Err("revoked".into());
     }
     let doc = ultros_list_doc::ListDocument::from_snapshot(snapshot).map_err(|_| "export")?;
     // Read the raw key so corrupt bytes fail safely instead of looking absent.
     if let Some(text) = storage.get_checked(&doc_key(user, list))? {
         let previous = STANDARD.decode(text).map_err(|_| "corrupt")?;
-        ultros_list_doc::ListDocument::from_snapshot(&previous).map_err(|_| "corrupt")?;
+        let previous_doc =
+            ultros_list_doc::ListDocument::from_snapshot(&previous).map_err(|_| "corrupt")?;
+        let previous_ready = readiness(
+            &checked_index(storage, user)?,
+            list,
+            &previous_doc,
+            expected_generation,
+        )
+        .unwrap_or_else(|| causal_content_ready(&previous_doc));
         let report = doc.import(&previous).map_err(|_| "history")?;
         if report.pending {
             return Err("history".into());
         }
+        ready |= previous_ready;
     }
     let merged = doc.export_snapshot().map_err(|_| "export")?;
-    if !save(storage, user, list, &merged, permission, now_ms()) {
-        return Err("storage".into());
-    }
+    save_ready(
+        storage,
+        user,
+        list,
+        (&merged, ready),
+        permission,
+        (expected_generation, expected_generation),
+    )?;
     // Purging is synchronous and can run in another tab while this tab owns
     // the save lock. Check again after writing before acknowledging durability.
-    if generation(storage, user, list) != expected_generation {
+    if checked_generation(storage, user, list).as_deref() != Ok(expected_generation) {
         storage.remove(&doc_key(user, list));
         return Err("revoked".into());
     }
@@ -165,17 +351,17 @@ pub fn merge_save(
 
 /// Replace server-rejected history without importing it back from disk. Refuse
 /// replacement if another tab persisted edits absent from the source document.
-pub fn replace_save(
+pub fn replace_save_with_readiness(
     storage: &impl Storage,
     user: i64,
     list: i32,
-    snapshot: &[u8],
+    snapshot: (&[u8], bool),
     permission: i16,
     expected_generation: &str,
     source_version: &[u8],
 ) -> (String, Result<Vec<u8>, String>) {
     let unchanged = || expected_generation.to_string();
-    if generation(storage, user, list) != expected_generation {
+    if checked_generation(storage, user, list).as_deref() != Ok(expected_generation) {
         return (unchanged(), Err("revoked".into()));
     }
     let previous_text = match storage.get_checked(&doc_key(user, list)) {
@@ -196,22 +382,19 @@ pub fn replace_save(
         .unwrap_or(0)
         .wrapping_add(1)
         .to_string();
-    if !storage.set(&generation_key(user, list), &next) {
-        return (unchanged(), Err("storage".into()));
-    }
-    // Fence stale writers before writing. On failure the caller retains the
-    // new token for retry; the previous snapshot is not deleted to free space.
-    let result = if save(storage, user, list, snapshot, permission, now_ms()) {
-        if generation(storage, user, list) == next {
-            Ok(snapshot.to_vec())
-        } else {
-            storage.remove(&doc_key(user, list));
-            Err("revoked".into())
-        }
-    } else {
-        Err("storage".into())
-    };
-    (next, result)
+    let result = save_ready(
+        storage,
+        user,
+        list,
+        snapshot,
+        permission,
+        (expected_generation, &next),
+    )
+    .map(|()| snapshot.0.to_vec());
+    (
+        checked_generation(storage, user, list).unwrap_or_else(|_| unchanged()),
+        result,
+    )
 }
 
 pub fn remember_permission(
@@ -221,7 +404,9 @@ pub fn remember_permission(
     permission: i16,
     now_ms: f64,
 ) -> bool {
-    let mut index = read_index(storage, user_id);
+    let Ok(mut index) = checked_index(storage, user_id) else {
+        return false;
+    };
     let entry = index.lists.entry(list_id).or_default();
     entry.permission = permission;
     // Only a backed entry has a meaningful snapshot access timestamp.
@@ -233,11 +418,12 @@ pub fn remember_permission(
 
 /// Drop one list's cached snapshot and index entry, e.g. once the server
 /// says forbidden / not found / deleted.
-pub fn purge(storage: &impl Storage, user_id: i64, list_id: i32) {
-    let token = generation(storage, user_id, list_id)
-        .parse::<u64>()
-        .unwrap_or(0)
-        .wrapping_add(1);
+pub fn purge_snapshot(storage: &impl Storage, user_id: i64, list_id: i32) {
+    let Ok(current) = checked_generation(storage, user_id, list_id) else {
+        storage.remove(&doc_key(user_id, list_id));
+        return;
+    };
+    let token = current.parse::<u64>().unwrap_or(0).wrapping_add(1);
     let token_key = generation_key(user_id, list_id);
     let fenced = storage.set(&token_key, &token.to_string());
     storage.remove(&doc_key(user_id, list_id));
@@ -246,10 +432,25 @@ pub fn purge(storage: &impl Storage, user_id: i64, list_id: i32) {
     if !fenced {
         storage.set(&token_key, &token.to_string());
     }
-    let mut index = read_index(storage, user_id);
-    if index.lists.remove(&list_id).is_some() {
-        write_index(storage, user_id, &index);
+}
+
+/// Index cleanup shares the account lock with saves and permission updates.
+/// Never remove a newly saved copy opened after the synchronous revocation.
+pub fn purge_index(storage: &impl Storage, user_id: i64, list_id: i32) -> bool {
+    if !matches!(storage.get_checked(&doc_key(user_id, list_id)), Ok(None)) {
+        return false;
     }
+    let Ok(mut index) = checked_index(storage, user_id) else {
+        return false;
+    };
+    index.lists.remove(&list_id);
+    write_index(storage, user_id, &index)
+}
+
+#[cfg(test)]
+fn purge(storage: &impl Storage, user_id: i64, list_id: i32) {
+    purge_snapshot(storage, user_id, list_id);
+    purge_index(storage, user_id, list_id);
 }
 
 pub struct BrowserStorage;
@@ -315,6 +516,50 @@ pub fn now_ms() -> f64 {
     {
         0.0
     }
+}
+
+#[cfg(test)]
+fn merge_save(
+    storage: &impl Storage,
+    user: i64,
+    list: i32,
+    snapshot: &[u8],
+    permission: i16,
+    generation: &str,
+) -> Result<Vec<u8>, String> {
+    let ready = ultros_list_doc::ListDocument::from_snapshot(snapshot)
+        .is_ok_and(|doc| causal_content_ready(&doc));
+    merge_save_with_readiness(
+        storage,
+        user,
+        list,
+        (snapshot, ready),
+        permission,
+        generation,
+    )
+}
+
+#[cfg(test)]
+fn replace_save(
+    storage: &impl Storage,
+    user: i64,
+    list: i32,
+    snapshot: &[u8],
+    permission: i16,
+    generation: &str,
+    source: &[u8],
+) -> (String, Result<Vec<u8>, String>) {
+    let ready = ultros_list_doc::ListDocument::from_snapshot(snapshot)
+        .is_ok_and(|doc| causal_content_ready(&doc));
+    replace_save_with_readiness(
+        storage,
+        user,
+        list,
+        (snapshot, ready),
+        permission,
+        generation,
+        source,
+    )
 }
 
 #[cfg(test)]
@@ -499,6 +744,249 @@ mod tests {
         doc.export_snapshot().unwrap()
     }
 
+    /// Fail exactly one write in a transaction, keeping all previously durable keys.
+    struct WriteFailure {
+        inner: MemoryStorage,
+        at: std::cell::Cell<usize>,
+        writes: std::cell::Cell<usize>,
+    }
+    impl WriteFailure {
+        fn new() -> Self {
+            Self {
+                inner: MemoryStorage::default(),
+                at: std::cell::Cell::new(usize::MAX),
+                writes: std::cell::Cell::new(0),
+            }
+        }
+        fn fail_at(&self, at: usize) {
+            self.writes.set(0);
+            self.at.set(at);
+        }
+    }
+    impl Storage for WriteFailure {
+        fn get(&self, key: &str) -> Option<String> {
+            self.inner.get(key)
+        }
+        fn set(&self, key: &str, value: &str) -> bool {
+            let writes = self.writes.get() + 1;
+            self.writes.set(writes);
+            writes != self.at.get() && self.inner.set(key, value)
+        }
+        fn remove(&self, key: &str) {
+            self.inner.remove(key);
+        }
+    }
+
+    #[test]
+    fn readiness_proof_preserves_confirmed_empty_and_unconfirmed_nonempty() {
+        let storage = MemoryStorage::default();
+        let empty = ultros_list_doc::ListDocument::empty_peer()
+            .export_snapshot()
+            .unwrap();
+        merge_save_with_readiness(&storage, 1, 7, (&empty, true), 3, "").unwrap();
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(true));
+        let partial = snapshot(5056);
+        merge_save_with_readiness(&storage, 1, 8, (&partial, false), 3, "").unwrap();
+        assert_eq!(load(&storage, 1, 8).unwrap().content_ready, Some(false));
+        assert!(remember_permission(&storage, 1, 8, 3, 100.0));
+        assert_eq!(load(&storage, 1, 8).unwrap().content_ready, Some(false));
+        // A stale unready save can merge complete contents, but cannot downgrade them.
+        merge_save_with_readiness(&storage, 1, 7, (&partial, false), 3, "").unwrap();
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(true));
+    }
+
+    #[test]
+    fn every_first_save_failure_keeps_unconfirmed_bytes_unreadable() {
+        for fail_at in 1..=3 {
+            let storage = WriteFailure::new();
+            storage.fail_at(fail_at);
+            assert!(
+                merge_save_with_readiness(&storage, 1, 7, (&snapshot(5056), false), 3, "").is_err()
+            );
+            match load(&storage, 1, 7) {
+                None => assert!(fail_at <= 2),
+                Some(loaded) => assert_eq!(loaded.content_ready, Some(false)),
+            }
+        }
+    }
+
+    #[test]
+    fn every_merge_write_failure_keeps_a_readable_durable_copy() {
+        for fail_at in 1..=3 {
+            let storage = WriteFailure::new();
+            let base = snapshot(5056);
+            merge_save_with_readiness(&storage, 1, 7, (&base, true), 3, "").unwrap();
+            let previous = load(&storage, 1, 7).unwrap().snapshot;
+            let edited = ultros_list_doc::ListDocument::from_snapshot(&previous).unwrap();
+            edited
+                .add_row(ultros_list_doc::RowKey::new(5057, None), 2, None)
+                .unwrap();
+            storage.fail_at(fail_at);
+            assert!(
+                merge_save_with_readiness(
+                    &storage,
+                    1,
+                    7,
+                    (&edited.export_snapshot().unwrap(), true),
+                    3,
+                    ""
+                )
+                .is_err()
+            );
+            let loaded = load(&storage, 1, 7).unwrap();
+            assert_eq!(loaded.content_ready, Some(true), "write {fail_at}");
+            if fail_at <= 2 {
+                assert_eq!(loaded.snapshot, previous);
+            }
+            let rows = ultros_list_doc::ListDocument::from_snapshot(&loaded.snapshot)
+                .unwrap()
+                .rows();
+            assert_eq!(rows.len(), if fail_at <= 2 { 1 } else { 2 });
+        }
+    }
+
+    #[test]
+    fn every_replacement_write_failure_preserves_old_proof_without_blessing_new_bytes() {
+        for fail_at in 1..=4 {
+            let storage = WriteFailure::new();
+            let original = snapshot(5056);
+            merge_save_with_readiness(&storage, 1, 7, (&original, true), 3, "").unwrap();
+            let old = load(&storage, 1, 7).unwrap().snapshot;
+            let source = ultros_list_doc::ListDocument::from_snapshot(&old)
+                .unwrap()
+                .version();
+            storage.fail_at(fail_at);
+            let (generation, result) = replace_save_with_readiness(
+                &storage,
+                1,
+                7,
+                (&snapshot(5057), false),
+                3,
+                "",
+                &source,
+            );
+            assert!(result.is_err());
+            assert_eq!(generation, if fail_at <= 2 { "" } else { "1" });
+            let loaded = load(&storage, 1, 7).unwrap();
+            assert_eq!(loaded.content_ready, Some(fail_at <= 3), "write {fail_at}");
+            if fail_at <= 3 {
+                assert_eq!(loaded.snapshot, old);
+            }
+        }
+    }
+
+    #[test]
+    fn retained_proofs_cannot_bless_different_versions_or_revoked_generations() {
+        let storage = MemoryStorage::default();
+        let original = snapshot(5056);
+        merge_save_with_readiness(&storage, 1, 7, (&original, true), 3, "").unwrap();
+        let index = storage.get(&index_key(1)).unwrap();
+        // Simulate bytes succeeding with a stale index; explicit mismatch is not legacy.
+        storage.set(&doc_key(1, 7), &STANDARD.encode(snapshot(5057)));
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(false));
+        purge(&storage, 1, 7);
+        storage.set(&index_key(1), &index);
+        storage.set(&doc_key(1, 7), &STANDARD.encode(original));
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(false));
+        // A permission update must preserve the mismatched proof, not erase it.
+        remember_permission(&storage, 1, 7, 3, 1.0);
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(false));
+    }
+
+    #[test]
+    fn unreadable_generation_never_uses_the_initial_generation_proof() {
+        struct GenerationFailure(MemoryStorage);
+        impl Storage for GenerationFailure {
+            fn get(&self, key: &str) -> Option<String> {
+                self.get_checked(key).ok().flatten()
+            }
+            fn get_checked(&self, key: &str) -> Result<Option<String>, &'static str> {
+                if key.starts_with(GENERATION_PREFIX) {
+                    Err("storage")
+                } else {
+                    Ok(self.0.get(key))
+                }
+            }
+            fn set(&self, key: &str, value: &str) -> bool {
+                self.0.set(key, value)
+            }
+            fn remove(&self, key: &str) {
+                self.0.remove(key);
+            }
+        }
+        let storage = GenerationFailure(MemoryStorage::default());
+        let bytes = snapshot(5056);
+        merge_save_with_readiness(&storage.0, 1, 7, (&bytes, true), 3, "").unwrap();
+        let before = storage.0.0.borrow().clone();
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(false));
+        assert!(merge_save_with_readiness(&storage, 1, 7, (&bytes, true), 3, "").is_err());
+        let source = ultros_list_doc::ListDocument::from_snapshot(&bytes)
+            .unwrap()
+            .version();
+        assert!(
+            replace_save_with_readiness(&storage, 1, 7, (&bytes, true), 3, "", &source)
+                .1
+                .is_err()
+        );
+        assert_eq!(*storage.0.0.borrow(), before);
+    }
+
+    #[test]
+    fn failed_generation_read_after_snapshot_write_removes_unacknowledged_bytes() {
+        struct PostWriteFailure {
+            inner: MemoryStorage,
+            wrote: std::cell::Cell<bool>,
+        }
+        impl Storage for PostWriteFailure {
+            fn get(&self, key: &str) -> Option<String> {
+                self.get_checked(key).ok().flatten()
+            }
+            fn get_checked(&self, key: &str) -> Result<Option<String>, &'static str> {
+                if key.starts_with(GENERATION_PREFIX) && self.wrote.get() {
+                    Err("storage")
+                } else {
+                    Ok(self.inner.get(key))
+                }
+            }
+            fn set(&self, key: &str, value: &str) -> bool {
+                let saved = self.inner.set(key, value);
+                if key.starts_with(DOC_PREFIX) {
+                    self.wrote.set(true);
+                }
+                saved
+            }
+            fn remove(&self, key: &str) {
+                self.inner.remove(key);
+            }
+        }
+        let storage = PostWriteFailure {
+            inner: MemoryStorage::default(),
+            wrote: std::cell::Cell::new(false),
+        };
+        assert!(merge_save_with_readiness(&storage, 1, 7, (&snapshot(5056), true), 3, "").is_err());
+        assert!(storage.inner.get(&doc_key(1, 7)).is_none());
+    }
+
+    #[test]
+    fn index_cleanup_preserves_other_proofs_and_a_reopened_copy() {
+        let storage = MemoryStorage::default();
+        let bytes = snapshot(5056);
+        merge_save_with_readiness(&storage, 1, 7, (&bytes, true), 3, "").unwrap();
+        merge_save_with_readiness(&storage, 1, 8, (&bytes, false), 3, "").unwrap();
+        purge_snapshot(&storage, 1, 7);
+        assert!(purge_index(&storage, 1, 7));
+        assert_eq!(load(&storage, 1, 8).unwrap().content_ready, Some(false));
+        merge_save_with_readiness(&storage, 1, 7, (&bytes, true), 3, "1").unwrap();
+        assert!(!purge_index(&storage, 1, 7));
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(true));
+        storage.set(&index_key(1), "corrupt index");
+        purge_snapshot(&storage, 1, 7);
+        assert!(!purge_index(&storage, 1, 7));
+        assert!(!remember_permission(&storage, 1, 8, 3, 0.0));
+        assert_eq!(storage.get(&index_key(1)).as_deref(), Some("corrupt index"));
+        assert_eq!(load(&storage, 1, 8).unwrap().content_ready, Some(false));
+    }
+
     #[test]
     fn divergent_tabs_merge_and_a_stale_close_cannot_erase_either_edit() {
         let storage = MemoryStorage::default();
@@ -658,10 +1146,27 @@ mod tests {
         };
         let a = snapshot(10);
         assert!(merge_save(&storage, 1, 7, &a, 2, "").is_err());
-        assert!(load(&storage, 1, 7).is_some());
+        // Failed proof staging must not expose new bytes without provenance.
+        assert!(load(&storage, 1, 7).is_none());
         storage.fail.set(false);
         assert!(merge_save(&storage, 1, 7, &a, 2, "").is_ok());
-        assert_eq!(load(&storage, 1, 7).unwrap().permission, 2);
+        let saved = load(&storage, 1, 7).unwrap().snapshot;
+        storage.fail.set(true);
+        let b = snapshot(20);
+        assert!(merge_save(&storage, 1, 7, &b, 2, "").is_err());
+        assert_eq!(load(&storage, 1, 7).unwrap().snapshot, saved);
+        assert_eq!(load(&storage, 1, 7).unwrap().content_ready, Some(true));
+        storage.fail.set(false);
+        assert!(merge_save(&storage, 1, 7, &b, 2, "").is_ok());
+        let loaded = load(&storage, 1, 7).unwrap();
+        assert_eq!(loaded.permission, 2);
+        assert_eq!(
+            ultros_list_doc::ListDocument::from_snapshot(&loaded.snapshot)
+                .unwrap()
+                .rows()
+                .len(),
+            2
+        );
         assert!(merge_save(&FullStorage, 1, 7, &a, 2, "").is_err());
     }
 

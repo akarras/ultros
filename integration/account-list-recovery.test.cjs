@@ -36,3 +36,16 @@ test("a pending replacement keeps its source fence with the account-scoped recov
   api.accountForget("recovery-user", 7);
   assert.equal(api.accountRecovery("recovery-user", 7), null);
 });
+
+
+test("pending account recovery preserves explicit readiness independently of its bytes", async () => {
+  const api = await import("../ultros/static/account-list-store.mjs");
+  const bytes = new Uint8Array([1, 2, 3]);
+  api.accountRemember("readiness-user", 7, bytes, null, false);
+  assert.equal(api.accountRecoveryReady("readiness-user", 7), false);
+  assert.equal(api.accountRecoveryReady("another-user", 7), null);
+  api.accountRemember("readiness-user", 7, bytes, new Uint8Array([4]), true);
+  assert.equal(api.accountRecoveryReady("readiness-user", 7), true);
+  api.accountForget("readiness-user", 7);
+  assert.equal(api.accountRecoveryReady("readiness-user", 7), null);
+});

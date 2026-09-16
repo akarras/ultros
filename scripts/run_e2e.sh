@@ -368,6 +368,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_allocation_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_allocation_exit"
         fi
+        log "running device Build price coverage and Shop parity E2E"
+        device_prices_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:device-build-prices ) || device_prices_exit=$?
+        if [ "$device_prices_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$device_prices_exit"
+        fi
         log "running cart sorting and accessibility E2E"
         list_sort_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-sort-accessibility ) || list_sort_exit=$?

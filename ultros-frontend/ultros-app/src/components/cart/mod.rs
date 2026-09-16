@@ -101,7 +101,12 @@ pub fn sort_cart_rows<'a>(
                 let cost = |item: &ListItem| {
                     lines
                         .get(&item.id)
-                        .filter(|line| line.status != estimate::LineStatus::NoSupply)
+                        .filter(|line| {
+                            !matches!(
+                                line.status,
+                                estimate::LineStatus::NoSupply | estimate::LineStatus::NotRequested
+                            )
+                        })
                         .map(|line| line.total)
                 };
                 match (cost(a), cost(b)) {
@@ -208,11 +213,7 @@ pub fn ListCart(
     let grid = NodeRef::<leptos::html::Div>::new();
     // Allocate before filtering or sorting. Hidden rows still need their
     // units; every visible cost, detail and total uses this same result.
-    let estimate = Memo::new(move |_| {
-        source
-            .rows
-            .with(|rows| ultros_calc::list_estimate::estimate_list_items(rows))
-    });
+    let estimate = source.estimate;
     let allocated_lines = Memo::new(move |_| estimate.with(estimate::lines_by_id));
     let visible = Memo::new(
         move |previous: Option<&Vec<(ListItem, Vec<ActiveListing>)>>| {
@@ -511,7 +512,9 @@ pub fn ListCart(
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=on_add_many /></Show>
             </Show>
-            <crate::components::list_estimate_summary::ListEstimateSummary estimate=estimate.into() feed=source.market scope=source.scope_name />
+            <Show when=move || source.estimate_available.get()>
+                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name />
+            </Show>
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <div class="flex flex-wrap items-center gap-2">
                 <input class="input min-w-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
@@ -743,6 +746,37 @@ mod tests {
             &lines,
         );
         assert_eq!(ids(&rows), [1, 2]);
+    }
+
+    #[test]
+    fn unrequested_costs_sort_after_known_costs_in_both_directions() {
+        let original = vec![
+            (
+                item(1, 10, 2, 0),
+                vec![fixture_listing(1, 10, 10, 5, false)],
+            ),
+            (item(2, 20, 1, 0), vec![fixture_listing(2, 20, 1, 5, false)]),
+            (item(3, 30, 1, 0), vec![]),
+            (item(4, 40, 1, 1), vec![]),
+        ];
+        let estimate = ultros_calc::list_estimate::estimate_list_items_with_coverage(
+            &original,
+            &HashSet::from([10, 30]),
+        );
+        let lines = estimate::lines_by_id(&estimate);
+        for (descending, expected) in [(false, [4, 1, 2, 3]), (true, [1, 4, 2, 3])] {
+            let mut rows = original.clone();
+            sort_cart_rows(
+                &mut rows,
+                SortSpec {
+                    key: SortKey::Price,
+                    descending,
+                },
+                |_| None,
+                &lines,
+            );
+            assert_eq!(ids(&rows), expected);
+        }
     }
 
     #[test]

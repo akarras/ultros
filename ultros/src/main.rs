@@ -1137,10 +1137,14 @@ mod tests {
 
         let captured: Arc<Mutex<Option<String>>> = Arc::default();
         let sink = captured.clone();
+        let test_thread = std::thread::current().id();
 
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            *sink.lock().unwrap() = super::panic_location_string(info);
+            // The hook is process-wide; parallel tests may also catch panics.
+            if std::thread::current().id() == test_thread {
+                *sink.lock().unwrap() = super::panic_location_string(info);
+            }
         }));
         let _ = std::panic::catch_unwind(|| panic!("boom"));
         std::panic::set_hook(previous);

@@ -24,7 +24,7 @@
 //!   [`CartEstimate::saturated`] set rather than wrapping.
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use ultros_api_types::{ActiveListing, list::ListItem};
@@ -67,6 +67,8 @@ impl From<&ListItem> for LineRequest {
 /// How much of a line's remaining need the estimate covers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineStatus {
+    /// This item was not covered by the last successful listings request.
+    NotRequested,
     /// Nothing remaining; the line prices nothing.
     Acquired,
     /// Every remaining unit has a listed price.
@@ -80,7 +82,10 @@ pub enum LineStatus {
 impl LineStatus {
     /// True when the line still needs units the board cannot price.
     pub fn is_short(self) -> bool {
-        matches!(self, Self::PartialSupply | Self::NoSupply)
+        matches!(
+            self,
+            Self::NotRequested | Self::PartialSupply | Self::NoSupply
+        )
     }
 }
 
@@ -151,6 +156,14 @@ pub struct CartEstimate {
 }
 
 impl CartEstimate {
+    /// Rows still needing units whose item has not been fetched successfully.
+    pub fn lines_not_requested(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|line| line.status == LineStatus::NotRequested)
+            .count()
+    }
+
     /// Lines that still need units, priced or not.
     pub fn lines_needing_units(&self) -> usize {
         self.lines_priced + self.lines_short
@@ -314,7 +327,9 @@ where
         match line.status {
             LineStatus::Acquired => cart.lines_acquired += 1,
             LineStatus::Priced => cart.lines_priced += 1,
-            LineStatus::PartialSupply | LineStatus::NoSupply => cart.lines_short += 1,
+            LineStatus::NotRequested | LineStatus::PartialSupply | LineStatus::NoSupply => {
+                cart.lines_short += 1;
+            }
         }
         cart.total = match cart.total.checked_add(line.total) {
             Some(total) => total,
@@ -345,11 +360,36 @@ pub fn estimate_list_items(rows: &[(ListItem, Vec<ActiveListing>)]) -> CartEstim
     )
 }
 
+/// Estimate only successfully fetched items. Coverage records requested item
+/// identities, including successful empty responses, not just nonempty offers.
+/// An item added during a lookup therefore stays unrequested until the next
+/// successful lookup includes it. All qualities share that item's coverage.
+pub fn estimate_list_items_with_coverage(
+    rows: &[(ListItem, Vec<ActiveListing>)],
+    fetched: &HashSet<i32>,
+) -> CartEstimate {
+    let mut estimate = estimate_cart(rows.iter().map(|(item, listings)| {
+        (
+            LineRequest::from(item),
+            if fetched.contains(&item.item_id) {
+                listings.as_slice()
+            } else {
+                &[]
+            },
+        )
+    }));
+    for line in &mut estimate.lines {
+        if line.remaining > 0 && !fetched.contains(&line.item_id) {
+            line.status = LineStatus::NotRequested;
+        }
+    }
+    estimate
+}
+
 /// Why an estimate has no listings behind it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissingReason {
-    /// Nobody has asked for prices yet (a device list before its Shop
-    /// lookup).
+    /// Nobody has asked for prices yet.
     NotRequested,
     /// The lookup failed and nothing earlier is cached.
     Failed,
@@ -529,6 +569,79 @@ pub mod fixtures {
 mod tests {
     use super::fixtures::{listing, request};
     use super::*;
+
+    fn covered_row(id: i32, item_id: i32, hq: Option<bool>, need: i32, owned: i32) -> ListItem {
+        ListItem {
+            id,
+            item_id,
+            list_id: 1,
+            hq,
+            quantity: Some(need),
+            acquired: Some(owned),
+            target_price: None,
+        }
+    }
+
+    #[test]
+    fn successful_empty_response_and_unrequested_item_are_distinct() {
+        let rows = vec![
+            (covered_row(1, 10, None, 2, 0), vec![]),
+            (covered_row(2, 20, None, 3, 0), vec![]),
+            (covered_row(3, 30, None, 4, 4), vec![]),
+        ];
+        let estimate = estimate_list_items_with_coverage(&rows, &HashSet::from([10]));
+        assert_eq!(estimate.lines[0].status, LineStatus::NoSupply);
+        assert_eq!(estimate.lines[1].status, LineStatus::NotRequested);
+        assert_eq!(estimate.lines[2].status, LineStatus::Acquired);
+        assert_eq!(estimate.lines_not_requested(), 1);
+        assert_eq!(estimate.unpriced_units, 5);
+        assert_eq!(estimate.coverage, Coverage::None);
+    }
+
+    #[test]
+    fn new_item_keeps_known_subtotal_and_cannot_use_unfetched_offers() {
+        let rows = vec![
+            (
+                covered_row(1, 10, None, 2, 0),
+                vec![listing(1, 10, false, 10, 9)],
+            ),
+            (
+                covered_row(2, 20, None, 3, 0),
+                vec![listing(2, 20, false, 100, 9)],
+            ),
+        ];
+        let requested_before_edit = HashSet::from([10]);
+        let pending = estimate_list_items_with_coverage(&rows, &requested_before_edit);
+        assert_eq!(pending.total, 20);
+        assert_eq!(pending.coverage, Coverage::Partial);
+        assert_eq!(pending.unpriced_units, 3);
+        assert_eq!(pending.lines[1].status, LineStatus::NotRequested);
+        assert!(pending.lines[1].allocations.is_empty());
+        let refreshed = estimate_list_items_with_coverage(&rows, &HashSet::from([10, 20]));
+        assert_eq!(refreshed.total, 320);
+        assert_eq!(refreshed.coverage, Coverage::Complete);
+        // A replacement scope does not inherit the previous scope's coverage.
+        let other_scope = estimate_list_items_with_coverage(&rows, &HashSet::from([20]));
+        assert_eq!(other_scope.total, 300);
+        assert_eq!(other_scope.lines[0].status, LineStatus::NotRequested);
+    }
+
+    #[test]
+    fn item_coverage_is_shared_by_quality_but_supply_is_not_duplicated() {
+        let offers = vec![listing(1, 10, true, 10, 2), listing(2, 10, false, 20, 2)];
+        let rows = vec![
+            (covered_row(1, 10, None, 3, 0), offers.clone()),
+            (covered_row(2, 10, Some(true), 2, 0), offers),
+        ];
+        let priced = estimate_list_items_with_coverage(&rows, &HashSet::from([10]));
+        assert_eq!(priced.total, 60);
+        assert_eq!(priced.lines[0].status, LineStatus::PartialSupply);
+        assert_eq!(priced.lines[1].status, LineStatus::Priced);
+        assert_eq!(priced.lines_not_requested(), 0);
+        let unfetched = estimate_list_items_with_coverage(&rows, &HashSet::new());
+        assert_eq!(unfetched.lines_not_requested(), 2);
+        assert_eq!(unfetched.total, 0);
+    }
 
     fn line(request: LineRequest, listings: &[ActiveListing]) -> LineEstimate {
         estimate_line(request, listings)
