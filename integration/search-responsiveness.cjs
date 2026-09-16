@@ -1,3 +1,4 @@
+// Advertising is outside this application regression. Disable only the external SDK; all page errors still fail.
 // Real hydrated search UI, controlled responses (including an intentionally
 // uncooperative transport) to exercise latest-query-wins independently of abort.
 const assert = require('node:assert/strict');
@@ -10,11 +11,18 @@ async function main() {
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(90000);
-    const errors = [];
-    page.on('pageerror', error => {
-      // Match the route runner's allowance for AdSense's headless-only error.
-      if (!error.message.includes('pagead2.googlesyndication.com')) errors.push(error.message);
+    await page.setCookie({name: 'HIDE_ADS', value: 'true', url: BASE, path: '/'});
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.hostname === 'pagead2.googlesyndication.com' && url.pathname.endsWith('/adsbygoogle.js')) {
+        void request.respond({status: 200, contentType: 'application/javascript', body: '/* Ad SDK disabled for application regression. */'});
+      } else {
+        void request.continue();
+      }
     });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.stack || error.message));
     await page.evaluateOnNewDocument(() => {
       window.__searchHydrated = false;
       window.addEventListener('ultros:hydrated', () => { window.__searchHydrated = true; });
@@ -92,7 +100,7 @@ async function main() {
     assert(await page.evaluate(() => window.__searchRequests[5].signal.aborted), 'unmount aborts request');
     await finish(5, 'Disposed stale recipe');
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
-    assert.deepEqual(errors, [], 'no disposed-signal errors');
+    assert.deepEqual(errors, [], 'no application errors');
     await page.keyboard.down('Control');
     await page.keyboard.press('KeyK');
     await page.keyboard.up('Control');

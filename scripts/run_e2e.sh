@@ -354,6 +354,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_subtotal_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_subtotal_exit"
         fi
+        log "running realtime callback retirement E2E"
+        realtime_retirement_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:realtime-retirement ) || realtime_retirement_exit=$?
+        if [ "$realtime_retirement_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$realtime_retirement_exit"
+        fi
         log "running list compaction recovery E2E"
         list_recovery_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-compaction-recovery ) || list_recovery_exit=$?

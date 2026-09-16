@@ -40,6 +40,7 @@
     "test:list-partial-subtotal": "node ./list-partial-subtotal.cjs",
     "test:list-compaction-recovery": "node ./list-compaction-recovery.cjs",
     "test:list-sync": "node ./list-sync.cjs",
+    "test:realtime-retirement": "node ./realtime-retirement.cjs",
     "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",
     "test:list-companion": "node ./list-companion.cjs",
     "test:labs": "node ./labs.cjs",

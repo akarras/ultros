@@ -58,6 +58,8 @@ mod client {
         pending_messages: RefCell<Vec<String>>,
         next_subscription_id: Cell<u64>,
         reconnect_attempt: Cell<u32>,
+        connection_generation: Cell<u64>,
+        reconnect_timer: RefCell<Option<Timeout>>,
         status: Signal<String>,
         last_update: Signal<Option<DateTime<Utc>>>,
         set_status: WriteSignal<String>,
@@ -66,6 +68,34 @@ mod client {
         onmessage: RefCell<Option<Closure<dyn FnMut(MessageEvent)>>>,
         onclose: RefCell<Option<Closure<dyn FnMut(CloseEvent)>>>,
         onerror: RefCell<Option<Closure<dyn FnMut(Event)>>>,
+    }
+
+    impl RealtimeInner {
+        /// Browser event targets must release their references before the Rust
+        /// closures are destroyed. CLOSING can still deliver a close event
+        /// after a replacement connection has already opened.
+        fn retire_socket(&self) {
+            self.connection_generation
+                .set(self.connection_generation.get().wrapping_add(1));
+            self.reconnect_timer.borrow_mut().take();
+            if let Some(socket) = self.socket.borrow_mut().take() {
+                socket.set_onopen(None);
+                socket.set_onmessage(None);
+                socket.set_onclose(None);
+                socket.set_onerror(None);
+                let _ = socket.close();
+            }
+            self.onopen.borrow_mut().take();
+            self.onmessage.borrow_mut().take();
+            self.onclose.borrow_mut().take();
+            self.onerror.borrow_mut().take();
+        }
+    }
+
+    impl Drop for RealtimeInner {
+        fn drop(&mut self) {
+            self.retire_socket();
+        }
     }
 
     impl RealtimeClient {
@@ -83,6 +113,8 @@ mod client {
                     pending_messages: RefCell::new(Vec::new()),
                     next_subscription_id: Cell::new(1),
                     reconnect_attempt: Cell::new(0),
+                    connection_generation: Cell::new(0),
+                    reconnect_timer: RefCell::new(None),
                     status: status.into(),
                     last_update: last_update.into(),
                     set_status,
@@ -261,6 +293,8 @@ mod client {
                 }
             }
 
+            self.inner.retire_socket();
+            let generation = self.inner.connection_generation.get();
             let Some(url) = websocket_url() else {
                 return;
             };
@@ -271,7 +305,8 @@ mod client {
 
             let weak = Rc::downgrade(&self.inner);
             let onopen = Closure::wrap(Box::new(move |_event: Event| {
-                if let Some(inner) = weak.upgrade() {
+                if let Some(inner) = current_connection(&weak, generation) {
+                    inner.reconnect_timer.borrow_mut().take();
                     inner.reconnect_attempt.set(0);
                     inner.set_status.set("live".to_string());
                     if let Some(socket) = inner.socket.borrow().as_ref().cloned() {
@@ -300,6 +335,9 @@ mod client {
 
             let weak = Rc::downgrade(&self.inner);
             let onmessage = Closure::wrap(Box::new(move |event: MessageEvent| {
+                if current_connection(&weak, generation).is_none() {
+                    return;
+                }
                 let Some(text) = event.data().as_string() else {
                     return;
                 };
@@ -313,14 +351,18 @@ mod client {
 
             let weak = Rc::downgrade(&self.inner);
             let onclose = Closure::wrap(Box::new(move |_event: CloseEvent| {
-                schedule_reconnect(&weak);
+                if current_connection(&weak, generation).is_some() {
+                    schedule_reconnect(&weak);
+                }
             }) as Box<dyn FnMut(_)>);
             socket.set_onclose(Some(onclose.as_ref().unchecked_ref()));
             *self.inner.onclose.borrow_mut() = Some(onclose);
 
             let weak = Rc::downgrade(&self.inner);
             let onerror = Closure::wrap(Box::new(move |_event: Event| {
-                schedule_reconnect(&weak);
+                if current_connection(&weak, generation).is_some() {
+                    schedule_reconnect(&weak);
+                }
             }) as Box<dyn FnMut(_)>);
             socket.set_onerror(Some(onerror.as_ref().unchecked_ref()));
             *self.inner.onerror.borrow_mut() = Some(onerror);
@@ -477,6 +519,14 @@ mod client {
         }
     }
 
+    fn current_connection(
+        weak: &Weak<RealtimeInner>,
+        generation: u64,
+    ) -> Option<Rc<RealtimeInner>> {
+        weak.upgrade()
+            .filter(|inner| inner.connection_generation.get() == generation)
+    }
+
     fn schedule_reconnect(weak: &Weak<RealtimeInner>) {
         let Some(inner) = weak.upgrade() else {
             return;
@@ -488,12 +538,19 @@ mod client {
             inner.set_status.set("offline".to_string());
             return;
         }
+        // Browsers commonly emit error followed by close for one failure.
+        // Keep one owned timer instead of accumulating forgotten callbacks.
+        if inner.reconnect_timer.borrow().is_some() {
+            return;
+        }
+        let generation = inner.connection_generation.get();
         let attempt = inner.reconnect_attempt.get().saturating_add(1).min(6);
         inner.reconnect_attempt.set(attempt);
         let delay_ms = 500_u32.saturating_mul(2_u32.saturating_pow(attempt));
         let weak = Rc::downgrade(&inner);
-        Timeout::new(delay_ms, move || {
-            if let Some(inner) = weak.upgrade() {
+        let timer = Timeout::new(delay_ms, move || {
+            if let Some(inner) = current_connection(&weak, generation) {
+                inner.reconnect_timer.borrow_mut().take();
                 let status = inner.status;
                 let last_update = inner.last_update;
                 RealtimeClient {
@@ -503,8 +560,8 @@ mod client {
                 }
                 .connect();
             }
-        })
-        .forget();
+        });
+        *inner.reconnect_timer.borrow_mut() = Some(timer);
     }
 
     fn websocket_url() -> Option<String> {
