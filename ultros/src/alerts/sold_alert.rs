@@ -20,31 +20,33 @@ use ultros_db::{UltrosDb, entity::alert};
 use crate::{
     alerts::{
         delivery::dispatch_alert,
+        inbox::{AlertFire, record_fire},
         price_alert_tracker::resolve_item_name,
         sold_matcher::{
             AddedListing, ObservedSale, RemovedListing, SaleKey, SoldEvent, SoldMatcher,
         },
     },
-    event::{BusRecv, EventBus, EventType, handle_bus_recv},
+    event::{BusRecv, EventBus, EventProducer, EventType, NotificationEvent, handle_bus_recv},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SaleRule {
     alert_id: i32,
+    owner: i64,
 }
 
 /// `retainer_id -> alerts that own it`.
 type RulesIndex = HashMap<i32, Vec<SaleRule>>;
 
-/// `(alert_id, owned retainer ids)` pairs into the index.
-fn build_rules_index(rows: Vec<(i32, Vec<i32>)>) -> RulesIndex {
+/// `(alert_id, owner, owned retainer ids)` rows into the index.
+fn build_rules_index(rows: Vec<(i32, i64, Vec<i32>)>) -> RulesIndex {
     let mut index: RulesIndex = HashMap::new();
-    for (alert_id, retainers) in rows {
+    for (alert_id, owner, retainers) in rows {
         for retainer_id in retainers {
             index
                 .entry(retainer_id)
                 .or_default()
-                .push(SaleRule { alert_id });
+                .push(SaleRule { alert_id, owner });
         }
     }
     index
@@ -59,7 +61,7 @@ async fn load_rules(db: &UltrosDb) -> Result<RulesIndex> {
     let mut rows = Vec::with_capacity(alerts.len());
     for (alert, _) in alerts {
         let retainers = db.get_owned_retainer_ids(alert.owner).await?;
-        rows.push((alert.id, retainers));
+        rows.push((alert.id, alert.owner, retainers));
     }
     Ok(build_rules_index(rows))
 }
@@ -105,6 +107,7 @@ impl RetainerSaleListener {
         mut retainers: EventBus<OwnedRetainer>,
         mut alert_events: EventBus<alert::Model>,
         ctx: serenity_prelude::Context,
+        notifications: EventProducer<NotificationEvent>,
     ) -> Result<Self> {
         let mut rules = load_rules(&db).await?;
         let mut matcher = SoldMatcher::new(owned_union(&rules));
@@ -127,7 +130,7 @@ impl RetainerSaleListener {
                     _ = stop_rx.recv() => break,
                     _ = tick.tick() => {
                         let fired = matcher.settle(Utc::now());
-                        fire_all(&db, &ctx, &rules, fired).await;
+                        fire_all(&db, &ctx, &rules, fired, &notifications).await;
                     }
                     msg = alert_events.recv() => match handle_bus_recv("sale_alert.alerts", msg) {
                         BusRecv::Msg(_) | BusRecv::Lagged => refresh(&db, &mut rules, &mut matcher).await,
@@ -231,6 +234,7 @@ async fn fire_all(
     ctx: &serenity_prelude::Context,
     rules: &RulesIndex,
     events: Vec<SoldEvent>,
+    notifications: &EventProducer<NotificationEvent>,
 ) {
     for event in events {
         let Some(alerts) = rules.get(&event.retainer_id) else {
@@ -248,22 +252,23 @@ async fn fire_all(
                     "retainer sale alert not delivered: {error}"
                 );
             }
-            if let Err(e) = db
-                .record_alert_event(
-                    rule.alert_id,
-                    event.key.item_id,
-                    None,
-                    Some(event.key.price_per_unit),
+            record_fire(
+                db,
+                notifications,
+                AlertFire {
+                    alert_id: rule.alert_id,
+                    owner: rule.owner,
+                    item_id: event.key.item_id,
+                    matched_listing_id: None,
+                    matched_price: Some(event.key.price_per_unit),
+                    title: &title,
+                    body: &body,
+                    click_url: &click_url,
                     delivered,
                     delivery_error,
-                )
-                .await
-            {
-                error!(
-                    "failed to record alert_event for sale alert {}: {e}",
-                    rule.alert_id
-                );
-            }
+                },
+            )
+            .await;
             if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
                 error!(
                     "failed to update last_fired_at for sale alert {}: {e}",
@@ -328,7 +333,7 @@ mod tests {
 
     #[test]
     fn rules_index_maps_each_owned_retainer_to_its_alerts() {
-        let rules = build_rules_index(vec![(10, vec![1, 2]), (11, vec![2])]);
+        let rules = build_rules_index(vec![(10, 100, vec![1, 2]), (11, 100, vec![2])]);
         assert_eq!(rules.get(&1).map(Vec::len), Some(1));
         assert_eq!(rules.get(&2).map(Vec::len), Some(2));
         let expected: HashSet<i32> = [1, 2].into_iter().collect();

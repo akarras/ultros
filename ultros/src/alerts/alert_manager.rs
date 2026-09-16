@@ -7,6 +7,7 @@ use tracing::error;
 use ultros_api_types::{
     user::OwnedRetainer,
     websocket::{ListEventData, ListingEventData, SaleEventData},
+    world_helper::WorldHelper,
 };
 use ultros_db::{
     UltrosDb,
@@ -14,12 +15,24 @@ use ultros_db::{
     world_data::world_cache::WorldCache,
 };
 
-use crate::event::{EventBus, EventType};
+use crate::event::{EventBus, EventProducer, EventType, NotificationEvent};
 
 use super::list_update_alert_tracker::ListUpdateAlertListener;
-use super::price_alert_tracker::PriceAlertListener;
+use super::price_alert_tracker::{PriceAlertListener, PriceAlertServices};
 use super::sold_alert::RetainerSaleListener;
-use super::undercut_alert::{RetainerAlertListener, RetainerAlertTx};
+use super::undercut_alert::{RetainerAlertListener, RetainerAlertServices, RetainerAlertTx};
+
+/// Long-lived handles `start_manager` and its sub-listeners share, bundled so
+/// adding one (like `notifications`/`world_helper` for the notification
+/// inbox) doesn't push `start_manager`'s argument count past clippy's
+/// `too_many_arguments` threshold.
+pub(crate) struct AlertManagerServices {
+    pub(crate) ctx: serenity_prelude::Context,
+    pub(crate) token: CancellationToken,
+    pub(crate) world_cache: Arc<WorldCache>,
+    pub(crate) world_helper: Arc<WorldHelper>,
+    pub(crate) notifications: EventProducer<NotificationEvent>,
+}
 
 pub(crate) struct AlertManager {
     /// Hashmap of the current retainer alerts where the id of the alert is the key
@@ -27,6 +40,7 @@ pub(crate) struct AlertManager {
     price_alerts: Option<PriceAlertListener>,
     list_update_alerts: Option<ListUpdateAlertListener>,
     sale_alerts: Option<RetainerSaleListener>,
+    notifications: EventProducer<NotificationEvent>,
 }
 
 impl AlertManager {
@@ -38,16 +52,22 @@ impl AlertManager {
             EventBus<alert_retainer_undercut::Model>,
         ),
         (lists, history): (EventBus<ListEventData>, EventBus<SaleEventData>),
-        ctx: serenity_prelude::Context,
-        token: CancellationToken,
-        world_cache: Arc<WorldCache>,
+        services: AlertManagerServices,
     ) {
+        let AlertManagerServices {
+            ctx,
+            token,
+            world_cache,
+            world_helper,
+            notifications,
+        } = services;
         // start all alerts we know about from the db, then use the alert busses to monitor for new alerts being spawned
         let mut manager = AlertManager {
             current_retainer_alerts: HashMap::new(),
             price_alerts: None,
             list_update_alerts: None,
             sale_alerts: None,
+            notifications: notifications.clone(),
         };
         match ultros_db.get_all_alerts().await {
             Ok(all_alerts) => {
@@ -77,8 +97,12 @@ impl AlertManager {
             listings.resubscribe(),
             alerts.resubscribe(),
             lists.resubscribe(),
-            ctx.clone(),
-            world_cache,
+            PriceAlertServices {
+                ctx: ctx.clone(),
+                world_cache,
+                world_helper,
+                notifications: notifications.clone(),
+            },
         )
         .await
         {
@@ -90,6 +114,7 @@ impl AlertManager {
             lists.resubscribe(),
             alerts.resubscribe(),
             ctx.clone(),
+            notifications.clone(),
         )
         .await
         {
@@ -103,6 +128,7 @@ impl AlertManager {
             retainers.resubscribe(),
             alerts.resubscribe(),
             ctx.clone(),
+            notifications.clone(),
         )
         .await
         {
@@ -194,7 +220,10 @@ impl AlertManager {
             ultros_db.clone(),
             listings,
             active_retainers,
-            ctx.clone(),
+            RetainerAlertServices {
+                ctx: ctx.clone(),
+                notifications: self.notifications.clone(),
+            },
         )
         .await
         {

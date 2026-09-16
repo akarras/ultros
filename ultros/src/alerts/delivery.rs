@@ -73,6 +73,15 @@ pub(crate) enum EndpointConfig {
     Webhook { url: String },
     #[serde(rename = "WebPush")]
     WebPush { subscription_id: i32 },
+    /// The auto-created "This site" inbox endpoint. Delivering to it is a no-op:
+    /// the tracker's own `record_fire` call (made after dispatch returns) writes
+    /// the `alert_event` row and broadcasts it on the `notifications` bus
+    /// regardless of this arm. It still has to exist and return `Ok(())` so an
+    /// alert whose only endpoint is the inbox counts as `Delivered` and advances
+    /// its cooldown (`dispatch_alert_detailed` otherwise reports
+    /// `PermanentFailure` for having no deliverable endpoints).
+    #[serde(rename = "InApp")]
+    InApp {},
 }
 
 /// Parse a notification endpoint row's `(method, config)` pair into a typed [`EndpointConfig`].
@@ -126,6 +135,12 @@ pub(crate) async fn deliver_to_endpoint(
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
             send_webpush(subscription_id, title, body, click_url, db, cfg).await
         }
+        // No-op: the tracker calls `record_fire` right after dispatch returns,
+        // which writes the `alert_event` row and broadcasts it on the
+        // `notifications` bus regardless of what happens here. This arm exists
+        // only so an alert whose sole endpoint is the inbox still counts as
+        // delivered.
+        EndpointConfig::InApp {} => Ok(()),
     }
 }
 
@@ -151,6 +166,12 @@ pub(crate) async fn deliver_non_discord_endpoint(
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
             send_webpush(subscription_id, title, body, click_url, db, cfg).await
         }
+        // No-op: the tracker calls `record_fire` right after dispatch returns,
+        // which writes the `alert_event` row and broadcasts it on the
+        // `notifications` bus regardless of what happens here. This arm exists
+        // only so an alert whose sole endpoint is the inbox still counts as
+        // delivered.
+        EndpointConfig::InApp {} => Ok(()),
     }
 }
 
@@ -713,6 +734,13 @@ mod tests {
                 subscription_id: 42
             }
         );
+    }
+
+    #[test]
+    fn parses_in_app_from_method_plus_empty_config() {
+        let cfg = json!({});
+        let parsed = parse_endpoint_config("InApp", &cfg).unwrap();
+        assert_eq!(parsed, EndpointConfig::InApp {});
     }
 
     #[test]

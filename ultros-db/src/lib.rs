@@ -16,6 +16,7 @@ pub mod retainers;
 pub mod sales;
 pub mod world_data;
 
+pub use alerts::NewAlertEvent;
 pub use sea_orm::ActiveValue;
 pub use sea_orm::error::DbErr as SeaDbErr;
 

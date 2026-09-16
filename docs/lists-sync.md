@@ -193,6 +193,9 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   calls and cover pending lookups, failed handshakes, access denial and lag.
 - Browser side: `localStorage.getItem("ultros.listdoc.index.v1.<user_id>")`
   lists the cached lists, their last use and last known permission.
+- The same socket also carries the notification inbox (`SubscribeNotifications`).
+  See `docs/notification-inbox.md` for its handshake, the `websocat` recipe,
+  and how it reuses this socket's `Stale`/subscription-limit conventions.
 - Divergence query for the soak:
   `SELECT l.list_id FROM list_doc l WHERE l.updated_at > now() - interval '1 day'`
   gives recently touched lists, not divergence. Retain the union of IDs

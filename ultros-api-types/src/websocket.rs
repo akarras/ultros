@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveListing, SaleHistory, UnknownCharacter,
+    alert::AlertEvent,
     retainer::Retainer,
     world_helper::{AnySelector, WorldHelper},
 };
@@ -304,6 +305,10 @@ pub enum ServerClient {
     },
     SubscriptionCreated,
     SocketConnected,
+    /// A fired alert, broadcast to the owner's other sessions. Always sent
+    /// wrapped in `SubscriptionEvent` so the client routes it to the
+    /// notification-inbox subscription.
+    Notification(AlertEvent),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -342,6 +347,12 @@ pub enum ClientMessage {
         list_id: i32,
         #[serde(with = "base64_bytes")]
         update: Vec<u8>,
+    },
+    /// Subscribe to the caller's notification inbox: fired alerts are relayed
+    /// back as `ServerClient::Notification` wrapped in `SubscriptionEvent`.
+    SubscribeNotifications {
+        #[serde(default)]
+        subscription_id: Option<u64>,
     },
 }
 
@@ -819,5 +830,62 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn notification_messages_round_trip() {
+        let subscribe = ClientMessage::SubscribeNotifications {
+            subscription_id: Some(3),
+        };
+        let text = serde_json::to_string(&subscribe).unwrap();
+        let back: ClientMessage = serde_json::from_str(&text).unwrap();
+        assert!(matches!(
+            back,
+            ClientMessage::SubscribeNotifications {
+                subscription_id: Some(3)
+            }
+        ));
+
+        // subscription_id defaults when omitted.
+        let back: ClientMessage = serde_json::from_str(r#"{"SubscribeNotifications":{}}"#).unwrap();
+        assert!(matches!(
+            back,
+            ClientMessage::SubscribeNotifications {
+                subscription_id: None
+            }
+        ));
+
+        let event = AlertEvent {
+            id: 1,
+            alert_id: 2,
+            fired_at: chrono::DateTime::<chrono::Utc>::default(),
+            item_id: 42,
+            matched_listing_id: None,
+            matched_price: Some(100),
+            delivered: true,
+            delivery_error: None,
+            read_at: None,
+            title: Some("Eternity Ring dropped".into()),
+            body: Some("Threshold: 100000 gil".into()),
+            click_url: Some("/item/Seraph/36687".into()),
+        };
+        let wrapped = ServerClient::SubscriptionEvent {
+            subscription_id: 3,
+            event: Box::new(ServerClient::Notification(event.clone())),
+        };
+        let text = serde_json::to_string(&wrapped).unwrap();
+        let back: ServerClient = serde_json::from_str(&text).unwrap();
+        let debug = format!("{back:?}");
+        let ServerClient::SubscriptionEvent {
+            subscription_id: 3,
+            event: inner,
+        } = back
+        else {
+            panic!("expected SubscriptionEvent{{subscription_id: 3, ..}}, got {debug}");
+        };
+        let ServerClient::Notification(notification) = *inner else {
+            panic!("expected Notification inside SubscriptionEvent, got {debug}");
+        };
+        assert_eq!(notification, event);
     }
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast::{channel, error::RecvError};
 use tracing::warn;
 use ultros_api_types::{
+    alert::AlertEvent,
     user::OwnedRetainer,
     websocket::{ListEventData, ListingEventData, SaleEventData},
 };
@@ -24,6 +25,22 @@ pub(crate) struct ListDocEvent {
 /// Ring size for the list buses. A MakePlace import or a bulk HQ change
 /// emits one event per row; 40 slots turned those into `Stale` refetch storms.
 const LISTS_BUS_SIZE: usize = 1024;
+
+/// A recorded alert fire, addressed to its owner's inbox. Broadcast on the
+/// `notifications` bus by `crate::alerts::inbox::record_fire` so every open
+/// websocket for that user can push it without a poll; also the payload the
+/// REST inbox endpoints serve on a fetch/paginate.
+#[derive(Debug, Clone)]
+pub(crate) struct NotificationEvent {
+    pub(crate) owner: i64,
+    pub(crate) event: AlertEvent,
+}
+
+/// Ring size for the notifications bus. Sized like `retainer_undercut`
+/// (another per-user, low-volume alert fan-out) with headroom: a user with
+/// several alerts on tight cooldowns firing in a burst (e.g. a market crash)
+/// shouldn't lose events before their socket drains them.
+const NOTIFICATIONS_BUS_SIZE: usize = 256;
 
 #[derive(Clone, Debug)]
 pub enum EventType<T> {
@@ -105,6 +122,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     let (history_sender, history_receiver) = channel(HISTORY_BUS_SIZE);
     let (list_sender, list_receiver) = channel(LISTS_BUS_SIZE);
     let (list_doc_sender, list_doc_receiver) = channel(LISTS_BUS_SIZE);
+    let (notifications_sender, notifications_receiver) = channel(NOTIFICATIONS_BUS_SIZE);
     (
         EventSenders {
             retainers: retainer_sender,
@@ -114,6 +132,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
             history: history_sender,
             lists: list_sender,
             list_docs: list_doc_sender,
+            notifications: notifications_sender,
         },
         EventReceivers {
             retainers: retainer_receiver,
@@ -123,6 +142,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
             history: history_receiver,
             lists: list_receiver,
             list_docs: list_doc_receiver,
+            notifications: notifications_receiver,
         },
     )
 }
@@ -137,6 +157,8 @@ pub(crate) struct EventSenders {
     pub(crate) lists: EventProducer<ListEventData>,
     /// Sent by `crate::lists::ListSync::publish`.
     pub(crate) list_docs: EventProducer<ListDocEvent>,
+    /// Sent by `crate::alerts::inbox::record_fire` on every alert fire.
+    pub(crate) notifications: EventProducer<NotificationEvent>,
 }
 
 /// Base event type for communicating across different parts of the app
@@ -149,6 +171,7 @@ pub(crate) struct EventReceivers {
     pub(crate) history: EventBus<SaleEventData>,
     pub(crate) lists: EventBus<ListEventData>,
     pub(crate) list_docs: EventBus<ListDocEvent>,
+    pub(crate) notifications: EventBus<NotificationEvent>,
 }
 
 /// Outcome of a broadcast `recv()`, distinguished so callers can react
@@ -210,6 +233,7 @@ impl Clone for EventReceivers {
             history: self.history.resubscribe(),
             lists: self.lists.resubscribe(),
             list_docs: self.list_docs.resubscribe(),
+            notifications: self.notifications.resubscribe(),
         }
     }
 }

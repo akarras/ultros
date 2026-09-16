@@ -1,6 +1,7 @@
 pub use sea_orm_migration::prelude::*;
 mod m20260910_000001_guest_list_adoption;
 mod m20260912_000001_active_listing_id_seq_negative_range;
+mod m20260915_000001_alert_event_inbox;
 
 mod m20220101_000001_create_table;
 mod m20220908_111724_create_index;
@@ -103,6 +104,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260908_000003_market_sweep::Migration),
             Box::new(m20260910_000001_guest_list_adoption::Migration),
             Box::new(m20260912_000001_active_listing_id_seq_negative_range::Migration),
+            Box::new(m20260915_000001_alert_event_inbox::Migration),
         ]
     }
 }

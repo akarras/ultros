@@ -12,8 +12,11 @@ use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::UltrosDb;
 
 use crate::{
-    alerts::delivery::{DispatchOutcome, dispatch_alert_detailed, permanent_failure_reason},
-    event::{EventBus, EventType},
+    alerts::{
+        delivery::{DispatchOutcome, dispatch_alert_detailed, permanent_failure_reason},
+        inbox::{AlertFire, record_fire},
+    },
+    event::{EventBus, EventProducer, EventType, NotificationEvent},
 };
 
 /// Returns true when `competitor_price` undercuts `our_lowest_price` by strictly more than
@@ -141,6 +144,15 @@ async fn send_discord_alerts(
 pub(crate) enum RetainerAlertTx {
     Stop,
     UpdateMargin(i32),
+}
+
+/// Shared handles `RetainerAlertListener::create_listener` needs beyond its
+/// identifying ids and event buses. Grouped so adding `notifications` for the
+/// notification inbox didn't push the function's argument count past
+/// clippy's `too_many_arguments` threshold.
+pub(crate) struct RetainerAlertServices {
+    pub(crate) ctx: serenity_prelude::Context,
+    pub(crate) notifications: EventProducer<NotificationEvent>,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord, Copy, Clone)]
@@ -318,7 +330,7 @@ impl UndercutTracker {
 }
 
 impl RetainerAlertListener {
-    #[instrument(skip(ultros_db, listings, ctx))]
+    #[instrument(skip(ultros_db, listings, services))]
     pub(crate) async fn create_listener(
         retainer_alert_id: i32,
         alert_id: i32,
@@ -326,8 +338,9 @@ impl RetainerAlertListener {
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
         active_retainers: EventBus<OwnedRetainer>,
-        ctx: serenity_prelude::Context,
+        services: RetainerAlertServices,
     ) -> Result<Self> {
+        let RetainerAlertServices { ctx, notifications } = services;
         let alert = ultros_db
             .get_alert(alert_id)
             .await?
@@ -457,19 +470,23 @@ impl RetainerAlertListener {
                                                 }
                                             }
                                         }
-                                        if let Err(e) = ultros_db
-                                            .record_alert_event(
+                                        record_fire(
+                                            &ultros_db,
+                                            &notifications,
+                                            AlertFire {
                                                 alert_id,
+                                                owner: discord_user as i64,
                                                 item_id,
-                                                None,
-                                                None,
+                                                matched_listing_id: None,
+                                                matched_price: None,
+                                                title,
+                                                body: &undercut_msg,
+                                                click_url: &click_url,
                                                 delivered,
-                                                delivery_error.clone(),
-                                            )
-                                            .await
-                                        {
-                                            error!("failed to record undercut alert event: {e}");
-                                        }
+                                                delivery_error: delivery_error.clone(),
+                                            },
+                                        )
+                                        .await;
                                         if delivered {
                                             if let Err(e) =
                                                 ultros_db.update_alert_last_fired(alert_id).await

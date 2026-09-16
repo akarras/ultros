@@ -10,8 +10,9 @@ use tokio::sync::Mutex;
 use tracing::{error, info, instrument, warn};
 use ultros_api_types::{
     ActiveListing,
+    alert::{ThresholdRule, threshold_listing_matches},
     websocket::{ListEventData, ListingEventData},
-    world_helper::AnySelector as ApiAnySelector,
+    world_helper::{AnySelector as ApiAnySelector, WorldHelper},
 };
 use ultros_db::{
     UltrosDb,
@@ -20,38 +21,28 @@ use ultros_db::{
 };
 
 use crate::alerts::delivery::dispatch_alert;
-use crate::event::{EventBus, EventType};
+use crate::alerts::inbox::{AlertFire, record_fire};
+use crate::event::{EventBus, EventProducer, EventType, NotificationEvent};
 
 /// True when an alert with the given `last_fired_at` is free to fire again given `cooldown_seconds`
 /// as of the reference timestamp `now`. `None` (never fired) is always off cooldown.
-pub(crate) fn is_off_cooldown_at(
-    last_fired_at: Option<DateTime<Utc>>,
-    cooldown_seconds: i32,
-    now: DateTime<Utc>,
-) -> bool {
-    match last_fired_at {
-        None => true,
-        Some(t) => now.signed_duration_since(t).num_seconds() >= cooldown_seconds as i64,
-    }
-}
+///
+/// Re-exported from `ultros_api_types::alert` so this crate's other trackers
+/// (e.g. `list_update_alert_tracker.rs`) keep importing it from here, while the
+/// actual logic is shared with the browser's guest-alert evaluation.
+pub(crate) use ultros_api_types::alert::is_off_cooldown_at;
 
 /// Returns true if `listing` satisfies every condition of `rule` and the rule is off
-/// cooldown at `now`. Pure: no DB calls, no `Utc::now()`.
+/// cooldown at `now`. Pure: no DB calls, no `Utc::now()`. Thin wrapper over the
+/// shared `threshold_listing_matches` predicate so account and guest alerts
+/// evaluate identically.
 pub(crate) fn rule_matches_listing(
     rule: &ActiveRule,
     listing: &ActiveListing,
+    worlds: &WorldHelper,
     now: DateTime<Utc>,
 ) -> bool {
-    if !rule.world_id_set.contains(&listing.world_id) {
-        return false;
-    }
-    if rule.hq_only && !listing.hq {
-        return false;
-    }
-    if listing.price_per_unit > rule.price_threshold {
-        return false;
-    }
-    is_off_cooldown_at(rule.last_fired_at, rule.cooldown_seconds, now)
+    threshold_listing_matches(&rule.threshold_rule(), listing, worlds, now)
 }
 
 /// Build the Discord embed title + body for a threshold-alert firing. Pure.
@@ -122,13 +113,32 @@ pub(crate) fn resolve_item_name(item_id: i32) -> String {
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveRule {
     pub(crate) alert_id: i32,
+    pub(crate) owner: i64,
     pub(crate) item_id: i32,
     pub(crate) price_threshold: i32,
     pub(crate) hq_only: bool,
     pub(crate) cooldown_seconds: i32,
     pub(crate) last_fired_at: Option<DateTime<Utc>>,
-    /// Pre-resolved set of world IDs this rule applies to.
-    pub(crate) world_id_set: HashSet<i32>,
+    /// World scope this rule applies to. Resolved against a `WorldHelper` at
+    /// match time (via `threshold_rule`/`threshold_listing_matches`) rather
+    /// than pre-flattened, matching how the browser evaluates guest alerts.
+    pub(crate) world_selector: ApiAnySelector,
+}
+
+impl ActiveRule {
+    /// Project onto the shared `ThresholdRule` shape so matching goes through
+    /// `threshold_listing_matches` — the same predicate the browser runs for
+    /// guest price alerts.
+    pub(crate) fn threshold_rule(&self) -> ThresholdRule {
+        ThresholdRule {
+            item_id: self.item_id,
+            world_selector: self.world_selector,
+            price_threshold: self.price_threshold,
+            hq_only: self.hq_only,
+            cooldown_seconds: self.cooldown_seconds,
+            last_fired_at: self.last_fired_at,
+        }
+    }
 }
 
 /// A pre-computed (alert, list_item) pair the price-alert tracker fires when a
@@ -138,6 +148,7 @@ pub(crate) struct ActiveRule {
 #[derive(Debug, Clone)]
 pub(crate) struct ListActiveRule {
     pub(crate) alert_id: i32,
+    pub(crate) owner: i64,
     pub(crate) list_id: i32,
     pub(crate) item_id: i32,
     pub(crate) target_price: i64,
@@ -161,50 +172,48 @@ impl TrackerState {
     fn refresh_from(
         &mut self,
         alerts: &[(alert::Model, alert_item_threshold::Model)],
-        world_cache: &WorldCache,
+        world_helper: &WorldHelper,
     ) {
         self.by_item.clear();
         for (a, t) in alerts {
             if !a.enabled {
                 continue;
             }
-            // Deserialize and resolve the world_selector to a flat set of world IDs.
-            let world_id_set: HashSet<i32> =
+            // World containment is resolved lazily at match time (see
+            // `ActiveRule::threshold_rule`), so we only need to deserialize the
+            // selector here, not flatten it against the world cache. We still
+            // do a one-off resolve check now so a stale/nonexistent world,
+            // datacenter, or region id gets logged at refresh time rather than
+            // failing silently on every future listing (it would otherwise
+            // never match, since an unresolvable selector fails closed in
+            // `threshold_listing_matches`).
+            let world_selector =
                 match serde_json::from_value::<ApiAnySelector>(t.world_selector.clone()) {
-                    Ok(api_selector) => {
-                        let selector: ultros_db::world_data::world_cache::AnySelector =
-                            api_selector.into();
-                        match world_cache.lookup_selector(&selector) {
-                            Ok(result) => world_cache
-                                .get_all_worlds_in(&result)
-                                .unwrap_or_default()
-                                .into_iter()
-                                .collect(),
-                            Err(e) => {
-                                warn!(
-                                    alert_id = a.id,
-                                    "could not resolve world_selector for alert: {e}"
-                                );
-                                HashSet::new()
-                            }
-                        }
-                    }
+                    Ok(selector) => selector,
                     Err(e) => {
                         warn!(
                             alert_id = a.id,
                             "could not deserialize world_selector for alert: {e}"
                         );
-                        HashSet::new()
+                        continue;
                     }
                 };
+            if world_helper.lookup_selector(world_selector).is_none() {
+                warn!(
+                    alert_id = a.id,
+                    ?world_selector,
+                    "world_selector for alert does not resolve against known world data; rule will never match"
+                );
+            }
             self.by_item.entry(t.item_id).or_default().push(ActiveRule {
                 alert_id: a.id,
+                owner: a.owner,
                 item_id: t.item_id,
                 price_threshold: t.price_threshold,
                 hq_only: t.hq_only,
                 cooldown_seconds: a.cooldown_seconds,
                 last_fired_at: a.last_fired_at.map(|dt| dt.with_timezone(&Utc)),
-                world_id_set,
+                world_selector,
             });
         }
     }
@@ -280,6 +289,7 @@ impl TrackerState {
                     .or_default()
                     .push(ListActiveRule {
                         alert_id: a.id,
+                        owner: a.owner,
                         list_id: t.list_id,
                         item_id: item.item_id,
                         target_price,
@@ -293,6 +303,17 @@ impl TrackerState {
     }
 }
 
+/// Shared handles `PriceAlertListener::start` needs beyond the event buses.
+/// Grouped so adding `world_helper`/`notifications` for the notification
+/// inbox didn't push the function's argument count past clippy's
+/// `too_many_arguments` threshold.
+pub(crate) struct PriceAlertServices {
+    pub(crate) ctx: serenity_prelude::Context,
+    pub(crate) world_cache: Arc<WorldCache>,
+    pub(crate) world_helper: Arc<WorldHelper>,
+    pub(crate) notifications: EventProducer<NotificationEvent>,
+}
+
 pub(crate) struct PriceAlertListener {
     /// Held to keep the channel sender alive — when `PriceAlertListener` is
     /// dropped, the corresponding `stop_rx.recv()` in the spawned task returns
@@ -303,18 +324,23 @@ pub(crate) struct PriceAlertListener {
 }
 
 impl PriceAlertListener {
-    #[instrument(skip(ultros_db, listings, alert_events, list_events, ctx, world_cache))]
+    #[instrument(skip(ultros_db, listings, alert_events, list_events, services))]
     pub(crate) async fn start(
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
         mut alert_events: EventBus<alert::Model>,
         mut list_events: EventBus<ListEventData>,
-        ctx: serenity_prelude::Context,
-        world_cache: Arc<WorldCache>,
+        services: PriceAlertServices,
     ) -> Result<Self> {
+        let PriceAlertServices {
+            ctx,
+            world_cache,
+            world_helper,
+            notifications,
+        } = services;
         let state = Arc::new(Mutex::new(TrackerState::default()));
         let (initial, initial_list) =
-            refresh_state_from_db(&state, &ultros_db, &world_cache).await?;
+            refresh_state_from_db(&state, &ultros_db, &world_cache, &world_helper).await?;
         info!(
             "price-alert tracker started with {} item-rules and {} list-alerts",
             initial.len(),
@@ -333,13 +359,13 @@ impl PriceAlertListener {
                     msg = alert_events.recv() => {
                         match msg {
                             Ok(_) => {
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after alert change: {e}");
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 error!("price-alert tracker lagged, dropped {n} alert events");
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after alert lag: {e}");
                                 }
                             }
@@ -349,13 +375,13 @@ impl PriceAlertListener {
                     msg = list_events.recv() => {
                         match msg {
                             Ok(_) => {
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after list change: {e}");
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 error!("price-alert tracker lagged, dropped {n} list events");
-                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop, &world_helper).await {
                                     error!("price-alert tracker refresh failed after list lag: {e}");
                                 }
                             }
@@ -371,7 +397,8 @@ impl PriceAlertListener {
                                         &state_for_loop,
                                         &db_for_loop,
                                         &ctx,
-                                        &world_cache_for_loop,
+                                        &world_helper,
+                                        &notifications,
                                     )
                                     .await;
                                 }
@@ -394,6 +421,7 @@ async fn refresh_state_from_db(
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
     world_cache: &WorldCache,
+    world_helper: &WorldHelper,
 ) -> Result<(
     Vec<(alert::Model, alert_item_threshold::Model)>,
     Vec<(alert::Model, alert_list_threshold::Model)>,
@@ -402,7 +430,7 @@ async fn refresh_state_from_db(
     let list_threshold_alerts = db.get_all_active_list_threshold_alerts().await?;
     {
         let mut guard = state.lock().await;
-        guard.refresh_from(&threshold_alerts, world_cache);
+        guard.refresh_from(&threshold_alerts, world_helper);
         guard
             .refresh_list_rules_from(&list_threshold_alerts, db, world_cache)
             .await;
@@ -415,7 +443,8 @@ async fn handle_added(
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
-    world_cache: &WorldCache,
+    world_helper: &WorldHelper,
+    notifications: &EventProducer<NotificationEvent>,
 ) {
     let now = Utc::now();
     let mut to_fire: Vec<(ActiveRule, i32, i32)> = vec![];
@@ -426,7 +455,7 @@ async fn handle_added(
         for (listing, _retainer) in &added.listings {
             if let Some(rules) = guard.by_item.get_mut(&listing.item_id) {
                 for rule in rules.iter_mut() {
-                    if !rule_matches_listing(rule, listing, now) {
+                    if !rule_matches_listing(rule, listing, world_helper, now) {
                         continue;
                     }
                     rule.last_fired_at = Some(now);
@@ -464,9 +493,8 @@ async fn handle_added(
 
     for (rule, matched_price, world_id) in to_fire {
         let item_name = resolve_item_name(rule.item_id);
-        let world_name = world_cache
-            .lookup_selector(&DbAnySelector::World(world_id))
-            .ok()
+        let world_name = world_helper
+            .lookup_selector(ApiAnySelector::World(world_id))
             .map(|world| world.get_name().to_string());
         let click_url = item_click_url(rule.item_id, world_name.as_deref());
         let (title, body) = format_threshold_alert_message(
@@ -481,22 +509,23 @@ async fn handle_added(
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
-        if let Err(e) = db
-            .record_alert_event(
-                rule.alert_id,
-                rule.item_id,
-                None,
-                Some(matched_price),
+        record_fire(
+            db,
+            notifications,
+            AlertFire {
+                alert_id: rule.alert_id,
+                owner: rule.owner,
+                item_id: rule.item_id,
+                matched_listing_id: None,
+                matched_price: Some(matched_price),
+                title: &title,
+                body: &body,
+                click_url: &click_url,
                 delivered,
                 delivery_error,
-            )
-            .await
-        {
-            error!(
-                "failed to record alert_event for alert {}: {e}",
-                rule.alert_id
-            );
-        }
+            },
+        )
+        .await;
         if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
             error!(
                 "failed to update last_fired_at for alert {}: {e}",
@@ -522,22 +551,23 @@ async fn handle_added(
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
-        if let Err(e) = db
-            .record_alert_event(
-                rule.alert_id,
-                rule.item_id,
-                None,
-                Some(matched_price),
+        record_fire(
+            db,
+            notifications,
+            AlertFire {
+                alert_id: rule.alert_id,
+                owner: rule.owner,
+                item_id: rule.item_id,
+                matched_listing_id: None,
+                matched_price: Some(matched_price),
+                title: &title,
+                body: &body,
+                click_url: &click_url,
                 delivered,
                 delivery_error,
-            )
-            .await
-        {
-            error!(
-                "failed to record alert_event for list-alert {}: {e}",
-                rule.alert_id
-            );
-        }
+            },
+        )
+        .await;
         if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
             error!(
                 "failed to update last_fired_at for list-alert {}: {e}",
@@ -550,34 +580,18 @@ async fn handle_added(
 #[cfg(test)]
 mod test {
     use super::*;
-    use chrono::{Duration, NaiveDateTime, Utc};
-
-    fn rule(threshold: i32, hq_only: bool, worlds: &[i32]) -> ActiveRule {
-        ActiveRule {
-            alert_id: 1,
-            item_id: 42,
-            price_threshold: threshold,
-            hq_only,
-            cooldown_seconds: 3600,
-            last_fired_at: None,
-            world_id_set: worlds.iter().copied().collect(),
-        }
-    }
-
-    fn listing(world_id: i32, price: i32, hq: bool) -> ActiveListing {
-        ActiveListing {
-            id: 1,
-            world_id,
-            item_id: 42,
-            retainer_id: 1,
-            price_per_unit: price,
-            quantity: 1,
-            hq,
-            timestamp: NaiveDateTime::default(),
-        }
-    }
+    use chrono::{Duration, Utc};
 
     // ---------- is_off_cooldown_at ----------
+    //
+    // `rule_matches_listing` itself is now a thin wrapper over
+    // `ultros_api_types::alert::threshold_listing_matches`; the item/world/hq/
+    // price/cooldown combinations it used to cover here are tested once,
+    // against the shared predicate, in `ultros-api-types/src/alert.rs`
+    // (`threshold_tests`). The boundary-condition tests for
+    // `is_off_cooldown_at` below aren't duplicated there (that module only
+    // exercises cooldown behavior indirectly via the combined predicate), so
+    // they stay here against the re-exported function.
 
     #[test]
     fn cooldown_blocks_recent_fire() {
@@ -618,76 +632,6 @@ mod test {
         let now = Utc::now();
         let last = Some(now);
         assert!(is_off_cooldown_at(last, 0, now));
-    }
-
-    // ---------- rule_matches_listing ----------
-
-    #[test]
-    fn matches_when_world_price_quality_and_cooldown_all_pass() {
-        let r = rule(100, false, &[1]);
-        let l = listing(1, 50, false);
-        assert!(rule_matches_listing(&r, &l, Utc::now()));
-    }
-
-    #[test]
-    fn does_not_match_when_listing_world_not_in_rule_world_set() {
-        let r = rule(100, false, &[1, 2]);
-        let l = listing(999, 50, false);
-        assert!(!rule_matches_listing(&r, &l, Utc::now()));
-    }
-
-    #[test]
-    fn does_not_match_when_hq_only_rule_sees_nq_listing() {
-        let r = rule(100, true, &[1]);
-        let l = listing(1, 50, false);
-        assert!(!rule_matches_listing(&r, &l, Utc::now()));
-    }
-
-    #[test]
-    fn does_match_when_hq_only_rule_sees_hq_listing() {
-        let r = rule(100, true, &[1]);
-        let l = listing(1, 50, true);
-        assert!(rule_matches_listing(&r, &l, Utc::now()));
-    }
-
-    #[test]
-    fn nq_rule_accepts_both_hq_and_nq_listings() {
-        let r = rule(100, false, &[1]);
-        assert!(rule_matches_listing(&r, &listing(1, 50, true), Utc::now()));
-        assert!(rule_matches_listing(&r, &listing(1, 50, false), Utc::now()));
-    }
-
-    #[test]
-    fn does_not_match_when_listing_price_above_threshold() {
-        let r = rule(100, false, &[1]);
-        let l = listing(1, 101, false);
-        assert!(!rule_matches_listing(&r, &l, Utc::now()));
-    }
-
-    #[test]
-    fn matches_at_exact_threshold_price() {
-        // "drops to or below" — equal is a match.
-        let r = rule(100, false, &[1]);
-        let l = listing(1, 100, false);
-        assert!(rule_matches_listing(&r, &l, Utc::now()));
-    }
-
-    #[test]
-    fn does_not_match_when_within_cooldown_window() {
-        let now = Utc::now();
-        let mut r = rule(100, false, &[1]);
-        r.last_fired_at = Some(now - Duration::seconds(60));
-        let l = listing(1, 50, false);
-        assert!(!rule_matches_listing(&r, &l, now));
-    }
-
-    #[test]
-    fn matches_after_cooldown_window_passed() {
-        let now = Utc::now();
-        let mut r = rule(100, false, &[1]);
-        r.last_fired_at = Some(now - Duration::seconds(7200));
-        let l = listing(1, 50, false);
-        assert!(rule_matches_listing(&r, &l, now));
     }
 
     // ---------- format_threshold_alert_message ----------
