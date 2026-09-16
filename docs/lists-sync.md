@@ -95,10 +95,18 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   client rebases its local rows onto that snapshot as new operations and
   sends them once more. A second rejection of the same server version stops
   the loop and shows the page as offline.
-- An idle page schedules revalidation after list broadcasts with a trailing
-  one-second debounce. Revocation/deletion is checked about a second after
-  the final broadcast, plus request latency; sustained broadcasts can defer
-  this check because the debounce has no maximum wait.
+- List broadcasts share a fixed one-second revalidation window. The first
+  broadcast schedules the permission probe; subsequent broadcasts cannot
+  postpone that deadline. Continuous updates therefore keep checking access.
+  The maximum normal scheduling delay is 1,000 ms, plus request latency;
+  suspended/background tabs can be delayed by browser timer throttling.
+  Fired timers release their slot and route cleanup cancels pending timers.
+  Results still require the active route and the exact open document; transport
+  failures or an expired session never purge the saved copy as a denial.
+  Price loads and permission probes also share a response watermark: a reply
+  older than the latest applied authoritative reply cannot restore stale write
+  access or apply an obsolete denial. Merely starting a newer request does not
+  discard useful responses, so slow overlapping requests cannot starve updates.
 - Undo is Loro's undo manager: local operations only, 100 steps, per open
   page. Every committed action (an applied `Edit`, a rename, a purchase) is
   exactly one step; there is no time-based merging, and multi-row edits are
