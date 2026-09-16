@@ -317,6 +317,11 @@ impl UltrosDb {
             matched_price: Set(matched_price),
             delivered: Set(delivered),
             delivery_error: Set(delivery_error),
+            // Populated once the inbox delivery path fills these in (Task 3).
+            read_at: Set(None),
+            title: Set(None),
+            body: Set(None),
+            click_url: Set(None),
         })
         .exec(&self.db)
         .await?;
