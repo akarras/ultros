@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use ultros_api_types::alert::{AlertEvent, MarkAlertEventsReadRequest};
 
 use crate::api::mark_alert_events_read;
+use crate::error::AppResult;
 
 /// `localStorage` key for the client-only half of the inbox.
 pub const LOCAL_INBOX_KEY: &str = "ultros.inbox.local.v1";
@@ -187,6 +188,26 @@ pub fn mark_read(items: &mut [InboxItem], ids: &[InboxId]) {
     }
 }
 
+/// The server-sync request a "mark all read" should send for `items`'
+/// current server half, or `None` when there is nothing server-side to sync
+/// (a guest with only local hits, or an empty inbox) — sending a
+/// `MarkAlertEventsReadRequest` with no `up_to_id` would be a no-op the
+/// server has nothing to do with, so callers skip the request entirely in
+/// that case.
+pub fn server_mark_all_request(items: &[InboxItem]) -> Option<MarkAlertEventsReadRequest> {
+    let up_to_id = items
+        .iter()
+        .filter_map(|item| match item.id {
+            InboxId::Server(id) => Some(id),
+            InboxId::Local(_) => None,
+        })
+        .max()?;
+    Some(MarkAlertEventsReadRequest {
+        ids: vec![],
+        up_to_id: Some(up_to_id),
+    })
+}
+
 /// Reactive notification-inbox store: a `server`-fetched signal plus a
 /// `localStorage`-backed local signal, merged into `items`/`unread_count`.
 ///
@@ -318,19 +339,15 @@ impl Inbox {
         }
     }
 
-    /// Marks every current item read, both locally and (via `up_to_id`) on
-    /// the server. Optimistic: never reverted on a failed server call.
-    pub fn mark_all_read(&self) {
-        let max_server_id = self.server.with(|items| {
-            items
-                .iter()
-                .filter_map(|item| match item.id {
-                    InboxId::Server(id) => Some(id),
-                    InboxId::Local(_) => None,
-                })
-                .max()
-        });
-
+    /// Flips `read = true` on every current item, both halves, and returns
+    /// the server-sync request to send (`None` when there's nothing
+    /// server-side to sync). Always runs synchronously — shared by
+    /// [`mark_all_read`][Self::mark_all_read] and
+    /// [`mark_all_read_and_sync`][Self::mark_all_read_and_sync] so both
+    /// start from the exact same optimistic flip before either one touches
+    /// the network.
+    fn flip_all_read(&self) -> Option<MarkAlertEventsReadRequest> {
+        let request = self.server.with(|items| server_mark_all_request(items));
         let _ = self.server.try_update(|items| {
             for item in items.iter_mut() {
                 item.read = true;
@@ -341,18 +358,44 @@ impl Inbox {
                 item.read = true;
             }
         });
+        request
+    }
 
-        if let Some(up_to_id) = max_server_id {
-            spawn_local(async move {
-                let request = MarkAlertEventsReadRequest {
-                    ids: vec![],
-                    up_to_id: Some(up_to_id),
-                };
-                if let Err(error) = mark_alert_events_read(request).await {
-                    log::error!("failed to mark all alert events read: {error}");
-                }
-            });
-        }
+    /// Marks every current item read, both locally and (via `up_to_id`) on
+    /// the server, and awaits the server round-trip before returning.
+    ///
+    /// The optimistic local flip ([`flip_all_read`][Self::flip_all_read])
+    /// still happens synchronously, before the `await` — a caller reading
+    /// `items()`/`unread_count()` right after calling this sees the flip
+    /// immediately, exactly as the fire-and-forget
+    /// [`mark_all_read`][Self::mark_all_read] behaves. What's different is
+    /// that *this* method lets a caller that needs the server write to have
+    /// actually landed (e.g. before re-fetching a page that would otherwise
+    /// race the un-awaited POST and come back showing stale unread state)
+    /// wait for it.
+    pub async fn mark_all_read_and_sync(&self) -> AppResult<()> {
+        let Some(request) = self.flip_all_read() else {
+            return Ok(());
+        };
+        mark_alert_events_read(request).await?;
+        Ok(())
+    }
+
+    /// Fire-and-forget wrapper: the optimistic local flip still happens
+    /// synchronously (before this method returns), the server sync just
+    /// isn't awaited. Kept for call sites that don't need to know when the
+    /// server write lands — see
+    /// [`mark_all_read_and_sync`][Self::mark_all_read_and_sync]'s docs for
+    /// the one that does.
+    pub fn mark_all_read(&self) {
+        let Some(request) = self.flip_all_read() else {
+            return;
+        };
+        spawn_local(async move {
+            if let Err(error) = mark_alert_events_read(request).await {
+                log::error!("failed to mark all alert events read: {error}");
+            }
+        });
     }
 }
 
@@ -475,6 +518,26 @@ mod tests {
         assert!(!items[0].read);
         assert!(items[1].read);
         assert!(!items[2].read);
+    }
+
+    #[test]
+    fn server_mark_all_request_none_when_no_server_items() {
+        let items = vec![item(InboxId::Local("x".to_string()), 1, "a", t(1), false)];
+        assert_eq!(server_mark_all_request(&items), None);
+        assert_eq!(server_mark_all_request(&[]), None);
+    }
+
+    #[test]
+    fn server_mark_all_request_uses_the_max_server_id() {
+        let items = vec![
+            item(InboxId::Server(3), 1, "a", t(1), false),
+            item(InboxId::Server(7), 1, "b", t(2), false),
+            item(InboxId::Local("x".to_string()), 1, "c", t(3), false),
+            item(InboxId::Server(5), 1, "d", t(4), false),
+        ];
+        let request = server_mark_all_request(&items).expect("has server items");
+        assert!(request.ids.is_empty());
+        assert_eq!(request.up_to_id, Some(7));
     }
 
     #[test]

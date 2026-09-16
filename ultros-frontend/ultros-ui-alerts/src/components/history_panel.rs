@@ -43,16 +43,22 @@ fn has_more(page_len: usize, page_size: usize) -> bool {
 /// "Mark all read" and by a successful resend, which can flip an event's
 /// `delivered`/`read_at` state in a way this accumulated buffer can't patch
 /// in place.
+///
+/// `try_*` throughout, not the panicking variants: both call sites run this
+/// after an `await` (the mark-all-read sync round-trip, the resend request),
+/// by which point the panel may already be disposed (e.g. the visitor
+/// navigated away before the request resolved) — `try_*` just no-ops instead
+/// of panicking on a disposed signal.
 fn reset_and_refetch(
     version: RwSignal<u64>,
     before_id: RwSignal<Option<i64>>,
     rows: RwSignal<Vec<AlertEvent>>,
     loading: RwSignal<bool>,
 ) {
-    before_id.set(None);
-    rows.set(Vec::new());
-    loading.set(true);
-    version.update(|v| *v += 1);
+    let _ = before_id.try_set(None);
+    let _ = rows.try_set(Vec::new());
+    let _ = loading.try_set(true);
+    let _ = version.try_update(|v| *v += 1);
 }
 
 #[component]
@@ -103,10 +109,26 @@ pub fn HistoryPanel() -> impl IntoView {
     });
 
     let mark_all_read = move |_| {
-        if let Some(inbox) = inbox {
-            inbox.mark_all_read();
-        }
-        reset_and_refetch(version, before_id, rows, loading);
+        let Some(inbox) = inbox else {
+            return;
+        };
+        spawn_local(async move {
+            // Awaited, not fire-and-forget (`Inbox::mark_all_read`): the
+            // optimistic local flip on `inbox` happens synchronously inside
+            // `mark_all_read_and_sync` before its first `await`, but the
+            // refetch below must not fire until the server's `read_at`
+            // write has actually landed — otherwise the page this refetch
+            // brings back can still show the pre-mark unread state, and
+            // nothing here would ever refetch again to correct it. On a
+            // failed server sync the local flip already happened, so the
+            // refetch still runs (the view converges on what the local
+            // state now says) and the error is logged rather than surfaced,
+            // matching every other best-effort sync in this app.
+            if let Err(error) = inbox.mark_all_read_and_sync().await {
+                log::error!("failed to mark all alert events read: {error}");
+            }
+            reset_and_refetch(version, before_id, rows, loading);
+        });
     };
 
     let load_more = move |_| {
