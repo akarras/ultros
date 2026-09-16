@@ -2309,6 +2309,7 @@
     "recipe_planner_route_home_only": "모두 시작 월드에서 구매",
     "recipe_planner_route_best_value": "최고 가치",
     "recipe_planner_route_cheapest": "최저가",
+    "recipe_planner_route_basis_previous": "이전 경로",
     "recipe_planner_route_saved_vs": "{{basis}}보다 {{gil}} 절약",
     "recipe_planner_route_dearer_than": "{{basis}}보다 {{gil}} 더 비쌈",
     "recipe_planner_route_same_as": "{{basis}}과 같은 비용",

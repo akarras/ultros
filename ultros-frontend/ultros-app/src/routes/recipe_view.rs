@@ -264,6 +264,27 @@ fn saving_line(
     })
 }
 
+/// Compare adjacent route alternatives, not a claimed price for one added world.
+/// Frontier world sets need not be nested and pinned routes can be dearer.
+/// Never subtract a partial cost, including when a pinned incomplete route
+/// interrupts the complete frontier.
+fn marginal_saving_line(plans: &[planner::ShoppingPlan], index: usize) -> Option<SavingLine> {
+    let previous = index.checked_sub(1)?;
+    if plans.get(previous)?.missing > 0 || plans.get(index)?.missing > 0 {
+        return None;
+    }
+    saving_line(plans, Some(previous), index)
+}
+
+fn home_first_worlds(
+    mut worlds: Vec<i32>,
+    home: i32,
+    mut names: impl FnMut(i32) -> (String, String),
+) -> Vec<i32> {
+    worlds.sort_by_cached_key(|world| (*world != home, names(*world), *world));
+    worlds
+}
+
 fn job(recipe: &xiv_gen::Recipe) -> String {
     let jobs = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
     let level = tracked_data()
@@ -895,13 +916,13 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             {move ||materials.get().err().map(|error|view!{<p role="alert" class="panel rounded-xl p-4 text-amber-300">{error}<button class="btn-secondary ml-3" on:click=move |_|set_craft.set(None)>"Reset craft choices"</button></p>})}
             <section aria-label="World visit comparison" class="space-y-2">
                 <div class="flex flex-wrap justify-between gap-2"><h2 class="font-semibold text-lg">{t!(i18n, recipe_planner_route_heading)}</h2><span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_route_subheading)}</span></div>
-                <div class="grid grid-cols-2 xl:grid-cols-5 gap-3">
+                <div class="grid grid-cols-2 xl:grid-cols-5 gap-2">
                 <Suspense fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
                     {move || {
                         let Cards{plans,pinned,best_value,cheapest,basis}=cards.get();
                         let basis_name=move ||if basis==Some(0) { t_string!(i18n, recipe_planner_route_basis_home).to_string() } else { t_string!(i18n, recipe_planner_route_basis_first_complete).to_string() };
-                        let lines=(0..plans.len()).map(|i|saving_line(&plans,basis,i)).collect::<Vec<_>>();
-                        plans.into_iter().zip(lines).enumerate().map(|(index,(p,line))| {
+                        let lines=(0..plans.len()).map(|i|(saving_line(&plans,basis,i),marginal_saving_line(&plans,i))).collect::<Vec<_>>();
+                        plans.into_iter().zip(lines).enumerate().map(|(index,(p,(line,marginal)))| {
                             let mut label=route_label(p.travel,p.worlds.is_empty());
                             if pinned==Some(index) { label=format!("{} · {label}",t_string!(i18n, recipe_planner_shared_route)); }
                             let stops=if p.worlds.is_empty() { t_string!(i18n, recipe_planner_route_home_only).to_string() } else { route_stops(&p.worlds) };
@@ -914,15 +935,25 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                             let worlds=p.worlds.clone();
                             let incomplete=p.missing>0;
                             // Partial plans get a hatched, dashed card so their lower total reads as "not comparable", not as a saving.
-                            let card_class=if incomplete { "panel panel-incomplete rounded-xl p-4 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" } else { "panel rounded-xl p-4 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" };
-                            view!{<button class=card_class data-incomplete=incomplete.to_string() class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
+                            let card_class=if incomplete { "panel panel-incomplete rounded-xl p-3 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" } else { "panel rounded-xl p-3 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" };
+                            view!{<button class=card_class title=stops.clone() data-incomplete=incomplete.to_string() class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
                                 <span class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm text-[color:var(--color-text-muted)]">{label}</span>{badge.map(|(text,brand)|{
                                     let badge_class=if brand { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-brand-500/20 text-brand-300" } else { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[color:var(--color-outline)] text-[color:var(--color-text-muted)]" };
                                     view!{<span class=badge_class data-testid="route-badge">{text}</span>}
                                 })}</span>
                                 <strong class="block text-xl tabular-nums">{gil(p.cost)}</strong>
                                 {vendor_plan_summary(&p).map(|text|view!{<span class="block text-xs text-brand-300">{text}</span>})}
-                                <span class="block text-xs">{if incomplete {format!("{} units unavailable · partial cost",p.missing)} else {stops}}</span>
+                                <span class="sr-only">{stops.clone()}</span>
+                                {incomplete.then(||view!{<span class="block text-xs">{format!("{} units unavailable · partial cost",p.missing)}</span>})}
+                                {marginal.and_then(|line| {
+                                    let previous=t_string!(i18n, recipe_planner_route_basis_previous).to_string();
+                                    match line {
+                                        SavingLine::Saved(s)=>Some(t_string!(i18n, recipe_planner_route_saved_vs, gil = gil(s), basis = previous).to_string()),
+                                        SavingLine::Dearer(s)=>Some(t_string!(i18n, recipe_planner_route_dearer_than, gil = gil(s), basis = previous).to_string()),
+                                        SavingLine::Same=>Some(t_string!(i18n, recipe_planner_route_same_as, basis = previous).to_string()),
+                                        _=>None,
+                                    }
+                                }).map(|text|view!{<span class="block text-xs font-medium" data-testid="route-marginal-saving">{text}</span>})}
                                 {line.and_then(|line| {
                                     const OK: &str = "block text-xs text-emerald-400";
                                     const MUTED: &str = "block text-xs text-[color:var(--color-text-muted)]";
@@ -988,7 +1019,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 </aside>
             </div>
             <section class="space-y-3" aria-label="Shopping itinerary"><h2 class="text-lg font-semibold">"Shopping itinerary"</h2>
-                <p class="text-sm text-[color:var(--color-text-muted)]">"Grouped by datacenter and world. Tick a line once bought: it stays in the plan while the rest re-plans. Confirm availability before travelling; prices can change."</p>
+                <p class="text-sm text-[color:var(--color-text-muted)]">"Starting world first when it has purchases, then grouped by datacenter and world. Tick a line once bought: it stays in the plan while the rest re-plans. Confirm availability before travelling; prices can change."</p>
                 {move || {
                     let reported=pair_set(unavailable.get());
                     (!reported.is_empty()).then(|| view!{<div class="flex flex-wrap items-center gap-2 text-sm" data-testid="unavailable-reports"><span class="text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_reported_unavailable)}</span>
@@ -998,12 +1029,10 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <Show when=move ||selected.with(Option::is_some) fallback=||view!{<p>"Loading shopping stops…"</p>}>
                     <div class="grid gap-3 lg:grid-cols-2">
                     <For each=move ||stops.with(|stops|{
-                        let mut worlds=stops.keys().copied().collect::<Vec<_>>();
-                        worlds.sort_by_key(|world|(dc_name(*world),world_name(*world),*world));
-                        worlds
+                        home_first_worlds(stops.keys().copied().collect(),home_id.get(),|world|(dc_name(world),world_name(world)))
                     }) key=|world|*world children=move |world|{
                         let rows=Memo::new(move |_|stops.with(|stops|stops.get(&world).cloned().unwrap_or_default()));
-                        view!{<div class="panel rounded-xl p-4 space-y-3"><div class="flex justify-between gap-2"><h3 class="font-semibold">{format!("{} · {}",dc_name(world),world_name(world))}</h3><span class="tabular-nums">{move ||rows.with(|rows|gil(rows.iter().map(|(_,o)|o.price*o.quantity).sum::<i64>()))}</span></div>
+                        view!{<div class="panel rounded-xl p-4 space-y-3" data-itinerary-world=world><div class="flex justify-between gap-2"><h3 class="font-semibold">{format!("{} · {}",dc_name(world),world_name(world))}</h3><span class="tabular-nums">{move ||rows.with(|rows|gil(rows.iter().map(|(_,o)|o.price*o.quantity).sum::<i64>()))}</span></div>
                         <For each=move ||rows.get() key=|(id,o)|(*id,o.id,o.price,o.quantity) children=move |(id,o)|{
                             let key=(id,o.id);
                             let world=o.world;
@@ -1034,7 +1063,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 </section>
             </Show>
             <section class="panel rounded-xl p-4 space-y-3" aria-label="Crafting order"><h2 class="text-lg font-semibold">"Craft in this order"</h2><ol class="list-decimal list-inside space-y-2 text-sm">{move ||materials.get().unwrap_or_default().into_iter().rev().filter(|m|m.crafts>0).map(|m|view!{<li>{format!("{} · {} crafts · {} extra",item_name(m.item),m.crafts,m.surplus)}</li>}).collect_view()}</ol></section>
-            <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left. Each card to the right completes more of the recipe or, when equally complete, costs less gil; the last card is the most complete plan found and, among equally complete plans, the cheapest. The full scope is always evaluated, so the frontier keeps the best plan found. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
+            <details class="text-xs text-[color:var(--color-text-muted)]"><summary class="cursor-pointer">"Price freshness and calculation details"</summary><div class="mt-2 space-y-1"><p>"Route cards are the travel frontier: one card per travel shape, shortest trip on the left. Each card to the right completes more of the recipe or, when equally complete, costs less gil; the last card is the most complete plan found and, among equally complete plans, the cheapest. Savings versus the previous route compare the two complete alternatives next to each other; their worlds may differ, so this is not a price for visiting one specific extra world. No savings are claimed against an incomplete route. Shared routes can sit between frontier cards and cost more. The full scope is always evaluated, so the frontier keeps the best plan found. Best value is the card the gil-plus-travel weighting prefers (adjustable in Planner settings). Adding a single world is checked exhaustively; larger routes search promising combinations, so they are best-found, not guaranteed global minima. Worlds already on your itinerary are free to revisit. Only market worlds are counted; vendor stops are separate."</p>{move ||loaded.get().map(|d| {
                 let mut lines=Vec::new();
                 for (id,item) in &d.items {let oldest=item.last_updated.iter().map(|u|u.updated_at).min();lines.push(format!("{}: {}",item_name(*id),oldest.map(|t|format!("oldest world update {t} UTC")).unwrap_or_else(||"freshness unknown".into())));}
                 for id in &d.failed {lines.push(format!("{}: market request failed — refresh to retry",item_name(*id)));}
@@ -1242,6 +1271,78 @@ mod tests {
         let short = vec![plan(10, 4)];
         assert_eq!(savings_basis(&short), None);
         assert_eq!(saving_line(&short, None, 0), Some(SavingLine::Incomplete));
+    }
+
+    #[test]
+    fn marginal_savings_compare_adjacent_complete_alternatives() {
+        let plan = |cost, missing, worlds: &[i32]| planner::ShoppingPlan {
+            cost,
+            missing,
+            worlds: worlds.iter().copied().collect(),
+            ..Default::default()
+        };
+        // The third route replaces world 79 instead of simply adding a hop.
+        let plans = vec![
+            plan(1_000, 0, &[]),
+            plan(800, 0, &[79]),
+            plan(700, 0, &[80, 81]),
+        ];
+        assert_eq!(marginal_saving_line(&plans, 0), None);
+        assert_eq!(
+            marginal_saving_line(&plans, 1),
+            Some(SavingLine::Saved(200))
+        );
+        assert_eq!(
+            marginal_saving_line(&plans, 2),
+            Some(SavingLine::Saved(100))
+        );
+        assert_eq!(
+            saving_line(&plans, savings_basis(&plans), 2),
+            Some(SavingLine::Saved(300))
+        );
+        assert_eq!(marginal_saving_line(&plans, 3), None);
+        // A pinned shared route can be dearer, equal, or incomplete. Do not
+        // skip it when claiming an adjacent comparison or compare partial costs.
+        let plans = vec![
+            plan(10, 4, &[]),
+            plan(800, 0, &[79]),
+            plan(900, 0, &[80]),
+            plan(900, 0, &[81]),
+            plan(20, 2, &[82]),
+            plan(700, 0, &[83]),
+        ];
+        assert_eq!(marginal_saving_line(&plans, 1), None);
+        assert_eq!(
+            marginal_saving_line(&plans, 2),
+            Some(SavingLine::Dearer(100))
+        );
+        assert_eq!(marginal_saving_line(&plans, 3), Some(SavingLine::Same));
+        assert_eq!(marginal_saving_line(&plans, 4), None);
+        assert_eq!(marginal_saving_line(&plans, 5), None);
+        assert_eq!(
+            saving_line(&plans, savings_basis(&plans), 5),
+            Some(SavingLine::Saved(100))
+        );
+        assert_eq!(marginal_saving_line(&[], 0), None);
+    }
+
+    #[test]
+    fn itinerary_starts_at_the_selected_world_without_inventing_a_stop() {
+        let names = |id| match id {
+            63 => ("Aether".into(), "Gilgamesh".into()),
+            79 => ("Aether".into(), "Cactuar".into()),
+            _ => ("Dynamis".into(), "Halicarnassus".into()),
+        };
+        assert_eq!(
+            home_first_worlds(vec![81, 79, 63], 63, names),
+            vec![63, 79, 81]
+        );
+        assert_eq!(
+            home_first_worlds(vec![63, 81, 79], 81, names),
+            vec![81, 79, 63]
+        );
+        assert_eq!(home_first_worlds(vec![81, 79], 63, names), vec![79, 81]);
+        assert!(home_first_worlds(vec![], 63, names).is_empty());
     }
 
     #[test]

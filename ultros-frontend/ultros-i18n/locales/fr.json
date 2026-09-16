@@ -2309,6 +2309,7 @@
     "recipe_planner_route_home_only": "Tout depuis votre monde de départ",
     "recipe_planner_route_best_value": "Meilleur rapport",
     "recipe_planner_route_cheapest": "Le moins cher",
+    "recipe_planner_route_basis_previous": "l’itinéraire précédent",
     "recipe_planner_route_saved_vs": "{{gil}} économisés par rapport à {{basis}}",
     "recipe_planner_route_dearer_than": "{{gil}} de plus que {{basis}}",
     "recipe_planner_route_same_as": "Même coût que {{basis}}",
