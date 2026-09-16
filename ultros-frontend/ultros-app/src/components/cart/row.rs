@@ -193,6 +193,10 @@ pub fn CartRow(
                 .into_any();
         };
         match line.status {
+            LineStatus::NotRequested => view! {
+                <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_not_requested)}</span>
+            }
+            .into_any(),
             LineStatus::NoSupply => view! {
                 <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_no_listings)}</span>
             }
@@ -224,7 +228,13 @@ pub fn CartRow(
                 <ItemIcon item_id=initial.item_id icon_size=IconSize::Small />
                 <span class="truncate font-semibold" title=name.clone()>{name.clone()}</span>
             </div>
-            <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate">
+            <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate" data-price-state=move || line.with(|line| match line.as_ref().map(|line|line.status) {
+                Some(LineStatus::NotRequested) | None => "not-requested",
+                Some(LineStatus::NoSupply) => "no-supply",
+                Some(LineStatus::PartialSupply) => "partial",
+                Some(LineStatus::Acquired) => "acquired",
+                Some(LineStatus::Priced) => "priced",
+            })>
                 <span class="sr-only">{t!(i18n, cart_est_cost)}</span>
                 {estimate_text}
             </div>

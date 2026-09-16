@@ -94,14 +94,14 @@ fn scope_of(list: &list::Model) -> Option<AnySelector> {
     }
 }
 
-fn meta_of(list: &list::Model) -> MetaSnapshot {
+pub(crate) fn meta_of(list: &list::Model) -> MetaSnapshot {
     MetaSnapshot {
         name: list.name.clone(),
         scope: scope_of(list),
     }
 }
 
-fn row_snapshot(model: &list_item::Model) -> RowSnapshot {
+pub(crate) fn row_snapshot(model: &list_item::Model) -> RowSnapshot {
     RowSnapshot {
         key: RowKey::new(model.item_id, model.hq),
         need: model.quantity.unwrap_or(1) as i64,
@@ -110,7 +110,7 @@ fn row_snapshot(model: &list_item::Model) -> RowSnapshot {
     }
 }
 
-fn clamp_i32(value: i64) -> i32 {
+pub(crate) fn clamp_i32(value: i64) -> i32 {
     value.clamp(0, i32::MAX as i64) as i32
 }
 

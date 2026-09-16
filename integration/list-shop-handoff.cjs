@@ -139,7 +139,7 @@ async function main() {
     if (priced) {
       assert.doesNotMatch(planned, /^0 gil/, planned);
       await page.$eval(testId("shop-estimate"), details => { details.open = true; });
-      assert.match(await text(testId("shop-estimate")), /Build estimate: [1-9]\d* gil \(1 of 1 items priced/);
+      assert.match(await text(testId("shop-estimate")), /Build estimate: [1-9][\d,]* gil \(1 of 1 items fully priced/);
       console.log("[step] recording a partial purchase of 1 unit from the first stack");
       const before = await text(testId("shop-stack-description"));
       await replace(testId("shop-stack-quantity"), "1");

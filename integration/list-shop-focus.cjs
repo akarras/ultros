@@ -214,11 +214,11 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('[data-testid="guest-shop-mode"]')?.getAttribute("aria-pressed") === "true");
       await page.waitForSelector(testId("shop-cheapest"), { visible: true });
       if (new URL(url).pathname.startsWith("/list/device/")) {
-        const lookup = await page.waitForSelector('button::-p-text(Look up prices)');
+        const lookup = await page.waitForSelector(testId("device-prices-refresh"));
         const response = page.waitForResponse(response => new URL(response.url()).pathname.startsWith("/api/v1/bulkListings/"));
         await lookup.click();
         assert((await response).ok(), "device price fixture must load");
-        await page.waitForFunction(() => [...document.querySelectorAll("button")].some(button => button.textContent.trim() === "Look up prices" && !button.disabled));
+        await page.waitForFunction(() => { const button = document.querySelector('[data-testid="device-prices-refresh"]'); return button?.textContent.trim() === "Refresh prices" && !button.disabled; });
       }
       await page.click(testId("shop-cheapest"));
       await page.waitForSelector('[data-shop-key]');

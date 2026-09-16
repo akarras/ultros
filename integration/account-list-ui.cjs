@@ -71,7 +71,7 @@ async function main() {
       if (!String(error.stack).includes("pagead2.googlesyndication.com"))
         appErrors.push(String(error.stack || error));
     });
-  let control, id;
+  let control, id, testError;
   try {
     const context = await browser.createBrowserContext();
     control = await context.newPage();
@@ -259,6 +259,10 @@ async function main() {
       { polling: 100 },
       needed,
     );
+    reopened.on("dialog", async dialog => { console.log("Account navigation dialog", dialog.type()); await dialog.accept(); });
+    const logoutStarted = Date.now();
+    reopened.on("response", response => { if (response.request().isNavigationRequest()) console.log("Account navigation response", Date.now() - logoutStarted, response.status(), new URL(response.url()).pathname); });
+    console.log("Logging out recovered account");
     await reopened.goto(`${base}/logout`, {
       waitUntil: "domcontentloaded",
       timeout: 60000,
@@ -299,19 +303,18 @@ async function main() {
       "account pages must not throw application errors",
     );
     console.log("Account list UI persistence and recovery checks passed");
+  } catch (error) {
+    testError = error;
   } finally {
-    if (control && id) {
-      await control
-        .goto(
-          `${base}/test/login?user_id=${user}&username=AccountStorageQA&redirect=/`,
-          { waitUntil: "domcontentloaded", timeout: 60000 },
-        )
-        .catch(() => {});
-      await api(control, "DELETE", `/api/v1/list/${id}/delete`).catch((e) =>
-        console.error("Fixture cleanup:", e.message),
-      );
-    }
-    await browser.close();
+    const cleanup = [];
+    if (control && id) cleanup.push((async () => {
+      await control.goto(`${base}/test/login?user_id=${user}&username=AccountStorageQA&redirect=/`, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await api(control, "DELETE", `/api/v1/list/${id}/delete`);
+    })());
+    const results = await Promise.allSettled(cleanup);
+    results.push(...await Promise.allSettled([browser.close()]));
+    const failures = [testError, ...results.filter(result => result.status === "rejected").map(result => result.reason)].filter(Boolean);
+    if (failures.length) throw new AggregateError(failures, "Account UI validation or owned fixture cleanup failed");
   }
 }
 main().catch((e) => {

@@ -34,6 +34,8 @@ async function records(page) {
 }
 
 async function prepare(page, errors) {
+  await page.setViewport({ width: 1280, height: 900 });
+  page.on("dialog", dialog => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
   page.setDefaultTimeout(60000);
   page.setDefaultNavigationTimeout(60000);
   page.on("pageerror", error => { if (!String(error.stack).includes("googlesyndication")) errors.push(String(error.stack || error)); });
@@ -60,9 +62,10 @@ async function prepare(page, errors) {
 
 async function restore(page, bytes) {
   const backup = JSON.stringify({ format: "ultros-device-list", version: 1, name: "Compatibility fixture", snapshot: Buffer.from(bytes).toString("base64") });
-  await page.waitForSelector(testId("device-list-backup"));
+  await page.waitForSelector(testId("list-restore-open"));
+  await page.click(testId("list-restore-open"));
+  await page.waitForSelector(testId("device-list-backup"), { visible: true });
   await page.$eval(testId("device-list-backup"), (input, text) => {
-    input.closest("details").open = true;
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, backup);
@@ -74,7 +77,7 @@ async function main() {
   fs.mkdirSync(artifacts, { recursive: true });
   const browser = await puppeteer.launch({ headless: true });
   const errors = [];
-  let control, listId;
+  let control, listId, testError;
   try {
     const guest = await browser.newPage();
     await prepare(guest, errors);
@@ -124,7 +127,10 @@ async function main() {
       await page.goto(`${base}/list/${listId}?lang=en`, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(() => window.compatibilityHydrated);
       await page.waitForSelector(testId("list-compatibility-export"));
-      await page.click(testId("list-compatibility-export"));
+      await page.evaluate(() => { window.compatibilityExport = undefined; });
+      await page.$eval(testId("list-compatibility-export"), button => button.scrollIntoView({ block: "center" }));
+      await page.locator(testId("list-compatibility-export")).click();
+      await page.waitForFunction(() => window.compatibilityExport instanceof Blob);
       const backup = await page.evaluate(async () => JSON.parse(await window.compatibilityExport.text()));
       assert.equal(backup.snapshot, original, `${kind}: export must contain the original bytes`);
       // Allow the save debounce and handshake callbacks to run before checking.
@@ -148,13 +154,15 @@ async function main() {
     for (const [index, page] of (await browser.pages()).entries()) {
       if (!page.url().startsWith(base)) continue;
       console.error("Failure page", page.url(), await page.evaluate(() => ({ body: document.body.innerText.slice(-6000), recovery: document.querySelector('[data-testid="list-recovery"]')?.textContent, save: document.querySelector('[data-testid="account-list-save-state"]')?.textContent })).catch(String));
-      await page.screenshot({ path: path.join(artifacts, `failure-${index}.png`), fullPage: true }).catch(() => {});
+      await Promise.race([page.screenshot({ path: path.join(artifacts, `failure-${index}.png`), fullPage: true }), new Promise((_, reject) => setTimeout(() => reject(new Error("Diagnostic screenshot timed out")), 10000))]).catch(() => {});
     }
     console.error("Browser errors", errors);
-    throw error;
+    testError = error;
   } finally {
-    if (control && listId) await api(control, "DELETE", `/api/v1/list/${listId}/delete`).catch(error => console.error("Fixture cleanup:", error));
-    await browser.close();
+    const cleanup = await Promise.allSettled(control && listId ? [api(control, "DELETE", `/api/v1/list/${listId}/delete`)] : []);
+    cleanup.push(...await Promise.allSettled([browser.close()]));
+    const failures = [testError, ...cleanup.filter(result => result.status === "rejected").map(result => result.reason)].filter(Boolean);
+    if (failures.length) throw new AggregateError(failures, "Compatibility validation or owned fixture cleanup failed");
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

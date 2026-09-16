@@ -51,6 +51,33 @@ The browser probe is `node integration/list-document-compatibility.cjs` against
 a fresh test-auth build. Its byte fixtures can be regenerated with
 `cargo run -p ultros-list-doc --example compatibility_fixtures`.
 
+## Readable cached contents and price coverage
+
+REST permission alone does not initialize a document. Build estimates, Shop,
+and editing wait for a validated cached copy or a completed document handshake,
+including an explicit UpToDate response. A genuinely empty readable list costs
+zero; an operation-free receiver waiting for its first snapshot is unavailable.
+
+New account-cache index entries bind readiness to the snapshot's causal version
+and revocation generation. Saves stage at most an incoming and previous proof
+before replacing raw bytes, so a failed write preserves the previous usable
+copy. Snapshot saves, permission updates and index cleanup share the account
+Web Lock. Revocation still fences and removes raw bytes synchronously. Invalid
+or mismatched explicit provenance never falls back to assuming complete contents.
+The raw snapshot format is unchanged, and pending recovery keeps its provenance.
+
+Legacy caches without readiness metadata use causal history, which survives
+shallow compaction. An ambiguous operation-free legacy cache remains preserved
+but needs a successful handshake; a newly confirmed zero-operation empty list
+can reopen offline using its explicit readiness proof.
+
+Build and Shop share the actual Build estimate. Price coverage identifies only
+item IDs returned by a successful account response or included in a successful
+device request. An added, unfetched item is “not requested”; a successfully
+checked item with no matching offers is “no supply.” Refresh failures retain
+same-list prices and their served scope. A new desired scope never relabels an
+older response, and fully owned rows need no market request to cost zero.
+
 ## Bundle measurements
 
 | build | raw | gzip -9 |
@@ -80,8 +107,8 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
 - The browser stores one snapshot per user and list under
   `ultros.listdoc.v1.{user_id}.{list_id}` in localStorage, with a per-user
   index at `ultros.listdoc.index.v1.{user_id}` (last use and last known
-  permission). At most 20 snapshots per user; least recently used evicted
-  first. Sign-out closes the document but keeps the snapshot, so an offline
+  permission and readiness provenance). These are primary offline copies,
+  so they are not automatically evicted. Sign-out keeps the snapshot, so an offline
   edit survives a session expiry. A permission denial or a deleted list
   purges it.
 - Sync rides the existing websocket. `SubscribeListDoc` carries the
@@ -141,16 +168,14 @@ artifact checksums and raw/gzip sizes; compare that delta with the budget.
   and send `{"SubscribeListDoc":{"subscription_id":1,"list_id":ID,"version":""}}`.
   The reply is a `ListDocSubscribed` with a `Snapshot` payload and the
   server's version.
-- A list whose page looks wrong: snapshot byte length and relational rows
-  alone cannot establish projection equality. A read-only checker must
-  read `list_doc.snapshot`, its `list_item` rows and `list` metadata at one
-  consistent database snapshot, decode with `ListDocument::from_snapshot`,
-  then compare `rows()` and `meta()` against the projection. Compare each
-  natural key (item and HQ), quantity, acquired count, target price, list
-  name and scope, using the projection's integer clamping rules. No such
-  operator checker is supplied here; implementing and validating it is a
-  promotion prerequisite. A mismatch requires investigation and is not by
-  itself proof of a bypassing writer.
+- A list whose page looks wrong: run the read-only decoded
+  [projection checker](list-projection-checker.md) against explicit list IDs.
+  It reads documents, list metadata and rows in one REPEATABLE READ, READ ONLY
+  database snapshot and compares each projected field with the writer's rules.
+  Its JSON distinguishes differences, decode failures, missing documents and
+  absent/deleted lists. A mismatch requires investigation and is not by itself
+  proof of a bypassing writer. Snapshot sizes and row counts alone do not
+  establish equality.
 - Compaction: a snapshot is replaced by a shallow one after 5,000 changes or
   256 KiB. This is a compaction trigger, not a stored-size cap: shallow
   snapshots can exceed it when the live document is large. Clients that
@@ -201,15 +226,21 @@ package so an older cached static helper cannot change a deployed module API.
 
 Promotion out of Labs deletes `LAB_LISTS_SYNC`, the `LabsSettings` section
 when the registry is empty, the legacy `ListView`, and the REST-driven
-actions it owns. It requires the soak below to pass. Promotion is blocked
-pending the projection checker, controlled bundle comparison and the
-production soak. Phase 4 validation is recorded below. This document
-does not record a completed production soak.
+actions it owns. It requires the soak below to pass. Promotion requires decoded
+projection-checker evidence, a controlled bundle comparison and the production
+soak. Phase 4 validation is recorded below. This document does not record a
+completed production soak.
 
 ## Production soak
 
+The deployed seven-day observation and promotion decision are tracked in
+[#1510](https://github.com/akarras/ultros/issues/1510).
+[#1439](https://github.com/akarras/ultros/issues/1439) owns the integrated product
+acceptance and readiness assessment; local fixtures do not close the soak.
+
 Run after the branch is deployed, over at least a week with the toggle on
-for the maintainer's own shared lists.
+for the maintainer's own shared lists. Retain the authoritative list-ID manifest
+and reconcile deletions using the [checker workflow](list-projection-checker.md).
 
 1. Turn it on under Settings › Labs on two browsers and one phone, and
    share one list between two Discord accounts.

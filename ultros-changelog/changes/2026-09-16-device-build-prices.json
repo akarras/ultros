@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Check prices while building a device list",
+  "blurb": "Look up and refresh prices directly in Build. New items clearly show when their prices have not been checked, and a failed refresh keeps the prices you already have.",
+  "link": "/list",
+  "labs": true
+}

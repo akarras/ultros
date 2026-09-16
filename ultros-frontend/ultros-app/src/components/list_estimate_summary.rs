@@ -18,6 +18,25 @@ pub(crate) fn coverage_text(i18n: I18n, estimate: &CartEstimate) -> String {
     if estimate.saturated {
         return t_string!(i18n, lists_estimate_saturated).to_string();
     }
+    let missing = estimate.lines_not_requested();
+    if missing > 0 {
+        if estimate.total > 0 {
+            return t_string!(
+                i18n,
+                lists_estimate_partial_missing,
+                items = missing,
+                units = estimate.unpriced_units
+            )
+            .to_string();
+        }
+        return t_string!(
+            i18n,
+            lists_estimate_missing_items,
+            items = missing,
+            units = estimate.unpriced_units
+        )
+        .to_string();
+    }
     match estimate.coverage {
         Coverage::None => t_string!(i18n, lists_estimate_none).to_string(),
         Coverage::Partial => t_string!(
@@ -37,6 +56,9 @@ pub(crate) fn coverage_text(i18n: I18n, estimate: &CartEstimate) -> String {
 /// only why there are none. With listings — fresh or marked — the coverage
 /// line applies.
 pub(crate) fn status_text(i18n: I18n, feed: PriceFeed, estimate: &CartEstimate) -> String {
+    if estimate.coverage == Coverage::Empty {
+        return coverage_text(i18n, estimate);
+    }
     match feed {
         PriceFeed::Loading => t_string!(i18n, lists_estimate_feed_loading).to_string(),
         PriceFeed::Missing(MissingReason::NotRequested) => {
@@ -54,6 +76,7 @@ pub(crate) fn status_text(i18n: I18n, feed: PriceFeed, estimate: &CartEstimate) 
 /// shows a dash. An empty cart genuinely costs nothing and shows zero.
 pub(crate) fn displayed_total(feed: PriceFeed, estimate: &CartEstimate) -> Option<i64> {
     match (feed.has_prices(), estimate.coverage) {
+        (_, Coverage::Empty) => Some(0),
         (false, _) | (true, Coverage::None) => None,
         (true, _) => Some(estimate.total),
     }
@@ -172,6 +195,55 @@ mod tests {
     }
 
     #[test]
+    fn no_remaining_demand_is_zero_without_a_price_request() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<Locale>();
+            provide_context(i18n);
+            for estimate in [cart(&[]), cart(&[(4, 4, 0)])] {
+                for feed in [
+                    PriceFeed::Loading,
+                    PriceFeed::Missing(MissingReason::NotRequested),
+                    PriceFeed::Missing(MissingReason::Failed),
+                ] {
+                    assert_eq!(displayed_total(feed, &estimate), Some(0));
+                    assert!(status_text(i18n, feed, &estimate).contains("Nothing left to buy"));
+                    let html = render(estimate.clone(), feed);
+                    assert!(html.contains("0 gil"));
+                    assert!(html.contains("data-incomplete=\"false\""));
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn unrequested_rows_do_not_claim_successful_no_supply() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<Locale>();
+            provide_context(i18n);
+            let feed = PriceFeed::observed(chrono::Utc::now());
+            for rows in [&[(2, 0, 2), (3, 0, 0)][..], &[(3, 0, 0)][..]] {
+                let mut estimate = cart(rows);
+                estimate.lines.last_mut().unwrap().status =
+                    ultros_calc::list_estimate::LineStatus::NotRequested;
+                let status = status_text(i18n, feed, &estimate);
+                assert!(status.contains("1 items"));
+                assert!(status.contains("price lookup"));
+                assert!(!status.contains("No listed prices"));
+                if estimate.total > 0 {
+                    assert!(status.contains("Known subtotal only"));
+                    assert_eq!(displayed_total(feed, &estimate), Some(20));
+                } else {
+                    assert_eq!(displayed_total(feed, &estimate), None);
+                }
+            }
+        });
+    }
+
+    #[test]
     fn partial_subtotals_and_missing_units_survive_helper_and_rendered_summary() {
         let _ = any_spawner::Executor::init_futures_executor();
         type StockRows = &'static [(i32, i32, i32)];
@@ -249,7 +321,7 @@ mod tests {
                 (PriceFeed::Loading, "Loading prices"),
                 (
                     PriceFeed::Missing(MissingReason::NotRequested),
-                    "Look up prices in Shop",
+                    "Look up prices",
                 ),
                 (
                     PriceFeed::Missing(MissingReason::Failed),

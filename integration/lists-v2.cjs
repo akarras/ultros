@@ -423,7 +423,7 @@ async function main() {
     assert.match(await page.$eval(testId("shop-totals"), element => element.textContent), /0 gil · 0 surplus · 5 missing/);
     await page.$eval(testId("shop-estimate"), details => { details.open = true; });
     assert.match(await page.$eval(testId("shop-estimate"), element => element.textContent),
-      /Build estimate: 0 gil \(0 of 1 items priced/, "Shop explains the whole-stack total against the Build estimate");
+      /Build estimate: — \(0 of 1 items fully priced/, "Shop distinguishes missing Build prices from a free cart");
     assert.equal(await visible(testId("shop-drift")), false, "a fresh trip reports no drift");
     await page.click(testId("guest-build-mode"));
     await page.waitForSelector(needed, { visible: true });
@@ -466,7 +466,7 @@ async function main() {
     popup.setDefaultTimeout(timeout);
     await popup.waitForSelector("main h1");
     assert.match(await popup.$eval("body", body => body.innerText), /Keep the Ultros tab open/);
-    assert.match(await popup.$eval("#notice", element => element.textContent), /always.on.top|normal|regular|standard/i,
+    assert.match(await popup.$eval("#window-mode", element => element.textContent), /always.on.top|normal|regular|standard/i,
       "fallback explains that a normal browser window is not always on top");
     // Use the router link rather than a document navigation: component
     // cleanup must close the companion even when pagehide never fires.

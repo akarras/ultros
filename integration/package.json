@@ -71,7 +71,8 @@
     "diag:hydrate-timing": "node ./hydrate-timing.cjs",
     "diag:truncation-proxy": "node ./truncation-proxy.mjs",
     "test:market-history": "node ./market-history.cjs",
-    "test:market-history-themes": "node ./market-history-themes.cjs"
+    "test:market-history-themes": "node ./market-history-themes.cjs",
+    "test:device-build-prices": "node ./device-build-prices.cjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

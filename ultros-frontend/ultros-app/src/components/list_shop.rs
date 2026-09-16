@@ -4,7 +4,9 @@ use crate::recipe_planner::{self as planner, Material, Offer, RouteContext, Shop
 use leptos::prelude::*;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use thousands::Separable;
 use ultros_api_types::ActiveListing;
+use ultros_calc::list_estimate::{CartEstimate, MissingReason, PriceFeed};
 
 #[derive(Clone, Debug)]
 pub struct ShopRow {
@@ -17,7 +19,7 @@ pub struct ShopRow {
     pub listings: Vec<ActiveListing>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ShopInput {
     pub title: String,
     pub rows: Vec<ShopRow>,
@@ -25,6 +27,28 @@ pub struct ShopInput {
     pub world_names: BTreeMap<i32, String>,
     pub datacenters: BTreeMap<i32, i32>,
     pub observed_at: Option<String>,
+    /// The same served-price state as Build; frozen with a selected trip.
+    pub price_feed: PriceFeed,
+    /// Actual Build result, including per-item lookup coverage. Shopping rows
+    /// never reconstruct it: their whole-stack purpose differs.
+    pub build_estimate: CartEstimate,
+    pub estimate_available: bool,
+}
+
+impl Default for ShopInput {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            rows: Vec::new(),
+            home_world: 0,
+            world_names: BTreeMap::new(),
+            datacenters: BTreeMap::new(),
+            observed_at: None,
+            price_feed: PriceFeed::Missing(MissingReason::NotRequested),
+            build_estimate: CartEstimate::default(),
+            estimate_available: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -109,40 +133,11 @@ pub fn cart_drift(planned: &ShopInput, live: &ShopInput) -> CartDrift {
     drift
 }
 
-/// The Build-side reference for a cart: every remaining unit priced at the
-/// cheapest matching unit price, the way the Build grid prices each row.
-/// Rows with no matching listing are counted, not priced at zero.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BuildEstimate {
-    pub cost: i64,
-    /// Rows with something left to buy.
-    pub rows: usize,
-    pub priced_rows: usize,
-    pub remaining_units: i64,
-}
-
-pub fn build_estimate(input: &ShopInput) -> BuildEstimate {
-    let mut estimate = BuildEstimate::default();
-    for row in &input.rows {
-        let remaining = remaining(row);
-        if remaining <= 0 {
-            continue;
-        }
-        estimate.rows += 1;
-        estimate.remaining_units += remaining;
-        let cheapest = row
-            .listings
-            .iter()
-            .filter(|listing| listing.item_id == row.item_id)
-            .filter(|listing| row.hq.is_none_or(|hq| hq == listing.hq))
-            .map(|listing| i64::from(listing.price_per_unit))
-            .min();
-        if let Some(price) = cheapest {
-            estimate.priced_rows += 1;
-            estimate.cost += remaining * price;
-        }
-    }
-    estimate
+/// The same quantity-aware shared-supply allocation as Build. Callers use
+/// the live input for the handoff and the frozen trip source for its reference;
+/// whole-stack purchases and surplus remain separate in `TripTotals`.
+pub fn build_estimate(input: &ShopInput) -> CartEstimate {
+    input.build_estimate.clone()
 }
 
 /// Whole-stack accounting for one plan: the parts of a trip total that the
@@ -557,8 +552,12 @@ pub fn ListShop(
         .to_string()
     };
     let live_snapshot = Memo::new(move |_| {
+        let source = input.get();
+        if !source.estimate_available {
+            return None;
+        }
         trip.get().map(|trip| {
-            let mut view = snapshot(&trip, &input.get(), stop.get(), can_edit.get());
+            let mut view = snapshot(&trip, &source, stop.get(), can_edit.get());
             view.can_undo_purchase = can_edit.get() && can_undo_purchase.get();
             if let Some(world) = view.unknown_world {
                 view.world = t_string!(i18n, list_shop_world, world = world).to_string();
@@ -664,6 +663,11 @@ pub fn ListShop(
         })
     });
     let action = Callback::new(move |(action, key, quantity): (String, String, i32)| {
+        // A queued popup callback can arrive after the document became unreadable.
+        // Permission alone can still reflect the last successful REST response.
+        if !input.get_untracked().estimate_available {
+            return;
+        }
         if action == "next" {
             if live_snapshot.get().is_some_and(|view| view.has_next) {
                 stop.update(|stop| *stop += 1);
@@ -735,6 +739,10 @@ pub fn ListShop(
     };
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
+        if !input.get().estimate_available {
+            browser::close();
+            return;
+        }
         if let Some(view) = live_snapshot.get() {
             let changed_list = trip.get().is_some_and(|active| {
                 let live = input.get();
@@ -770,8 +778,9 @@ pub fn ListShop(
     #[cfg(feature = "hydrate")]
     {
         let cleanup = StoredValue::new_local(None::<js_sys::Function>);
+        let available = Memo::new(move |_| input.get().estimate_available);
         Effect::new(move |_| {
-            let root = stacks.get();
+            let root = if available.get() { stacks.get() } else { None };
             cleanup.update_value(|cleanup| {
                 if let Some(previous) = cleanup.take() {
                     let _ = previous.call0(&wasm_bindgen::JsValue::NULL);
@@ -788,12 +797,16 @@ pub fn ListShop(
         });
     }
     view! {
+        <Show when=move || input.get().estimate_available>
         <section class="space-y-4" aria-label=move || t_string!(i18n, list_shop_trip).to_string()>
             <div class="rounded-xl border border-white/10 p-4 space-y-2" data-testid="shop-handoff">
                 <p>{move || t_string!(i18n, list_shop_handoff_intro)}</p>
                 <p class="font-medium" data-testid="shop-cart-summary">{move || {
-                    let estimate = build_estimate(&input.get());
-                    t_string!(i18n, list_shop_cart_summary, items = estimate.rows, units = estimate.remaining_units, priced = estimate.priced_rows).to_string()
+                    let source = input.get();
+                    let estimate = build_estimate(&source);
+                    let remaining: i64 = estimate.lines.iter().map(|line| i64::from(line.remaining)).sum();
+                    let priced = if source.price_feed.has_prices() { estimate.lines_priced } else { 0 };
+                    t_string!(i18n, list_shop_cart_summary, items = estimate.lines_needing_units(), units = remaining, priced = priced).to_string()
                 }}</p>
                 <p class="text-sm text-[color:var(--color-text-muted)]">{move || {
                     let input = input.get();
@@ -818,6 +831,14 @@ pub fn ListShop(
             {move || trip.get().map(|active| {
                 let totals = trip_totals(&active.plan);
                 let estimate = build_estimate(&active.source);
+                let feed = active.source.price_feed;
+                let estimate_cost = super::list_estimate_summary::displayed_total(feed, &estimate)
+                    .map(|total| t_string!(i18n, lists_workspace_gil, price = total.separate_with_commas()).to_string())
+                    .unwrap_or_else(|| "—".to_string());
+                let estimate_coverage = super::list_estimate_summary::status_text(i18n, feed, &estimate);
+                let incomplete = feed.has_prices() && estimate.is_incomplete();
+                let priced = if feed.has_prices() { estimate.lines_priced } else { 0 };
+                let refresh_failed = matches!(feed, PriceFeed::Observed { refresh_failed: true, .. });
                 view! {
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <strong data-testid="shop-totals">{t_string!(i18n, list_shop_totals, cost = totals.cost, surplus = totals.surplus, missing = totals.missing)}</strong>
@@ -829,7 +850,9 @@ pub fn ListShop(
                     <details class="rounded-lg border border-white/10 p-3 text-sm" data-testid="shop-estimate">
                         <summary class="cursor-pointer font-medium">{t_string!(i18n, list_shop_estimate_summary)}</summary>
                         <ul class="space-y-1 pt-2">
-                            <li>{t_string!(i18n, list_shop_estimate_build, cost = estimate.cost, priced = estimate.priced_rows, rows = estimate.rows)}</li>
+                            <li data-testid="shop-build-reference" data-incomplete=incomplete.to_string() data-refresh-failed=refresh_failed.to_string()>{t_string!(i18n, list_shop_estimate_build, cost = estimate_cost, priced = priced, rows = estimate.lines_needing_units())}</li>
+                            <li data-testid="shop-build-coverage">{estimate_coverage}</li>
+                            <Show when=move || refresh_failed><li data-testid="shop-build-refresh-failed">{t_string!(i18n, lists_estimate_refresh_failed)}</li></Show>
                             <li>{t_string!(i18n, list_shop_estimate_trip, cost = totals.cost, stops = totals.stops)}</li>
                             <li>{t_string!(i18n, list_shop_estimate_surplus, units = totals.surplus)}</li>
                             <li>{t_string!(i18n, list_shop_estimate_missing, units = totals.missing)}</li>
@@ -948,12 +971,33 @@ pub fn ListShop(
                 </div>
             </details>
         </section>
+        </Show>
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ultros_calc::list_estimate::Coverage;
+
+    // Simulate the route publishing a new result from the shared production
+    // estimator. Shop itself must never do this from its shopping rows.
+    fn update_build(source: &mut ShopInput) {
+        use ultros_calc::list_estimate::{LineRequest, estimate_cart};
+        source.build_estimate =
+            estimate_cart(source.rows.iter().enumerate().map(|(index, row)| {
+                (
+                    LineRequest {
+                        row_id: index as i32,
+                        item_id: row.item_id,
+                        hq: row.hq,
+                        requested: row.needed,
+                        acquired: row.acquired,
+                    },
+                    row.listings.as_slice(),
+                )
+            }));
+    }
 
     fn listing(id: i32, world: i32, quantity: i32, price: i32, hq: bool) -> ActiveListing {
         ActiveListing {
@@ -968,9 +1012,11 @@ mod tests {
         }
     }
     fn input() -> ShopInput {
-        ShopInput {
+        let mut source = ShopInput {
             title: "Raid supplies".into(),
             home_world: 1,
+            price_feed: PriceFeed::observed("2026-09-16T00:00:00Z".parse().unwrap()),
+            estimate_available: true,
             rows: vec![ShopRow {
                 key: "row:1".into(),
                 name: "Potion".into(),
@@ -981,7 +1027,9 @@ mod tests {
                 listings: vec![listing(1, 1, 99, 1, false), listing(2, 2, 3, 10, false)],
             }],
             ..Default::default()
-        }
+        };
+        update_build(&mut source);
+        source
     }
     #[test]
     fn actual_stack_cost_changes_cheapest_world() {
@@ -1125,16 +1173,23 @@ mod tests {
         source.rows[0].acquired = 1;
         let mut unpriced = source.rows[0].clone();
         unpriced.key = "row:2".into();
+        unpriced.item_id = 43;
         unpriced.listings.clear();
         source.rows.push(unpriced);
+        update_build(&mut source);
+        let estimate = build_estimate(&source);
+        assert_eq!(estimate.total, 2);
+        assert_eq!(estimate.lines_needing_units(), 2);
+        assert_eq!(estimate.lines_priced, 1);
+        assert_eq!(estimate.unpriced_units, 2);
+        assert_eq!(estimate.coverage, Coverage::Partial);
         assert_eq!(
-            build_estimate(&source),
-            BuildEstimate {
-                cost: 2,
-                rows: 2,
-                priced_rows: 1,
-                remaining_units: 4,
-            }
+            estimate
+                .lines
+                .iter()
+                .map(|line| line.remaining)
+                .sum::<i32>(),
+            4
         );
     }
 
@@ -1151,7 +1206,161 @@ mod tests {
                 stops: 1,
             }
         );
-        assert_eq!(build_estimate(&source).cost, 3);
+        assert_eq!(build_estimate(&source).total, 3);
+    }
+
+    fn overlapping_build_fixture() -> ShopInput {
+        let mut source = input();
+        let offers = vec![
+            listing(1, 1, 2, 10, false),
+            listing(2, 1, 2, 20, true),
+            listing(3, 2, 3, 12, false),
+            listing(4, 3, 4, 25, true),
+        ];
+        source.rows = [(901, None, 4), (302, Some(true), 2), (703, Some(false), 2)]
+            .into_iter()
+            .map(|(row_id, hq, needed)| ShopRow {
+                key: format!("action:{row_id}"),
+                name: "Potion".into(),
+                item_id: 42,
+                hq,
+                needed,
+                acquired: 0,
+                listings: offers.clone(),
+            })
+            .collect();
+        update_build(&mut source);
+        source
+    }
+
+    #[test]
+    fn active_build_reference_stays_on_the_frozen_trip_source() {
+        let source = overlapping_build_fixture();
+        let plans = candidates(&source, &BTreeSet::new());
+        let trip = Trip {
+            source: source.clone(),
+            plan: plans[2].clone(),
+            mode: 2,
+            alternatives: plans,
+        };
+        let mut live = source;
+        for row in &mut live.rows {
+            row.acquired = row.needed;
+            row.listings.clear();
+        }
+        assert_eq!(
+            build_estimate(&live).total,
+            121,
+            "raw shopping rows cannot reconstruct or overwrite the carried Build result"
+        );
+        update_build(&mut live);
+        assert_eq!(build_estimate(&live).total, 0);
+        assert_eq!(build_estimate(&trip.source).total, 121);
+        assert_eq!(trip.plan, trip.alternatives[2]);
+    }
+
+    #[test]
+    fn build_reference_freezes_feed_and_keeps_cached_failure_prices() {
+        use super::super::list_estimate_summary::displayed_total;
+        let source = overlapping_build_fixture();
+        let plans = candidates(&source, &BTreeSet::new());
+        let trip = Trip {
+            source: source.clone(),
+            plan: plans[2].clone(),
+            mode: 2,
+            alternatives: plans,
+        };
+        let mut live = source;
+        live.price_feed = live.price_feed.after_fetch(None);
+        assert!(matches!(
+            live.price_feed,
+            PriceFeed::Observed {
+                refresh_failed: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            trip.source.price_feed,
+            PriceFeed::Observed {
+                refresh_failed: false,
+                ..
+            }
+        ));
+        assert_eq!(
+            live.price_feed.fetched_at(),
+            trip.source.price_feed.fetched_at()
+        );
+        assert_eq!(
+            displayed_total(live.price_feed, &build_estimate(&live)),
+            Some(121)
+        );
+        assert_eq!(
+            displayed_total(trip.source.price_feed, &build_estimate(&trip.source)),
+            Some(121)
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn unreadable_document_does_not_present_a_known_empty_shopping_cart() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>();
+            provide_context(i18n);
+            let source = ShopInput {
+                price_feed: PriceFeed::observed(chrono::Utc::now()),
+                ..Default::default()
+            };
+            let html = view! {
+                <ListShop input=Signal::stored(source) on_purchase=Callback::new(|_| ())
+                    on_undo=Callback::new(|_| ()) can_undo_purchase=Signal::stored(false)
+                    can_edit=Signal::stored(false) />
+            }
+            .to_html();
+            assert!(!html.contains("shop-cart-summary"));
+            assert!(!html.contains("shop-cheapest"));
+        });
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn build_reference_matches_unknown_feed_status_and_acquired_zero() {
+        use super::super::list_estimate_summary::{displayed_total, status_text};
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>();
+            provide_context(i18n);
+            for (feed, message) in [
+                (PriceFeed::Loading, "Loading prices"),
+                (
+                    PriceFeed::Missing(MissingReason::NotRequested),
+                    "Look up prices",
+                ),
+                (
+                    PriceFeed::Missing(MissingReason::Failed),
+                    "Prices unavailable",
+                ),
+            ] {
+                let mut source = overlapping_build_fixture();
+                source.price_feed = feed;
+                let estimate = build_estimate(&source);
+                assert_eq!(displayed_total(source.price_feed, &estimate), None);
+                assert!(status_text(i18n, source.price_feed, &estimate).contains(message));
+                for row in &mut source.rows {
+                    row.acquired = row.needed;
+                }
+                update_build(&mut source);
+                let acquired = build_estimate(&source);
+                // #1471's shared presentation helpers make a fully owned cart
+                // zero/complete even if no price request has ever succeeded.
+                assert_eq!(displayed_total(source.price_feed, &acquired), Some(0));
+                assert!(
+                    status_text(i18n, source.price_feed, &acquired).contains("Nothing left to buy")
+                );
+            }
+        });
     }
 
     #[test]
