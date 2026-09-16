@@ -141,11 +141,32 @@ async function apiFetch(page, method, path, body) {
   );
 }
 
+// Deletes every `below_threshold` alert whose `item_id` matches `itemId`,
+// re-fetched fresh from the server rather than relying on an id captured
+// mid-flow — a caller reaches for this in `finally` specifically so a
+// failed assertion between "adoption created the alert" and "we noticed"
+// can never leak the row.
+async function deleteBelowThresholdAlertsForItem(page, itemId) {
+  if (itemId === undefined) return;
+  const { status, data } = await apiFetch(page, "GET", "/api/v1/alerts");
+  if (status !== 200 || !Array.isArray(data)) return;
+  const matches = data.filter(
+    (a) => a.trigger && a.trigger.type === "below_threshold" && a.trigger.item_id === itemId,
+  );
+  for (const alert of matches) {
+    await apiFetch(page, "DELETE", `/api/v1/alerts/${alert.id}`);
+  }
+}
+
 async function main() {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
   const createdAlertIds = new Set();
   const errors = [];
   let page;
+  // Hoisted out of the `try` block so `finally` can still reach it for
+  // fallback cleanup even when an assertion throws before the normal
+  // `createdAlertIds.add(...)` path runs.
+  let itemId;
 
   try {
     page = await browser.newPage();
@@ -213,7 +234,7 @@ async function main() {
       () => JSON.parse(localStorage.getItem("ultros.guest_alerts.v1"))[0],
     );
     assert.equal(guestRule.price_threshold, THRESHOLD);
-    const itemId = guestRule.item_id;
+    itemId = guestRule.item_id;
     const ruleId = guestRule.id;
     console.log(`[ok] guest rule persisted to localStorage (item ${itemId}, rule ${ruleId})`);
 
@@ -329,8 +350,12 @@ async function main() {
       while (Date.now() < deadline) {
         const { status, data } = await apiFetch(page, "GET", "/api/v1/alerts");
         assert.equal(status, 200, `GET /api/v1/alerts: ${JSON.stringify(data)}`);
+        // AlertTrigger is `#[serde(tag = "type", rename_all = "snake_case")]`
+        // (ultros-api-types/src/alert.rs) — an internally-tagged enum, not
+        // externally tagged, so the variant's own fields sit flat on
+        // `trigger` alongside `type`, not nested under a `BelowThreshold` key.
         adoptedAlert = (data || []).find(
-          (a) => a.trigger && a.trigger.BelowThreshold && a.trigger.BelowThreshold.item_id === itemId,
+          (a) => a.trigger && a.trigger.type === "below_threshold" && a.trigger.item_id === itemId,
         );
         if (adoptedAlert) break;
         await new Promise((resolve) => setTimeout(resolve, 300));
@@ -432,6 +457,19 @@ async function main() {
         } catch (e) {
           console.error("fixture cleanup failed:", e.message);
         }
+      }
+      // Belt-and-suspenders: `createdAlertIds` is only populated once the
+      // post-adoption polling assertion succeeds, so a failure anywhere
+      // between the adoption click and that assertion (e.g. a mismatched
+      // trigger-shape predicate) would otherwise leak the server-side
+      // alert this run created. Re-fetch fresh and delete by item id
+      // instead of trusting anything captured mid-flow. A no-op (and
+      // silently ignored) when `itemId` was never set or the account
+      // session is gone.
+      try {
+        await deleteBelowThresholdAlertsForItem(page, itemId);
+      } catch (e) {
+        console.error("fallback fixture cleanup failed:", e.message);
       }
     }
     await browser.close();
