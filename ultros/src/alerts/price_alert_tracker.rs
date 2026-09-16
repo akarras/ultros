@@ -11,16 +11,17 @@ use tracing::{error, info, instrument, warn};
 use ultros_api_types::{
     ActiveListing,
     websocket::{ListEventData, ListingEventData},
-    world_helper::AnySelector as ApiAnySelector,
+    world_helper::{AnySelector as ApiAnySelector, WorldHelper},
 };
 use ultros_db::{
-    NewAlertEvent, UltrosDb,
+    UltrosDb,
     entity::{alert, alert_item_threshold, alert_list_threshold},
     world_data::world_cache::{AnySelector as DbAnySelector, WorldCache},
 };
 
 use crate::alerts::delivery::dispatch_alert;
-use crate::event::{EventBus, EventType};
+use crate::alerts::inbox::{AlertFire, record_fire};
+use crate::event::{EventBus, EventProducer, EventType, NotificationEvent};
 
 /// True when an alert with the given `last_fired_at` is free to fire again given `cooldown_seconds`
 /// as of the reference timestamp `now`. `None` (never fired) is always off cooldown.
@@ -122,6 +123,7 @@ pub(crate) fn resolve_item_name(item_id: i32) -> String {
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveRule {
     pub(crate) alert_id: i32,
+    pub(crate) owner: i64,
     pub(crate) item_id: i32,
     pub(crate) price_threshold: i32,
     pub(crate) hq_only: bool,
@@ -138,6 +140,7 @@ pub(crate) struct ActiveRule {
 #[derive(Debug, Clone)]
 pub(crate) struct ListActiveRule {
     pub(crate) alert_id: i32,
+    pub(crate) owner: i64,
     pub(crate) list_id: i32,
     pub(crate) item_id: i32,
     pub(crate) target_price: i64,
@@ -199,6 +202,7 @@ impl TrackerState {
                 };
             self.by_item.entry(t.item_id).or_default().push(ActiveRule {
                 alert_id: a.id,
+                owner: a.owner,
                 item_id: t.item_id,
                 price_threshold: t.price_threshold,
                 hq_only: t.hq_only,
@@ -280,6 +284,7 @@ impl TrackerState {
                     .or_default()
                     .push(ListActiveRule {
                         alert_id: a.id,
+                        owner: a.owner,
                         list_id: t.list_id,
                         item_id: item.item_id,
                         target_price,
@@ -293,6 +298,17 @@ impl TrackerState {
     }
 }
 
+/// Shared handles `PriceAlertListener::start` needs beyond the event buses.
+/// Grouped so adding `world_helper`/`notifications` for the notification
+/// inbox didn't push the function's argument count past clippy's
+/// `too_many_arguments` threshold.
+pub(crate) struct PriceAlertServices {
+    pub(crate) ctx: serenity_prelude::Context,
+    pub(crate) world_cache: Arc<WorldCache>,
+    pub(crate) world_helper: Arc<WorldHelper>,
+    pub(crate) notifications: EventProducer<NotificationEvent>,
+}
+
 pub(crate) struct PriceAlertListener {
     /// Held to keep the channel sender alive — when `PriceAlertListener` is
     /// dropped, the corresponding `stop_rx.recv()` in the spawned task returns
@@ -303,15 +319,20 @@ pub(crate) struct PriceAlertListener {
 }
 
 impl PriceAlertListener {
-    #[instrument(skip(ultros_db, listings, alert_events, list_events, ctx, world_cache))]
+    #[instrument(skip(ultros_db, listings, alert_events, list_events, services))]
     pub(crate) async fn start(
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
         mut alert_events: EventBus<alert::Model>,
         mut list_events: EventBus<ListEventData>,
-        ctx: serenity_prelude::Context,
-        world_cache: Arc<WorldCache>,
+        services: PriceAlertServices,
     ) -> Result<Self> {
+        let PriceAlertServices {
+            ctx,
+            world_cache,
+            world_helper,
+            notifications,
+        } = services;
         let state = Arc::new(Mutex::new(TrackerState::default()));
         let (initial, initial_list) =
             refresh_state_from_db(&state, &ultros_db, &world_cache).await?;
@@ -371,7 +392,8 @@ impl PriceAlertListener {
                                         &state_for_loop,
                                         &db_for_loop,
                                         &ctx,
-                                        &world_cache_for_loop,
+                                        &world_helper,
+                                        &notifications,
                                     )
                                     .await;
                                 }
@@ -415,7 +437,8 @@ async fn handle_added(
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
-    world_cache: &WorldCache,
+    world_helper: &WorldHelper,
+    notifications: &EventProducer<NotificationEvent>,
 ) {
     let now = Utc::now();
     let mut to_fire: Vec<(ActiveRule, i32, i32)> = vec![];
@@ -464,9 +487,8 @@ async fn handle_added(
 
     for (rule, matched_price, world_id) in to_fire {
         let item_name = resolve_item_name(rule.item_id);
-        let world_name = world_cache
-            .lookup_selector(&DbAnySelector::World(world_id))
-            .ok()
+        let world_name = world_helper
+            .lookup_selector(ApiAnySelector::World(world_id))
             .map(|world| world.get_name().to_string());
         let click_url = item_click_url(rule.item_id, world_name.as_deref());
         let (title, body) = format_threshold_alert_message(
@@ -481,25 +503,23 @@ async fn handle_added(
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
-        if let Err(e) = db
-            .record_alert_event(NewAlertEvent {
+        record_fire(
+            db,
+            notifications,
+            AlertFire {
                 alert_id: rule.alert_id,
+                owner: rule.owner,
                 item_id: rule.item_id,
                 matched_listing_id: None,
                 matched_price: Some(matched_price),
+                title: &title,
+                body: &body,
+                click_url: &click_url,
                 delivered,
                 delivery_error,
-                title,
-                body,
-                click_url,
-            })
-            .await
-        {
-            error!(
-                "failed to record alert_event for alert {}: {e}",
-                rule.alert_id
-            );
-        }
+            },
+        )
+        .await;
         if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
             error!(
                 "failed to update last_fired_at for alert {}: {e}",
@@ -525,25 +545,23 @@ async fn handle_added(
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
-        if let Err(e) = db
-            .record_alert_event(NewAlertEvent {
+        record_fire(
+            db,
+            notifications,
+            AlertFire {
                 alert_id: rule.alert_id,
+                owner: rule.owner,
                 item_id: rule.item_id,
                 matched_listing_id: None,
                 matched_price: Some(matched_price),
+                title: &title,
+                body: &body,
+                click_url: &click_url,
                 delivered,
                 delivery_error,
-                title,
-                body,
-                click_url,
-            })
-            .await
-        {
-            error!(
-                "failed to record alert_event for list-alert {}: {e}",
-                rule.alert_id
-            );
-        }
+            },
+        )
+        .await;
         if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
             error!(
                 "failed to update last_fired_at for list-alert {}: {e}",
@@ -561,6 +579,7 @@ mod test {
     fn rule(threshold: i32, hq_only: bool, worlds: &[i32]) -> ActiveRule {
         ActiveRule {
             alert_id: 1,
+            owner: 100,
             item_id: 42,
             price_threshold: threshold,
             hq_only,

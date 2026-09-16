@@ -9,7 +9,7 @@ use ultros_clickhouse::ClickHouseClient;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
 use crate::{
-    alerts::alert_manager::AlertManager,
+    alerts::alert_manager::{AlertManager, AlertManagerServices},
     analyzer_service::AnalyzerService,
     event::{EventReceivers, EventSenders},
     item_update_service::UpdateService,
@@ -221,9 +221,13 @@ pub(crate) async fn start_discord(
                         event_receivers.lists.resubscribe(),
                         event_receivers.history.resubscribe(),
                     ),
-                    ctx.clone(),
-                    setup_token,
-                    world_cache.clone(),
+                    AlertManagerServices {
+                        ctx: ctx.clone(),
+                        token: setup_token,
+                        world_cache: world_cache.clone(),
+                        world_helper: world_helper.clone(),
+                        notifications: event_senders.notifications.clone(),
+                    },
                 ));
                 Ok(Data {
                     db,

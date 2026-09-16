@@ -6,16 +6,21 @@ use poise::serenity_prelude;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use ultros_api_types::websocket::ListEventData;
-use ultros_db::{NewAlertEvent, UltrosDb, entity::alert};
+use ultros_db::{UltrosDb, entity::alert};
 
 use crate::{
-    alerts::{delivery::dispatch_alert, price_alert_tracker::is_off_cooldown_at},
-    event::{EventBus, EventType},
+    alerts::{
+        delivery::dispatch_alert,
+        inbox::{AlertFire, record_fire},
+        price_alert_tracker::is_off_cooldown_at,
+    },
+    event::{EventBus, EventProducer, EventType, NotificationEvent},
 };
 
 #[derive(Debug, Clone)]
 struct ListUpdateRule {
     alert_id: i32,
+    owner: i64,
     list_id: i32,
     cooldown_seconds: i32,
     last_fired_at: Option<DateTime<Utc>>,
@@ -56,6 +61,7 @@ impl TrackerState {
                 .or_default()
                 .push(ListUpdateRule {
                     alert_id: alert.id,
+                    owner: alert.owner,
                     list_id: list_update.list_id,
                     cooldown_seconds: alert.cooldown_seconds,
                     last_fired_at: alert.last_fired_at.map(|dt| dt.with_timezone(&Utc)),
@@ -77,6 +83,7 @@ impl ListUpdateAlertListener {
         mut list_events: EventBus<ListEventData>,
         mut alert_events: EventBus<alert::Model>,
         ctx: serenity_prelude::Context,
+        notifications: EventProducer<NotificationEvent>,
     ) -> Result<Self> {
         let state = Arc::new(Mutex::new(TrackerState::default()));
         let initial = {
@@ -111,7 +118,7 @@ impl ListUpdateAlertListener {
                     msg = list_events.recv() => {
                         match msg {
                             Ok(event) => {
-                                handle_list_event(&event, &state_for_loop, &db_for_loop, &ctx).await;
+                                handle_list_event(&event, &state_for_loop, &db_for_loop, &ctx, &notifications).await;
                                 if let Err(e) = refresh_state(&state_for_loop, &db_for_loop).await {
                                     error!("list-update tracker refresh failed after list change: {e}");
                                 }
@@ -144,6 +151,7 @@ async fn handle_list_event(
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
+    notifications: &EventProducer<NotificationEvent>,
 ) {
     let Some((list_id, item_id, title_hint, body_hint)) = describe_list_event(event) else {
         return;
@@ -175,25 +183,23 @@ async fn handle_list_event(
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
-        if let Err(e) = db
-            .record_alert_event(NewAlertEvent {
+        record_fire(
+            db,
+            notifications,
+            AlertFire {
                 alert_id: rule.alert_id,
+                owner: rule.owner,
                 item_id: item_id.unwrap_or_default(),
                 matched_listing_id: None,
                 matched_price: None,
+                title: &title,
+                body: &body,
+                click_url: &click_url,
                 delivered,
                 delivery_error,
-                title,
-                body,
-                click_url,
-            })
-            .await
-        {
-            error!(
-                "failed to record alert_event for list-update alert {}: {e}",
-                rule.alert_id
-            );
-        }
+            },
+        )
+        .await;
         if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
             error!(
                 "failed to update last_fired_at for list-update alert {}: {e}",
