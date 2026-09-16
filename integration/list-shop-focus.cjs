@@ -1,10 +1,18 @@
 "use strict";
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { capture } = require("./capture.cjs");
+const artifacts = path.join(__dirname, "artifacts/list-shop-focus");
+fs.mkdirSync(artifacts, { recursive: true });
 const testId = id => `[data-testid="${id}"]`;
 
 async function typeQuantity(page, selector, value) {
+  console.log(`[quantity] focus ${selector}`);
   await page.focus(selector);
+  console.log(`[quantity] select ${selector}`);
   await page.$eval(selector, input => input.select());
+  console.log(`[quantity] type ${value}`);
   await page.keyboard.press("Backspace");
   await page.keyboard.type(String(value));
 }
@@ -36,6 +44,7 @@ async function runShopFocus(page, { remotePurchase, label, onRemoteCompletion })
   assert.equal(await page.$eval(quantity, node => node === window.shopDraftNode && node === document.activeElement), true, `${label}: unrelated purchase preserves editor node and focus`);
   assert.equal(await page.$eval(quantity, node => node.value), String(first.quantity), `${label}: unrelated purchase preserves draft`);
   assert.equal(await page.evaluate(() => window.scrollY), await page.evaluate(() => window.shopDraftScroll), `${label}: unrelated purchase preserves scroll`);
+  await capture(page, { path: path.join(artifacts, `${label.replace(/[^a-z0-9]+/gi, "-")}-draft.png`), fullPage: false });
   await page.keyboard.press("Tab");
   assert.equal(await page.$eval(bought, node => node === document.activeElement), true);
   await remotePurchase(first.key, 1);
@@ -65,19 +74,48 @@ async function runShopFocus(page, { remotePurchase, label, onRemoteCompletion })
   await page.waitForFunction(selector => document.querySelector(selector)?.disabled, {}, bought);
   await page.waitForFunction(selector => document.querySelector(selector)?.querySelector('button') === document.activeElement, {}, row);
 
-  await page.focus(testId("shop-next-world"));
-  await page.keyboard.press("Enter");
-  await page.waitForFunction(key => !document.querySelector(`[data-shop-key="${key}"]`), {}, first.key);
-  assert.equal(await page.evaluate(() => document.activeElement !== document.body), true, `${label}: changing worlds retains a usable focus target`);
-  // Continue to the final stop: Next becomes disabled and focus moves to the
-  // first stack rather than disappearing into the document body.
-  while (!await page.$eval(testId("shop-next-world"), node => node.disabled)) {
-    await page.focus(testId("shop-next-world"));
+  const next = testId("shop-next-world");
+  assert.equal(await page.$eval(next, node => node.disabled), true, `${label}: the other unfinished stack correctly blocks Next`);
+  // Next is gated on the whole stop, not just the first completed stack.
+  // Buy each currently actionable remainder through the real controls; later
+  // stacks of an item become actionable only after the earlier stack finishes.
+  async function finishStop() {
+    for (let purchases = 0; purchases < 100; purchases += 1) {
+      const pending = await page.$$eval('[data-shop-key]', nodes => {
+        const row = nodes.find(node => !node.querySelector('[data-testid="shop-stack-bought"]').disabled);
+        return row ? { key: row.dataset.shopKey, quantity: Number(row.querySelector('input').max) } : null;
+      });
+      if (!pending) {
+        const limits = await page.$$eval('[data-shop-key] input', nodes => nodes.map(node => Number(node.max)));
+        assert(limits.length > 0 && limits.every(limit => limit === 0), `${label}: disabled controls must represent a completed stop, not a permission or ordering failure: ${limits}`);
+        return;
+      }
+      const stack = `[data-shop-key="${pending.key}"]`;
+      await typeQuantity(page, `${stack} ${testId("shop-stack-quantity")}`, pending.quantity);
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(selector => document.querySelector(selector)?.disabled, {}, `${stack} ${testId("shop-stack-bought")}`);
+      await page.waitForFunction(selector => document.querySelector(selector)?.querySelector('button') === document.activeElement, {}, stack);
+    }
+    throw new Error(`${label}: stop never completed after 100 purchases`);
+  }
+  let transitions = 0;
+  for (let worlds = 0; worlds < 20; worlds += 1) {
+    await finishStop();
+    // Disabled only means final after every purchase in this stop is done.
+    if (await page.$eval(next, node => node.disabled)) break;
     const world = await page.$eval(testId("shop-stop-title"), node => node.textContent);
+    await page.focus(next);
     await page.keyboard.press("Enter");
     await page.waitForFunction(({ selector, world }) => document.querySelector(selector)?.textContent !== world, {}, { selector: testId("shop-stop-title"), world });
+    transitions += 1;
+    assert.equal(await page.evaluate(() => document.activeElement.closest('[data-shop-key]') !== null), true, `${label}: disabled Next on the new unfinished stop chooses its first stack control`);
+    assert.equal(await page.$eval(next, node => node.disabled), true, `${label}: a newly reached unfinished stop gates Next`);
+    if (worlds === 19) throw new Error(`${label}: route never reached its final stop`);
   }
-  assert.equal(await page.evaluate(() => document.activeElement.closest('[data-shop-key]') !== null), true, `${label}: final Next chooses a stack control`);
+  assert(transitions >= 1, `${label}: fixture must exercise a later world`);
+  assert.equal(await page.$eval(next, node => node.disabled), true, `${label}: fully completed final stop has no Next`);
+  assert.equal(await page.evaluate(() => document.activeElement.closest('[data-shop-key]') !== null), true, `${label}: final purchase retains a usable stack control`);
   console.log(`[ok] ${label}: remote updates, draft limits, keyboard completion and Next world preserve focus`);
 }
 
@@ -87,6 +125,8 @@ async function main() {
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
   const errors = [];
+  const consoleEvidence = [];
+  const requestEvidence = [];
   let listId;
   const createdListIds = new Set();
   const pendingRequests = new Set();
@@ -124,6 +164,9 @@ async function main() {
     target.on("request", handler);
     await target.setViewport({ width: 1280, height: 900 });
     target.on("pageerror", error => errors.push(error.message));
+    target.on("console", message => { if (["error", "warn"].includes(message.type())) consoleEvidence.push({ type: message.type(), text: message.text() }); });
+    target.on("requestfailed", request => requestEvidence.push({ path: new URL(request.url()).pathname, failure: request.failure()?.errorText }));
+    target.on("response", response => { if (response.status() >= 400) requestEvidence.push({ path: new URL(response.url()).pathname, status: response.status() }); });
     target.on("dialog", dialog => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
     await target.evaluateOnNewDocument(() => {
       window.shopHydrated = false;
@@ -137,8 +180,11 @@ async function main() {
     return text ? JSON.parse(text) : null;
   }, { method, route, body });
   const load = async (target, url) => {
+    await target.bringToFront();
+    console.log(`[load] ${new URL(url).pathname}`);
     await target.goto(url, { waitUntil: "domcontentloaded" });
     await target.waitForFunction(() => window.shopHydrated);
+    console.log(`[hydrated] ${new URL(target.url()).pathname}`);
   };
   try {
     await prepare(page);
@@ -165,6 +211,8 @@ async function main() {
       await page.bringToFront();
       await page.waitForSelector(testId("guest-shop-mode"));
       await page.click(testId("guest-shop-mode"));
+      await page.waitForFunction(() => document.querySelector('[data-testid="guest-shop-mode"]')?.getAttribute("aria-pressed") === "true");
+      await page.waitForSelector(testId("shop-cheapest"), { visible: true });
       if (new URL(url).pathname.startsWith("/list/device/")) {
         const lookup = await page.waitForSelector('button::-p-text(Look up prices)');
         const response = page.waitForResponse(response => new URL(response.url()).pathname.startsWith("/api/v1/bulkListings/"));
@@ -175,6 +223,8 @@ async function main() {
       await page.click(testId("shop-cheapest"));
       await page.waitForSelector('[data-shop-key]');
       await runShopFocus(page, { label, onRemoteCompletion, remotePurchase: async (key, delta) => {
+        console.log(`[remote] ${key} ${delta}: foreground`);
+        await remote.bringToFront();
         const quality = offers.find(offer => String(offer.id) === key).hq ? "hq" : "nq";
         const index = await remote.$$eval('[data-testid="cart-rows"] > li', (rows, quality) => rows.findIndex(row => row.querySelector('select')?.value === quality), quality);
         assert(index >= 0, `remote ${quality} row missing`);
@@ -185,6 +235,7 @@ async function main() {
         const before = Number(await remote.$eval(owned, node => node.value));
         await typeQuantity(remote, owned, before + delta);
         await remote.keyboard.press("Enter");
+        console.log(`[remote] ${key} ${delta}: committed`);
         await page.bringToFront();
       } });
     }
@@ -223,6 +274,18 @@ async function main() {
     });
     await Promise.allSettled([...pendingRequests]);
     assert.deepEqual(errors, []);
+  } catch (error) {
+    console.error("Application errors:", errors);
+    console.error("Console evidence:", consoleEvidence.slice(-20));
+    console.error("Request evidence:", requestEvidence.slice(-20));
+    let failureIndex = 0;
+    for (const target of requestHandlers.keys()) {
+      try {
+        await capture(target, { path: path.join(artifacts, `failure-${failureIndex++}.png`), fullPage: false });
+        console.error(await target.evaluate(() => ({ url: location.href, hydrated: window.shopHydrated, visibility: document.visibilityState, active: document.activeElement?.outerHTML.slice(0, 600), text: document.body.innerText.slice(-5000) })));
+      } catch {}
+    }
+    throw error;
   } finally {
     try {
       if (!page.isClosed()) for (const id of createdListIds) await api("DELETE", `/api/v1/list/${id}/delete`).catch(() => {});
