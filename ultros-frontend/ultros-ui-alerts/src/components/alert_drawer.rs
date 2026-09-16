@@ -17,7 +17,7 @@ use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_lo
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use ultros_api_types::{
-    alert::{Alert, AlertTrigger, CreateAlertRequest, Endpoint},
+    alert::{Alert, AlertTrigger, CreateAlertRequest, Endpoint, EndpointMethod},
     icon_size::IconSize,
     world_helper::AnySelector,
 };
@@ -28,8 +28,10 @@ use crate::components::{
     endpoint_picker::EndpointPicker, icon::Icon, item_icon::ItemIcon, modal::Modal,
     world_picker::WorldPicker,
 };
+use crate::global_state::guest_alerts::{GuestAlertRule, use_guest_alerts};
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::toasts::use_toast;
+use crate::global_state::user::BootstrapUser;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
 
@@ -53,6 +55,46 @@ fn trigger_matches_kind(trigger: &AlertTrigger, kind: AlertKind) -> bool {
     )
 }
 
+/// Alert kinds offered by the drawer's type toggle. A signed-out guest can
+/// only manage client-side item-price alerts (undercut/sold rules require a
+/// server-side account), so guest mode locks the toggle to just that one
+/// kind.
+fn kinds_for(signed_in: bool) -> &'static [AlertKind] {
+    if signed_in {
+        &[AlertKind::ItemPrice, AlertKind::Undercut, AlertKind::Sold]
+    } else {
+        &[AlertKind::ItemPrice]
+    }
+}
+
+/// One row of the "Active" list — shared markup for both a signed-in
+/// server-backed [`Alert`] and a guest's local [`GuestAlertRule`], which
+/// differ only in what goes in `description`/`sub_label` and what `on_delete`
+/// does (`delete_alert` over the network vs. `GuestAlerts::remove` in
+/// `localStorage`).
+fn active_alert_row(
+    description: String,
+    sub_label: String,
+    delete_aria: String,
+    on_delete: impl Fn() + 'static,
+) -> impl IntoView {
+    view! {
+        <li class="flex items-center justify-between gap-2 p-2">
+            <div class="min-w-0">
+                <div class="text-sm truncate">{description}</div>
+                <div class="text-xs opacity-60 truncate">{sub_label}</div>
+            </div>
+            <button
+                class="btn-ghost text-red-400"
+                aria-label=delete_aria
+                on:click=move |_| on_delete()
+            >
+                <Icon icon=i::BiTrashSolid />
+            </button>
+        </li>
+    }
+}
+
 #[component]
 pub fn AlertDrawer(
     #[prop(optional)] initial_kind: AlertKind,
@@ -71,8 +113,17 @@ pub fn AlertDrawer(
     set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    // Decided synchronously from context, identically on SSR and the client
+    // hydration pass — no Suspense divergence, no flash of the wrong mode.
+    // `unwrap_or(true)` keeps the pre-guest-mode behaviour (full drawer) for
+    // any caller/test that doesn't provide a `BootstrapUser` context at all.
+    let signed_in = use_context::<BootstrapUser>()
+        .map(|u| u.0.is_some())
+        .unwrap_or(true);
+    let guest = use_guest_alerts();
+    let available_kinds = kinds_for(signed_in);
     let locked_to_preset_item = preset_item.is_some();
-    let kind = RwSignal::new(if locked_to_preset_item {
+    let kind = RwSignal::new(if locked_to_preset_item || !signed_in {
         AlertKind::ItemPrice
     } else {
         initial_kind
@@ -80,11 +131,42 @@ pub fn AlertDrawer(
     // Cache-buster bumped after a delete so the active list refreshes without
     // closing the drawer.
     let version = RwSignal::new(0u64);
-    let alerts = Resource::new(move || version.get(), move |_| get_alerts());
-    let endpoints = Resource::new(|| (), |_| list_endpoints());
+    // A guest never hits an authenticated endpoint: these resources simply
+    // don't exist in guest mode rather than being created and left unused.
+    let alerts = signed_in.then(|| Resource::new(move || version.get(), move |_| get_alerts()));
+    let endpoints = signed_in.then(|| Resource::new(|| (), |_| list_endpoints()));
     let selected_endpoints = RwSignal::new(HashSet::<i32>::new());
     let (error, set_error) = signal::<Option<String>>(None);
     let toasts = use_toast();
+
+    // Seed the endpoint selection with the caller's auto-created `InApp`
+    // endpoint the first time the endpoints resource resolves, so a
+    // signed-in user doesn't have to manually tick a box for the common
+    // case. Guarded by `seeded` so it only ever seeds once — if the user
+    // deselects everything afterward, it stays deselected.
+    if let Some(endpoints) = endpoints {
+        let seeded = RwSignal::new(false);
+        Effect::new(move |_| {
+            if seeded.get_untracked() {
+                return;
+            }
+            let Some(Ok(list)) = endpoints.get() else {
+                return;
+            };
+            if !selected_endpoints.get_untracked().is_empty() {
+                return;
+            }
+            if let Some(in_app) = list
+                .iter()
+                .find(|e| matches!(e.method, EndpointMethod::InApp {}))
+            {
+                selected_endpoints.update(|s| {
+                    s.insert(in_app.id);
+                });
+                seeded.set(true);
+            }
+        });
+    }
 
     // Item-price form state. Default the world picker to the caller-supplied
     // default, falling back to the user's home world when set.
@@ -180,6 +262,37 @@ pub fn AlertDrawer(
             }
             AlertKind::Sold => AlertTrigger::RetainerSold {},
         };
+
+        // Guest mode never reaches the server: `kind` is locked to
+        // `ItemPrice` above, so `trigger` is always `BelowThreshold` here.
+        // Persist to the local guest-alerts store instead of POSTing, and
+        // skip the endpoint-required check entirely (guests have no
+        // endpoints to pick from — alerts fire client-side).
+        if !signed_in {
+            let AlertTrigger::BelowThreshold {
+                item_id,
+                world_selector,
+                price_threshold,
+                hq_only,
+            } = trigger
+            else {
+                return;
+            };
+            let Some(guest) = guest else {
+                return;
+            };
+            let rule = GuestAlertRule::new(item_id, world_selector, price_threshold, hq_only, None);
+            if guest.add(rule) {
+                if let Some(t) = toasts {
+                    t.success(t_string!(i18n, guest_alert_created_toast).to_string());
+                }
+                set_visible.set(false);
+            } else {
+                set_error.set(Some(t_string!(i18n, guest_alert_err_limit).to_string()));
+            }
+            return;
+        }
+
         let endpoint_ids: Vec<i32> = selected_endpoints.get().into_iter().collect();
         if endpoint_ids.is_empty() {
             set_error.set(Some(
@@ -264,7 +377,7 @@ pub fn AlertDrawer(
             <div class="p-4 space-y-4 w-[28rem] max-h-[80vh] overflow-y-auto">
                 <h2 class="text-xl font-bold">{title.clone()}</h2>
 
-                <Show when=move || !locked_to_preset_item>
+                <Show when=move || !locked_to_preset_item && (available_kinds.len() > 1)>
                     <div class="space-y-1">
                         <label class="text-sm font-semibold">{t!(i18n, alert_kind_label)}</label>
                         <div class="grid grid-cols-3 gap-2">
@@ -275,11 +388,11 @@ pub fn AlertDrawer(
                     </div>
                 </Show>
 
-                <Show when=move || !locked_to_preset_item && kind.get() == AlertKind::Undercut>
+                <Show when=move || !locked_to_preset_item && signed_in && kind.get() == AlertKind::Undercut>
                     <p class="text-sm opacity-80">{t!(i18n, undercut_alert_description)}</p>
                 </Show>
 
-                <Show when=move || !locked_to_preset_item && kind.get() == AlertKind::Sold>
+                <Show when=move || !locked_to_preset_item && signed_in && kind.get() == AlertKind::Sold>
                     <p class="text-sm opacity-80">{t!(i18n, sold_alert_description)}</p>
                 </Show>
 
@@ -381,7 +494,7 @@ pub fn AlertDrawer(
                     </div>
                 </Show>
 
-                <Show when=move || kind.get() == AlertKind::Undercut>
+                <Show when=move || signed_in && kind.get() == AlertKind::Undercut>
                     <div class="space-y-1">
                         <label class="text-sm font-semibold" for="undercut-alert-margin">
                             {t!(i18n, undercut_alert_margin_label)}
@@ -398,94 +511,127 @@ pub fn AlertDrawer(
                     </div>
                 </Show>
 
-                <EndpointPicker endpoints selected=selected_endpoints />
+                <Show
+                    when=move || signed_in
+                    fallback=move || view! {
+                        <p class="text-sm opacity-70">{t!(i18n, guest_alert_saved_on_device_note)}</p>
+                    }
+                >
+                    <EndpointPicker
+                        endpoints=endpoints.expect("endpoints resource exists when signed in")
+                        selected=selected_endpoints
+                    />
+                </Show>
 
                 <div class="space-y-1">
                     <label class="text-sm font-semibold">{t!(i18n, alert_drawer_active_heading)}</label>
-                    <Suspense fallback=move || {
-                        view! { <div class="text-sm opacity-70">{t!(i18n, loading)}</div> }
-                    }>
-                        {move || alerts.get().map(|r| match r {
-                            Ok(rows) => {
-                                let endpoint_list: Vec<Endpoint> = endpoints
-                                    .get()
-                                    .and_then(|r| r.ok())
-                                    .unwrap_or_default();
-                                let rows: Vec<Alert> = rows
-                                    .into_iter()
-                                    .filter(|a| trigger_matches_kind(&a.trigger, kind.get()))
-                                    .collect();
-                                if rows.is_empty() {
-                                    view! {
-                                        <p class="text-sm opacity-70">{t!(i18n, alert_drawer_active_empty)}</p>
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <ul class="divide-y divide-[color:var(--color-outline)] rounded border border-[color:var(--color-outline)]">
-                                            {rows.into_iter().map(|a| {
-                                                let id = a.id;
-                                                let description = match &a.trigger {
-                                                    AlertTrigger::BelowThreshold { item_id, price_threshold, .. } => {
-                                                        let name = tracked_data()
-                                                            .items
-                                                            .get(&ItemId(*item_id))
-                                                            .map(|it| it.name.as_str().to_string())
-                                                            .unwrap_or_else(|| format!("Item {item_id}"));
-                                                        format!(
-                                                            "{name} · {}",
-                                                            t_string!(i18n, alert_drawer_threshold_below, price = *price_threshold)
-                                                        )
-                                                    }
-                                                    AlertTrigger::RetainerUndercut { margin_percent } => {
-                                                        format!(
-                                                            "{} · {}",
-                                                            t_string!(i18n, alerts_retainer_undercut_rule),
-                                                            t_string!(i18n, alerts_margin_percent, margin = *margin_percent)
-                                                        )
-                                                    }
-                                                    AlertTrigger::RetainerSold {} => {
-                                                        t_string!(i18n, alerts_retainer_sold_rule).to_string()
-                                                    }
-                                                    // Filtered out above; keep the match exhaustive.
-                                                    _ => String::new(),
-                                                };
-                                                let endpoint_names = a
-                                                    .endpoint_ids
-                                                    .iter()
-                                                    .map(|id| {
-                                                        endpoint_list
-                                                            .iter()
-                                                            .find(|e| e.id == *id)
-                                                            .map(|e| e.name.clone())
-                                                            .unwrap_or_else(|| format!("#{id}"))
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                                    .join(", ");
-                                                view! {
-                                                    <li class="flex items-center justify-between gap-2 p-2">
-                                                        <div class="min-w-0">
-                                                            <div class="text-sm truncate">{description}</div>
-                                                            <div class="text-xs opacity-60 truncate">{endpoint_names}</div>
-                                                        </div>
-                                                        <button
-                                                            class="btn-ghost text-red-400"
-                                                            aria-label=t_string!(i18n, alert_rules_aria_delete_alert)
-                                                            on:click=move |_| remove(id)
-                                                        >
-                                                            <Icon icon=i::BiTrashSolid />
-                                                        </button>
-                                                    </li>
+                    <Show
+                        when=move || signed_in
+                        fallback=move || {
+                            let device_label = t_string!(i18n, guest_alert_device_label).to_string();
+                            let delete_aria = t_string!(i18n, alert_rules_aria_delete_alert).to_string();
+                            let rows = guest.map(|g| g.rules().get()).unwrap_or_default();
+                            if rows.is_empty() {
+                                view! {
+                                    <p class="text-sm opacity-70">{t!(i18n, alert_drawer_active_empty)}</p>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <ul class="divide-y divide-[color:var(--color-outline)] rounded border border-[color:var(--color-outline)]">
+                                        {rows.into_iter().map(|rule| {
+                                            let row_id = rule.id.clone();
+                                            let name = tracked_data()
+                                                .items
+                                                .get(&ItemId(rule.item_id))
+                                                .map(|it| it.name.as_str().to_string())
+                                                .unwrap_or_else(|| format!("Item {}", rule.item_id));
+                                            let description = format!(
+                                                "{name} · {}",
+                                                t_string!(i18n, alert_drawer_threshold_below, price = rule.price_threshold)
+                                            );
+                                            active_alert_row(description, device_label.clone(), delete_aria.clone(), move || {
+                                                if let Some(guest) = guest {
+                                                    guest.remove(&row_id);
                                                 }
-                                            }).collect_view()}
-                                        </ul>
-                                    }.into_any()
-                                }
+                                            })
+                                        }).collect_view()}
+                                    </ul>
+                                }.into_any()
                             }
-                            Err(e) => view! {
-                                <div class="text-sm text-red-500">{format!("{e}")}</div>
-                            }.into_any(),
-                        })}
-                    </Suspense>
+                        }
+                    >
+                        <Suspense fallback=move || {
+                            view! { <div class="text-sm opacity-70">{t!(i18n, loading)}</div> }
+                        }>
+                            {move || alerts.and_then(|res| res.get()).map(|r| match r {
+                                Ok(rows) => {
+                                    let endpoint_list: Vec<Endpoint> = endpoints
+                                        .and_then(|res| res.get())
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or_default();
+                                    let rows: Vec<Alert> = rows
+                                        .into_iter()
+                                        .filter(|a| trigger_matches_kind(&a.trigger, kind.get()))
+                                        .collect();
+                                    if rows.is_empty() {
+                                        view! {
+                                            <p class="text-sm opacity-70">{t!(i18n, alert_drawer_active_empty)}</p>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <ul class="divide-y divide-[color:var(--color-outline)] rounded border border-[color:var(--color-outline)]">
+                                                {rows.into_iter().map(|a| {
+                                                    let id = a.id;
+                                                    let description = match &a.trigger {
+                                                        AlertTrigger::BelowThreshold { item_id, price_threshold, .. } => {
+                                                            let name = tracked_data()
+                                                                .items
+                                                                .get(&ItemId(*item_id))
+                                                                .map(|it| it.name.as_str().to_string())
+                                                                .unwrap_or_else(|| format!("Item {item_id}"));
+                                                            format!(
+                                                                "{name} · {}",
+                                                                t_string!(i18n, alert_drawer_threshold_below, price = *price_threshold)
+                                                            )
+                                                        }
+                                                        AlertTrigger::RetainerUndercut { margin_percent } => {
+                                                            format!(
+                                                                "{} · {}",
+                                                                t_string!(i18n, alerts_retainer_undercut_rule),
+                                                                t_string!(i18n, alerts_margin_percent, margin = *margin_percent)
+                                                            )
+                                                        }
+                                                        AlertTrigger::RetainerSold {} => {
+                                                            t_string!(i18n, alerts_retainer_sold_rule).to_string()
+                                                        }
+                                                        // Filtered out above; keep the match exhaustive.
+                                                        _ => String::new(),
+                                                    };
+                                                    let endpoint_names = a
+                                                        .endpoint_ids
+                                                        .iter()
+                                                        .map(|id| {
+                                                            endpoint_list
+                                                                .iter()
+                                                                .find(|e| e.id == *id)
+                                                                .map(|e| e.name.clone())
+                                                                .unwrap_or_else(|| format!("#{id}"))
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                        .join(", ");
+                                                    let delete_aria = t_string!(i18n, alert_rules_aria_delete_alert).to_string();
+                                                    active_alert_row(description, endpoint_names, delete_aria, move || remove(id))
+                                                }).collect_view()}
+                                            </ul>
+                                        }.into_any()
+                                    }
+                                }
+                                Err(e) => view! {
+                                    <div class="text-sm text-red-500">{format!("{e}")}</div>
+                                }.into_any(),
+                            })}
+                        </Suspense>
+                    </Show>
                 </div>
 
                 <Show when=move || error.get().is_some()>
@@ -515,6 +661,15 @@ pub fn AlertDrawer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guest_mode_only_offers_item_price() {
+        assert_eq!(kinds_for(false), &[AlertKind::ItemPrice]);
+        assert_eq!(
+            kinds_for(true),
+            &[AlertKind::ItemPrice, AlertKind::Undercut, AlertKind::Sold]
+        );
+    }
 
     #[test]
     fn item_price_kind_matches_only_below_threshold() {
