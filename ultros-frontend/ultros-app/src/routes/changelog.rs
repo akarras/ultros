@@ -56,7 +56,17 @@ pub fn Changelog() -> impl IntoView {
                                         <ul class="flex flex-col gap-5">
                                             {entries.iter().filter(|entry| entry.category == category).map(|entry| view! {
                                                 <li class="flex flex-col gap-2">
-                                                    <h4 class="font-semibold text-[color:var(--brand-fg)]">{entry.title}</h4>
+                                                    <h4 class="font-semibold text-[color:var(--brand-fg)] flex flex-wrap items-center gap-2">
+                                                        <span>{entry.title}</span>
+                                                        {entry.labs.then(|| view! {
+                                                            <span
+                                                                class="text-xs font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 border border-brand-300/60 text-brand-300"
+                                                                title=t_string!(i18n, changelog_labs_hint)
+                                                            >
+                                                                {t!(i18n, labs_title)}
+                                                            </span>
+                                                        })}
+                                                    </h4>
                                                     <p class="text-sm text-[color:var(--color-text-muted)]">{entry.blurb}</p>
                                                     {entry.link.map(|href| view! {
                                                         <AppLink

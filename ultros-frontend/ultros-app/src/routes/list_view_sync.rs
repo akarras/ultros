@@ -1969,6 +1969,7 @@ pub fn ListViewSync() -> impl IntoView {
                                             excluded_datacenters=excluded_datacenters
                                             set_excluded_datacenters=set_excluded_datacenters
                                             sort_spec=Signal::derive(move || sort_spec.get())
+                                            quantity_sort=Signal::derive(move || !legacy_cart.get() && !buying_view.get())
                                             set_sort_spec=Callback::new(move |spec| {
                                                 set_sort_spec.set(spec)
                                             })

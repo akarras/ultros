@@ -12,7 +12,7 @@ async function main() {
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
   page.setDefaultTimeout(60000);
-  page.setDefaultNavigationTimeout(60000);
+  page.setDefaultNavigationTimeout(Number(process.env.NAVIGATION_TIMEOUT_MS || 120000));
   await page.setViewport({ width: 1280, height: 900 });
   const errors = [];
   page.on("pageerror", error => {
@@ -44,6 +44,9 @@ async function main() {
     await page.keyboard.press(key);
   };
   async function checkSortAX(column, description, pressed = true) {
+    await page.waitForFunction(({ column, pressed }) =>
+      document.querySelector(`button[aria-label="Sort by ${column}"]`)?.getAttribute("aria-pressed") === String(pressed),
+    {}, { column, pressed });
     const client = await page.createCDPSession();
     try {
       const { nodes } = await client.send("Accessibility.getFullAXTree");
@@ -91,7 +94,10 @@ async function main() {
     });
     await page.goto(`${base}/list/${listId}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => document.querySelector('[data-testid="list-estimate-total"]')?.textContent === "60 gil");
+    console.log("[ok] real account rows and deterministic market offers loaded");
     assert(lookups > 0, "deterministic offers reached editor");
+    assert.deepEqual(await page.$$eval('#list-sort-select option[value^="acquired"]', options => options.map(option => option.textContent)),
+      ["Fewest needed first", "Most needed first"], "the account toolbar names the same requested-quantity sort as the cart");
     assert.equal(await page.$$eval(`${cart} [role="columnheader"], ${cart} [aria-sort], ${cart} [role="row"]`, nodes => nodes.length), 0, "list controls have no unsupported table roles or attributes");
     assert(await page.$eval(`${cart} [role="group"][aria-label="Sort by"]`, group => group.querySelectorAll("button[aria-controls='cart-row-list']").length === 3));
     const any = await rowSelector("any");
@@ -112,6 +118,7 @@ async function main() {
     await activate("Est. cost", "Space");
     await waitOrder(["nq", "any", "hq"]);
     await checkSortAX("Est. cost", "Most expensive first");
+    console.log("[ok] desktop sorting, selection, and computed accessibility tree");
     const artifacts = path.join(__dirname, "artifacts", "list-sort-accessibility");
     fs.mkdirSync(artifacts, { recursive: true });
     await page.screenshot({ path: path.join(artifacts, "desktop.png"), fullPage: true });
@@ -124,6 +131,7 @@ async function main() {
     await waitOrder(["nq", "hq", "any"]);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "mobile cart has no horizontal overflow");
     await page.screenshot({ path: path.join(artifacts, "mobile.png"), fullPage: true });
+    console.log("[ok] mobile sort controls and layout");
     await saved();
     await page.reload({ waitUntil: "domcontentloaded" });
     await waitOrder(["nq", "hq", "any"]);
@@ -152,6 +160,9 @@ async function main() {
     await waitOrder(["any", "hq", "nq"]);
     assert.deepEqual(errors, [], "no application or fixture errors");
     console.log("PASS: displayed quantity, unknown-last cost, native list AX, keyboard/mobile controls, selection, draft pin/release and deletion focus");
+  } catch (error) {
+    console.error("Sort state", page.url(), await order().catch(String), "errors", errors);
+    throw error;
   } finally {
     if (listId) await api("DELETE", `/api/v1/list/${listId}/delete`).catch(console.error);
     await browser.close();

@@ -50,7 +50,7 @@ impl ComputeLock {
     ///
     /// Returns `None` when the current thread already holds it (a reentrant
     /// recompute), in which case the caller proceeds without a guard.
-    fn acquire(&self) -> Option<ComputeGuard<'_>> {
+    pub(crate) fn acquire(&self) -> Option<ComputeGuard<'_>> {
         let me = thread::current().id();
         let mut owner = self.owner.lock().or_poisoned();
         loop {
@@ -67,31 +67,11 @@ impl ComputeLock {
             }
         }
     }
-
-    /// Whether *another* thread currently holds the lock.
-    pub(crate) fn held_by_other_thread(&self) -> bool {
-        matches!(*self.owner.lock().or_poisoned(), Some(id) if id != thread::current().id())
-    }
-
-    /// Whether the current thread holds the lock (i.e. we are inside this
-    /// memo's own closure).
-    pub(crate) fn held_by_current_thread(&self) -> bool {
-        matches!(*self.owner.lock().or_poisoned(), Some(id) if id == thread::current().id())
-    }
-
-    /// Blocks until whichever other thread holds the lock releases it.
-    pub(crate) fn wait_for_release(&self) {
-        let me = thread::current().id();
-        let mut owner = self.owner.lock().or_poisoned();
-        while matches!(*owner, Some(id) if id != me) {
-            owner = self.released.wait(owner).or_poisoned();
-        }
-    }
 }
 
 /// Releases the [`ComputeLock`] on drop, including during a panic unwind, so
 /// a closure that panics never leaves other threads waiting forever.
-struct ComputeGuard<'a> {
+pub(crate) struct ComputeGuard<'a> {
     lock: &'a ComputeLock,
 }
 

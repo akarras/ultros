@@ -38,6 +38,7 @@
     "test:account-list-ui": "node ./account-list-ui.cjs",
     "test:list-sort-accessibility": "node ./list-sort-accessibility.cjs",
     "test:list-estimate-allocation": "node ./list-estimate-allocation.cjs",
+    "test:list-partial-subtotal": "node ./list-partial-subtotal.cjs",
     "test:list-compaction-recovery": "node ./list-compaction-recovery.cjs",
     "test:list-sync": "node ./list-sync.cjs",
     "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",

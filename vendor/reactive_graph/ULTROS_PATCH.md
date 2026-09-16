@@ -28,6 +28,18 @@ runtime two things go wrong:
 2. **Lost updates.** A source that changes while the closure is running marks
    the memo `Dirty`; the closure then finishes and overwrites that with
    `Clean`, so the memo serves the stale value until the *next* change.
+3. **A signal read that coincides with a write on another thread panics as
+   "already been disposed".** `ArcRwSignal::try_read_untracked` (and every
+   other reader built on `Plain::try_new`) is a plain `RwLock::try_read`, so
+   it fails whenever another thread holds -- or is queued for -- the write
+   lock. `set` holds it only for the assignment, but that is enough for a
+   `get` to land on, and a writing thread that gets preempted keeps the lock
+   for a scheduler quantum. `get` then treats the `None` as a disposed
+   signal. This is what actually made `memo_concurrent`'s stress test flake
+   on CI after the first two fixes landed (akarras/ultros#1491): the memo's
+   closure read its source signal at the moment the writer thread was
+   setting it. It is not specific to memos -- any cross-thread
+   `signal.get()` racing a `set()` can hit it.
 
 On the Ultros server this is not theoretical. Leptos' `<Suspense>` SSR path
 spawns an isomorphic effect onto the tokio pool (`Effect::new_isomorphic` →
@@ -63,17 +75,42 @@ connection's thread — and both read the memos the resource just dirtied
   (reentrancy — never supported; it used to recurse until the stack
   overflowed) now returns `None` from `try_*` / the usual "disposed" panic
   from `get()`.
+- `Plain::try_new` (the read guard behind `ArcRwSignal`, `ArcReadSignal`,
+  `ArcStoredValue` and the memo's cached value) waits for a writer instead
+  of failing at once: it retries `try_read`, yielding and then sleeping
+  between attempts, for up to one second before returning `None`. The wait
+  is bounded rather than a blocking `read()` because the writer may be
+  *this* thread (a signal read from inside its own `update` closure), which
+  would deadlock; that case still fails as before, just later. On wasm32
+  there are no other threads, so it returns `None` immediately as before.
 
-`tests/memo_concurrent.rs` reproduces the race (it fails on pristine 0.2.14
-with tens of thousands of panics in two seconds and a stale final value) and
-pins the reentrancy behaviour and recovery after a panicking computation.
+`tests/memo_concurrent.rs` reproduces the memo race (it fails on pristine
+0.2.14 with tens of thousands of panics in two seconds and a stale final
+value), pins the reentrancy behaviour and recovery after a panicking
+computation, and reproduces the signal read/write race (four readers against
+a tight `set` loop fail every run without the `Plain::try_new` change).
+
+The follow-up in #1494 fixes a second race in the original retry logic: a
+writer can publish and release compute between a cache miss and the reader's
+ownership checks. Two such misses exhausted the one-retry limit and reported
+an undisposed memo as disposed. The slow read path now claims compute and
+checks the cache again before releasing it. A later panicking computation is
+retried after releasing both locks; contention has no arbitrary retry limit.
+The uncontended cached read still takes only its existing value read lock.
+
+The unit tests in `src/computed/arc_memo.rs` use thread-local, test-only
+scheduling hooks and channels to force the publish-before-owner-check
+interleaving (fails before the repair) and a computation unwind in the same
+window. The stress tests retain caught panic messages and no longer replace
+the process-wide panic hook, so a future failure preserves its cause.
 
 ## Upstream status
 
-Not yet reported upstream as of 2026-09-13; `reactive_graph` on `main` still
-has the same `take()` / unconditional-`Clean` code. Once it is fixed upstream
-and `leptos` picks up the new version, delete this directory and the
-`[patch.crates-io]` entry.
+Not yet reported upstream as of 2026-09-15; the newest published
+`reactive_graph` (0.3.0-beta2) still has the same `take()` /
+unconditional-`Clean` memo code and the same `try_read`-only signal reads.
+Once it is fixed upstream and `leptos` picks up the new version, delete this
+directory and the `[patch.crates-io]` entry.
 
 ## Maintaining
 
@@ -84,4 +121,4 @@ and `leptos` picks up the new version, delete this directory and the
 - Format with the crate's own `rustfmt.toml` (`cargo fmt` inside this
   directory); the root `cargo fmt --all` does not touch it.
 - Run its tests with `cargo test --manifest-path vendor/reactive_graph/Cargo.toml`;
-  `scripts/check_tests.sh` runs the regression test in CI.
+  `scripts/check_tests.sh` runs the unit and concurrency regression tests in CI.

@@ -9,6 +9,10 @@ struct Entry {
     title: String,
     blurb: String,
     link: Option<String>,
+    /// Lives behind a Labs toggle. Shown with a badge and never counted as
+    /// "what's new", since most players cannot see the change yet.
+    #[serde(default)]
+    labs: bool,
 }
 
 struct Parsed<'a> {
@@ -104,8 +108,8 @@ fn compile(sources: &[(String, String)]) -> Result<String, String> {
     {
         // Debug escaping emits Rust string literals, including quotes and Unicode.
         writeln!(output,
-            "ChangelogEntry {{ date: {date:?}, category: ChangelogCategory::{category}, importance: ChangelogImportance::{importance}, title: {:?}, blurb: {:?}, link: {:?} }},",
-            entry.title, entry.blurb, entry.link
+            "ChangelogEntry {{ date: {date:?}, category: ChangelogCategory::{category}, importance: ChangelogImportance::{importance}, title: {:?}, blurb: {:?}, link: {:?}, labs: {} }},",
+            entry.title, entry.blurb, entry.link, entry.labs
         ).unwrap();
     }
     output.push_str("];\n");
@@ -223,6 +227,25 @@ mod tests {
         let output = compile(&[("2026-09-04-change.json".into(), source.to_string())]).unwrap();
         assert!(output.contains(r#"title: "Quotes \" \\ 日本語\n<script>""#));
         assert!(output.contains(r#"Some("/items?search=test#results")"#));
+    }
+
+    #[test]
+    fn labs_flag_defaults_off_and_must_be_a_bool() {
+        let plain = entry("Plain", "medium");
+        assert!(
+            compile(&[("2026-09-04-change.json".into(), plain.clone())])
+                .unwrap()
+                .contains("labs: false")
+        );
+        let mut source: serde_json::Value = serde_json::from_str(&plain).unwrap();
+        source["labs"] = true.into();
+        assert!(
+            compile(&[("2026-09-04-change.json".into(), source.to_string())])
+                .unwrap()
+                .contains("labs: true")
+        );
+        source["labs"] = "yes".into();
+        assert!(parse("2026-09-04-change.json", &source.to_string()).is_err());
     }
 
     #[test]

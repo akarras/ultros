@@ -470,6 +470,16 @@ async fn checked_json<T: serde::de::DeserializeOwned>(
     Ok(serde_json::from_slice(&body)?)
 }
 
+/// Label value for `ultros_universalis_requests_total{status}`: the HTTP
+/// status Universalis answered with, or `transport` when no response came
+/// back at all (connect failure, timeout, TLS).
+fn status_label(result: &Result<reqwest::Response, reqwest::Error>) -> String {
+    match result {
+        Ok(response) => response.status().as_u16().to_string(),
+        Err(_) => "transport".to_string(),
+    }
+}
+
 impl UniversalisClient {
     const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
 
@@ -482,17 +492,40 @@ impl UniversalisClient {
         UniversalisClient { client }
     }
 
+    /// Every REST call goes through here so outbound traffic to Universalis is
+    /// counted once, per endpoint, regardless of which caller made it:
+    /// `ultros_universalis_requests_total{endpoint,status}` and
+    /// `ultros_universalis_request_duration_seconds{endpoint}`. `endpoint` is
+    /// the route family (`current`, `aggregated`, ...), never the URL, so the
+    /// cardinality stays at a handful of series.
+    async fn send(&self, endpoint: &'static str, url: &str) -> Result<reqwest::Response, Error> {
+        let request = Request::new(Method::GET, Url::parse(url)?);
+        let started = std::time::Instant::now();
+        let result = self.client.execute(request).await;
+        let status = status_label(&result);
+        metrics::counter!(
+            "ultros_universalis_requests_total",
+            "endpoint" => endpoint,
+            "status" => status
+        )
+        .increment(1);
+        metrics::histogram!(
+            "ultros_universalis_request_duration_seconds",
+            "endpoint" => endpoint
+        )
+        .record(started.elapsed().as_secs_f64());
+        Ok(result?)
+    }
+
     pub async fn get_data_centers(&self) -> Result<DataCentersView, Error> {
         let url = format!("{}/data-centers", Self::UNIVERSALIS_BASE_URL);
-        let data_centers = Request::new(Method::GET, Url::parse(&url)?);
-        let response = self.client.execute(data_centers).await?;
+        let response = self.send("data_centers", &url).await?;
         checked_json(&url, response).await
     }
 
     pub async fn get_worlds(&self) -> Result<WorldsView, Error> {
         let url = format!("{}/worlds", Self::UNIVERSALIS_BASE_URL);
-        let worlds = Request::new(Method::GET, Url::parse(&url)?);
-        let response = self.client.execute(worlds).await?;
+        let response = self.send("worlds", &url).await?;
         checked_json(&url, response).await
     }
 
@@ -509,9 +542,8 @@ impl UniversalisClient {
             "{}/{world_or_datacenter}/{id_str}",
             Self::UNIVERSALIS_BASE_URL
         );
-        let request = Request::new(Method::GET, Url::parse(&url)?);
-        info!("Getting current marketboard data: {}", request.url());
-        let response = self.client.execute(request).await?;
+        info!("Getting current marketboard data: {url}");
+        let response = self.send("current", &url).await?;
         let body = checked_body(&url, response).await?;
         // serde struggles with this untagged enum so I just manually decide for it :)
         Ok(if item_ids.len() == 1 {
@@ -539,9 +571,8 @@ impl UniversalisClient {
             "{}/aggregated/{world_or_datacenter}/{id_str}",
             Self::UNIVERSALIS_BASE_URL
         );
-        let request = Request::new(Method::GET, Url::parse(&url)?);
-        info!("Getting aggregated marketboard data: {}", request.url());
-        let response = self.client.execute(request).await?;
+        info!("Getting aggregated marketboard data: {url}");
+        let response = self.send("aggregated", &url).await?;
         checked_json(&url, response).await
     }
 
@@ -556,8 +587,8 @@ impl UniversalisClient {
             Self::UNIVERSALIS_BASE_URL,
             id_str
         );
-        info!("getting historical marketboard data: {}", url);
-        let response = self.client.get(&url).send().await?;
+        info!("getting historical marketboard data: {url}");
+        let response = self.send("history", &url).await?;
         let body = checked_body(&url, response).await?;
         Ok(if item_ids.len() == 1 {
             HistoryView::SingleView(serde_json::from_slice(&body)?)
@@ -579,8 +610,8 @@ impl UniversalisClient {
             "{}/extra/stats/most-recently-updated?entries={entries}&{world_filter_str}",
             Self::UNIVERSALIS_BASE_URL
         );
-        info!("getting recently updated items {}", url);
-        let response = self.client.get(&url).send().await?;
+        info!("getting recently updated items {url}");
+        let response = self.send("recently_updated", &url).await?;
         checked_json(&url, response).await
     }
 
@@ -650,13 +681,33 @@ mod aggregated_test {
 
 #[cfg(test)]
 mod status_test {
-    use crate::{Error, MostRecentlyUpdatedItemsView, check_status};
+    use crate::{Error, MostRecentlyUpdatedItemsView, check_status, status_label};
 
     /// Verbatim body Universalis returns for a world it does not know, e.g.
     /// `/extra/stats/most-recently-updated?entries=200&world=Innocence`.
     const NOT_FOUND_BODY: &[u8] = br#"{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-1046d7d509da111cf20beb46d99f08dc-5aaf766c058a47f2-01"}"#;
 
     const URL: &str = "https://universalis.app/api/v2/extra/stats/most-recently-updated?entries=200&world=Innocence";
+
+    /// The `status` label is the numeric HTTP status when Universalis answered
+    /// at all (a 429 or 503 is still an answer) and `transport` only when the
+    /// request never produced a response.
+    #[test]
+    fn status_label_reports_status_or_transport() {
+        for status in [200u16, 404, 429, 503] {
+            let response: reqwest::Response = http::Response::builder()
+                .status(status)
+                .body("")
+                .unwrap()
+                .into();
+            assert_eq!(status_label(&Ok(response)), status.to_string());
+        }
+        let err = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("an invalid URL never builds a request");
+        assert_eq!(status_label(&Err(err)), "transport");
+    }
 
     #[test]
     fn not_found_is_reported_as_a_status_error_not_a_schema_error() {

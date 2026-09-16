@@ -20,6 +20,8 @@ the Prometheus endpoint at `:9091/metrics` (see `ultros/src/web_metrics.rs`).
 | `ultros_clickhouse_writer_*` | (existing) | `table` | Every writer metric now carries `table` = `sales`, `listing_events` or `floor_changes`; one bounded writer per table. |
 | `ultros_listing_events_seed_failures_total` | counter | — | The one-time `listing_events` seed failed and will retry in 10 minutes. Runs on the rollup leader. |
 | `ultros_floor_changes_bulk_failures_total` | counter | `reason` | A floor resync diff could not be bulk-inserted (`writer_not_ready`, `insert_failed`). Rows are dropped; the next resync re-derives them. |
+| `ultros_universalis_requests_total` | counter | `endpoint`, `status` | Every outbound REST call to universalis.app, by route family (`current`, `aggregated`, `recently_updated`, `history`, `worlds`, `data_centers`) and HTTP status (`transport` when no response came back). The catch-up sweep's `current` calls carry up to 100 items each, so this is the request count the recovered-items panel cannot give you. A rising `status="429"` line means Universalis is shedding our load. |
+| `ultros_universalis_request_duration_seconds` | histogram | `endpoint` | Round-trip time of those calls. |
 | `ultros_listing_stats_cache_total` | counter | `disposition` | `/api/v1/listing_stats/{scope}` cache behaviour (`fresh`, `loaded`, `stale`), the same contract as `ultros_sale_stats_cache_total`. `loaded` tracking request rate means the cache is not holding; `stale` with no `loaded` means ClickHouse stopped answering. |
 
 Pre-existing and still useful alongside these:

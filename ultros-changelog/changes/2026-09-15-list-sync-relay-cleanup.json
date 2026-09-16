@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Smoother live list syncing",
+  "blurb": "Lists stop receiving duplicate live updates after repeated resyncs, and leaving a list releases its old connection work.",
+  "link": "/list"
+}

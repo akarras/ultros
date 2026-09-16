@@ -136,3 +136,143 @@ pub fn ListEstimateSummary(
         </section>
     }
 }
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+    use ultros_calc::list_estimate::{
+        estimate_cart,
+        fixtures::{listing, request},
+    };
+
+    fn cart(rows: &[(i32, i32, i32)]) -> CartEstimate {
+        let offers: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .map(|(index, &(_, _, stock))| {
+                let id = index as i32 + 1;
+                vec![listing(id, id, false, 10, stock)]
+            })
+            .collect();
+        estimate_cart(
+            rows.iter()
+                .enumerate()
+                .map(|(index, &(need, acquired, _))| {
+                    let id = index as i32 + 1;
+                    (
+                        request(id, id, None, need, acquired),
+                        offers[index].as_slice(),
+                    )
+                }),
+        )
+    }
+
+    fn render(estimate: CartEstimate, feed: PriceFeed) -> String {
+        view! { <ListEstimateSummary estimate=Signal::stored(estimate) feed=Signal::stored(feed) /> }.to_html()
+    }
+
+    #[test]
+    fn partial_subtotals_and_missing_units_survive_helper_and_rendered_summary() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        type StockRows = &'static [(i32, i32, i32)];
+        let cases: &[(&str, StockRows, Option<i64>, i64, usize)] = &[
+            ("one partial", &[(5, 0, 2)], Some(20), 3, 0),
+            ("all partial", &[(5, 0, 2), (4, 0, 1)], Some(30), 6, 0),
+            (
+                "partial and no supply",
+                &[(5, 0, 2), (4, 0, 0)],
+                Some(20),
+                7,
+                0,
+            ),
+            (
+                "complete and partial",
+                &[(2, 0, 2), (4, 0, 1)],
+                Some(30),
+                3,
+                1,
+            ),
+            ("no supply", &[(5, 0, 0)], None, 5, 0),
+            ("acquired", &[(5, 5, 2)], Some(0), 0, 0),
+            ("empty", &[], Some(0), 0, 0),
+            ("complete", &[(2, 0, 2)], Some(20), 0, 1),
+        ];
+        for &(name, rows, total, missing, fully_priced) in cases {
+            let owner = Owner::new();
+            owner.with(|| {
+                let i18n = leptos_i18n::context::init_i18n_context::<Locale>();
+                provide_context(i18n);
+                let estimate = cart(rows);
+                let feed = PriceFeed::observed(chrono::Utc::now());
+                assert_eq!(displayed_total(feed, &estimate), total, "{name}");
+                let status = status_text(i18n, feed, &estimate);
+                let html = render(estimate, feed);
+                assert!(html.contains(&status), "{name}: {html}");
+                match total {
+                    Some(total) => assert!(html.contains(&format!("{total} gil")), "{name}"),
+                    None => assert!(html.contains('—'), "{name}"),
+                }
+                if missing > 0 && total.is_some() {
+                    assert!(status.contains("Known subtotal only"), "{name}");
+                    assert!(
+                        status.contains(&format!("{missing} units still unpriced")),
+                        "{name}"
+                    );
+                    assert!(
+                        status.contains(&format!(
+                            "{fully_priced} of {} items fully priced",
+                            rows.len()
+                        )),
+                        "{name}"
+                    );
+                    assert!(html.contains("data-incomplete=\"true\""), "{name}");
+                    assert!(!html.contains("No listed prices"), "{name}");
+                } else if total.is_none() {
+                    assert!(status.contains("No listed prices"), "{name}");
+                } else {
+                    assert!(html.contains("data-incomplete=\"false\""), "{name}");
+                    assert!(!status.contains("Known subtotal only"), "{name}");
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn feed_states_remain_distinct_from_partial_supply() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<Locale>();
+            provide_context(i18n);
+            let estimate = cart(&[(5, 0, 2)]);
+            for (feed, message) in [
+                (PriceFeed::Loading, "Loading prices"),
+                (
+                    PriceFeed::Missing(MissingReason::NotRequested),
+                    "Look up prices in Shop",
+                ),
+                (
+                    PriceFeed::Missing(MissingReason::Failed),
+                    "Prices unavailable right now",
+                ),
+            ] {
+                assert_eq!(displayed_total(feed, &estimate), None);
+                assert!(status_text(i18n, feed, &estimate).contains(message));
+                let html = render(estimate.clone(), feed);
+                assert!(html.contains(message));
+                assert!(!html.contains("20 gil"));
+                assert!(!html.contains("Known subtotal only"));
+                assert!(html.contains("data-incomplete=\"false\""));
+            }
+            let cached = PriceFeed::Observed {
+                fetched_at: chrono::Utc::now(),
+                refresh_failed: true,
+            };
+            assert_eq!(displayed_total(cached, &estimate), Some(20));
+            let html = render(estimate, cached);
+            assert!(html.contains("20 gil"));
+            assert!(html.contains("Known subtotal only"));
+            assert!(html.contains("The latest refresh failed"));
+        });
+    }
+}

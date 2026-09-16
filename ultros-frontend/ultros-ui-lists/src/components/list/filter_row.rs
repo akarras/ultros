@@ -110,6 +110,9 @@ pub fn ListFilterRow(
     #[prop(into)] set_sort_spec: Callback<Option<SortSpec>>,
     #[prop(into)] hide_acquired: Signal<bool>,
     #[prop(into)] set_hide_acquired: Callback<bool>,
+    /// The compact Build cart sorts its visible requested quantity.
+    #[prop(default = Signal::derive(|| false))]
+    quantity_sort: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let worlds = StoredValue::new(worlds);
@@ -276,8 +279,16 @@ pub fn ListFilterRow(
                     <option value="name-desc">{t!(i18n, list_view_sort_name_desc)}</option>
                     <option value="price">{t!(i18n, list_view_sort_price_asc)}</option>
                     <option value="price-desc">{t!(i18n, list_view_sort_price_desc)}</option>
-                    <option value="acquired">{t!(i18n, list_view_sort_acquired_asc)}</option>
-                    <option value="acquired-desc">{t!(i18n, list_view_sort_acquired_desc)}</option>
+                    <option value="acquired">{move || if quantity_sort.get() {
+                        t_string!(i18n, cart_sort_qty_asc).to_string()
+                    } else {
+                        t_string!(i18n, list_view_sort_acquired_asc).to_string()
+                    }}</option>
+                    <option value="acquired-desc">{move || if quantity_sort.get() {
+                        t_string!(i18n, cart_sort_qty_desc).to_string()
+                    } else {
+                        t_string!(i18n, list_view_sort_acquired_desc).to_string()
+                    }}</option>
                 </select>
             </div>
 
