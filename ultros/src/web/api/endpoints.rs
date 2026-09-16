@@ -247,6 +247,25 @@ pub(crate) async fn create_endpoint(
     }))
 }
 
+/// InApp ("This site") is auto-created and has exactly one row per user —
+/// letting a caller retarget it at a different delivery method would leave
+/// that row's `config`/`method` no longer matching what `list_endpoints`
+/// expects to find, and `get_or_create_inapp_endpoint` would then create a
+/// *second* InApp row on the caller's next `GET`. Renaming is still fine:
+/// only a method change is rejected.
+#[allow(clippy::result_large_err)]
+fn reject_inapp_method_change(
+    existing_method: &str,
+    requested_method: &Option<EndpointMethod>,
+) -> Result<(), ApiError> {
+    if existing_method == "InApp" && requested_method.is_some() {
+        return Err(ApiError::BadRequest(
+            "the in-app inbox endpoint cannot change delivery method",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn update_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -259,6 +278,12 @@ pub(crate) async fn update_endpoint(
             user_id: user.id as i64,
         });
     }
+
+    let existing = db
+        .get_endpoint_owned_by(user.id as i64, id)
+        .await
+        .map_err(ApiError::from)?;
+    reject_inapp_method_change(&existing.method, &req.method)?;
 
     let method_and_config = match &req.method {
         Some(m) => {
@@ -567,6 +592,25 @@ mod tests {
             guild_name: None,
         };
         assert!(validate_endpoint_method(&m, 1).is_err());
+    }
+
+    #[test]
+    fn reject_inapp_method_change_blocks_method_but_allows_rename() {
+        // A method change on the InApp row is rejected...
+        assert!(reject_inapp_method_change("InApp", &Some(EndpointMethod::InApp {})).is_err());
+        assert!(
+            reject_inapp_method_change(
+                "InApp",
+                &Some(EndpointMethod::Webhook {
+                    url: "https://discord.com/api/webhooks/1/abc".into(),
+                })
+            )
+            .is_err()
+        );
+        // ...but a rename-only request (method: None) is still allowed.
+        assert!(reject_inapp_method_change("InApp", &None).is_ok());
+        // Non-InApp endpoints are never touched by this guard.
+        assert!(reject_inapp_method_change("Webhook", &Some(EndpointMethod::InApp {})).is_ok());
     }
 
     #[test]

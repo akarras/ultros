@@ -518,11 +518,11 @@ impl UltrosDb {
         }
         let alert_ids: Vec<i32> = alert::Entity::find()
             .filter(alert::Column::Owner.eq(owner))
+            .select_only()
+            .column(alert::Column::Id)
+            .into_tuple()
             .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
+            .await?;
         if alert_ids.is_empty() {
             return Ok(0);
         }
@@ -1139,6 +1139,15 @@ impl UltrosDb {
     /// `get_or_create_dm_endpoint`/`get_or_create_webpush_endpoint`, dedupe is
     /// on `UserId` + `Method` alone — a user has at most one inbox, so there is
     /// no config payload to distinguish between rows.
+    ///
+    /// The select-then-insert below is still a race: two concurrent
+    /// first-time callers can both pass the select and both attempt the
+    /// insert. `notification_endpoint` carries a partial unique index on
+    /// `(user_id) WHERE method = 'InApp'` (migration
+    /// `m20260915_000001_alert_event_inbox`) to make the loser's insert fail
+    /// instead of creating a permanent duplicate (`delete_endpoint` refuses
+    /// to delete InApp rows) — on a unique-constraint violation we re-select
+    /// and return the winner's id.
     pub async fn get_or_create_inapp_endpoint(&self, owner: i64, name: &str) -> Result<i32> {
         if let Some(existing) = notification_endpoint::Entity::find()
             .filter(notification_endpoint::Column::UserId.eq(owner))
@@ -1148,8 +1157,35 @@ impl UltrosDb {
         {
             return Ok(existing.id);
         }
-        self.create_endpoint(owner, name, "InApp", serde_json::json!({}))
-            .await
+        let inserted = notification_endpoint::Entity::insert(notification_endpoint::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            name: Set(name.to_string()),
+            method: Set("InApp".to_string()),
+            config: Set(serde_json::json!({})),
+            created_at: Set(chrono::Utc::now()),
+            disabled_at: Set(None),
+            last_error: Set(None),
+        })
+        .exec_with_returning(&self.db)
+        .await;
+        match inserted {
+            Ok(model) => Ok(model.id),
+            Err(error) if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => {
+                notification_endpoint::Entity::find()
+                    .filter(notification_endpoint::Column::UserId.eq(owner))
+                    .filter(notification_endpoint::Column::Method.eq("InApp"))
+                    .one(&self.db)
+                    .await?
+                    .map(|existing| existing.id)
+                    .ok_or_else(|| {
+                        anyhow::Error::msg(
+                            "InApp endpoint insert hit a unique violation but no row was found on re-select",
+                        )
+                    })
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Same as `get_or_create_dm_endpoint` but for a DiscordChannel pointed at `channel_id`.
@@ -1499,6 +1535,22 @@ mod inbox_tests {
             .await
             .unwrap();
         assert!(b.read_at.is_none());
+
+        // Same scoping, but via `up_to_id` alone (empty `ids`): owner_a's
+        // `up_to_id` is at least owner_b's event id, yet owner_b's row must
+        // still come back unread — `up_to_id` is scoped by the caller's own
+        // alerts, not a global "every event with id <= N".
+        let up_to = std::cmp::max(event_a.id, event_b.id);
+        let affected_up_to = db
+            .mark_alert_events_read_for_user(owner_a, &[], Some(up_to))
+            .await
+            .unwrap();
+        assert_eq!(affected_up_to, 0, "event_a was already marked read above");
+        let b_after_up_to = db
+            .get_alert_event_by_id_owned_by(owner_b, event_b.id)
+            .await
+            .unwrap();
+        assert!(b_after_up_to.read_at.is_none());
     }
 
     #[tokio::test]
@@ -1628,6 +1680,55 @@ mod inbox_tests {
             .await
             .unwrap();
         assert_eq!(first, second);
+
+        let endpoints = db.list_endpoints(owner).await.unwrap();
+        assert_eq!(endpoints.iter().filter(|e| e.method == "InApp").count(), 1);
+    }
+
+    /// Proves `uq_notification_endpoint_inapp` (migration
+    /// `m20260915_000001_alert_event_inbox`) actually exists and rejects a
+    /// second `InApp` row for the same user — this is what makes
+    /// `get_or_create_inapp_endpoint`'s race-loser re-select path reachable
+    /// rather than dead code. Inserts directly through the entity API
+    /// (bypassing `get_or_create_inapp_endpoint`'s own select-first check) to
+    /// isolate the database constraint from the application-level guard.
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn duplicate_inapp_endpoint_insert_is_rejected_by_unique_index() {
+        let db = test_db().await;
+        let owner = unique_owner(8);
+        db.get_or_create_discord_user(owner as u64, "InboxUniqueOwner".into())
+            .await
+            .unwrap();
+
+        db.create_endpoint(owner, "Inbox", "InApp", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let second = notification_endpoint::Entity::insert(notification_endpoint::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            name: Set("Inbox (duplicate)".to_string()),
+            method: Set("InApp".to_string()),
+            config: Set(serde_json::json!({})),
+            created_at: Set(chrono::Utc::now()),
+            disabled_at: Set(None),
+            last_error: Set(None),
+        })
+        .exec_with_returning(&db.db)
+        .await;
+
+        match second {
+            Err(error) => assert!(
+                matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))),
+                "expected a unique-constraint violation, got {error:?}"
+            ),
+            Ok(model) => panic!(
+                "second InApp row for the same user should have been rejected by \
+                 uq_notification_endpoint_inapp, but inserted as id {}",
+                model.id
+            ),
+        }
 
         let endpoints = db.list_endpoints(owner).await.unwrap();
         assert_eq!(endpoints.iter().filter(|e| e.method == "InApp").count(), 1);

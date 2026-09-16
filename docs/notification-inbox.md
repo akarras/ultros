@@ -79,15 +79,20 @@ Fired alerts arrive wrapped in `SubscriptionEvent`:
 {"SubscriptionEvent":{"subscription_id":1,"event":{"Notification":{ ...AlertEvent... }}}}
 ```
 
-Other outcomes on the same subscription:
-- **`Stale`** (`{"SubscriptionEvent":{"subscription_id":1,"event":{"Stale":{"subscription_id":1}}}}`) —
-  the socket fell behind the 256-slot `notifications` bus and some fires were
-  dropped before this receiver read them (Postgres still has them). On `Stale`
-  the client should refetch `GET /api/v1/alerts/events` and
+Other outcomes on the same subscription. Only `Notification` is wrapped in
+`SubscriptionEvent` as a matter of course — `notification_relay`
+(`ultros/src/web/api/real_time_data.rs`) sends `Stale` bare, the same
+socket-wide convention as `Subscribed`/`Unsubscribed`:
+- **`Stale`** (`{"Stale":{"subscription_id":1}}`) — the socket fell behind the
+  256-slot `notifications` bus and some fires were dropped before this
+  receiver read them (Postgres still has them). On `Stale` the client should
+  refetch `GET /api/v1/alerts/events` and
   `GET /api/v1/alerts/events/unread_count` rather than trying to patch its
   local list.
-- **Anonymous caller** → a scoped `Error` (`authorize_notifications` in
-  `ultros/src/web/api/real_time_data.rs`): `{"SubscriptionEvent":{"subscription_id":1,"event":{"Error":{"message":"sign in to receive notifications"}}}}`.
+- **Anonymous caller** → `authorize_notifications` (same file) builds a
+  one-off scoped `Error` before a relay is even created, so this specific
+  case *is* wrapped in `SubscriptionEvent`:
+  `{"SubscriptionEvent":{"subscription_id":1,"event":{"Error":{"message":"sign in to receive notifications"}}}}`.
   The subscription is not registered.
 - Exceeding **`MAX_SUBSCRIPTIONS_PER_SOCKET` (64)** active subscriptions on one
   socket (shared across every subscription kind, not just notifications)
@@ -134,9 +139,11 @@ inbox still counts as delivered:
   "InApp"` target with `ApiError::BadRequest` — deleting it would just get
   silently re-created on the caller's next `GET`, so the delete is refused
   outright instead.
-- `test`/`resend` against the InApp endpoint report `delivered: true` with no
-  side effect beyond whatever `record_fire` already did — there's no external
-  call to retry.
+- `test`/`resend` against the InApp endpoint report `delivered: true` but have
+  **no side effect at all** — `deliver_to_endpoint`'s `InApp {}` arm is a bare
+  no-op, and neither `test_endpoint` nor `resend_alert_event` calls
+  `inbox::record_fire`. Testing (or resending) "This site" does not add
+  anything to the inbox; only a real alert fire does, via `record_fire`.
 
 ## Shared predicate contract for guest evaluation
 
