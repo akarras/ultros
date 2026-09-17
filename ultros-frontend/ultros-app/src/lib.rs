@@ -1,4 +1,4 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 pub use ultros_ui_market::analysis;
 pub(crate) mod analyzer_kit;
 pub use ultros_frontend_core::api;
