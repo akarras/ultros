@@ -252,10 +252,10 @@ mod tests {
         };
         assert!(!p.narrows());
         assert_eq!(p.blocked(), Some(TravelBlocked::WorldData));
-        assert_eq!(p.filter_listings(&[listing.clone()]), vec![listing.clone()]);
+        assert_eq!(p.filter_listings(std::slice::from_ref(&listing)), vec![listing.clone()]);
         p.excluded_worlds.insert(1);
         assert!(p.narrows());
-        assert!(p.filter_listings(&[listing.clone()]).is_empty());
+        assert!(p.filter_listings(std::slice::from_ref(&listing)).is_empty());
         p.excluded_worlds.clear();
         p.unresolved_datacenters.insert("Renamed DC".into());
         assert!(p.narrows());
