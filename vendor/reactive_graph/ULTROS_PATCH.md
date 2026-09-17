@@ -98,6 +98,23 @@ checks the cache again before releasing it. A later panicking computation is
 retried after releasing both locks; contention has no arbitrary retry limit.
 The uncontended cached read still takes only its existing value read lock.
 
+The follow-up for akarras/ultros#1511 fixes a regression the patch itself
+introduced. After taking the compute lock, `update_if_necessary` called
+`needs_update` a second time to skip a recompute another thread had just
+finished. `needs_update` in the `Check` state walks the sources and calls
+`update_if_necessary` on each, and that walk is not idempotent: on an
+`ArcAsyncDerived` it *consumes* the dirty flag (returning `true` and stamping
+`Clean`). A memo that reads a resource — the grid's `rows` memo on the Trends
+page — walked the resource once, which recomputed the resource's source memo
+and marked the resource dirty, then walked it again and cleared that flag; the
+resource's own task woke to a clean node over a clean source and never reran
+its future, so changing the window (or world) on Trends refetched nothing.
+The re-check is now a state check: `Clean` means the recompute we waited for
+has landed, anything else still runs the closure. `tests/async_source_walk.rs`
+reproduces the page's graph (label, view and grid readers, fresh and hydrated)
+and fails on the previous version of the patch in every shape that has a memo
+reader over the async value.
+
 The unit tests in `src/computed/arc_memo.rs` use thread-local, test-only
 scheduling hooks and channels to force the publish-before-owner-check
 interleaving (fails before the repair) and a computation unwind in the same
@@ -120,5 +137,9 @@ directory and the `[patch.crates-io]` entry.
   `ULTROS_PATCH.diff`.
 - Format with the crate's own `rustfmt.toml` (`cargo fmt` inside this
   directory); the root `cargo fmt --all` does not touch it.
-- Run its tests with `cargo test --manifest-path vendor/reactive_graph/Cargo.toml`;
-  `scripts/check_tests.sh` runs the unit and concurrency regression tests in CI.
+- Run its tests with
+  `cargo test --manifest-path vendor/reactive_graph/Cargo.toml --features effects`;
+  `scripts/check_tests.sh` runs the unit tests and the `memo_concurrent` and
+  `async_source_walk` regression tests in CI. `--features effects` matters:
+  without it `Effect::new` is a no-op, so `async_source_walk`'s readers never
+  run and every shape passes against the broken code too.
