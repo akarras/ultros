@@ -57,7 +57,8 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     assert.equal(url.searchParams.get("labs"), "lists-sync");
     assert.equal(url.searchParams.get("make_online"), device ? "1" : null);
     assert.equal(url.searchParams.has("recovery"), false);
-    assert.deepEqual([...url.searchParams.keys()].sort(), ["labs", "buy", "travel", "excluded-worlds", "excluded-datacenters", ...(device ? ["make_online"] : [])].sort(), "handoff only forwards explicitly supported list settings");
+    // The app appends its own `lang` after navigation; it is not a handoff key.
+    assert.deepEqual([...url.searchParams.keys()].filter(key => key !== "lang").sort(), ["labs", "buy", "travel", "excluded-worlds", "excluded-datacenters", ...(device ? ["make_online"] : [])].sort(), "handoff only forwards explicitly supported list settings");
     assert.match(url.search, /excluded-worlds=\d+%2C\d+/i, "world list remains one encoded value");
   }
   async function shop() {
@@ -106,6 +107,9 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     await page.waitForFunction(name => [...document.querySelectorAll('button[role="option"]')].some(node => node.textContent.trim().endsWith(name)), {}, market.region.name);
     await page.evaluate(name => [...document.querySelectorAll('button[role="option"]')].find(node => node.textContent.trim().endsWith(name)).click(), market.region.name);
     await page.waitForFunction(() => document.querySelector('[data-testid="device-list-status"]')?.textContent === "Saved on this device");
+    // Leaving the device page while the guest-offline worker is still caching
+    // the wasm aborts the next document's own wasm fetch (lists-v2 waits too).
+    await page.waitForFunction(() => typeof window.__ULTROS_GUEST_OFFLINE_READY__ === "boolean");
     const filtered = new URL(devicePath, base);
     filtered.search = new URLSearchParams({ labs: "lists-sync", "excluded-worlds": exclusions, "excluded-datacenters": foreignDc.name, debug: "must-not-forward" }).toString();
     await load(filtered.href);

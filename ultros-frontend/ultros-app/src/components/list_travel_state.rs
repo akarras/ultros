@@ -1,12 +1,15 @@
 //! Editor-owned URL settings. Both list editors filter the successfully
 //! served rows with this policy before their single coverage-aware estimate.
+#[cfg(feature = "hydrate")]
+use crate::components::app_link::use_query_map_or_default;
 use crate::{
-    components::{app_link::use_query_map_or_default, list_travel_controls::ListTravelControls},
+    components::list_travel_controls::ListTravelControls,
     global_state::{home_world::use_home_world, use_world_helper},
     query_defaults::filter_query_signal,
     routes::list_view::{IdList, NameList},
 };
 use leptos::prelude::*;
+#[cfg(any(feature = "hydrate", test))]
 use leptos_router::params::ParamsMap;
 use std::collections::BTreeSet;
 use ultros_api_types::world_helper::AnySelector;
@@ -21,11 +24,14 @@ pub struct ListTravelState {
     pub home_datacenter: Signal<Option<String>>,
     pub blocked: Signal<Option<TravelBlocked>>,
     pub clear_unresolved: Callback<()>,
+    // Only the browser-side handoff links read the live query map.
+    #[cfg(feature = "hydrate")]
     query: Memo<ParamsMap>,
 }
 
 /// Called once in the editor owner, outside Suspense and mode views.
 pub fn use_list_travel() -> ListTravelState {
+    #[cfg(feature = "hydrate")]
     let query = use_query_map_or_default();
     let (limit, set_limit) = filter_query_signal::<TravelLimit>("travel");
     let (excluded_worlds, _) = filter_query_signal::<IdList>("excluded-worlds");
@@ -87,6 +93,7 @@ pub fn use_list_travel() -> ListTravelState {
                 &unresolved,
             ));
         }),
+        #[cfg(feature = "hydrate")]
         query,
     }
 }
@@ -104,6 +111,7 @@ fn clear_unresolved_names(
     (!retained.is_empty()).then_some(NameList(retained))
 }
 
+#[cfg(feature = "hydrate")]
 impl ListTravelState {
     pub fn online_href(&self, list_id: i32, shop: bool) -> String {
         online_href(list_id, shop, &self.query.get_untracked())
@@ -114,6 +122,7 @@ impl ListTravelState {
     }
 }
 
+#[cfg(any(feature = "hydrate", test))]
 fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
     let mut query = ParamsMap::new();
     query.replace("labs", "lists-sync".to_string());
@@ -130,6 +139,7 @@ fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
     query
 }
 
+#[cfg(any(feature = "hydrate", test))]
 fn online_href(list_id: i32, shop: bool, source: &ParamsMap) -> String {
     format!(
         "/list/{list_id}{}",
@@ -137,6 +147,7 @@ fn online_href(list_id: i32, shop: bool, source: &ParamsMap) -> String {
     )
 }
 
+#[cfg(any(feature = "hydrate", test))]
 fn device_continue_href(device_id: &str, shop: bool, source: &ParamsMap) -> String {
     let mut query = view_query(shop, source);
     query.replace("make_online", "1".to_string());

@@ -210,7 +210,7 @@ mod tests {
         p.excluded_datacenters.clear();
         assert_eq!(allowed(&p), vec![9]);
         // A price scope that contains only world1 cannot gain home9 offers.
-        assert!([1].into_iter().any(|world| p.allows_world(world)));
+        assert!(![1].into_iter().any(|world| p.allows_world(world)));
     }
 
     #[test]
