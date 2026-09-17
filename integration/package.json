@@ -51,6 +51,7 @@
     "test:list-sync": "node ./list-sync.cjs",
     "test:realtime-retirement": "node ./realtime-retirement.cjs",
     "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",
+    "test:device-list-card-edit": "node ./device-list-card-edit.cjs",
     "test:list-companion": "node ./list-companion.cjs",
     "test:labs": "node ./labs.cjs",
     "test:list-cart-feedback": "node ./list-cart-feedback.cjs",
