@@ -48,6 +48,10 @@ pub fn numeric_editor(
         id,
     } = spec;
     let i18n = use_i18n();
+    let invalid = RwSignal::new(false);
+    let too_large = RwSignal::new(false);
+    let error_id = format!("cart-number-error-{}-{field}", row.get_untracked().id);
+    let described_by = error_id.clone();
     let value = Memo::new(move |_| {
         let item = row.get();
         match field {
@@ -56,8 +60,25 @@ pub fn numeric_editor(
             _ => item.target_price.map(|v| v.to_string()).unwrap_or_default(),
         }
     });
+    // The committed-value binding below already replaces the displayed draft
+    // when a collaborator updates this field. Clear validation at that same
+    // boundary; an error must never describe a now-valid committed value.
+    // Updates to other fields do not change this memo or discard its error.
+    Effect::new(move |_| {
+        value.track();
+        invalid.set(false);
+        too_large.set(false);
+    });
     view! {
-        <input id=id class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
+        <div class="min-w-0">
+        <input id=id class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } max=if field == 2 { i64::MAX.to_string() } else { i32::MAX.to_string() } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) aria-invalid=move || invalid.get().to_string() aria-describedby=move || invalid.get().then(|| described_by.clone()) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
+            on:input=move |ev| {
+                if invalid.get_untracked() {
+                    let entered = event_target_value(&ev);
+                    too_large.set(numeric_value_too_large(field, &entered));
+                    invalid.set(!valid_numeric_value(field, &entered));
+                }
+            }
             on:keydown=move |ev| {
                 // Only the keys this cell handles stop here; Ctrl+Z must
                 // reach the window listener, which decides between native
@@ -70,6 +91,7 @@ pub fn numeric_editor(
                     let input = event_target::<web_sys::HtmlInputElement>(&ev);
                     let committed = value.get_untracked();
                     if input.value().trim() != committed.trim() { ev.stop_propagation(); input.set_value(&committed); }
+                    invalid.set(false);
                 }
             }
             on:change=move |ev| {
@@ -78,9 +100,51 @@ pub fn numeric_editor(
                 let valid = if field == 2 && entered.is_empty() { updated.target_price = None; true }
                 else if field == 2 { entered.parse::<i64>().ok().filter(|v| *v >= 0).map(|v| updated.target_price = Some(v)).is_some() }
                 else { entered.parse::<i32>().ok().filter(|v| *v >= if field == 0 {1} else {0}).map(|v| if field == 0 { updated.quantity = Some(v); } else { updated.acquired = Some(v); }).is_some() };
-                if valid && can_write.get_untracked() { on_edit.run(updated); } else { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
+                if !can_write.get_untracked() {
+                    event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked());
+                    invalid.set(false);
+                } else if valid {
+                    invalid.set(false);
+                    on_edit.run(updated);
+                } else {
+                    // Keep the draft so the player can correct it. The document
+                    // keeps its committed value until a valid change is made.
+                    too_large.set(numeric_value_too_large(field, &entered));
+                    invalid.set(true);
+                }
             } />
+        <Show when=move || invalid.get()>
+            <p id=error_id.clone() role="alert" class="mt-1 text-xs text-red-300">{move || if too_large.get() {
+                t_string!(i18n, cart_number_too_large).to_string()
+            } else { match field {
+                0 => t_string!(i18n, cart_quantity_invalid).to_string(),
+                1 => t_string!(i18n, cart_owned_invalid).to_string(),
+                _ => t_string!(i18n, cart_price_invalid).to_string(),
+            } }}</p>
+        </Show>
+        </div>
     }
+}
+
+/// Reject fractions, overflow and missing required values before committing.
+pub fn valid_numeric_value(field: u8, value: &str) -> bool {
+    if field == 2 {
+        value.is_empty() || value.parse::<i64>().is_ok_and(|value| value >= 0)
+    } else {
+        value
+            .parse::<i32>()
+            .is_ok_and(|value| value >= if field == 0 { 1 } else { 0 })
+    }
+}
+
+/// Overflow needs a distinct correction from fractional or negative input.
+pub fn numeric_value_too_large(field: u8, value: &str) -> bool {
+    let error = if field == 2 {
+        value.parse::<i64>().err()
+    } else {
+        value.parse::<i32>().err()
+    };
+    error.is_some_and(|error| *error.kind() == std::num::IntErrorKind::PosOverflow)
 }
 
 /// Gil with thousands separators through the locale's gil template.
@@ -181,7 +245,7 @@ pub fn CartRow(
         NumericField {
             field: 0,
             label: t_string!(i18n, lists_workspace_needed).to_string(),
-            class: "input w-full min-w-0 text-right tabular-nums",
+            class: "input w-full min-w-0 px-2 text-right tabular-nums",
             id: Some(quantity_input_id(id)),
         },
         can_write,
@@ -220,6 +284,7 @@ pub fn CartRow(
     let details_name = name.clone();
     let remove_name = name.clone();
     let panel_name = name.clone();
+    let copy_name = name.clone();
     let panel_controls = details_id.clone();
     view! {
         <li class=format!("{ROW_GRID} border-b border-[color:var(--color-outline)] last:border-b-0 hover:bg-[color:var(--color-background-panel)] transition-colors") class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=initial.item_id data-row-id=id>
@@ -227,6 +292,8 @@ pub fn CartRow(
             <div class="order-2 flex min-w-0 items-center gap-2">
                 <ItemIcon item_id=initial.item_id icon_size=IconSize::Small />
                 <span class="truncate font-semibold" title=name.clone()>{name.clone()}</span>
+                // Copy the name for the in-game market board search.
+                <span class="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] [&_button]:flex [&_button]:h-7 [&_button]:w-7 [&_button]:items-center [&_button]:justify-center" data-testid="cart-copy-name"><crate::components::clipboard::Clipboard clipboard_text=Signal::derive(move || copy_name.clone()) /></span>
             </div>
             <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate" data-price-state=move || line.with(|line| match line.as_ref().map(|line|line.status) {
                 Some(LineStatus::NotRequested) | None => "not-requested",
@@ -239,16 +306,16 @@ pub fn CartRow(
                 {estimate_text}
             </div>
             <div class="order-4 col-span-2 col-start-2 flex items-center gap-2 sm:contents">
-                <div class="w-20 sm:order-3 sm:w-auto">{quantity}</div>
-                <select class="input min-w-0 sm:order-4" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
+                <div class="w-20 shrink-0 sm:order-3 sm:w-auto">{quantity}</div>
+                <select class="input w-auto min-w-0 flex-1 sm:order-4" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
                     <option value="any">{t!(i18n, lists_workspace_any)}</option>
                     <option value="nq">{t!(i18n, lists_workspace_nq)}</option>
                     {can_hq.then(|| view! { <option value="hq">{t!(i18n, lists_workspace_hq)}</option> })}
                 </select>
-                <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
+                <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
                     <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
                 </button>
-                <button type="button" class="btn-ghost inline-flex h-10 w-10 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
                     <Icon icon=i::BiTrashRegular />
                 </button>
             </div>

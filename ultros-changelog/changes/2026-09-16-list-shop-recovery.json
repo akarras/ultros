@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "List recovery stays visible while shopping",
+  "blurb": "If a list cannot be opened safely, Shop now shows recovery guidance and a backup download instead of a blank view.",
+  "link": "/list",
+  "labs": true
+}

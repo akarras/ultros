@@ -668,6 +668,7 @@ mod browser {
         });
         let source = ListWorkspaceSource {
             hide_acquired: Signal::derive(|| false),
+            reset_filters: Callback::new(|()| {}),
             list_id: Signal::derive(|| 0),
             add: Callback::new(move |item| apply.run(Edit::Add(item))),
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
@@ -707,6 +708,7 @@ mod browser {
             sort: sort.into(),
             set_sort: Callback::new(move |spec| sort.set(spec)),
         };
+        let highlighted = crate::components::cart::use_changed_row_highlight(source.rows);
         let legacy_cart = use_legacy_cart();
         view! {
             <section class="space-y-3" data-testid="device-list-editor"
@@ -721,7 +723,7 @@ mod browser {
                     </div>
                     <div class="flex flex-wrap gap-2">
                     <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
-                    <button class="btn-secondary" data-testid="device-list-storage-toggle" on:click=move |_|set_storage_open(true)>{t!(i18n,online_more)}</button>
+                    <button class="btn-secondary inline-flex min-h-11 min-w-11 items-center justify-center !px-2" data-testid="device-list-storage-toggle" aria-label=move || t_string!(i18n,online_more).to_string() title=move || t_string!(i18n,online_more).to_string() aria-haspopup="dialog" on:click=move |_|set_storage_open(true)><crate::components::icon::Icon icon=icondata::BsThreeDotsVertical aria_hidden=true /></button>
                     <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
                         <button class="btn-secondary" on:click=move |_| {
                             apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
@@ -759,15 +761,16 @@ mod browser {
                 </div>
                 <div class:hidden=move || shop.get()>
                 {move || if legacy_cart.get() {
-                    view! { <ListBuildWorkspace source selected_items=selected /> }.into_any()
+                    view! { <ListBuildWorkspace source selected_items=selected highlighted /> }.into_any()
                 } else {
-                    view! { <ListCart source selected_items=selected /> }.into_any()
+                    view! { <ListCart source selected_items=selected highlighted /> }.into_any()
                 }}
                 </div>
                 <Show when=storage_open><crate::components::modal::Modal set_visible=set_storage_open aria_label=Signal::derive(move || t_string!(i18n,online_more).to_string())>
                     <h2 class="text-xl font-bold">{t!(i18n,online_more)}</h2>
                     <div class="space-y-3 pt-3">
                         <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                        <crate::routes::guest_list_adoption::DeviceListSeparateUpload handle=handle.get_value() on_connect=Callback::new(move |()| set_storage_open(false)) />
                         <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_backup_warning)}</p>
                         <div class="flex flex-wrap gap-2">
                             <button class="btn-secondary" data-testid="device-list-export" on:click=move |_| {

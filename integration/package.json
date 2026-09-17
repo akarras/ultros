@@ -53,6 +53,7 @@
     "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",
     "test:list-companion": "node ./list-companion.cjs",
     "test:labs": "node ./labs.cjs",
+    "test:list-cart-feedback": "node ./list-cart-feedback.cjs",
     "test:list-card-edit": "node ./list-card-edit.cjs",
     "test:list-view-rename": "node ./list-view-rename.cjs",
     "test:list-bulk-edit": "node ./list-bulk-edit.cjs",

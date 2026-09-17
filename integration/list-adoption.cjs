@@ -292,9 +292,9 @@ async function main() {
     const legacyRequest={expected_owner:owner,adoption_key:`legacy-${Date.now()}`,device_list_id:oldId,source_revision:String(old.revision),name:`Legacy destination ${Date.now()}`,wdr_filter:{Region:1},items:[{item_id:5056,hq:null,quantity:3,acquired:0,target_price:null}]};
     const receipt=(await api(page,'POST','/api/v1/list/adopt',legacyRequest)).data;created.add(receipt.list_id);
     await page.evaluate(({owner,id,receipt})=>localStorage.setItem(`ultros:device-adoption:v1:${owner}:${id}:receipt`,JSON.stringify(receipt)),{owner,id:oldId,receipt});
-    await load(page,legacy+'?labs=lists-sync');await page.waitForFunction(()=>document.body.textContent.includes('Continue online'));
+    await load(page,legacy+'?labs=lists-sync');await page.waitForSelector(tid('device-list-open-online'));
     promotionResponded=true;holdFinalLogin=true;
-    await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Continue online').click());
+    await page.click(tid('device-list-open-online'));
     const legacyDeadline=Date.now()+60000;while(!heldLogin.length&&Date.now()<legacyDeadline)await new Promise(r=>setTimeout(r,50));
     assert.equal(heldLogin.length,1);await replace(page,needed,9);
     await Promise.all(heldLogin.splice(0).map(r=>r.continue()));
@@ -313,8 +313,9 @@ async function main() {
     created.add(separateReceipt.list_id);
     await page.evaluate(({owner,id,receipt})=>localStorage.setItem(`ultros:device-adoption:v1:${owner}:${id}:receipt`,JSON.stringify(receipt)),{owner,id:separateDevice,receipt:separateReceipt});
     await replace(page,needed,8);await page.keyboard.press('Enter');await saved(page);
-    await load(page,separate+'?labs=lists-sync');await page.waitForFunction(()=>document.body.textContent.includes('Keep this version separately'));
-    await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Keep this version separately').click());
+    await load(page,separate+'?labs=lists-sync');await page.waitForSelector(tid('device-list-open-online'));
+    // The separate upload is a secondary path behind the storage menu.
+    await page.click(tid('device-list-storage-toggle'));await page.waitForSelector(tid('device-list-upload-separate'));await page.click(tid('device-list-upload-separate'));
     const separateId=await online(page);assert.notEqual(separateId,separateReceipt.list_id);await waitValue(page,needed,8);
     const untouched=(await api(page,'GET',`/api/v1/list/${separateReceipt.list_id}/listings`)).data;
     assert.equal(untouched[1][0][0].quantity,3,'independently edited legacy destination is not replaced');
