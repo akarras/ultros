@@ -20,6 +20,10 @@
 //! Mounted directly above `<HomeWorldMenu/>` in `side_nav.rs`, making it the
 //! first row of the pinned bottom cluster — see that file for why the
 //! cluster survives the collapsed 56px rail while `.side-nav-info` does not.
+//!
+//! The trigger is labelled "Alerts" with the bell icon: it replaced the
+//! standalone `/alerts` sidebar entry, so the "Manage alerts" link in the
+//! panel footer is now the sidebar's only route to the alerts page.
 
 use crate::components::app_link::AppLink;
 use crate::components::dismissable::use_dismissable;
@@ -89,7 +93,7 @@ pub fn NotificationInbox() -> impl IntoView {
                 class="side-nav-account-trigger"
                 aria-haspopup="true"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
-                aria-label=t_string!(i18n, inbox_aria_label)
+                aria-label=t_string!(i18n, alerts)
                 on:click=move |_| {
                     let opening = !open.get_untracked();
                     if opening {
@@ -98,8 +102,8 @@ pub fn NotificationInbox() -> impl IntoView {
                     set_open.set(opening);
                 }
             >
-                <Icon icon=i::BsInbox width="1.1em" height="1.1em" aria_hidden=true />
-                <span class="side-nav-label ml-2">{t!(i18n, inbox_title)}</span>
+                <Icon icon=i::BsBell width="1.1em" height="1.1em" aria_hidden=true />
+                <span class="side-nav-label ml-2">{t!(i18n, alerts)}</span>
                 {move || {
                     let n = unread.get();
                     (n > 0)

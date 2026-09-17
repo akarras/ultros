@@ -1355,8 +1355,6 @@
     "inbox_fallback_generic_body": "Ihr Preisalarm wurde ausgelöst",
     "inbox_guest_hit_title": "{{item}} hat deinen Preis erreicht",
     "inbox_guest_hit_body": "Gelistet für {{price}} Gil auf {{world}}",
-    "inbox_title": "Posteingang",
-    "inbox_aria_label": "Benachrichtigungen",
     "inbox_unread_sr": "{{count}} ungelesene Benachrichtigungen",
     "inbox_mark_all_read": "Alle als gelesen markieren",
     "inbox_clear_all": "Leeren",

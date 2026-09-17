@@ -312,7 +312,7 @@ async function main() {
     console.log("[ok] injected listing fired the guest rule; sidebar pill shows 1");
 
     // ---- 3. Open the inbox, mark read ----
-    await page.click('button[aria-label="Notifications"]');
+    await page.click('button[aria-label="Alerts"]');
     await page.waitForSelector(".side-nav-inbox-panel", { visible: true });
     const rowCount = await page.$$eval(".side-nav-inbox-panel .inbox-item", (els) => els.length);
     assert.equal(rowCount, 1, "expected exactly one inbox row after the guest hit");
@@ -425,7 +425,7 @@ async function main() {
     // injection (above, before any other event could possibly have
     // arrived), by this point in the flow a real background fire is not
     // ruled out — the title is a precise check either way.
-    await page.click('button[aria-label="Notifications"]');
+    await page.click('button[aria-label="Alerts"]');
     await page.waitForSelector(".side-nav-inbox-panel", { visible: true });
     await page.waitForFunction(
       () =>
