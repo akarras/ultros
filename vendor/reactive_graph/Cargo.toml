@@ -192,3 +192,7 @@ check-cfg = [
     "cfg(leptos_debuginfo)",
     "cfg(rustc_nightly)",
 ]
+
+[[test]]
+name = "async_source_walk"
+path = "tests/async_source_walk.rs"

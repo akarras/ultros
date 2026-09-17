@@ -44,5 +44,7 @@ cargo test --locked -p game-data-pack --test pack_sanity
 
 # The vendored `reactive_graph` patch (vendor/reactive_graph/ULTROS_PATCH.md)
 # fixes a cross-thread memo recompute race that panicked streaming SSR. It is
-# not a workspace member, so gate its regression test explicitly.
-cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --lib --test memo_concurrent
+# not a workspace member, so gate its regression tests explicitly:
+# `memo_concurrent` for the race, `async_source_walk` for the resource refetch
+# the first version of the patch broke (#1511).
+cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --lib --test memo_concurrent --test async_source_walk

@@ -66,6 +66,21 @@ async function main() {
         ? { status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Listing statistics temporarily unavailable' }) }
         : { status: 200, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
     }
+    if (url.pathname.startsWith('/api/v1/trends/')) {
+      // One Trends row whose VWAP encodes the world and window it was fetched
+      // for, so a cell proves which request the grid is showing.
+      const world = decodeURIComponent(url.pathname.split('/').at(-1));
+      const days = Number(url.searchParams.get('window'));
+      const key = `trends:${world}/${days}`;
+      hits.set(key, (hits.get(key) || 0) + 1);
+      const vwap = (world === 'Cactuar' ? 100 : 500) + days;
+      const body = { items: [{ item_id: 42, hq: false, price: 100, world_id: 1, average_sale_price: vwap, sales_per_week: days,
+        window_days: days, vwap_window: vwap, sales_in_window: days, unit_volume_window: days * 10, gil_volume_window: vwap * days,
+        sales_per_day: 1, pct_change_window: 0, sparkline_24h: [], confidence_band: 'high' }] };
+      const respond = () => request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
+      if (hold.has(key)) held.set(key, respond); else return respond();
+      return;
+    }
     if (!url.pathname.startsWith('/api/v1/sale_stats/')) return request.continue();
     const scope = decodeURIComponent(url.pathname.split('/').at(-1));
     const days = Number(url.searchParams.get('window'));
@@ -111,6 +126,16 @@ async function main() {
   async function release(key) {
     assert(held.has(key), `${key} request was held`);
     await held.get(key)(); held.delete(key); hold.delete(key);
+  }
+  const trendsRequest = (world, days) => request => {
+    const url = new URL(request.url());
+    return url.pathname === `/api/v1/trends/${world}` && url.searchParams.get('window') === String(days);
+  };
+  // A same-origin anchor click is what the client router intercepts.
+  async function follow(href) {
+    await page.evaluate(href => {
+      const a = document.createElement('a'); a.href = href; document.querySelector('main').append(a); a.click(); a.remove();
+    }, href);
   }
   try {
     await page.setViewport({ width: 1600, height: 900 });
@@ -297,11 +322,41 @@ async function main() {
       page.select('[data-market-window]', '7'),
     ]);
     await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
+    // #1511: the rows must be the 7d response, and every later window must fetch its own.
+    await cell('vwap', '507');
+    assert.equal(hits.get('trends:Gilgamesh/7'), 1);
+    await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 90)), page.select('[data-market-window]', '90')]);
+    await cell('vwap', '590');
+    await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 30)), page.select('[data-market-window]', '30')]);
+    await cell('vwap', '530');
+    assert.equal(hits.get('trends:Gilgamesh/30'), 1, 'the hydrated 30d rows were not refetched until 30d was reselected');
+    // A 90d response that lands after the user has moved back to 30d must not be what the grid ends on.
+    hold.add('trends:Gilgamesh/90');
+    await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 90)), page.select('[data-market-window]', '90')]);
+    await page.select('[data-market-window]', '30');
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '30');
+    const refetch30 = page.waitForRequest(trendsRequest('Gilgamesh', 30));
+    await release('trends:Gilgamesh/90');
+    await refetch30;
+    await cell('vwap', '530');
+    assert(!(await page.$$eval(selector('vwap'), cells => cells.map(cell => cell.textContent.trim()))).includes('590'));
+    // Changing world through the router refetches for the new world and the selected window.
+    await Promise.all([page.waitForRequest(trendsRequest('Cactuar', 30)), follow('/trends/Cactuar?v=1&lang=en&window=30')]);
+    await cell('vwap', '130');
+    // Entering Trends through the client router builds the resource fresh: the default window fetches once and later windows still refetch.
+    await page.goto(`${BASE}${fixture}?market-window-test=1&lang=en&v=1`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__windowHydrated);
+    await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 30)), follow('/trends/Gilgamesh?v=1&lang=en')]);
+    await cell('vwap', '530');
+    assert.equal(await page.$eval('[data-market-window]', el => el.value), '30');
+    await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 7)), page.select('[data-market-window]', '7')]);
+    await cell('vwap', '507');
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
     for (const endpoint of ['/api/v1/listing_stats/Cactuar', '/api/v1/sale_stats/Cactuar?window=1', '/api/v1/sale_stats/Gilgamesh?window=1']) {
       assert(expectedFailures.has(BASE + endpoint), `expected failing fixture was exercised: ${endpoint}`);
     }
     assert.deepEqual(errors, []);
-    console.log('PASS market windows: defaults, pinned comparisons, prices, pending filters/sorts, hidden requirements, deduplication, saved URLs, SSR, scope/window races, failures, missing rows and current-listing columns');
+    console.log('PASS market windows: defaults, pinned comparisons, prices, pending filters/sorts, hidden requirements, deduplication, saved URLs, SSR, scope/window races, failures, missing rows, current-listing columns and Trends refetch');
   } catch (error) {
     const artifacts = path.join(__dirname, 'artifacts', 'market-window');
     fs.mkdirSync(artifacts, { recursive: true });

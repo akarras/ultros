@@ -201,11 +201,23 @@ where
             let Some(compute_guard) = self.compute.acquire() else {
                 return false;
             };
-            if !needs_update(&self.reactivity) {
-                let mut lock = self.reactivity.write().or_poisoned();
-                if lock.state == ReactiveNodeState::Check {
-                    lock.state = ReactiveNodeState::Clean;
-                }
+            // The recompute we may have waited for stamps `Clean` before it
+            // runs its closure and holds compute until the value is stored,
+            // so `Clean` here means another thread has already brought this
+            // memo up to date. `Dirty` is a change since then, and `Check` is
+            // the walk above having found a changed source without anyone
+            // marking this memo since (an async source reports its change
+            // exactly once) -- both still need the closure.
+            //
+            // This has to be a state check rather than a second
+            // `needs_update`: the walk is not idempotent. `update_if_necessary`
+            // on an async derived *consumes* its dirty flag, so walking the
+            // sources again would clear the flag the first walk raised, and
+            // the async task that wakes to it would find nothing to rerun on
+            // (akarras/ultros#1511, tests/async_source_walk.rs).
+            if self.reactivity.read().or_poisoned().state
+                == ReactiveNodeState::Clean
+            {
                 return false;
             }
 
