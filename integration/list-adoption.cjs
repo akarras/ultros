@@ -55,7 +55,8 @@ async function main() {
     });
   }
   const load=async(p,route)=>{await p.bringToFront();await p.goto(new URL(route,base).href,{waitUntil:'domcontentloaded'});await p.waitForFunction(()=>window.__onlineHydrated);};
-  const login=async(p,id,next='/list?labs=lists-sync')=>load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);
+  let signedIn=false;
+  const login=async(p,id,next='/list?labs=lists-sync')=>{signedIn=true;return load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);};
   const api=async(p,method,route,body)=>p.evaluate(async({method,route,body})=>{
     const r=await fetch(route,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
     const text=await r.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:r.status,data};
@@ -72,7 +73,7 @@ async function main() {
     assert.equal(await page.$$(tid('device-lists-adoption')).then(a=>a.length),0);
     await page.click(tid('list-new'));await replace(page,tid('device-list-name'),name);
     // Signed-in sessions default to Online; this script exercises the local→online transition itself.
-    const local=await page.$(tid('device-list-storage-local'));if(local){await local.click();await page.waitForFunction(sel=>document.querySelector(sel)?.getAttribute('aria-pressed')==='true',{},tid('device-list-storage-local'));}
+    if(signedIn){await page.waitForSelector(tid('device-list-storage-local'),{visible:true});await page.click(tid('device-list-storage-local'));await page.waitForFunction(sel=>document.querySelector(sel)?.getAttribute('aria-pressed')==='true',{},tid('device-list-storage-local'));}
     await page.click(tid('device-list-create'));
     await page.waitForFunction(()=>location.pathname.startsWith('/list/device/'));
     await replace(page,'input[aria-label="Quantity to add"]',3);

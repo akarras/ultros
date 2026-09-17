@@ -64,11 +64,13 @@ translated, not stubbed:
 ## Tests
 
 - Unit: `device_list_href` both branches.
-- E2E: `integration/device-build-prices.cjs`, `integration/list-adoption.cjs`
-  and `integration/list-cart-feedback.cjs` create a list while signed in and
-  assume it is local; each clicks `device-list-storage-local` before create.
-  `integration/list-modal-keyboard.cjs` keeps working (it only focuses the name
-  field).
+- E2E: `integration/list-adoption.cjs` (calls after its first sign-in),
+  `integration/list-shop-focus.cjs` and `integration/list-priced-acceptance.cjs`
+  create a list while signed in and assume it is local; each waits for and
+  clicks `device-list-storage-local` before create. The other scripts that
+  create device lists do so before any sign-in, so the modal is unchanged for
+  them. `integration/list-modal-keyboard.cjs` keeps working (it only focuses
+  the name field).
 - `./check_ci.sh` must pass before commit.
 
 ## Out of scope
