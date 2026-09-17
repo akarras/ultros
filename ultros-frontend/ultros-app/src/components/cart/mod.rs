@@ -26,7 +26,7 @@ use crate::components::list::filter_row::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::routes::list_view::remaining_quantity;
-use crate::routes::list_view_sync::{InlineListAdd, InlineRecipeAdd, ListWorkspaceSource};
+use crate::routes::list_view_sync::{InlineListAdd, ListWorkspaceSource};
 
 use feedback::{CartFeedback, Removal, focus_after_removal};
 use row::{CartRow, ROW_GRID, focus_element, quantity_input_id, remove_button_id};
@@ -591,14 +591,11 @@ pub fn ListCart(
         <section class="space-y-3 xl:grid xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)] xl:items-start xl:gap-4 xl:space-y-0" data-testid="list-cart">
             <div class="space-y-3 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto" class:hidden=move || !source.can_write.get() data-testid="list-cart-composer">
             <Show when=move || source.can_write.get()>
-                <InlineListAdd list_id=source.list_id on_add=on_add pending=source.pending feedback=source.feedback />
+                <InlineListAdd list_id=source.list_id on_add=on_add on_add_many=on_add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
                 <div class="flex flex-wrap items-center gap-2 text-sm">
-                    <button type="button" class="btn-ghost" aria-expanded=move || source.recipe_open.get().to_string() on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
-                    <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
                     <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| on_undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
                     <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| on_redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
-                <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=on_add_many /></Show>
             </Show>
             </div>
             <div class="space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
