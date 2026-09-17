@@ -264,6 +264,15 @@ if [ "${RUN_LISTS_V2:-1}" != "0" ]; then
         test_exit="$list_undo_keyboard_exit"
     fi
 
+    # Rename/delete a local list from its /list card without opening it.
+    # Needs only the catalog, like lists-v2.
+    log "running device-list card edit E2E"
+    device_list_card_edit_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:device-list-card-edit ) || device_list_card_edit_exit=$?
+    if [ "$device_list_card_edit_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$device_list_card_edit_exit"
+    fi
+
     # The shopping companion module against its own loopback fixture; it
     # does not talk to $BASE_URL.
     log "running shopping companion module E2E"
