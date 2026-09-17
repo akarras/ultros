@@ -1338,6 +1338,8 @@
     "inbox_aria_label": "Notifications",
     "inbox_unread_sr": "{{count}} unread notifications",
     "inbox_mark_all_read": "Mark all read",
+    "inbox_clear_all": "Clear",
+    "inbox_clear_confirm": "Clear all?",
     "inbox_empty": "No notifications yet.",
     "inbox_manage_alerts": "Manage alerts",
     "inbox_guest_footer": "Browser alerts run only while this tab is open. Sign in for Discord and push delivery.",

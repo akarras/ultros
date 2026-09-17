@@ -120,6 +120,23 @@ pub struct MarkAlertEventsReadResponse {
     pub unread_count: u64,
 }
 
+/// Body for `POST /api/v1/alerts/events/clear`. Deletes the caller's alert
+/// events — every one with `id <= up_to_id` when given, otherwise all of
+/// them. The inbox always sends the newest id it has rendered, so an event
+/// that fires between the user seeing the list and clicking "Clear" survives
+/// instead of being silently discarded unseen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearAlertEventsRequest {
+    #[serde(default)]
+    pub up_to_id: Option<i64>,
+}
+
+/// Response for `POST /api/v1/alerts/events/clear`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearAlertEventsResponse {
+    pub deleted: u64,
+}
+
 /// Response for `GET /api/v1/alerts/events/unread_count`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnreadAlertEventCount {

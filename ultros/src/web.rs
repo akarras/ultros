@@ -90,8 +90,8 @@ use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
 use crate::web::api::alerts::{
-    create_alert, delete_alert, list_alert_events, list_alerts, mark_alert_events_read,
-    resend_alert_event, unread_alert_event_count, update_alert,
+    clear_alert_events, create_alert, delete_alert, list_alert_events, list_alerts,
+    mark_alert_events_read, resend_alert_event, unread_alert_event_count, update_alert,
 };
 use crate::web::api::endpoints::{
     create_endpoint, delete_endpoint, list_discord_writable_guilds, list_endpoints, test_endpoint,
@@ -3490,6 +3490,7 @@ fn api_router() -> Router<WebState> {
             post(resend_alert_event),
         )
         .route("/api/v1/alerts/events/read", post(mark_alert_events_read))
+        .route("/api/v1/alerts/events/clear", post(clear_alert_events))
         .route(
             "/api/v1/alerts/events/unread_count",
             get(unread_alert_event_count),

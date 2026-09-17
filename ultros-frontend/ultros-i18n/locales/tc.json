@@ -1335,6 +1335,8 @@
     "inbox_aria_label": "通知",
     "inbox_unread_sr": "{{count}} 則未讀通知",
     "inbox_mark_all_read": "全部標記為已讀",
+    "inbox_clear_all": "清空",
+    "inbox_clear_confirm": "清空全部？",
     "inbox_empty": "尚無通知。",
     "inbox_manage_alerts": "管理提醒",
     "inbox_guest_footer": "瀏覽器提醒僅在此分頁開啟時運作。登入以透過Discord和推播接收提醒。",

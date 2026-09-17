@@ -3,7 +3,14 @@
 //! Mirrors `AccountMenu`/`HomeWorldMenu`: a `side-nav-account-trigger`
 //! button that expands a `side-nav-account-panel` drop-up above it,
 //! dismissed by route change / outside click / Escape via
-//! [`use_dismissable`]. Reads the [`Inbox`] global-state store — see
+//! [`use_dismissable`]. Because the panel grows *upward* from the trigger,
+//! the bulk actions ("Mark all read", "Clear") live in a footer row pinned
+//! to the bottom of the panel — right above the trigger the pointer is
+//! already on — and the list scrolls inside a capped-height panel
+//! (`.side-nav-inbox-panel` / `.inbox-list` in `tailwind.css`) so a busy
+//! inbox never pushes those actions up to the top of the viewport.
+//!
+//! Reads the [`Inbox`] global-state store — see
 //! `ultros-frontend-core/src/global_state/notifications.rs` for the
 //! server+local merge and hydration-gating this UI depends on: `items()`
 //! and `unread_count()` are guaranteed empty/zero until an `Effect` has run
@@ -56,6 +63,26 @@ pub fn NotificationInbox() -> impl IntoView {
     let unread = inbox.unread_count();
     let signed_in = matches!(use_context::<BootstrapUser>(), Some(BootstrapUser(Some(_))));
 
+    // "Clear" is a two-tap action (same idiom as the list-settings delete
+    // button): the first click arms it, the second actually deletes — the
+    // rows are removed from the server-side history too, not just hidden,
+    // so a stray click in a small pop-up shouldn't be enough. Disarms when
+    // the panel closes so it never stays primed across open/close cycles.
+    let (clear_armed, set_clear_armed) = signal(false);
+    Effect::new(move |_| {
+        if !open.get() {
+            set_clear_armed.set(false);
+        }
+    });
+    let on_clear = move |_| {
+        if clear_armed.get_untracked() {
+            inbox.clear_all();
+            set_clear_armed.set(false);
+        } else {
+            set_clear_armed.set(true);
+        }
+    };
+
     view! {
         <div class="side-nav-inbox" node_ref=root_ref>
             <button
@@ -92,37 +119,54 @@ pub fn NotificationInbox() -> impl IntoView {
 
             <Show when=move || open.get()>
                 <div class="side-nav-account-panel side-nav-inbox-panel" tabindex="-1">
-                    <div class="menu-row">
-                        <span class="menu-item flex-1">{t!(i18n, inbox_title)}</span>
-                        <button
-                            class="menu-expand"
-                            disabled=move || unread.get() == 0
-                            aria-label=t_string!(i18n, inbox_mark_all_read)
-                            on:click=move |_| inbox.mark_all_read()
-                        >
-                            <Icon icon=i::BsCheck2All />
-                        </button>
-                    </div>
-
                     <GuestAlertAdoptionBanner compact=true />
 
-                    {move || {
-                        let list = items.get();
-                        if list.is_empty() {
-                            view! {
-                                <div class="menu-item muted">{t!(i18n, inbox_empty)}</div>
+                    <div class="inbox-list">
+                        {move || {
+                            let list = items.get();
+                            if list.is_empty() {
+                                view! {
+                                    <div class="menu-item muted">{t!(i18n, inbox_empty)}</div>
+                                }
+                                    .into_any()
+                            } else {
+                                list.into_iter()
+                                    .take(20)
+                                    .map(|item| inbox_row(item, inbox))
+                                    .collect::<Vec<_>>()
+                                    .into_any()
                             }
-                                .into_any()
-                        } else {
-                            list.into_iter()
-                                .take(20)
-                                .map(|item| inbox_row(item, inbox))
-                                .collect::<Vec<_>>()
-                                .into_any()
-                        }
-                    }}
+                        }}
+                    </div>
 
                     <div class="menu-divider"></div>
+                    <div class="inbox-actions">
+                        <button
+                            class="menu-item inbox-action"
+                            disabled=move || unread.get() == 0
+                            on:click=move |_| inbox.mark_all_read()
+                        >
+                            <Icon icon=i::BsCheck2All aria_hidden=true />
+                            <span>{t!(i18n, inbox_mark_all_read)}</span>
+                        </button>
+                        <button
+                            class="menu-item inbox-action"
+                            class:inbox-action-danger=move || clear_armed.get()
+                            disabled=move || items.with(Vec::is_empty)
+                            on:click=on_clear
+                        >
+                            <Icon icon=i::BiTrashRegular aria_hidden=true />
+                            <span>
+                                {move || {
+                                    if clear_armed.get() {
+                                        t_string!(i18n, inbox_clear_confirm).to_string()
+                                    } else {
+                                        t_string!(i18n, inbox_clear_all).to_string()
+                                    }
+                                }}
+                            </span>
+                        </button>
+                    </div>
                     <AppLink href="/alerts" attr:class="menu-item">
                         {t!(i18n, inbox_manage_alerts)}
                     </AppLink>

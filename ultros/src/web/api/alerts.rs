@@ -4,9 +4,9 @@ use axum::{
 };
 use serde::Deserialize;
 use ultros_api_types::alert::{
-    Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, CreateAlertRequest,
-    MarkAlertEventsReadRequest, MarkAlertEventsReadResponse, ResendResult, UnreadAlertEventCount,
-    UpdateAlertRequest,
+    Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, ClearAlertEventsRequest,
+    ClearAlertEventsResponse, CreateAlertRequest, MarkAlertEventsReadRequest,
+    MarkAlertEventsReadResponse, ResendResult, UnreadAlertEventCount, UpdateAlertRequest,
 };
 use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
@@ -651,6 +651,23 @@ pub(crate) async fn mark_alert_events_read(
         updated,
         unread_count,
     }))
+}
+
+/// Delete the caller's alert events (all of them, or only those with
+/// `id <= up_to_id`). Backs the inbox's "Clear" action; the rows are gone
+/// from the alert history too, not just hidden.
+///
+/// Path: `POST /api/v1/alerts/events/clear`.
+pub(crate) async fn clear_alert_events(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(req): Json<ClearAlertEventsRequest>,
+) -> Result<Json<ClearAlertEventsResponse>, ApiError> {
+    let deleted = db
+        .delete_alert_events_for_user(user.id as i64, req.up_to_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(ClearAlertEventsResponse { deleted }))
 }
 
 /// Path: `GET /api/v1/alerts/events/unread_count`.

@@ -8,7 +8,7 @@ use crate::api::{get_alert_events_page, resend_alert_event};
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
-use crate::global_state::notifications::use_inbox;
+use crate::global_state::notifications::{display_body, use_inbox};
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
@@ -179,7 +179,13 @@ pub fn HistoryPanel() -> impl IntoView {
                                                     .map(|it| it.name.as_str().to_string())
                                                     .unwrap_or_else(|| format!("Item {}", e.item_id));
                                                 let title_str = e.title.clone().unwrap_or_else(|| item_name.clone());
-                                                let body_str = e.body.clone();
+                                                // Drop the bare-link line the delivery body carries
+                                                // for Discord/push; the row is already navigable.
+                                                let body_str = e
+                                                    .body
+                                                    .as_deref()
+                                                    .map(display_body)
+                                                    .filter(|body| !body.is_empty());
                                                 let fired_abs = e.fired_at.to_rfc3339();
                                                 let price_str = e.matched_price.map(|p| p.to_string()).unwrap_or_else(|| "\u{2014}".into());
                                                 let delivered_str = if e.delivered {

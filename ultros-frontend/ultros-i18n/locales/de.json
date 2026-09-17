@@ -1335,6 +1335,8 @@
     "inbox_aria_label": "Benachrichtigungen",
     "inbox_unread_sr": "{{count}} ungelesene Benachrichtigungen",
     "inbox_mark_all_read": "Alle als gelesen markieren",
+    "inbox_clear_all": "Leeren",
+    "inbox_clear_confirm": "Alle löschen?",
     "inbox_empty": "Noch keine Benachrichtigungen.",
     "inbox_manage_alerts": "Alarme verwalten",
     "inbox_guest_footer": "Browser-Alarme laufen nur, solange dieser Tab geöffnet ist. Melde dich an, um Discord- und Push-Zustellung zu erhalten.",

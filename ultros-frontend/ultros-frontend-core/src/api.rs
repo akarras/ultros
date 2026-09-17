@@ -7,10 +7,11 @@ use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter,
     alert::{
-        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
-        CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
-        MarkAlertEventsReadRequest, MarkAlertEventsReadResponse, ResendResult,
-        UnreadAlertEventCount, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
+        Alert, AlertEvent, ClearAlertEventsRequest, ClearAlertEventsResponse, CreateAlertRequest,
+        CreateEndpointRequest, CreatePushSubscriptionRequest, DeleteEndpointResponse,
+        DiscordWritableGuild, Endpoint, MarkAlertEventsReadRequest, MarkAlertEventsReadResponse,
+        ResendResult, UnreadAlertEventCount, UpdateAlertRequest, UpdateEndpointRequest,
+        VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     item_stats::ItemStatsResponse,
@@ -903,6 +904,14 @@ pub async fn mark_alert_events_read(
     req: MarkAlertEventsReadRequest,
 ) -> AppResult<MarkAlertEventsReadResponse> {
     post_api("/api/v1/alerts/events/read", req).await
+}
+
+/// Delete the caller's notification-inbox events server-side (every event
+/// with `id <= up_to_id`, or all of them when `None`).
+pub async fn clear_alert_events(
+    req: ClearAlertEventsRequest,
+) -> AppResult<ClearAlertEventsResponse> {
+    post_api("/api/v1/alerts/events/clear", req).await
 }
 
 /// The notification-inbox unread badge count.

@@ -20,9 +20,9 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use serde::{Deserialize, Serialize};
-use ultros_api_types::alert::{AlertEvent, MarkAlertEventsReadRequest};
+use ultros_api_types::alert::{AlertEvent, ClearAlertEventsRequest, MarkAlertEventsReadRequest};
 
-use crate::api::mark_alert_events_read;
+use crate::api::{clear_alert_events, mark_alert_events_read};
 use crate::error::AppResult;
 
 /// `localStorage` key for the client-only half of the inbox.
@@ -62,6 +62,30 @@ pub struct InboxItem {
     pub source_key: Option<String>,
 }
 
+/// Strips bare-link lines from an alert body for on-screen display.
+///
+/// The alert trackers build one body string that is shared by every delivery
+/// channel, and for Discord/webhook/push that body ends in a
+/// `https://ultros.app/...` line so the recipient has something to click.
+/// In the inbox the row itself is the link (see `InboxItem::url`), so that
+/// line is just the backing URL leaking into the UI. Any line that is
+/// nothing but a URL is dropped; everything else is kept as-is, and
+/// surrounding whitespace is trimmed. Old events already stored with the
+/// link in their body are cleaned up by this at render time too, so no
+/// backfill is needed.
+pub fn display_body(body: &str) -> String {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| {
+            !(line.starts_with("https://") || line.starts_with("http://"))
+                || line.contains(char::is_whitespace)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 /// Builds an [`InboxItem`] from a server `AlertEvent`.
 ///
 /// `title` falls back to the item's display name (via `item_name`) when the
@@ -78,7 +102,11 @@ pub fn inbox_item_from_event(
         .title
         .clone()
         .unwrap_or_else(|| item_name(event.item_id));
-    let body = event.body.clone().unwrap_or_else(|| fallback_body(event));
+    let body = event
+        .body
+        .as_deref()
+        .map(display_body)
+        .unwrap_or_else(|| fallback_body(event));
     let url = event
         .click_url
         .clone()
@@ -204,6 +232,23 @@ pub fn server_mark_all_request(items: &[InboxItem]) -> Option<MarkAlertEventsRea
         .max()?;
     Some(MarkAlertEventsReadRequest {
         ids: vec![],
+        up_to_id: Some(up_to_id),
+    })
+}
+
+/// The server-sync request a "clear" should send for `items`' current server
+/// half, or `None` when there is nothing server-side to delete. Bounded by
+/// the newest server id currently in the list, so an event that fires
+/// between render and click is left in place rather than deleted unseen.
+pub fn server_clear_request(items: &[InboxItem]) -> Option<ClearAlertEventsRequest> {
+    let up_to_id = items
+        .iter()
+        .filter_map(|item| match item.id {
+            InboxId::Server(id) => Some(id),
+            InboxId::Local(_) => None,
+        })
+        .max()?;
+    Some(ClearAlertEventsRequest {
         up_to_id: Some(up_to_id),
     })
 }
@@ -405,6 +450,24 @@ impl Inbox {
             }
         });
     }
+
+    /// Removes every current item from both halves of the inbox and deletes
+    /// the server half server-side (bounded by the newest server id present,
+    /// see [`server_clear_request`]). The local removal is optimistic and
+    /// not reverted if the server call fails; the error is logged.
+    pub fn clear_all(&self) {
+        let request = self.server.with(|items| server_clear_request(items));
+        let _ = self.server.try_update(Vec::clear);
+        let _ = self.local_write.try_update(Vec::clear);
+        let Some(request) = request else {
+            return;
+        };
+        spawn_local(async move {
+            if let Err(error) = clear_alert_events(request).await {
+                log::error!("failed to clear alert events: {error}");
+            }
+        });
+    }
 }
 
 pub fn provide_inbox() {
@@ -546,6 +609,50 @@ mod tests {
         let request = server_mark_all_request(&items).expect("has server items");
         assert!(request.ids.is_empty());
         assert_eq!(request.up_to_id, Some(7));
+    }
+
+    #[test]
+    fn server_clear_request_uses_the_max_server_id() {
+        let items = vec![
+            item(InboxId::Server(3), 1, "a", t(1), false),
+            item(InboxId::Local("x".to_string()), 1, "c", t(3), false),
+            item(InboxId::Server(7), 1, "b", t(2), false),
+        ];
+        let request = server_clear_request(&items).expect("has server items");
+        assert_eq!(request.up_to_id, Some(7));
+        assert_eq!(
+            server_clear_request(&[item(InboxId::Local("x".to_string()), 1, "a", t(1), false)]),
+            None
+        );
+    }
+
+    #[test]
+    fn display_body_drops_bare_link_lines() {
+        assert_eq!(
+            display_body("Threshold: 500 gil\nhttps://ultros.app/item/Seraph/6141"),
+            "Threshold: 500 gil"
+        );
+        assert_eq!(
+            display_body(
+                "Your retainers Bob have been undercut on Fire Shard\n\nhttps://ultros.app/retainers/undercuts"
+            ),
+            "Your retainers Bob have been undercut on Fire Shard"
+        );
+        // A URL inside a sentence is prose, not a bare link line.
+        assert_eq!(
+            display_body("See https://ultros.app/list/1 for details"),
+            "See https://ultros.app/list/1 for details"
+        );
+        assert_eq!(display_body("https://ultros.app/list/1"), "");
+        assert_eq!(display_body("plain body"), "plain body");
+    }
+
+    #[test]
+    fn inbox_item_from_event_strips_link_line_from_body() {
+        let mut e = event(1, 42, t(1));
+        e.body = Some("Threshold: 500 gil\nhttps://ultros.app/item/42".to_string());
+        let out = inbox_item_from_event(&e, |id| format!("Item {id}"), |_| "body".to_string());
+        assert_eq!(out.body, "Threshold: 500 gil");
     }
 
     #[test]
