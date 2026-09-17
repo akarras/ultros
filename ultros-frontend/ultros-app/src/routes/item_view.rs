@@ -16,16 +16,17 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, item_tooltip::ItemTooltip,
-    listings_panel::ListingsPanel, meta::*, realtime_status::RealtimeStatus,
-    recently_viewed::RecentItems, related_items::*, sale_history_table::*, section_nav::SectionNav,
-    skeleton::BoxSkeleton, stats_display::*, toggle::Toggle,
+    ad::Ad, add_to_list::AddToList, alert_drawer::AlertDrawer, clipboard::*, item_icon::*,
+    item_tooltip::ItemTooltip, listings_panel::ListingsPanel, meta::*,
+    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
+    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
+    toggle::Toggle, tooltip::Tooltip,
 };
 use crate::error::AppError;
-use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
+use crate::global_state::{LocalWorldData, use_world_helper};
 use crate::i18n::{t, t_string};
 use crate::query_defaults::filter_query_signal;
 use crate::routes::item_view_scope::{COMPARE_BUY_FROM_PARAM, item_href};
@@ -1613,6 +1614,22 @@ fn ItemViewContent() -> impl IntoView {
 
     let item = move || tracked_data().items.get(&ItemId(item_id()));
 
+    // "Price alert" shortcut in the header. The drawer opens locked to this
+    // item and defaults its world picker to whatever world/datacenter/region
+    // the page is currently showing (the `:world` route segment), so the
+    // common case — "tell me when it's cheap where I'm already looking" —
+    // needs only a threshold. Falls back to the drawer's own home-world
+    // default when the segment names nothing the world list knows.
+    let (alert_drawer_open, set_alert_drawer_open) = signal(false);
+    let alert_world_helper = use_world_helper().ok();
+    let alert_default_world = Signal::derive(move || {
+        alert_world_helper.as_ref().and_then(|helper| {
+            helper
+                .lookup_world_by_name(&Url::unescape(&world()))
+                .map(|found| AnySelector::from(&found))
+        })
+    });
+
     let item_category = move || {
         let data = tracked_data();
         data.items.get(&ItemId(item_id())).and_then(|item| {
@@ -1707,6 +1724,24 @@ fn ItemViewContent() -> impl IntoView {
                         <div class="flex flex-wrap gap-2 items-center" data-testid="item-actions">
                             <RealtimeStatus status=realtime_status last_update=last_update_at />
                             <div class="cursor-pointer"><AddToList item_id /></div>
+                            <Tooltip tooltip_text=t_string!(i18n, item_view_price_alert_tooltip).to_string()>
+                                <button
+                                    class="btn-primary"
+                                    data-testid="item-price-alert"
+                                    aria-label=move || t_string!(i18n, item_view_price_alert_aria_label).to_string()
+                                    on:click=move |_| set_alert_drawer_open.set(true)
+                                >
+                                    <Icon icon=icondata::BsBell />
+                                    <span class="hidden sm:inline">{t!(i18n, item_view_price_alert_button)}</span>
+                                </button>
+                            </Tooltip>
+                            <Show when=alert_drawer_open>
+                                <AlertDrawer
+                                    preset_item=(item_id(), item_name())
+                                    default_world=alert_default_world
+                                    set_visible=set_alert_drawer_open.into()
+                                />
+                            </Show>
                             <a
                                 class="btn-primary"
                                 target="_blank"
