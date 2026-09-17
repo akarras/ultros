@@ -16,6 +16,7 @@ use crate::CheapestPrices;
 use crate::api::get_cheapest_listings;
 use crate::components::add_set_to_list::AddSetToList;
 use crate::components::cheapest_price::CheapestPrice;
+use crate::components::clipboard::Clipboard;
 use crate::components::crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter};
 use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
@@ -336,29 +337,39 @@ pub(crate) fn aggregate_materials(
 /// section. Inlines an icon, name, quantity, and cheapest NQ price so
 /// the user can eyeball "how much will this set cost in ingredients?"
 fn material_row(m: MaterialEntry) -> impl IntoView {
+    let i18n = use_i18n();
     let id = m.id.0;
     let name = m.name.clone();
+    let copy_name = m.name.clone();
     let amount = m.amount;
     view! {
-        <AppLink
-            href=format!("/item/{}", id)
-            attr:class="group flex flex-row items-center gap-2 p-2 rounded-lg panel \
-                       border border-white/5 hover:border-brand-500/30 transition-colors"
-        >
-            <div class="shrink-0 flex items-center justify-center w-8 h-8">
-                <ItemIcon item_id=id icon_size=IconSize::Small />
-            </div>
-            <div class="flex flex-col min-w-0 flex-1">
-                <span class="font-medium text-xs leading-snug line-clamp-1 group-hover:text-brand-300 transition-colors">
-                    {name}
-                </span>
-                <div class="flex flex-row items-center gap-1.5 text-[10px] text-[color:var(--color-text-muted)]">
-                    <span>"× "{amount}</span>
-                    <span>"•"</span>
-                    <CheapestPrice item_id=xiv_gen::ItemId(id) show_hq=false />
+        <div class="flex flex-row items-center gap-1 p-2 rounded-lg panel \
+                    border border-white/5 hover:border-brand-500/30 transition-colors">
+            <AppLink
+                href=format!("/item/{}", id)
+                attr:class="group flex flex-row items-center gap-2 min-w-0 flex-1"
+            >
+                <div class="shrink-0 flex items-center justify-center w-8 h-8">
+                    <ItemIcon item_id=id icon_size=IconSize::Small />
                 </div>
+                <div class="flex flex-col min-w-0 flex-1">
+                    <span class="font-medium text-xs leading-snug line-clamp-1 group-hover:text-brand-300 transition-colors">
+                        {name}
+                    </span>
+                    <div class="flex flex-row items-center gap-1.5 text-[10px] text-[color:var(--color-text-muted)]">
+                        <span>"× "{amount}</span>
+                        <span>"•"</span>
+                        <CheapestPrice item_id=xiv_gen::ItemId(id) show_hq=false />
+                    </div>
+                </div>
+            </AppLink>
+            <div
+                class="shrink-0 p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                title=t_string!(i18n, item_explorer_copy_name).to_string()
+            >
+                <Clipboard clipboard_text=copy_name />
             </div>
-        </AppLink>
+        </div>
     }
     .into_any()
 }
@@ -555,6 +566,7 @@ pub fn JobSetDetail() -> impl IntoView {
                             {g.items.into_iter().map(|item| {
                                 let item_id = item.id.0;
                                 let item_name = item.name.clone();
+                                let copy_name = item.name.clone();
                                 let slot = slot_label_from_name(&item_name);
                                 view! {
                                     <div class="flex flex-col p-3 rounded-lg panel border border-white/5">
@@ -575,13 +587,21 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 } else {
                                                     ().into_any()
                                                 }}
-                                                <AppLink
-                                                    href=format!("/item/{}", item_id)
-                                                    attr:class="font-medium text-sm leading-snug \
-                                                               hover:text-brand-300 transition-colors line-clamp-2"
-                                                >
-                                                    {item_name}
-                                                </AppLink>
+                                                <div class="flex flex-row items-start gap-1 min-w-0">
+                                                    <AppLink
+                                                        href=format!("/item/{}", item_id)
+                                                        attr:class="font-medium text-sm leading-snug \
+                                                                   hover:text-brand-300 transition-colors line-clamp-2"
+                                                    >
+                                                        {item_name}
+                                                    </AppLink>
+                                                    <div
+                                                        class="shrink-0 p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                                                        title=t_string!(i18n, item_explorer_copy_name).to_string()
+                                                    >
+                                                        <Clipboard clipboard_text=copy_name />
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                         <div class="flex flex-col gap-1.5 mt-1 pt-2 border-t border-white/5 text-sm">
