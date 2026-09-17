@@ -128,15 +128,34 @@ where
     })
 }
 
-/// Inline catalog composer shared by account and device lists.
+/// Inline composer shared by account and device lists. One panel, two modes:
+/// the Items mode searches the catalog, the Recipes mode previews a recipe's
+/// finished items or ingredients. The mode is the source's `recipe_open`
+/// signal, so the legacy toolbar button and the guest follow guard keep
+/// their meaning.
 #[component]
 pub fn InlineListAdd(
     list_id: Signal<i32>,
     on_add: Callback<ListItem>,
+    on_add_many: Callback<Vec<ListItem>>,
+    recipe_mode: Signal<bool>,
+    toggle_recipe: Callback<()>,
     #[prop(default = Signal::derive(|| false))] pending: Signal<bool>,
     #[prop(default = Signal::derive(String::new))] feedback: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let set_recipe_mode = move |want: bool| {
+        if recipe_mode.get_untracked() != want {
+            toggle_recipe.run(());
+        }
+    };
+    let mode_class = move |active: bool| {
+        if active {
+            "btn-primary min-w-20 justify-center font-semibold shadow-sm"
+        } else {
+            "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]"
+        }
+    };
     let search = RwSignal::new(String::new());
     let committed_search = RwSignal::new(String::new());
     let quantity = RwSignal::new("1".to_string());
@@ -196,7 +215,18 @@ pub fn InlineListAdd(
     });
     view! {
         <section class="panel rounded-xl p-4 sm:p-5" aria-label=t_string!(i18n, lists_workspace_add_items_label) data-testid="inline-list-add">
-            <div class="mb-3"><h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_build_hint)}</p></div>
+            <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0">
+                    <h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2>
+                    <p class="text-sm text-[color:var(--color-text-muted)]">{move || if recipe_mode.get() { t_string!(i18n, lists_workspace_recipe_hint).to_string() } else { t_string!(i18n, lists_workspace_build_hint).to_string() }}</p>
+                </div>
+                <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label=t_string!(i18n, lists_workspace_composer_mode) data-testid="list-composer-mode">
+                    <button type="button" class=move || mode_class(!recipe_mode.get()) data-testid="list-composer-items" aria-pressed=move || (!recipe_mode.get()).to_string() on:click=move |_| set_recipe_mode(false)>{t!(i18n, lists_workspace_composer_items)}</button>
+                    <button type="button" class=move || mode_class(recipe_mode.get()) data-testid="list-composer-recipes" aria-pressed=move || recipe_mode.get().to_string() on:click=move |_| set_recipe_mode(true)>{t!(i18n, lists_workspace_composer_recipes)}</button>
+                </div>
+            </div>
+            <Show when=move || recipe_mode.get()><InlineRecipeAdd list_id=list_id on_add=on_add_many /></Show>
+            <Show when=move || !recipe_mode.get()>
             <div class="flex flex-wrap gap-2">
                 <input node_ref=input id="list-cart-add-input" class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed="" data-handoff-committed=move || committed_search.get()
                     on:input=move |ev| search.set(event_target_value(&ev))
@@ -229,6 +259,7 @@ pub fn InlineListAdd(
                         </div>
                     } />
                 </div>
+            </Show>
             </Show>
         </section>
     }
@@ -311,16 +342,26 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
         }
     });
     view! {
-        <section class="panel rounded-xl p-4 space-y-3" data-testid="inline-recipe-add" aria-label=t_string!(i18n, lists_workspace_add_recipe)>
-            <h2 class="font-semibold">{t!(i18n, lists_workspace_add_recipe)}</h2>
-            <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_recipe_hint)}</p>
+        <div class="space-y-3" data-testid="inline-recipe-add" role="group" aria-label=t_string!(i18n, lists_workspace_add_recipe)>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_search_recipes) placeholder=t_string!(i18n, lists_workspace_recipe_placeholder) prop:value=query on:input=move |ev| query.set(event_target_value(&ev)) />
-            <div class="max-h-48 overflow-y-auto flex flex-col gap-1">
-                <For each=move || results.get() key=|(id, _, _)| *id children=move |(_, name, recipe)| view! {
-                    <button class="btn-secondary justify-start" on:click=move |_| selected.set(Some(recipe))>{name}</button>
-                } />
-                <Show when=move || !query.get().trim().is_empty() && results.get().is_empty()><p>{t!(i18n, lists_workspace_no_recipes)}</p></Show>
-            </div>
+            <Show when=move || !query.get().trim().is_empty()>
+                <div class="max-h-80 overflow-y-auto divide-y divide-[color:var(--color-outline)]" aria-label=t_string!(i18n, lists_workspace_catalog_results)>
+                    <Show when=move || results.get().is_empty()><p class="p-3 text-sm">{t!(i18n, lists_workspace_no_recipes)}</p></Show>
+                    <For each=move || results.get() key=|(id, _, _)| *id children=move |(id, name, recipe)| {
+                        let active = move || selected.get().is_some_and(|current| std::ptr::eq(current, recipe));
+                        view! {
+                            // The row shows the recipe's finished item; the
+                            // small button is the only control, so the icon
+                            // and name read as a catalog row, not a button.
+                            <div class="flex items-center gap-3 py-2 px-1 rounded" class:bg-brand-900=active data-recipe-id=id>
+                                <ItemIcon item_id=recipe.item_result icon_size=IconSize::Small />
+                                <span class="flex-1 min-w-0 truncate">{name.clone()}</span>
+                                <button type="button" class="btn-secondary p-1.5 shrink-0" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) aria-pressed=move || active().to_string() on:click=move |_| selected.set(Some(recipe))><Icon icon=i::BiPlusRegular /></button>
+                            </div>
+                        }
+                    } />
+                </div>
+            </Show>
             <Show when=move || selected.get().is_some()>
                 <h3 class="font-semibold">{move || selected.get().and_then(|recipe| tracked_data().items.get(&ItemId(recipe.item_result))).map(|item| item.name.to_string())}</h3>
                 <div class="flex flex-wrap gap-3 items-center">
@@ -345,7 +386,7 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
                 <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_recipe_add_hint)}</p>
                 <button class="btn-primary" disabled=move || preview.get().is_none_or(|items| items.is_empty()) on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }>{t!(i18n, lists_workspace_add_preview)}</button>
             </Show>
-        </section>
+        </div>
     }
 }
 
@@ -550,13 +591,11 @@ pub fn ListBuildWorkspace(
     view! {
         <section class="space-y-3" data-testid="list-build-workspace">
             <Show when=move || source.can_write.get()>
-                <InlineListAdd list_id=source.list_id on_add=source.add pending=source.pending feedback=source.feedback />
+                <InlineListAdd list_id=source.list_id on_add=source.add on_add_many=source.add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
                 <div class="flex gap-2 flex-wrap">
-                    <button class="btn-secondary" on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <button class="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| source.undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
                     <button class="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| source.redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
                 </div>
-                <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
             <Show when=move || source.estimate_available.get()>

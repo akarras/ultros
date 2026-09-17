@@ -298,13 +298,13 @@ async function main() {
           const composer = '[data-testid="inline-recipe-add"]';
           await ownerPage.waitForSelector(composer);
           await ownerPage.type(`${composer} input[aria-label="Search recipes"]`, "Bronze Ingot");
-          await ownerPage.waitForFunction(selector => Array.from(document.querySelectorAll(`${selector} button`))
-            .some(button => button.textContent.trim() === "Bronze Ingot"), {}, composer);
+          // Each result row shows the finished item's icon and name with a
+          // small "+" button labelled "Add <name>" that opens the preview.
+          await ownerPage.waitForFunction(selector => !!document.querySelector(`${selector} button[aria-label="Add Bronze Ingot"]`), {}, composer);
           // Catalog names overlap (e.g. Standard Treated Bronze Ingot), so
           // select the exact ordinary recipe used by this fixture.
           await ownerPage.evaluate(selector => {
-            const button = Array.from(document.querySelectorAll(`${selector} button`))
-              .find(button => button.textContent.trim() === "Bronze Ingot");
+            const button = document.querySelector(`${selector} button[aria-label="Add Bronze Ingot"]`);
             if (!button) throw new Error("Exact Bronze Ingot recipe is missing");
             button.click();
           }, composer);
