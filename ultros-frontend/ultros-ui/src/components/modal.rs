@@ -141,7 +141,7 @@ where
                 // would push the top above the viewport with no way to reach
                 // it (the list settings drawer's Delete button was unclickable
                 // at 900px-tall windows).
-                class="fixed inset-0 z-[90] bg-[color:color-mix(in_srgb,_var(--color-text)_40%,_var(--color-background))] flex justify-center overflow-y-auto p-6
+                class="fixed inset-0 z-[90] bg-black/60 flex justify-center overflow-y-auto p-6
                 transition-opacity duration-300 ease-in-out
                 animate-fade-in"
                 on:click=move |_| set_visible(false)

@@ -55,7 +55,8 @@ async function main() {
     });
   }
   const load=async(p,route)=>{await p.bringToFront();await p.goto(new URL(route,base).href,{waitUntil:'domcontentloaded'});await p.waitForFunction(()=>window.__onlineHydrated);};
-  const login=async(p,id,next='/list?labs=lists-sync')=>load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);
+  let signedIn=false;
+  const login=async(p,id,next='/list?labs=lists-sync')=>{signedIn=true;return load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);};
   const api=async(p,method,route,body)=>p.evaluate(async({method,route,body})=>{
     const r=await fetch(route,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
     const text=await r.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:r.status,data};
@@ -70,7 +71,10 @@ async function main() {
     assert.equal(await page.$$eval('h1',nodes=>nodes.filter(n=>n.textContent.trim()==='Lists').length),1);
     assert.equal(await page.$$(tid('list-new')).then(a=>a.length),1);
     assert.equal(await page.$$(tid('device-lists-adoption')).then(a=>a.length),0);
-    await page.click(tid('list-new'));await replace(page,tid('device-list-name'),name);await page.click(tid('device-list-create'));
+    await page.click(tid('list-new'));await replace(page,tid('device-list-name'),name);
+    // Signed-in sessions default to Online; this script exercises the local→online transition itself.
+    if(signedIn){await page.waitForSelector(tid('device-list-storage-local'),{visible:true});await page.click(tid('device-list-storage-local'));await page.waitForFunction(sel=>document.querySelector(sel)?.getAttribute('aria-pressed')==='true',{},tid('device-list-storage-local'));}
+    await page.click(tid('device-list-create'));
     await page.waitForFunction(()=>location.pathname.startsWith('/list/device/'));
     await replace(page,'input[aria-label="Quantity to add"]',3);
     await replace(page,'input[aria-label="Add an item"]','Bronze Ingot');
@@ -146,6 +150,17 @@ async function main() {
     await page.click(tid('list-redo'));await waitValue(page,needed,5);
     await page.waitForFunction(()=>document.querySelector('[data-testid="account-list-save-state"]')?.textContent==='Saved on this device');
     await load(page,first+'?labs=lists-sync');assert.equal(await online(page),firstId);await waitValue(page,needed,5);
+    // GlitchTip #7389: leaving /list/:id client-side re-runs the route view with
+    // the next match's params before the old page is dropped. The stale rebuild
+    // used to register a title closure over disposed signals, which panicked the
+    // client on the following navigation (creating a device list here).
+    await page.evaluate(()=>{history.pushState({},'','/list?labs=lists-sync');dispatchEvent(new PopStateEvent('popstate',{state:{}}));});
+    await page.waitForSelector(tid('list-new'));
+    await page.click(tid('list-new'));await replace(page,tid('device-list-name'),`Leave online ${Date.now()}`);await page.click(tid('device-list-create'));
+    await page.waitForFunction(()=>location.pathname.startsWith('/list/device/'));
+    await page.waitForSelector('input[aria-label="Add an item"]');
+    assert.deepEqual(errors,[],'client-side navigation away from an online list must not panic');
+    console.log('[ok] leaving an online list client-side and creating a device list keeps the app alive');
     await load(page,'/list?labs=lists-sync');await page.waitForSelector(tid('lists-grid'));
     await page.waitForFunction(id=>document.querySelectorAll(`a[href="/list/${id}"]`).length>0,{},firstId);
     assert.equal((await api(page,'GET','/api/v1/list')).data.filter(l=>l.list.id===firstId).length,1);

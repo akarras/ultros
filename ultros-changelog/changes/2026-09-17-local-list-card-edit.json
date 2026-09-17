@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Rename or delete a device list from its card",
+  "blurb": "Lists saved on this device now get the same pencil as online lists on the Lists page. Rename inline or delete from the Danger Zone without opening the list first.",
+  "link": "/list",
+  "labs": true
+}

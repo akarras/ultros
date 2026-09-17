@@ -125,6 +125,13 @@ fn review_is_current(
             })
 }
 
+/// Choosing a route only needs a review once there is progress to protect.
+/// Until a stack has been recorded the player is previewing options, so a
+/// different world or quick pick replaces the trip outright (#1480 follow-up).
+fn choice_needs_review(active: bool, live: &ShopInput) -> bool {
+    active && live.rows.iter().any(|row| row.acquired > 0)
+}
+
 /// How the live cart differs from the cart an active trip was planned from.
 /// Purchase progress is not drift: the trip tracks acquired counts itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -583,8 +590,10 @@ pub fn ListShop(
         stop.set(0);
         notice.set(String::new());
     };
-    // The first choice starts a trip. Any replacement, including a different
-    // shortcut or frontier card, is reviewed before changing an active trip.
+    // The first choice starts a trip. Once a stack has been recorded, any
+    // replacement, including a different shortcut or frontier card, is
+    // reviewed before changing the active trip; before that the player is
+    // previewing options and the choice simply replaces the trip.
     let choose = Callback::new(move |mode: usize| {
         let source = input.get_untracked();
         let (receipts, plans, frontier) = trip.with_untracked(|previous| {
@@ -603,7 +612,7 @@ pub fn ListShop(
                 mode,
             )
         });
-        if trip.with_untracked(|active| active.is_some()) {
+        if choice_needs_review(trip.with_untracked(|active| active.is_some()), &source) {
             review.set(Some(Review {
                 source,
                 receipts,
@@ -1882,6 +1891,25 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[test]
+    fn a_route_choice_is_reviewed_only_once_a_stack_is_recorded() {
+        let mut live = input();
+        assert!(
+            !choice_needs_review(false, &live),
+            "the first choice starts a trip"
+        );
+        assert!(
+            !choice_needs_review(true, &live),
+            "an active trip with nothing bought is a preview and is replaced outright"
+        );
+        live.rows[0].acquired = 1;
+        assert!(
+            choice_needs_review(true, &live),
+            "recorded progress is protected behind a review"
+        );
+        assert!(!choice_needs_review(false, &live));
     }
 
     #[test]

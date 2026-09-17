@@ -128,15 +128,34 @@ where
     })
 }
 
-/// Inline catalog composer shared by account and device lists.
+/// Inline composer shared by account and device lists. One panel, two modes:
+/// the Items mode searches the catalog, the Recipes mode previews a recipe's
+/// finished items or ingredients. The mode is the source's `recipe_open`
+/// signal, so the legacy toolbar button and the guest follow guard keep
+/// their meaning.
 #[component]
 pub fn InlineListAdd(
     list_id: Signal<i32>,
     on_add: Callback<ListItem>,
+    on_add_many: Callback<Vec<ListItem>>,
+    recipe_mode: Signal<bool>,
+    toggle_recipe: Callback<()>,
     #[prop(default = Signal::derive(|| false))] pending: Signal<bool>,
     #[prop(default = Signal::derive(String::new))] feedback: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let set_recipe_mode = move |want: bool| {
+        if recipe_mode.get_untracked() != want {
+            toggle_recipe.run(());
+        }
+    };
+    let mode_class = move |active: bool| {
+        if active {
+            "btn-primary min-w-20 justify-center font-semibold shadow-sm"
+        } else {
+            "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]"
+        }
+    };
     let search = RwSignal::new(String::new());
     let committed_search = RwSignal::new(String::new());
     let quantity = RwSignal::new("1".to_string());
@@ -196,7 +215,18 @@ pub fn InlineListAdd(
     });
     view! {
         <section class="panel rounded-xl p-4 sm:p-5" aria-label=t_string!(i18n, lists_workspace_add_items_label) data-testid="inline-list-add">
-            <div class="mb-3"><h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_build_hint)}</p></div>
+            <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0">
+                    <h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2>
+                    <p class="text-sm text-[color:var(--color-text-muted)]">{move || if recipe_mode.get() { t_string!(i18n, lists_workspace_recipe_hint).to_string() } else { t_string!(i18n, lists_workspace_build_hint).to_string() }}</p>
+                </div>
+                <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label=t_string!(i18n, lists_workspace_composer_mode) data-testid="list-composer-mode">
+                    <button type="button" class=move || mode_class(!recipe_mode.get()) data-testid="list-composer-items" aria-pressed=move || (!recipe_mode.get()).to_string() on:click=move |_| set_recipe_mode(false)>{t!(i18n, lists_workspace_composer_items)}</button>
+                    <button type="button" class=move || mode_class(recipe_mode.get()) data-testid="list-composer-recipes" aria-pressed=move || recipe_mode.get().to_string() on:click=move |_| set_recipe_mode(true)>{t!(i18n, lists_workspace_composer_recipes)}</button>
+                </div>
+            </div>
+            <Show when=move || recipe_mode.get()><InlineRecipeAdd list_id=list_id on_add=on_add_many /></Show>
+            <Show when=move || !recipe_mode.get()>
             <div class="flex flex-wrap gap-2">
                 <input node_ref=input id="list-cart-add-input" class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed="" data-handoff-committed=move || committed_search.get()
                     on:input=move |ev| search.set(event_target_value(&ev))
@@ -229,6 +259,7 @@ pub fn InlineListAdd(
                         </div>
                     } />
                 </div>
+            </Show>
             </Show>
         </section>
     }
@@ -311,16 +342,26 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
         }
     });
     view! {
-        <section class="panel rounded-xl p-4 space-y-3" data-testid="inline-recipe-add" aria-label=t_string!(i18n, lists_workspace_add_recipe)>
-            <h2 class="font-semibold">{t!(i18n, lists_workspace_add_recipe)}</h2>
-            <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_recipe_hint)}</p>
+        <div class="space-y-3" data-testid="inline-recipe-add" role="group" aria-label=t_string!(i18n, lists_workspace_add_recipe)>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_search_recipes) placeholder=t_string!(i18n, lists_workspace_recipe_placeholder) prop:value=query on:input=move |ev| query.set(event_target_value(&ev)) />
-            <div class="max-h-48 overflow-y-auto flex flex-col gap-1">
-                <For each=move || results.get() key=|(id, _, _)| *id children=move |(_, name, recipe)| view! {
-                    <button class="btn-secondary justify-start" on:click=move |_| selected.set(Some(recipe))>{name}</button>
-                } />
-                <Show when=move || !query.get().trim().is_empty() && results.get().is_empty()><p>{t!(i18n, lists_workspace_no_recipes)}</p></Show>
-            </div>
+            <Show when=move || !query.get().trim().is_empty()>
+                <div class="max-h-80 overflow-y-auto divide-y divide-[color:var(--color-outline)]" aria-label=t_string!(i18n, lists_workspace_catalog_results)>
+                    <Show when=move || results.get().is_empty()><p class="p-3 text-sm">{t!(i18n, lists_workspace_no_recipes)}</p></Show>
+                    <For each=move || results.get() key=|(id, _, _)| *id children=move |(id, name, recipe)| {
+                        let active = move || selected.get().is_some_and(|current| std::ptr::eq(current, recipe));
+                        view! {
+                            // The row shows the recipe's finished item; the
+                            // small button is the only control, so the icon
+                            // and name read as a catalog row, not a button.
+                            <div class="flex items-center gap-3 py-2 px-1 rounded" class:bg-brand-900=active data-recipe-id=id>
+                                <ItemIcon item_id=recipe.item_result icon_size=IconSize::Small />
+                                <span class="flex-1 min-w-0 truncate">{name.clone()}</span>
+                                <button type="button" class="btn-secondary p-1.5 shrink-0" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) aria-pressed=move || active().to_string() on:click=move |_| selected.set(Some(recipe))><Icon icon=i::BiPlusRegular /></button>
+                            </div>
+                        }
+                    } />
+                </div>
+            </Show>
             <Show when=move || selected.get().is_some()>
                 <h3 class="font-semibold">{move || selected.get().and_then(|recipe| tracked_data().items.get(&ItemId(recipe.item_result))).map(|item| item.name.to_string())}</h3>
                 <div class="flex flex-wrap gap-3 items-center">
@@ -345,7 +386,7 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
                 <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_recipe_add_hint)}</p>
                 <button class="btn-primary" disabled=move || preview.get().is_none_or(|items| items.is_empty()) on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }>{t!(i18n, lists_workspace_add_preview)}</button>
             </Show>
-        </section>
+        </div>
     }
 }
 
@@ -550,13 +591,11 @@ pub fn ListBuildWorkspace(
     view! {
         <section class="space-y-3" data-testid="list-build-workspace">
             <Show when=move || source.can_write.get()>
-                <InlineListAdd list_id=source.list_id on_add=source.add pending=source.pending feedback=source.feedback />
+                <InlineListAdd list_id=source.list_id on_add=source.add on_add_many=source.add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
                 <div class="flex gap-2 flex-wrap">
-                    <button class="btn-secondary" on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <button class="btn-secondary h-10 w-10 shrink-0 items-center disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() aria-label=t_string!(i18n, lists_workspace_undo) title=move || if source.can_undo.get() { t_string!(i18n, lists_workspace_undo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_undo).to_string() } on:click=move |_| source.undo.run(())><Icon icon=i::BiUndoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
                     <button class="btn-secondary h-10 w-10 shrink-0 items-center disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() aria-label=t_string!(i18n, lists_workspace_redo) title=move || if source.can_redo.get() { t_string!(i18n, lists_workspace_redo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_redo).to_string() } on:click=move |_| source.redo.run(())><Icon icon=i::BiRedoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
                 </div>
-                <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=source.add_many /></Show>
             </Show>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
             <Show when=move || source.estimate_available.get()>
@@ -2777,22 +2816,65 @@ pub fn ListViewSync() -> impl IntoView {
 /// tracked so moving between lists builds a fresh page and document.
 #[component]
 pub fn ListRoute() -> impl IntoView {
-    let sync = use_lab(LAB_LISTS_SYNC);
+    // Decided once per mount, not tracked: the Labs flag only changes
+    // together with a route change (every `?labs=` link targets another
+    // route, and the cookie is set on the Labs page). Tracking it made the
+    // route view rebuild a whole list page while the router was already
+    // leaving `/list/:id` for a URL that carried the flag; that page's owner
+    // was disposed at once, but its `<Title>` stayed on leptos_meta's stack
+    // and panicked the client on the next navigation (GlitchTip #7389).
+    let sync = use_lab(LAB_LISTS_SYNC).get_untracked();
     let params = use_params_map();
     let id = Memo::new(move |_| params.with(|p| p.get("id").unwrap_or_default()));
-    move || {
-        id.track();
-        if sync.get() {
-            view! { <ListViewSync /> }.into_any()
-        } else {
-            view! { <ListView /> }.into_any()
-        }
+    move || match list_route_view(id.try_get(), sync) {
+        ListRouteView::Sync => view! { <ListViewSync /> }.into_any(),
+        ListRouteView::Legacy => view! { <ListView /> }.into_any(),
+        ListRouteView::Leaving => ().into_any(),
+    }
+}
+
+/// Which page the `/list/:id` route builds for the URL it currently sees.
+#[derive(Debug, PartialEq, Eq)]
+enum ListRouteView {
+    Sync,
+    Legacy,
+    /// The router is on its way out of this route: its params already
+    /// describe the next match (no `id`), or the route's own memo is gone.
+    /// Rebuilding a list page here is wasted work at best; at worst it
+    /// registers a `<Title>` whose closure outlives the page.
+    Leaving,
+}
+
+fn list_route_view(id: Option<String>, sync: bool) -> ListRouteView {
+    match id {
+        Some(id) if !id.is_empty() && sync => ListRouteView::Sync,
+        Some(id) if !id.is_empty() => ListRouteView::Legacy,
+        _ => ListRouteView::Leaving,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Leaving `/list/:id` re-runs the route view with the next match's
+    /// params before the old page is dropped; that run must not build a page.
+    #[test]
+    fn list_route_builds_nothing_once_the_router_is_leaving() {
+        assert_eq!(
+            list_route_view(Some("24".into()), true),
+            ListRouteView::Sync
+        );
+        assert_eq!(
+            list_route_view(Some("24".into()), false),
+            ListRouteView::Legacy
+        );
+        assert_eq!(
+            list_route_view(Some(String::new()), true),
+            ListRouteView::Leaving
+        );
+        assert_eq!(list_route_view(None, true), ListRouteView::Leaving);
+    }
 
     fn permission_reply(permission: ListPermission) -> ListViewResult {
         Ok((

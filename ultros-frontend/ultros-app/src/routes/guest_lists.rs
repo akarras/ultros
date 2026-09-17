@@ -21,11 +21,14 @@ pub fn DeviceLists() -> impl IntoView {
 #[component]
 pub fn GuestListRoute() -> impl IntoView {
     let i18n = use_i18n();
-    let enabled = use_lab(LAB_LISTS_SYNC);
+    // Read once per mount, like `ListRoute`: the flag only changes with the
+    // route, and tracking it rebuilt this view inside a route the router was
+    // already leaving.
+    let enabled = use_lab(LAB_LISTS_SYNC).get_untracked();
     let ready = RwSignal::new(false);
     Effect::new(move |_| ready.set(true));
     move || {
-        if !enabled.get() {
+        if !enabled {
             return view! { <p>{t!(i18n, guest_workspace_enable)}</p> }.into_any();
         }
         ready.track();
@@ -34,6 +37,18 @@ pub fn GuestListRoute() -> impl IntoView {
             return view! { <browser::DeviceEditorLoader /> }.into_any();
         }
         view! { <p>{t!(i18n, guest_workspace_opening)}</p> }.into_any()
+    }
+}
+
+/// Editor URL for a freshly created device list. `online` appends the
+/// `make_online=1` flag that `DeviceListAdoption` resumes in the editor, so
+/// the upload reuses the same consent and scope handling as "Make online".
+#[cfg(any(feature = "hydrate", test))]
+fn device_list_href(id: &str, online: bool) -> String {
+    if online {
+        format!("/list/device/{id}?labs=lists-sync&make_online=1")
+    } else {
+        format!("/list/device/{id}?labs=lists-sync")
     }
 }
 
@@ -48,6 +63,7 @@ mod browser {
         guest::GuestListHandle,
     };
     use crate::routes::list_view_sync::{ListBuildWorkspace, ListWorkspaceSource};
+    use leptos::either::Either;
     use leptos_router::hooks::{use_navigate, use_params_map};
     use std::collections::HashSet;
     use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
@@ -99,9 +115,11 @@ mod browser {
             delete_list, edit_list, get_lists_with_permissions, get_login, leave_list,
             use_list_invite,
         };
+        use crate::components::icon::Icon;
         use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
         use crate::components::modal::Modal;
         use crate::routes::lists::ListCard;
+        use icondata as i;
         use ultros_api_types::list::List;
         let i18n = use_i18n();
         prepare_offline();
@@ -109,7 +127,24 @@ mod browser {
         let filter = RwSignal::new(String::new());
         let error = RwSignal::new(String::new());
         let busy = RwSignal::new(false);
+        // Online is the default for signed-in users; reset each time the
+        // modal opens so a previous Local choice does not stick.
+        let storage_online = RwSignal::new(true);
         let summaries = RwSignal::new(Vec::<crate::list_doc::guest::GuestListSummary>::new());
+        // A rename or delete from a local card re-reads the device directory
+        // so the card re-keys on its new storage revision (or disappears).
+        let reload_local = move || {
+            leptos::task::spawn_local(async move {
+                match GuestListHandle::list().await {
+                    Ok(lists) => {
+                        let _ = summaries.try_set(lists);
+                    }
+                    Err(e) => {
+                        let _ = error.try_set(e);
+                    }
+                }
+            });
+        };
         let local_loaded = RwSignal::new(false);
         let backup = RwSignal::new(String::new());
         let (creating, set_creating) = signal(false);
@@ -192,16 +227,15 @@ mod browser {
             busy.set(true);
             error.set(String::new());
             let name = name.get_untracked();
+            // Signed-out users never see the toggle, so never hand off online.
+            let online = storage_online.get_untracked() && user_id.get_untracked().is_some();
             leptos::task::spawn_local(async move {
                 match GuestListHandle::create(name.trim()).await {
                     Ok(handle) => {
                         let id = handle.id();
                         handle.close();
                         go.try_with_value(|go| {
-                            go(
-                                &format!("/list/device/{id}?labs=lists-sync"),
-                                Default::default(),
-                            )
+                            go(&device_list_href(&id, online), Default::default())
                         });
                     }
                     Err(e) => {
@@ -263,7 +297,7 @@ mod browser {
                     <div class="flex flex-wrap gap-2">
                         <button class="btn-secondary" data-testid="list-restore-open" on:click=move |_| {error.set(String::new());set_restoring(true);} >{t!(i18n, online_restore)}</button>
                         <Show when=move || user_id.get().is_some()><button class="btn-secondary" data-testid="list-join-open" on:click=move |_| {error.set(String::new());set_joining(true);} >{t!(i18n, lists_redeem_invite_label)}</button></Show>
-                        <button class="btn-primary" data-testid="list-new" on:click=move |_| {error.set(String::new());set_creating(true);} >{t!(i18n, online_new)}</button>
+                        <button class="btn-primary" data-testid="list-new" on:click=move |_| {error.set(String::new());storage_online.set(true);set_creating(true);} >{t!(i18n, online_new)}</button>
                     </div>
                 </header>
                 <input type="search" class="input w-full" data-testid="lists-search" aria-label=move || t_string!(i18n, search_your_lists).to_string() placeholder=move || t_string!(i18n, search_your_lists).to_string() prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
@@ -279,12 +313,105 @@ mod browser {
                         let destination=matching.filter(|b| b.legacy || b.acknowledged>=list.revision).and_then(|b|b.list_id);
                         let link=destination.map(|id|format!("/list/{id}?labs=lists-sync")).unwrap_or_else(||format!("/list/device/{}?labs=lists-sync",list.id));
                         let local=list.online.is_none();
+                        let status=list.error.clone().unwrap_or_else(|| if destination.is_some() {t_string!(i18n,online_connected).to_string()} else if binding.is_some() {t_string!(i18n,online_pending).to_string()} else {t_string!(i18n,guest_workspace_saved).to_string()});
+                        let original=StoredValue::new(list.name.clone());
+                        let link=StoredValue::new(link);
+                        let editing=RwSignal::new(false);
+                        let (confirm_delete,set_confirm_delete)=signal(false);
+                        let saving=RwSignal::new(false);
+                        let draft=RwSignal::new(list.name.clone());
+                        // Rename through a short-lived handle so the card never holds the
+                        // document open; the directory re-keys on the new storage revision.
+                        let save=move || {
+                            let next=draft.get_untracked();
+                            if saving.get_untracked() || next.trim().is_empty() { return; }
+                            if next.trim()==original.get_value().trim() { editing.set(false); return; }
+                            saving.set(true);
+                            error.set(String::new());
+                            let list_id=id.get_value();
+                            leptos::task::spawn_local(async move {
+                                let result=async {
+                                    let h=GuestListHandle::open(&list_id).await?;
+                                    let renamed=h.rename(&next);
+                                    let flushed=h.flush().await;
+                                    h.close();
+                                    renamed.and(flushed)
+                                }.await;
+                                match result {
+                                    Ok(()) => { let _=editing.try_set(false); reload_local(); }
+                                    Err(e) => { let _=error.try_set(e); }
+                                }
+                                let _=saving.try_set(false);
+                            });
+                        };
+                        let remove=move |_| {
+                            if saving.get_untracked() { return; }
+                            saving.set(true);
+                            error.set(String::new());
+                            let list_id=id.get_value();
+                            leptos::task::spawn_local(async move {
+                                let result=async {
+                                    let h=GuestListHandle::open(&list_id).await?;
+                                    h.remove().await
+                                }.await;
+                                match result {
+                                    Ok(()) => { set_confirm_delete(false); let _=editing.try_set(false); reload_local(); }
+                                    Err(e) => { let _=error.try_set(e); }
+                                }
+                                let _=saving.try_set(false);
+                            });
+                        };
                         view! {
                             <article class="panel rounded-xl p-4 flex flex-col gap-3" data-testid="list-card">
-                                <a class="text-lg font-semibold hover:underline break-words" href=link>{list.name.clone()}</a>
-                                <p class="text-sm text-[color:var(--color-text-muted)]">{list.error.clone().unwrap_or_else(|| if destination.is_some() {t_string!(i18n,online_connected).to_string()} else if binding.is_some() {t_string!(i18n,online_pending).to_string()} else {t_string!(i18n,guest_workspace_saved).to_string()})}</p>
-                                <Show when=move || local><a class="btn-secondary self-start" data-testid="list-card-make-online" href=format!("/list/device/{}?labs=lists-sync&make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
-                                {destination.map(|dest|view! { <a class="btn-secondary self-start" href=format!("/list/{dest}?labs=lists-sync")>{t!(i18n,online_open)}</a> })}
+                                <Show when=move || local && editing.get() fallback=move || view! {
+                                    <div class="flex justify-between items-start gap-2">
+                                        <a class="text-lg font-semibold hover:underline break-words min-w-0" href=link.get_value()>{original.get_value()}</a>
+                                        <Show when=move || local>
+                                            <button type="button" class="btn-ghost btn-sm shrink-0 text-gray-400 hover:text-white" data-testid="list-card-edit" aria-label=move || t_string!(i18n,edit_list).to_string() title=move || t_string!(i18n,edit_list).to_string() on:click=move |_| { draft.set(original.get_value()); editing.set(true); }>
+                                                <Icon icon=i::BsPencilFill />
+                                            </button>
+                                        </Show>
+                                    </div>
+                                    <p class="text-sm text-[color:var(--color-text-muted)]">{status.clone()}</p>
+                                    <Show when=move || local><a class="btn-secondary self-start" data-testid="list-card-make-online" href=format!("/list/device/{}?labs=lists-sync&make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
+                                    {destination.map(|dest|view! { <a class="btn-secondary self-start" href=format!("/list/{dest}?labs=lists-sync")>{t!(i18n,online_open)}</a> })}
+                                }>
+                                    <div class="flex flex-col gap-3 w-full">
+                                        <div>
+                                            <label class="label text-sm font-semibold">{t!(i18n,list_name)}</label>
+                                            <input class="input w-full" data-testid="list-card-name" aria-label=move || t_string!(i18n,list_name).to_string() maxlength="100" prop:value=move || draft.get() on:input=move |ev| draft.set(event_target_value(&ev)) on:keydown=move |ev| { if ev.key()=="Enter" { ev.prevent_default(); save(); } else if ev.key()=="Escape" { editing.set(false); } } />
+                                        </div>
+                                        <div class="flex gap-2 justify-end mt-2">
+                                            <button type="button" class="btn-secondary btn-sm" data-testid="list-card-cancel" disabled=move || saving.get() on:click=move |_| editing.set(false)>
+                                                <Icon icon=i::AiCloseOutlined /> {t!(i18n,cancel)}
+                                            </button>
+                                            <button type="button" class="btn-primary btn-sm" data-testid="list-card-save" disabled=move || saving.get() || draft.get().trim().is_empty() on:click=move |_| save()>
+                                                <Icon icon=i::BiSaveSolid /> {t!(i18n,save)}
+                                            </button>
+                                        </div>
+                                        <div class="border-t border-gray-600/50 my-2"></div>
+                                        <div class="flex justify-between items-center">
+                                            <span class="text-red-400 text-sm font-semibold">{t!(i18n,danger_zone)}</span>
+                                            <button type="button" class="btn-danger btn-sm" data-testid="list-card-delete" disabled=move || saving.get() on:click=move |_| set_confirm_delete(true)>
+                                                <Icon icon=i::BiTrashSolid /> {t!(i18n,delete)}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </Show>
+                                <Show when=confirm_delete><Modal set_visible=set_confirm_delete aria_label=Signal::derive(move || t_string!(i18n,guest_workspace_delete_label).to_string())>
+                                    <div class="flex flex-col gap-4">
+                                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n,list_delete_confirm_title)}</h2>
+                                        <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n,guest_workspace_delete_confirm)}</p>
+                                        <div class="flex justify-end gap-2">
+                                            <button type="button" class="btn-secondary" disabled=move || saving.get() on:click=move |_| set_confirm_delete(false)>
+                                                <Icon icon=i::AiCloseOutlined /> {t!(i18n,guest_workspace_keep)}
+                                            </button>
+                                            <button type="button" class="btn-danger" data-testid="list-card-confirm-delete" disabled=move || saving.get() on:click=remove>
+                                                <Icon icon=i::BiTrashSolid /> {t!(i18n,guest_workspace_delete_permanent)}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </Modal></Show>
                             </article>
                         }
                     } />
@@ -297,6 +424,16 @@ mod browser {
                 <Show when=creating><Modal set_visible=set_creating aria_label=Signal::derive(move || t_string!(i18n,online_new).to_string())>
                     <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_new)}</h2>
                     <input class="input w-full" data-testid="device-list-name" aria-label=move || t_string!(i18n,list_name).to_string() placeholder=move || t_string!(i18n,guest_workspace_placeholder).to_string() prop:value=move || name.get() on:input=move |ev| name.set(event_target_value(&ev)) maxlength="100" />
+                    <Show when=move || user_id.get().is_some()>
+                        <div class="space-y-2" data-testid="device-list-storage">
+                            <p id="device-list-storage-label" class="label font-semibold">{t!(i18n,online_new_storage_label)}</p>
+                            <div class="flex flex-wrap gap-2" role="group" aria-labelledby="device-list-storage-label">
+                                <button type="button" class=move || if storage_online.get() { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || storage_online.get().to_string() data-testid="device-list-storage-online" on:click=move |_| storage_online.set(true)>{t!(i18n,online_new_storage_online)}</button>
+                                <button type="button" class=move || if storage_online.get() { "btn-secondary min-h-11" } else { "btn-primary min-h-11" } aria-pressed=move || (!storage_online.get()).to_string() data-testid="device-list-storage-local" on:click=move |_| storage_online.set(false)>{t!(i18n,online_new_storage_local)}</button>
+                            </div>
+                            <p class="text-sm text-[color:var(--color-text-muted)]" data-testid="device-list-storage-desc">{move || if storage_online.get() { Either::Left(t!(i18n,online_new_storage_online_desc)) } else { Either::Right(t!(i18n,online_new_storage_local_desc)) }}</p>
+                        </div>
+                    </Show>
                     <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
                     <button class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty() on:click=create>{t!(i18n,create_list)}</button></div>
                 </Modal></Show>
@@ -340,6 +477,12 @@ mod browser {
         let account_required = RwSignal::new(false);
         Effect::new(move |_| {
             let id = params.with(|p| p.get("device_id").unwrap_or_default());
+            // The router is leaving this route: its params already describe
+            // the next match. The editor's own cleanup closes the handle, so
+            // opening "" here would only report a missing list on the way out.
+            if id.is_empty() {
+                return;
+            }
             if let Some(old) = loaded.get_untracked() {
                 old.close();
             }
@@ -882,5 +1025,26 @@ mod browser {
                 }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) travel_policy />
             </div>
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_list_opens_the_plain_device_editor() {
+        assert_eq!(
+            device_list_href("abc-123", false),
+            "/list/device/abc-123?labs=lists-sync"
+        );
+    }
+
+    #[test]
+    fn online_list_resumes_make_online_in_the_editor() {
+        assert_eq!(
+            device_list_href("abc-123", true),
+            "/list/device/abc-123?labs=lists-sync&make_online=1"
+        );
     }
 }

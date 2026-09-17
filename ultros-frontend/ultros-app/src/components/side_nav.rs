@@ -248,9 +248,6 @@ pub fn SideNav() -> impl IntoView {
                 >
                     {t!(i18n, retainers)}
                 </SideNavItem>
-                <SideNavItem href="/alerts".to_string() section="alerts" icon=i::BsBell>
-                    {t!(i18n, alerts)}
-                </SideNavItem>
             </nav>
 
             // Informational links (Discord bot, help, changelog) live in the

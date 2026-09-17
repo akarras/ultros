@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Shop route picks no longer ask for confirmation before you've bought anything",
+  "blurb": "Changing the starting world, a quick pick or a route card in a list's Shop tab always asked you to review the refreshed trip, even when you were just comparing options. Until you record a purchase the pick now switches the trip straight away; once a stack is recorded the review still guards your progress.",
+  "importance": "low"
+}

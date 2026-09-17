@@ -244,6 +244,10 @@ async function main() {
       await load(page, `${base}/list`);
       await page.click(testId("list-new"));
       await page.type(testId("device-list-name"), `${name} ${suffix}`);
+      // Signed in: the modal defaults to Online; this flow needs a device-only list.
+      await page.waitForSelector(testId("device-list-storage-local"), { visible: true });
+      await page.click(testId("device-list-storage-local"));
+      await page.waitForFunction(sel => document.querySelector(sel)?.getAttribute("aria-pressed") === "true", {}, testId("device-list-storage-local"));
       await page.click(testId("device-list-create"));
       await page.waitForFunction(() => location.pathname.startsWith("/list/device/"));
       const deviceUrl = page.url();
