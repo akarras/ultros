@@ -166,6 +166,14 @@ mod tests {
         );
     }
 
+    /// The server-side encoder percent-escapes `-` and `_` in keys
+    /// (`excluded%2Dworlds`, `make%5Fonline`); the browser encoder keeps
+    /// them. Both decode to the same key, so accept either spelling.
+    fn has_param(href: &str, key: &str, value: &str) -> bool {
+        let escaped = key.replace('-', "%2D").replace('_', "%5F");
+        href.contains(&format!("{key}={value}")) || href.contains(&format!("{escaped}={value}"))
+    }
+
     #[test]
     fn online_handoff_keeps_travel_and_exclusions_without_device_flags() {
         let mut source = ParamsMap::new();
@@ -178,21 +186,21 @@ mod tests {
         assert!(href.starts_with("/list/42?"));
         assert!(href.contains("travel=dc"));
         assert!(href.contains("buy=true"));
-        assert!(href.contains("excluded-worlds="));
-        assert!(href.contains("excluded-datacenters="));
+        assert!(has_param(&href, "excluded-worlds", ""));
+        assert!(has_param(&href, "excluded-datacenters", ""));
         assert!(
             href.contains("%26"),
             "DC names remain one encoded query value"
         );
         assert!(!href.contains("recovery"));
-        assert!(!href.contains("make_online"));
+        assert!(!has_param(&href, "make_online", ""));
         assert!(!online_href(42, false, &source).contains("buy="));
         let continuation = device_continue_href("local-id", true, &source);
         assert!(continuation.starts_with("/list/device/local-id?"));
-        assert!(continuation.contains("make_online=1"));
+        assert!(has_param(&continuation, "make_online", "1"));
         assert!(continuation.contains("travel=dc"));
         assert!(continuation.contains("buy=true"));
-        assert!(continuation.contains("excluded-worlds="));
+        assert!(has_param(&continuation, "excluded-worlds", ""));
         assert!(continuation.contains("%26"));
         assert!(!continuation.contains("recovery"));
     }
