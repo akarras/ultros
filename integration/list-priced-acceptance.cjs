@@ -299,6 +299,9 @@ async function main() {
     // price toolbar is supplied by #1471, a required dependency of this gate.
     await load("/list"); await click(tid("list-new"));
     await replace(tid("device-list-name"), `Priced device ${market.token}`);
+    // Signed in: the modal defaults to Online; this gate transitions the list itself later.
+    await click(tid("device-list-storage-local"));
+    await page.waitForFunction(sel => document.querySelector(sel)?.getAttribute("aria-pressed") === "true", {}, tid("device-list-storage-local"));
     await click(tid("device-list-create"));
     await page.waitForFunction(() => location.pathname.startsWith("/list/device/"));
     deviceUrl = new URL(page.url()).pathname;
