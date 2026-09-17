@@ -1,4 +1,6 @@
 //! Stable, whole-stack shopping trips shared by account and device lists.
+use crate::components::world_picker::WorldOnlyPicker;
+use crate::global_state::home_world::use_home_world;
 use crate::i18n::{t_string, use_i18n};
 use crate::recipe_planner::{self as planner, Material, Offer, RouteContext, ShoppingPlan};
 use leptos::prelude::*;
@@ -520,6 +522,18 @@ mod browser {
     }
 }
 
+/// The "Cheapest" badge goes to the most complete card only when no other
+/// card costs less, so a cheap partial route never reads as the bargain.
+fn cheapest_index(plans: &[ShoppingPlan]) -> Option<usize> {
+    let i = plans.len().checked_sub(1)?;
+    let cost = plans[i].cost;
+    plans
+        .iter()
+        .enumerate()
+        .all(|(j, p)| j == i || cost <= p.cost)
+        .then_some(i)
+}
+
 #[component]
 pub fn ListShop(
     input: Signal<ShopInput>,
@@ -530,6 +544,11 @@ pub fn ListShop(
     #[prop(optional)] travel_policy: Option<Signal<TravelPolicy>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    // The Starting world picker needs the cookie jar and the world catalog;
+    // a bare render (tests, a degraded SSR owner) simply omits it.
+    let home_picker = (use_context::<crate::global_state::cookies::Cookies>().is_some()
+        && use_context::<crate::global_state::LocalWorldData>().is_some())
+    .then(use_home_world);
     let trip = RwSignal::new(None::<Trip>);
     let unavailable = RwSignal::new(BTreeSet::<i32>::new());
     let consumed = RwSignal::new(Receipts::new());
@@ -985,9 +1004,86 @@ pub fn ListShop(
                 }}</p>
                 <p role="status" class="text-sm" data-testid="shop-no-prices" class:hidden=move || input.with(|input| input.rows.iter().any(|row| !row.listings.is_empty()))>{move || t_string!(i18n, list_shop_no_prices)}</p>
             </div>
-            <div class="rounded-xl border border-white/10 p-4 space-y-3">
-                <h2 class="text-xl font-semibold">{move || t_string!(i18n, list_shop_route)}</h2>
-                <div class="flex flex-wrap gap-2" role="group" aria-label=move || t_string!(i18n, list_shop_route).to_string()>
+            <div class="rounded-xl border border-white/10 p-4 space-y-3" data-testid="shop-route-picker">
+                <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                    <div class="min-w-0">
+                        <h2 class="text-xl font-semibold">{move || t_string!(i18n, recipe_planner_route_heading)}</h2>
+                        <p class="text-sm text-[color:var(--color-text-muted)]">{move || t_string!(i18n, recipe_planner_route_subheading)}</p>
+                    </div>
+                    {home_picker.map(|(home_world, set_home_world)| view! {
+                        <label class="flex flex-wrap items-center gap-2 text-sm" data-testid="shop-starting-world">
+                            <span class="text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_shop_starting_world)}</span>
+                            <WorldOnlyPicker current_world=home_world set_current_world=set_home_world />
+                        </label>
+                    })}
+                </div>
+                // One card per route on the travel frontier, shortest trip first,
+                // exactly like the recipe tool. Before a trip is adopted the
+                // frontier follows the live cart; once adopted it is frozen with
+                // the trip, and choosing another card goes through Review.
+                <div class="grid grid-cols-2 gap-2 xl:grid-cols-5" role="group" aria-label=move || t_string!(i18n, list_shop_route).to_string() data-testid="shop-route-comparison">
+                    {move || {
+                        let source = input.get();
+                        let active = trip.get();
+                        let frontier = active.as_ref().map(|active| active.frontier.clone()).unwrap_or_else(|| {
+                            replan(None, &source, &unavailable.get(), &consumed.get()).2
+                        });
+                        let (best_value, cheapest) = if frontier.len() > 1 {
+                            (planner::RouteComparison { cards: frontier.clone() }.best_value(), cheapest_index(&frontier))
+                        } else {
+                            (None, None)
+                        };
+                        frontier.iter().enumerate().map(|(index, plan)| {
+                            let selected = active.as_ref().is_some_and(|active| active.plan == *plan);
+                            let saving = match planner::marginal_saving_line(&frontier, index) {
+                                Some(planner::SavingLine::Saved(amount)) => Some(t_string!(i18n, list_travel_saved_previous, amount = amount).to_string()),
+                                Some(planner::SavingLine::Same) => Some(t_string!(i18n, list_travel_saved_previous, amount = 0).to_string()),
+                                _ => None,
+                            };
+                            let stops = planner::itinerary(plan);
+                            let worlds = stops.keys().map(|world| world.to_string()).collect::<Vec<_>>().join(",");
+                            let stop_names = stops.keys().map(|world| source.world_names.get(world).cloned().unwrap_or_else(|| world.to_string())).collect::<Vec<_>>().join(" · ");
+                            let label = match (plan.travel.dc_hops, plan.travel.world_hops) {
+                                (0, 0) => t_string!(i18n, recipe_planner_route_stay_home).to_string(),
+                                (0, count) => t_string!(i18n, recipe_planner_route_world_hops, count = count).to_string(),
+                                (dcs, worlds) => t_string!(i18n, recipe_planner_route_dc_and_world_hops, dcs = dcs, worlds = worlds).to_string(),
+                            };
+                            let badge = match (best_value == Some(index), cheapest == Some(index)) {
+                                (true, true) => Some((format!("{} · {}", t_string!(i18n, recipe_planner_route_best_value), t_string!(i18n, recipe_planner_route_cheapest)), true)),
+                                (true, false) => Some((t_string!(i18n, recipe_planner_route_best_value).to_string(), true)),
+                                (false, true) => Some((t_string!(i18n, recipe_planner_route_cheapest).to_string(), false)),
+                                (false, false) => None,
+                            };
+                            let incomplete = plan.missing > 0;
+                            // A partial route is hatched and dashed so its lower total reads as "not comparable", not as a saving.
+                            let card_class = if incomplete { "panel panel-incomplete rounded-xl p-3 text-left space-y-1 min-h-11 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" } else { "panel rounded-xl p-3 text-left space-y-1 min-h-11 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" };
+                            let cost = plan.cost;
+                            let missing = plan.missing;
+                            let title = stop_names.clone();
+                            view! {
+                                <button type="button" class=card_class class:border-brand-400=selected aria-pressed=selected.to_string() title=title
+                                    data-testid="shop-route-option" data-route-index=index data-route-worlds=worlds data-route-cost=cost data-route-missing=missing data-incomplete=incomplete.to_string()
+                                    on:click=move |_| choose.run(index + 3)>
+                                    <span class="flex flex-wrap items-center justify-between gap-2">
+                                        <span class="text-sm text-[color:var(--color-text-muted)]">{label}</span>
+                                        {badge.map(|(text, brand)| {
+                                            let badge_class = if brand { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-brand-500/20 text-brand-300" } else { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[color:var(--color-background-elevated)] text-[color:var(--color-text-muted)]" };
+                                            view! { <span class=badge_class data-testid="shop-route-badge">{text}</span> }
+                                        })}
+                                    </span>
+                                    <strong class="block text-xl tabular-nums">{t_string!(i18n, lists_workspace_gil, price = cost.separate_with_commas())}</strong>
+                                    <span class="block text-xs text-[color:var(--color-text-muted)]">{t_string!(i18n, list_shop_route_stops, count = stops.len())}</span>
+                                    {incomplete.then(|| view! { <span class="block text-xs text-amber-300">{t_string!(i18n, list_shop_route_partial, count = missing)}</span> })}
+                                    <span class="block text-xs" data-testid="shop-route-saving">{saving}</span>
+                                    <span class="sr-only">{stop_names}</span>
+                                </button>
+                            }
+                        }).collect_view()
+                    }}
+                </div>
+                <p class="text-xs text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_travel_comparison_note)}</p>
+                <div class="flex flex-wrap items-center gap-2" role="group" aria-label=move || t_string!(i18n, list_shop_quick_picks).to_string()>
+                    <span class="text-sm text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_shop_quick_picks)}</span>
                     <button class=move || if trip.get().is_some_and(|t| t.mode == 0) { "btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } else { "btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 0).to_string() data-testid="shop-home" disabled=move || input.get().home_world == 0 on:click=move |_| choose.run(0)>{move || t_string!(i18n, list_shop_home)}</button>
                     <button class=move || if trip.get().is_some_and(|t| t.mode == 1) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 1).to_string() data-testid="shop-fewest" on:click=move |_| choose.run(1)>{move || t_string!(i18n, list_shop_fewest)}</button>
                     <button class=move || if trip.get().is_some_and(|t| t.mode == 2) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 2).to_string() data-testid="shop-cheapest" on:click=move |_| choose.run(2)>{move || t_string!(i18n, list_shop_cheapest)}</button>
@@ -1114,38 +1210,6 @@ pub fn ListShop(
                     <button data-testid="shop-next-world" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !live_snapshot.get().is_some_and(|view| view.has_next) on:click=move |_| action.run(("next".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_next)}</button>
                 </div>
             </div>
-            {move || trip.get().map(|active| {
-                let observed = active.source.observed_at.clone();
-                view! {
-                    <section class="space-y-2" data-testid="shop-route-comparison">
-                        <h3 class="font-medium">{t_string!(i18n, list_shop_compare)}</h3>
-                        <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                            {active.frontier.iter().enumerate().map(|(index, plan)| {
-                                let selected = active.plan == *plan;
-                                let saving = match planner::marginal_saving_line(&active.frontier, index) {
-                                    Some(planner::SavingLine::Saved(amount)) => Some(t_string!(i18n, list_travel_saved_previous, amount = amount).to_string()),
-                                    Some(planner::SavingLine::Same) => Some(t_string!(i18n, list_travel_saved_previous, amount = 0).to_string()),
-                                    _ => None,
-                                };
-                                let worlds = planner::itinerary(plan).into_keys().map(|world| world.to_string()).collect::<Vec<_>>().join(",");
-                                view! {
-                                    <button type="button" class="rounded-lg border border-white/10 p-3 text-left min-h-11 hover:border-brand-400" aria-pressed=selected.to_string()
-                                        data-testid="shop-route-option" data-route-index=index data-route-worlds=worlds data-route-cost=plan.cost data-route-missing=plan.missing
-                                        on:click=move |_| choose.run(index + 3)>
-                                        <strong class="block">{t_string!(i18n, list_travel_route, number = index + 1)}</strong>
-                                        <span class="block">{t_string!(i18n, list_shop_stops, cost = plan.cost, count = planner::itinerary(plan).len())}</span>
-                                        <span class="block text-sm">{t_string!(i18n, list_travel_hops, worlds = plan.travel.world_hops, datacenters = plan.travel.dc_hops)}</span>
-                                        <span class="block text-sm">{t_string!(i18n, list_shop_missing, count = plan.missing)}</span>
-                                        <span class="block text-sm" data-testid="shop-route-saving">{saving}</span>
-                                    </button>
-                                }
-                            }).collect_view()}
-                        </div>
-                        <p class="text-xs text-[color:var(--color-text-muted)]">{t_string!(i18n, list_travel_comparison_note)}</p>
-                        <p class="text-xs text-[color:var(--color-text-muted)]">{observed.map(|time| t_string!(i18n, list_shop_listings_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_observation_unknown).to_string())}</p>
-                    </section>
-                }
-            })}
         </section>
         </Show>
     }

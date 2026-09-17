@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Shop compares trips the way the recipe tool does",
+  "blurb": "The Shop tab opens with one card per trip: stay home, one hop, two hops and so on, each with its total, what stays unavailable and Best value / Cheapest badges. Pick your starting world and where to buy from right above the cards.",
+  "link": "/list",
+  "labs": true
+}
