@@ -81,6 +81,53 @@ fn en_pack_carries_the_derived_vendor_fields() {
     );
 }
 
+/// The client-derived placements and the sheets the map pins need are folded
+/// in at generation; a generator that dropped them would only show up as an
+/// item page with every vendor "Location unavailable".
+#[test]
+fn en_pack_carries_npc_placements_and_map_sheets() {
+    let Some(data) = decode_en_pack("en_pack_carries_npc_placements_and_map_sheets") else {
+        return;
+    };
+    // Ilorie, Old Gridania: the Level sheet never placed her.
+    let ilorie = &data.npc_placements[&xiv_gen::ENpcResidentId(1000216)];
+    assert!(
+        ilorie
+            .iter()
+            .any(|p| p.territory.0 == 133 && (p.x - 14.4).abs() < 0.1 && (p.y - 9.7).abs() < 0.1),
+        "{ilorie:?}"
+    );
+    // Well over the Level sheet's 193; a big drop means the layout walk broke.
+    assert!(
+        data.npc_placements.len() > 400,
+        "{}",
+        data.npc_placements.len()
+    );
+    for placements in data.npc_placements.values() {
+        assert!(!placements.is_empty());
+        for p in placements {
+            assert!(
+                data.maps.contains_key(&p.map),
+                "placement on unknown map {p:?}"
+            );
+            assert!(data.territory_types.contains_key(&p.territory));
+        }
+    }
+    let gridania = &data.maps[&xiv_gen::MapId(2)];
+    assert_eq!(
+        (gridania.id.as_str(), gridania.size_factor),
+        ("f1t1/00", 200)
+    );
+    assert_eq!(
+        data.place_names[&xiv_gen::PlaceNameId(52)].name,
+        "New Gridania"
+    );
+    assert_eq!(
+        data.leve_issuers[&xiv_gen::LeveId(21)],
+        vec![xiv_gen::ENpcResidentId(1000101)]
+    );
+}
+
 /// Decodes the committed pack, or returns `None` after explaining why it could
 /// not (missing file or un-pulled LFS stub) so a fresh clone stays green.
 fn decode_en_pack(test_name: &str) -> Option<xiv_gen::Data> {

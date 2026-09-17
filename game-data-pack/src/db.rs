@@ -5,10 +5,12 @@
 
 use std::path::Path;
 
+use std::collections::HashMap;
+
 use anyhow::{Context, anyhow, ensure};
 use flate2::{Compression, FlushCompress};
-use xiv_gen::Language;
-use xiv_gen::csv_to_rkyv::read_data_from;
+use xiv_gen::csv_to_rkyv::{Supplements, read_data_with};
+use xiv_gen::{ENpcResidentId, Language, MapId, NpcPlacement};
 
 /// Every language packed.
 pub const LANGUAGES: [Language; 7] = [
@@ -34,6 +36,15 @@ pub struct DbOutput {
     /// `(item id, icon id)` of the *named* items in the `en` data, ascending by
     /// item id — the icon extraction reads exactly these out of the game files.
     pub en_named_items: Vec<(i32, i32)>,
+    /// The placements that made it into the `en` pack (vendors and leve
+    /// issuers only) — what `data/npc-placements.json` records and what the
+    /// map pack has to cover.
+    pub en_npc_placements: HashMap<ENpcResidentId, Vec<NpcPlacement>>,
+    /// `(map id, Map.Id texture stem)` for every map a packed placement sits
+    /// on, ascending by map id.
+    pub en_maps_used: Vec<(i32, String)>,
+    /// Distinct gil-shop vendor NPCs in the `en` data, for the coverage report.
+    pub en_vendor_npcs: usize,
 }
 
 /// Items worth extracting an icon for: the rows that actually have a name, as
@@ -52,21 +63,36 @@ fn named_items<'a>(items: impl IntoIterator<Item = (i32, &'a str, i32)>) -> Vec<
     named
 }
 
-/// Reads every language out of `datamining_root` and writes one pack per
-/// language into `out_dir`.
-pub fn build_packs(datamining_root: &Path, out_dir: &Path) -> anyhow::Result<DbOutput> {
+/// Reads every language out of `datamining_root`, folds `supplements` in, and
+/// writes one pack per language into `out_dir`.
+pub fn build_packs(
+    datamining_root: &Path,
+    out_dir: &Path,
+    supplements: &Supplements,
+) -> anyhow::Result<DbOutput> {
     std::fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
 
     let mut packs = Vec::with_capacity(LANGUAGES.len());
     let mut en_named_items = Vec::new();
+    let mut en_npc_placements = HashMap::new();
+    let mut en_maps_used = Vec::new();
+    let mut en_vendor_npcs = 0;
     for lang in LANGUAGES {
-        let data = read_data_from(datamining_root, lang);
+        let data = read_data_with(datamining_root, lang, supplements);
         if lang == Language::En {
             en_named_items = named_items(
                 data.items
                     .iter()
                     .map(|(id, item)| (id.0, item.name.as_str(), item.icon)),
             );
+            en_npc_placements = data.npc_placements.clone();
+            en_maps_used = maps_used(&data.npc_placements, &data.maps);
+            en_vendor_npcs = data
+                .gil_shop_npcs
+                .values()
+                .flatten()
+                .collect::<std::collections::HashSet<_>>()
+                .len();
         }
         let items = data.items.len();
 
@@ -108,7 +134,27 @@ pub fn build_packs(datamining_root: &Path, out_dir: &Path) -> anyhow::Result<DbO
     Ok(DbOutput {
         packs,
         en_named_items,
+        en_npc_placements,
+        en_maps_used,
+        en_vendor_npcs,
     })
+}
+
+/// Every map some placement refers to, with its texture stem, ascending.
+fn maps_used(
+    placements: &HashMap<ENpcResidentId, Vec<NpcPlacement>>,
+    maps: &HashMap<MapId, xiv_gen::Map>,
+) -> Vec<(i32, String)> {
+    let mut used: Vec<(i32, String)> = placements
+        .values()
+        .flatten()
+        .map(|p| p.map)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .filter_map(|id| maps.get(&id).map(|m| (id.0, m.id.clone())))
+        .collect();
+    used.sort_unstable();
+    used
 }
 
 #[cfg(test)]

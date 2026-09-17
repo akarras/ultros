@@ -1,48 +1,81 @@
+//! Where an NPC stands, and who issues a leve — both read out of the game
+//! data pack (`Data::npc_placements` and `Data::leve_issuers`).
+
 use crate::{global_state::xiv_data::tracked_data, i18n::*};
 use leptos::prelude::*;
-use serde::Deserialize;
-use std::{collections::BTreeMap, sync::LazyLock};
+use ultros_ui::components::app_link::AppLink;
+use xiv_gen::{ENpcResidentId, LeveId, MapId, NpcPlacement, PlaceNameId, TerritoryTypeId};
 
-#[derive(Deserialize)]
-struct Location {
-    label: String,
-    x: f64,
-    y: f64,
+/// The page for an NPC.
+pub fn npc_href(npc_id: i32) -> String {
+    format!("/npc/{npc_id}")
 }
 
-#[derive(Deserialize)]
-struct Npc {
-    name: String,
-    locations: Vec<Location>,
+/// Zone label for a placement in the current locale: the territory's place
+/// name, plus the map's sub-area when it has one (`Ul'dah - Steps of Thal ·
+/// Merchant Strip`).
+pub fn placement_label(data: &xiv_gen::Data, placement: &NpcPlacement) -> String {
+    let name = |id: i32| {
+        data.place_names
+            .get(&PlaceNameId(id))
+            .map(|p| p.name.as_str())
+            .filter(|n| !n.is_empty())
+    };
+    let zone = data
+        .territory_types
+        .get(&TerritoryTypeId(placement.territory.0))
+        .and_then(|t| name(t.place_name))
+        .or_else(|| {
+            data.maps
+                .get(&MapId(placement.map.0))
+                .and_then(|m| name(m.place_name))
+        });
+    let sub = data
+        .maps
+        .get(&MapId(placement.map.0))
+        .and_then(|m| name(m.place_name_sub));
+    match (zone, sub) {
+        (Some(zone), Some(sub)) => format!("{zone} · {sub}"),
+        (Some(zone), None) => zone.to_string(),
+        (None, Some(sub)) => sub.to_string(),
+        (None, None) => String::new(),
+    }
 }
 
-#[derive(Deserialize)]
-struct LocationData {
-    npcs: BTreeMap<i32, Npc>,
-    leve_issuers: BTreeMap<i32, Vec<i32>>,
+/// `New Gridania · X: 11.8, Y: 13.4`.
+pub fn placement_text(data: &xiv_gen::Data, placement: &NpcPlacement) -> String {
+    let label = placement_label(data, placement);
+    if label.is_empty() {
+        format!("X: {:.1}, Y: {:.1}", placement.x, placement.y)
+    } else {
+        format!("{label} · X: {:.1}, Y: {:.1}", placement.x, placement.y)
+    }
 }
-
-// Identical bundled data on SSR and hydration; no per-card network requests.
-static DATA: LazyLock<LocationData> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../../data/npc-locations/runtime.json"))
-        .expect("validated NPC location data")
-});
 
 #[component]
 pub fn NpcLocations(npc_id: i32) -> impl IntoView {
     let i18n = use_i18n();
-    let locations = DATA
-        .npcs
-        .get(&npc_id)
-        .map(|npc| npc.locations.as_slice())
+    let data = tracked_data();
+    let placements = data
+        .npc_placements
+        .get(&ENpcResidentId(npc_id))
+        .map(Vec::as_slice)
         .unwrap_or_default();
     view! {
         <div data-npc-locations=npc_id class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
-            {if locations.is_empty() {
+            {if placements.is_empty() {
                 view! { <span>{t!(i18n, npc_location_unknown)}</span> }.into_any()
             } else {
-                locations.iter().map(|location| view! {
-                    <span>{format!("{} · X: {:.1}, Y: {:.1}", location.label, location.x, location.y)}</span>
+                placements.iter().map(|placement| {
+                    let seasonal = placement.festival_id != 0;
+                    view! {
+                        <span>
+                            {placement_text(data, placement)}
+                            {seasonal.then(|| view! {
+                                <span class="ml-1 text-amber-300">{t!(i18n, npc_location_seasonal)}</span>
+                            })}
+                        </span>
+                    }
                 }).collect_view().into_any()
             }}
         </div>
@@ -52,9 +85,10 @@ pub fn NpcLocations(npc_id: i32) -> impl IntoView {
 #[component]
 pub fn LeveIssuers(leve_id: i32) -> impl IntoView {
     let i18n = use_i18n();
-    let issuers = DATA
+    let data = tracked_data();
+    let issuers = data
         .leve_issuers
-        .get(&leve_id)
+        .get(&LeveId(leve_id))
         .map(Vec::as_slice)
         .unwrap_or_default();
     view! {
@@ -65,12 +99,12 @@ pub fn LeveIssuers(leve_id: i32) -> impl IntoView {
             } else {
                 issuers.iter().copied().map(|npc_id| view! {
                     <div class="flex flex-col gap-1">
-                        <a href=format!("https://garlandtools.org/db/#npc/{npc_id}") class="text-brand-200 hover:underline">
-                            {move || tracked_data().e_npc_residents.get(&xiv_gen::ENpcResidentId(npc_id))
+                        <AppLink href=npc_href(npc_id.0) attr:class="text-brand-200 hover:underline">
+                            {data.e_npc_residents.get(&npc_id)
                                 .map(|npc| npc.singular.clone())
-                                .unwrap_or_else(|| DATA.npcs[&npc_id].name.clone())}
-                        </a>
-                        <NpcLocations npc_id />
+                                .unwrap_or_else(|| npc_id.0.to_string())}
+                        </AppLink>
+                        <NpcLocations npc_id=npc_id.0 />
                     </div>
                 }).collect_view().into_any()
             }}
@@ -87,15 +121,17 @@ mod tests {
         let _ = any_spawner::Executor::init_futures_executor();
         Owner::new().with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<Locale>());
+            // Leve 21, "In with the New": issued by Gontrant in New Gridania.
             let html = view! { <LeveIssuers leve_id=21 /> }.to_html();
-            assert!(html.contains("Gontrant"));
-            assert!(html.contains("New Gridania"));
-            assert!(html.contains("X: ") && html.contains("Y: "));
-            assert!(html.contains("https://garlandtools.org/db/#npc/1000101"));
+            assert!(html.contains("Gontrant"), "{html}");
+            assert!(html.contains("New Gridania"), "{html}");
+            assert!(html.contains("X: 11.8, Y: 13.4"), "{html}");
+            assert!(html.contains("href=\"/npc/1000101\""), "{html}");
             assert!(!html.contains("Maisenta"));
             assert_eq!(html, view! { <LeveIssuers leve_id=21 /> }.to_html());
+            // A housing servant has no world position.
             assert!(
-                view! { <NpcLocations npc_id=1000391 /> }
+                view! { <NpcLocations npc_id=1016176 /> }
                     .to_html()
                     .contains("Location unavailable")
             );
@@ -108,27 +144,28 @@ mod tests {
     }
 
     #[test]
-    fn leve_issuer_is_not_the_delivery_recipient() {
-        assert_eq!(DATA.leve_issuers[&21], vec![1000101]);
-        assert_eq!(DATA.npcs[&1000101].name, "Gontrant");
-        assert!(!DATA.leve_issuers[&21].contains(&1001276));
-        assert!(!DATA.npcs[&1000101].locations.is_empty());
-    }
-
-    #[test]
-    fn bundled_locations_and_issuer_references_are_valid() {
-        for issuers in DATA.leve_issuers.values() {
-            assert!(!issuers.is_empty());
-            assert!(issuers.windows(2).all(|pair| pair[0] < pair[1]));
-            assert!(issuers.iter().all(|id| DATA.npcs.contains_key(id)));
+    fn pack_places_the_city_vendors_the_level_sheet_misses() {
+        let data = tracked_data();
+        // Ilorie and Admiranda, Old Gridania: absent from the Level sheet.
+        for (npc, x, y) in [(1000216, 14.4, 9.7), (1000218, 14.5, 10.1)] {
+            let placements = &data.npc_placements[&ENpcResidentId(npc)];
+            let p = placements
+                .iter()
+                .find(|p| (p.x - x).abs() < 0.1 && (p.y - y).abs() < 0.1)
+                .unwrap_or_else(|| panic!("npc {npc} not at {x},{y}: {placements:?}"));
+            assert_eq!(placement_label(data, p), "Old Gridania");
         }
-        for npc in DATA.npcs.values() {
-            for location in &npc.locations {
-                assert!(!location.label.is_empty());
-                assert!(location.x.is_finite() && location.y.is_finite());
-            }
+        for placements in data.npc_placements.values() {
+            assert!(!placements.is_empty());
+            assert!(
+                placements
+                    .iter()
+                    .all(|p| p.x.is_finite() && p.y.is_finite())
+            );
         }
-        assert!(DATA.npcs[&1000391].locations.is_empty());
-        assert!(!DATA.leve_issuers.contains_key(&0));
+        assert_eq!(
+            data.leve_issuers[&LeveId(21)],
+            vec![ENpcResidentId(1000101)]
+        );
     }
 }

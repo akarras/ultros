@@ -103,7 +103,7 @@ use crate::web::api::{
     get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
     recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, npc_sitemap, sitemap_index};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -1450,7 +1450,7 @@ async fn refresh_world_item_listings(
 
 pub(crate) use self::state::WebState;
 use self::static_files::{
-    fallback_item_icon, favicon, get_item_icon, robots, service_worker_js, static_path,
+    fallback_item_icon, favicon, get_item_icon, get_map, robots, service_worker_js, static_path,
 };
 
 pub(crate) async fn invite() -> Redirect {
@@ -3692,6 +3692,7 @@ pub(crate) async fn start_web(
         .route("/static/{*path}", get(static_path))
         .route("/static/itemicon/fallback", get(fallback_item_icon))
         .route("/static/itemicon/{path}", get(get_item_icon))
+        .route("/static/map/{file}", get(get_map))
         .route("/static/data/{version}/{lang}", get(get_xiv_data_bytes))
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
@@ -3706,6 +3707,7 @@ pub(crate) async fn start_web(
             get(social_card::social_card),
         )
         .route("/sitemap/items.xml", get(item_sitemap))
+        .route("/sitemap/npcs.xml", get(npc_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))

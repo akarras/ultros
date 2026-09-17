@@ -116,6 +116,43 @@ impl GameInstall {
     }
 }
 
+/// SqPack path of a map's texture, from the `Map.Id` sheet column (`f1t1/00`
+/// lives at `ui/map/f1t1/00/f1t100_m.tex`). `None` for a row with no image.
+pub fn map_sqpack_path(map_id: &str) -> Option<String> {
+    let (zone, index) = map_id.split_once('/')?;
+    if zone.is_empty() || index.is_empty() {
+        return None;
+    }
+    Some(format!("ui/map/{zone}/{index}/{zone}{index}_m.tex"))
+}
+
+impl GameInstall {
+    /// Raw bytes of any SqPack file; `Ok(None)` when the client does not
+    /// index `path`, an error when it is indexed but unreadable.
+    pub fn read_file(&self, path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        match self.ironworks.file::<Vec<u8>>(path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(ironworks::Error::NotFound(_)) => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("reading {path}")),
+        }
+    }
+
+    /// Read and decode the map image for `Map.Id` `map_id`; `Ok(None)` when
+    /// the client has no such texture (or the id names no image at all).
+    pub fn map(&self, map_id: &str) -> anyhow::Result<Option<RgbaImage>> {
+        let Some(path) = map_sqpack_path(map_id) else {
+            return Ok(None);
+        };
+        match self.ironworks.file::<Texture>(&path) {
+            Ok(tex) => decode_tex(&tex)
+                .map(Some)
+                .with_context(|| format!("decoding {path}")),
+            Err(ironworks::Error::NotFound(_)) => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("reading {path}")),
+        }
+    }
+}
+
 /// Outcome of reading one icon out of the install.
 #[derive(Debug)]
 pub enum IconRead {
@@ -290,6 +327,12 @@ mod tests {
         );
         assert_eq!(icon_sqpack_path(20801, false), "ui/icon/020000/020801.tex");
         assert_eq!(icon_sqpack_path(999, true), "ui/icon/000000/000999_hr1.tex");
+        assert_eq!(
+            map_sqpack_path("f1t1/00").as_deref(),
+            Some("ui/map/f1t1/00/f1t100_m.tex")
+        );
+        assert_eq!(map_sqpack_path("").as_deref(), None);
+        assert_eq!(map_sqpack_path("f1t1/").as_deref(), None);
     }
 
     #[test]

@@ -22,7 +22,10 @@ pub const DATAMINING_LANGS: [&str; 4] = ["en", "ja", "de", "fr"];
 /// `Data::gil_shop_npcs`, and `Achievement`/`Quest` into each shop item's
 /// `availability`. A sheet costs checkout time here but zero pack bytes, so
 /// prefer resolving upstream data at generation time over shipping it.
-pub const SHEETS: [&str; 34] = [
+pub const SHEETS: [&str; 37] = [
+    "Map",
+    "PlaceName",
+    "TerritoryType",
     "Achievement",
     "Quest",
     "Item",
@@ -248,7 +251,7 @@ mod tests {
 
     #[test]
     fn sheets_list_covers_every_read_sheet() {
-        assert_eq!(SHEETS.len(), 34);
+        assert_eq!(SHEETS.len(), 37);
         let mut sorted = SHEETS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -266,6 +269,11 @@ mod tests {
         assert!(SHEETS.contains(&"Quest"));
         // Likewise read-and-dropped, for `Data::gil_shop_npcs`.
         for sheet in ["ENpcBase", "TopicSelect", "PreHandler"] {
+            assert!(SHEETS.contains(&sheet), "{sheet} missing from SHEETS");
+        }
+        // Stored: zone names for NPC placements, and the map transforms the
+        // placement extraction and the map pins both depend on.
+        for sheet in ["Map", "PlaceName", "TerritoryType"] {
             assert!(SHEETS.contains(&sheet), "{sheet} missing from SHEETS");
         }
     }

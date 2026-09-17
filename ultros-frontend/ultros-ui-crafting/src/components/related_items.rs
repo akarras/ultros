@@ -584,7 +584,7 @@ fn vendor_sources_for_item(item_id: i32) -> Vec<VendorSource> {
 /// the sightseeing log" is the kind of thing a reader wants before walking to
 /// the NPC, and it is not a warning — hence the softer styling.
 #[component]
-fn VendorGateBadge(availability: VendorAvailability) -> impl IntoView {
+pub fn VendorGateBadge(availability: VendorAvailability) -> impl IntoView {
     let i18n = use_i18n();
     if availability == VendorAvailability::Open {
         return None;
@@ -629,9 +629,9 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 let shop = data.gil_shops.get(&source.shop)?;
                 let price = item.price_mid as i32;
                 Some(view! {
-                    <a
-                        href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex flex-col gap-2 panel panel-interactive p-3"
+                    <AppLink
+                        href=super::npc_locations::npc_href(resident.key_id.0)
+                        attr:class="group flex flex-col gap-2 panel panel-interactive p-3"
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
                             <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
@@ -643,7 +643,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         </div>
                         <VendorGateBadge availability=source.availability />
                         <super::npc_locations::NpcLocations npc_id=resident.key_id.0 />
-                    </a>
+                    </AppLink>
                 })
             }).collect_view())
     };

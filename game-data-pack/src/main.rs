@@ -1,12 +1,17 @@
 //! Generates the LFS-tracked game-data packs under `data/`.
 //!
 //! Fetches the pinned upstream sources (sparse + blobless), runs the CSV→rkyv
-//! pipeline for every language and the PNG→WebP pipeline for the item icons.
+//! pipeline for every language, and reads three things out of a local FFXIV
+//! install: the item icons, the NPC placements (folded into the rkyv packs and
+//! recorded in `data/npc-placements.json` so a CSV-only rebuild keeps them),
+//! and the map images those placements sit on.
 
 mod db;
 mod fetch;
 mod icons;
 mod manifest;
+mod maps;
+mod placements;
 
 // Included verbatim by the build scripts of the crates that *read* the packs.
 // The generator only writes them, so nothing here calls it outside tests.
@@ -31,9 +36,13 @@ Options:
                            manifest, then build
   --offline-source <path>  Build the CSV packs from an already-populated ultros
                            checkout instead of fetching anything
-  --skip-icons             Skip the icon pack (no FFXIV install needed)
-  --game-path <path>       FFXIV install root to extract icons from (default:
-                           search the standard install locations)
+  --skip-icons             Skip everything read from the FFXIV install: the
+                           icon pack, the map pack and NPC placement
+                           extraction. The rkyv packs then take their NPC
+                           placements from the committed
+                           data/npc-placements.json.
+  --game-path <path>       FFXIV install root to read from (default: search
+                           the standard install locations)
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -91,8 +100,65 @@ fn run() -> anyhow::Result<()> {
         }
     };
 
+    // Everything that needs the client is read before the packs are built,
+    // because the packs fold the NPC placements in.
+    let install = if args.skip_icons {
+        None
+    } else {
+        Some(icon_extract::GameInstall::discover(
+            args.game_path.as_deref(),
+        )?)
+    };
+    let placements_path = data_dir.join("npc-placements.json");
+    let leve_issuers =
+        placements::load_leve_issuers(&data_dir.join("npc-locations").join("leve-issuers.json"))?;
+    let npc_placements = match &install {
+        Some(install) => {
+            println!("\nreading NPC placements from FFXIV {}", install.version);
+            let en = layout.datamining.join("csv").join("en");
+            let extraction = placements::extract(
+                install,
+                &xiv_gen::csv_to_rkyv::read_sheet::<xiv_gen::TerritoryType>(
+                    &en.join("TerritoryType.csv"),
+                ),
+                &xiv_gen::csv_to_rkyv::read_sheet::<xiv_gen::Map>(&en.join("Map.csv"))
+                    .into_iter()
+                    .map(|m| (m.key_id, m))
+                    .collect(),
+                &xiv_gen::csv_to_rkyv::read_sheet::<xiv_gen::ENpcResident>(
+                    &en.join("ENpcResident.csv"),
+                )
+                .into_iter()
+                .filter(|r| r.map != 0)
+                .map(|r| (r.key_id, xiv_gen::MapId(r.map)))
+                .collect(),
+            )?;
+            println!(
+                "  {} NPCs placed across {} layout directories",
+                extraction.placements.len(),
+                extraction.directories
+            );
+            for (path, why) in &extraction.unparsed {
+                println!("  skipped {path}: {why}");
+            }
+            extraction.placements
+        }
+        None => placements::PlacementsFile::load(&placements_path)
+            .with_context(|| {
+                format!(
+                    "--skip-icons needs the committed {} to fold NPC placements into the packs",
+                    placements_path.display()
+                )
+            })?
+            .into_placements()?,
+    };
+    let supplements = xiv_gen::csv_to_rkyv::Supplements {
+        npc_placements,
+        leve_issuers,
+    };
+
     let xiv_db_dir = data_dir.join("xiv-db");
-    let output = db::build_packs(&layout.datamining, &xiv_db_dir)?;
+    let output = db::build_packs(&layout.datamining, &xiv_db_dir, &supplements)?;
     println!("\nxiv-db packs -> {}", xiv_db_dir.display());
     for pack in &output.packs {
         println!(
@@ -104,12 +170,48 @@ fn run() -> anyhow::Result<()> {
         );
     }
 
-    if args.skip_icons {
-        println!("\nicons skipped");
+    let Some(install) = install else {
+        println!("\nicons, maps and placement extraction skipped");
         return Ok(());
+    };
+
+    let placed_vendors = output.en_npc_placements.len();
+    placements::PlacementsFile::from_placements(&install.version, &output.en_npc_placements)
+        .save(&placements_path)?;
+    println!("npc placements -> {}", placements_path.display());
+    println!(
+        "  {placed_vendors} NPCs with a placement ({} gil-shop vendors in the en data; the rest \
+         are housing servants and seasonal stalls)",
+        output.en_vendor_npcs
+    );
+
+    println!("\nextracting maps from FFXIV {}", install.version);
+    let mut map_images = Vec::with_capacity(output.en_maps_used.len());
+    let mut maps_missing = Vec::new();
+    for (map_id, stem) in &output.en_maps_used {
+        match install.map(stem)? {
+            Some(image) => map_images.push((*map_id, image)),
+            None => maps_missing.push((*map_id, stem.clone())),
+        }
+    }
+    let maps_path = data_dir.join("maps").join("maps.tar.zst");
+    let map_stats = maps::build_pack(map_images, &maps_path)?;
+    println!("maps -> {}", maps_path.display());
+    println!(
+        "  {} maps at {}px, {:.2}MB tar -> {:.2}MB zst",
+        map_stats.maps,
+        maps::MAP_PX,
+        mib(map_stats.tar_bytes),
+        mib(map_stats.packed_bytes),
+    );
+    if !maps_missing.is_empty() {
+        println!(
+            "  {} referenced maps have no texture in the client: {:?}",
+            maps_missing.len(),
+            maps_missing.iter().take(10).collect::<Vec<_>>()
+        );
     }
 
-    let install = icon_extract::GameInstall::discover(args.game_path.as_deref())?;
     println!("\nextracting icons from FFXIV {}", install.version);
     let extracted = extract_icons(&install, &output.en_named_items)?;
     // An indexed-but-unreadable icon is never acceptable: the file is right

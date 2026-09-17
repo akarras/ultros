@@ -2493,5 +2493,17 @@
     "online_invite_group": "Groupe",
     "online_invite_user": "Utilisateur Discord",
     "online_account_required": "Connectez-vous au compte associé à cette liste.",
-    "online_finish_edit": "Terminez ou annulez votre modification pour continuer en ligne."
+    "online_finish_edit": "Terminez ou annulez votre modification pour continuer en ligne.",
+    "npc_page_title": "{{ name }} – PNJ marchand",
+    "npc_page_desc": "Où trouver {{ name }} ({{ zone }}) dans FFXIV et tout ce qu’il vend contre des gils.",
+    "npc_not_found": "Aucun PNJ avec cet identifiant.",
+    "npc_location_title": "Emplacement",
+    "npc_location_none_long": "Pas d’emplacement fixe : ce PNJ apparaît dans une résidence de joueur ou lors d’un événement.",
+    "npc_location_seasonal": "Événement saisonnier",
+    "npc_sells_title": "Vend",
+    "npc_no_items": "Ce PNJ n’a pas de boutique en gils.",
+    "npc_shop_unnamed": "Boutique",
+    "npc_map_zoom_in": "Zoom avant",
+    "npc_map_zoom_out": "Zoom arrière",
+    "npc_map_reset": "Réinitialiser la vue"
 }

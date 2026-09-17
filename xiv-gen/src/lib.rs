@@ -121,6 +121,9 @@ define_id!(CompanyCraftSupplyItemId);
 define_id!(CompanyCraftDraftCategoryId);
 define_id!(CompanyCraftTypeId);
 define_id!(CompanyCraftDraftId);
+define_id!(MapId);
+define_id!(PlaceNameId);
+define_id!(TerritoryTypeId);
 
 #[derive(
     Debug,
@@ -584,6 +587,11 @@ pub struct ENpcResident {
     pub key_id: ENpcResidentId,
     #[xiv_gen(column = "Singular")]
     pub singular: String,
+    /// The game's own hint for which map of a multi-map city the NPC belongs
+    /// to (Ul'dah's Merchant Strip), or 0. Used when placing NPCs from the
+    /// client's layout files.
+    #[xiv_gen(column = "Map", default_if_missing = "0")]
+    pub map: i32,
 }
 
 #[derive(
@@ -644,6 +652,141 @@ pub struct GilShopItem {
     /// — see [`VendorAvailability`].
     #[xiv_gen(skip)]
     pub availability: VendorAvailability,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
+#[xiv_gen(sheet = "PlaceName")]
+pub struct PlaceName {
+    #[xiv_gen(column = "#")]
+    pub key_id: PlaceNameId,
+    #[xiv_gen(column = "Name")]
+    pub name: String,
+}
+
+/// One in-game map image and the transform from world space onto it.
+///
+/// Read from the English sheet whatever the pack's language: every column is
+/// an id or a number, and the CN/KO/TC forks' SaintCoinach header layout does
+/// not name them all.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
+#[xiv_gen(sheet = "Map")]
+pub struct Map {
+    #[xiv_gen(column = "#")]
+    pub key_id: MapId,
+    /// Texture path stem, e.g. `f1t1/00`: the image lives at
+    /// `ui/map/f1t1/00/f1t100_m.tex` in the client.
+    #[xiv_gen(column = "Id")]
+    pub id: String,
+    /// Map scale in percent; 100 for a field zone, 200 for a city.
+    #[xiv_gen(column = "SizeFactor")]
+    pub size_factor: i32,
+    #[xiv_gen(column = "PlaceNameRegion")]
+    pub place_name_region: i32,
+    #[xiv_gen(column = "PlaceName")]
+    pub place_name: i32,
+    /// Sub-area name for a multi-map territory (`Merchant Strip`), else 0.
+    #[xiv_gen(column = "PlaceNameSub")]
+    pub place_name_sub: i32,
+    #[xiv_gen(column = "TerritoryType")]
+    pub territory_type: i32,
+    #[xiv_gen(column = "OffsetX")]
+    pub offset_x: i32,
+    #[xiv_gen(column = "OffsetY")]
+    pub offset_y: i32,
+}
+
+impl Map {
+    /// Fraction (0..1) across the map image where map coordinate `coord`
+    /// (the `X: 11.8` a player reads off the in-game map) lands.
+    ///
+    /// Inverse of [`map_coordinate`] up to the world offset, which the image
+    /// already absorbs.
+    pub fn fraction(&self, coord: f32) -> f32 {
+        (coord - 1.0) * (self.size_factor as f32 / 100.0) / 41.0
+    }
+}
+
+/// World X/Z -> the map coordinate players see, per
+/// <https://github.com/xivapi/ffxiv-datamining/blob/master/docs/MapCoordinates.md>.
+///
+/// `size_factor` and `offset` come from the [`Map`] row; world Y is elevation
+/// and never takes part.
+pub fn map_coordinate(position: f32, size_factor: i32, offset: i32) -> f32 {
+    let factor = size_factor as f32 / 100.0;
+    41.0 / factor * (((position + offset as f32) * factor + 1024.0) / 2048.0) + 1.0
+}
+
+/// Read from the English sheet, like [`Map`]: only ids are used.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
+#[xiv_gen(sheet = "TerritoryType")]
+pub struct TerritoryType {
+    #[xiv_gen(column = "#")]
+    pub key_id: TerritoryTypeId,
+    /// Zone code such as `f1t1`; instanced copies of a zone carry other names.
+    #[xiv_gen(column = "Name")]
+    pub name: String,
+    /// Layout path stem (`ffxiv/fst_f1/twn/f1t1/level/f1t1`); its directory
+    /// holds the `.lgb` files that place the zone's NPCs.
+    #[xiv_gen(column = "Bg")]
+    pub bg: String,
+    #[xiv_gen(column = "PlaceName")]
+    pub place_name: i32,
+    /// The territory's main map; multi-map cities have more in [`Map`].
+    #[xiv_gen(column = "Map")]
+    pub map: i32,
+}
+
+/// Where an NPC stands, extracted from the client's `.lgb` layout files at
+/// pack generation (see `game-data-pack`). Not a CSV sheet.
+///
+/// The `Level` sheet only places NPCs that quests reference; the layout files
+/// place every vendor that stands in the world. NPCs spawned inside player
+/// estates (housing servants) have no placement at all.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Archive, RkyvDeserialize, RkyvSerialize,
+)]
+#[archive(check_bytes)]
+pub struct NpcPlacement {
+    pub map: MapId,
+    pub territory: TerritoryTypeId,
+    /// Map coordinates as the player reads them (`X: 11.8, Y: 13.4`).
+    pub x: f32,
+    pub y: f32,
+    /// Seasonal event whose layer places the NPC, or 0 for a year-round spot.
+    pub festival_id: u16,
 }
 
 /// How reachable a gil-shop row is, ordered from least to most restricted.
@@ -1192,6 +1335,17 @@ pub struct Data {
     pub collectables_shop_reward_scrips:
         HashMap<CollectablesShopRewardScripId, CollectablesShopRewardScrip>,
     pub craft_leves: HashMap<CraftLeveId, CraftLeve>,
+    pub place_names: HashMap<PlaceNameId, PlaceName>,
+    pub maps: HashMap<MapId, Map>,
+    pub territory_types: HashMap<TerritoryTypeId, TerritoryType>,
+    /// Placements of the NPCs the app can show: gil-shop vendors and leve
+    /// issuers. Sorted by (territory, x, y) so render order is stable between
+    /// SSR and hydration.
+    pub npc_placements: HashMap<ENpcResidentId, Vec<NpcPlacement>>,
+    /// Which NPCs offer each leve, from Teamcraft's hand-kept levemete table
+    /// (`data/npc-locations/leve-issuers.json`). `Leve.LevelLevemete` is the
+    /// *delivery* NPC, not the issuer, so this cannot be derived from sheets.
+    pub leve_issuers: HashMap<LeveId, Vec<ENpcResidentId>>,
 }
 
 impl HasId for Item {
@@ -1380,6 +1534,24 @@ impl HasId for CompanyCraftDraft {
         self.key_id
     }
 }
+impl HasId for PlaceName {
+    type Id = PlaceNameId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
+impl HasId for Map {
+    type Id = MapId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
+impl HasId for TerritoryType {
+    type Id = TerritoryTypeId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
 
 fn ok_or_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
@@ -1390,4 +1562,46 @@ where
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    fn new_gridania() -> Map {
+        Map {
+            key_id: MapId(2),
+            id: "f1t1/00".into(),
+            size_factor: 200,
+            place_name_region: 23,
+            place_name: 52,
+            place_name_sub: 0,
+            territory_type: 132,
+            offset_x: 0,
+            offset_y: 0,
+        }
+    }
+
+    #[test]
+    fn map_coordinate_matches_the_level_sheet() {
+        // Gontrant's Level row (1140471) in New Gridania: world X 25.04,
+        // Z 108.11, which the game shows as X 11.8, Y 13.4.
+        let map = new_gridania();
+        let x = map_coordinate(25.04, map.size_factor, map.offset_x);
+        let y = map_coordinate(108.11, map.size_factor, map.offset_y);
+        assert!((x - 11.75).abs() < 0.05, "{x}");
+        assert!((y - 13.41).abs() < 0.05, "{y}");
+    }
+
+    #[test]
+    fn fraction_spans_the_image_for_any_scale() {
+        // Coordinate 1 is the image's left/top edge; the far edge is
+        // 41 / (scale / 100) + 1, i.e. 42 on a field map and 21.5 in a city.
+        let city = new_gridania();
+        assert!((city.fraction(1.0)).abs() < 1e-6);
+        assert!((city.fraction(21.5) - 1.0).abs() < 1e-6);
+        let field = Map {
+            size_factor: 100,
+            ..new_gridania()
+        };
+        assert!((field.fraction(42.0) - 1.0).abs() < 1e-6);
+        assert!((field.fraction(21.5) - 0.5).abs() < 1e-6);
+    }
+}

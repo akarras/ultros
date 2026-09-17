@@ -2493,5 +2493,17 @@
     "online_invite_group": "群組",
     "online_invite_user": "Discord 使用者",
     "online_account_required": "請登入與此清單關聯的帳戶。",
-    "online_finish_edit": "完成或取消目前的編輯後，即可在線上繼續。"
+    "online_finish_edit": "完成或取消目前的編輯後，即可在線上繼續。",
+    "npc_page_title": "{{ name }} – NPC商店",
+    "npc_page_desc": "{{ name }}（{{ zone }}）在FFXIV中的位置，以及所有以金幣出售的物品。",
+    "npc_not_found": "沒有此ID的NPC。",
+    "npc_location_title": "位置",
+    "npc_location_none_long": "沒有固定位置：此NPC出現在玩家房屋內或活動期間。",
+    "npc_location_seasonal": "季節活動",
+    "npc_sells_title": "出售",
+    "npc_no_items": "此NPC沒有金幣商店。",
+    "npc_shop_unnamed": "商店",
+    "npc_map_zoom_in": "放大",
+    "npc_map_zoom_out": "縮小",
+    "npc_map_reset": "重設檢視"
 }

@@ -79,6 +79,41 @@ fn icon_data() -> &'static IconData {
     })
 }
 
+fn map_data() -> &'static HashMap<i32, Vec<u8>> {
+    let tar = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../data/maps/maps.tar.zst"
+    ))
+    .as_ref();
+    static DATA: OnceCell<HashMap<i32, Vec<u8>>> = OnceCell::new();
+    DATA.get_or_init(|| {
+        let mut decoder = zstd::Decoder::new(tar).unwrap();
+        let mut data = vec![];
+        decoder.read_to_end(&mut data).unwrap();
+        let mut archive = Archive::new(Cursor::new(data));
+        let mut images = HashMap::new();
+        for entry in archive.entries_with_seek().unwrap().flatten() {
+            let mut bytes = vec![];
+            let mut entry = entry;
+            entry.read_to_end(&mut bytes).unwrap();
+            let name = entry.path().unwrap().display().to_string();
+            // `<map id>.webp`, as game-data-pack's maps::entry_name writes it.
+            let id: i32 = name
+                .strip_suffix(".webp")
+                .and_then(|stem| stem.parse().ok())
+                .unwrap_or_else(|| panic!("unexpected map pack entry {name}"));
+            images.insert(id, bytes);
+        }
+        images
+    })
+}
+
+/// Bytes of the packed WebP of the in-game map `map_id` (`Map` sheet id), or
+/// `None` for a map no packed NPC placement refers to.
+pub fn get_map_image(map_id: i32) -> Option<&'static [u8]> {
+    map_data().get(&map_id).map(|v| v.as_slice())
+}
+
 /// Bytes of the packed WebP for `item_id` at `image_size`.
 ///
 /// The pack only stores Large (80px — the native 2x resolution) and Medium
@@ -112,6 +147,16 @@ mod tests {
                 "item {item_id} has no Large icon"
             );
         }
+    }
+
+    #[test]
+    fn city_maps_are_packed_and_decode() {
+        // New Gridania (2) and Old Gridania (3) carry vendor placements.
+        for map in [2, 3] {
+            let bytes = get_map_image(map).unwrap_or_else(|| panic!("map {map} missing"));
+            assert!(bytes.starts_with(b"RIFF"), "map {map} is not a WebP");
+        }
+        assert!(get_map_image(0).is_none());
     }
 
     #[test]

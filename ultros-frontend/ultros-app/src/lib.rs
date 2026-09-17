@@ -65,6 +65,7 @@ use crate::{
         list_view_sync::ListRoute,
         lists::*,
         not_found::NotFound,
+        npc_view::NpcView,
         recipe_analyzer::*,
         recipe_view::RecipeView,
         retainers::*,
@@ -625,6 +626,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("vendor-resale/:world") view=VendorWorldView />
                         <Route path=path!("recipe-analyzer/:world?") view=RecipeAnalyzer />
                         <Route path=path!("recipe/:id") view=RecipeView />
+                        <Route path=path!("npc/:id") view=NpcView />
                         <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
                         <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
                         <Route path=path!("leve-analyzer/:world?") view=LeveAnalyzer />
