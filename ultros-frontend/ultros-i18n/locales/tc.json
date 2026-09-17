@@ -1355,8 +1355,6 @@
     "inbox_fallback_generic_body": "您的價格提醒已觸發",
     "inbox_guest_hit_title": "{{item}} 已達到您設定的價格",
     "inbox_guest_hit_body": "在{{world}}以{{price}}金幣上架",
-    "inbox_title": "收件匣",
-    "inbox_aria_label": "通知",
     "inbox_unread_sr": "{{count}} 則未讀通知",
     "inbox_mark_all_read": "全部標記為已讀",
     "inbox_clear_all": "清空",

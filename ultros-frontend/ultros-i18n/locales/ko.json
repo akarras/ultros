@@ -1355,8 +1355,6 @@
     "inbox_fallback_generic_body": "가격 알림이 일치했습니다",
     "inbox_guest_hit_title": "{{item}}이(가) 설정한 가격에 도달했습니다",
     "inbox_guest_hit_body": "{{world}}에 {{price}}길로 등록되었습니다",
-    "inbox_title": "받은함",
-    "inbox_aria_label": "알림",
     "inbox_unread_sr": "읽지 않은 알림 {{count}}개",
     "inbox_mark_all_read": "모두 읽음으로 표시",
     "inbox_clear_all": "지우기",

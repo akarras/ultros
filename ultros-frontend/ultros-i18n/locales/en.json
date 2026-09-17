@@ -1358,8 +1358,6 @@
     "inbox_fallback_generic_body": "Your price alert matched",
     "inbox_guest_hit_title": "{{item}} hit your price",
     "inbox_guest_hit_body": "Listed at {{price}} gil on {{world}}",
-    "inbox_title": "Inbox",
-    "inbox_aria_label": "Notifications",
     "inbox_unread_sr": "{{count}} unread notifications",
     "inbox_mark_all_read": "Mark all read",
     "inbox_clear_all": "Clear",

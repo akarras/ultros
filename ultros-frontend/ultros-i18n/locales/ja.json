@@ -1355,8 +1355,6 @@
     "inbox_fallback_generic_body": "価格アラートが一致しました",
     "inbox_guest_hit_title": "{{item}}が設定価格に達しました",
     "inbox_guest_hit_body": "{{world}}で{{price}}ギルで出品されています",
-    "inbox_title": "受信箱",
-    "inbox_aria_label": "通知",
     "inbox_unread_sr": "未読の通知が{{count}}件あります",
     "inbox_mark_all_read": "すべて既読にする",
     "inbox_clear_all": "クリア",
