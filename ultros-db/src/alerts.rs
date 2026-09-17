@@ -546,6 +546,34 @@ impl UltrosDb {
         Ok(result.rows_affected)
     }
 
+    /// Delete alert events belonging to alerts `owner` owns: every event with
+    /// `id <= up_to_id` when given, otherwise all of them. Rows belonging to
+    /// other users are never touched, whatever `up_to_id` says. Returns the
+    /// number of rows deleted.
+    pub async fn delete_alert_events_for_user(
+        &self,
+        owner: i64,
+        up_to_id: Option<i64>,
+    ) -> Result<u64> {
+        let alert_ids: Vec<i32> = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .select_only()
+            .column(alert::Column::Id)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        if alert_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut query = alert_event::Entity::delete_many()
+            .filter(alert_event::Column::AlertId.is_in(alert_ids));
+        if let Some(up_to_id) = up_to_id {
+            query = query.filter(alert_event::Column::Id.lte(up_to_id));
+        }
+        let result = query.exec(&self.db).await?;
+        Ok(result.rows_affected)
+    }
+
     pub async fn list_endpoints(&self, owner: i64) -> Result<Vec<notification_endpoint::Model>> {
         Ok(notification_endpoint::Entity::find()
             .filter(notification_endpoint::Column::UserId.eq(owner))
@@ -1589,6 +1617,65 @@ mod inbox_tests {
                 .unwrap()
                 .read_at
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn clear_only_deletes_owners_events_up_to_id() {
+        let db = test_db().await;
+        let owner_a = unique_owner(11);
+        let owner_b = unique_owner(12);
+        let alert_a = owned_alert(&db, owner_a).await;
+        let alert_b = owned_alert(&db, owner_b).await;
+
+        let a1 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        let a2 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        let b1 = db.record_alert_event(new_event(alert_b.id)).await.unwrap();
+        let a3 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+
+        // `up_to_id` covers b1 too, but only owner_a's rows may go.
+        let deleted = db
+            .delete_alert_events_for_user(owner_a, Some(a2.id))
+            .await
+            .unwrap();
+        assert_eq!(deleted, 2);
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a1.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a2.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a3.id)
+                .await
+                .is_ok()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_b, b1.id)
+                .await
+                .is_ok()
+        );
+
+        // No bound: everything left that owner_a owns goes, owner_b's stays.
+        let deleted_all = db
+            .delete_alert_events_for_user(owner_a, None)
+            .await
+            .unwrap();
+        assert_eq!(deleted_all, 1);
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a3.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_b, b1.id)
+                .await
+                .is_ok()
         );
     }
 

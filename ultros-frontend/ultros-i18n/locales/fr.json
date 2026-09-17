@@ -1359,6 +1359,8 @@
     "inbox_aria_label": "Notifications",
     "inbox_unread_sr": "{{count}} notifications non lues",
     "inbox_mark_all_read": "Tout marquer comme lu",
+    "inbox_clear_all": "Effacer",
+    "inbox_clear_confirm": "Tout effacer ?",
     "inbox_empty": "Aucune notification pour le moment.",
     "inbox_manage_alerts": "Gérer les alertes",
     "inbox_guest_footer": "Les alertes du navigateur ne fonctionnent que si cet onglet est ouvert. Connecte-toi pour recevoir les alertes par Discord et les notifications push.",

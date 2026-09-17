@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "A tidier notification inbox with a Clear button",
+  "blurb": "Notifications no longer show the raw link they point to — just click the row to go there. The inbox panel stays a sensible height and scrolls, with Mark all read and the new Clear button kept within reach at the bottom. Clear removes your notifications for good, after a quick tap to confirm.",
+  "link": "/alerts"
+}

@@ -1359,6 +1359,8 @@
     "inbox_aria_label": "알림",
     "inbox_unread_sr": "읽지 않은 알림 {{count}}개",
     "inbox_mark_all_read": "모두 읽음으로 표시",
+    "inbox_clear_all": "지우기",
+    "inbox_clear_confirm": "모두 지울까요?",
     "inbox_empty": "아직 알림이 없습니다.",
     "inbox_manage_alerts": "알림 관리",
     "inbox_guest_footer": "브라우저 알림은 이 탭이 열려 있는 동안에만 작동합니다. Discord 및 푸시 전송을 받으려면 로그인하세요.",

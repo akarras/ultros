@@ -1359,6 +1359,8 @@
     "inbox_aria_label": "通知",
     "inbox_unread_sr": "未読の通知が{{count}}件あります",
     "inbox_mark_all_read": "すべて既読にする",
+    "inbox_clear_all": "クリア",
+    "inbox_clear_confirm": "すべて削除しますか？",
     "inbox_empty": "通知はまだありません。",
     "inbox_manage_alerts": "アラートを管理",
     "inbox_guest_footer": "ブラウザ通知はこのタブを開いている間のみ動作します。Discordとプッシュ通知を受け取るにはサインインしてください。",
