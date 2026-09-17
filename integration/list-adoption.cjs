@@ -70,7 +70,10 @@ async function main() {
     assert.equal(await page.$$eval('h1',nodes=>nodes.filter(n=>n.textContent.trim()==='Lists').length),1);
     assert.equal(await page.$$(tid('list-new')).then(a=>a.length),1);
     assert.equal(await page.$$(tid('device-lists-adoption')).then(a=>a.length),0);
-    await page.click(tid('list-new'));await replace(page,tid('device-list-name'),name);await page.click(tid('device-list-create'));
+    await page.click(tid('list-new'));await replace(page,tid('device-list-name'),name);
+    // Signed-in sessions default to Online; this script exercises the local→online transition itself.
+    const local=await page.$(tid('device-list-storage-local'));if(local){await local.click();await page.waitForFunction(sel=>document.querySelector(sel)?.getAttribute('aria-pressed')==='true',{},tid('device-list-storage-local'));}
+    await page.click(tid('device-list-create'));
     await page.waitForFunction(()=>location.pathname.startsWith('/list/device/'));
     await replace(page,'input[aria-label="Quantity to add"]',3);
     await replace(page,'input[aria-label="Add an item"]','Bronze Ingot');
