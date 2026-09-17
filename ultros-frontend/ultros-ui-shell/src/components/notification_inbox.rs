@@ -143,6 +143,7 @@ pub fn NotificationInbox() -> impl IntoView {
                     <div class="inbox-actions">
                         <button
                             class="menu-item inbox-action"
+                            data-testid="inbox-mark-all-read"
                             disabled=move || unread.get() == 0
                             on:click=move |_| inbox.mark_all_read()
                         >
@@ -152,6 +153,7 @@ pub fn NotificationInbox() -> impl IntoView {
                         <button
                             class="menu-item inbox-action"
                             class:inbox-action-danger=move || clear_armed.get()
+                            data-testid="inbox-clear"
                             disabled=move || items.with(Vec::is_empty)
                             on:click=on_clear
                         >

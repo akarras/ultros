@@ -317,7 +317,7 @@ async function main() {
     const rowCount = await page.$$eval(".side-nav-inbox-panel .inbox-item", (els) => els.length);
     assert.equal(rowCount, 1, "expected exactly one inbox row after the guest hit");
 
-    await page.click('button[aria-label="Mark all read"]');
+    await page.click('[data-testid="inbox-mark-all-read"]');
     await page.waitForFunction(() => !document.querySelector(".side-nav-count"), { timeout: 5000 });
     const localInbox = await page.evaluate(() =>
       JSON.parse(localStorage.getItem("ultros.inbox.local.v1") || "[]"),
@@ -435,6 +435,44 @@ async function main() {
       { timeout: 5000 },
     );
     console.log("[ok] synthetic server notification lands in the signed-in inbox");
+
+    // ---- 6. Clear is a two-tap action and deletes server-side ----
+    // First click only arms the button (label flips to the confirm copy and
+    // nothing is sent); the second click empties both inbox halves and
+    // POSTs `/api/v1/alerts/events/clear` bounded by the newest rendered id.
+    const clearRequests = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && req.url().endsWith("/api/v1/alerts/events/clear")) {
+        clearRequests.push(JSON.parse(req.postData() || "{}"));
+      }
+    });
+    const clearResponse = page.waitForResponse(
+      (res) => res.url().endsWith("/api/v1/alerts/events/clear"),
+      { timeout: 5000 },
+    );
+    await page.click('[data-testid="inbox-clear"]');
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="inbox-clear"]')?.textContent.trim() === "Clear all?",
+      { timeout: 5000 },
+    );
+    assert.equal(clearRequests.length, 0, "arming Clear must not send a request");
+    await page.click('[data-testid="inbox-clear"]');
+    const clearStatus = (await clearResponse).status();
+    assert.equal(clearStatus, 200, `clear endpoint returned ${clearStatus}`);
+    assert.equal(clearRequests.length, 1, "second click sends exactly one clear request");
+    assert.equal(clearRequests[0].up_to_id, 987654321, "clear is bounded by the newest rendered id");
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll(".side-nav-inbox-panel .inbox-item").length === 0 &&
+        !document.querySelector(".side-nav-count"),
+      { timeout: 5000 },
+    );
+    assert.equal(
+      await page.$eval('[data-testid="inbox-clear"]', (el) => el.disabled),
+      true,
+      "Clear disables once the inbox is empty",
+    );
+    console.log("[ok] two-tap Clear empties the inbox and deletes server-side (bounded by up_to_id)");
 
     assert.deepEqual(errors, [], `unexpected page errors: ${JSON.stringify(errors)}`);
     console.log("Notification inbox + browser price alerts E2E passed.");
