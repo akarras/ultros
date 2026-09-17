@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thousands::Separable;
 use ultros_api_types::ActiveListing;
 use ultros_calc::list_estimate::{CartEstimate, MissingReason, PriceFeed};
+use ultros_calc::list_travel::TravelPolicy;
 
 #[derive(Clone, Debug)]
 pub struct ShopRow {
@@ -56,7 +57,23 @@ struct Trip {
     source: ShopInput,
     plan: ShoppingPlan,
     mode: usize,
-    alternatives: Vec<ShoppingPlan>,
+    frontier: Vec<ShoppingPlan>,
+    policy: TravelPolicy,
+}
+
+impl Trip {
+    /// The source and plan are frozen at adoption. Home is first only when
+    /// the trip buys there; the remaining world order and each world's
+    /// physical-stack order stay stable until a replacement is adopted.
+    /// Receipts must use this same sequence when assigning acquired units.
+    fn itinerary(&self) -> Vec<(i32, Vec<(i32, Offer)>)> {
+        let mut stops = planner::itinerary(&self.plan);
+        let home = stops.remove(&self.source.home_world);
+        home.into_iter()
+            .map(|offers| (self.source.home_world, offers))
+            .chain(stops)
+            .collect()
+    }
 }
 
 /// Stacks already recorded against physical listings, keyed by listing id.
@@ -70,6 +87,40 @@ struct Review {
     receipts: Receipts,
     plans: Vec<ShoppingPlan>,
     mode: usize,
+    frontier: Vec<ShoppingPlan>,
+    policy: TravelPolicy,
+    unavailable: BTreeSet<i32>,
+}
+
+/// A review authorizes exactly the cart and settings it displays. Purchases,
+/// undo, quality edits or a newly unavailable stack require a fresh proposal.
+fn review_is_current(
+    review: &Review,
+    live: &ShopInput,
+    policy: &TravelPolicy,
+    unavailable: &BTreeSet<i32>,
+) -> bool {
+    review.policy == *policy
+        && review.unavailable == *unavailable
+        && review.source.home_world == live.home_world
+        && review.source.rows.len() == live.rows.len()
+        && review
+            .source
+            .rows
+            .iter()
+            .zip(&live.rows)
+            .all(|(before, after)| {
+                let mut old_offers: Vec<_> = before.listings.iter().map(listing_shape).collect();
+                let mut new_offers: Vec<_> = after.listings.iter().map(listing_shape).collect();
+                old_offers.sort_unstable();
+                new_offers.sort_unstable();
+                before.key == after.key
+                    && before.item_id == after.item_id
+                    && before.hq == after.hq
+                    && before.needed == after.needed
+                    && before.acquired == after.acquired
+                    && old_offers == new_offers
+            })
 }
 
 /// How the live cart differs from the cart an active trip was planned from.
@@ -166,8 +217,67 @@ fn trip_totals(plan: &ShoppingPlan) -> TripTotals {
 // Give quality-specific needs first claim on supply, then offer the remaining
 // stacks to Any-quality rows. Each physical listing can appear at most once.
 // This allocation is conservative; all route choices are labelled best-found.
+#[cfg(test)]
 fn candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
-    let mut plans = scoped_candidates(input, unavailable);
+    let frontier = candidate_frontier(input, unavailable);
+    quick_candidates(&frontier)
+}
+
+fn quick_candidates(frontier: &[ShoppingPlan]) -> Vec<ShoppingPlan> {
+    let home = frontier.first().cloned().unwrap_or_default();
+    let fewest = frontier
+        .iter()
+        .min_by_key(|plan| (plan.missing, planner::itinerary(plan).len(), plan.cost))
+        .cloned()
+        .unwrap_or_default();
+    let cheapest = frontier
+        .iter()
+        .min_by_key(|plan| (plan.missing, plan.cost, planner::itinerary(plan).len()))
+        .cloned()
+        .unwrap_or_default();
+    vec![home, fewest, cheapest]
+}
+
+fn choice_plan<'a>(
+    quick: &'a [ShoppingPlan],
+    frontier: &'a [ShoppingPlan],
+    mode: usize,
+) -> &'a ShoppingPlan {
+    if mode < 3 {
+        quick.get(mode)
+    } else {
+        frontier.get(mode - 3)
+    }
+    .unwrap_or(&quick[2])
+}
+
+/// Frontier indices are presentation positions, not route identities. A
+/// refreshed route follows the same set of purchased worlds when possible;
+/// otherwise the complete cheapest replacement is offered for review.
+fn refreshed_mode(
+    previous: Option<&[ShoppingPlan]>,
+    frontier: &[ShoppingPlan],
+    mode: usize,
+) -> usize {
+    if mode < 3 {
+        return mode;
+    }
+    let Some(old) = previous.and_then(|plans| plans.get(mode - 3)) else {
+        return 2;
+    };
+    let worlds: Vec<_> = planner::itinerary(old).into_keys().collect();
+    frontier
+        .iter()
+        .position(|plan| planner::itinerary(plan).into_keys().collect::<Vec<_>>() == worlds)
+        .map(|index| index + 3)
+        .unwrap_or(2)
+}
+
+/// Keep the planner's complete frontier for marginal route comparisons.
+/// Input listings have already been narrowed by the editor's travel policy;
+/// neither this search nor its separate home allocation may expand that scope.
+fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+    let plans = scoped_frontier(input, unavailable);
     let mut home = input.clone();
     for row in &mut home.rows {
         row.listings
@@ -175,25 +285,18 @@ fn candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPla
     }
     // Allocate overlapping quality needs within the fixed home scope: cheaper
     // foreign stacks must never hide feasible supply on the player's world.
-    plans[0] = scoped_candidates(&home, unavailable).remove(0);
-    if (
-        plans[0].missing,
-        planner::itinerary(&plans[0]).len(),
-        plans[0].cost,
-    ) < (
-        plans[1].missing,
-        planner::itinerary(&plans[1]).len(),
-        plans[1].cost,
-    ) {
-        plans[1] = plans[0].clone();
-    }
-    if (plans[0].missing, plans[0].cost) < (plans[2].missing, plans[2].cost) {
-        plans[2] = plans[0].clone();
-    }
-    plans
+    let home_plan = scoped_frontier(&home, unavailable)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    planner::frontier(
+        plans.into_iter().chain(std::iter::once(home_plan)),
+        &planner::TravelWeights::default(),
+        planner::ROUTE_LIMIT,
+    )
 }
 
-fn scoped_candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn scoped_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
     let mut materials = Vec::new();
     let mut market = BTreeMap::new();
     let mut used = BTreeSet::new();
@@ -240,21 +343,7 @@ fn scoped_candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<Shop
         datacenters: input.datacenters.clone(),
         ..Default::default()
     };
-    let comparison = planner::compare_routes(&materials, &market, &BTreeMap::new(), &ctx);
-    let home = comparison.cards.first().cloned().unwrap_or_default();
-    let fewest = comparison
-        .cards
-        .iter()
-        .min_by_key(|plan| (plan.missing, planner::itinerary(plan).len(), plan.cost))
-        .cloned()
-        .unwrap_or_default();
-    let cheapest = comparison
-        .cards
-        .iter()
-        .min_by_key(|plan| (plan.missing, plan.cost, planner::itinerary(plan).len()))
-        .cloned()
-        .unwrap_or_default();
-    vec![home, fewest, cheapest]
+    planner::compare_routes(&materials, &market, &BTreeMap::new(), &ctx).cards
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -300,7 +389,7 @@ fn replan(
     source: &ShopInput,
     unavailable: &BTreeSet<i32>,
     consumed: &Receipts,
-) -> (Receipts, Vec<ShoppingPlan>) {
+) -> (Receipts, Vec<ShoppingPlan>, Vec<ShoppingPlan>) {
     let mut receipts = consumed.clone();
     if let Some(previous) = previous {
         receipts.extend(completed_offers(previous, source));
@@ -314,7 +403,9 @@ fn replan(
             .filter(|row| i64::from(row.acquired) >= *threshold)
             .map(|_| *id)
     }));
-    (receipts, candidates(source, &excluded))
+    let frontier = candidate_frontier(source, &excluded);
+    let quick = quick_candidates(&frontier);
+    (receipts, quick, frontier)
 }
 
 /// Completed physical listings stay excluded across replans. The acquired
@@ -322,7 +413,7 @@ fn replan(
 fn completed_offers(trip: &Trip, live: &ShopInput) -> Receipts {
     let mut thresholds = BTreeMap::<i32, i64>::new();
     let mut receipts = BTreeMap::new();
-    for offers in planner::itinerary(&trip.plan).values() {
+    for (_, offers) in &trip.itinerary() {
         for (index, offer) in offers {
             let row = &trip.source.rows[*index as usize];
             let threshold = thresholds.entry(*index).or_insert(i64::from(row.acquired));
@@ -340,8 +431,8 @@ fn completed_offers(trip: &Trip, live: &ShopInput) -> Receipts {
 }
 
 fn snapshot(trip: &Trip, live: &ShopInput, stop: usize, can_edit: bool) -> CompanionSnapshot {
-    let stops = planner::itinerary(&trip.plan);
-    let current = stops.iter().nth(stop.min(stops.len().saturating_sub(1)));
+    let stops = trip.itinerary();
+    let current = stops.get(stop.min(stops.len().saturating_sub(1)));
     let mut completed = BTreeMap::new();
     for (index, row) in trip.source.rows.iter().enumerate() {
         let now = live.rows.iter().find(|candidate| candidate.key == row.key);
@@ -436,6 +527,7 @@ pub fn ListShop(
     on_undo: Callback<()>,
     can_undo_purchase: Signal<bool>,
     can_edit: Signal<bool>,
+    #[prop(optional)] travel_policy: Option<Signal<TravelPolicy>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let trip = RwSignal::new(None::<Trip>);
@@ -444,24 +536,39 @@ pub fn ListShop(
     let review = RwSignal::new(None::<Review>);
     let stop = RwSignal::new(0_usize);
     let notice = RwSignal::new(String::new());
-    let adopt =
-        move |source: ShopInput, receipts: Receipts, plans: Vec<ShoppingPlan>, mode: usize| {
-            let plan = plans[mode.min(2)].clone();
-            consumed.set(receipts);
-            trip.set(Some(Trip {
-                source,
-                plan,
-                mode,
-                alternatives: plans,
-            }));
-            review.set(None);
-            stop.set(0);
-            notice.set(String::new());
-        };
-    // Choosing a route is the player's decision: it takes effect at once.
+    let policy = Signal::derive(move || {
+        travel_policy.map(|policy| policy.get()).unwrap_or_else(|| {
+            input.with(|source| TravelPolicy {
+                home_world: (source.home_world > 0).then_some(source.home_world),
+                datacenters: source.datacenters.clone(),
+                ..Default::default()
+            })
+        })
+    });
+    let adopt = move |source: ShopInput,
+                      receipts: Receipts,
+                      plans: Vec<ShoppingPlan>,
+                      frontier: Vec<ShoppingPlan>,
+                      adopted_policy: TravelPolicy,
+                      mode: usize| {
+        let plan = choice_plan(&plans, &frontier, mode).clone();
+        consumed.set(receipts);
+        trip.set(Some(Trip {
+            source,
+            plan,
+            mode,
+            frontier,
+            policy: adopted_policy,
+        }));
+        review.set(None);
+        stop.set(0);
+        notice.set(String::new());
+    };
+    // The first choice starts a trip. Any replacement, including a different
+    // shortcut or frontier card, is reviewed before changing an active trip.
     let choose = Callback::new(move |mode: usize| {
         let source = input.get_untracked();
-        let (receipts, plans) = trip.with_untracked(|previous| {
+        let (receipts, plans, frontier) = trip.with_untracked(|previous| {
             replan(
                 previous.as_ref(),
                 &source,
@@ -469,7 +576,27 @@ pub fn ListShop(
                 &consumed.get_untracked(),
             )
         });
-        adopt(source, receipts, plans, mode);
+        let next_policy = policy.get_untracked();
+        let mode = trip.with_untracked(|previous| {
+            refreshed_mode(
+                previous.as_ref().map(|trip| trip.frontier.as_slice()),
+                &frontier,
+                mode,
+            )
+        });
+        if trip.with_untracked(|active| active.is_some()) {
+            review.set(Some(Review {
+                source,
+                receipts,
+                plans,
+                mode,
+                frontier,
+                policy: next_policy,
+                unavailable: unavailable.get_untracked(),
+            }));
+        } else {
+            adopt(source, receipts, plans, frontier, next_policy, mode);
+        }
     });
     // Refreshing an active trip against newer prices or cart edits is
     // reviewable: the candidate is shown beside the current trip first.
@@ -478,7 +605,7 @@ pub fn ListShop(
             return;
         };
         let source = input.get_untracked();
-        let (receipts, plans) = trip.with_untracked(|previous| {
+        let (receipts, plans, frontier) = trip.with_untracked(|previous| {
             replan(
                 previous.as_ref(),
                 &source,
@@ -486,19 +613,59 @@ pub fn ListShop(
                 &consumed.get_untracked(),
             )
         });
+        let mode = trip.with_untracked(|previous| {
+            refreshed_mode(
+                previous.as_ref().map(|trip| trip.frontier.as_slice()),
+                &frontier,
+                mode,
+            )
+        });
         review.set(Some(Review {
             source,
             receipts,
             plans,
             mode,
+            frontier,
+            policy: policy.get_untracked(),
+            unavailable: unavailable.get_untracked(),
         }));
     });
     let apply_review = move |_| {
         if let Some(pending) = review.get_untracked() {
+            if !review_is_current(
+                &pending,
+                &input.get_untracked(),
+                &policy.get_untracked(),
+                &unavailable.get_untracked(),
+            ) {
+                let source = input.get_untracked();
+                let (receipts, plans, frontier) = trip.with_untracked(|previous| {
+                    replan(
+                        previous.as_ref(),
+                        &source,
+                        &unavailable.get_untracked(),
+                        &consumed.get_untracked(),
+                    )
+                });
+                let mode = refreshed_mode(Some(&pending.frontier), &frontier, pending.mode);
+                review.set(Some(Review {
+                    source,
+                    receipts,
+                    plans,
+                    mode,
+                    frontier,
+                    policy: policy.get_untracked(),
+                    unavailable: unavailable.get_untracked(),
+                }));
+                notice.set(t_string!(i18n, list_travel_review_updated).to_string());
+                return;
+            }
             adopt(
                 pending.source,
                 pending.receipts,
                 pending.plans,
+                pending.frontier,
+                pending.policy,
                 pending.mode,
             );
         }
@@ -827,7 +994,7 @@ pub fn ListShop(
                 </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || input.get().observed_at.map(|time| t_string!(i18n, list_shop_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_age_unknown).to_string())}</p>
             </div>
-            <p role="status" class:hidden=move || notice.get().is_empty()>{move || notice.get()}</p>
+            <p role="status" data-testid="shop-notice" class:hidden=move || notice.get().is_empty()>{move || notice.get()}</p>
             {move || trip.get().map(|active| {
                 let totals = trip_totals(&active.plan);
                 let estimate = build_estimate(&active.source);
@@ -862,9 +1029,10 @@ pub fn ListShop(
                 }
             })}
             <p role="status" class="text-sm" data-testid="shop-drift" class:hidden=move || drift.get().is_empty()>{drift_text}</p>
+            <p role="status" class="text-sm" data-testid="shop-travel-drift" class:hidden=move || !trip.with(|active| active.as_ref().is_some_and(|active| active.policy != policy.get()))>{move || t_string!(i18n, list_travel_changed)}</p>
             {move || review.get().map(|pending| {
                 let current = trip.with_untracked(|trip| trip.as_ref().map(|trip| trip_totals(&trip.plan))).unwrap_or_default();
-                let next = trip_totals(&pending.plans[pending.mode.min(2)]);
+                let next = trip_totals(choice_plan(&pending.plans, &pending.frontier, pending.mode));
                 view! {
                     <div class="rounded-xl border border-brand-400/60 p-4 space-y-2" role="group" aria-label=t_string!(i18n, list_shop_review_label).to_string() data-testid="shop-review">
                         <p>{t_string!(i18n, list_shop_review_intro)}</p>
@@ -946,30 +1114,38 @@ pub fn ListShop(
                     <button data-testid="shop-next-world" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" disabled=move || !live_snapshot.get().is_some_and(|view| view.has_next) on:click=move |_| action.run(("next".into(), String::new(), 0))>{move || t_string!(i18n, list_shop_next)}</button>
                 </div>
             </div>
-            <details class="rounded-xl border border-white/10 p-4 text-sm">
-                <summary class="cursor-pointer font-medium">{move || t_string!(i18n, list_shop_compare)}</summary>
-                <div class="space-y-3 pt-3">
-                    {move || trip.get().map(|active| {
-                        let savings = if active.alternatives[1].missing == active.alternatives[2].missing { t_string!(i18n, list_shop_savings, amount = (active.alternatives[1].cost - active.alternatives[2].cost).max(0)).to_string() } else { t_string!(i18n, list_shop_compare_missing).to_string() };
-                        view! {
-                            <div class="grid gap-2 sm:grid-cols-3">
-                                {active.alternatives.iter().enumerate().map(|(mode, plan)| view! {
-                                    <div class="rounded-lg border border-white/10 p-3">
-                                        <strong>{[t_string!(i18n, list_shop_home_label).to_string(), t_string!(i18n, list_shop_fewest).to_string(), t_string!(i18n, list_shop_lowest_label).to_string()][mode].clone()}</strong>
-                                        <p>{t_string!(i18n, list_shop_stops, cost = plan.cost, count = planner::itinerary(plan).len())}</p>
-                                        <p>{t_string!(i18n, list_shop_missing, count = plan.missing)}</p>
-                                    </div>
-                                }).collect_view()}
-                            </div>
-                            <p>{savings}</p>
-                        }
-                    })}
-                    <p>{move || input.get().observed_at.map(|time| t_string!(i18n, list_shop_listings_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_observation_unknown).to_string())}</p>
-                    <p>{move || t_string!(i18n, list_shop_whole_stacks)}</p>
-                    <p>{move || t_string!(i18n, list_shop_stable_trip)}</p>
-                    <p>{move || t_string!(i18n, list_shop_keep_page)}</p>
-                </div>
-            </details>
+            {move || trip.get().map(|active| {
+                let observed = active.source.observed_at.clone();
+                view! {
+                    <section class="space-y-2" data-testid="shop-route-comparison">
+                        <h3 class="font-medium">{t_string!(i18n, list_shop_compare)}</h3>
+                        <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {active.frontier.iter().enumerate().map(|(index, plan)| {
+                                let selected = active.plan == *plan;
+                                let saving = match planner::marginal_saving_line(&active.frontier, index) {
+                                    Some(planner::SavingLine::Saved(amount)) => Some(t_string!(i18n, list_travel_saved_previous, amount = amount).to_string()),
+                                    Some(planner::SavingLine::Same) => Some(t_string!(i18n, list_travel_saved_previous, amount = 0).to_string()),
+                                    _ => None,
+                                };
+                                let worlds = planner::itinerary(plan).into_keys().map(|world| world.to_string()).collect::<Vec<_>>().join(",");
+                                view! {
+                                    <button type="button" class="rounded-lg border border-white/10 p-3 text-left min-h-11 hover:border-brand-400" aria-pressed=selected.to_string()
+                                        data-testid="shop-route-option" data-route-index=index data-route-worlds=worlds data-route-cost=plan.cost data-route-missing=plan.missing
+                                        on:click=move |_| choose.run(index + 3)>
+                                        <strong class="block">{t_string!(i18n, list_travel_route, number = index + 1)}</strong>
+                                        <span class="block">{t_string!(i18n, list_shop_stops, cost = plan.cost, count = planner::itinerary(plan).len())}</span>
+                                        <span class="block text-sm">{t_string!(i18n, list_travel_hops, worlds = plan.travel.world_hops, datacenters = plan.travel.dc_hops)}</span>
+                                        <span class="block text-sm">{t_string!(i18n, list_shop_missing, count = plan.missing)}</span>
+                                        <span class="block text-sm" data-testid="shop-route-saving">{saving}</span>
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
+                        <p class="text-xs text-[color:var(--color-text-muted)]">{t_string!(i18n, list_travel_comparison_note)}</p>
+                        <p class="text-xs text-[color:var(--color-text-muted)]">{observed.map(|time| t_string!(i18n, list_shop_listings_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_observation_unknown).to_string())}</p>
+                    </section>
+                }
+            })}
         </section>
         </Show>
     }
@@ -1039,6 +1215,283 @@ mod tests {
         assert_eq!(plans[2].cost, 30);
         assert_eq!(plans[2].purchases[&0].quantity, 3);
     }
+
+    #[test]
+    fn higher_id_home_is_first_for_progress_receipts_and_replanning() {
+        let mut source = input();
+        source.home_world = 9;
+        source.world_names = BTreeMap::from([(1, "Foreign".into()), (9, "Home".into())]);
+        source.rows[0].needed = 6;
+        source.rows[0].listings = vec![listing(1, 1, 3, 1, false), listing(2, 9, 3, 10, false)];
+        let plans = candidates(&source, &BTreeSet::new());
+        let trip = Trip {
+            source: source.clone(),
+            plan: plans[2].clone(),
+            mode: 2,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
+        };
+        assert_eq!(
+            trip.itinerary()
+                .iter()
+                .map(|(world, _)| *world)
+                .collect::<Vec<_>>(),
+            vec![9, 1],
+        );
+        let first = snapshot(&trip, &source, 0, true);
+        assert_eq!(first.world, "Home");
+        assert_eq!(first.rows[0].key, "2");
+        assert!(!first.has_next);
+
+        // An uncompleted home stack retains first claim on purchased units.
+        source.rows[0].acquired = 1;
+        assert_eq!(snapshot(&trip, &source, 0, true).rows[0].quantity, 2);
+        assert!(!snapshot(&trip, &source, 1, true).rows[0].can_buy);
+        assert!(completed_offers(&trip, &source).is_empty());
+        source.rows[0].acquired = 3;
+        assert!(snapshot(&trip, &source, 0, true).has_next);
+        let next = snapshot(&trip, &source, 1, true);
+        assert_eq!(next.world, "Foreign");
+        assert_eq!(next.rows[0].key, "1");
+        assert!(next.rows[0].can_buy);
+        let receipts = completed_offers(&trip, &source);
+        assert_eq!(receipts, BTreeMap::from([(2, ("row:1".into(), 3))]));
+        let (_, reviewed, _) = replan(Some(&trip), &source, &BTreeSet::new(), &Receipts::new());
+        assert_eq!(reviewed[2].purchases[&0].offers[0].id, 1);
+        assert_eq!(reviewed[2].cost, 3);
+
+        // Neither a changed home nor a changed feed rewrites the active trip.
+        source.home_world = 1;
+        source.rows[0].listings.clear();
+        assert_eq!(snapshot(&trip, &source, 0, true).world, "Home");
+        assert_eq!(snapshot(&trip, &source, 1, true).world, "Foreign");
+        assert_eq!(completed_offers(&trip, &source), receipts);
+        source.rows[0].acquired = 0;
+        assert!(completed_offers(&trip, &source).is_empty());
+        assert_eq!(snapshot(&trip, &source, 0, true).rows[0].quantity, 3);
+        assert!(!snapshot(&trip, &source, 1, true).rows[0].can_buy);
+    }
+
+    #[test]
+    fn home_first_order_does_not_invent_a_home_stop() {
+        let mut source = input();
+        source.home_world = 99;
+        let plans = candidates(&source, &BTreeSet::new());
+        let trip = Trip {
+            source,
+            plan: plans[2].clone(),
+            mode: 2,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
+        };
+        assert_eq!(
+            trip.itinerary()
+                .iter()
+                .map(|(world, _)| *world)
+                .collect::<Vec<_>>(),
+            vec![2],
+        );
+        let empty = Trip {
+            plan: ShoppingPlan::default(),
+            ..trip
+        };
+        assert!(empty.itinerary().is_empty());
+    }
+
+    fn travel_ladder_input() -> ShopInput {
+        let mut source = input();
+        source.home_world = 9;
+        source.datacenters = BTreeMap::from([(1, 10), (9, 10), (20, 30)]);
+        source.rows[0].needed = 1;
+        source.rows[0].listings = vec![listing(1, 9, 1, 100, false), listing(2, 1, 1, 60, false)];
+        let mut second = source.rows[0].clone();
+        second.key = "row:2".into();
+        second.item_id = 43;
+        second.listings = vec![listing(3, 9, 1, 100, false), listing(4, 20, 1, 20, false)];
+        for offer in &mut second.listings {
+            offer.item_id = 43;
+        }
+        source.rows.push(second);
+        source
+    }
+
+    #[test]
+    fn candidate_frontier_keeps_every_complete_marginal_step() {
+        let source = travel_ladder_input();
+        let frontier = candidate_frontier(&source, &BTreeSet::new());
+        assert_eq!(
+            frontier
+                .iter()
+                .map(|plan| (plan.cost, plan.missing))
+                .collect::<Vec<_>>(),
+            vec![(200, 0), (160, 0), (120, 0), (80, 0)]
+        );
+        assert_eq!(
+            frontier
+                .iter()
+                .map(|plan| (plan.travel.world_hops, plan.travel.dc_hops))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (1, 0), (0, 1), (1, 1)]
+        );
+        for index in 1..frontier.len() {
+            assert_eq!(
+                planner::marginal_saving_line(&frontier, index),
+                Some(planner::SavingLine::Saved(40))
+            );
+        }
+        // The middle routes are alternatives, not a nested chain of worlds.
+        assert_eq!(
+            planner::itinerary(&frontier[1])
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![1, 9]
+        );
+        assert_eq!(
+            planner::itinerary(&frontier[2])
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![9, 20]
+        );
+    }
+
+    #[test]
+    fn frontier_refresh_tracks_worlds_instead_of_card_position() {
+        let frontier = candidate_frontier(&travel_ladder_input(), &BTreeSet::new());
+        let shortened = frontier[1..].to_vec();
+        assert_eq!(refreshed_mode(Some(&frontier), &shortened, 4), 3);
+        assert_eq!(
+            choice_plan(&quick_candidates(&shortened), &shortened, 3).cost,
+            160
+        );
+        assert_eq!(refreshed_mode(Some(&frontier), &frontier[2..], 4), 2);
+        assert_eq!(refreshed_mode(Some(&frontier), &shortened, 1), 1);
+    }
+
+    #[test]
+    fn a_review_is_invalidated_by_purchases_quality_prices_or_policy() {
+        let source = travel_ladder_input();
+        let policy = TravelPolicy {
+            home_world: Some(source.home_world),
+            datacenters: source.datacenters.clone(),
+            ..Default::default()
+        };
+        let (receipts, plans, frontier) = replan(None, &source, &BTreeSet::new(), &Receipts::new());
+        let review = Review {
+            source: source.clone(),
+            receipts,
+            plans,
+            mode: 2,
+            frontier,
+            policy: policy.clone(),
+            unavailable: BTreeSet::new(),
+        };
+        assert!(review_is_current(
+            &review,
+            &source,
+            &policy,
+            &BTreeSet::new()
+        ));
+        let mut live = source.clone();
+        live.rows[0].acquired += 1;
+        assert!(!review_is_current(
+            &review,
+            &live,
+            &policy,
+            &BTreeSet::new()
+        ));
+        live = source.clone();
+        live.rows[0].hq = Some(true);
+        assert!(!review_is_current(
+            &review,
+            &live,
+            &policy,
+            &BTreeSet::new()
+        ));
+        live = source.clone();
+        live.rows[0].listings[0].price_per_unit += 1;
+        assert!(!review_is_current(
+            &review,
+            &live,
+            &policy,
+            &BTreeSet::new()
+        ));
+        live = source.clone();
+        live.rows[0].listings.reverse();
+        assert!(
+            review_is_current(&review, &live, &policy, &BTreeSet::new()),
+            "transport ordering alone does not change the proposal"
+        );
+        let mut changed_policy = policy.clone();
+        changed_policy.excluded_worlds.insert(999);
+        assert!(
+            !review_is_current(&review, &source, &changed_policy, &BTreeSet::new()),
+            "setting identity matters even when its current offers are unchanged"
+        );
+        assert!(!review_is_current(
+            &review,
+            &source,
+            &policy,
+            &BTreeSet::from([1])
+        ));
+        live.home_world = 1;
+        assert!(!review_is_current(
+            &review,
+            &live,
+            &policy,
+            &BTreeSet::new()
+        ));
+    }
+
+    #[test]
+    fn constrained_frontier_cannot_reintroduce_excluded_supply() {
+        use ultros_calc::list_travel::{TravelLimit, TravelPolicy};
+        let original = travel_ladder_input();
+        let mut source = original.clone();
+        let mut policy = TravelPolicy {
+            limit: TravelLimit::Datacenter,
+            home_world: Some(source.home_world),
+            datacenters: source.datacenters.clone(),
+            ..Default::default()
+        };
+        let apply = |source: &mut ShopInput, policy: &TravelPolicy| {
+            for row in &mut source.rows {
+                row.listings = policy.filter_listings(&row.listings);
+            }
+        };
+        apply(&mut source, &policy);
+        let frontier = candidate_frontier(&source, &BTreeSet::new());
+        assert_eq!(
+            frontier.iter().map(|plan| plan.cost).collect::<Vec<_>>(),
+            vec![200, 160]
+        );
+        assert!(frontier.iter().all(|plan| {
+            planner::itinerary(plan)
+                .keys()
+                .all(|world| policy.allows_world(*world))
+        }));
+
+        source = original.clone();
+        policy.excluded_worlds.insert(1);
+        apply(&mut source, &policy);
+        assert_eq!(candidate_frontier(&source, &BTreeSet::new())[0].cost, 200);
+        source = original;
+        // Only the foreign DC can supply row2: the constrained source must
+        // retain that missing row, even though its offer list becomes empty.
+        source.rows[1].listings.retain(|offer| offer.world_id == 20);
+        policy.excluded_worlds.clear();
+        apply(&mut source, &policy);
+        let partial = candidate_frontier(&source, &BTreeSet::new());
+        assert!(partial.iter().all(|plan| plan.missing == 1));
+        assert_eq!(planner::savings_basis(&partial), None);
+        assert_eq!(planner::marginal_saving_line(&partial, 1), None);
+        assert!(partial.iter().all(|plan| {
+            planner::itinerary(plan)
+                .keys()
+                .all(|world| policy.allows_world(*world))
+        }));
+    }
     #[test]
     fn no_supply_is_explicitly_missing() {
         let mut source = input();
@@ -1072,7 +1525,8 @@ mod tests {
             source: source.clone(),
             plan: plans[2].clone(),
             mode: 2,
-            alternatives: plans,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
         };
         let mut live = source;
         live.rows[0].listings.clear();
@@ -1095,7 +1549,8 @@ mod tests {
             source: source.clone(),
             plan: plans[0].clone(),
             mode: 0,
-            alternatives: plans,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
         };
         let view = snapshot(&trip, &source, 0, true);
         assert!(view.rows[0].can_buy);
@@ -1241,7 +1696,8 @@ mod tests {
             source: source.clone(),
             plan: plans[2].clone(),
             mode: 2,
-            alternatives: plans,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
         };
         let mut live = source;
         for row in &mut live.rows {
@@ -1256,7 +1712,7 @@ mod tests {
         update_build(&mut live);
         assert_eq!(build_estimate(&live).total, 0);
         assert_eq!(build_estimate(&trip.source).total, 121);
-        assert_eq!(trip.plan, trip.alternatives[2]);
+        assert_eq!(trip.plan, plans[2]);
     }
 
     #[test]
@@ -1268,7 +1724,8 @@ mod tests {
             source: source.clone(),
             plan: plans[2].clone(),
             mode: 2,
-            alternatives: plans,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
         };
         let mut live = source;
         live.price_feed = live.price_feed.after_fetch(None);
@@ -1366,17 +1823,18 @@ mod tests {
     #[test]
     fn a_review_leaves_the_active_trip_untouched_until_adopted() {
         let source = input();
-        let (receipts, plans) = replan(None, &source, &BTreeSet::new(), &Receipts::new());
+        let (receipts, plans, _) = replan(None, &source, &BTreeSet::new(), &Receipts::new());
         assert!(receipts.is_empty());
         let trip = Trip {
             source: source.clone(),
             plan: plans[2].clone(),
             mode: 2,
-            alternatives: plans,
+            frontier: Vec::new(),
+            policy: TravelPolicy::default(),
         };
         let mut live = source;
         live.rows[0].listings = vec![listing(3, 1, 3, 1, false)];
-        let (_, refreshed) = replan(Some(&trip), &live, &BTreeSet::new(), &Receipts::new());
+        let (_, refreshed, _) = replan(Some(&trip), &live, &BTreeSet::new(), &Receipts::new());
         assert_eq!(refreshed[2].cost, 3);
         assert_eq!(trip.plan.cost, 30);
         assert_eq!(snapshot(&trip, &live, 0, true).rows[0].cost, 30);

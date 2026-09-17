@@ -51,6 +51,7 @@ mod browser {
     use leptos_router::hooks::{use_navigate, use_params_map};
     use std::collections::HashSet;
     use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
+    use ultros_calc::list_travel::TravelPolicy;
 
     /// The document cannot see uncommitted browser text. Use the same
     /// committed-value boundary as native text Undo, including composer drafts.
@@ -412,10 +413,16 @@ mod browser {
         let busy = RwSignal::new(false);
         let pending_scope = RwSignal::new(None);
         let ticket = StoredValue::new(LookupTicket::default());
-        let shop = RwSignal::new(false);
+        // `?buy=true` reopens Shop after a sign-in round trip, the same way
+        // the account editor reads it, so the handoff keeps the player's mode.
+        let shop = RwSignal::new(query.with_untracked(|q| q.get("buy").as_deref() == Some("true")));
         let shop_mounted = Memo::new(move |previous: Option<&bool>| {
             shop.get() || previous.copied().unwrap_or(false)
         });
+        // Editor-owned travel limit and exclusions (#1480): device lists have
+        // no other exclusion filter, so the policy alone narrows served rows.
+        let travel = crate::components::list_travel_state::use_list_travel();
+        let device_id = StoredValue::new(handle.with_value(|h| h.id()));
         let (home, _) = crate::global_state::home_world::use_home_world();
         let scope = Signal::derive(move || {
             revision.track();
@@ -569,13 +576,8 @@ mod browser {
                     && can_follow
                 {
                     navigate.try_with_value(|go| {
-                        let mode = if shop.get_untracked() {
-                            "&buy=true"
-                        } else {
-                            ""
-                        };
                         go(
-                            &format!("/list/{id}?labs=lists-sync{mode}"),
+                            &travel.online_href(id, shop.get_untracked()),
                             Default::default(),
                         )
                     });
@@ -646,6 +648,7 @@ mod browser {
         let sort = RwSignal::new(None::<SortSpec>);
         let guest_rows = Signal::derive(move || {
             revision.track();
+            let policy = travel.policy.get();
             handle.with_value(|h| {
                 h.rows()
                     .iter()
@@ -653,6 +656,11 @@ mod browser {
                     .map(|item| {
                         let prices = offers
                             .with(|offers| offers.get(&item.item_id).cloned().unwrap_or_default());
+                        let prices = if policy.narrows() {
+                            policy.filter_listings(&prices)
+                        } else {
+                            prices
+                        };
                         (item, prices)
                     })
                     .collect::<Vec<_>>()
@@ -712,7 +720,7 @@ mod browser {
                         <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                    <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() /></Show>
+                    <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
                     <button class="btn-secondary" data-testid="device-list-storage-toggle" on:click=move |_|set_storage_open(true)>{t!(i18n,online_more)}</button>
                     <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
                         <button class="btn-secondary" on:click=move |_| {
@@ -741,12 +749,13 @@ mod browser {
                             {move || if busy.get() && scope.get() == pending_scope.get() { t_string!(i18n, guest_workspace_refreshing).to_string() } else if feed.get().has_prices() { t_string!(i18n, guest_workspace_refresh_prices).to_string() } else { t_string!(i18n, guest_workspace_prices).to_string() }}
                         </button>
                     </div>
+                    <crate::components::list_travel_state::ListTravelPanel state=travel />
                     <Show when=move || !price_error.get().is_empty()><p role="alert" class="text-sm text-red-400" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
                 </Show>
                 // Mounted on first use and then only hidden, so a return to
                 // Build keeps the chosen trip and its recorded stacks.
                 <div class:hidden=move || !shop.get()>
-                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source /></Show>
+                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy /></Show>
                 </div>
                 <div class:hidden=move || shop.get()>
                 {move || if legacy_cart.get() {
@@ -798,7 +807,11 @@ mod browser {
     }
 
     #[component]
-    fn DeviceShop(handle: GuestListHandle, source: ListWorkspaceSource) -> impl IntoView {
+    fn DeviceShop(
+        handle: GuestListHandle,
+        source: ListWorkspaceSource,
+        travel_policy: Signal<TravelPolicy>,
+    ) -> impl IntoView {
         use crate::components::list_shop::{ListShop, ShopInput, ShopRow};
         let i18n = use_i18n();
         let handle = StoredValue::new_local(handle);
@@ -863,7 +876,7 @@ mod browser {
                     }
                 }) on_undo=Callback::new(move |()| {
                     if let Err(e) = handle.with_value(|h| h.apply(Edit::UndoPurchase)) { error.set(e); }
-                }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) />
+                }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) travel_policy />
             </div>
         }
     }
