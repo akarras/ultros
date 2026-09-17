@@ -21,4 +21,6 @@ pub mod sync;
 pub mod undo;
 
 #[cfg(feature = "hydrate")]
+pub mod bridge;
+#[cfg(feature = "hydrate")]
 pub mod guest;

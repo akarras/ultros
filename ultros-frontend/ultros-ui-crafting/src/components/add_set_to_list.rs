@@ -20,6 +20,7 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use ultros_api_types::list::ListItem;
+use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 use xiv_gen::{Item, ItemId};
 
 #[derive(Clone)]
@@ -134,6 +135,35 @@ fn AddSetToListModal(
         });
     };
 
+    // The rows to add at click time: every entry with a non-zero quantity,
+    // HQ only where the item can be. Shared by the account-list buttons and
+    // the device-list section (which ignores `list_id`).
+    let items_to_add = move |list_id: i32| {
+        let hq_only = hq.get_untracked();
+        entry_states
+            .get_value()
+            .iter()
+            .filter_map(|s| {
+                let quantity = s.quantity.get_untracked();
+                if quantity == 0 {
+                    return None;
+                }
+                let can_be_hq = s.item.can_be_hq;
+                Some(ListItem {
+                    id: 0,
+                    item_id: s.item_id.0,
+                    list_id,
+                    hq: Some(hq_only && can_be_hq),
+                    quantity: Some(quantity),
+                    acquired: None,
+                    target_price: None,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let local_items = Callback::new(move |()| items_to_add(0));
+    let close_on_added = Callback::new(move |()| set_visible(false));
+
     view! {
         <Modal set_visible>
             <div class="panel p-6 rounded-xl space-y-4 max-w-2xl">
@@ -227,28 +257,7 @@ fn AddSetToListModal(
                                                         disabled=add_bulk_action.pending()
                                                         on:click=move |_| {
                                                             let list_id = list.id;
-                                                            let hq_only = hq.get_untracked();
-                                                            let items_to_add = entry_states
-                                                                .get_value()
-                                                                .iter()
-                                                                .filter_map(|s| {
-                                                                    let quantity = s.quantity.get_untracked();
-                                                                    if quantity == 0 {
-                                                                        return None;
-                                                                    }
-                                                                    let can_be_hq = s.item.can_be_hq;
-                                                                    Some(ListItem {
-                                                                        id: 0,
-                                                                        item_id: s.item_id.0,
-                                                                        list_id,
-                                                                        hq: Some(hq_only && can_be_hq),
-                                                                        quantity: Some(quantity),
-                                                                        acquired: None,
-                                                                        target_price: None,
-                                                                    })
-                                                                })
-                                                                .collect::<Vec<_>>();
-
+                                                            let items_to_add = items_to_add(list_id);
                                                             if !items_to_add.is_empty() {
                                                                 add_bulk_action.dispatch((list_id, items_to_add));
                                                             }
@@ -275,6 +284,7 @@ fn AddSetToListModal(
                             ))
                         }}
                     </Suspense>
+                    <LocalListTargets build_items=local_items on_added=close_on_added />
                 </div>
             </div>
         </Modal>

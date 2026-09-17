@@ -10,6 +10,7 @@ pub mod guest_alert_evaluator;
 pub mod guest_alerts;
 pub mod home_world;
 pub mod labs;
+pub mod local_lists;
 pub mod local_world_data;
 pub mod notifications;
 pub mod platform;

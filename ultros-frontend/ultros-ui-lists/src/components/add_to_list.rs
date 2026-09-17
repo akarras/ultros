@@ -19,6 +19,7 @@ use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
+use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 
 #[component]
 pub fn AddToList(
@@ -59,6 +60,18 @@ fn AddToListModal(
     let (hq, set_hq) = signal(false);
     let (quantity, set_quantity) = signal(1);
     let quantity_id = move || format!("add-to-list-qty-{}", item_id());
+    // The same row the account-list buttons build, read at click time.
+    let local_items = Callback::new(move |()| {
+        vec![ListItem {
+            id: 0,
+            item_id: item_id.get_untracked(),
+            list_id: 0,
+            hq: Some(hq.get_untracked()),
+            quantity: Some(quantity.get_untracked().max(1)),
+            acquired: None,
+            target_price: None,
+        }]
+    });
 
     view! {
         <Modal set_visible>
@@ -223,6 +236,7 @@ fn AddToListModal(
                             ))
                         }}
                     </Suspense>
+                    <LocalListTargets build_items=local_items />
                 </div>
             </div>
         </Modal>
