@@ -5,18 +5,75 @@ let snapshot = null;
 let opening = null;
 let generation = 0;
 let surface = null;
+let lastCopied = null;
+let themeObserver = null;
 
+// The companion loads the opener's own stylesheet (see adoptTheme), so the
+// app's theme tokens and component classes (`card`, `btn-primary`,
+// `btn-secondary`, `input`, `clipboard`) apply here as on the list page. This
+// sheet only supplies layout, the touch-target floor, and fallbacks for the
+// rare case the app stylesheet fails to load. Class rules from the app
+// stylesheet outrank these element selectors regardless of sheet order.
 const css = `
-:root{color-scheme:dark;font:15px system-ui,sans-serif;background:#111827;color:#f3f4f6}
-*{box-sizing:border-box}body{margin:0;padding:16px}h1{font-size:18px;margin:0 0 6px}
-p{margin:6px 0;color:#cbd5e1;font-size:13px}header{position:sticky;top:0;background:#111827;padding-bottom:12px}
-article{border:1px solid #475569;border-radius:10px;padding:12px;margin:10px 0;background:#1e293b}
-article.done{opacity:.65}h2{font-size:15px;margin:0 0 6px;overflow-wrap:anywhere}
-button,input{font:inherit;border:1px solid #64748b;border-radius:6px;padding:7px;background:#334155;color:white}
-button,input{min-height:44px;min-width:44px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}button:focus-visible,input:focus-visible{outline:3px solid #a5b4fc;outline-offset:2px}
-.actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px}input{width:70px}
-.primary{background:#4338ca}footer{display:flex;gap:8px;margin-top:14px}#notice{min-height:18px;color:#fde68a}
+:root{font:15px system-ui,sans-serif;background:var(--color-background,#111827);color:var(--color-text,#f3f4f6);color-scheme:dark}
+:root[data-theme="light"]{color-scheme:light}
+*{box-sizing:border-box}body{margin:0;padding:16px;background:inherit;color:inherit}h1{font-size:18px;margin:0 0 6px}
+p{margin:6px 0;color:var(--color-text-muted,#cbd5e1);font-size:13px}header{position:sticky;top:0;z-index:1;background:var(--color-background,#111827);padding-bottom:12px}
+article{border:1px solid var(--color-outline,#475569);border-radius:12px;padding:12px;margin:10px 0;background:var(--color-background-elevated,#1e293b)}
+article.done{opacity:.65}.heading{display:flex;align-items:center;gap:8px;min-width:0}h2{flex:1;min-width:0;font-size:15px;margin:0;overflow-wrap:anywhere}
+button,input{font:inherit;border:1px solid var(--color-outline,#64748b);border-radius:8px;padding:7px;background:var(--color-background-elevated,#334155);color:var(--color-text,#fff)}
+button,input{min-height:44px;min-width:44px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}button:focus-visible,input:focus-visible{outline:3px solid var(--brand-ring,#a5b4fc);outline-offset:2px}
+.clipboard{display:inline-flex;align-items:center;justify-content:center;flex:none;padding:0;border:0;background:transparent;color:var(--color-text,#f3f4f6);font-size:1.1rem;border-radius:8px}
+.actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px}input{width:80px}
+footer{display:flex;gap:8px;margin-top:14px}#notice{min-height:18px;font-weight:600;color:var(--color-text,#f3f4f6)}
 `;
+
+// Bootstrap Icons clipboard2-fill / clipboard2-check-fill, the same glyphs the
+// list page's Clipboard control renders (icondata BsClipboard2Fill/CheckFill).
+const CLIPBOARD_ICON = '<path d="M9.5 0a.5.5 0 0 1 .5.5.5.5 0 0 0 .5.5.5.5 0 0 1 .5.5V2a.5.5 0 0 1-.5.5h-5A.5.5 0 0 1 5 2v-.5a.5.5 0 0 1 .5-.5.5.5 0 0 0 .5-.5.5.5 0 0 1 .5-.5z"/><path d="M3.5 1h.585A1.5 1.5 0 0 0 4 1.5V2a1.5 1.5 0 0 0 1.5 1.5h5A1.5 1.5 0 0 0 12 2v-.5q-.001-.264-.085-.5h.585A1.5 1.5 0 0 1 14 2.5v12a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 14.5v-12A1.5 1.5 0 0 1 3.5 1"/>';
+const CLIPBOARD_CHECK_ICON = '<path d="M10 .5a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5.5.5 0 0 1-.5.5.5.5 0 0 0-.5.5V2a.5.5 0 0 0 .5.5h5A.5.5 0 0 0 11 2v-.5a.5.5 0 0 0-.5-.5.5.5 0 0 1-.5-.5"/><path d="M4.085 1H3.5A1.5 1.5 0 0 0 2 2.5v12A1.5 1.5 0 0 0 3.5 16h9a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 12.5 1h-.585q.084.236.085.5V2a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 4 2v-.5q.001-.264.085-.5m6.769 6.854-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 9.793l2.646-2.647a.5.5 0 0 1 .708.708"/>';
+
+const THEME_ATTRIBUTES = ['data-theme', 'data-palette', 'lang'];
+
+// Link the opener's stylesheets into the companion and keep <html>'s theme
+// attributes in step, so a theme or palette change on the list page restyles
+// the companion live. Both windows are same-origin, so the app sheet loads.
+function adoptTheme(opened) {
+  const head = opened.document.head;
+  for (const node of document.querySelectorAll('link[rel~="stylesheet"], style')) {
+    if (node.tagName === 'LINK') {
+      const link = opened.document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = node.href;
+      head.append(link);
+    } else {
+      head.append(node.cloneNode(true));
+    }
+  }
+  const mirror = () => {
+    if (opened.closed) return;
+    for (const name of THEME_ATTRIBUTES) {
+      const value = document.documentElement.getAttribute(name);
+      if (value === null) opened.document.documentElement.removeAttribute(name);
+      else opened.document.documentElement.setAttribute(name, value);
+    }
+  };
+  mirror();
+  themeObserver?.disconnect();
+  themeObserver = new MutationObserver(mirror);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: THEME_ATTRIBUTES });
+}
+
+function icon(copied) {
+  const svg = companion.document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '1em');
+  svg.setAttribute('height', '1em');
+  svg.setAttribute('fill', 'currentColor');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = copied ? CLIPBOARD_CHECK_ICON : CLIPBOARD_ICON;
+  return svg;
+}
 
 function parse(value) {
   const result = JSON.parse(value);
@@ -45,12 +102,10 @@ function dispatch(action, key = '', quantity = 0) {
   catch { notice(label('updateFailed', 'Could not update your list. Try again in the main window.')); }
 }
 
-function button(label, action, disabled = false) {
-  const node = element('button', label);
+function button(label, action, testId, className) {
+  const node = element('button', label, className);
   node.type = 'button';
-  node.disabled = disabled;
-  const testId = { [snapshot?.labels?.copyName ?? 'Copy name']: 'companion-copy', [snapshot?.labels?.bought ?? 'Bought']: 'companion-buy', [snapshot?.labels?.undo ?? 'Undo']: 'companion-undo', [snapshot?.labels?.nextWorld ?? 'Next world']: 'companion-next' }[label];
-  if (testId) node.dataset.testid = testId;
+  node.dataset.testid = testId;
   node.addEventListener('click', action);
   return node;
 }
@@ -74,8 +129,8 @@ function makeSurface() {
   const rows = element('div');
   const empty = element('p');
   const footer = element('footer');
-  const undo = button(label('undo', 'Undo'), () => dispatch('undo'));
-  const next = button(label('nextWorld', 'Next world'), () => dispatch('next'));
+  const undo = button(label('undo', 'Undo'), () => dispatch('undo'), 'companion-undo', 'btn-secondary');
+  const next = button(label('nextWorld', 'Next world'), () => dispatch('next'), 'companion-next', 'btn-secondary');
   footer.append(undo, next);
   main.append(header, rows, empty, footer);
   companion.document.body.replaceChildren(main);
@@ -83,19 +138,28 @@ function makeSurface() {
 }
 
 function makeRow(key) {
-  const article = element('article');
+  const article = element('article', undefined, 'card');
   article.dataset.key = key;
+  const heading = element('div', undefined, 'heading');
   const name = element('h2');
   const description = element('p');
   const actions = element('div', undefined, 'actions');
   const entry = { article, name, description, actions, row: null, dirty: false };
-  entry.copy = button(label('copyName', 'Copy name'), async () => {
+  // The list page's Clipboard control: icon-only beside the name, checkmark
+  // once this name is the most recently copied text.
+  entry.copy = button(undefined, async () => {
+    const text = String(entry.row.name);
     try {
-      await companion.navigator.clipboard.writeText(String(entry.row.name));
+      await companion.navigator.clipboard.writeText(text);
+      lastCopied = text;
       notice(label('copied', 'Item name copied.'));
+      render();
     } catch { notice(label('clipboardUnavailable', 'Clipboard unavailable. Select and copy the item name above.')); }
-  });
-  entry.quantity = element('input');
+  }, 'companion-copy', 'clipboard');
+  entry.copy.replaceChildren(icon(false));
+  entry.copied = false;
+  heading.append(name, entry.copy);
+  entry.quantity = element('input', undefined, 'input');
   entry.quantity.type = 'number';
   entry.quantity.min = '1';
   entry.quantity.step = '1';
@@ -117,11 +181,10 @@ function makeRow(key) {
     }
     entry.dirty = false;
     dispatch('bought', key, amount);
-  });
-  entry.bought.className = 'primary';
+  }, 'companion-buy', 'btn-primary');
   entry.earlier = element('p');
-  actions.append(entry.copy, entry.quantity, entry.bought, entry.earlier);
-  article.append(name, description, actions);
+  actions.append(entry.quantity, entry.bought, entry.earlier);
+  article.append(heading, description, actions);
   return entry;
 }
 
@@ -152,10 +215,19 @@ function render() {
     const key = String(row.key);
     const entry = surface.entries.get(key) ?? makeRow(key);
     entry.row = row;
-    entry.article.className = row.done ? 'done' : '';
+    entry.article.className = row.done ? 'card done' : 'card';
     entry.name.textContent = row.name;
     entry.description.textContent = row.description ?? `${row.quality || label('anyQuality', 'Any quality')} · ${row.quantity} remaining${row.cost == null ? '' : ` · ${row.cost} gil expected`}${row.done ? ' · Done' : ''}`;
-    entry.copy.textContent = label('copyName', 'Copy name');
+    const copied = lastCopied !== null && String(row.name) === lastCopied;
+    entry.copy.setAttribute('aria-label', copied ? label('copied', 'Item name copied.') : label('copyName', 'Copy name'));
+    entry.copy.title = label('copyName', 'Copy name');
+    if (copied) entry.copy.dataset.copied = 'true';
+    else delete entry.copy.dataset.copied;
+    // Swap the glyph only on a state change so focus and hit-testing stay put.
+    if (entry.copied !== copied) {
+      entry.copied = copied;
+      entry.copy.replaceChildren(icon(copied));
+    }
     entry.bought.textContent = label('bought', 'Bought');
     entry.quantity.max = String(row.quantity);
     entry.quantity.setAttribute('aria-label', row.quantityLabel ?? `Quantity purchased: ${row.name}`);
@@ -243,11 +315,12 @@ export async function openCompanion(initial, onAction) {
     surface = null;
     opened.__ultrosMode = mode;
     opened.document.head.replaceChildren();
+    adoptTheme(opened);
     const style = element('style', css);
     opened.document.head.append(style);
     opened.document.documentElement.lang = document.documentElement.lang || 'en';
     opened.addEventListener('pagehide', () => {
-      if (companion === opened) { companion = null; callback = null; surface = null; }
+      if (companion === opened) { companion = null; callback = null; surface = null; themeObserver?.disconnect(); themeObserver = null; }
     }, { once: true });
     render();
     return mode;
@@ -264,6 +337,9 @@ export function closeCompanion() {
   surface = null;
   callback = null;
   snapshot = null;
+  lastCopied = null;
+  themeObserver?.disconnect();
+  themeObserver = null;
   if (opened && !opened.closed) opened.close();
 }
 

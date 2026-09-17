@@ -7,9 +7,13 @@ const http = require('node:http');
 (async () => {
   const { default: puppeteer } = await import('puppeteer');
   const source = fs.readFileSync(path.join(__dirname, '../ultros/static/list-companion.mjs'));
+  // The opener carries the app's theme: a linked stylesheet, an inline style and
+  // the `data-theme` / `data-palette` attributes the real page sets on <html>.
+  const opener = '<!doctype html><html data-theme="light" data-palette="ascian"><head><link rel="stylesheet" href="/theme.css"><style id="inline-probe">.probe{color:red}</style></head><body><button id="open">Open</button></body></html>';
   const server = http.createServer((request, response) => {
-    response.setHeader('Content-Type', request.url === '/companion.mjs' ? 'text/javascript' : 'text/html');
-    response.end(request.url === '/companion.mjs' ? source : '<!doctype html><button id="open">Open</button>');
+    const kind = { '/companion.mjs': 'text/javascript', '/theme.css': 'text/css' }[request.url] ?? 'text/html';
+    response.setHeader('Content-Type', kind);
+    response.end({ '/companion.mjs': source, '/theme.css': ':root{--companion-probe:1}' }[request.url] ?? opener);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   let browser;
@@ -40,6 +44,34 @@ const http = require('node:http');
     await popup.waitForSelector('[data-testid="companion-buy"]');
     assert.equal(await popup.$eval('h1', (node) => node.textContent), '<img src=x onerror=alert(1)>');
     assert.equal(await popup.$$eval('img,script', (nodes) => nodes.length), 0);
+    stage = 'companion adopts the opener theme';
+    // Same-origin windows can load the app stylesheet directly, so the popout
+    // uses the real theme tokens and component classes instead of its own palette.
+    await popup.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--companion-probe').trim() === '1');
+    assert.equal(await popup.$$eval('link[rel="stylesheet"]', (nodes) => nodes.filter((node) => node.href.endsWith('/theme.css')).length), 1, 'opener stylesheets are linked once');
+    assert.equal(await popup.$$eval('style#inline-probe', (nodes) => nodes.length), 1, 'inline opener styles are cloned');
+    assert.deepEqual(await popup.evaluate(() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette]), ['light', 'ascian']);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; document.documentElement.dataset.palette = 'ultros'; });
+    await popup.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.palette === 'ultros');
+    assert.equal(await popup.$$eval('article', (nodes) => nodes.map((node) => node.className)).then((classes) => classes.every((name) => name.split(' ').includes('card'))), true, 'rows use the app card surface');
+    assert.equal(await popup.$eval('[data-testid="companion-buy"]', (node) => node.classList.contains('btn-primary')), true);
+    assert.equal(await popup.$eval('[data-testid="companion-next"]', (node) => node.classList.contains('btn-secondary')), true);
+    assert.equal(await popup.$eval('input', (node) => node.classList.contains('input')), true);
+    stage = 'clipboard control matches the list rows';
+    // The list rows show the Clipboard icon control beside each name: an
+    // icon-only button whose icon flips to the checkmark once copied.
+    const copy = '[data-testid="companion-copy"]';
+    assert.equal(await popup.$eval(copy, (node) => node.classList.contains('clipboard') && node.querySelector('svg') !== null && node.textContent.trim() === ''), true, 'copy is an icon-only clipboard button');
+    assert.equal(await popup.$eval(copy, (node) => node.getAttribute('aria-label')), 'Copy name');
+    assert.equal(await popup.$eval(copy, (node) => node.closest('article').querySelector('h2 + *') === node), true, 'clipboard sits beside the item name');
+    assert.equal(await popup.$eval(copy, (node) => node.dataset.copied), undefined);
+    await popup.evaluate(() => { window.copies = []; navigator.clipboard.writeText = (text) => { window.copies.push(text); return Promise.resolve(); }; });
+    await popup.click(copy);
+    await popup.waitForFunction(() => document.querySelector('[data-testid="companion-copy"]').dataset.copied === 'true');
+    assert.deepEqual(await popup.evaluate(() => window.copies), ['<script>unsafe()</script>']);
+    assert.equal(await popup.$eval('#notice', (node) => node.textContent), 'Item name copied.');
+    await page.evaluate(() => api.updateCompanion(JSON.stringify(data)));
+    assert.equal(await popup.$eval(copy, (node) => node.dataset.copied), 'true', 'copied state survives an update');
     await popup.$eval('input', (node) => { node.value = '2'; });
     await popup.click('[data-testid="companion-buy"]');
     assert.deepEqual(await page.evaluate(() => events), [['bought', 'item:1', 2]]);
@@ -60,7 +92,7 @@ const http = require('node:http');
     assert.equal(await page.evaluate(() => events.length), 3);
     // Locale changes flow through the owning view without changing action IDs.
     await page.evaluate(() => {
-      data.labels = { bought: 'Acheté', undo: 'Annuler', nextWorld: 'Monde suivant', copyName: 'Copier le nom', keepOpen: 'Gardez cet onglet ouvert.' };
+      data.labels = { bought: 'Acheté', undo: 'Annuler', nextWorld: 'Monde suivant', copyName: 'Copier le nom', copied: 'Nom copié.', keepOpen: 'Gardez cet onglet ouvert.' };
       data.rows[0].canBuy = true;
       data.rows[0].description = 'HQ · 3 restants · 100 gils';
       data.rows[0].quantityLabel = 'Quantité achetée';
@@ -69,6 +101,7 @@ const http = require('node:http');
     });
     assert.equal(await popup.$eval('[data-testid="companion-buy"]', (node) => node.textContent), 'Acheté');
     assert.equal(await popup.$eval('input', (node) => node.getAttribute('aria-label')), 'Quantité achetée');
+    assert.equal(await popup.$eval(copy, (node) => node.getAttribute('aria-label')), 'Nom copié.', 'the copied row announces its state in the active locale');
     assert.match(await popup.$eval('article', (node) => node.textContent), /100 gils/);
     await popup.$eval('input', (node) => { node.value = '4'; });
     await popup.click('[data-testid="companion-buy"]');
