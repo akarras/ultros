@@ -2777,22 +2777,65 @@ pub fn ListViewSync() -> impl IntoView {
 /// tracked so moving between lists builds a fresh page and document.
 #[component]
 pub fn ListRoute() -> impl IntoView {
-    let sync = use_lab(LAB_LISTS_SYNC);
+    // Decided once per mount, not tracked: the Labs flag only changes
+    // together with a route change (every `?labs=` link targets another
+    // route, and the cookie is set on the Labs page). Tracking it made the
+    // route view rebuild a whole list page while the router was already
+    // leaving `/list/:id` for a URL that carried the flag; that page's owner
+    // was disposed at once, but its `<Title>` stayed on leptos_meta's stack
+    // and panicked the client on the next navigation (GlitchTip #7389).
+    let sync = use_lab(LAB_LISTS_SYNC).get_untracked();
     let params = use_params_map();
     let id = Memo::new(move |_| params.with(|p| p.get("id").unwrap_or_default()));
-    move || {
-        id.track();
-        if sync.get() {
-            view! { <ListViewSync /> }.into_any()
-        } else {
-            view! { <ListView /> }.into_any()
-        }
+    move || match list_route_view(id.try_get(), sync) {
+        ListRouteView::Sync => view! { <ListViewSync /> }.into_any(),
+        ListRouteView::Legacy => view! { <ListView /> }.into_any(),
+        ListRouteView::Leaving => ().into_any(),
+    }
+}
+
+/// Which page the `/list/:id` route builds for the URL it currently sees.
+#[derive(Debug, PartialEq, Eq)]
+enum ListRouteView {
+    Sync,
+    Legacy,
+    /// The router is on its way out of this route: its params already
+    /// describe the next match (no `id`), or the route's own memo is gone.
+    /// Rebuilding a list page here is wasted work at best; at worst it
+    /// registers a `<Title>` whose closure outlives the page.
+    Leaving,
+}
+
+fn list_route_view(id: Option<String>, sync: bool) -> ListRouteView {
+    match id {
+        Some(id) if !id.is_empty() && sync => ListRouteView::Sync,
+        Some(id) if !id.is_empty() => ListRouteView::Legacy,
+        _ => ListRouteView::Leaving,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Leaving `/list/:id` re-runs the route view with the next match's
+    /// params before the old page is dropped; that run must not build a page.
+    #[test]
+    fn list_route_builds_nothing_once_the_router_is_leaving() {
+        assert_eq!(
+            list_route_view(Some("24".into()), true),
+            ListRouteView::Sync
+        );
+        assert_eq!(
+            list_route_view(Some("24".into()), false),
+            ListRouteView::Legacy
+        );
+        assert_eq!(
+            list_route_view(Some(String::new()), true),
+            ListRouteView::Leaving
+        );
+        assert_eq!(list_route_view(None, true), ListRouteView::Leaving);
+    }
 
     fn permission_reply(permission: ListPermission) -> ListViewResult {
         Ok((

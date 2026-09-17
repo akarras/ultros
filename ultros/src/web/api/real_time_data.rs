@@ -105,6 +105,21 @@ where
     }))
 }
 
+/// A `SubscribeList` for a list that does not exist is answered on that one
+/// subscription; the socket stays up for everything else it carries (market
+/// feeds, notifications, other lists). Propagating the lookup error instead
+/// closed the whole socket and logged a fatal "List not found" for what is
+/// ordinary client state: a page still subscribed to a list deleted from
+/// another tab, or a stale id replayed on reconnect. Other lookup failures
+/// (database down) are still fatal for the socket.
+fn list_lookup_rejection(error: &anyhow::Error, list_id: i32) -> Option<String> {
+    use ultros_db::lists::ListError;
+    match error.downcast_ref::<ListError>() {
+        Some(ListError::NotFound) => Some(format!("list {list_id}: {}", ListError::NotFound)),
+        _ => None,
+    }
+}
+
 pub(crate) async fn real_time_data(
     ws: WebSocketUpgrade,
     user: Result<AuthDiscordUser, ApiError>,
@@ -370,7 +385,27 @@ async fn handle_socket(
                                         let user_id =
                                             user.as_ref().map(|u| u.id as i64).unwrap_or(0);
                                         let permission =
-                                            db.get_permission(list_id, user_id).await?;
+                                            match db.get_permission(list_id, user_id).await {
+                                                Ok(permission) => permission,
+                                                Err(error) => {
+                                                    let Some(message) =
+                                                        list_lookup_rejection(&error, list_id)
+                                                    else {
+                                                        return Err(error.into());
+                                                    };
+                                                    info!(list_id, "rejecting list subscription");
+                                                    subscriptions.remove(subscription_id);
+                                                    sender
+                                                        .send(Message::Text(
+                                                            serde_json::to_string(
+                                                                &ServerClient::Error { message },
+                                                            )?
+                                                            .into(),
+                                                        ))
+                                                        .await?;
+                                                    continue;
+                                                }
+                                            };
                                         if permission >= ListPermission::Read {
                                             let relay_db = db.clone();
                                             let stream = BroadcastStream::new(lists.resubscribe())
@@ -924,6 +959,20 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use tokio::sync::{broadcast, oneshot};
     use ultros_api_types::alert::AlertEvent;
+
+    /// The reply uses the wording the client's `classify_error` already
+    /// recognises as NotFound, so a still-subscribed page treats it like a
+    /// deleted list rather than a lost connection.
+    #[test]
+    fn missing_list_subscription_is_answered_instead_of_closing_the_socket() {
+        let missing = anyhow::Error::from(ultros_db::lists::ListError::NotFound);
+        assert_eq!(
+            list_lookup_rejection(&missing, 9).as_deref(),
+            Some("list 9: List not found")
+        );
+        let outage = anyhow::anyhow!("connection reset by peer");
+        assert!(list_lookup_rejection(&outage, 9).is_none());
+    }
 
     fn notification_event(owner: i64, alert_id: i32) -> EventType<Arc<NotificationEvent>> {
         EventType::added(NotificationEvent {

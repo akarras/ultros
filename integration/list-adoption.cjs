@@ -146,6 +146,17 @@ async function main() {
     await page.click(tid('list-redo'));await waitValue(page,needed,5);
     await page.waitForFunction(()=>document.querySelector('[data-testid="account-list-save-state"]')?.textContent==='Saved on this device');
     await load(page,first+'?labs=lists-sync');assert.equal(await online(page),firstId);await waitValue(page,needed,5);
+    // GlitchTip #7389: leaving /list/:id client-side re-runs the route view with
+    // the next match's params before the old page is dropped. The stale rebuild
+    // used to register a title closure over disposed signals, which panicked the
+    // client on the following navigation (creating a device list here).
+    await page.evaluate(()=>{history.pushState({},'','/list?labs=lists-sync');dispatchEvent(new PopStateEvent('popstate',{state:{}}));});
+    await page.waitForSelector(tid('list-new'));
+    await page.click(tid('list-new'));await replace(page,tid('device-list-name'),`Leave online ${Date.now()}`);await page.click(tid('device-list-create'));
+    await page.waitForFunction(()=>location.pathname.startsWith('/list/device/'));
+    await page.waitForSelector('input[aria-label="Add an item"]');
+    assert.deepEqual(errors,[],'client-side navigation away from an online list must not panic');
+    console.log('[ok] leaving an online list client-side and creating a device list keeps the app alive');
     await load(page,'/list?labs=lists-sync');await page.waitForSelector(tid('lists-grid'));
     await page.waitForFunction(id=>document.querySelectorAll(`a[href="/list/${id}"]`).length>0,{},firstId);
     assert.equal((await api(page,'GET','/api/v1/list')).data.filter(l=>l.list.id===firstId).length,1);

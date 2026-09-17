@@ -354,13 +354,17 @@ pub(crate) fn ListCard(
 
 #[component]
 pub fn EditLists() -> impl IntoView {
-    let enabled = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
+    // Decided once per mount, like `ListRoute`: tracking the flag rebuilt
+    // the other index variant inside this route while the router was
+    // already leaving for a URL without (or with) `?labs=`.
+    let enabled = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC)
+        .get_untracked();
     let i18n = use_i18n();
     view! {
         <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
-        <Show when=move || enabled.get() fallback=|| view! { <LegacyEditLists /> }>
+        <Show when=move || enabled fallback=|| view! { <LegacyEditLists /> }>
             <crate::routes::guest_lists::DeviceLists />
         </Show>
     }
