@@ -30,7 +30,20 @@ anyhow.workspace = true
 rexie = "0.6"
 any_spawner = "0.3"
 console_log = { version = "1.0.0", features = ["color"] }
-web-sys = { version = "0.3", features = ["HtmlDocument", "Document", "Window", "Event", "EventTarget"] }
+web-sys = { version = "0.3", features = [
+    "HtmlDocument",
+    "Document",
+    "Window",
+    "Event",
+    "EventTarget",
+    "DomStringList",
+    "IdbDatabase",
+    "IdbFactory",
+    "IdbObjectStore",
+    "IdbObjectStoreParameters",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+] }
 
 [features]
 default = ["hydrate"]

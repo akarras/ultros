@@ -41,10 +41,10 @@ where
 
 async fn open_transaction(rexie: &Rexie) -> Result<(Transaction, Store)> {
     let transaction = rexie
-        .transaction(&["game_data"], TransactionMode::ReadWrite)
+        .transaction(&[GAME_DATA_STORE], TransactionMode::ReadWrite)
         .map_err(|e| anyhow!("failed to open db {e}"))?;
     let game_data = transaction
-        .store("game_data")
+        .store(GAME_DATA_STORE)
         .map_err(|e| anyhow!("failed to open store {e}"))?;
     Ok((transaction, game_data))
 }
@@ -159,22 +159,143 @@ async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Game-data cache schema. `ensure_game_data_schema` and `try_build_db` must
+/// describe the same database, so that by the time rexie opens it there is
+/// nothing left to upgrade (see `ensure_game_data_schema`).
+const GAME_DATA_DB: &str = "ultros";
+const GAME_DATA_DB_VERSION: u32 = 1;
+const GAME_DATA_STORE: &str = "game_data";
+const GAME_DATA_KEY_PATH: &str = "version";
+
+/// Opens — and, on first visit, creates — the game-data database with plain
+/// `web-sys` calls before rexie touches it, then closes the connection.
+///
+/// rexie delegates to the `idb` crate, whose `upgradeneeded` handler is a
+/// chain of `.expect()`s, starting with casting `event.target` to
+/// `IDBOpenDBRequest`. That handler runs inside a JS event callback, so no
+/// `Result` on our side can catch it: a partial IndexedDB implementation
+/// (the Lightpanda crawler dispatches the event with a bare `IDBRequest` as
+/// its target) panics the whole wasm module before hydration starts
+/// (GlitchTip #7391, 100+ events/day). Doing the schema creation here keeps
+/// every step on a `Result` path — the upgrade handler never reads
+/// `event.target`, it uses the request it captured — and leaves the database
+/// at `GAME_DATA_DB_VERSION` with the store in place, so rexie's own open
+/// finds nothing to upgrade and its handler never fires. Any failure means
+/// "no usable IndexedDB here" and the caller fetches the data uncached.
+async fn ensure_game_data_schema() -> Result<()> {
+    use futures::channel::oneshot;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+    use web_sys::{IdbDatabase, IdbObjectStoreParameters, IdbOpenDbRequest};
+
+    let factory = web_sys::window()
+        .ok_or_else(|| anyhow!("no window"))?
+        .indexed_db()
+        .map_err(|e| anyhow!("indexedDB unavailable: {e:?}"))?
+        .ok_or_else(|| anyhow!("indexedDB unavailable"))?;
+    let request = factory
+        .open_with_u32(GAME_DATA_DB, GAME_DATA_DB_VERSION)
+        .map_err(|e| anyhow!("failed to open db: {e:?}"))?;
+
+    // Whichever of the handlers fires first settles the outcome; the rest
+    // find the sender gone and do nothing.
+    let (tx, rx) = oneshot::channel::<Result<()>>();
+    let tx = Rc::new(RefCell::new(Some(tx)));
+    let settle = {
+        let tx = tx.clone();
+        move |outcome: Result<()>| {
+            if let Some(tx) = tx.borrow_mut().take() {
+                let _ = tx.send(outcome);
+            }
+        }
+    };
+
+    fn database_of(request: &IdbOpenDbRequest) -> Result<IdbDatabase> {
+        request
+            .result()
+            .map_err(|e| anyhow!("open request has no result: {e:?}"))?
+            .dyn_into::<IdbDatabase>()
+            .map_err(|value| anyhow!("open request result is not an IDBDatabase: {value:?}"))
+    }
+
+    let on_upgrade = {
+        let request = request.clone();
+        let settle = settle.clone();
+        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
+            let created = database_of(&request).and_then(|db| {
+                if db.object_store_names().contains(GAME_DATA_STORE) {
+                    return Ok(());
+                }
+                let params = IdbObjectStoreParameters::new();
+                params.set_key_path(&JsValue::from_str(GAME_DATA_KEY_PATH));
+                db.create_object_store_with_optional_parameters(GAME_DATA_STORE, &params)
+                    .map(|_| ())
+                    .map_err(|e| anyhow!("failed to create object store: {e:?}"))
+            });
+            // Only a failure settles here: success is reported by `onsuccess`
+            // once the versionchange transaction has committed.
+            if let Err(e) = created {
+                settle(Err(e));
+            }
+        })
+    };
+    let on_success = {
+        let request = request.clone();
+        let settle = settle.clone();
+        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
+            settle(database_of(&request).map(|db| db.close()));
+        })
+    };
+    let on_error = {
+        let settle = settle.clone();
+        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
+            settle(Err(anyhow!("open request failed")));
+        })
+    };
+    let on_blocked = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
+        settle(Err(anyhow!("open request blocked by another connection")));
+    });
+    request.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
+    request.set_onsuccess(Some(on_success.as_ref().unchecked_ref()));
+    request.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+    request.set_onblocked(Some(on_blocked.as_ref().unchecked_ref()));
+
+    let outcome = rx
+        .await
+        .map_err(|_| anyhow!("open request dropped without settling"))?;
+
+    // Detach before the closures drop so a late event can't call into freed
+    // handlers.
+    request.set_onupgradeneeded(None);
+    request.set_onsuccess(None);
+    request.set_onerror(None);
+    request.set_onblocked(None);
+    outcome
+}
+
 async fn try_build_db() -> Result<Rexie> {
-    Rexie::builder("ultros")
-        .version(1)
-        .add_object_store(ObjectStore::new("game_data").key_path("version"))
+    ensure_game_data_schema().await?;
+    Rexie::builder(GAME_DATA_DB)
+        .version(GAME_DATA_DB_VERSION)
+        .add_object_store(ObjectStore::new(GAME_DATA_STORE).key_path(GAME_DATA_KEY_PATH))
         .build()
         .await
         .map_err(|e| anyhow!("failed to build db {e}"))
 }
 
 pub async fn try_populate_xiv_gen_data() -> anyhow::Result<()> {
-    if let Ok(rexie) = try_build_db().await {
-        if let Err(_e) = retry(|| try_populate_xiv_gen_data_internal(&rexie), 3).await {
+    match try_build_db().await {
+        Ok(rexie) => {
+            if let Err(e) = retry(|| try_populate_xiv_gen_data_internal(&rexie), 3).await {
+                error!("game data cache unusable, fetching uncached: {e}");
+                let _ = init_data().await?;
+            }
+        }
+        Err(e) => {
+            info!("IndexedDB unavailable, fetching game data uncached: {e}");
             let _ = init_data().await?;
         }
-    } else {
-        let _ = init_data().await?;
     }
     // Need to trigger a reactive update here if data() changed
     // In practice try_init already updates the atomic XIV_DATA state
