@@ -3728,8 +3728,11 @@ name = "icon-extract"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "csv",
  "image",
  "ironworks",
+ "serde",
+ "serde_json",
  "texture2ddecoder",
 ]
 
