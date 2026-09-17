@@ -17,11 +17,13 @@ pub mod selection;
 
 use std::collections::{HashMap, HashSet};
 
+use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
+use crate::components::icon::Icon;
 use crate::components::list::filter_row::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -595,8 +597,8 @@ pub fn ListCart(
                 <div class="flex flex-wrap items-center gap-2 text-sm">
                     <button type="button" class="btn-ghost" aria-expanded=move || source.recipe_open.get().to_string() on:click=move |_| source.toggle_recipe.run(())>{t!(i18n, lists_workspace_add_recipe)}</button>
                     <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
-                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() title=move || (!source.can_undo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_undo).to_string()) on:click=move |_| on_undo.run(())>{t!(i18n, lists_workspace_undo)}</button>
-                    <button type="button" class="btn-ghost disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() title=move || (!source.can_redo.get()).then(|| t_string!(i18n, lists_workspace_nothing_to_redo).to_string()) on:click=move |_| on_redo.run(())>{t!(i18n, lists_workspace_redo)}</button>
+                    <button type="button" class="btn-ghost h-10 w-10 shrink-0 p-0 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() aria-label=t_string!(i18n, lists_workspace_undo) title=move || if source.can_undo.get() { t_string!(i18n, lists_workspace_undo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_undo).to_string() } on:click=move |_| on_undo.run(())><Icon icon=i::BiUndoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
+                    <button type="button" class="btn-ghost h-10 w-10 shrink-0 p-0 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() aria-label=t_string!(i18n, lists_workspace_redo) title=move || if source.can_redo.get() { t_string!(i18n, lists_workspace_redo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_redo).to_string() } on:click=move |_| on_redo.run(())><Icon icon=i::BiRedoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=on_add_many /></Show>
             </Show>
