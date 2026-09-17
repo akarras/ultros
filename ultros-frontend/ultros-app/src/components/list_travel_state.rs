@@ -116,9 +116,9 @@ impl ListTravelState {
 
 fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
     let mut query = ParamsMap::new();
-    query.replace("labs", "lists-sync");
+    query.replace("labs", "lists-sync".to_string());
     if shop {
-        query.replace("buy", "true");
+        query.replace("buy", "true".to_string());
     }
     // Carry only list-view settings. Device recovery/promotion flags must not
     // be replayed on the account route after the same-list handoff.
@@ -139,7 +139,7 @@ fn online_href(list_id: i32, shop: bool, source: &ParamsMap) -> String {
 
 fn device_continue_href(device_id: &str, shop: bool, source: &ParamsMap) -> String {
     let mut query = view_query(shop, source);
-    query.replace("make_online", "1");
+    query.replace("make_online", "1".to_string());
     format!("/list/device/{device_id}{}", query.to_query_string())
 }
 
@@ -169,11 +169,11 @@ mod tests {
     #[test]
     fn online_handoff_keeps_travel_and_exclusions_without_device_flags() {
         let mut source = ParamsMap::new();
-        source.replace("travel", "dc");
-        source.replace("excluded-worlds", "1,9");
-        source.replace("excluded-datacenters", "Other & DC");
-        source.replace("recovery", "1");
-        source.replace("make_online", "1");
+        source.replace("travel", "dc".to_string());
+        source.replace("excluded-worlds", "1,9".to_string());
+        source.replace("excluded-datacenters", "Other & DC".to_string());
+        source.replace("recovery", "1".to_string());
+        source.replace("make_online", "1".to_string());
         let href = online_href(42, true, &source);
         assert!(href.starts_with("/list/42?"));
         assert!(href.contains("travel=dc"));
