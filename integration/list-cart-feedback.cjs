@@ -101,6 +101,9 @@ async function run(browser) {
   async function exercise(kind, viewport) {
     const prefix = `${kind}-${viewport}`;
     await page.waitForSelector(cart);
+    // The composer mounts once the document reports it is writable, which an
+    // account list resolves after its access check.
+    await page.waitForSelector(addQuantity);
     await replace(addQuantity, "0");
     await assertInvalid(addQuantity);
     await replace(search, "Bronze Ingot");

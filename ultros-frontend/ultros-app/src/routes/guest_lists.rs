@@ -715,7 +715,7 @@ mod browser {
                     </div>
                     <div class="flex flex-wrap gap-2">
                     <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() /></Show>
-                    <button class="btn-secondary" data-testid="device-list-storage-toggle" on:click=move |_|set_storage_open(true)>{t!(i18n,online_more)}</button>
+                    <button class="btn-secondary inline-flex min-h-11 min-w-11 items-center justify-center !px-2" data-testid="device-list-storage-toggle" aria-label=move || t_string!(i18n,online_more).to_string() title=move || t_string!(i18n,online_more).to_string() aria-haspopup="dialog" on:click=move |_|set_storage_open(true)><crate::components::icon::Icon icon=icondata::BsThreeDotsVertical aria_hidden=true /></button>
                     <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
                         <button class="btn-secondary" on:click=move |_| {
                             apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
@@ -761,6 +761,7 @@ mod browser {
                     <h2 class="text-xl font-bold">{t!(i18n,online_more)}</h2>
                     <div class="space-y-3 pt-3">
                         <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                        <crate::routes::guest_list_adoption::DeviceListSeparateUpload handle=handle.get_value() on_connect=Callback::new(move |()| set_storage_open(false)) />
                         <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_backup_warning)}</p>
                         <div class="flex flex-wrap gap-2">
                             <button class="btn-secondary" data-testid="device-list-export" on:click=move |_| {

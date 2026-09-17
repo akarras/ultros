@@ -284,6 +284,7 @@ pub fn CartRow(
     let details_name = name.clone();
     let remove_name = name.clone();
     let panel_name = name.clone();
+    let copy_name = name.clone();
     let panel_controls = details_id.clone();
     view! {
         <li class=format!("{ROW_GRID} border-b border-[color:var(--color-outline)] last:border-b-0 hover:bg-[color:var(--color-background-panel)] transition-colors") class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=initial.item_id data-row-id=id>
@@ -291,6 +292,8 @@ pub fn CartRow(
             <div class="order-2 flex min-w-0 items-center gap-2">
                 <ItemIcon item_id=initial.item_id icon_size=IconSize::Small />
                 <span class="truncate font-semibold" title=name.clone()>{name.clone()}</span>
+                // Copy the name for the in-game market board search.
+                <span class="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] [&_button]:flex [&_button]:h-7 [&_button]:w-7 [&_button]:items-center [&_button]:justify-center" data-testid="cart-copy-name"><crate::components::clipboard::Clipboard clipboard_text=Signal::derive(move || copy_name.clone()) /></span>
             </div>
             <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate" data-price-state=move || line.with(|line| match line.as_ref().map(|line|line.status) {
                 Some(LineStatus::NotRequested) | None => "not-requested",
