@@ -67,6 +67,11 @@ async function runShopAvailability(page, { url, listId, readProjection }) {
     }, { listId, snapshot: Buffer.from(fixture.future).toString("base64") });
     await closed;
     assert(popup.isClosed(), "companion closes on document availability loss without route navigation");
+    await page.waitForSelector(tid("list-recovery"), { visible: true });
+    await page.waitForSelector(tid("list-compatibility-export"), { visible: true });
+    assert.equal(await page.$eval(tid("guest-shop-mode"), button => button.getAttribute("aria-pressed")), "true", "recovery is visible before leaving Shop");
+    assert.equal((await page.$$(tid("list-recovery"))).length, 1, "one active recovery panel serves both modes");
+    assert.equal((await page.$$(tid("list-compatibility-export"))).length, 1, "one original-snapshot export is available");
     const artifactDir = require("node:path").join(__dirname, "artifacts", "device-build-prices");
     require("node:fs").mkdirSync(artifactDir, { recursive: true });
     await page.screenshot({ path: require("node:path").join(artifactDir, "shop-incompatible-before-build.png"), fullPage: true });
@@ -74,6 +79,7 @@ async function runShopAvailability(page, { url, listId, readProjection }) {
     assert.equal(await page.$(tid("open-shopping-companion")), null, "unavailable document cannot reopen companion");
     await page.locator(tid("guest-build-mode")).click();
     await page.waitForSelector(tid("list-compatibility-export"), { visible: true });
+    assert.equal((await page.$$(tid("list-recovery"))).length, 1, "switching modes does not duplicate recovery");
     assert.equal(await page.$(tid("list-estimate-total")), null, "unavailable Build must not claim 0 gil");
     await new Promise(resolve => setTimeout(resolve, 600));
     assert.deepEqual(await readProjection(), before, "compatibility failure must not write purchases or replace the server list");

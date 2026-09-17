@@ -140,6 +140,8 @@ pub fn InlineListAdd(
     let search = RwSignal::new(String::new());
     let committed_search = RwSignal::new(String::new());
     let quantity = RwSignal::new("1".to_string());
+    let invalid_quantity =
+        Memo::new(move |_| !crate::components::cart::row::valid_numeric_value(0, &quantity.get()));
     let quality = RwSignal::new("any".to_string());
     let committed_quantity = RwSignal::new("1".to_string());
     let committed_quality = RwSignal::new("any".to_string());
@@ -205,20 +207,25 @@ pub fn InlineListAdd(
                             if let Some((id, _, can_hq, _)) = results.get_untracked().first() { add.run((*id, *can_hq)); }
                         }
                     } />
-                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) prop:value=quantity data-committed=move || quantity.get() data-handoff-committed=move || committed_quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) on:keydown=move |ev| {
+                <input type="number" min="1" max=i32::MAX class="input w-24" aria-label=t_string!(i18n, lists_workspace_add_quantity) aria-invalid=move || invalid_quantity.get().to_string() aria-describedby=move || invalid_quantity.get().then_some("list-add-quantity-error") prop:value=quantity data-committed=move || quantity.get() data-handoff-committed=move || committed_quantity.get() on:input=move |ev| quantity.set(event_target_value(&ev)) on:keydown=move |ev| {
                     if ev.key() == "Escape" { quantity.set(committed_quantity.get_untracked()); ev.stop_propagation(); }
                 } />
                 <select class="input" aria-label=t_string!(i18n, lists_workspace_add_quality) prop:value=quality data-handoff-committed=move || committed_quality.get() on:change=move |ev| quality.set(event_target_value(&ev)) on:keydown=move |ev| {
                     if ev.key() == "Escape" { quality.set(committed_quality.get_untracked()); ev.stop_propagation(); }
                 }><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
             </div>
+            <Show when=move || invalid_quantity.get()><p id="list-add-quantity-error" role="alert" class="mt-2 text-sm text-red-300">{move || if crate::components::cart::row::numeric_value_too_large(0, &quantity.get()) {
+                t_string!(i18n, cart_number_too_large).to_string()
+            } else {
+                t_string!(i18n, cart_quantity_invalid).to_string()
+            }}</p></Show>
             <p class="text-sm mt-2 text-[color:var(--color-text-muted)]" role="status">{feedback}</p>
             <Show when=move || !search.get().trim().is_empty()>
                 <div class="mt-3 max-h-80 overflow-y-auto divide-y divide-[color:var(--color-outline)]" aria-label=t_string!(i18n, lists_workspace_catalog_results)>
                     <Show when=move || results.get().is_empty()><p class="p-3 text-sm">{t!(i18n, lists_workspace_no_items)}</p></Show>
                     <For each=move || results.get() key=|item| item.0 children=move |(id, name, can_hq, _)| view! {
                         <div class="flex items-center gap-3 py-2"><ItemIcon item_id=id icon_size=IconSize::Small /><span class="flex-1 min-w-0">{name.clone()}</span>
-                            <button class="btn-primary" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) disabled={move || pending.get() || quantity.get().parse::<i32>().map_or(true, |q| q < 1)} on:click=move |_| add.run((id, can_hq))>{t!(i18n, lists_workspace_add)}</button>
+                            <button class="btn-primary" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) disabled={move || pending.get() || invalid_quantity.get()} on:click=move |_| add.run((id, can_hq))>{t!(i18n, lists_workspace_add)}</button>
                         </div>
                     } />
                 </div>
@@ -462,6 +469,7 @@ pub struct ListWorkspaceSource {
     /// for — the scope the prices are *for*, not the one currently picked.
     pub scope_name: Signal<Option<String>>,
     pub hide_acquired: Signal<bool>,
+    pub reset_filters: Callback<()>,
     pub can_write: Signal<bool>,
     pub edit: Callback<ListItem>,
     pub remove: Callback<i32>,
@@ -2032,6 +2040,7 @@ pub fn ListViewSync() -> impl IntoView {
                 .map(|result| result.get_name().to_string())
         }),
         hide_acquired: hide_acquired.into(),
+        reset_filters: Callback::new(move |()| set_hide_acquired_param.set(None)),
         can_write: Signal::derive(move || view_caps.with(|c| c.can_write)),
         edit: Callback::new(move |item| {
             edit_item.dispatch(item);
@@ -2258,6 +2267,13 @@ pub fn ListViewSync() -> impl IntoView {
                     }
                 }}
             </Show>
+
+            // Recovery belongs to the active document in either mode. An
+            // incompatible snapshot intentionally makes estimates unavailable,
+            // so readiness must not hide its explanation and original export.
+            {move || handle.get()
+                .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
+                .map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
 
             // Shop mounts the first time it is opened and then stays mounted
             // but hidden, so returning to Build keeps the chosen trip, its
@@ -2549,7 +2565,6 @@ pub fn ListViewSync() -> impl IntoView {
                                                                 </Tooltip>
                                                             </div>
                                                         </div>
-                                                        {move || handle.get().map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
                                                     </div>
 
                                                     <Show when=move || legacy_cart.get() && view_caps.with(|c| c.can_write)>

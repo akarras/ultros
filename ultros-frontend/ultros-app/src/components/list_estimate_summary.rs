@@ -230,8 +230,8 @@ mod tests {
                 estimate.lines.last_mut().unwrap().status =
                     ultros_calc::list_estimate::LineStatus::NotRequested;
                 let status = status_text(i18n, feed, &estimate);
-                assert!(status.contains("1 items"));
-                assert!(status.contains("price lookup"));
+                assert!(status.contains("Price lookup needed: 1"));
+                assert!(status.contains("Unpriced units:"));
                 assert!(!status.contains("No listed prices"));
                 if estimate.total > 0 {
                     assert!(status.contains("Known subtotal only"));
@@ -248,6 +248,7 @@ mod tests {
         let _ = any_spawner::Executor::init_futures_executor();
         type StockRows = &'static [(i32, i32, i32)];
         let cases: &[(&str, StockRows, Option<i64>, i64, usize)] = &[
+            ("one unpriced unit", &[(2, 0, 1)], Some(10), 1, 0),
             ("one partial", &[(5, 0, 2)], Some(20), 3, 0),
             ("all partial", &[(5, 0, 2), (4, 0, 1)], Some(30), 6, 0),
             (
@@ -287,12 +288,12 @@ mod tests {
                 if missing > 0 && total.is_some() {
                     assert!(status.contains("Known subtotal only"), "{name}");
                     assert!(
-                        status.contains(&format!("{missing} units still unpriced")),
+                        status.contains(&format!("Unpriced units: {missing}")),
                         "{name}"
                     );
                     assert!(
                         status.contains(&format!(
-                            "{fully_priced} of {} items fully priced",
+                            "Fully priced items: {fully_priced}/{}",
                             rows.len()
                         )),
                         "{name}"

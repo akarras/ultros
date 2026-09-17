@@ -18,6 +18,7 @@ pub mod selection;
 use std::collections::{HashMap, HashSet};
 
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
@@ -30,6 +31,58 @@ use crate::routes::list_view_sync::{InlineListAdd, InlineRecipeAdd, ListWorkspac
 use feedback::{CartFeedback, Removal, focus_after_removal};
 use row::{CartRow, ROW_GRID, focus_element, quantity_input_id, remove_button_id};
 use selection::{CartSelectionBar, retain_present};
+
+/// Identify rows changed after the editor first opens, including a duplicate
+/// add that increases an existing row. Price refreshes never highlight rows.
+///
+/// Only the device editor (a hydrate-only module) calls this; the SSR-only
+/// build of this crate has no caller.
+#[cfg(feature = "hydrate")]
+pub fn use_changed_row_highlight(
+    rows: Signal<Vec<(ListItem, Vec<ActiveListing>)>>,
+) -> Signal<HashSet<i32>> {
+    use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
+    type Snapshot = HashMap<i32, (Option<i32>, Option<i32>)>;
+    let previous = StoredValue::new(None::<Snapshot>);
+    let highlighted = RwSignal::new(HashSet::<i32>::new());
+    let timer = StoredValue::new(None::<TimeoutHandle>);
+    on_cleanup(move || {
+        if let Some(timer) = timer.get_value() {
+            timer.clear();
+        }
+    });
+    Effect::new(move |_| {
+        let current: Snapshot = rows.with(|rows| {
+            rows.iter()
+                .map(|(row, _)| (row.id, (row.quantity, row.acquired)))
+                .collect()
+        });
+        if let Some(previous) = previous.get_value() {
+            let changed: HashSet<i32> = current
+                .iter()
+                .filter(|(id, value)| previous.get(*id) != Some(*value))
+                .map(|(id, _)| *id)
+                .collect();
+            if !changed.is_empty() {
+                highlighted.set(changed);
+                if let Some(timer) = timer.get_value() {
+                    timer.clear();
+                }
+                timer.set_value(
+                    set_timeout_with_handle(
+                        move || {
+                            highlighted.try_update(HashSet::clear);
+                        },
+                        std::time::Duration::from_millis(1500),
+                    )
+                    .ok(),
+                );
+            }
+        }
+        previous.set_value(Some(current));
+    });
+    highlighted.into()
+}
 
 /// Whether an event target is one of the cart's editors (a control whose
 /// row must stay visible while it has focus), as opposed to a button.
@@ -192,6 +245,28 @@ fn parse_sort_option(value: &str) -> Option<SortSpec> {
 /// The list is mounted once, independently of resource revisions. Row
 /// identity is the document row key; each cell reads its current value
 /// from its own memo, so a remote update never rebuilds an editor.
+/// The toast text for one add: the quantity and name for a single item, a
+/// count for a recipe's ingredients.
+fn added_message(i18n: I18nContext<Locale, I18nKeys>, items: &[ListItem]) -> String {
+    match items {
+        [item] => {
+            let name = tracked_data()
+                .items
+                .get(&ItemId(item.item_id))
+                .map(|i| i.name.to_string())
+                .unwrap_or_default();
+            t_string!(
+                i18n,
+                cart_added_named,
+                quantity = item.quantity.unwrap_or(1),
+                name = name
+            )
+            .to_string()
+        }
+        _ => t_string!(i18n, cart_added_count, count = items.len()).to_string(),
+    }
+}
+
 #[component]
 pub fn ListCart(
     source: ListWorkspaceSource,
@@ -409,12 +484,21 @@ pub fn ListCart(
         bump();
         source.edit.run(item);
     });
-    let on_add = Callback::new(move |item| {
+    // Adding confirms through the global toast: the new row usually lands
+    // below the fold, so the composer alone gives no visible feedback.
+    let toasts = crate::global_state::toasts::use_toast();
+    let on_add = Callback::new(move |item: ListItem| {
         bump();
+        if let Some(toasts) = toasts {
+            toasts.success(added_message(i18n, std::slice::from_ref(&item)));
+        }
         source.add.run(item);
     });
-    let on_add_many = Callback::new(move |items| {
+    let on_add_many = Callback::new(move |items: Vec<ListItem>| {
         bump();
+        if let Some(toasts) = toasts {
+            toasts.success(added_message(i18n, &items));
+        }
         source.add_many.run(items);
     });
     let on_set_quality_many = Callback::new(move |(ids, hq): (Vec<i32>, Option<bool>)| {
@@ -501,7 +585,11 @@ pub fn ListCart(
     let qty_label = Signal::derive(move || t_string!(i18n, cart_qty).to_string());
     let cost_label = Signal::derive(move || t_string!(i18n, cart_est_cost).to_string());
     view! {
-        <section class="space-y-3" data-testid="list-cart">
+        // Wide screens put the composer beside the rows instead of above
+        // them, so search results and the recipe panel never push the list
+        // below the fold; the composer column sticks while the rows scroll.
+        <section class="space-y-3 xl:grid xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)] xl:items-start xl:gap-4 xl:space-y-0" data-testid="list-cart">
+            <div class="space-y-3 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto" class:hidden=move || !source.can_write.get() data-testid="list-cart-composer">
             <Show when=move || source.can_write.get()>
                 <InlineListAdd list_id=source.list_id on_add=on_add pending=source.pending feedback=source.feedback />
                 <div class="flex flex-wrap items-center gap-2 text-sm">
@@ -512,6 +600,8 @@ pub fn ListCart(
                 </div>
                 <Show when=move || source.recipe_open.get()><InlineRecipeAdd list_id=source.list_id on_add=on_add_many /></Show>
             </Show>
+            </div>
+            <div class="space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
             <Show when=move || source.estimate_available.get()>
                 <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name />
             </Show>
@@ -605,6 +695,16 @@ pub fn ListCart(
                 <Show when=move || is_empty.get()>
                     <p class="px-4 py-6 text-center text-sm text-[color:var(--color-text-muted)]">{t!(i18n, cart_empty)}</p>
                 </Show>
+                <Show when=move || !is_empty.get() && visible_ids.with(|ids| ids.is_empty())>
+                    <div class="space-y-2 px-4 py-6 text-center text-sm" data-testid="cart-no-matches">
+                        <p role="status">{t!(i18n, cart_no_matches)}</p>
+                        <button type="button" class="btn-ghost" on:click=move |_| {
+                            filter.set(String::new());
+                            source.reset_filters.run(());
+                        }>{t!(i18n, cart_clear_filters)}</button>
+                    </div>
+                </Show>
+            </div>
             </div>
         </section>
     }
