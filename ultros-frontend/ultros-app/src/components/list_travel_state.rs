@@ -1,5 +1,10 @@
 //! Editor-owned URL settings. Both list editors filter the successfully
 //! served rows with this policy before their single coverage-aware estimate.
+// TODO(#1480): not yet consumed. Both list editors (`routes::list_view` and
+// `routes::guest_lists`) still have to call `use_list_travel` in their owner,
+// render `ListTravelPanel`, filter served rows with `policy` before the
+// coverage-aware estimate, and pass `travel_policy` into `ListShop`.
+#![allow(dead_code)]
 use crate::{
     components::{app_link::use_query_map_or_default, list_travel_controls::ListTravelControls},
     global_state::{home_world::use_home_world, use_world_helper},
