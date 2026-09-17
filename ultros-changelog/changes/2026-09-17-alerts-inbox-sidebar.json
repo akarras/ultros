@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "One Alerts entry in the sidebar",
+  "blurb": "The separate Alerts link and the notification Inbox were two doors to the same place. The sidebar now has a single Alerts button (bell icon) in the bottom cluster that opens your notifications, with Manage alerts inside it for the full alerts page.",
+  "link": "/alerts"
+}
