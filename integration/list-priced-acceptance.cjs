@@ -84,6 +84,9 @@ async function main() {
       refreshFailed: /refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent || ""),
     }));
     await click(tid("guest-shop-mode")); await click(tid("shop-cheapest"));
+    // With a trip already active, a quick pick is reviewed before adoption
+    // (#1480); the reference must describe the adopted source.
+    if (await page.$(tid("shop-review-apply"))) await click(tid("shop-review-apply"));
     await page.waitForSelector(tid("shop-build-reference"));
     await page.$eval(tid("shop-estimate"), details => { details.open = true; });
     assert((await page.$eval(tid("shop-build-reference"), node => node.textContent)).includes(`Build estimate: ${build.total} (`), "Shop reference exactly matches actual Build total");
