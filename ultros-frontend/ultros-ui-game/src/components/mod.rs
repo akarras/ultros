@@ -12,6 +12,7 @@ pub mod stats_display;
 pub mod ui_text;
 pub mod world_name;
 pub mod world_picker;
+pub mod zone_map;
 pub use ultros_ui::components::app_link;
 pub use ultros_ui::components::gil;
 pub use ultros_ui::components::hover_card;

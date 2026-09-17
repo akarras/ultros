@@ -27,6 +27,10 @@ web-sys = { version = "0.3", features = [
     "Element",
     "HtmlElement",
     "Storage",
+    "DomRect",
+    "MouseEvent",
+    "PointerEvent",
+    "WheelEvent",
 ] }
 xiv-gen = { workspace = true }
 

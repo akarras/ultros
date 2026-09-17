@@ -28,6 +28,7 @@ pub mod list_view;
 pub mod list_view_sync;
 pub mod lists;
 pub mod not_found;
+pub mod npc_view;
 pub mod recipe_analyzer;
 pub mod recipe_view;
 pub mod retainer_live;

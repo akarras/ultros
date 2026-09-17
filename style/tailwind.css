@@ -1131,6 +1131,23 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     @apply text-amber-800;
 }
 
+/* Zone map (NPC pages): a pin is centred on its coordinate, so the dot marks
+   the exact spot however far the map is zoomed. */
+.zone-map-pin {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+.zone-map-pin-dot {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: #f59e0b;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35), 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
 /* Light-mode text utility fixes for contrast */
 [data-theme="light"] .text-gray-300,
 [data-theme="light"] .text-slate-300,

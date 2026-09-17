@@ -13,9 +13,26 @@ pub fn read_data(lang: Language) -> Data {
     )
 }
 
+/// Data that exists in no CSV sheet and is folded into the pack at generation.
+#[derive(Debug, Default, Clone)]
+pub struct Supplements {
+    /// Every NPC placement extracted from the client, keyed by `ENpcBase` id
+    /// (which equals the `ENpcResident` id). Only the NPCs the app can show —
+    /// gil-shop vendors and leve issuers — make it into the pack.
+    pub npc_placements: HashMap<ENpcResidentId, Vec<NpcPlacement>>,
+    /// Leve id -> issuing NPCs, from Teamcraft's hand-kept levemete table.
+    pub leve_issuers: HashMap<LeveId, Vec<ENpcResidentId>>,
+}
+
 /// Reads `lang` from an ffxiv-datamining tree rooted at `root`, i.e. a directory
-/// containing `csv/<lang>/*.csv`.
+/// containing `csv/<lang>/*.csv`, with no supplements: `npc_placements` and
+/// `leve_issuers` come out empty.
 pub fn read_data_from(root: &Path, lang: Language) -> Data {
+    read_data_with(root, lang, &Supplements::default())
+}
+
+/// [`read_data_from`] plus the client-derived `supplements`.
+pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) -> Data {
     let base_path = match lang {
         // The ko fork keeps its CSVs one level deeper than its siblings do.
         Language::Ko => root.join("csv").join("ko").join("csv"),
@@ -77,6 +94,30 @@ pub fn read_data_from(root: &Path, lang: Language) -> Data {
         &e_npc_residents,
         &gil_shops,
     );
+    let leves: HashMap<LeveId, Leve> = read_csv_to_map(&format!("{}Leve.csv", base_path));
+    let leve_issuers: HashMap<LeveId, Vec<ENpcResidentId>> = supplements
+        .leve_issuers
+        .iter()
+        .filter(|(leve, _)| leves.contains_key(leve))
+        .map(|(leve, npcs)| {
+            let mut npcs: Vec<_> = npcs
+                .iter()
+                .copied()
+                .filter(|npc| e_npc_residents.contains_key(npc))
+                .collect();
+            npcs.sort_unstable_by_key(|n| n.0);
+            npcs.dedup();
+            (*leve, npcs)
+        })
+        .filter(|(_, npcs)| !npcs.is_empty())
+        .collect();
+    let npc_placements = shown_npc_placements(
+        &supplements.npc_placements,
+        gil_shop_npcs
+            .values()
+            .flatten()
+            .chain(leve_issuers.values().flatten()),
+    );
     Data {
         items: read_csv_to_map(&format!("{}Item.csv", base_path)),
         recipes: read_csv_to_map(&format!("{}Recipe.csv", base_path)),
@@ -84,7 +125,7 @@ pub fn read_data_from(root: &Path, lang: Language) -> Data {
         class_job_categorys: read_csv_to_map(&format!("{}ClassJobCategory.csv", base_path)),
         base_params: read_csv_to_map(&format!("{}BaseParam.csv", base_path)),
         special_shops: read_csv_to_map(&format!("{}SpecialShop.csv", base_path)),
-        leves: read_csv_to_map(&format!("{}Leve.csv", base_path)),
+        leves,
         leve_reward_items: read_csv_to_map(&format!("{}LeveRewardItem.csv", base_path)),
         leve_reward_item_groups: read_csv_to_map(&format!("{}LeveRewardItemGroup.csv", base_path)),
         e_npc_residents,
@@ -136,7 +177,39 @@ pub fn read_data_from(root: &Path, lang: Language) -> Data {
             base_path
         )),
         craft_leves: read_csv_to_map(&format!("{}CraftLeve.csv", base_path)),
+        place_names: read_csv_to_map(&format!("{}PlaceName.csv", base_path)),
+        // Ids and numbers only, so the English sheet serves every language
+        // (the forks' header layout leaves some of these columns unnamed).
+        maps: read_csv_to_map(&format!("{en_path}Map.csv")),
+        territory_types: read_csv_to_map(&format!("{en_path}TerritoryType.csv")),
+        npc_placements,
+        leve_issuers,
     }
+}
+
+/// The placements of just the NPCs in `shown`, each list sorted so the pack
+/// is independent of extraction order.
+fn shown_npc_placements<'a>(
+    all: &HashMap<ENpcResidentId, Vec<NpcPlacement>>,
+    shown: impl Iterator<Item = &'a ENpcResidentId>,
+) -> HashMap<ENpcResidentId, Vec<NpcPlacement>> {
+    let mut out: HashMap<ENpcResidentId, Vec<NpcPlacement>> = HashMap::new();
+    for npc in shown {
+        if out.contains_key(npc) {
+            continue;
+        }
+        if let Some(placements) = all.get(npc).filter(|p| !p.is_empty()) {
+            let mut placements = placements.clone();
+            placements.sort_by(|a, b| {
+                (a.territory.0, a.map.0, a.festival_id)
+                    .cmp(&(b.territory.0, b.map.0, b.festival_id))
+                    .then(a.x.total_cmp(&b.x))
+                    .then(a.y.total_cmp(&b.y))
+            });
+            out.insert(*npc, placements);
+        }
+    }
+    out
 }
 
 /// Invert `ENpcBase.ENpcData` into `gil_shop -> npcs`.
@@ -318,6 +391,12 @@ fn classify_availability(
     VendorAvailability::Open
 }
 
+/// Reads every row of one sheet. Public so the pack generator can read the
+/// sheets it needs for client extraction (`TerritoryType`, `Map`) the same way.
+pub fn read_sheet<T: FromCsv>(path: &Path) -> Vec<T> {
+    read_csv_vec(&path.display().to_string())
+}
+
 fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -382,6 +461,38 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shown_placements_keep_only_named_npcs_and_sort_them() {
+        let p = |t: i32, x: f32, y: f32| NpcPlacement {
+            map: MapId(1),
+            territory: TerritoryTypeId(t),
+            x,
+            y,
+            festival_id: 0,
+        };
+        let all = HashMap::from([
+            (
+                ENpcResidentId(7),
+                vec![p(2, 5.0, 5.0), p(1, 9.0, 1.0), p(1, 3.0, 8.0)],
+            ),
+            (ENpcResidentId(8), vec![p(1, 1.0, 1.0)]),
+            (ENpcResidentId(9), vec![]),
+        ]);
+        let shown = [
+            ENpcResidentId(7),
+            ENpcResidentId(9),
+            ENpcResidentId(7),
+            ENpcResidentId(42),
+        ];
+        let out = shown_npc_placements(&all, shown.iter());
+        assert_eq!(out.len(), 1);
+        let xs: Vec<_> = out[&ENpcResidentId(7)]
+            .iter()
+            .map(|p| (p.territory.0, p.x))
+            .collect();
+        assert_eq!(xs, vec![(1, 3.0), (1, 9.0), (2, 5.0)]);
+    }
 
     /// `Out of Sight`, the sightseeing-log achievement behind the Paintings —
     /// the largest group of achievement-gated marketable rows, and one any

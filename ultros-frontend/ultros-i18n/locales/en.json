@@ -2495,5 +2495,17 @@
     "online_invite_group": "Group",
     "online_invite_user": "Discord user",
     "online_account_required": "Sign in to the account connected to this list.",
-    "online_finish_edit": "Finish or cancel your edit to continue online."
+    "online_finish_edit": "Finish or cancel your edit to continue online.",
+    "npc_page_title": "{{ name }} – NPC vendor",
+    "npc_page_desc": "Where to find {{ name }} ({{ zone }}) in FFXIV and everything they sell for gil.",
+    "npc_not_found": "No NPC with this id.",
+    "npc_location_title": "Location",
+    "npc_location_none_long": "No fixed location: this NPC is spawned inside a player estate or by an event.",
+    "npc_location_seasonal": "Seasonal event",
+    "npc_sells_title": "Sells",
+    "npc_no_items": "This NPC has no gil shop.",
+    "npc_shop_unnamed": "Shop",
+    "npc_map_zoom_in": "Zoom in",
+    "npc_map_zoom_out": "Zoom out",
+    "npc_map_reset": "Reset view"
 }

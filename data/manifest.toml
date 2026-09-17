@@ -33,4 +33,4 @@ sha = "e203c7e46dd80fd2a967e5741b30e3c9fad0c767"
 checkout_subdir = "csv/tc"
 
 [icons]
-game_version = "2026.09.01.0000.0000"
+game_version = "2026.09.15.0000.0000"

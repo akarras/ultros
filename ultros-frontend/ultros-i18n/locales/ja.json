@@ -2495,5 +2495,17 @@
     "online_invite_group": "グループ",
     "online_invite_user": "Discordユーザー",
     "online_account_required": "このリストに接続したアカウントでログインしてください。",
-    "online_finish_edit": "オンラインで続けるには、編集中の内容を確定またはキャンセルしてください。"
+    "online_finish_edit": "オンラインで続けるには、編集中の内容を確定またはキャンセルしてください。",
+    "npc_page_title": "{{ name }} – NPCショップ",
+    "npc_page_desc": "FFXIVで{{ name }}（{{ zone }}）がいる場所と、ギルで販売しているすべてのアイテム。",
+    "npc_not_found": "このIDのNPCは存在しません。",
+    "npc_location_title": "場所",
+    "npc_location_none_long": "固定の場所はありません。このNPCはハウジング内またはイベント時に出現します。",
+    "npc_location_seasonal": "季節イベント",
+    "npc_sells_title": "販売品",
+    "npc_no_items": "このNPCにはギルショップがありません。",
+    "npc_shop_unnamed": "ショップ",
+    "npc_map_zoom_in": "拡大",
+    "npc_map_zoom_out": "縮小",
+    "npc_map_reset": "表示をリセット"
 }

@@ -2495,5 +2495,17 @@
     "online_invite_group": "그룹",
     "online_invite_user": "Discord 사용자",
     "online_account_required": "이 목록에 연결된 계정으로 로그인하세요.",
-    "online_finish_edit": "온라인으로 계속하려면 편집을 완료하거나 취소하세요."
+    "online_finish_edit": "온라인으로 계속하려면 편집을 완료하거나 취소하세요.",
+    "npc_page_title": "{{ name }} – NPC 상점",
+    "npc_page_desc": "FFXIV에서 {{ name }}({{ zone }})의 위치와 길로 판매하는 모든 아이템.",
+    "npc_not_found": "해당 ID의 NPC가 없습니다.",
+    "npc_location_title": "위치",
+    "npc_location_none_long": "고정된 위치가 없습니다. 이 NPC는 플레이어 하우징 내부나 이벤트 중에 등장합니다.",
+    "npc_location_seasonal": "계절 이벤트",
+    "npc_sells_title": "판매",
+    "npc_no_items": "이 NPC에게는 길 상점이 없습니다.",
+    "npc_shop_unnamed": "상점",
+    "npc_map_zoom_in": "확대",
+    "npc_map_zoom_out": "축소",
+    "npc_map_reset": "보기 초기화"
 }

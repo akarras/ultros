@@ -2495,5 +2495,17 @@
     "online_invite_group": "Gruppe",
     "online_invite_user": "Discord-Nutzer",
     "online_account_required": "Melde dich bei dem Konto an, das mit dieser Liste verbunden ist.",
-    "online_finish_edit": "Beende oder verwirf deine Eingabe, um online fortzufahren."
+    "online_finish_edit": "Beende oder verwirf deine Eingabe, um online fortzufahren.",
+    "npc_page_title": "{{ name }} – NPC-Händler",
+    "npc_page_desc": "Wo {{ name }} ({{ zone }}) in FFXIV zu finden ist und alles, was dort für Gil verkauft wird.",
+    "npc_not_found": "Kein NPC mit dieser ID.",
+    "npc_location_title": "Standort",
+    "npc_location_none_long": "Kein fester Standort: Dieser NPC erscheint in einem Spielerhaus oder bei einem Event.",
+    "npc_location_seasonal": "Saisonales Event",
+    "npc_sells_title": "Verkauft",
+    "npc_no_items": "Dieser NPC hat keinen Gil-Laden.",
+    "npc_shop_unnamed": "Laden",
+    "npc_map_zoom_in": "Vergrößern",
+    "npc_map_zoom_out": "Verkleinern",
+    "npc_map_reset": "Ansicht zurücksetzen"
 }

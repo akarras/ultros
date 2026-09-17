@@ -43,6 +43,7 @@ pub(crate) async fn sitemap_index() -> Result<Xml, WebError> {
     let sitemap_list = vec![
         Sitemap::new("https://ultros.app/sitemap/pages.xml".to_string(), None),
         Sitemap::new("https://ultros.app/sitemap/items.xml".to_string(), None),
+        Sitemap::new("https://ultros.app/sitemap/npcs.xml".to_string(), None),
     ];
 
     let index = SitemapIndex::new(sitemap_list)?;
@@ -329,5 +330,38 @@ pub(crate) async fn item_sitemap(
     items
         .write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating site map"))?;
+    Ok(Xml(url_xml))
+}
+
+/// `/npc/<id>` for every NPC that offers a gil shop, ascending. Their pages
+/// are static game data, so they sit at one low, weekly priority.
+pub(crate) fn npc_page_ids(data: &xiv_gen::Data) -> Vec<i32> {
+    let mut ids: Vec<i32> = data
+        .gil_shop_npcs
+        .values()
+        .flatten()
+        .map(|npc| npc.0)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+pub(crate) async fn npc_sitemap() -> Result<Xml, WebError> {
+    let urls = UrlSet::new(
+        npc_page_ids(xiv_gen_db::data())
+            .into_iter()
+            .map(|id| {
+                Url::builder(format!("https://ultros.app/npc/{id}"))
+                    .change_frequency(ChangeFrequency::Weekly)
+                    .priority(0.4)
+                    .build()
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("Error generating npc sitemap: {e}"))?,
+    )?;
+    let mut url_xml = Vec::new();
+    urls.write(&mut url_xml)
+        .map_err(|_| anyhow!("Error creating npc site map"))?;
     Ok(Xml(url_xml))
 }
