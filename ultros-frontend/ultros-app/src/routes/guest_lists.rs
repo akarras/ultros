@@ -37,6 +37,18 @@ pub fn GuestListRoute() -> impl IntoView {
     }
 }
 
+/// Editor URL for a freshly created device list. `online` appends the
+/// `make_online=1` flag that `DeviceListAdoption` resumes in the editor, so
+/// the upload reuses the same consent and scope handling as "Make online".
+#[cfg(any(feature = "hydrate", test))]
+fn device_list_href(id: &str, online: bool) -> String {
+    if online {
+        format!("/list/device/{id}?labs=lists-sync&make_online=1")
+    } else {
+        format!("/list/device/{id}?labs=lists-sync")
+    }
+}
+
 #[cfg(feature = "hydrate")]
 mod browser {
     use super::*;
@@ -882,5 +894,26 @@ mod browser {
                 }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) travel_policy />
             </div>
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_list_opens_the_plain_device_editor() {
+        assert_eq!(
+            device_list_href("abc-123", false),
+            "/list/device/abc-123?labs=lists-sync"
+        );
+    }
+
+    #[test]
+    fn online_list_resumes_make_online_in_the_editor() {
+        assert_eq!(
+            device_list_href("abc-123", true),
+            "/list/device/abc-123?labs=lists-sync&make_online=1"
+        );
     }
 }
