@@ -21,11 +21,14 @@ pub fn DeviceLists() -> impl IntoView {
 #[component]
 pub fn GuestListRoute() -> impl IntoView {
     let i18n = use_i18n();
-    let enabled = use_lab(LAB_LISTS_SYNC);
+    // Read once per mount, like `ListRoute`: the flag only changes with the
+    // route, and tracking it rebuilt this view inside a route the router was
+    // already leaving.
+    let enabled = use_lab(LAB_LISTS_SYNC).get_untracked();
     let ready = RwSignal::new(false);
     Effect::new(move |_| ready.set(true));
     move || {
-        if !enabled.get() {
+        if !enabled {
             return view! { <p>{t!(i18n, guest_workspace_enable)}</p> }.into_any();
         }
         ready.track();
@@ -340,6 +343,12 @@ mod browser {
         let account_required = RwSignal::new(false);
         Effect::new(move |_| {
             let id = params.with(|p| p.get("device_id").unwrap_or_default());
+            // The router is leaving this route: its params already describe
+            // the next match. The editor's own cleanup closes the handle, so
+            // opening "" here would only report a missing list on the way out.
+            if id.is_empty() {
+                return;
+            }
             if let Some(old) = loaded.get_untracked() {
                 old.close();
             }
