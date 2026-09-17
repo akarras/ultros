@@ -535,6 +535,10 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     ws::realtime::provide_realtime_context();
     provide_inbox();
     provide_guest_alerts();
+    // The device-list runtime only exists in a browser tab; without it the
+    // add-to-list modals offer account lists only.
+    #[cfg(feature = "hydrate")]
+    list_doc::bridge::provide_local_lists();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]

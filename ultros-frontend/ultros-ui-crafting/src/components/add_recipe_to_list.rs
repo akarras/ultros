@@ -12,6 +12,7 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use ultros_api_types::list::ListItem;
+use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 use xiv_gen::{Item, ItemId, Recipe};
 
 #[derive(Clone)]
@@ -91,6 +92,35 @@ fn AddRecipeToListModal(
         let items = items.clone();
         bulk_add_item_to_list(*list_id, items)
     });
+
+    // The rows to add at click time: every ingredient with a non-zero
+    // quantity, HQ only where the item can be. Shared by the account-list
+    // buttons and the device-list section (which ignores `list_id`).
+    let items_to_add = move |list_id: i32| {
+        let hq_only = hq.get_untracked();
+        ingredients
+            .get_value()
+            .iter()
+            .filter_map(|i| {
+                let quantity = i.quantity.get_untracked();
+                if quantity == 0 {
+                    return None;
+                }
+                let can_be_hq = i.item.can_be_hq;
+                Some(ListItem {
+                    id: 0,
+                    item_id: i.item_id.0,
+                    list_id,
+                    hq: Some(hq_only && can_be_hq),
+                    quantity: Some(quantity),
+                    acquired: None,
+                    target_price: None,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let local_items = Callback::new(move |()| items_to_add(0));
+    let close_on_added = Callback::new(move |()| set_visible(false));
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = add_bulk_action.value().get() {
@@ -223,28 +253,7 @@ fn AddRecipeToListModal(
                                                         disabled=add_bulk_action.pending()
                                                         on:click=move |_| {
                                                             let list_id = list.id;
-                                                            let hq_only = hq.get_untracked();
-                                                            let items_to_add = ingredients
-                                                                .get_value()
-                                                                .iter()
-                                                                .filter_map(|i| {
-                                                                    let quantity = i.quantity.get_untracked();
-                                                                    if quantity == 0 {
-                                                                        return None;
-                                                                    }
-                                                                    let can_be_hq = i.item.can_be_hq;
-                                                                    Some(ListItem {
-                                                                        id: 0,
-                                                                        item_id: i.item_id.0,
-                                                                        list_id,
-                                                                        hq: Some(hq_only && can_be_hq),
-                                                                        quantity: Some(quantity),
-                                                                        acquired: None,
-                                                                        target_price: None,
-                                                                    })
-                                                                })
-                                                                .collect::<Vec<_>>();
-
+                                                            let items_to_add = items_to_add(list_id);
                                                             if !items_to_add.is_empty() {
                                                                 add_bulk_action.dispatch((list_id, items_to_add));
                                                             }
@@ -271,6 +280,7 @@ fn AddRecipeToListModal(
                             ))
                         }}
                     </Suspense>
+                    <LocalListTargets build_items=local_items on_added=close_on_added />
                 </div>
             </div>
         </Modal>

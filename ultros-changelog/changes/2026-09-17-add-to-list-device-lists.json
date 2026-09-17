@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Add to a device list (or a brand-new one) straight from any Add to List dialog",
+  "blurb": "With the Lists: local-first sync lab switched on, the Add to List dialogs on items, recipes and gear sets now offer the lists saved on this device alongside your account lists. Need a list you don't have yet? Type a name at the bottom of the dialog and it's created on your device with the items already in it.",
+  "importance": "medium"
+}
