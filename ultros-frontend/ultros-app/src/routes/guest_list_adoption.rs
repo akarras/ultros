@@ -99,7 +99,13 @@ mod browser {
     /// or open the online copy a list already has. A list is presented once;
     /// the device bytes stay as a backup behind the storage menu.
     #[component]
-    pub fn DeviceListAdoption(handle: GuestListHandle) -> impl IntoView {
+    pub fn DeviceListAdoption(
+        handle: GuestListHandle,
+        /// Sign-in return target that keeps the editor's travel and Shop
+        /// settings; defaults to the plain device URL.
+        #[prop(optional)]
+        continuation: Option<Signal<String>>,
+    ) -> impl IntoView {
         let i18n = use_i18n();
         let Adoption {
             handle,
@@ -155,7 +161,10 @@ mod browser {
                             }.into_any()
                         },
                         _ => view! {
-                            <a class="btn-primary inline-flex items-center gap-2" data-testid="device-list-make-online-sign-in" rel="external" href=handle.with_value(|h| format!("/login?next={}", String::from(js_sys::encode_uri_component(&format!("/list/device/{}?labs=lists-sync&make_online=1", h.id())))))><Icon icon=i::BsCloudArrowUp aria_hidden=true />{t!(i18n, online_make)}</a>
+                            <a class="btn-primary inline-flex items-center gap-2" data-testid="device-list-make-online-sign-in" rel="external" href=move || {
+                                let next = continuation.map(|next| next.get()).unwrap_or_else(|| handle.with_value(|h| format!("/list/device/{}?labs=lists-sync&make_online=1", h.id())));
+                                format!("/login?next={}", String::from(js_sys::encode_uri_component(&next)))
+                            }><Icon icon=i::BsCloudArrowUp aria_hidden=true />{t!(i18n, online_make)}</a>
                         }.into_any(),
                     }}
                 </Suspense>

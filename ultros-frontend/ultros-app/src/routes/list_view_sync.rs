@@ -1828,6 +1828,10 @@ pub fn ListViewSync() -> impl IntoView {
         set_excluded_datacenters_param.set((!set.is_empty()).then(|| NameList::from_set(set)));
     });
 
+    // Editor-owned travel limit (#1480): narrows the served rows both Build
+    // and Shop price, and travels with the URL like the exclusions above.
+    let travel = crate::components::list_travel_state::use_list_travel();
+
     let (hide_acquired_param, set_hide_acquired_param) =
         filter_query_signal::<bool>("hide-acquired");
     let hide_acquired = Memo::new(move |_| hide_acquired_param.get().unwrap_or(false));
@@ -1949,6 +1953,10 @@ pub fn ListViewSync() -> impl IntoView {
             &excluded_datacenters.get(),
             world_helper.as_deref(),
         );
+        let travel_policy = travel.policy.get();
+        if travel_policy.narrows() {
+            rows = travel_policy.filter_rows(&rows);
+        }
         if legacy_cart.get()
             && let Some(spec) = sort_spec.get()
         {
@@ -2242,6 +2250,8 @@ pub fn ListViewSync() -> impl IntoView {
                 </div>
             </div>
 
+            <crate::components::list_travel_state::ListTravelPanel state=travel />
+
             <Show when=subscribe_open>
                 {move || {
                     let name = list_view
@@ -2288,7 +2298,8 @@ pub fn ListViewSync() -> impl IntoView {
                                 }
                             })
                             can_undo_purchase=Signal::derive(move || handle.get().is_some_and(|h| h.can_undo_purchase()))
-                            can_edit=Signal::derive(move || view_caps.with(|c| c.can_write)) />
+                            can_edit=Signal::derive(move || view_caps.with(|c| c.can_write))
+                            travel_policy=travel.policy />
                     </Suspense>
                 </Show>
             </div>
