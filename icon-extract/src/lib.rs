@@ -331,3 +331,5 @@ mod tests {
         assert!(decode_tex(&tex).is_err());
     }
 }
+
+pub mod lgb;

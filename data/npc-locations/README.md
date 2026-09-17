@@ -85,8 +85,20 @@ unlike the multiple placements retained here.
 ## Coverage improvements
 
 1. Supplement Level placements: it misses most resolved gil vendors, including
-   ordinary city vendors. Evaluate game-client placement extraction or a pinned
-   supplemental dataset; measure coverage and preserve source provenance.
+   ordinary city vendors. **Proven route (2026-09-16):** the client's `.lgb`
+   layout files. `icon-extract::lgb` parses them and the
+   `npc_positions` example (`cargo run --release -p icon-extract --example
+   npc_positions -- <csv dir> <vendors.json> <out.json>`) measured, against
+   client 2026.09.01: 445 of the 629 vendor NPCs placed (70.7%), versus 193
+   from Level. Of the 184 without a placement, 135 are housing-estate servants
+   (material suppliers, junkmongers, maids; spawned inside player estates, no
+   world position by design), 43 sell only from seasonal shops, and 6 remain
+   (three `weapons dealer`, three `expedition provisioner`). Every Level row
+   for a vendor agrees with its LGB placement to within 0.3 map units except
+   13 housing-ward NPCs that the LGB files place twice. NPCs live in
+   `planner.lgb` (the old city vendors) and `planevent.lgb`; `planmap.lgb`
+   holds only the graphics-benchmark scene, and the 32-byte-header `planner`
+   variant in seven dungeon/field zones holds only level-design markers.
 2. Fill the remaining quest issuer relationships independently of delivery NPC
    relationships. Include city-issued courier leves and expansion hubs in checks.
 3. Handle event/housing/story-dependent locations and duplicate placements. A
