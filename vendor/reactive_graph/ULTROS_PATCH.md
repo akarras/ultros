@@ -137,6 +137,9 @@ directory and the `[patch.crates-io]` entry.
   `ULTROS_PATCH.diff`.
 - Format with the crate's own `rustfmt.toml` (`cargo fmt` inside this
   directory); the root `cargo fmt --all` does not touch it.
-- Run its tests with `cargo test --manifest-path vendor/reactive_graph/Cargo.toml`;
+- Run its tests with
+  `cargo test --manifest-path vendor/reactive_graph/Cargo.toml --features effects`;
   `scripts/check_tests.sh` runs the unit tests and the `memo_concurrent` and
-  `async_source_walk` regression tests in CI.
+  `async_source_walk` regression tests in CI. `--features effects` matters:
+  without it `Effect::new` is a no-op, so `async_source_walk`'s readers never
+  run and every shape passes against the broken code too.

@@ -17,6 +17,9 @@
 //! and that call *consumes* the dirty flag. The async task then wakes to a
 //! clean node over an already-clean source and never reruns its future:
 //! the resource's key changed and nothing was fetched.
+//!
+//! Run with `--features effects`: `Effect::new` is a no-op without it, and
+//! every shape then passes against the broken `inner.rs` as well.
 
 use any_spawner::Executor;
 use reactive_graph::{
