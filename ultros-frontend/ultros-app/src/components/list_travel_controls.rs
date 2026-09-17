@@ -1,8 +1,5 @@
 //! One travel limit for both Build estimates and candidate Shop routes.
 //! State belongs to the editor: changing this control never adopts a trip.
-// TODO(#1480): rendered only through `list_travel_state::ListTravelPanel`,
-// which no list editor mounts yet.
-#![allow(dead_code)]
 use crate::i18n::{t_string, use_i18n};
 use leptos::prelude::*;
 use ultros_calc::list_travel::{TravelBlocked, TravelLimit};

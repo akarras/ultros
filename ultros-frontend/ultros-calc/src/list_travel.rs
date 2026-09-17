@@ -139,7 +139,21 @@ impl TravelPolicy {
         }
     }
 
+    /// Whether the policy narrows served supply at all. A plain fetched-scope
+    /// policy with nothing excluded leaves every offer in place, even before
+    /// the world catalog has loaded; only an actual limit or exclusion, or an
+    /// exclusion that failed to resolve, applies and then fails closed.
+    pub fn narrows(&self) -> bool {
+        self.limit != TravelLimit::Scope
+            || !self.excluded_worlds.is_empty()
+            || !self.excluded_datacenters.is_empty()
+            || !self.unresolved_datacenters.is_empty()
+    }
+
     pub fn filter_listings(&self, listings: &[ActiveListing]) -> Vec<ActiveListing> {
+        if !self.narrows() {
+            return listings.to_vec();
+        }
         listings
             .iter()
             .filter(|listing| self.allows_world(listing.world_id))
@@ -218,6 +232,34 @@ mod tests {
         p.excluded_datacenters.insert(30);
         assert!(!p.allows_world(99));
         assert!(!p.allows_world(20));
+    }
+
+    #[test]
+    fn plain_scope_passes_through_but_any_constraint_fails_closed_without_metadata() {
+        let listing = ActiveListing {
+            id: 1,
+            world_id: 9,
+            item_id: 42,
+            retainer_id: 1,
+            quantity: 3,
+            price_per_unit: 10,
+            hq: false,
+            timestamp: "2026-09-16T00:00:00".parse().unwrap(),
+        };
+        let mut p = TravelPolicy {
+            metadata_missing: true,
+            ..Default::default()
+        };
+        assert!(!p.narrows());
+        assert_eq!(p.blocked(), Some(TravelBlocked::WorldData));
+        assert_eq!(p.filter_listings(&[listing.clone()]), vec![listing.clone()]);
+        p.excluded_worlds.insert(1);
+        assert!(p.narrows());
+        assert!(p.filter_listings(&[listing.clone()]).is_empty());
+        p.excluded_worlds.clear();
+        p.unresolved_datacenters.insert("Renamed DC".into());
+        assert!(p.narrows());
+        assert!(p.filter_listings(&[listing]).is_empty());
     }
 
     #[test]
