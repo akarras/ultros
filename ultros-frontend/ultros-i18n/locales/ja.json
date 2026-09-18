@@ -408,6 +408,8 @@
     "social_card_privacy_subtitle": "Ultrosのデータの取り扱い",
     "social_card_cookie_subtitle": "プライバシー設定を知ろう",
     "social_card_exchange_item_description": "Ultrosで{{item}}の交換先を調べ、FFXIVのマーケットでの選択肢を比較しましょう。",
+    "social_card_npc_eyebrow": "FFXIV NPCショップ",
+    "social_card_npc_subtitle": "{{ n }}個のアイテムをギルで販売",
     "home": "ホーム",
     "discord": "Discord",
     "github": "GitHub",

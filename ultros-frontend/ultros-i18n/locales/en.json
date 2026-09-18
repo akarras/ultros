@@ -408,6 +408,8 @@
     "social_card_privacy_subtitle": "How Ultros handles your data",
     "social_card_cookie_subtitle": "Understand your privacy choices",
     "social_card_exchange_item_description": "Explore exchanges for {{item}} and compare FFXIV market options with Ultros.",
+    "social_card_npc_eyebrow": "FFXIV NPC VENDOR",
+    "social_card_npc_subtitle": "Sells {{ n }} items for gil",
     "home": "Home",
     "discord": "Discord",
     "github": "GitHub",

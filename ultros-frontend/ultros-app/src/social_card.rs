@@ -5,15 +5,21 @@
 
 use crate::i18n::*;
 use crate::routes::item_explorer::canonical_job_acronym;
+use crate::routes::npc_view::shops_for_npc;
+use ultros_ui_game::components::npc_locations::placement_label;
 #[cfg(test)]
 use xiv_gen::Language;
-use xiv_gen::{ClassJobId, ItemId};
+use xiv_gen::{ClassJobId, ENpcResidentId, ItemId};
+
+/// How many sold-item icons the vendor hero mosaic can hold.
+pub const VENDOR_HERO_SLOTS: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SocialCardKind {
     Home,
     Item(i32),
     Jobset(String),
+    Npc(i32),
     Currency(Option<i32>),
     Tool(String),
     Help(Option<String>),
@@ -24,6 +30,8 @@ pub enum SocialCardHero {
     Item(i32),
     /// A glyph in the bundled FFXIVAppIcons font, not a Unicode text symbol.
     Job(char),
+    /// Up to four icons of items a vendor sells, first slots filled first.
+    Vendor([Option<i32>; VENDOR_HERO_SLOTS]),
     Currency,
     Search,
     Analyzer,
@@ -129,6 +137,7 @@ impl SocialCardKind {
                 canonical_job(job).map(|job| Self::Jobset(job.to_string()))
             }
             ["items", "category", _] => Some(Self::Tool("items".to_string())),
+            ["npc", id] => positive_id(id).map(Self::Npc),
             ["currency-exchange"] => Some(Self::Currency(None)),
             ["currency-exchange", id] => positive_id(id).map(|id| Self::Currency(Some(id))),
             ["help"] => Some(Self::Help(None)),
@@ -160,6 +169,7 @@ impl SocialCardKind {
             "home" if key == "default" => Some(Self::Home),
             "item" => positive_id(key).map(Self::Item),
             "jobset" => canonical_job(key).map(|job| Self::Jobset(job.to_string())),
+            "npc" => positive_id(key).map(Self::Npc),
             "currency" if key == "default" => Some(Self::Currency(None)),
             "currency" => positive_id(key).map(|id| Self::Currency(Some(id))),
             "tool" if TOOLS.contains(&key) => Some(Self::Tool(key.to_string())),
@@ -174,6 +184,7 @@ impl SocialCardKind {
             Self::Home => ("home", "default".to_string()),
             Self::Item(id) => ("item", id.to_string()),
             Self::Jobset(job) => ("jobset", job.to_string()),
+            Self::Npc(id) => ("npc", id.to_string()),
             Self::Currency(id) => (
                 "currency",
                 id.map_or_else(|| "default".to_string(), |id| id.to_string()),
@@ -286,6 +297,51 @@ pub fn social_card_content(
                 SocialCardHero::Analyzer
             };
         }
+        SocialCardKind::Npc(id) => {
+            let resident = data()
+                .e_npc_residents
+                .get(&ENpcResidentId(*id))
+                .filter(|resident| !resident.singular.trim().is_empty())?;
+            let shops = shops_for_npc(data(), ENpcResidentId(*id));
+            let item_count: usize = shops.iter().map(|(_, rows)| rows.len()).sum();
+            let mut hero = [None; VENDOR_HERO_SLOTS];
+            let mut filled = 0;
+            for row in shops.iter().flat_map(|(_, rows)| rows.iter()) {
+                if filled == VENDOR_HERO_SLOTS {
+                    break;
+                }
+                if lookup_item(row.item).is_none() || hero.contains(&Some(row.item)) {
+                    continue;
+                }
+                hero[filled] = Some(row.item);
+                filled += 1;
+            }
+            let zone = data()
+                .npc_placements
+                .get(&ENpcResidentId(*id))
+                .and_then(|placements| placements.first())
+                .map(|placement| placement_label(data(), placement))
+                .filter(|zone| !zone.is_empty());
+            content.title = resident.singular.clone();
+            content.subtitle = if item_count == 0 {
+                td_string!(locale, npc_no_items).to_string()
+            } else {
+                td_string!(locale, social_card_npc_subtitle, n = item_count).to_string()
+            };
+            content.eyebrow = td_string!(locale, social_card_npc_eyebrow).to_string();
+            content.footer = zone
+                .clone()
+                .unwrap_or_else(|| td_string!(locale, npc_location_unknown).to_string());
+            content.description = td_string!(
+                locale,
+                npc_page_desc,
+                name = &resident.singular,
+                zone = content.footer.as_str()
+            )
+            .to_string();
+            content.hero = SocialCardHero::Vendor(hero);
+            return Some(content);
+        }
         SocialCardKind::Currency(id) => {
             content.title = td_string!(locale, currency_exchange).to_string();
             content.subtitle = td_string!(locale, social_card_currency_subtitle).to_string();
@@ -366,6 +422,7 @@ mod tests {
             "/items/category/1",
             "/currency-exchange",
             "/currency-exchange/28",
+            "/npc/1001276",
             "/help/getting-started",
             "/help",
         ] {
@@ -402,12 +459,17 @@ mod tests {
             "/item/0",
             "/item/not-an-item",
             "/items/jobset/NOT_A_JOB",
+            "/npc/0",
+            "/npc/abc",
+            "/npc/1001276/extra",
             "/help/unpublished",
             "/unknown-page",
         ] {
             assert_eq!(SocialCardKind::from_route(path), SocialCardKind::Home);
         }
         assert_eq!(SocialCardKind::from_parts("tool", "unknown"), None);
+        assert_eq!(SocialCardKind::from_parts("npc", "x"), None);
+        assert_eq!(SocialCardKind::from_parts("npc", "-4"), None);
         assert_eq!(SocialCardKind::from_parts("home", "arbitrary"), None);
         assert_eq!(parse_locale("zh-CN"), None);
         assert_eq!(parse_locale("unknown"), None);
@@ -452,6 +514,55 @@ mod tests {
                         .is_some()
                 );
             }
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn npc_cards_carry_name_item_count_zone_and_sold_item_icons() {
+        use crate::routes::npc_view::shops_for_npc;
+        // Ilorie (Gridania) sells arms; Gontrant issues leves but sells nothing.
+        for code in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            let locale = parse_locale(code).unwrap();
+            let data = xiv_gen_db::data_for(game_language(locale));
+            let resident = data.e_npc_residents.get(&ENpcResidentId(1000216)).unwrap();
+            let card = social_card_content(locale, &SocialCardKind::Npc(1000216), None).unwrap();
+            assert_eq!(card.title, resident.singular);
+            let count: usize = shops_for_npc(data, ENpcResidentId(1000216))
+                .iter()
+                .map(|(_, rows)| rows.len())
+                .sum();
+            assert!(count > 0);
+            assert!(
+                card.subtitle.contains(&count.to_string()),
+                "{}",
+                card.subtitle
+            );
+            assert_eq!(card.eyebrow, td_string!(locale, social_card_npc_eyebrow));
+            let placement = data.npc_placements[&ENpcResidentId(1000216)][0];
+            assert_eq!(card.footer, placement_label(data, &placement));
+            assert!(card.description.contains(&card.footer));
+            let SocialCardHero::Vendor(icons) = card.hero else {
+                panic!("vendor hero expected, got {:?}", card.hero);
+            };
+            assert!(icons[0].is_some());
+            let filled: Vec<_> = icons.iter().flatten().collect();
+            let mut distinct = filled.clone();
+            distinct.sort();
+            distinct.dedup();
+            assert_eq!(filled.len(), distinct.len(), "mosaic ids are distinct");
+            assert!(
+                icons
+                    .iter()
+                    .skip_while(|i| i.is_some())
+                    .all(Option::is_none)
+            );
+        }
+        let card = social_card_content(Locale::en, &SocialCardKind::Npc(1000101), None).unwrap();
+        assert_eq!(card.subtitle, td_string!(Locale::en, npc_no_items));
+        assert_eq!(card.hero, SocialCardHero::Vendor([None; VENDOR_HERO_SLOTS]));
+        for id in [0, -1, i32::MAX] {
+            assert!(social_card_content(Locale::en, &SocialCardKind::Npc(id), None).is_none());
         }
     }
 

@@ -408,6 +408,8 @@
     "social_card_privacy_subtitle": "Ultros 如何處理你的資料",
     "social_card_cookie_subtitle": "了解你的隱私選項",
     "social_card_exchange_item_description": "使用 Ultros 探索{{item}}的兌換管道，比較 FFXIV 市場中的選擇。",
+    "social_card_npc_eyebrow": "FFXIV NPC商人",
+    "social_card_npc_subtitle": "出售 {{ n }} 件商品（金幣）",
     "home": "首頁",
     "discord": "Discord",
     "github": "GitHub",
