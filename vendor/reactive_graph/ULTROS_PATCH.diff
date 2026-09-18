@@ -878,13 +878,16 @@
                  paused,
              })),
              #[cfg(feature = "hydration")]
-@@ -368,9 +378,25 @@
+@@ -368,9 +378,28 @@
                  mem::take(owner);
              }
          });
 +        // An effect body of this tree may be mid-run on another thread; let
-+        // it finish before its signals are pulled out from under it.
-+        self.inner.read().or_poisoned().activity.wait_idle();
++        // it finish before its signals are pulled out from under it. Clone
++        // the tracker out first so the wait doesn't hold this owner's read
++        // lock against a body that needs to write to it.
++        let activity = self.inner.read().or_poisoned().activity.clone();
++        activity.wait_idle();
          self.cleanup();
      }
  
@@ -904,7 +907,7 @@
      /// Returns the current [`SharedContext`], if any.
      #[cfg(feature = "hydration")]
      pub fn current_shared_context(
-@@ -502,6 +528,8 @@
+@@ -502,6 +531,8 @@
      pub children: Vec<Weak<RwLock<OwnerInner>>>,
      #[cfg(feature = "sandboxed-arenas")]
      arena: Arc<RwLock<ArenaMap>>,
@@ -913,7 +916,7 @@
      paused: bool,
  }
  
-@@ -518,6 +546,11 @@
+@@ -518,6 +549,11 @@
  
  impl Drop for OwnerInner {
      fn drop(&mut self) {

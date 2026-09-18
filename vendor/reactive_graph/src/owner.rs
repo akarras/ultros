@@ -379,8 +379,11 @@ impl Owner {
             }
         });
         // An effect body of this tree may be mid-run on another thread; let
-        // it finish before its signals are pulled out from under it.
-        self.inner.read().or_poisoned().activity.wait_idle();
+        // it finish before its signals are pulled out from under it. Clone
+        // the tracker out first so the wait doesn't hold this owner's read
+        // lock against a body that needs to write to it.
+        let activity = self.inner.read().or_poisoned().activity.clone();
+        activity.wait_idle();
         self.cleanup();
     }
 
