@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Undercut alerts no longer spam one notification per listing",
+  "blurb": "Holding several copies of one item could trigger the same undercut alert over and over as listings churned, and a competitor relisting a whole set sent one message per item. Undercut alerts now wait a short moment and send a single summary — one item, or \"undercut on 4 items: …\" — so your inbox, Discord and push notifications get one message instead of a burst.",
+  "importance": "medium"
+}

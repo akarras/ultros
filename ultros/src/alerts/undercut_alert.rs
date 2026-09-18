@@ -1,12 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, btree_map::Entry},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Result;
-use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
+use tokio::time::Instant;
 use tracing::{debug, error, instrument, warn};
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::UltrosDb;
@@ -45,6 +46,32 @@ fn retainer_undercut_click_url(retainer_id: Option<i32>) -> String {
 pub(crate) struct RetainerAlertListener {
     pub(crate) retainer_alert_id: i32,
     pub(crate) cancellation_sender: tokio::sync::mpsc::Sender<RetainerAlertTx>,
+}
+
+/// Keep the "already alerted" flag across a refetch for every listing whose
+/// lowest price is unchanged.
+///
+/// A refetch happens whenever one of our own listings is removed, and the
+/// fresh rows all come back `has_alerted: false`. With several copies of one
+/// item up (six halfgloves at the same price), one copy selling — or the
+/// catch-up feed re-adding the rest — used to reset the flag while the
+/// competitor that undercut us was still there, so the next listing event for
+/// that item fired the identical alert again. If our lowest price didn't
+/// move, nothing the user cares about changed, so the flag stays set. A
+/// changed lowest price (we repriced, or the cheap copy sold leaving dearer
+/// ones) is a new situation and re-arms the alert as before.
+fn carry_over_alerted(
+    previous: &HashMap<ListingKey, ListingValue>,
+    refreshed: &mut HashMap<ListingKey, ListingValue>,
+) {
+    for (key, value) in refreshed.iter_mut() {
+        if let Some(prev) = previous.get(key)
+            && prev.has_alerted
+            && prev.lowest_price == value.lowest_price
+        {
+            value.has_alerted = true;
+        }
+    }
 }
 
 async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
@@ -228,13 +255,14 @@ impl UndercutTracker {
                             .filter(|v| v.lowest_price >= removed.price_per_unit)
                             .copied()
                         && value.lowest_price >= removed.price_per_unit
-                        && let Ok((retainer_ids, listings)) =
+                        && let Ok((retainer_ids, mut listings)) =
                             get_user_unique_retainer_ids_and_listing_ids_by_price(
                                 &self.db,
                                 self.discord_user_id,
                             )
                             .await
                     {
+                        carry_over_alerted(&self.user_lowest_listings, &mut listings);
                         self.retainer_ids = retainer_ids;
                         self.user_lowest_listings = listings;
                     }
@@ -329,6 +357,293 @@ impl UndercutTracker {
     }
 }
 
+/// How long the roll-up waits after the most recent undercut for more to
+/// arrive before sending. Universalis pushes a competitor's relist of a whole
+/// gear set as one listing event per item over a few seconds, so a short
+/// quiet window catches the burst without noticeably delaying the alert.
+pub(crate) const ROLLUP_QUIET_WINDOW: Duration = Duration::from_secs(30);
+
+/// Upper bound on how long the first undercut in a batch is held, however
+/// steadily more keep trickling in. Undercut alerts are time-sensitive — the
+/// user wants to reprice — so a busy market must not defer them indefinitely.
+pub(crate) const ROLLUP_MAX_WINDOW: Duration = Duration::from_secs(120);
+
+/// Undercuts one alert's tracker has detected but not yet sent.
+///
+/// Held back briefly so a burst becomes a single notification instead of one
+/// per listing event. That matters for the user's inbox (six identical rows
+/// in a minute) and for Discord and Web Push, where one message per event
+/// walks straight into rate limits. Items are keyed by id, so a second
+/// undercut on an item already waiting merges into it — the retainer sets are
+/// unioned — rather than queueing a duplicate.
+#[derive(Debug, Default)]
+pub(crate) struct UndercutRollup {
+    /// `item_id -> (retainer_id -> retainer)`, both sorted so the summary
+    /// lists items and retainers in a stable order.
+    pending: BTreeMap<i32, BTreeMap<i32, UndercutRetainer>>,
+    first_at: Option<Instant>,
+    last_at: Option<Instant>,
+}
+
+impl UndercutRollup {
+    pub(crate) fn push(&mut self, undercut: Undercut, now: Instant) {
+        let retainers = self.pending.entry(undercut.item_id).or_default();
+        for retainer in undercut.undercut_retainers {
+            match retainers.entry(retainer.id) {
+                Entry::Vacant(slot) => {
+                    slot.insert(retainer);
+                }
+                Entry::Occupied(mut slot) => {
+                    let existing = slot.get_mut();
+                    existing.undercut_amount =
+                        existing.undercut_amount.min(retainer.undercut_amount);
+                }
+            }
+        }
+        self.first_at.get_or_insert(now);
+        self.last_at = Some(now);
+    }
+
+    /// When the pending batch should be sent, or `None` while nothing is
+    /// waiting. Extends with each new undercut up to [`ROLLUP_MAX_WINDOW`]
+    /// after the first.
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        let first = self.first_at?;
+        let last = self.last_at?;
+        Some((last + ROLLUP_QUIET_WINDOW).min(first + ROLLUP_MAX_WINDOW))
+    }
+
+    /// Take everything pending, in item-id order, and reset the timer.
+    pub(crate) fn drain(&mut self) -> Vec<Undercut> {
+        self.first_at = None;
+        self.last_at = None;
+        std::mem::take(&mut self.pending)
+            .into_iter()
+            .map(|(item_id, retainers)| Undercut {
+                item_id,
+                undercut_retainers: retainers.into_values().collect(),
+            })
+            .collect()
+    }
+}
+
+/// Resolves once `deadline` passes, or never when there is no batch waiting —
+/// the idle arm of the listener's `select!`.
+async fn sleep_until_or_never(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
+pub(crate) const UNDERCUT_ALERT_TITLE: &str = "Undercut Alert";
+
+/// Items named in a summary before it falls back to "and N more".
+const MAX_LISTED_ITEMS: usize = 10;
+
+/// One rolled-up batch of undercuts rendered for every delivery channel.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct UndercutMessage {
+    /// Representative item for the inbox row: the lowest item id in the batch.
+    pub(crate) item_id: i32,
+    pub(crate) body: String,
+    pub(crate) click_url: String,
+}
+
+fn retainer_names(undercut: &Undercut) -> String {
+    undercut
+        .undercut_retainers
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Render a batch as one message. Items whose name can't be resolved are
+/// skipped (as a single unknown item always was); `None` when nothing is left.
+///
+/// A single item keeps the long-standing wording. Several items become one
+/// sentence listing them, attributing each to its retainers only when the
+/// retainer sets differ. Everything stays on one line because the in-app
+/// inbox collapses newlines; the bare link line at the end is what Discord
+/// and Web Push readers click, and the inbox strips it.
+pub(crate) fn format_undercut_message(
+    undercuts: &[Undercut],
+    item_name: impl Fn(i32) -> Option<String>,
+) -> Option<UndercutMessage> {
+    let named: Vec<(&Undercut, String)> = undercuts
+        .iter()
+        .filter_map(|undercut| item_name(undercut.item_id).map(|name| (undercut, name)))
+        .collect();
+    let item_id = named.iter().map(|(undercut, _)| undercut.item_id).min()?;
+    let click_url = retainer_undercut_click_url(
+        named
+            .iter()
+            .flat_map(|(undercut, _)| undercut.undercut_retainers.iter().map(|r| r.id))
+            .min(),
+    );
+    let summary = match named.as_slice() {
+        [(undercut, name)] => format!(
+            "Your retainers {} have been undercut on {name}",
+            retainer_names(undercut)
+        ),
+        _ => {
+            let retainer_sets: HashSet<String> = named
+                .iter()
+                .map(|(undercut, _)| retainer_names(undercut))
+                .collect();
+            let shared = (retainer_sets.len() == 1).then(|| retainer_names(named[0].0));
+            let mut listed: Vec<String> = named
+                .iter()
+                .take(MAX_LISTED_ITEMS)
+                .map(|(undercut, name)| match &shared {
+                    Some(_) => name.clone(),
+                    None => {
+                        let retainers = retainer_names(undercut);
+                        if retainers.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{name} ({retainers})")
+                        }
+                    }
+                })
+                .collect();
+            if named.len() > MAX_LISTED_ITEMS {
+                listed.push(format!("and {} more", named.len() - MAX_LISTED_ITEMS));
+            }
+            let count = named.len();
+            match shared {
+                Some(retainers) => format!(
+                    "Your retainers {retainers} have been undercut on {count} items: {}",
+                    listed.join(", ")
+                ),
+                None => format!(
+                    "Your retainers have been undercut on {count} items: {}",
+                    listed.join(", ")
+                ),
+            }
+        }
+    };
+    Some(UndercutMessage {
+        item_id,
+        body: format!("{summary}\n\nhttps://ultros.app{click_url}"),
+        click_url,
+    })
+}
+
+/// Everything the listener task needs to push one message out and record it.
+struct UndercutDeliverer {
+    alert_id: i32,
+    discord_user: u64,
+    db: UltrosDb,
+    ctx: serenity_prelude::Context,
+    notifications: EventProducer<NotificationEvent>,
+}
+
+impl UndercutDeliverer {
+    async fn deliver_batch(&self, undercuts: Vec<Undercut>) {
+        let items = &xiv_gen_db::data().items;
+        let Some(message) = format_undercut_message(&undercuts, |item_id| {
+            items
+                .get(&xiv_gen::ItemId(item_id))
+                .map(|item| item.name.clone())
+        }) else {
+            return;
+        };
+        self.deliver(&message).await;
+    }
+
+    async fn deliver(&self, message: &UndercutMessage) {
+        let UndercutMessage {
+            item_id,
+            body,
+            click_url,
+        } = message;
+        let alert_id = self.alert_id;
+        let title = UNDERCUT_ALERT_TITLE;
+        let mut delivered = false;
+        let mut delivery_error = None;
+        // Tracks whether every destination failed for a reason a retry can't
+        // change (the channel is gone, the bot was removed). Those are
+        // recorded on the event but not re-reported as a new error every fire.
+        let mut permanent = false;
+        let endpoint_failure =
+            match dispatch_alert_detailed(alert_id, title, body, click_url, &self.db, &self.ctx)
+                .await
+            {
+                DispatchOutcome::Delivered => {
+                    delivered = true;
+                    None
+                }
+                DispatchOutcome::PermanentFailure(reason) => {
+                    permanent = true;
+                    Some(reason)
+                }
+                DispatchOutcome::TransientFailure(e) => Some(format!("{e}")),
+            };
+        // Always give the legacy destinations a turn — they're a separate set
+        // of channels, and some pre-endpoint alerts still have nothing else.
+        if let Some(endpoint_failure) = endpoint_failure {
+            match send_discord_alerts(alert_id, self.discord_user, &self.db, &self.ctx, body).await
+            {
+                Ok(LegacyOutcome::Delivered) => {
+                    delivered = true;
+                    permanent = false;
+                }
+                Ok(LegacyOutcome::NoDestinations) => {
+                    // Nothing else to try, so the endpoint verdict stands.
+                    delivery_error = Some(endpoint_failure);
+                }
+                Ok(LegacyOutcome::Failed(legacy_error)) => {
+                    // Only stays "permanent" if the fallback is dead too.
+                    permanent = permanent && permanent_failure_reason(&legacy_error).is_some();
+                    delivery_error = Some(format!(
+                        "{endpoint_failure}; legacy Discord destinations failed: {legacy_error}"
+                    ));
+                }
+                Err(lookup_error) => {
+                    // Couldn't even read the destinations — transient.
+                    permanent = false;
+                    delivery_error = Some(format!(
+                        "{endpoint_failure}; legacy Discord destinations failed: {lookup_error}"
+                    ));
+                }
+            }
+        }
+        record_fire(
+            &self.db,
+            &self.notifications,
+            AlertFire {
+                alert_id,
+                owner: self.discord_user as i64,
+                item_id: *item_id,
+                matched_listing_id: None,
+                matched_price: None,
+                title,
+                body,
+                click_url,
+                delivered,
+                delivery_error: delivery_error.clone(),
+            },
+        )
+        .await;
+        if delivered {
+            if let Err(e) = self.db.update_alert_last_fired(alert_id).await {
+                error!("failed to update undercut alert last_fired_at: {e}");
+            }
+        } else if let Some(error) = delivery_error {
+            if permanent {
+                // Steady state we've already acted on (endpoint disabled).
+                // Keep it out of the error reporter — it fired ~150 times a
+                // day for six alerts.
+                warn!("undercut alert {alert_id} has no working destinations: {error}");
+            } else {
+                error!("Error sending undercut alerts {error}");
+            }
+        }
+    }
+}
+
 impl RetainerAlertListener {
     #[instrument(skip(ultros_db, listings, services))]
     pub(crate) async fn create_listener(
@@ -349,170 +664,39 @@ impl RetainerAlertListener {
 
         let (cancellation_sender, mut receiver) = tokio::sync::mpsc::channel::<RetainerAlertTx>(10);
         let mut undercut_tracker = UndercutTracker::new(discord_user, &ultros_db, margin).await?;
+        let deliverer = UndercutDeliverer {
+            alert_id,
+            discord_user,
+            db: ultros_db,
+            ctx,
+            notifications,
+        };
         tokio::spawn(async move {
+            let mut rollup = UndercutRollup::default();
             loop {
-                let ended =
-                    future::select(Box::pin(receiver.recv()), Box::pin(listings.recv())).await;
-                match ended {
-                    Either::Left((msg, _)) => {
-                        if let Some(msg) = msg {
-                            match msg {
-                                RetainerAlertTx::Stop => {
-                                    break;
-                                }
-                                RetainerAlertTx::UpdateMargin(m) => {
-                                    undercut_tracker.margin = m;
-                                }
-                            }
-                        } else {
-                            break;
+                // Every arm is cancel-safe (mpsc and broadcast `recv`, a
+                // sleep), so an undercut is never lost when another arm wins.
+                tokio::select! {
+                    msg = receiver.recv() => match msg {
+                        // Stop means the alert was disabled or deleted, so
+                        // anything still batched is dropped with it.
+                        Some(RetainerAlertTx::Stop) | None => break,
+                        Some(RetainerAlertTx::UpdateMargin(m)) => {
+                            undercut_tracker.margin = m;
                         }
-                    }
-                    Either::Right((listing, _)) => {
+                    },
+                    listing = listings.recv() => {
                         match undercut_tracker
                             .handle_listing_event(listing.map_err(|e| e.into()))
                             .await
                         {
-                            Err(e) => {
-                                error!("{e:?}");
-                            }
-                            Ok(undercuts) => match undercuts {
-                                None => {}
-                                Some(Undercut {
-                                    item_id,
-                                    undercut_retainers,
-                                }) => {
-                                    let items = &xiv_gen_db::data().items;
-                                    if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
-                                        let click_url = retainer_undercut_click_url(
-                                            undercut_retainers.iter().map(|r| r.id).min(),
-                                        );
-                                        let retainer_names = undercut_retainers
-                                            .into_iter()
-                                            .map(|r| r.name)
-                                            .collect::<Vec<_>>()
-                                            .join(", ");
-                                        let item_name = &item.name;
-                                        let undercut_msg = format!(
-                                            "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app{click_url}"
-                                        );
-                                        let title = "Undercut Alert";
-                                        let mut delivered = false;
-                                        let mut delivery_error = None;
-                                        // Tracks whether every destination failed
-                                        // for a reason a retry can't change (the
-                                        // channel is gone, the bot was removed).
-                                        // Those are recorded on the event but not
-                                        // re-reported as a new error every fire.
-                                        let mut permanent = false;
-                                        let endpoint_failure = match dispatch_alert_detailed(
-                                            alert_id,
-                                            title,
-                                            &undercut_msg,
-                                            &click_url,
-                                            &ultros_db,
-                                            &ctx,
-                                        )
-                                        .await
-                                        {
-                                            DispatchOutcome::Delivered => {
-                                                delivered = true;
-                                                None
-                                            }
-                                            DispatchOutcome::PermanentFailure(reason) => {
-                                                permanent = true;
-                                                Some(reason)
-                                            }
-                                            DispatchOutcome::TransientFailure(e) => {
-                                                Some(format!("{e}"))
-                                            }
-                                        };
-                                        // Always give the legacy destinations a
-                                        // turn — they're a separate set of
-                                        // channels, and some pre-endpoint alerts
-                                        // still have nothing else.
-                                        if let Some(endpoint_failure) = endpoint_failure {
-                                            match send_discord_alerts(
-                                                alert_id,
-                                                discord_user,
-                                                &ultros_db,
-                                                &ctx,
-                                                &undercut_msg,
-                                            )
-                                            .await
-                                            {
-                                                Ok(LegacyOutcome::Delivered) => {
-                                                    delivered = true;
-                                                    permanent = false;
-                                                }
-                                                Ok(LegacyOutcome::NoDestinations) => {
-                                                    // Nothing else to try, so the
-                                                    // endpoint verdict stands.
-                                                    delivery_error = Some(endpoint_failure);
-                                                }
-                                                Ok(LegacyOutcome::Failed(legacy_error)) => {
-                                                    // Only stays "permanent" if
-                                                    // the fallback is dead too.
-                                                    permanent = permanent
-                                                        && permanent_failure_reason(&legacy_error)
-                                                            .is_some();
-                                                    delivery_error = Some(format!(
-                                                        "{endpoint_failure}; legacy Discord destinations failed: {legacy_error}"
-                                                    ));
-                                                }
-                                                Err(lookup_error) => {
-                                                    // Couldn't even read the
-                                                    // destinations — transient.
-                                                    permanent = false;
-                                                    delivery_error = Some(format!(
-                                                        "{endpoint_failure}; legacy Discord destinations failed: {lookup_error}"
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                        record_fire(
-                                            &ultros_db,
-                                            &notifications,
-                                            AlertFire {
-                                                alert_id,
-                                                owner: discord_user as i64,
-                                                item_id,
-                                                matched_listing_id: None,
-                                                matched_price: None,
-                                                title,
-                                                body: &undercut_msg,
-                                                click_url: &click_url,
-                                                delivered,
-                                                delivery_error: delivery_error.clone(),
-                                            },
-                                        )
-                                        .await;
-                                        if delivered {
-                                            if let Err(e) =
-                                                ultros_db.update_alert_last_fired(alert_id).await
-                                            {
-                                                error!(
-                                                    "failed to update undercut alert last_fired_at: {e}"
-                                                );
-                                            }
-                                        } else if let Some(error) = delivery_error {
-                                            if permanent {
-                                                // Steady state we've already
-                                                // acted on (endpoint disabled).
-                                                // Keep it out of the error
-                                                // reporter — it fired ~150
-                                                // times a day for six alerts.
-                                                warn!(
-                                                    "undercut alert {alert_id} has no working destinations: {error}"
-                                                );
-                                            } else {
-                                                error!("Error sending undercut alerts {error}");
-                                            }
-                                        }
-                                    }
-                                }
-                            },
+                            Err(e) => error!("{e:?}"),
+                            Ok(None) => {}
+                            Ok(Some(undercut)) => rollup.push(undercut, Instant::now()),
                         }
+                    }
+                    _ = sleep_until_or_never(rollup.deadline()) => {
+                        deliverer.deliver_batch(rollup.drain()).await;
                     }
                 }
             }
@@ -648,6 +832,290 @@ mod tests {
         assert_ne!(a, c);
         assert_ne!(a, d);
         assert_eq!(a, a);
+    }
+
+    // ---------- carry_over_alerted ----------
+
+    fn key(item_id: i32) -> ListingKey {
+        ListingKey {
+            item_id,
+            world_id: 1,
+            hq: true,
+        }
+    }
+
+    #[test]
+    fn refetch_keeps_alerted_flag_when_our_lowest_price_is_unchanged() {
+        // Six copies at 254,668, already alerted; one sells and the refetch
+        // still finds the same lowest price. The competitor is still there,
+        // so the alert must not re-arm.
+        let previous = HashMap::from([(
+            key(1),
+            ListingValue {
+                lowest_price: 254_668,
+                has_alerted: true,
+            },
+        )]);
+        let mut refreshed = HashMap::from([(
+            key(1),
+            ListingValue {
+                lowest_price: 254_668,
+                has_alerted: false,
+            },
+        )]);
+        carry_over_alerted(&previous, &mut refreshed);
+        assert!(refreshed[&key(1)].has_alerted);
+    }
+
+    #[test]
+    fn refetch_rearms_when_our_lowest_price_changed_and_leaves_new_keys_alone() {
+        let previous = HashMap::from([
+            (
+                key(1),
+                ListingValue {
+                    lowest_price: 100,
+                    has_alerted: true,
+                },
+            ),
+            (
+                key(2),
+                ListingValue {
+                    lowest_price: 100,
+                    has_alerted: false,
+                },
+            ),
+        ]);
+        let mut refreshed = HashMap::from([
+            // Our cheap copy sold; the remaining one is dearer — new situation.
+            (
+                key(1),
+                ListingValue {
+                    lowest_price: 120,
+                    has_alerted: false,
+                },
+            ),
+            // Never alerted before: stays un-alerted.
+            (
+                key(2),
+                ListingValue {
+                    lowest_price: 100,
+                    has_alerted: false,
+                },
+            ),
+            // Not present before: stays un-alerted.
+            (
+                key(3),
+                ListingValue {
+                    lowest_price: 50,
+                    has_alerted: false,
+                },
+            ),
+        ]);
+        carry_over_alerted(&previous, &mut refreshed);
+        assert!(!refreshed[&key(1)].has_alerted);
+        assert!(!refreshed[&key(2)].has_alerted);
+        assert!(!refreshed[&key(3)].has_alerted);
+    }
+
+    // ---------- UndercutRollup ----------
+
+    fn retainer(id: i32, name: &str, amount: i32) -> UndercutRetainer {
+        UndercutRetainer {
+            id,
+            name: name.into(),
+            undercut_amount: amount,
+        }
+    }
+
+    fn undercut(item_id: i32, retainers: Vec<UndercutRetainer>) -> Undercut {
+        Undercut {
+            item_id,
+            undercut_retainers: retainers,
+        }
+    }
+
+    #[test]
+    fn rollup_is_idle_until_something_is_pushed() {
+        let mut rollup = UndercutRollup::default();
+        assert_eq!(rollup.deadline(), None);
+        assert!(rollup.drain().is_empty());
+        assert_eq!(rollup.deadline(), None);
+    }
+
+    #[test]
+    fn rollup_merges_repeat_undercuts_on_the_same_item() {
+        // The spam case: the same item fires three times in a minute. It
+        // must come out as one entry with the retainers unioned.
+        let now = Instant::now();
+        let mut rollup = UndercutRollup::default();
+        rollup.push(undercut(7, vec![retainer(1, "Seeba", 254_668)]), now);
+        rollup.push(undercut(7, vec![retainer(1, "Seeba", 254_668)]), now);
+        rollup.push(
+            undercut(
+                7,
+                vec![
+                    retainer(1, "Seeba", 250_000),
+                    retainer(2, "Giltastrophe", 300_000),
+                ],
+            ),
+            now,
+        );
+        let drained = rollup.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].item_id, 7);
+        assert_eq!(
+            drained[0].undercut_retainers,
+            vec![
+                retainer(1, "Seeba", 250_000),
+                retainer(2, "Giltastrophe", 300_000)
+            ]
+        );
+    }
+
+    #[test]
+    fn rollup_drains_distinct_items_in_item_id_order_and_resets() {
+        let now = Instant::now();
+        let mut rollup = UndercutRollup::default();
+        rollup.push(undercut(30, vec![retainer(1, "Seeba", 1)]), now);
+        rollup.push(undercut(10, vec![retainer(1, "Seeba", 1)]), now);
+        rollup.push(undercut(20, vec![retainer(1, "Seeba", 1)]), now);
+        let ids: Vec<i32> = rollup.drain().iter().map(|u| u.item_id).collect();
+        assert_eq!(ids, vec![10, 20, 30]);
+        assert!(rollup.drain().is_empty());
+        assert_eq!(rollup.deadline(), None);
+    }
+
+    #[test]
+    fn rollup_deadline_extends_with_each_undercut_within_the_quiet_window() {
+        let start = Instant::now();
+        let mut rollup = UndercutRollup::default();
+        rollup.push(undercut(1, vec![]), start);
+        assert_eq!(rollup.deadline(), Some(start + ROLLUP_QUIET_WINDOW));
+
+        let later = start + Duration::from_secs(20);
+        rollup.push(undercut(2, vec![]), later);
+        assert_eq!(rollup.deadline(), Some(later + ROLLUP_QUIET_WINDOW));
+    }
+
+    #[test]
+    fn rollup_deadline_never_exceeds_the_max_window_after_the_first_undercut() {
+        let start = Instant::now();
+        let mut rollup = UndercutRollup::default();
+        rollup.push(undercut(1, vec![]), start);
+        // Keep trickling in right up to the cap: the batch still goes out at
+        // first + max, not last + quiet.
+        let late = start + ROLLUP_MAX_WINDOW - Duration::from_secs(1);
+        rollup.push(undercut(2, vec![]), late);
+        assert_eq!(rollup.deadline(), Some(start + ROLLUP_MAX_WINDOW));
+    }
+
+    // ---------- format_undercut_message ----------
+
+    fn names(id: i32) -> Option<String> {
+        match id {
+            1 => Some("Fire Shard".into()),
+            2 => Some("Ice Shard".into()),
+            3 => Some("Wind Shard".into()),
+            id if id >= 100 => Some(format!("Item {id}")),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn single_item_message_keeps_the_original_wording() {
+        let batch = vec![undercut(
+            1,
+            vec![retainer(5, "Seeba", 1), retainer(9, "Giltastrophe", 2)],
+        )];
+        let message = format_undercut_message(&batch, names).unwrap();
+        assert_eq!(
+            message,
+            UndercutMessage {
+                item_id: 1,
+                body: "Your retainers Seeba, Giltastrophe have been undercut on Fire Shard\n\nhttps://ultros.app/retainers/undercuts#retainer-5".into(),
+                click_url: "/retainers/undercuts#retainer-5".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn several_items_with_the_same_retainers_become_one_sentence() {
+        let batch = vec![
+            undercut(1, vec![retainer(5, "Seeba", 1)]),
+            undercut(2, vec![retainer(5, "Seeba", 1)]),
+            undercut(3, vec![retainer(5, "Seeba", 1)]),
+        ];
+        let message = format_undercut_message(&batch, names).unwrap();
+        assert_eq!(message.item_id, 1);
+        assert_eq!(message.click_url, "/retainers/undercuts#retainer-5");
+        assert_eq!(
+            message.body,
+            "Your retainers Seeba have been undercut on 3 items: Fire Shard, Ice Shard, Wind Shard\n\nhttps://ultros.app/retainers/undercuts#retainer-5"
+        );
+    }
+
+    #[test]
+    fn several_items_with_different_retainers_attribute_each_item() {
+        let batch = vec![
+            undercut(1, vec![retainer(5, "Seeba", 1)]),
+            undercut(
+                2,
+                vec![retainer(5, "Seeba", 1), retainer(9, "Giltastrophe", 1)],
+            ),
+            // Retainer lookup failed for this one: no attribution, no "()".
+            undercut(3, vec![]),
+        ];
+        let message = format_undercut_message(&batch, names).unwrap();
+        assert_eq!(
+            message.body,
+            "Your retainers have been undercut on 3 items: Fire Shard (Seeba), Ice Shard (Seeba, Giltastrophe), Wind Shard\n\nhttps://ultros.app/retainers/undercuts#retainer-5"
+        );
+    }
+
+    #[test]
+    fn long_batches_are_truncated_with_a_count() {
+        let batch: Vec<Undercut> = (100..115)
+            .map(|id| undercut(id, vec![retainer(5, "Seeba", 1)]))
+            .collect();
+        let message = format_undercut_message(&batch, names).unwrap();
+        let summary = message.body.lines().next().unwrap();
+        assert!(
+            summary.starts_with("Your retainers Seeba have been undercut on 15 items: Item 100, "),
+            "{summary}"
+        );
+        assert!(summary.contains("Item 109, and 5 more"), "{summary}");
+        assert!(!summary.contains("Item 110"), "{summary}");
+    }
+
+    #[test]
+    fn unknown_items_are_skipped_and_an_all_unknown_batch_sends_nothing() {
+        let batch = vec![
+            undercut(-1, vec![retainer(5, "Seeba", 1)]),
+            undercut(1, vec![retainer(5, "Seeba", 1)]),
+        ];
+        let message = format_undercut_message(&batch, names).unwrap();
+        assert_eq!(message.item_id, 1);
+        assert!(
+            message
+                .body
+                .starts_with("Your retainers Seeba have been undercut on Fire Shard\n")
+        );
+
+        let unknown = vec![undercut(-1, vec![retainer(5, "Seeba", 1)])];
+        assert_eq!(format_undercut_message(&unknown, names), None);
+        assert_eq!(format_undercut_message(&[], names), None);
+    }
+
+    #[test]
+    fn batch_without_any_retainer_falls_back_to_the_generic_page() {
+        let batch = vec![undercut(1, vec![]), undercut(2, vec![])];
+        let message = format_undercut_message(&batch, names).unwrap();
+        assert_eq!(message.click_url, "/retainers/undercuts");
+        assert!(
+            message
+                .body
+                .ends_with("\n\nhttps://ultros.app/retainers/undercuts")
+        );
     }
 
     // ---------- UndercutRetainer ordering ----------
