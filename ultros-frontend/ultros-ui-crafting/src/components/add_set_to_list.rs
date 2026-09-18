@@ -20,6 +20,7 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use ultros_api_types::list::ListItem;
+use ultros_frontend_core::components::account_lists_failure::AccountListsFailure;
 use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 use xiv_gen::{Item, ItemId};
 
@@ -176,9 +177,6 @@ fn AddSetToListModal(
                             {move || subject.get()}
                         </div>
                     </div>
-                    <button type="button" class="btn-secondary" on:click=move |_| set_visible(false)>
-                        {t!(i18n, add_recipe_close)}
-                    </button>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
@@ -230,12 +228,9 @@ fn AddSetToListModal(
                 <div class="rounded p-1">
                     <Suspense fallback=Loading>
                         {move || {
-                            let Ok(lists) = lists.get()? else {
-                                return Some(Either::Right(view! {
-                                    <div class="text-red-400 text-sm">
-                                        {t!(i18n, add_recipe_unable_to_load_lists)}
-                                    </div>
-                                }));
+                            let lists = match lists.get()? {
+                                Ok(lists) => lists,
+                                Err(error) => return Some(Either::Right(view! { <AccountListsFailure error /> })),
                             };
 
                             Some(Either::Left(
