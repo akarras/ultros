@@ -148,6 +148,7 @@ pub(crate) async fn social_card(
         let hero = match content.hero {
             SocialCardHero::Item(id) => CardHero::Item(id),
             SocialCardHero::Job(glyph) => CardHero::Job(glyph),
+            SocialCardHero::Vendor(ids) => CardHero::Vendor(ids),
             SocialCardHero::Currency => CardHero::Currency,
             SocialCardHero::Search => CardHero::Search,
             SocialCardHero::Analyzer => CardHero::Analyzer,

@@ -408,6 +408,8 @@
     "social_card_privacy_subtitle": "Ultros의 데이터 처리 방식",
     "social_card_cookie_subtitle": "개인정보 설정을 알아보세요",
     "social_card_exchange_item_description": "Ultros에서 {{item}} 교환 방법을 살펴보고 FFXIV 시장의 선택지를 비교하세요.",
+    "social_card_npc_eyebrow": "FFXIV NPC 상인",
+    "social_card_npc_subtitle": "{{ n }}개 아이템을 길로 판매",
     "home": "홈",
     "discord": "Discord",
     "github": "GitHub",

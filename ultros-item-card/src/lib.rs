@@ -54,6 +54,9 @@ pub enum CardHero {
     Item(i32),
     /// A codepoint from the site's existing FFXIVAppIcons job font.
     Job(char),
+    /// Up to four packed item icons for a vendor, drawn as a mosaic. Ids
+    /// without a packed icon are skipped; with none left, a shop glyph shows.
+    Vendor([Option<i32>; 4]),
     Currency,
     Search,
     Analyzer,
@@ -172,16 +175,59 @@ fn paste_icon(card: &mut RgbaImage, icon: &RgbaImage, center: (u32, u32), size: 
     );
 }
 
+const HERO_CENTER: (u32, u32) = (970, 328);
+
+fn packed_item_icon(id: i32) -> Result<Option<RgbaImage>> {
+    ultros_xiv_icons::get_item_image(id, IconSize::Large)
+        .map(|bytes| {
+            image::load_from_memory_with_format(bytes, image::ImageFormat::WebP)
+                .context("failed to decode packed item icon")
+                .map(image::DynamicImage::into_rgba8)
+        })
+        .transpose()
+}
+
+/// Icon centres and size for a mosaic of `count` icons around the hero spot.
+fn mosaic_layout(count: usize) -> (Vec<(u32, u32)>, u32) {
+    let (cx, cy) = HERO_CENTER;
+    match count {
+        0 => (Vec::new(), 0),
+        1 => (vec![(cx, cy)], 208),
+        2 => (vec![(cx - 80, cy), (cx + 80, cy)], 150),
+        _ => (
+            vec![
+                (cx - 74, cy - 74),
+                (cx + 74, cy - 74),
+                (cx - 74, cy + 74),
+                (cx + 74, cy + 74),
+            ],
+            136,
+        ),
+    }
+}
+
 fn draw_hero(card: &mut RgbaImage, hero: CardHero) -> Result<()> {
     match hero {
         CardHero::Item(id) => {
-            if let Some(bytes) = ultros_xiv_icons::get_item_image(id, IconSize::Large) {
-                let icon = image::load_from_memory_with_format(bytes, image::ImageFormat::WebP)
-                    .context("failed to decode packed item icon")?
-                    .into_rgba8();
-                paste_icon(card, &icon, (970, 328), 208);
+            if let Some(icon) = packed_item_icon(id)? {
+                paste_icon(card, &icon, HERO_CENTER, 208);
             } else {
-                draw_symbol(card, icondata_bi::BiSearchAlt2Regular, (970, 328), 225)?;
+                draw_symbol(card, icondata_bi::BiSearchAlt2Regular, HERO_CENTER, 225)?;
+            }
+        }
+        CardHero::Vendor(ids) => {
+            let icons = ids
+                .into_iter()
+                .flatten()
+                .map(packed_item_icon)
+                .filter_map(Result::transpose)
+                .collect::<Result<Vec<_>>>()?;
+            if icons.is_empty() {
+                return draw_symbol(card, icondata_bi::BiShoppingBagRegular, HERO_CENTER, 245);
+            }
+            let (centers, size) = mosaic_layout(icons.len());
+            for (icon, center) in icons.iter().zip(centers) {
+                paste_icon(card, icon, center, size);
             }
         }
         CardHero::Job(glyph) => {
@@ -315,6 +361,38 @@ mod tests {
             .expect("tool card");
             assert_valid_card(&bytes);
         }
+    }
+
+    #[test]
+    fn renders_vendor_mosaics_of_every_size_and_skips_missing_icons() {
+        let render = |ids| {
+            let bytes = render_card(&CardContent {
+                title: "Ilorie",
+                subtitle: "Sells 12 items for gil",
+                eyebrow: "FFXIV NPC VENDOR",
+                footer: "New Gridania",
+                hero: CardHero::Vendor(ids),
+                locale: CardLocale::En,
+            })
+            .expect("vendor card");
+            assert_valid_card(&bytes);
+            bytes
+        };
+        // An id without a packed icon is skipped, so these both show the glyph.
+        assert_eq!(render([None; 4]), render([Some(-1), None, None, None]));
+        let sizes = [
+            render([Some(5333), None, None, None]),
+            render([Some(5333), Some(49318), None, None]),
+            render([Some(5333), Some(49318), Some(-1), Some(2)]),
+            render([Some(5333), Some(49318), Some(2), Some(3)]),
+        ];
+        for (i, a) in sizes.iter().enumerate() {
+            for b in &sizes[i + 1..] {
+                assert_ne!(a, b, "each mosaic size draws differently");
+            }
+        }
+        assert_eq!(mosaic_layout(3).0.len(), 4);
+        assert_eq!(mosaic_layout(0).0.len(), 0);
     }
 
     #[test]

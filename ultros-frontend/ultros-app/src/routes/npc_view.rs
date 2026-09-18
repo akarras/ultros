@@ -23,7 +23,7 @@ use ultros_ui_game::components::npc_locations::{placement_label, placement_text}
 use ultros_ui_game::components::zone_map::{MapPin, ZoneMap};
 
 /// The gil shops `npc` offers, in shop-id order, each with its rows.
-fn shops_for_npc(
+pub(crate) fn shops_for_npc(
     data: &'static xiv_gen::Data,
     npc: ENpcResidentId,
 ) -> Vec<(&'static xiv_gen::GilShop, &'static [xiv_gen::GilShopItem])> {
