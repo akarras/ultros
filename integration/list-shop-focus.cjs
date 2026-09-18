@@ -192,7 +192,7 @@ async function main() {
     const worlds = await api("GET", "/api/v1/world_data");
     const region = worlds.regions.find(region => region.datacenters.some(dc => dc.worlds.length >= 3));
     const [home, second, last] = [...region.datacenters.find(dc => dc.worlds.length >= 3).worlds].sort((a, b) => a.id - b.id);
-    await page.setCookie(...[["LABS", "lists-sync"], ["HOME_WORLD", home.name], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await page.setCookie(...[["LABS", "lists-sync"], ["HOME_WORLD", home.name], ["PRICE_ZONE", home.name], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     offers = [[-1474001, home, false, 2, 10], [-1474002, home, true, 2, 20], [-1474003, second, false, 3, 12], [-1474004, last, true, 4, 25]].map(([id, world, hq, quantity, price_per_unit]) => ({ id, world_id: world.id, item_id: 5056, retainer_id: 1, price_per_unit, quantity, hq, timestamp: "2026-09-16T00:00:00" }));
     cookie = (await page.cookies()).map(entry => `${entry.name}=${entry.value}`).join("; ");
     // Only prices and the unrelated ads SDK are intercepted. Both editors

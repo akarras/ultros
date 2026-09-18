@@ -129,7 +129,7 @@ async function main() {
     const worlds = data.regions.flatMap(region => region.datacenters.flatMap(dc => dc.worlds));
     [world, secondWorld] = worlds;
     assert(world && secondWorld, "two worlds required for scope replacement");
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name], ["PRICE_ZONE", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     await load(`${base}/list?labs=lists-sync`);
     await page.click(tid("list-new")); await replace(tid("device-list-name"), `Device prices ${Date.now()}`); await page.click(tid("device-list-create"));
     await page.waitForSelector(tid("device-list-editor")); const deviceUrl = page.url();

@@ -1044,11 +1044,18 @@ pub fn ListShop(
                         let frontier = active.as_ref().map(|active| active.frontier.clone()).unwrap_or_else(|| {
                             replan(None, &source, &unavailable.get(), &consumed.get()).2
                         });
-                        // `cheapest_card` also marks a lone card, so the
-                        // e2e harness can always find the route to adopt.
-                        let cheapest_card = cheapest_index(&frontier);
+                        // The lowest-cost card (ties go to the shorter trip),
+                        // marked with `data-route-cheapest` so the e2e harness
+                        // can always find a route to adopt. The "Cheapest"
+                        // badge below is stricter: it only shows when the full
+                        // trip beats every shorter one.
+                        let cheapest_card = frontier
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, plan)| plan.cost)
+                            .map(|(index, _)| index);
                         let (best_value, cheapest) = if frontier.len() > 1 {
-                            (planner::RouteComparison { cards: frontier.clone() }.best_value(), cheapest_card)
+                            (planner::RouteComparison { cards: frontier.clone() }.best_value(), cheapest_index(&frontier))
                         } else {
                             (None, None)
                         };
