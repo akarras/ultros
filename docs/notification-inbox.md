@@ -41,6 +41,13 @@ bus (`ultros/src/event.rs`, `NotificationEvent { owner, event }`, ring size
 both the websocket push and the REST history endpoint so they never disagree
 on shape.
 
+`undercut_alert` batches before it fires: undercuts one alert detects are
+held in an `UndercutRollup` (30 s of quiet after the latest, at most 120 s
+after the first) and sent as a single `record_fire` — repeats of the same
+item merge, several items become one "undercut on N items: …" body. This is
+what keeps six copies of one item, or a competitor relisting a whole set,
+from producing a row (and a Discord/Web Push message) per listing event.
+
 ## REST
 
 All three routes require Discord auth (`AuthDiscordUser`) and are scoped to
