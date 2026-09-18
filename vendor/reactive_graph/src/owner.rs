@@ -12,6 +12,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
+mod activity;
 mod arc_stored_value;
 mod arena;
 mod arena_item;
@@ -19,6 +20,7 @@ mod context;
 mod storage;
 mod stored_value;
 use self::arena::Arena;
+pub(crate) use activity::RunGuard;
 pub use arc_stored_value::ArcStoredValue;
 #[cfg(feature = "sandboxed-arenas")]
 pub use arena::sandboxed::Sandboxed;
@@ -174,6 +176,11 @@ impl Owner {
                     .and_then(|parent| parent.upgrade())
                     .map(|parent| parent.read().or_poisoned().arena.clone())
                     .unwrap_or_default(),
+                activity: parent
+                    .as_ref()
+                    .and_then(|parent| parent.upgrade())
+                    .map(|parent| parent.read().or_poisoned().activity.clone())
+                    .unwrap_or_default(),
                 paused: false,
             })),
             #[cfg(feature = "hydration")]
@@ -208,6 +215,7 @@ impl Owner {
                 children: Default::default(),
                 #[cfg(feature = "sandboxed-arenas")]
                 arena: Default::default(),
+                activity: Default::default(),
                 paused: false,
             })),
             #[cfg(feature = "hydration")]
@@ -242,6 +250,7 @@ impl Owner {
         let mut inner = self.inner.write().or_poisoned();
         #[cfg(feature = "sandboxed-arenas")]
         let arena = inner.arena.clone();
+        let activity = inner.activity.clone();
         let paused = inner.paused;
         let child = Self {
             inner: Arc::new(RwLock::new(OwnerInner {
@@ -252,6 +261,7 @@ impl Owner {
                 children: Default::default(),
                 #[cfg(feature = "sandboxed-arenas")]
                 arena,
+                activity,
                 paused,
             })),
             #[cfg(feature = "hydration")]
@@ -368,7 +378,26 @@ impl Owner {
                 mem::take(owner);
             }
         });
+        // An effect body of this tree may be mid-run on another thread; let
+        // it finish before its signals are pulled out from under it. Clone
+        // the tracker out first so the wait doesn't hold this owner's read
+        // lock against a body that needs to write to it.
+        let activity = self.inner.read().or_poisoned().activity.clone();
+        activity.wait_idle();
         self.cleanup();
+    }
+
+    /// Runs an effect body, marking it as in flight for this owner's tree so
+    /// a forced teardown of the tree waits for it — see `activity`.
+    pub(crate) fn run_effect_body<T>(&self, fun: impl FnOnce() -> T) -> T {
+        let _guard = self.effect_body_guard();
+        fun()
+    }
+
+    /// Marks an effect body of this owner's tree as in flight until the
+    /// guard drops — see [`Owner::run_effect_body`].
+    pub(crate) fn effect_body_guard(&self) -> RunGuard {
+        self.inner.read().or_poisoned().activity.enter()
     }
 
     /// Returns the current [`SharedContext`], if any.
@@ -502,6 +531,8 @@ pub(crate) struct OwnerInner {
     pub children: Vec<Weak<RwLock<OwnerInner>>>,
     #[cfg(feature = "sandboxed-arenas")]
     arena: Arc<RwLock<ArenaMap>>,
+    /// Shared by every owner in the tree; see `activity`.
+    activity: Arc<activity::Activity>,
     paused: bool,
 }
 
@@ -518,6 +549,11 @@ impl Debug for OwnerInner {
 
 impl Drop for OwnerInner {
     fn drop(&mut self) {
+        // A root dropped without a forced cleanup (an abandoned render) tears
+        // the whole tree down too; give a running effect body the same grace.
+        if self.parent.is_none() {
+            self.activity.wait_idle();
+        }
         for child in std::mem::take(&mut self.children) {
             if let Some(child) = child.upgrade() {
                 child.cleanup();

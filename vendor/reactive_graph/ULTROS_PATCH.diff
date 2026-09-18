@@ -824,3 +824,519 @@
 +shape_test!(label_and_grid_hydrated, true, false, true, true);
 +shape_test!(all_readers_hydrated, true, true, true, true);
 +shape_test!(all_readers_fresh, true, true, true, false);
+--- a/src/owner.rs
++++ b/src/owner.rs
+@@ -12,6 +12,7 @@
+     sync::{Arc, RwLock, Weak},
+ };
+ 
++mod activity;
+ mod arc_stored_value;
+ mod arena;
+ mod arena_item;
+@@ -19,6 +20,7 @@
+ mod storage;
+ mod stored_value;
+ use self::arena::Arena;
++pub(crate) use activity::RunGuard;
+ pub use arc_stored_value::ArcStoredValue;
+ #[cfg(feature = "sandboxed-arenas")]
+ pub use arena::sandboxed::Sandboxed;
+@@ -174,6 +176,11 @@
+                     .and_then(|parent| parent.upgrade())
+                     .map(|parent| parent.read().or_poisoned().arena.clone())
+                     .unwrap_or_default(),
++                activity: parent
++                    .as_ref()
++                    .and_then(|parent| parent.upgrade())
++                    .map(|parent| parent.read().or_poisoned().activity.clone())
++                    .unwrap_or_default(),
+                 paused: false,
+             })),
+             #[cfg(feature = "hydration")]
+@@ -208,6 +215,7 @@
+                 children: Default::default(),
+                 #[cfg(feature = "sandboxed-arenas")]
+                 arena: Default::default(),
++                activity: Default::default(),
+                 paused: false,
+             })),
+             #[cfg(feature = "hydration")]
+@@ -242,6 +250,7 @@
+         let mut inner = self.inner.write().or_poisoned();
+         #[cfg(feature = "sandboxed-arenas")]
+         let arena = inner.arena.clone();
++        let activity = inner.activity.clone();
+         let paused = inner.paused;
+         let child = Self {
+             inner: Arc::new(RwLock::new(OwnerInner {
+@@ -252,6 +261,7 @@
+                 children: Default::default(),
+                 #[cfg(feature = "sandboxed-arenas")]
+                 arena,
++                activity,
+                 paused,
+             })),
+             #[cfg(feature = "hydration")]
+@@ -368,9 +378,28 @@
+                 mem::take(owner);
+             }
+         });
++        // An effect body of this tree may be mid-run on another thread; let
++        // it finish before its signals are pulled out from under it. Clone
++        // the tracker out first so the wait doesn't hold this owner's read
++        // lock against a body that needs to write to it.
++        let activity = self.inner.read().or_poisoned().activity.clone();
++        activity.wait_idle();
+         self.cleanup();
+     }
+ 
++    /// Runs an effect body, marking it as in flight for this owner's tree so
++    /// a forced teardown of the tree waits for it — see `activity`.
++    pub(crate) fn run_effect_body<T>(&self, fun: impl FnOnce() -> T) -> T {
++        let _guard = self.effect_body_guard();
++        fun()
++    }
++
++    /// Marks an effect body of this owner's tree as in flight until the
++    /// guard drops — see [`Owner::run_effect_body`].
++    pub(crate) fn effect_body_guard(&self) -> RunGuard {
++        self.inner.read().or_poisoned().activity.enter()
++    }
++
+     /// Returns the current [`SharedContext`], if any.
+     #[cfg(feature = "hydration")]
+     pub fn current_shared_context(
+@@ -502,6 +531,8 @@
+     pub children: Vec<Weak<RwLock<OwnerInner>>>,
+     #[cfg(feature = "sandboxed-arenas")]
+     arena: Arc<RwLock<ArenaMap>>,
++    /// Shared by every owner in the tree; see `activity`.
++    activity: Arc<activity::Activity>,
+     paused: bool,
+ }
+ 
+@@ -518,6 +549,11 @@
+ 
+ impl Drop for OwnerInner {
+     fn drop(&mut self) {
++        // A root dropped without a forced cleanup (an abandoned render) tears
++        // the whole tree down too; give a running effect body the same grace.
++        if self.parent.is_none() {
++            self.activity.wait_idle();
++        }
+         for child in std::mem::take(&mut self.children) {
+             if let Some(child) = child.upgrade() {
+                 child.cleanup();
+--- a/src/owner/activity.rs
++++ b/src/owner/activity.rs
+@@ -0,0 +1,90 @@
++//! Tracks effect bodies that are currently running somewhere in an owner
++//! tree, so a forced teardown of the tree can wait for them.
++//!
++//! Effects run on spawned tasks. On a multi-threaded runtime an effect's body
++//! can be mid-run on one worker while another thread tears the tree's root
++//! down (leptos' `from_app` does that at the end of every response stream);
++//! every arena read the body makes after that point panics with "already
++//! been disposed", even though the body was started while the tree was
++//! alive. The tracker is shared by every owner in a tree (cloned from the
++//! parent like the arena) and counts bodies in flight; the root's forced
++//! cleanup waits for the count to reach zero — bounded, and never for a body
++//! running on the waiting thread itself.
++
++use or_poisoned::OrPoisoned;
++use std::{
++    cell::RefCell,
++    sync::{Arc, Condvar, Mutex},
++    time::Duration,
++};
++
++/// Longest a forced teardown waits for a running effect body. An effect body
++/// is synchronous and short (a `<Suspense>`'s `dry_resolve` walk is the
++/// heaviest in practice); anything past this is a stuck body, and tearing
++/// down under it is the pre-existing behaviour.
++const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
++
++#[derive(Default)]
++pub(crate) struct Activity {
++    running: Mutex<usize>,
++    idle: Condvar,
++}
++
++thread_local! {
++    /// The trackers whose effect bodies this thread is currently inside,
++    /// so a teardown triggered from within a body never waits on itself.
++    static ENTERED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
++}
++
++impl Activity {
++    fn id(self: &Arc<Self>) -> usize {
++        Arc::as_ptr(self) as usize
++    }
++
++    /// Marks an effect body as running until the returned guard drops.
++    pub(crate) fn enter(self: &Arc<Self>) -> RunGuard {
++        *self.running.lock().or_poisoned() += 1;
++        ENTERED.with_borrow_mut(|entered| entered.push(self.id()));
++        RunGuard(Arc::clone(self))
++    }
++
++    /// Blocks until no effect body of this tree is running, or until
++    /// [`IDLE_TIMEOUT`] passes. Returns at once if the current thread is
++    /// itself inside one of this tree's effect bodies.
++    pub(crate) fn wait_idle(self: &Arc<Self>) {
++        let id = self.id();
++        if ENTERED.with_borrow(|entered| entered.contains(&id)) {
++            return;
++        }
++        let running = self.running.lock().or_poisoned();
++        if *running == 0 {
++            return;
++        }
++        // A body that unwound has already released its guard, so a poisoned
++        // lock carries nothing worth propagating; either way the wait ends.
++        _ = self
++            .idle
++            .wait_timeout_while(running, IDLE_TIMEOUT, |running| *running > 0)
++            .unwrap_or_else(|poisoned| poisoned.into_inner());
++    }
++}
++
++/// Decrements the running count when the effect body it was taken for ends,
++/// whether it returned or unwound.
++pub(crate) struct RunGuard(Arc<Activity>);
++
++impl Drop for RunGuard {
++    fn drop(&mut self) {
++        let id = self.0.id();
++        ENTERED.with_borrow_mut(|entered| {
++            if let Some(pos) = entered.iter().rposition(|e| *e == id) {
++                entered.remove(pos);
++            }
++        });
++        let mut running = self.0.running.lock().or_poisoned();
++        *running -= 1;
++        if *running == 0 {
++            self.0.idle.notify_all();
++        }
++    }
++}
+--- a/src/effect/effect.rs
++++ b/src/effect/effect.rs
+@@ -190,9 +190,13 @@
+ 
+                             let old_value =
+                                 mem::take(&mut *value.write().or_poisoned());
+-                            let new_value = owner.with_cleanup(|| {
+-                                subscriber.with_observer(|| {
+-                                    run_in_effect_scope(|| fun.run(old_value))
++                            let new_value = owner.run_effect_body(|| {
++                                owner.with_cleanup(|| {
++                                    subscriber.with_observer(|| {
++                                        run_in_effect_scope(|| {
++                                            fun.run(old_value)
++                                        })
++                                    })
+                                 })
+                             });
+                             *value.write().or_poisoned() = Some(new_value);
+@@ -339,6 +343,10 @@
+                         {
+                             subscriber.clear_sources(&subscriber);
+ 
++                            // Both closures run under one in-flight guard;
++                            // see `Owner::run_effect_body`.
++                            let _run = owner.effect_body_guard();
++
+                             let old_dep_value = mem::take(
+                                 &mut *dep_value.write().or_poisoned(),
+                             );
+@@ -365,6 +373,7 @@
+                                 Some(new_dep_value);
+ 
+                             first_run = false;
++                            drop(_run);
+                         }
+                     }
+                 }
+@@ -426,9 +435,11 @@
+ 
+                         let old_value =
+                             mem::take(&mut *value.write().or_poisoned());
+-                        let new_value = owner.with_cleanup(|| {
+-                            subscriber.with_observer(|| {
+-                                run_in_effect_scope(|| fun.run(old_value))
++                        let new_value = owner.run_effect_body(|| {
++                            owner.with_cleanup(|| {
++                                subscriber.with_observer(|| {
++                                    run_in_effect_scope(|| fun.run(old_value))
++                                })
+                             })
+                         });
+                         *value.write().or_poisoned() = Some(new_value);
+@@ -477,6 +488,10 @@
+                         {
+                             subscriber.clear_sources(&subscriber);
+ 
++                            // Both closures run under one in-flight guard;
++                            // see `Owner::run_effect_body`.
++                            let _run = owner.effect_body_guard();
++
+                             let old_dep_value = mem::take(
+                                 &mut *dep_value.write().or_poisoned(),
+                             );
+@@ -503,6 +518,7 @@
+                                 Some(new_dep_value);
+ 
+                             first_run = false;
++                            drop(_run);
+                         }
+                     }
+                 }
+--- a/tests/effect_disposed_first_run.rs
++++ b/tests/effect_disposed_first_run.rs
+@@ -0,0 +1,244 @@
++//! Regression test for the SSR panics that survived akarras/ultros#1520
++//! (GlitchTip #7388 `cookies.rs:174`, and the `leptos_i18n context.rs:213`
++//! tail of #7382): an effect whose owner is cleaned up before its spawned
++//! first run gets polled must not run at all.
++//!
++//! `Effect::new_isomorphic` (and `Effect::new`) queue their first run as a
++//! detached task. That task keeps its own `Arc` to the effect and to the
++//! child owner, so nothing in it notices when the request's root owner is
++//! torn down — the body runs anyway and reads a signal whose arena node is
++//! gone: "you tried to access a reactive value … but it has already been
++//! disposed". On the server this happens whenever a render finishes before
++//! the tokio scheduler gets to the effect task (leptos' `<Suspense>` effect
++//! that `dry_resolve`s the boundary's children, `leptos_i18n`'s locale
++//! effect); on the client it is the "effect outlives its page" shape.
++//!
++//! Run with `--features effects` for the `Effect::new` case: without it
++//! `Effect::new` is a no-op and that test trivially passes.
++
++use any_spawner::Executor;
++use reactive_graph::{
++    effect::Effect,
++    owner::Owner,
++    signal::RwSignal,
++    traits::{Get, Set},
++};
++use std::{
++    sync::{
++        atomic::{AtomicBool, AtomicUsize, Ordering},
++        Arc, Barrier,
++    },
++    time::Duration,
++};
++
++async fn settle() {
++    for _ in 0..8 {
++        Executor::tick().await;
++    }
++}
++
++#[tokio::test]
++async fn isomorphic_effect_does_not_run_after_its_owner_is_cleaned_up() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let source = RwSignal::new(0);
++    let runs = Arc::new(AtomicUsize::new(0));
++
++    Effect::new_isomorphic({
++        let runs = Arc::clone(&runs);
++        move |_| {
++            runs.fetch_add(1, Ordering::SeqCst);
++            // The read that panics in production: the node is gone.
++            source.get();
++        }
++    });
++
++    // The render is over before the effect task was ever polled.
++    owner.unset_with_forced_cleanup();
++    settle().await;
++
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        0,
++        "an effect must not run once its owner has been cleaned up"
++    );
++}
++
++#[tokio::test]
++async fn isomorphic_effect_stops_rerunning_after_its_owner_is_cleaned_up() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let source = RwSignal::new(0);
++    let survivor = RwSignal::new(0);
++    let runs = Arc::new(AtomicUsize::new(0));
++
++    Effect::new_isomorphic({
++        let runs = Arc::clone(&runs);
++        move |_| {
++            runs.fetch_add(1, Ordering::SeqCst);
++            source.get();
++        }
++    });
++    settle().await;
++    assert_eq!(runs.load(Ordering::SeqCst), 1, "first run happens normally");
++
++    // Queue a rerun, then tear the owner down before the task gets to it.
++    source.set(1);
++    owner.unset_with_forced_cleanup();
++    settle().await;
++    // Unrelated activity must not resurrect it either.
++    survivor.set(1);
++    settle().await;
++
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        1,
++        "a queued rerun must be dropped once the owner is cleaned up"
++    );
++}
++
++#[cfg(feature = "effects")]
++#[tokio::test]
++async fn local_effect_does_not_run_after_its_owner_is_cleaned_up() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    tokio::task::LocalSet::new()
++        .run_until(async {
++            let source = RwSignal::new(0);
++            let runs = Arc::new(AtomicUsize::new(0));
++
++            Effect::new({
++                let runs = Arc::clone(&runs);
++                move |_| {
++                    runs.fetch_add(1, Ordering::SeqCst);
++                    source.get();
++                }
++            });
++
++            owner.unset_with_forced_cleanup();
++            settle().await;
++
++            assert_eq!(
++                runs.load(Ordering::SeqCst),
++                0,
++                "a local effect must not run once its owner has been cleaned \
++                 up"
++            );
++        })
++        .await;
++}
++
++/// The production shape: the effect body is *mid-run* on one worker when
++/// the request's root owner is force-cleaned on another (leptos' from_app
++/// does that at the end of the response stream). Every read after that
++/// point used to panic with "already been disposed"; the forced cleanup
++/// must wait for the running body instead.
++#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
++async fn forced_cleanup_waits_for_a_running_effect_body() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let first = RwSignal::new(1);
++    let second = RwSignal::new(2);
++    let completed = Arc::new(AtomicBool::new(false));
++    let started = Arc::new(Barrier::new(2));
++
++    Effect::new_isomorphic({
++        let completed = Arc::clone(&completed);
++        let started = Arc::clone(&started);
++        move |_| {
++            first.get();
++            // Hand control to the test thread and give it time to run the
++            // cleanup while this body is still going.
++            started.wait();
++            std::thread::sleep(Duration::from_millis(100));
++            second.get();
++            completed.store(true, Ordering::SeqCst);
++        }
++    });
++
++    let cleanup = tokio::task::spawn_blocking(move || {
++        started.wait();
++        owner.unset_with_forced_cleanup();
++    });
++    cleanup.await.unwrap();
++    // Let the effect task finish (or die) before asserting.
++    tokio::time::sleep(Duration::from_millis(300)).await;
++
++    assert!(
++        completed.load(Ordering::SeqCst),
++        "the effect body must finish before its tree is torn down"
++    );
++}
++
++/// Same race through the other teardown path: the root `Owner` is simply
++/// dropped (an abandoned render past leptos' drain cap) while a body runs.
++#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
++async fn root_drop_waits_for_a_running_effect_body() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let first = RwSignal::new(1);
++    let second = RwSignal::new(2);
++    let completed = Arc::new(AtomicBool::new(false));
++    let started = Arc::new(Barrier::new(2));
++
++    Effect::new_isomorphic({
++        let completed = Arc::clone(&completed);
++        let started = Arc::clone(&started);
++        move |_| {
++            first.get();
++            started.wait();
++            std::thread::sleep(Duration::from_millis(100));
++            second.get();
++            completed.store(true, Ordering::SeqCst);
++        }
++    });
++
++    let teardown = tokio::task::spawn_blocking(move || {
++        started.wait();
++        // `set()` only keeps a weak handle, so this is the last strong one.
++        drop(owner);
++    });
++    teardown.await.unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++
++    assert!(
++        completed.load(Ordering::SeqCst),
++        "the effect body must finish before its tree is dropped"
++    );
++}
++
++/// A body that tears down its own tree must not wait on itself.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn a_body_tearing_down_its_own_tree_does_not_deadlock() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let done = Arc::new(AtomicBool::new(false));
++    let handle = owner.clone();
++    Effect::new_isomorphic({
++        let done = Arc::clone(&done);
++        move |_| {
++            handle.clone().unset_with_forced_cleanup();
++            done.store(true, Ordering::SeqCst);
++        }
++    });
++
++    let finished = tokio::time::timeout(Duration::from_secs(2), async {
++        while !done.load(Ordering::SeqCst) {
++            tokio::time::sleep(Duration::from_millis(5)).await;
++        }
++    })
++    .await;
++    assert!(finished.is_ok(), "the body blocked on its own teardown");
++}

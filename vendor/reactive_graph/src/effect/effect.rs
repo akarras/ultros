@@ -190,9 +190,13 @@ impl Effect<LocalStorage> {
 
                             let old_value =
                                 mem::take(&mut *value.write().or_poisoned());
-                            let new_value = owner.with_cleanup(|| {
-                                subscriber.with_observer(|| {
-                                    run_in_effect_scope(|| fun.run(old_value))
+                            let new_value = owner.run_effect_body(|| {
+                                owner.with_cleanup(|| {
+                                    subscriber.with_observer(|| {
+                                        run_in_effect_scope(|| {
+                                            fun.run(old_value)
+                                        })
+                                    })
                                 })
                             });
                             *value.write().or_poisoned() = Some(new_value);
@@ -339,6 +343,10 @@ impl Effect<LocalStorage> {
                         {
                             subscriber.clear_sources(&subscriber);
 
+                            // Both closures run under one in-flight guard;
+                            // see `Owner::run_effect_body`.
+                            let _run = owner.effect_body_guard();
+
                             let old_dep_value = mem::take(
                                 &mut *dep_value.write().or_poisoned(),
                             );
@@ -365,6 +373,7 @@ impl Effect<LocalStorage> {
                                 Some(new_dep_value);
 
                             first_run = false;
+                            drop(_run);
                         }
                     }
                 }
@@ -426,9 +435,11 @@ impl Effect<SyncStorage> {
 
                         let old_value =
                             mem::take(&mut *value.write().or_poisoned());
-                        let new_value = owner.with_cleanup(|| {
-                            subscriber.with_observer(|| {
-                                run_in_effect_scope(|| fun.run(old_value))
+                        let new_value = owner.run_effect_body(|| {
+                            owner.with_cleanup(|| {
+                                subscriber.with_observer(|| {
+                                    run_in_effect_scope(|| fun.run(old_value))
+                                })
                             })
                         });
                         *value.write().or_poisoned() = Some(new_value);
@@ -477,6 +488,10 @@ impl Effect<SyncStorage> {
                         {
                             subscriber.clear_sources(&subscriber);
 
+                            // Both closures run under one in-flight guard;
+                            // see `Owner::run_effect_body`.
+                            let _run = owner.effect_body_guard();
+
                             let old_dep_value = mem::take(
                                 &mut *dep_value.write().or_poisoned(),
                             );
@@ -503,6 +518,7 @@ impl Effect<SyncStorage> {
                                 Some(new_dep_value);
 
                             first_run = false;
+                            drop(_run);
                         }
                     }
                 }

@@ -196,3 +196,7 @@ check-cfg = [
 [[test]]
 name = "async_source_walk"
 path = "tests/async_source_walk.rs"
+
+[[test]]
+name = "effect_disposed_first_run"
+path = "tests/effect_disposed_first_run.rs"
