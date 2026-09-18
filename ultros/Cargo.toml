@@ -21,12 +21,17 @@ cookie = "0.18.1"
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 poise = { version = "0.6.2" }
 chrono = { workspace = true }
-lodestone = { git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = [
+lodestone = { git = "https://github.com/akarras/lodestone.git", branch = "master", default-features = false, features = [
     "rustls-tls",
 ] }
-reqwest = { version = "0.11", default-features = false, features = [
+reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
+# `web-push` 0.11 still speaks `http` 0.2: `request_builder::build_request` yields
+# an `http` 0.2 request and `parse_response` takes an `http` 0.2 `StatusCode`,
+# while reqwest 0.12 is on `http` 1.x. This renamed dep bridges the two in
+# `alerts::delivery::send_webpush` until web-push moves to http 1.
+http02 = { package = "http", version = "0.2" }
 # Reading the character name/home world off a Lodestone profile page, see
 # `lodestone_profile`. This is the same HTML parser the `lodestone` crate uses.
 select = "0.6"

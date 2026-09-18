@@ -572,9 +572,8 @@ struct DiscordAuthConfigImpl {
     /// Shared async HTTP client for OAuth token exchange / revocation. v5
     /// requires us to bring our own `AsyncHttpClient` and configure it not to
     /// follow redirects to avoid SSRF on the token endpoint. We use the
-    /// `reqwest` that oauth2 re-exports (0.12) rather than ultros's own
-    /// `reqwest = 0.11`, because the `AsyncHttpClient` trait is only
-    /// implemented for the 0.12 `reqwest::Client`.
+    /// `reqwest` that oauth2 re-exports so the `AsyncHttpClient` trait impl is
+    /// guaranteed to match — it is the same 0.12 `reqwest` ultros depends on.
     pub http_client: oauth2::reqwest::Client,
 }
 

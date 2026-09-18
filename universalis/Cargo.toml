@@ -7,7 +7,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = {version = "0.11.11", default-features = false, features = ["json", "rustls-tls"]}
+reqwest = {version = "0.12", default-features = false, features = ["json", "rustls-tls"]}
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -27,9 +27,9 @@ chrono = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
-# reqwest 0.11's `Response: From<http::Response<_>>` — builds fake responses for
+# reqwest 0.12's `Response: From<http::Response<_>>` — builds fake responses for
 # the metrics label tests without touching the network.
-http = "0.2"
+http = "1"
 clap = {version = "4.0.18", features = ["derive"]}
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
