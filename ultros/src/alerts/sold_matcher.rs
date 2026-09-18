@@ -195,14 +195,11 @@ impl SoldMatcher {
     fn settle_key(&mut self, key: SaleKey, now: DateTime<Utc>) -> Vec<SoldEvent> {
         let mut fired = Vec::new();
         let mut index = 0;
-        loop {
-            let Some(sale) = self
-                .pending_sales
-                .get(&key)
-                .and_then(|sales| sales.get(index).cloned())
-            else {
-                break;
-            };
+        while let Some(sale) = self
+            .pending_sales
+            .get(&key)
+            .and_then(|sales| sales.get(index).cloned())
+        {
             if now - sale.received_at < self.settle {
                 // Sales are in arrival order, so nothing after this one has
                 // settled either.

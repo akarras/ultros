@@ -277,7 +277,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
                 line.source = PriceSource::Subcraft;
                 line.world_id = 0;
             }
-            sub_crafts.extend(best_sub_crafts.into_iter());
+            sub_crafts.extend(best_sub_crafts);
         }
         unpriced = unpriced.saturating_add(best_unpriced);
 
