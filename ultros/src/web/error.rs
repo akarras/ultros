@@ -215,7 +215,10 @@ define_error_enum!(ApiError {
     #[error("No Auth Cookie")]
     NoAuthCookie,
     #[error("Discord token was invalid")]
-    DiscordTokenInvalid(PrivateCookieJar<Key>),
+    // Boxed: the jar is ~160 bytes and this variant alone was the size of every
+    // `Result<_, ApiError>` on the hot path (clippy::result_large_err). It is
+    // only ever built on the auth-failure path.
+    DiscordTokenInvalid(Box<PrivateCookieJar<Key>>),
     #[error("{0}")]
     Forbidden(&'static str),
     #[error("{0}")]
@@ -467,7 +470,8 @@ fn api_report_title(error: &ApiError) -> std::borrow::Cow<'static, str> {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        if let ApiError::DiscordTokenInvalid(mut cookies) = self {
+        if let ApiError::DiscordTokenInvalid(cookies) = self {
+            let mut cookies = *cookies;
             // remove the discord user cookie
             info!("Removed invalid Discord token");
             cookies = cookies.remove(super::oauth::discord_auth_removal_cookie());
@@ -820,7 +824,7 @@ mod tests {
     #[test]
     fn discord_token_invalid_is_unauthorized() {
         let jar = PrivateCookieJar::new(Key::generate());
-        let response = ApiError::DiscordTokenInvalid(jar).into_response();
+        let response = ApiError::DiscordTokenInvalid(Box::new(jar)).into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 

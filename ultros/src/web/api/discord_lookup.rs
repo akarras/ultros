@@ -388,7 +388,7 @@ async fn oauth_manageable_guild_ids(
                 if let Some(token) = cookies.get(crate::web::oauth::DISCORD_AUTH_COOKIE) {
                     cache.remove_token(token.value()).await;
                 }
-                return Err(ApiError::DiscordTokenInvalid(cookies.clone()));
+                return Err(ApiError::DiscordTokenInvalid(Box::new(cookies.clone())));
             }
             Ok(Err(error)) => return Err(anyhow::anyhow!(error).into()),
             Err(_) => return Err(anyhow::anyhow!("Discord guild discovery timed out").into()),
@@ -435,7 +435,7 @@ pub(crate) async fn manageable_guilds_for_user(
             )
         })
         .collect::<Vec<_>>();
-    guilds.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    guilds.sort_by_key(|a| a.1.to_lowercase());
     Ok(guilds)
 }
 
@@ -494,7 +494,7 @@ pub(crate) async fn writable_guilds_for_user(
                 name: channel.name,
             })
             .collect::<Vec<_>>();
-        channels.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        channels.sort_by_key(|a| a.name.to_lowercase());
 
         guilds.push(DiscordWritableGuild {
             id: partial.id.get() as i64,
@@ -504,7 +504,7 @@ pub(crate) async fn writable_guilds_for_user(
         });
     }
 
-    guilds.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    guilds.sort_by_key(|a| a.name.to_lowercase());
     Ok(guilds)
 }
 

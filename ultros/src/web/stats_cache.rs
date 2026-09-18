@@ -219,11 +219,12 @@ impl<K: CacheKind> StatsCache<K> {
     }
 
     fn subtract_retained(&self, bytes: usize) {
-        let _ = self.inner.retained_bytes.fetch_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |current| Some(current.saturating_sub(bytes)),
-        );
+        let _ =
+            self.inner
+                .retained_bytes
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    Some(current.saturating_sub(bytes))
+                });
     }
 
     /// Evict least-recently-used slots until cached response bodies are back

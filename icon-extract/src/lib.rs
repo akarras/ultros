@@ -224,8 +224,10 @@ fn packed16(data: &[u8], w: usize, h: usize, name: &str) -> anyhow::Result<Vec<u
         .get(..w * h * 2)
         .with_context(|| format!("{name} data too short for {w}x{h}"))?;
     Ok(mip0
-        .chunks_exact(2)
-        .map(|p| u16::from_le_bytes([p[0], p[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&p| u16::from_le_bytes(p))
         .collect())
 }
 
@@ -239,8 +241,10 @@ pub fn decode_tex(tex: &Texture) -> anyhow::Result<RgbaImage> {
                 .get(..w * h * 4)
                 .with_context(|| format!("Bgra8 data too short for {w}x{h}"))?;
             // Stored B,G,R,A per pixel.
-            mip0.chunks_exact(4)
-                .flat_map(|p| [p[2], p[1], p[0], p[3]])
+            mip0.as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|&[b, g, r, a]| [r, g, b, a])
                 .collect()
         }
         Format::Bc1Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc1, "bc1")?,

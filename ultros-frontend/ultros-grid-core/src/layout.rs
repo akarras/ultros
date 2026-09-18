@@ -134,9 +134,11 @@ impl GridLayout {
                         return None;
                     }
                     let widths = tokens
-                        .chunks_exact(2)
-                        .map(|p| {
-                            Some((p[0].to_string(), u32::from_str_radix(p[1], 36).ok()? as f64))
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|[key, width]| {
+                            Some((key.to_string(), u32::from_str_radix(width, 36).ok()? as f64))
                         })
                         .collect::<Option<BTreeMap<_, _>>>()?;
                     Some(Self {
