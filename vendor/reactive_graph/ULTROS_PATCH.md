@@ -121,6 +121,37 @@ interleaving (fails before the repair) and a computation unwind in the same
 window. The stress tests retain caught panic messages and no longer replace
 the process-wide panic hook, so a future failure preserves its cause.
 
+## Effect bodies vs. a forced teardown (akarras/ultros#1520 follow-up)
+
+`Effect::new`, `new_isomorphic`, `watch` and `watch_sync` run their bodies on
+spawned tasks. On the multi-threaded server runtime a body can be mid-run on
+one worker while another thread tears the tree's root down —
+`leptos_integration_utils::from_app` calls `owner.unset_with_forced_cleanup()`
+as the last item of every response stream, and an abandoned render drops the
+root outright. Every arena read the body makes after that point panics with
+"you tried to access a reactive value … but it has already been disposed",
+although the body was started while the tree was alive. On Ultros that was
+the tail left after #1520 (which fixed the *arena* mix-up): GlitchTip #7388
+(`cookies.rs:174`, the home-world cookie memo read by a `<Suspense>` effect's
+`dry_resolve` walk) and the `leptos_i18n context.rs:213` locale effect in
+#7382, a handful per day, clustered under load when the effect task lags the
+render. The pre-poll ordering is already safe — the effect's `Receiver` holds
+a `Weak`, so a cleanup that lands *before* the body starts ends the task
+silently — only the concurrent one panics.
+
+`src/owner/activity.rs` adds a per-tree in-flight counter (`Activity`,
+shared by every owner in a tree the same way the arena is). The four effect
+constructors run each body under `Owner::run_effect_body` /
+`effect_body_guard`, and the root's `unset_with_forced_cleanup` and its
+`Drop` wait (bounded, 5 s) for the count to reach zero first. A thread that is
+itself inside one of the tree's bodies never waits (thread-local
+`ENTERED`), so a body that tears down its own tree cannot deadlock, and on
+wasm — single-threaded, so `running > 0` always means the current thread —
+the wait is never entered. `tests/effect_disposed_first_run.rs` reproduces
+the race on a multi-thread runtime through both teardown paths (fails on the
+previous version of the patch with the exact production message) and pins the
+pre-poll orderings and the self-teardown case.
+
 ## Upstream status
 
 Not yet reported upstream as of 2026-09-15; the newest published
@@ -139,7 +170,7 @@ directory and the `[patch.crates-io]` entry.
   directory); the root `cargo fmt --all` does not touch it.
 - Run its tests with
   `cargo test --manifest-path vendor/reactive_graph/Cargo.toml --features effects`;
-  `scripts/check_tests.sh` runs the unit tests and the `memo_concurrent` and
-  `async_source_walk` regression tests in CI. `--features effects` matters:
+  `scripts/check_tests.sh` runs the unit tests and the `memo_concurrent`,
+  `async_source_walk` and `effect_disposed_first_run` regression tests in CI. `--features effects` matters:
   without it `Effect::new` is a no-op, so `async_source_walk`'s readers never
   run and every shape passes against the broken code too.

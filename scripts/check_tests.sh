@@ -50,4 +50,6 @@ cargo test --locked -p game-data-pack --test pack_sanity
 # load-bearing: without it `Effect::new` is a no-op, every reader in
 # `async_source_walk` is dead code, and all eleven shapes pass against the
 # broken `inner.rs` too.
-cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --features effects --lib --test memo_concurrent --test async_source_walk
+# `effect_disposed_first_run` covers the follow-up: a forced teardown must
+# wait for an effect body that is mid-run on another worker.
+cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --features effects --lib --test memo_concurrent --test async_source_walk --test effect_disposed_first_run
