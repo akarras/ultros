@@ -28,7 +28,7 @@ use crate::components::{
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases,
-        filter_row::{ListFilterRow, SortSpec, worlds_in_listings},
+        filter_row::{ListFilterRow, SortSpec},
         list_settings_drawer::ListSettingsDrawer,
         list_summary::*,
     },
@@ -40,6 +40,7 @@ use crate::components::{
     realtime_status::RealtimeStatus,
     skeleton::TableSkeleton,
     tooltip::*,
+    world_picker::WorldPicker,
 };
 use crate::error::AppError;
 use crate::global_state::labs::{LAB_LISTS_SYNC, use_lab};
@@ -48,7 +49,7 @@ use crate::list_doc::adapter::Edit;
 use crate::list_doc::handle::ListDocHandle;
 use crate::query_defaults::filter_query_signal;
 use crate::routes::list_view::{
-    ActivityFeed, IdList, ListView, ListViewResult, MenuState, NameList, filter_excluded,
+    ActivityFeed, IdList, ListView, ListViewResult, NameList, filter_excluded,
     list_item_table_skeleton_columns, remaining_quantity, sort_list_items,
 };
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -467,12 +468,35 @@ pub fn BuildListRow(
 }
 
 #[component]
-pub fn ListWorkspaceModes(shop: Signal<bool>, set_shop: Callback<bool>) -> impl IntoView {
+pub fn ListWorkspaceModes(
+    shop: Signal<bool>,
+    set_shop: Callback<bool>,
+    /// Sized like a `.sticky-bar-button`, for the account page's control
+    /// bar, where the full-height segmented control towered over its
+    /// neighbours.
+    #[prop(optional)]
+    compact: bool,
+) -> impl IntoView {
     let i18n = use_i18n();
+    let group_class = if compact {
+        "inline-flex w-fit gap-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-0.5"
+    } else {
+        "inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1"
+    };
+    let button_class = move |active: bool| match (compact, active) {
+        (true, true) => {
+            "rounded px-2.5 py-0.5 text-[0.85rem] font-semibold bg-brand-900 text-[color:var(--brand-fg)]"
+        }
+        (true, false) => {
+            "rounded px-2.5 py-0.5 text-[0.85rem] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+        }
+        (false, true) => "btn-primary min-w-20 justify-center font-semibold shadow-sm",
+        (false, false) => "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]",
+    };
     view! {
-        <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label=t_string!(i18n, lists_workspace_mode)>
-            <button class=move || if !shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } data-testid="guest-build-mode" aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
-            <button class=move || if shop.get() { "btn-primary min-w-20 justify-center font-semibold shadow-sm" } else { "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]" } data-testid="guest-shop-mode" aria-pressed=move || shop.get().to_string() on:click=move |_| set_shop.run(true)>{t!(i18n, lists_workspace_shop)}</button>
+        <div class=group_class role="group" aria-label=t_string!(i18n, lists_workspace_mode)>
+            <button type="button" class=move || button_class(!shop.get()) data-testid="guest-build-mode" aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
+            <button type="button" class=move || button_class(shop.get()) data-testid="guest-shop-mode" aria-pressed=move || shop.get().to_string() on:click=move |_| set_shop.run(true)>{t!(i18n, lists_workspace_shop)}</button>
         </div>
     }
 }
@@ -1644,7 +1668,7 @@ pub fn ListViewSync() -> impl IntoView {
         }
     });
 
-    let (menu, set_menu) = signal(MenuState::None);
+    let (make_place_open, set_make_place_open) = signal(false);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
     let (settings_open, set_settings_open) = signal(false);
@@ -1660,7 +1684,11 @@ pub fn ListViewSync() -> impl IntoView {
     // (#1332), and `SyncSubscription` owns `Rc`s, so it can only live in a
     // thread-local slot.
     let modal_open = Signal::derive(move || {
-        subscribe_open() || settings_open() || access_open() || confirm_bulk_delete()
+        subscribe_open()
+            || settings_open()
+            || access_open()
+            || confirm_bulk_delete()
+            || make_place_open()
     });
     let (resync, set_resync) = signal(0u32);
     #[cfg(feature = "hydrate")]
@@ -2114,6 +2142,30 @@ pub fn ListViewSync() -> impl IntoView {
             .unwrap_or_default()
     });
     let (home_world, _) = crate::global_state::home_world::use_home_world();
+    // The scope the document is priced for: the document's own once it has
+    // recorded one, otherwise the server's. Read through the handle so the
+    // picker only ever exists on the client (see the markup below).
+    let list_scope = Signal::derive(move || {
+        let doc = handle
+            .get()
+            .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())?;
+        doc.revision.track();
+        doc.meta().scope.or_else(|| {
+            list_view
+                .get()
+                .and_then(Result::ok)
+                .filter(|(list, _)| list.list.id == list_id.get())
+                .map(|(list, _)| list.list.wdr_filter)
+        })
+    });
+    let set_list_scope = move |scope: Option<AnySelector>| {
+        let Some(scope) = scope else {
+            return;
+        };
+        if let Err(error) = apply_edit(handle, Edit::SetScope(scope)) {
+            mutation_feedback.set(workspace_error(i18n, &error));
+        }
+    };
     let shop_worlds = use_context::<LocalWorldData>().and_then(|data| data.0.ok());
     let shop_input = Signal::derive(move || {
         use crate::components::list_shop::{ShopInput, ShopRow};
@@ -2198,44 +2250,28 @@ pub fn ListViewSync() -> impl IntoView {
                 // `integration/list-flow.cjs`, `screenshots.cjs` and
                 // `shared-list.cjs`, which locate this row by that class.
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between list-toolbar">
+                    // Recipes are added from the composer's Items / Recipes
+                    // toggle, so the bar keeps only the tools that are not
+                    // part of the cart itself.
                     <div class="flex flex-wrap items-center gap-2">
                         <Show when=move || view_caps.with(|c| c.can_write)>
-                            <>
-                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
-                                    <button
-                                        class="sticky-bar-button sticky-bar-button-shrink"
-                                        class:bg-brand-900=move || recipe_modal_open.get()
-                                        class:border-brand-500=move || recipe_modal_open.get()
-                                        on:click=move |_| {
-                                            set_buying_view_param.set(None);
-                                            set_recipe_modal_open(!recipe_modal_open.get_untracked());
-                                        }
-                                    >
-                                        <Icon icon=i::BiBookAddRegular />
-                                        <span class="sticky-bar-button-label">{t!(i18n, list_view_add_recipe)}</span>
-                                    </button>
-                                </Tooltip>
-                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
-                                    <button
-                                        class="sticky-bar-button sticky-bar-button-shrink"
-                                        class:bg-brand-900=move || menu() == MenuState::MakePlace
-                                        class:border-brand-500=move || menu() == MenuState::MakePlace
-                                        on:click=move |_| set_menu(
-                                            match menu() {
-                                                MenuState::MakePlace => MenuState::None,
-                                                _ => MenuState::MakePlace,
-                                            },
-                                        )
-                                    >
-                                        <Icon icon=i::BiImportRegular />
-                                        <span class="sticky-bar-button-label">{t!(i18n, list_view_make_place)}</span>
-                                    </button>
-                                </Tooltip>
-                            </>
+                            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
+                                <button
+                                    class="sticky-bar-button sticky-bar-button-shrink"
+                                    data-testid="list-make-place-btn"
+                                    aria-haspopup="dialog"
+                                    on:click=move |_| set_make_place_open(true)
+                                >
+                                    <Icon icon=i::BiImportRegular />
+                                    <span class="sticky-bar-button-label">{t!(i18n, list_view_make_place)}</span>
+                                </button>
+                            </Tooltip>
                         </Show>
                     </div>
 
-                    <div class="flex flex-wrap gap-2 self-start lg:self-auto">
+                    // `items-center`: without it the wrapped tooltips and
+                    // the bare buttons stretched to different heights.
+                    <div class="flex flex-wrap items-center gap-2 self-start lg:self-auto">
                         <Show when=move || view_caps.with(|c| c.can_write)>
                             <Tooltip tooltip_text=t_string!(i18n, list_auto_mark_description).to_string()>
                                 <AutoMarkPurchases
@@ -2267,11 +2303,11 @@ pub fn ListViewSync() -> impl IntoView {
                                 <span class="sticky-bar-button-label">{t!(i18n, list_view_subscribe_button)}</span>
                             </button>
                         </Tooltip>
-                        <ListWorkspaceModes shop=buying_view.into() set_shop=Callback::new(move |shop: bool| set_buying_view_param.set(shop.then_some(true))) />
+                        <ListWorkspaceModes shop=buying_view.into() set_shop=Callback::new(move |shop: bool| set_buying_view_param.set(shop.then_some(true))) compact=true />
                         <Show when=move || view_caps.with(|c|c.can_admin)>
-                            <button class="sticky-bar-button" data-testid="list-access-btn" on:click=move |_|set_access_open(true)>
+                            <button class="sticky-bar-button sticky-bar-button-shrink" data-testid="list-access-btn" on:click=move |_|set_access_open(true)>
                                 <Icon icon=i::BiShareAltRegular />
-                                <span>{t!(i18n,online_access)}</span>
+                                <span class="sticky-bar-button-label">{t!(i18n,online_access)}</span>
                             </button>
                         </Show>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
@@ -2289,7 +2325,20 @@ pub fn ListViewSync() -> impl IntoView {
                 </div>
             </div>
 
-            <crate::components::list_travel_state::ListTravelPanel state=travel />
+            // The price scope sits with the travel limit, as it does on a
+            // device list. Only the owner may change it (the sync relay
+            // rejects anyone else's meta edit), and the document that
+            // carries it exists on the client alone, so the first server
+            // render matches the hydrating client: neither shows it.
+            <div class="panel rounded-lg p-3 flex flex-wrap items-end gap-x-6 gap-y-3" data-testid="list-price-controls">
+                <Show when=move || view_caps.with(|c| c.can_admin) && handle.get().is_some()>
+                    <div class="flex flex-wrap items-center gap-2 text-sm" data-testid="list-price-scope">
+                        <span>{t!(i18n, list_price_scope_label)}</span>
+                        <WorldPicker current_world=list_scope set_current_world=leptos::reactive::wrappers::write::SignalSetter::map(set_list_scope) />
+                    </div>
+                </Show>
+                <crate::components::list_travel_state::ListTravelPanel state=travel />
+            </div>
 
             <Show when=subscribe_open>
                 {move || {
@@ -2343,29 +2392,24 @@ pub fn ListViewSync() -> impl IntoView {
                 </Show>
             </div>
 
-            {move || match menu() {
-                MenuState::None => None,
-                MenuState::MakePlace => {
-                    Some(
-                        view! {
-                            <section class="panel rounded-lg p-4">
-                                <MakePlaceImporter
-                                    list_id=Signal::derive(move || {
-                                        params
-                                            .with(|p| {
-                                                p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
-                                            })
-                                            .flatten()
-                                            .unwrap_or_default()
+            <Show when=make_place_open>
+                <Modal set_visible=set_make_place_open aria_label=Signal::derive(move || t_string!(i18n, list_view_make_place).to_string())>
+                    <div class="space-y-3">
+                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_make_place)}</h2>
+                        <MakePlaceImporter
+                            list_id=Signal::derive(move || {
+                                params
+                                    .with(|p| {
+                                        p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
                                     })
-
-                                    refresh=move || set_listings_version.update(|v| *v += 1)
-                                />
-                            </section>
-                        },
-                    )
-                }
-            }}
+                                    .flatten()
+                                    .unwrap_or_default()
+                            })
+                            refresh=move || set_listings_version.update(|v| *v += 1)
+                        />
+                    </div>
+                </Modal>
+            </Show>
 
             <Transition fallback=move || {
                 view! {
@@ -2411,36 +2455,20 @@ pub fn ListViewSync() -> impl IntoView {
                                     } else {
                                         0
                                     };
-                                    let world_helper = use_context::<LocalWorldData>()
-                                        .and_then(|world_data| world_data.0.ok());
-
                                     // Built here, inside the Transition, so its SSR render
                                     // comes from the resolved resource — a read of
                                     // `list_view` outside a suspense boundary doesn't
                                     // register, and the shell/first-client-render disagree
                                     // when the resource resolves after the shell flushes
                                     // (an unrecoverable hydration mismatch).
-                                    let datacenters = world_helper
-                                        .as_deref()
-                                        .and_then(|helper| {
-                                            helper.lookup_selector(list.list.wdr_filter).map(
-                                                |result| {
-                                                    helper
-                                                        .get_datacenters(&result)
-                                                        .into_iter()
-                                                        .map(|dc| dc.name.clone())
-                                                        .collect::<Vec<_>>()
-                                                },
-                                            )
-                                        })
-                                        .unwrap_or_default();
+                                    //
+                                    // No exclusions group: narrowing worlds is Shop's
+                                    // job now (its trip and the travel limit above).
                                     let filter_row = view! {
                                         <ListFilterRow
-                                            worlds=worlds_in_listings(
-                                                &item_snapshot,
-                                                world_helper.as_deref(),
-                                            )
-                                            datacenters=datacenters
+                                            worlds=Vec::new()
+                                            datacenters=Vec::new()
+                                            exclusions=false
                                             excluded_worlds=excluded_worlds
                                             set_excluded_worlds=set_excluded_worlds
                                             excluded_datacenters=excluded_datacenters

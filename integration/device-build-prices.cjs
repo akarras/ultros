@@ -129,32 +129,43 @@ async function main() {
     const worlds = data.regions.flatMap(region => region.datacenters.flatMap(dc => dc.worlds));
     [world, secondWorld] = worlds;
     assert(world && secondWorld, "two worlds required for scope replacement");
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name], ["PRICE_ZONE", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     await load(`${base}/list?labs=lists-sync`);
     await page.click(tid("list-new")); await replace(tid("device-list-name"), `Device prices ${Date.now()}`); await page.click(tid("device-list-create"));
     await page.waitForSelector(tid("device-list-editor")); const deviceUrl = page.url();
     console.log("Device editor ready; adding catalog items");
+    // Build prices itself as soon as the list has a row. Fault that first
+    // eager lookup so the not-requested state is reachable, then hold the
+    // manual retry: a failed lookup is not retried until the list changes.
+    assert.equal(requests, 0, "an empty list has nothing to price");
+    failBulk = true;
     await addItem("Bronze Ingot"); await page.waitForSelector(row(item));
-    await expectState(item, "not-requested"); await expectTotal("—");
-    assert.equal(requests, 0, "Build opens without an implicit Shop lookup");
-    failBulk = true; await page.click(tid("device-prices-refresh"));
     await page.waitForSelector(tid("device-prices-error"));
     assert.equal(await text(tid("device-prices-error")), "Could not load prices. Try again.");
+    assert.equal(requests, 1, "Build looks prices up on its own once a row lands");
     await expectTotal("—"); await expectState(item, "not-requested");
     failBulk = false;
     holdBulk = true; await page.click(tid("device-prices-refresh"));
     await page.waitForFunction(() => document.querySelector('[data-testid="list-estimate-status"]')?.textContent.includes("Loading prices"));
+    await waitHeld(1); holdBulk = false; await respondBulk(held.shift());
+    await expectState(item, "priced"); await expectTotal("10 gil");
+    // A new row is priced on its own as well; when that lookup fails the
+    // row stays unpriced beside the known subtotal.
+    failBulk = true;
     await addItem("Iron Ingot");
     await page.waitForSelector('input[aria-label="Needed for Iron Ingot"]');
     added = await page.$eval('input[aria-label="Needed for Iron Ingot"]', el => Number(el.closest("[data-item-id]").dataset.itemId));
     await page.waitForSelector(row(added));
-    await waitHeld(1); assert(!new URL(held[0].url()).pathname.split("/").at(-1).split(",").includes(String(added)));
-    holdBulk = false; await respondBulk(held.shift());
+    await page.waitForSelector(tid("device-prices-error"));
+    assert.equal(requests, 3, "the added row triggers exactly one more lookup");
     await expectState(item, "priced"); await expectState(added, "not-requested"); await expectTotal("10 gil");
     assert.equal(await text(tid("list-estimate-status")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
     await capture("partial-coverage");
+    failBulk = false;
+    // From here on a trip is being followed, so the editor stops repricing on
+    // its own and every later lookup below is the explicit Refresh prices.
     await page.click(tid("guest-shop-mode"));
-    await page.click(tid("shop-cheapest"));
+    await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /10 gil/);
     assert.equal(await text(tid("shop-build-coverage")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
@@ -187,7 +198,8 @@ async function main() {
     await page.setOfflineMode(true);
     await setNumber(`${row(item)} input[aria-label="Needed for Bronze Ingot"]`, 4); await expectTotal("120 gil"); await saved();
     await page.setOfflineMode(false); await load(deviceUrl);
-    await expectState(item, "not-requested"); await expectTotal("—");
+    // A reopened list prices itself against the scope it saved.
+    await expectState(item, "priced"); await expectTotal("120 gil");
     assert((await text(tid("device-price-controls"))).includes(secondWorld.name), "reopen restores selected scope");
     assert.equal(await page.$eval(`${row(item)} input[aria-label="Needed for Bronze Ingot"]`, el => el.value), "4");
     await page.click(`${row(item)} button[aria-label="Details for Bronze Ingot"]`);
@@ -201,7 +213,7 @@ async function main() {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "mobile price controls do not overflow");
     await page.screenshot({ path: path.join(artifacts, "mobile.png"), fullPage: true });
     await page.setViewport({ width: 1280, height: 900 });
-    console.log("PASS device: Build lookup, in-flight new ID, no-supply coverage, failed/late scope responses, offline edits, reopen scope, all-owned zero");
+    console.log("PASS device: eager Build lookup, failed new-row lookup, no-supply coverage, failed/late scope responses, offline edits, reopen scope, all-owned zero");
 
     const login = await page.goto(`${base}/test/login?user_id=990000001471&username=DeviceBuildPricesQA&redirect=/list`, { waitUntil: "domcontentloaded" }); assert(login.ok());
     const name = `Shared pricing ${Date.now()}`;
@@ -232,8 +244,8 @@ async function main() {
       window.__holdInitialPriceDoc = null;
       for (const { socket, data } of window.__heldInitialPriceDocs.splice(0)) socket.dispatchEvent(new MessageEvent("message", { data }));
     });
-    await page.waitForSelector(tid("shop-cheapest"));
-    await page.click(tid("shop-cheapest"));
+    await page.waitForSelector((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-stack-bought"));
     assert.match(await text(tid("shop-build-reference")), /20 gil/, "readable snapshot mounts the shared-price Shop workspace");
     await page.click(tid("guest-build-mode"));
@@ -244,7 +256,7 @@ async function main() {
     await setNumber(`${row(item)} input[aria-label="Needed for Bronze Ingot"]`, 4); await expectTotal("40 gil");
     await addItem("Iron Ingot"); await expectState(added, "not-requested");
     await page.click(tid("guest-shop-mode"));
-    await page.click(tid("shop-cheapest"));
+    await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /40 gil/);
     assert.equal(await text(tid("shop-build-coverage")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
@@ -273,7 +285,7 @@ async function main() {
     unavailableAccount = false;
     await api("POST", "/api/v1/list/item/edit", { ...rowBeforeCycle, target_price: (rowBeforeCycle.target_price || 0) + 2 });
     await page.waitForSelector(quantityInput);
-    assert.equal(await page.$eval(tid("shop-cheapest"), node => node.getAttribute("aria-pressed")), "true", "same-document availability recovery retains the selected trip");
+    assert.equal(await page.$eval((tid("shop-route-option") + '[data-route-cheapest="true"]'), node => node.getAttribute("aria-pressed")), "true", "same-document availability recovery retains the selected trip");
     assert.equal(await text(tid("shop-build-reference")), referenceBeforeCycle, "same-document recovery retains the frozen Build reference");
     assert.deepEqual(await page.$$eval("[data-shop-key]", nodes => nodes.map(node => node.dataset.shopKey)), tripBeforeCycle, "availability recovery retains frozen offer identities");
     assert.equal(await text(tid("shop-stop-title")), worldBeforeCycle, "availability recovery retains the active stop");

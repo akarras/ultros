@@ -134,8 +134,8 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
     // Open the actual companion before the downgrade, including with no market
     // prices. It must retire its editable controls when read-only arrives.
     await editorPage.click('[data-testid="guest-shop-mode"]');
-    await editorPage.waitForSelector('[data-testid="shop-cheapest"]', { visible: true });
-    await editorPage.click('[data-testid="shop-cheapest"]');
+    await editorPage.waitForSelector('[data-testid="shop-route-option"][data-route-cheapest="true"]', { visible: true });
+    await editorPage.click('[data-testid="shop-route-option"][data-route-cheapest="true"]');
     await editorPage.waitForSelector('[data-testid="open-shopping-companion"]', { visible: true });
     const opened = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Permission probe companion did not open")), timeout);

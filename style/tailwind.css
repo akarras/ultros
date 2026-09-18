@@ -1324,6 +1324,16 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     border-color: var(--color-outline);
 }
 
+/* Firefox paints a number input's spin buttons permanently (Chromium only
+   shows them on hover/focus), which crowds the narrow quantity cells in the
+   list cart. Hide them there; the value is still typed or arrow-keyed. */
+@supports (-moz-appearance: textfield) {
+    .input[type="number"] {
+        -moz-appearance: textfield;
+        appearance: textfield;
+    }
+}
+
 /* Placeholder contrast */
 .input::placeholder {
     color: var(--color-text-muted);

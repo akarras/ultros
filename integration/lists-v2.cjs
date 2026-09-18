@@ -430,7 +430,7 @@ async function main() {
     assert.match(await page.$eval(testId("shop-cart-summary"), element => element.textContent),
       /1 items · 5 units left to buy · 0 priced/, "handoff counts remaining units of a partially acquired row");
     assert.equal(await visible(testId("shop-no-prices")), true, "unknown prices are called out before a trip exists");
-    await page.click(testId("shop-cheapest"));
+    await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(testId("shop-totals"));
     assert.equal(await page.$eval(testId("shop-undo-purchase"), button => button.disabled), true,
       "manual Owned edits do not become Shop purchases on a device list");
@@ -469,7 +469,7 @@ async function main() {
     await page.waitForFunction(selector => !!document.querySelector(selector)?.closest(".hidden"), {}, testId("shop-drift"));
     console.log("[ok] Build edits keep the chosen trip; a refresh is reviewed before it replaces it");
 
-    await page.click(testId("shop-cheapest"));
+    await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(testId("open-shopping-companion"));
     const popupPromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Shopping companion did not open")), timeout);
