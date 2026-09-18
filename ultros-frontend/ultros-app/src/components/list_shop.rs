@@ -549,6 +549,10 @@ pub fn ListShop(
     can_undo_purchase: Signal<bool>,
     can_edit: Signal<bool>,
     #[prop(optional)] travel_policy: Option<Signal<TravelPolicy>>,
+    /// Told whether a trip is being followed. A host that fetches prices on
+    /// its own uses it to stop refreshing under an adopted trip.
+    #[prop(optional)]
+    on_trip_active: Option<Callback<bool>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     // The Starting world picker needs the cookie jar and the world catalog;
@@ -557,6 +561,9 @@ pub fn ListShop(
         && use_context::<crate::global_state::LocalWorldData>().is_some())
     .then(use_home_world);
     let trip = RwSignal::new(None::<Trip>);
+    if let Some(on_trip_active) = on_trip_active {
+        Effect::new(move |_| on_trip_active.run(trip.with(|trip| trip.is_some())));
+    }
     let unavailable = RwSignal::new(BTreeSet::<i32>::new());
     let consumed = RwSignal::new(Receipts::new());
     let review = RwSignal::new(None::<Review>);
@@ -1037,8 +1044,11 @@ pub fn ListShop(
                         let frontier = active.as_ref().map(|active| active.frontier.clone()).unwrap_or_else(|| {
                             replan(None, &source, &unavailable.get(), &consumed.get()).2
                         });
+                        // `cheapest_card` also marks a lone card, so the
+                        // e2e harness can always find the route to adopt.
+                        let cheapest_card = cheapest_index(&frontier);
                         let (best_value, cheapest) = if frontier.len() > 1 {
-                            (planner::RouteComparison { cards: frontier.clone() }.best_value(), cheapest_index(&frontier))
+                            (planner::RouteComparison { cards: frontier.clone() }.best_value(), cheapest_card)
                         } else {
                             (None, None)
                         };
@@ -1071,7 +1081,7 @@ pub fn ListShop(
                             let title = stop_names.clone();
                             view! {
                                 <button type="button" class=card_class class:border-brand-400=selected aria-pressed=selected.to_string() title=title
-                                    data-testid="shop-route-option" data-route-index=index data-route-worlds=worlds data-route-cost=cost data-route-missing=missing data-incomplete=incomplete.to_string()
+                                    data-testid="shop-route-option" data-route-index=index data-route-worlds=worlds data-route-cost=cost data-route-missing=missing data-incomplete=incomplete.to_string() data-route-cheapest=(cheapest_card == Some(index)).to_string()
                                     on:click=move |_| choose.run(index + 3)>
                                     <span class="flex flex-wrap items-center justify-between gap-2">
                                         <span class="text-sm text-[color:var(--color-text-muted)]">{label}</span>
@@ -1091,12 +1101,6 @@ pub fn ListShop(
                     }}
                 </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_travel_comparison_note)}</p>
-                <div class="flex flex-wrap items-center gap-2" role="group" aria-label=move || t_string!(i18n, list_shop_quick_picks).to_string()>
-                    <span class="text-sm text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_shop_quick_picks)}</span>
-                    <button class=move || if trip.get().is_some_and(|t| t.mode == 0) { "btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } else { "btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 0).to_string() data-testid="shop-home" disabled=move || input.get().home_world == 0 on:click=move |_| choose.run(0)>{move || t_string!(i18n, list_shop_home)}</button>
-                    <button class=move || if trip.get().is_some_and(|t| t.mode == 1) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 1).to_string() data-testid="shop-fewest" on:click=move |_| choose.run(1)>{move || t_string!(i18n, list_shop_fewest)}</button>
-                    <button class=move || if trip.get().is_some_and(|t| t.mode == 2) { "btn-primary min-h-11" } else { "btn-secondary min-h-11" } aria-pressed=move || trip.get().is_some_and(|t| t.mode == 2).to_string() data-testid="shop-cheapest" on:click=move |_| choose.run(2)>{move || t_string!(i18n, list_shop_cheapest)}</button>
-                </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || input.get().observed_at.map(|time| t_string!(i18n, list_shop_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_age_unknown).to_string())}</p>
             </div>
             <p role="status" data-testid="shop-notice" class:hidden=move || notice.get().is_empty()>{move || notice.get()}</p>
@@ -1849,7 +1853,7 @@ mod tests {
             }
             .to_html();
             assert!(!html.contains("shop-cart-summary"));
-            assert!(!html.contains("shop-cheapest"));
+            assert!(!html.contains("shop-route-option"));
         });
     }
 

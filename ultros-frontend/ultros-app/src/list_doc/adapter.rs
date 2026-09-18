@@ -149,6 +149,8 @@ pub enum Edit {
         name: String,
         scope: AnySelector,
     },
+    /// The price scope alone, from the inline picker on the list page.
+    SetScope(AnySelector),
 }
 
 /// Applies one full-row edit the same way the server's own PUT handler does
@@ -259,6 +261,7 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
             doc.rename(&name)?;
             doc.set_scope(scope)
         }),
+        Edit::SetScope(scope) => undo.group(|| doc.set_scope(scope)),
     }
 }
 

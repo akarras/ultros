@@ -83,7 +83,7 @@ async function main() {
       coverage: document.querySelector('[data-testid="list-estimate-status"]').textContent,
       refreshFailed: /refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent || ""),
     }));
-    await click(tid("guest-shop-mode")); await click(tid("shop-cheapest"));
+    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     // With a trip already active, a quick pick is reviewed before adoption
     // (#1480); the reference must describe the adopted source.
     if (await page.$(tid("shop-review-apply"))) await click(tid("shop-review-apply"));
@@ -242,7 +242,7 @@ async function main() {
     await load(`/list/${id}`); await summary("121 gil", false);
     assert.equal((await checked("GET", `/api/v1/list/${id}/listings`))[0].permission, "Read");
     assert.equal(await page.$(tid("inline-list-add")), null, "reader cannot add items");
-    await click(tid("guest-shop-mode")); await click(tid("shop-cheapest"));
+    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-stack-bought"));
     assert(await page.$$eval(tid("shop-stack-bought"), buttons => buttons.length > 0 && buttons.every(button => button.disabled)), "reader cannot record purchases");
     await record("shared-reader-mobile-priced-shop");
@@ -275,7 +275,7 @@ async function main() {
       await remote.goto(`${base}/list/${focusList}`, { waitUntil: "domcontentloaded" });
       await remote.waitForFunction(() => window.__pricedHydrated);
       await load(`/list/${focusList}`);
-      await click(tid("guest-shop-mode")); await click(tid("shop-cheapest"));
+      await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
       await page.waitForSelector('[data-shop-key]');
       await require("./list-shop-focus.cjs").runShopFocus(page, { label: "real-market-account", remotePurchase: async (key, delta) => {
         await remote.bringToFront();
@@ -305,13 +305,7 @@ async function main() {
     await click(tid("device-list-create"));
     await page.waitForFunction(() => location.pathname.startsWith("/list/device/"));
     deviceUrl = new URL(page.url()).pathname;
-    await replace('input[aria-label="Quantity to add"]', 5);
-    await replace('input[aria-label="Add an item"]', itemName);
-    await page.waitForSelector(`button[aria-label="Add ${itemName}"]`);
-    await page.keyboard.press("Enter"); await page.keyboard.press("Escape");
     await page.waitForSelector(tid("device-price-controls"));
-    await summary("—", false); await checkBuildReference();
-    await record("device-prices-not-requested-reference");
     await replace(`${tid("device-price-controls")} input[role="combobox"]`, market.region.name);
     await page.waitForFunction(name => [...document.querySelectorAll('button[role="option"]')]
       .some(button => button.textContent.trim().endsWith(name)), {}, market.region.name);
@@ -319,6 +313,8 @@ async function main() {
       .find(button => button.textContent.trim().endsWith(name)).click(), market.region.name);
     // Fault only the transport; every successful response still comes from
     // the real server fixture, with no injected price response or DOM state.
+    // Installed before the first row lands: Build prices itself as soon as
+    // it has one, so the held request below is that eager lookup.
     let lookupMode = "hold";
     let heldLookup;
     const intercept = async request => {
@@ -330,7 +326,10 @@ async function main() {
     };
     await page.setRequestInterception(true); page.on("request", intercept);
     try {
-      await click(tid("device-prices-refresh"));
+      await replace('input[aria-label="Quantity to add"]', 5);
+      await replace('input[aria-label="Add an item"]', itemName);
+      await page.waitForSelector(`button[aria-label="Add ${itemName}"]`);
+      await page.keyboard.press("Enter"); await page.keyboard.press("Escape");
       await page.waitForFunction(() => /Loading prices/.test(document.querySelector('[data-testid="list-estimate-status"]')?.textContent));
       assert(heldLookup, "the actual market request must be held while testing loading");
       await checkBuildReference(); await record("device-prices-loading-reference");
@@ -344,19 +343,25 @@ async function main() {
       await record("device-cached-prices-failed-refresh-reference");
       lookupMode = "pass"; await click(tid("device-prices-refresh")); await summary("56 gil", false);
       await page.waitForFunction(() => !/refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent));
+      // A new row is looked up on its own; fault that lookup so the row
+      // stays unpriced beside the known subtotal.
+      lookupMode = "abort";
+      const newItemName = market.manifest.item_names[1];
+      await replace('input[aria-label="Quantity to add"]', 1);
+      await replace('input[aria-label="Add an item"]', newItemName);
+      await page.waitForSelector(`button[aria-label="Add ${newItemName}"]`);
+      await page.keyboard.press("Enter"); await page.keyboard.press("Escape");
+      await page.waitForFunction(() => /refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent));
+      await page.waitForFunction(name => document.querySelector(`input[aria-label="Needed for ${name}"]`)
+        ?.closest("li")?.querySelector('[data-testid="cart-line-estimate"]')?.dataset.priceState === "not-requested", {}, newItemName);
+      await summary("56 gil", true); await checkBuildReference();
+      await record("device-new-item-not-requested-with-existing-prices");
+      lookupMode = "pass";
     } finally {
       if (heldLookup) await heldLookup.abort("failed").catch(() => {});
       page.off("request", intercept); await page.setRequestInterception(false);
     }
     const newItemName = market.manifest.item_names[1];
-    await replace('input[aria-label="Quantity to add"]', 1);
-    await replace('input[aria-label="Add an item"]', newItemName);
-    await page.waitForSelector(`button[aria-label="Add ${newItemName}"]`);
-    await page.keyboard.press("Enter"); await page.keyboard.press("Escape");
-    await page.waitForFunction(name => document.querySelector(`input[aria-label="Needed for ${name}"]`)
-      ?.closest("li")?.querySelector('[data-testid="cart-line-estimate"]')?.dataset.priceState === "not-requested", {}, newItemName);
-    await summary("56 gil", true); await checkBuildReference();
-    await record("device-new-item-not-requested-with-existing-prices");
     await click(tid("device-prices-refresh"));
     await page.waitForFunction(name => document.querySelector(`input[aria-label="Needed for ${name}"]`)
       ?.closest("li")?.querySelector('[data-testid="cart-line-estimate"]')?.dataset.priceState === "no-supply", {}, newItemName);
@@ -367,7 +372,7 @@ async function main() {
     await summary("56 gil", false);
     await checkBuildReference();
     await record("device-mobile-build-real-market");
-    await click(tid("guest-shop-mode")); await click(tid("shop-cheapest"));
+    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-stack-quantity"));
     await replace(tid("shop-stack-quantity"), 1); await click(tid("shop-stack-bought"));
     await click(tid("guest-build-mode"));

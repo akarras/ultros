@@ -97,29 +97,32 @@ where
             && parsed.with(|p| p.as_ref().is_ok_and(|l| !l.is_empty()))
     });
     view! {
-        <div class="flex-column">
-            <label for="make-place-textarea">
+        <div class="flex flex-col gap-3" data-testid="make-place-importer">
+            <label class="text-sm text-[color:var(--color-text-muted)]" for="make-place-textarea">
                 {t!(i18n, make_place_instructions)}
             </label>
             <textarea
                 id="make-place-textarea"
-                class="input h-96"
+                class="input h-72 w-full font-mono text-sm"
                 on:input=move |input| set_list(event_target_value(&input))
             ></textarea>
-            {parsed_items}
-            <button
-                type="button"
-                on:click=move |_| {
-                    if let Ok(list) = parsed.get_untracked() {
-                        add_items_to_list.dispatch(list);
+            <p class="text-sm" role="status">{parsed_items}</p>
+            <div class="flex flex-wrap items-center gap-3">
+                <button
+                    type="button"
+                    on:click=move |_| {
+                        if let Ok(list) = parsed.get_untracked() {
+                            add_items_to_list.dispatch(list);
+                        }
                     }
-                }
-                prop:disabled=move || !can_add.get()
-                class="btn"
-            >
-                {t!(i18n, make_place_bulk_add)}
-            </button>
-            {move || add_items_to_list.pending()().then(|| view! { <Loading /> })}
+                    prop:disabled=move || !can_add.get()
+                    class="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                    data-testid="make-place-add"
+                >
+                    {t!(i18n, make_place_bulk_add)}
+                </button>
+                {move || add_items_to_list.pending()().then(|| view! { <Loading /> })}
+            </div>
             <div>
                 {move || {
                     add_items_to_list

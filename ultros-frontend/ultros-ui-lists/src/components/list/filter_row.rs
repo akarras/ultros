@@ -113,6 +113,11 @@ pub fn ListFilterRow(
     /// The compact Build cart sorts its visible requested quantity.
     #[prop(default = Signal::derive(|| false))]
     quantity_sort: Signal<bool>,
+    /// Whether to render the exclusions group at all. The Lists 2.0 page
+    /// narrows worlds through its Shop trip instead, so it hides the chips
+    /// and the world select while the legacy page keeps them.
+    #[prop(default = true)]
+    exclusions: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let worlds = StoredValue::new(worlds);
@@ -134,6 +139,7 @@ pub fn ListFilterRow(
             data-testid="list-filter-row"
         >
             // ===== Exclusions =====
+            {exclusions.then(|| view! {
             <div
                 class="flex flex-wrap items-center gap-2"
                 aria-label=t_string!(i18n, list_view_exclude_datacenters)
@@ -255,6 +261,7 @@ pub fn ListFilterRow(
                     </div>
                 </Show>
             </div>
+            })}
 
             // ===== Sort =====
             <div class="flex flex-wrap items-center gap-2">

@@ -65,7 +65,8 @@ mod browser {
     use crate::routes::list_view_sync::{ListBuildWorkspace, ListWorkspaceSource};
     use leptos::either::Either;
     use leptos_router::hooks::{use_navigate, use_params_map};
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
+    use ultros_api_types::world_helper::AnySelector;
     use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
     use ultros_calc::list_travel::TravelPolicy;
 
@@ -566,15 +567,17 @@ mod browser {
         // no other exclusion filter, so the policy alone narrows served rows.
         let travel = crate::components::list_travel_state::use_list_travel();
         let device_id = StoredValue::new(handle.with_value(|h| h.id()));
-        let (home, _) = crate::global_state::home_world::use_home_world();
+        // A list that has never chosen a scope prices against the player's
+        // price zone (the site-wide "prices for" setting), like every other
+        // market page — not their home world, which is where trips *start*.
+        let (zone, _) = crate::global_state::home_world::get_price_zone();
         let scope = Signal::derive(move || {
             revision.track();
-            handle.with_value(|h| h.meta().scope).or_else(|| {
-                home.get()
-                    .map(|world| ultros_api_types::world_helper::AnySelector::World(world.id))
-            })
+            handle
+                .with_value(|h| h.meta().scope)
+                .or_else(|| zone.get().map(Into::<AnySelector>::into))
         });
-        let set_scope = move |value: Option<ultros_api_types::world_helper::AnySelector>| {
+        let set_scope = move |value: Option<AnySelector>| {
             if recovery.get_untracked() {
                 return;
             }
@@ -584,10 +587,10 @@ mod browser {
                 error.set(e);
             }
         };
-        let refresh_prices = move |_| {
-            let Some(selector) = scope.get_untracked() else {
-                return;
-            };
+        // One lookup for both the button and the eager fetch below. Neither
+        // writes the scope to the document: only the picker does, so the
+        // default can keep following the price zone until the player picks.
+        let fetch_prices = move |selector: AnySelector| {
             if busy.get_untracked() && pending_scope.get_untracked() == Some(selector) {
                 return;
             }
@@ -602,10 +605,6 @@ mod browser {
             else {
                 return;
             };
-            if let Err(e) = handle.with_value(|h| h.set_scope(selector)) {
-                error.set(e);
-                return;
-            }
             let ids: HashSet<_> = handle
                 .with_value(|h| h.rows())
                 .into_iter()
@@ -652,6 +651,50 @@ mod browser {
                 let _ = busy.try_set(false);
             });
         };
+        let refresh_prices = move |_| {
+            if let Some(selector) = scope.get_untracked() {
+                fetch_prices(selector);
+            }
+        };
+        // Prices load on their own: as soon as the list has a scope and
+        // rows, and again whenever either changes. Two exceptions — a
+        // trip the player is following must not have its stacks repriced
+        // underneath them (the Refresh prices button remains for that),
+        // and a failed lookup is not retried until something changes, so
+        // an outage never turns into a request loop. Edits are debounced
+        // so pasting a recipe's ingredients costs one request, not one
+        // per ingredient.
+        let trip_active = RwSignal::new(false);
+        let auto_key = StoredValue::new(None::<(AnySelector, BTreeSet<i32>)>);
+        let auto_timer: StoredValue<Option<gloo_timers::callback::Timeout>, LocalStorage> =
+            StoredValue::new_local(None);
+        Effect::new(move |_| {
+            if recovery.get() || trip_active.get() {
+                auto_timer.set_value(None);
+                return;
+            }
+            let Some(selector) = scope.get() else {
+                return;
+            };
+            revision.track();
+            let ids: BTreeSet<i32> = handle
+                .with_value(|h| h.rows())
+                .into_iter()
+                .map(|row| row.key.item_id)
+                .collect();
+            if ids.is_empty() {
+                return;
+            }
+            let key = (selector, ids);
+            if auto_key.with_value(|last| last.as_ref() == Some(&key)) {
+                return;
+            }
+            auto_key.set_value(Some(key));
+            auto_timer.set_value(Some(gloo_timers::callback::Timeout::new(400, move || {
+                fetch_prices(selector);
+            })));
+        });
+        on_cleanup(move || auto_timer.set_value(None));
         let recipe_open = RwSignal::new(false);
         let (storage_open, set_storage_open) = signal(recovery.get_untracked());
         let confirm_delete = RwSignal::new(false);
@@ -900,7 +943,7 @@ mod browser {
                 // Mounted on first use and then only hidden, so a return to
                 // Build keeps the chosen trip and its recorded stacks.
                 <div class:hidden=move || !shop.get()>
-                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy /></Show>
+                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy trip_active /></Show>
                 </div>
                 <div class:hidden=move || shop.get()>
                 {move || if legacy_cart.get() {
@@ -957,6 +1000,9 @@ mod browser {
         handle: GuestListHandle,
         source: ListWorkspaceSource,
         travel_policy: Signal<TravelPolicy>,
+        /// Raised while a trip is adopted, so the editor's eager price
+        /// lookups pause instead of repricing the stacks being followed.
+        trip_active: RwSignal<bool>,
     ) -> impl IntoView {
         use crate::components::list_shop::{ListShop, ShopInput, ShopRow};
         let i18n = use_i18n();
@@ -1022,7 +1068,7 @@ mod browser {
                     }
                 }) on_undo=Callback::new(move |()| {
                     if let Err(e) = handle.with_value(|h| h.apply(Edit::UndoPurchase)) { error.set(e); }
-                }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) travel_policy />
+                }) can_undo_purchase=Signal::derive(move || handle.with_value(|h| h.can_undo_purchase())) can_edit=Signal::derive(|| true) travel_policy on_trip_active=Callback::new(move |active: bool| trip_active.set(active)) />
             </div>
         }
     }

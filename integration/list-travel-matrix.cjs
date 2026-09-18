@@ -68,7 +68,7 @@ async function runTravelMatrix({ page, base, market, createList, load, click, re
   async function start(cart, { params = {}, total, incomplete = false, plans, tripCost = total, missing = 0 }) {
     const displayed = total === null ? "—" : `${total} gil`;
     await open(cart, params); await summary(displayed, incomplete);
-    await click(tid("guest-shop-mode")); await click(tid("shop-cheapest"));
+    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-totals"));
     assert.match(await page.$eval(tid("shop-totals"), node => node.textContent), new RegExp(`${tripCost} gil.*${missing} missing`));
     await page.$eval(tid("shop-estimate"), node => { node.open = true; });
