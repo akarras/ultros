@@ -13,6 +13,9 @@ async function main() {
   let listId;
   page.setDefaultTimeout(30000);
   page.on('pageerror', error => errors.push(String(error.stack || error)));
+  // Leaving a list page can raise the unsaved-work prompt; accept it like the
+  // other list scripts do, or the next `goto` hangs until the protocol timeout.
+  page.on('dialog', dialog => (dialog.type() === 'beforeunload' ? dialog.accept() : dialog.dismiss()).catch(() => {}));
   await page.evaluateOnNewDocument(() => {
     window.__modalHydrated = false;
     window.addEventListener('ultros:hydrated', () => { window.__modalHydrated = true; });
@@ -98,31 +101,11 @@ async function main() {
     await load(`/list/${listId}?labs=lists-sync`);
     await cycle('list-access-btn', 'Manage access');
 
-    await open('list-settings-btn');
-    const scope = `${dialog} [role="combobox"]`;
-    await page.waitForSelector(scope, { visible: true });
-    await page.focus(scope);
-    await page.keyboard.press('ArrowDown');
-    const chosen = await page.$eval(scope, input => {
-      const listbox = [...document.querySelectorAll('[role="listbox"]')].find(node => node.checkVisibility());
-      return listbox?.querySelector(`[id="${input.getAttribute('aria-activedescendant')}"]`)?.textContent.trim();
-    });
-    assert(chosen, 'custom world picker exposes a highlighted choice');
-    await page.keyboard.press('Enter');
-    await page.waitForFunction((selector, chosen) => {
-      const input = document.querySelector(selector);
-      return input?.getAttribute('aria-expanded') === 'false' && input.parentElement.textContent.includes(chosen);
-    }, {}, scope, chosen);
-    assert.equal(await page.$$(dialog).then(nodes => nodes.length), 1, 'selecting an external portal choice retains the modal');
-    await page.focus(scope);
-    await page.waitForFunction(selector => document.querySelector(selector)?.getAttribute('aria-expanded') === 'true', {}, scope);
-    await page.keyboard.press('Escape');
-    await page.waitForFunction(selector => document.querySelector(selector)?.getAttribute('aria-expanded') === 'false', {}, scope);
-    assert.equal(await page.$$(dialog).then(nodes => nodes.length), 1, 'first Escape closes the dropdown only');
-    await page.keyboard.press('Escape');
-    await page.waitForSelector(dialog, { hidden: true });
-    assert(await page.$eval(tid('list-settings-btn'), node => document.activeElement === node));
-    console.log('[ok] modal world picker supports keyboard selection, dropdown Escape, then modal Escape');
+    await cycle('list-settings-btn', 'More options');
+
+    // No Lists 2.0 dialog contains a world picker any more (the scope picker
+    // sits in the page's price row), so the nested dropdown-then-modal Escape
+    // check that used to run against the settings drawer has no subject here.
 
     await load('/list?labs=lists-sync');
     await open('list-new');

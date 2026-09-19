@@ -13,9 +13,8 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::components::icon::Icon;
 use crate::global_state::LocalWorldData;
 use icondata as i;
-use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_navigate, use_params_map};
 use ultros_api_types::{
     ActiveListing,
     list::{ListCapabilities, ListItem, ListPermission, ListWithPermission},
@@ -23,30 +22,23 @@ use ultros_api_types::{
 };
 
 use crate::api::{get_list_activity, get_list_items_with_listings};
+use crate::components::list_workspace_shell::ListWorkspaceShell;
 use crate::components::{
     cart::{ListCart, use_legacy_cart},
     item_icon::*,
-    list::{
-        auto_mark_purchases::AutoMarkPurchases,
-        filter_row::{ListFilterRow, SortSpec},
-        list_settings_drawer::ListSettingsDrawer,
-        list_summary::*,
-    },
+    list::{auto_mark_purchases::AutoMarkPurchases, filter_row::SortSpec, list_summary::*},
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
     make_place_importer::*,
     meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
     modal::Modal,
-    realtime_status::RealtimeStatus,
     skeleton::TableSkeleton,
-    tooltip::*,
-    world_picker::WorldPicker,
 };
 use crate::error::AppError;
 use crate::global_state::labs::{LAB_LISTS_SYNC, use_lab};
 use crate::i18n::*;
 use crate::list_doc::adapter::Edit;
-use crate::list_doc::handle::ListDocHandle;
+use crate::list_doc::handle::{ListDocHandle, RecoveryState, SaveState};
 use crate::query_defaults::filter_query_signal;
 use crate::routes::list_view::{
     ActivityFeed, IdList, ListView, ListViewResult, NameList, filter_excluded,
@@ -534,6 +526,9 @@ pub struct ListWorkspaceSource {
     /// for — the scope the prices are *for*, not the one currently picked.
     pub scope_name: Signal<Option<String>>,
     pub hide_acquired: Signal<bool>,
+    /// The cart's own Hide-acquired toggle. Account lists keep it in the
+    /// URL (`hide-acquired`); device lists keep it in memory.
+    pub set_hide_acquired: Callback<bool>,
     pub reset_filters: Callback<()>,
     pub can_write: Signal<bool>,
     pub edit: Callback<ListItem>,
@@ -1142,6 +1137,17 @@ fn apply_edit(handle: RwSignal<Option<ListDocHandle>>, edit: Edit) -> Result<(),
 
 /// Translate local lifecycle failures at the UI boundary, keeping the internal
 /// error values stable for transport and retry decisions.
+/// The connection clause of the shell's status line, from the handle's (or
+/// the socket's) status keyword.
+fn live_status_label(i18n: leptos_i18n::I18nContext<Locale, I18nKeys>, status: &str) -> String {
+    match status {
+        "live" => t_string!(i18n, list_view_live_status_live).to_string(),
+        "reconnecting" => t_string!(i18n, list_view_live_status_reconnecting).to_string(),
+        "offline" => t_string!(i18n, list_view_live_status_offline).to_string(),
+        _ => t_string!(i18n, list_view_live_status_connecting).to_string(),
+    }
+}
+
 fn workspace_error(i18n: leptos_i18n::I18nContext<Locale, I18nKeys>, error: &AppError) -> String {
     match error {
         AppError::ListDoc(message) if message == "document is closed" => {
@@ -1451,28 +1457,8 @@ pub fn ListViewSync() -> impl IntoView {
             result
         }
     });
-    let edit_list_action = Action::new(move |list: &ultros_api_types::list::List| {
-        let edit = Edit::Rename {
-            name: list.name.clone(),
-            scope: list.wdr_filter,
-        };
-        async move { apply_edit(handle, edit) }
-    });
-
     let bulk_pending =
         Signal::derive(move || delete_items.pending().get() || edit_items_hq.pending().get());
-    let bulk_error = Signal::derive(move || {
-        delete_items
-            .value()
-            .get()
-            .and_then(|result| result.err().map(|e| workspace_error(i18n, &e)))
-            .or_else(|| {
-                edit_items_hq
-                    .value()
-                    .get()
-                    .and_then(|result| result.err().map(|e| workspace_error(i18n, &e)))
-            })
-    });
 
     // Listings come from the existing endpoint and are cached per list; the
     // document supplies rows, so a local edit never refetches prices.
@@ -1488,7 +1474,9 @@ pub fn ListViewSync() -> impl IntoView {
     #[cfg(not(feature = "hydrate"))]
     let _ = (set_activity_update_version, set_revalidate_version);
     let (listings_version, set_listings_version) = signal(0u32);
-    let (last_update_at, set_last_update_at) =
+    // Only written: the market and sync callbacks note the instant so a
+    // later reader (none on the page today) can show "updated N s ago".
+    let (_last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let listings_cache = ListReads::new();
     // The estimate's account of its prices (see `note_fetch`): every fetch
@@ -1671,11 +1659,11 @@ pub fn ListViewSync() -> impl IntoView {
     let (make_place_open, set_make_place_open) = signal(false);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
-    let (settings_open, set_settings_open) = signal(false);
     let (access_open, set_access_open) = signal(false);
-    let (rename_open, set_rename_open) = signal(false);
-    let (rename_value, set_rename_value) = signal(String::new());
-    let (confirm_bulk_delete, set_confirm_bulk_delete) = signal(false);
+    // The shell's ⋮ menu (Subscribe, import, auto-mark, recovery copy,
+    // leave, delete). A dialog for the undo keybindings like the others.
+    let menu_open = RwSignal::new(false);
+    let confirm_delete = RwSignal::new(false);
 
     // ---- The document's lifecycle (spec sections 3.1, 3.3, 5) ----
     //
@@ -1684,11 +1672,7 @@ pub fn ListViewSync() -> impl IntoView {
     // (#1332), and `SyncSubscription` owns `Rc`s, so it can only live in a
     // thread-local slot.
     let modal_open = Signal::derive(move || {
-        subscribe_open()
-            || settings_open()
-            || access_open()
-            || confirm_bulk_delete()
-            || make_place_open()
+        subscribe_open() || menu_open.get() || access_open() || make_place_open()
     });
     let (resync, set_resync) = signal(0u32);
     #[cfg(feature = "hydrate")]
@@ -1871,30 +1855,22 @@ pub fn ListViewSync() -> impl IntoView {
         buying_view.get() || previous.copied().unwrap_or(false)
     });
 
-    let (excluded_worlds_param, set_excluded_worlds_param) =
-        filter_query_signal::<IdList>("excluded-worlds");
+    // Still honoured from shared links; narrowing worlds is Shop's job now,
+    // so nothing on this page writes these two params.
+    let (excluded_worlds_param, _) = filter_query_signal::<IdList>("excluded-worlds");
     let excluded_worlds = Memo::new(move |_| {
         excluded_worlds_param
             .get()
             .map(|list| list.0.into_iter().collect::<HashSet<i32>>())
             .unwrap_or_default()
     });
-    let set_excluded_worlds = Callback::new(move |set: HashSet<i32>| {
-        set_excluded_worlds_param.set((!set.is_empty()).then(|| IdList::from_set(set)));
-    });
-
-    let (excluded_datacenters_param, set_excluded_datacenters_param) =
-        filter_query_signal::<NameList>("excluded-datacenters");
+    let (excluded_datacenters_param, _) = filter_query_signal::<NameList>("excluded-datacenters");
     let excluded_datacenters = Memo::new(move |_| {
         excluded_datacenters_param
             .get()
             .map(|list| list.0.into_iter().collect::<HashSet<String>>())
             .unwrap_or_default()
     });
-    let set_excluded_datacenters = Callback::new(move |set: HashSet<String>| {
-        set_excluded_datacenters_param.set((!set.is_empty()).then(|| NameList::from_set(set)));
-    });
-
     // Editor-owned travel limit (#1480): narrows the served rows both Build
     // and Shop price, and travels with the URL like the exclusions above.
     let travel = crate::components::list_travel_state::use_list_travel();
@@ -1948,20 +1924,6 @@ pub fn ListViewSync() -> impl IntoView {
         }
     });
 
-    // The settings drawer is rebuilt only when the list row it edits actually
-    // changes, not on every document revision or price refresh the page
-    // resource re-runs for; otherwise a collaborator's edit (or a market
-    // update) would recreate an open drawer under the user's cursor.
-    let drawer_key = Memo::new(move |_| {
-        list_view.get().and_then(Result::ok).map(|(l, _)| {
-            (
-                l.list.id,
-                l.list.name.clone(),
-                l.list.wdr_filter,
-                l.permission,
-            )
-        })
-    });
     let view_caps = RwSignal::new(ListCapabilities::default());
     Effect::new(move |_| {
         let next = match list_view.get() {
@@ -2107,6 +2069,9 @@ pub fn ListViewSync() -> impl IntoView {
                 .map(|result| result.get_name().to_string())
         }),
         hide_acquired: hide_acquired.into(),
+        set_hide_acquired: Callback::new(move |hide: bool| {
+            set_hide_acquired_param.set(hide.then_some(true))
+        }),
         reset_filters: Callback::new(move |()| set_hide_acquired_param.set(None)),
         can_write: Signal::derive(move || view_caps.with(|c| c.can_write)),
         edit: Callback::new(move |item| {
@@ -2126,21 +2091,28 @@ pub fn ListViewSync() -> impl IntoView {
         set_sort: Callback::new(move |spec| set_sort_spec.set(spec)),
     };
 
-    let drawer_refresh = Signal::derive(move || {
-        last_update_at
-            .get()
-            .map(|t| t.timestamp_millis() as u32)
-            .unwrap_or(0)
-    });
-
     // Auto-mark logic moved to AutoMarkPurchases component
 
-    let list_name_for_meta = Signal::derive(move || {
-        list_view
+    // The document's own name once it is open (so a rename shows at once),
+    // otherwise the server's.
+    let list_name = Signal::derive(move || {
+        handle
             .get()
-            .and_then(|r| r.ok().map(|(l, _)| l.list.name))
+            .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
+            .map(|doc| {
+                doc.revision.track();
+                doc.meta().name
+            })
+            .or_else(|| {
+                list_view
+                    .get()
+                    .and_then(Result::ok)
+                    .filter(|(list, _)| list.list.id == list_id.get())
+                    .map(|(list, _)| list.list.name)
+            })
             .unwrap_or_default()
     });
+    let list_name_for_meta = list_name;
     let (home_world, _) = crate::global_state::home_world::use_home_world();
     // The scope the document is priced for: the document's own once it has
     // recorded one, otherwise the server's. Read through the handle so the
@@ -2165,6 +2137,73 @@ pub fn ListViewSync() -> impl IntoView {
         if let Err(error) = apply_edit(handle, Edit::SetScope(scope)) {
             mutation_feedback.set(workspace_error(i18n, &error));
         }
+    };
+    let rename = Callback::new(move |value: String| {
+        let name = value.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let Some(scope) = list_scope.get_untracked() else {
+            return;
+        };
+        if let Err(error) = apply_edit(handle, Edit::Rename { name, scope }) {
+            mutation_feedback.set(workspace_error(i18n, &error));
+        }
+    });
+    let can_write = Signal::derive(move || view_caps.with(|c| c.can_write));
+    let can_admin = Signal::derive(move || view_caps.with(|c| c.can_admin));
+    let can_leave = Signal::derive(move || view_caps.with(|c| c.can_leave));
+    let open_doc = move || {
+        handle
+            .get()
+            .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
+    };
+    // One status line: where the local copy stands. An incompatible
+    // snapshot says nothing here; the recovery panel explains it instead.
+    let doc_status = Signal::derive(move || {
+        let Some(doc) = open_doc() else {
+            return String::new();
+        };
+        if doc.recovery_state.try_get() == Some(RecoveryState::Incompatible) {
+            return String::new();
+        }
+        match doc.save_state.try_get().unwrap_or(SaveState::Pending) {
+            SaveState::Saved => t_string!(i18n, device_runtime_saved).to_string(),
+            SaveState::Pending => t_string!(i18n, device_runtime_saving).to_string(),
+            SaveState::Failed => t_string!(i18n, account_list_save_failed).to_string(),
+        }
+    });
+    let save_failed = Signal::derive(move || {
+        open_doc().is_some_and(|doc| {
+            doc.save_state.try_get() == Some(SaveState::Failed)
+                && doc.recovery_state.try_get() != Some(RecoveryState::Incompatible)
+        })
+    });
+    let live_status = Signal::derive(move || live_status_label(i18n, &realtime_status.get()));
+    let navigate = use_navigate();
+    let delete_action = Action::new(move |_: &()| {
+        let id = list_id.get_untracked();
+        async move { crate::api::delete_list(id).await }
+    });
+    let leave_action = Action::new(move |user_id: &u64| {
+        let id = list_id.get_untracked();
+        let user_id = *user_id;
+        async move { crate::api::leave_list(id, user_id).await }
+    });
+    Effect::new(move |_| {
+        if matches!(delete_action.value().get(), Some(Ok(_)))
+            || matches!(leave_action.value().get(), Some(Ok(_)))
+        {
+            navigate("/list?labs=lists-sync", Default::default());
+        }
+    });
+    let danger_error = move || {
+        delete_action
+            .value()
+            .get()
+            .and_then(|result| result.err())
+            .or_else(|| leave_action.value().get().and_then(|result| result.err()))
+            .map(|error| workspace_error(i18n, &error))
     };
     let shop_worlds = use_context::<LocalWorldData>().and_then(|data| data.0.ok());
     let shop_input = Signal::derive(move || {
@@ -2241,600 +2280,225 @@ pub fn ListViewSync() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, list_view_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4" data-testid="list-view-sync">
-            <div class="sticky-bar rounded-lg px-3 py-3">
-                // `list-toolbar` no longer carries any CSS (the compact
-                // button-sizing rule it used to scope moved to the shared
-                // `.sticky-bar-button` class on each button below and was
-                // deleted from tailwind.css) — kept purely as a stable
-                // `querySelector(".list-toolbar")` hook for
-                // `integration/list-flow.cjs`, `screenshots.cjs` and
-                // `shared-list.cjs`, which locate this row by that class.
-                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between list-toolbar">
-                    // Recipes are added from the composer's Items / Recipes
-                    // toggle, so the bar keeps only the tools that are not
-                    // part of the cart itself.
-                    <div class="flex flex-wrap items-center gap-2">
-                        <Show when=move || view_caps.with(|c| c.can_write)>
-                            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
-                                <button
-                                    class="sticky-bar-button sticky-bar-button-shrink"
-                                    data-testid="list-make-place-btn"
-                                    aria-haspopup="dialog"
-                                    on:click=move |_| set_make_place_open(true)
-                                >
-                                    <Icon icon=i::BiImportRegular />
-                                    <span class="sticky-bar-button-label">{t!(i18n, list_view_make_place)}</span>
-                                </button>
-                            </Tooltip>
-                        </Show>
-                    </div>
-
-                    // `items-center`: without it the wrapped tooltips and
-                    // the bare buttons stretched to different heights.
-                    <div class="flex flex-wrap items-center gap-2 self-start lg:self-auto">
-                        <Show when=move || view_caps.with(|c| c.can_write)>
-                            <Tooltip tooltip_text=t_string!(i18n, list_auto_mark_description).to_string()>
-                                <AutoMarkPurchases
-                                    list_view=list_view
-                                    on_purchase=Callback::new(move |(item_id, hq): (i32, bool)| {
-                                        if let Some(handle) = handle.get_untracked()
-                                            && let Err(error) = handle
-                                                .apply(Edit::AddAcquired {
-                                                    item_id,
-                                                    hq: Some(hq),
-                                                    delta: 1,
-                                                })
-                                        {
-                                            log::warn!(
-                                                "auto-mark failed for item {item_id}: {error}"
-                                            );
-                                        }
-                                    })
-                                />
-                            </Tooltip>
-                        </Show>
-                        <Tooltip tooltip_text=t_string!(i18n, list_view_subscribe_tooltip).to_string()>
-                            <button
-                                class="sticky-bar-button sticky-bar-button-shrink"
-                                aria-label=t_string!(i18n, list_view_subscribe_aria)
-                                on:click=move |_| set_subscribe_open(true)
-                            >
-                                <Icon icon=i::BsBell />
-                                <span class="sticky-bar-button-label">{t!(i18n, list_view_subscribe_button)}</span>
-                            </button>
-                        </Tooltip>
-                        <ListWorkspaceModes shop=buying_view.into() set_shop=Callback::new(move |shop: bool| set_buying_view_param.set(shop.then_some(true))) compact=true />
-                        <Show when=move || view_caps.with(|c|c.can_admin)>
-                            <button class="sticky-bar-button sticky-bar-button-shrink" data-testid="list-access-btn" on:click=move |_|set_access_open(true)>
-                                <Icon icon=i::BiShareAltRegular />
-                                <span class="sticky-bar-button-label">{t!(i18n,online_access)}</span>
-                            </button>
-                        </Show>
-                        <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
-                            <button
-                                class="sticky-bar-button sticky-bar-button-shrink"
-                                aria-label=t_string!(i18n, list_view_settings)
-                                data-testid="list-settings-btn"
-                                on:click=move |_| set_settings_open(true)
-                            >
-                                <Icon icon=i::BsGear />
-                                <span class="sticky-bar-button-label">{t!(i18n, list_view_settings)}</span>
-                            </button>
-                        </Tooltip>
-                    </div>
-                </div>
-            </div>
-
-            // The price scope sits with the travel limit, as it does on a
-            // device list. Only the owner may change it (the sync relay
-            // rejects anyone else's meta edit), and the document that
-            // carries it exists on the client alone, so the first server
-            // render matches the hydrating client: neither shows it.
-            <div class="panel rounded-lg p-3 flex flex-wrap items-end gap-x-6 gap-y-3" data-testid="list-price-controls">
-                <Show when=move || view_caps.with(|c| c.can_admin) && handle.get().is_some()>
-                    <div class="flex flex-wrap items-center gap-2 text-sm" data-testid="list-price-scope">
-                        <span>{t!(i18n, list_price_scope_label)}</span>
-                        <WorldPicker current_world=list_scope set_current_world=leptos::reactive::wrappers::write::SignalSetter::map(set_list_scope) />
-                    </div>
-                </Show>
-                <crate::components::list_travel_state::ListTravelPanel state=travel />
-            </div>
-
-            <Show when=subscribe_open>
-                {move || {
-                    let name = list_view
-                        .get()
-                        .and_then(|r| r.ok().map(|(l, _)| l.list.name))
-                        .unwrap_or_else(|| t_string!(i18n, lists_workspace_list_fallback, id = list_id()).to_string());
-                    view! {
-                        <ListSubscribeDrawer
-                            list_id=list_id()
-                            list_name=name
-                            set_visible=set_subscribe_open.into()
-                        />
-                    }
-                }}
-            </Show>
-
-            // Recovery belongs to the active document in either mode. An
-            // incompatible snapshot intentionally makes estimates unavailable,
-            // so readiness must not hide its explanation and original export.
-            {move || handle.get()
-                .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
-                .map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
-
-            // Shop mounts the first time it is opened and then stays mounted
-            // but hidden, so returning to Build keeps the chosen trip, its
-            // recorded stacks and an open companion. The first server render
-            // is unchanged: without `?buy=true` nothing is mounted yet.
-            <div class:hidden=move || !buying_view.get()>
-                <Show when=move || shop_mounted.get()>
-                    <Suspense fallback=move || view! { <Loading /> }>
-                        <crate::components::list_shop::ListShop input=shop_input
-                            on_purchase=Callback::new(move |(key, delta): (String, i32)| {
-                                if !view_caps.with_untracked(|c| c.can_write) { return; }
-                                if let Ok(id) = key.parse::<i32>()
-                                    && let Some(key) = crate::list_doc::adapter::key_of(id)
-                                    && let Some(handle) = handle.get_untracked()
-                                    && let Err(error) = handle.apply(Edit::RecordPurchase { key, quantity: i64::from(delta.max(0)) })
-                                { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
-                            })
-                            on_undo=Callback::new(move |()| {
-                                if let Some(handle) = handle.get_untracked()
-                                    && let Err(error) = handle.apply(Edit::UndoPurchase) {
-                                    mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string())));
-                                }
-                            })
-                            can_undo_purchase=Signal::derive(move || handle.get().is_some_and(|h| h.can_undo_purchase()))
-                            can_edit=Signal::derive(move || view_caps.with(|c| c.can_write))
-                            travel_policy=travel.policy />
-                    </Suspense>
-                </Show>
-            </div>
-
-            <Show when=make_place_open>
-                <Modal set_visible=set_make_place_open aria_label=Signal::derive(move || t_string!(i18n, list_view_make_place).to_string())>
-                    <div class="space-y-3">
-                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_make_place)}</h2>
-                        <MakePlaceImporter
-                            list_id=Signal::derive(move || {
-                                params
-                                    .with(|p| {
-                                        p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
-                                    })
-                                    .flatten()
-                                    .unwrap_or_default()
-                            })
-                            refresh=move || set_listings_version.update(|v| *v += 1)
-                        />
-                    </div>
-                </Modal>
-            </Show>
-
-            <Transition fallback=move || {
-                view! {
-                    <section class="panel rounded-lg overflow-hidden">
-                        <TableSkeleton
-                            columns=list_item_table_skeleton_columns()
-                            rows=6
-                            row_class="px-1"
-                        />
-                    </section>
+            // The same frame as a device list: name, one status line, one
+            // primary action (Access) and a ⋮ menu, Build / Shop, then the
+            // price row. The scope picker exists on the client alone (the
+            // document that carries it does), so the first server render
+            // matches the hydrating client: neither shows it.
+            <ListWorkspaceShell
+                name=list_name
+                can_rename=Signal::derive(move || can_admin.get() && open_doc().is_some())
+                on_rename=rename
+                status=doc_status
+                status_testid="account-list-save-state"
+                status_detail=live_status
+                status_detail_key=realtime_status
+                status_actions=move || view! {
+                    <Show when=move || save_failed.get()>
+                        <button type="button" class="btn-secondary" on:click=move |_| { if let Some(doc) = handle.get_untracked() { doc.save_now(); } }>{t!(i18n, account_list_save_retry)}</button>
+                        <button type="button" class="btn-secondary" on:click=move |_| { if let Some(doc) = handle.get_untracked() { doc.download_recovery(); } }>{t!(i18n, account_list_save_export)}</button>
+                    </Show>
                 }
-            }>
-                {move || {
-                    list_view
-                        .get()
-                        .map(move |list| match list {
-                            Ok((list, items)) => {
-                                let items = StoredValue::new(items);
-                                Either::Left(move || {
-                                    let item_snapshot = items.get_value();
-                                    let total_items = item_snapshot.len();
-                                    let remaining_items = item_snapshot
-                                        .iter()
-                                        .filter(|(item, _)| {
-                                            item.quantity.unwrap_or(1)
-                                                > item.acquired.unwrap_or(0)
-                                        })
-                                        .count();
-                                    let acquired_items = total_items.saturating_sub(remaining_items);
-                                    let total_quantity: i32 = item_snapshot
-                                        .iter()
-                                        .map(|(i, _)| i.quantity.unwrap_or(1).max(1))
-                                        .sum();
-                                    let total_acquired: i32 = item_snapshot
-                                        .iter()
-                                        .map(|(i, _)| {
-                                            let q = i.quantity.unwrap_or(1).max(1);
-                                            i.acquired.unwrap_or(0).clamp(0, q)
-                                        })
-                                        .sum();
-                                    let pct: i32 = if total_quantity > 0 {
-                                        100 * total_acquired / total_quantity
-                                    } else {
-                                        0
-                                    };
-                                    // Built here, inside the Transition, so its SSR render
-                                    // comes from the resolved resource — a read of
-                                    // `list_view` outside a suspense boundary doesn't
-                                    // register, and the shell/first-client-render disagree
-                                    // when the resource resolves after the shell flushes
-                                    // (an unrecoverable hydration mismatch).
-                                    //
-                                    // No exclusions group: narrowing worlds is Shop's
-                                    // job now (its trip and the travel limit above).
-                                    let filter_row = view! {
-                                        <ListFilterRow
-                                            worlds=Vec::new()
-                                            datacenters=Vec::new()
-                                            exclusions=false
-                                            excluded_worlds=excluded_worlds
-                                            set_excluded_worlds=set_excluded_worlds
-                                            excluded_datacenters=excluded_datacenters
-                                            set_excluded_datacenters=set_excluded_datacenters
-                                            sort_spec=Signal::derive(move || sort_spec.get())
-                                            quantity_sort=Signal::derive(move || !legacy_cart.get() && !buying_view.get())
-                                            set_sort_spec=Callback::new(move |spec| {
-                                                set_sort_spec.set(spec)
+                primary=move || view! {
+                    <Show when=move || can_admin.get()>
+                        <button type="button" class="btn-primary inline-flex items-center gap-2" data-testid="list-access-btn" aria-haspopup="dialog" on:click=move |_| set_access_open(true)>
+                            <Icon icon=i::BiShareAltRegular aria_hidden=true />
+                            {t!(i18n, online_access)}
+                        </button>
+                    </Show>
+                }
+                menu_testid="list-settings-btn"
+                menu_open
+                menu=move || view! {
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="list-subscribe-btn" on:click=move |_| { menu_open.set(false); set_subscribe_open(true); }>
+                            <Icon icon=i::BsBell aria_hidden=true />
+                            {t!(i18n, list_view_subscribe_button)}
+                        </button>
+                        <Show when=move || can_write.get()>
+                            <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="list-make-place-btn" on:click=move |_| { menu_open.set(false); set_make_place_open(true); }>
+                                <Icon icon=i::BiImportRegular aria_hidden=true />
+                                {t!(i18n, list_view_make_place)}
+                            </button>
+                            <AutoMarkPurchases
+                                list_view=list_view
+                                button_class="btn-secondary inline-flex items-center gap-2"
+                                on_purchase=Callback::new(move |(item_id, hq): (i32, bool)| {
+                                    if let Some(handle) = handle.get_untracked()
+                                        && let Err(error) = handle
+                                            .apply(Edit::AddAcquired {
+                                                item_id,
+                                                hq: Some(hq),
+                                                delta: 1,
                                             })
-                                            hide_acquired=hide_acquired
-                                            set_hide_acquired=Callback::new(move |hide: bool| {
-                                                set_hide_acquired_param.set(hide.then_some(true));
-                                            })
-                                        />
-                                    };
-
-                                    if buying_view() {
-                                        Either::Left(view! { {filter_row} })
-                                    } else {
-                                        Either::Right(
-                                            view! {
-                                                {filter_row}
-                                                <section class="panel rounded-lg overflow-hidden">
-                                                    <div class="border-b border-[color:var(--color-outline)] p-4 sm:p-5">
-                                                        <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                                                            <div>
-                                                                <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_list_label)}</p>
-                                                                <div class="flex items-center gap-2">
-                                                                    {
-                                                                        let list_for_title = list.list.clone();
-                                                                        let display_name = list_for_title.name.clone();
-                                                                        move || {
-                                                                            if rename_open() && view_caps.with(|c| c.can_admin) {
-                                                                                let list_for_save = list_for_title.clone();
-                                                                                Either::Left(view! {
-                                                                                    <div class="flex flex-wrap items-center gap-2">
-                                                                                        <input
-                                                                                            class="input text-xl font-bold"
-                                                                                            prop:value=rename_value
-                                                                                            on:input=move |ev| set_rename_value(event_target_value(&ev))
-                                                                                            data-testid="list-rename-input"
-                                                                                        />
-                                                                                        <button
-                                                                                            class="btn-primary"
-                                                                                            data-testid="list-rename-save"
-                                                                                            on:click={
-                                                                                                let list_for_save = list_for_save.clone();
-                                                                                                move |_| {
-                                                                                                    let mut new_list = list_for_save.clone();
-                                                                                                    new_list.name = rename_value().trim().to_string();
-                                                                                                    if !new_list.name.is_empty() {
-                                                                                                        edit_list_action.dispatch(new_list);
-                                                                                                        set_rename_open(false);
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        >
-                                                                                            <Icon icon=i::BiSaveSolid />
-                                                                                            <span>{t!(i18n, list_view_settings_save)}</span>
-                                                                                        </button>
-                                                                                        <button
-                                                                                            class="btn-secondary"
-                                                                                            on:click=move |_| set_rename_open(false)
-                                                                                        >
-                                                                                            {t!(i18n, list_view_settings_cancel)}
-                                                                                        </button>
-                                                                                    </div>
-                                                                                })
-                                                                            } else {
-                                                                                let display_name = display_name.clone();
-                                                                                Either::Right(view! {
-                                                                                    <>
-                                                                                        <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">{display_name.clone()}</h1>
-                                                                                        <Show when=move || view_caps.with(|c| c.can_admin)>
-                                                                                            <button
-                                                                                                class="btn-ghost p-1"
-                                                                                                aria-label=t_string!(i18n, edit_list).to_string()
-                                                                                                data-testid="list-rename-btn"
-                                                                                                on:click={
-                                                                                                    let name = display_name.clone();
-                                                                                                    move |_| {
-                                                                                                        set_rename_value(name.clone());
-                                                                                                        set_rename_open(true);
-                                                                                                    }
-                                                                                                }
-                                                                                            >
-                                                                                                <Icon icon=i::BsPencilFill />
-                                                                                            </button>
-                                                                                        </Show>
-                                                                                    </>
-                                                                                })
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                </div>
-                                                                <div class="mt-2">
-                                                                    <RealtimeStatus
-                                                                        status=realtime_status
-                                                                        last_update=last_update_at
-                                                                    />
-                                                                    {move || handle.get().map(|doc| {
-                                                                        use crate::list_doc::handle::SaveState;
-                                                                        view! {
-                                                                            <div data-testid="account-list-save-state" role="status" aria-live="polite" class="mt-2 text-sm" hidden=move || doc.recovery_state.try_get() == Some(crate::list_doc::handle::RecoveryState::Incompatible)>
-                                                                                {move || match doc.save_state.try_get().unwrap_or(SaveState::Pending) {
-                                                                                    SaveState::Saved => t_string!(i18n, device_runtime_saved).to_string(),
-                                                                                    SaveState::Pending => t_string!(i18n, device_runtime_saving).to_string(),
-                                                                                    SaveState::Failed => t_string!(i18n, account_list_save_failed).to_string(),
-                                                                                }}
-                                                                                <Show when=move || doc.save_state.try_get() == Some(SaveState::Failed)>
-                                                                                    <button type="button" class="btn-secondary ml-2" on:click=move |_| doc.save_now()>{t!(i18n, account_list_save_retry)}</button>
-                                                                                    <button type="button" class="btn-secondary ml-2" on:click=move |_| doc.download_recovery()>{t!(i18n, account_list_save_export)}</button>
-                                                                                </Show>
-                                                                            </div>
-                                                                        }
-                                                                    })}
-
-                                                                </div>
-                                                                <div class="mt-3 flex items-center gap-3 text-sm">
-                                                                    {if total_quantity > 0 {
-                                                                        Either::Left(view! {
-                                                                            <div
-                                                                                class="flex min-w-0 flex-1 flex-col gap-1"
-                                                                                aria-label=t_string!(i18n, list_view_units_acquired_aria, acquired = total_acquired, quantity = total_quantity).to_string()
-                                                                            >
-                                                                                <span class="text-[color:var(--color-text-muted)]">
-                                                                                    {t!(i18n, list_view_units_acquired_progress, acquired = total_acquired, quantity = total_quantity, pct = pct)}
-                                                                                </span>
-                                                                                <progress
-                                                                                    class="progress progress-primary h-2 w-full rounded"
-                                                                                    value=total_acquired
-                                                                                    max=total_quantity
-                                                                                ></progress>
-                                                                            </div>
-                                                                        })
-                                                                    } else {
-                                                                        Either::Right(view! {
-                                                                            <span class="text-[color:var(--color-text-muted)]">
-                                                                                {t!(i18n, list_view_no_items_yet)}
-                                                                            </span>
-                                                                        })
-                                                                    }}
-                                                                </div>
-                                                            </div>
-                                                            <div class="grid grid-cols-3 gap-2 text-center text-sm">
-                                                                <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
-                                                                    <div class="text-lg font-bold">{total_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, item_explorer_items)}</div>
-                                                                </div>
-                                                                <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
-                                                                    <div class="text-lg font-bold">{remaining_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_remaining)}</div>
-                                                                </div>
-                                                                <Tooltip tooltip_text=Signal::derive(move || {
-                                                                    t_string!(i18n, list_view_acquired_items_tooltip, count = acquired_items, total = total_items).to_string()
-                                                                })>
-                                                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
-                                                                        <div class="text-lg font-bold">{acquired_items}</div>
-                                                                        <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_acquired)}</div>
-                                                                    </div>
-                                                                </Tooltip>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <Show when=move || legacy_cart.get() && view_caps.with(|c| c.can_write)>
-                                                        <div class="flex flex-col gap-3 border-b border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]/60 p-3 lg:flex-row lg:items-center lg:justify-between">
-                                                            <div class="flex flex-wrap items-center gap-2">
-                                                                <span class="text-sm">{move || t_string!(i18n, lists_workspace_selected, count = selected_items.with(|s| s.len())).to_string()}</span>
-                                                                <div
-                                                                    class="flex flex-wrap items-center gap-2"
-                                                                    class:hidden=move || selected_items.with(|s| s.is_empty())
-                                                                >
-                                                                    <button
-                                                                        class="btn-danger"
-                                                                        disabled=bulk_pending
-                                                                        on:click=move |_| {
-                                                                            if !selected_items.with_untracked(|s| s.is_empty()) {
-                                                                                set_confirm_bulk_delete(true);
-                                                                            }
-                                                                        }
-                                                                    >
-                                                                        <Icon icon=i::BiTrashSolid />
-                                                                        <span>{t!(i18n, list_view_delete)}</span>
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn-secondary"
-                                                                        disabled=bulk_pending
-                                                                        on:click=move |_| {
-                                                                            let items = selected_items
-                                                                                .with_untracked(|s| {
-                                                                                    s.iter().copied().collect::<Vec<_>>()
-                                                                                });
-                                                                            edit_items_hq.dispatch((items, Some(true)));
-                                                                        }
-                                                                    >
-                                                                        <span>{t!(i18n, list_view_bulk_set_hq)}</span>
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn-secondary"
-                                                                        disabled=bulk_pending
-                                                                        on:click=move |_| {
-                                                                            let items = selected_items
-                                                                                .with_untracked(|s| {
-                                                                                    s.iter().copied().collect::<Vec<_>>()
-                                                                                });
-                                                                            edit_items_hq.dispatch((items, None));
-                                                                        }
-                                                                    >
-                                                                        <span>{t!(i18n, list_view_bulk_any_quality)}</span>
-                                                                    </button>
-                                                                    <Show when=move || bulk_pending.get()>
-                                                                        <span class="flex items-center gap-2 text-sm text-[color:var(--color-text-muted)]">
-                                                                            <Loading />
-                                                                            {t!(i18n, list_view_bulk_pending)}
-                                                                        </span>
-                                                                    </Show>
-                                                                    {move || {
-                                                                        (!bulk_pending.get())
-                                                                            .then(|| bulk_error.get())
-                                                                            .flatten()
-                                                                            .map(|error| {
-                                                                                view! {
-                                                                                    <span class="text-sm text-red-200">
-                                                                                        {format!(
-                                                                                            "{} {error}",
-                                                                                            t_string!(i18n, list_view_bulk_failed),
-                                                                                        )}
-                                                                                    </span>
-                                                                                }
-                                                                            })
-                                                                    }}
-                                                                </div>
-                                                            </div>
-                                                            <div
-                                                                class="flex flex-wrap items-center gap-2"
-                                                            >
-                                                                <button
-                                                                    class="btn-secondary"
-                                                                    on:click=move |_| {
-                                                                        selected_items
-                                                                            .update(|i| {
-                                                                                for (item, _) in items.get_value() {
-                                                                                    i.insert(item.id);
-                                                                                }
-                                                                            })
-                                                                    }
-                                                                >
-                                                                    {t!(i18n, list_view_select_all)}
-                                                                </button>
-                                                                <button
-                                                                    class="btn-secondary"
-                                                                    on:click=move |_| {
-                                                                        selected_items.update(|i| i.clear());
-                                                                    }
-                                                                >
-                                                                    {t!(i18n, list_view_deselect_all)}
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                        <Show when=confirm_bulk_delete>
-                                                            <Modal set_visible=set_confirm_bulk_delete>
-                                                                <div class="flex flex-col gap-4">
-                                                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
-                                                                        {t!(i18n, list_view_bulk_delete_confirm_title)}
-                                                                    </h2>
-                                                                    <p class="text-sm text-[color:var(--color-text-muted)]">
-                                                                        {move || t!(
-                                                                            i18n,
-                                                                            list_view_bulk_delete_confirm_body,
-                                                                            count = selected_items.with(|s| s.len()),
-                                                                        )}
-                                                                    </p>
-                                                                    <div class="flex justify-end gap-2">
-                                                                        <button
-                                                                            class="btn-secondary"
-                                                                            on:click=move |_| set_confirm_bulk_delete(false)
-                                                                        >
-                                                                            {t!(i18n, cancel)}
-                                                                        </button>
-                                                                        <button
-                                                                            class="btn-danger"
-                                                                            on:click=move |_| {
-                                                                                let items = selected_items
-                                                                                    .with_untracked(|s| {
-                                                                                        s.iter().copied().collect::<Vec<_>>()
-                                                                                    });
-                                                                                selected_items.update(|i| i.clear());
-                                                                                delete_items.dispatch(items);
-                                                                                set_confirm_bulk_delete(false);
-                                                                            }
-                                                                        >
-                                                                            <Icon icon=i::BiTrashSolid />
-                                                                            <span>{t!(i18n, list_view_delete)}</span>
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            </Modal>
-                                                        </Show>
-                                                    </Show>
-
-                                                </section>
-                                            },
-                                        )
+                                    {
+                                        log::warn!(
+                                            "auto-mark failed for item {item_id}: {error}"
+                                        );
                                     }
                                 })
-                            }
-                            Err(e) => {
-                                Either::Right(
-                                    view! {
-                                        <div class="panel rounded-lg p-4">{format!("{}\n{}", t_string!(i18n, list_view_failed_to_get_items), workspace_error(i18n, &e))}</div>
-                                    },
-                                )
-                            }
-                        })
-                }}
-
-            </Transition>
-
-            <div class:hidden=move || buying_view.get()>
-                <Transition fallback=move || view! { <Loading /> }>
-                    {move || if legacy_cart.get() {
-                        view! { <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
-                    } else {
-                        view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                            />
+                        </Show>
+                        <Show when=move || open_doc().is_some()>
+                            <button type="button" class="btn-secondary" data-testid="list-download-recovery" on:click=move |_| { if let Some(doc) = handle.get_untracked() { doc.download_recovery(); } }>{t!(i18n, account_list_save_export)}</button>
+                        </Show>
+                    </div>
+                    <Show when=move || can_admin.get() || can_leave.get()>
+                        <div class="space-y-3 border-t border-[color:var(--color-outline)] pt-3" data-testid="list-danger-zone">
+                            <p class="text-sm font-semibold text-red-400">{t!(i18n, list_view_settings_danger_zone)}</p>
+                            <div class="flex flex-wrap gap-2">
+                                <Show when=move || can_leave.get()>
+                                    <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="list-leave-btn" disabled=move || leave_action.pending().get() on:click=move |_| { if let Some(user) = self_user_id.get_untracked() { leave_action.dispatch(user); } }>
+                                        <Icon icon=i::BiExitRegular aria_hidden=true />
+                                        {t!(i18n, leave_list)}
+                                    </button>
+                                </Show>
+                                <Show when=move || can_admin.get()>
+                                    <button type="button" class="btn-danger inline-flex items-center gap-2" data-testid="list-delete-btn" on:click=move |_| confirm_delete.set(true)>
+                                        <Icon icon=i::BiTrashSolid aria_hidden=true />
+                                        {t!(i18n, delete)}
+                                    </button>
+                                </Show>
+                            </div>
+                            <Show when=move || confirm_delete.get() && can_admin.get()>
+                                <div class="rounded-lg border border-red-400/50 p-4 space-y-3" role="group" aria-label=move || t_string!(i18n, guest_workspace_delete_label).to_string()>
+                                    <p>{t!(i18n, guest_workspace_delete_confirm)}</p>
+                                    <div class="flex flex-wrap gap-2">
+                                        <button type="button" class="btn-secondary" disabled=move || delete_action.pending().get() on:click=move |_| confirm_delete.set(false)>{t!(i18n, guest_workspace_keep)}</button>
+                                        <button type="button" class="btn-danger" data-testid="list-confirm-delete" disabled=move || delete_action.pending().get() on:click=move |_| { delete_action.dispatch(()); }>{t!(i18n, guest_workspace_delete_permanent)}</button>
+                                    </div>
+                                </div>
+                            </Show>
+                            {move || danger_error().map(|error| view! { <p role="alert" class="text-sm text-red-400">{error}</p> })}
+                        </div>
+                    </Show>
+                }
+                // Recovery belongs to the active document in either mode. An
+                // incompatible snapshot intentionally makes estimates unavailable,
+                // so readiness must not hide its explanation and original export.
+                notices=move || view! {
+                    {move || open_doc().map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
+                }
+                show_controls=Signal::derive(|| true)
+                shop=buying_view
+                set_shop=Callback::new(move |shop: bool| set_buying_view_param.set(shop.then_some(true)))
+                scope=list_scope
+                set_scope=Callback::new(set_list_scope)
+                can_set_scope=Signal::derive(move || can_admin.get() && open_doc().is_some())
+                price_row_testid="list-price-controls"
+                travel
+            >
+                <Show when=subscribe_open>
+                    {move || {
+                        let name = list_view
+                            .get()
+                            .and_then(|r| r.ok().map(|(l, _)| l.list.name))
+                            .unwrap_or_else(|| t_string!(i18n, lists_workspace_list_fallback, id = list_id()).to_string());
+                        view! {
+                            <ListSubscribeDrawer
+                                list_id=list_id()
+                                list_name=name
+                                set_visible=set_subscribe_open.into()
+                            />
+                        }
                     }}
-                    <div class="panel rounded-lg p-4 mt-3">
+                </Show>
+
+                // Shop mounts the first time it is opened and then stays mounted
+                // but hidden, so returning to Build keeps the chosen trip, its
+                // recorded stacks and an open companion. The first server render
+                // is unchanged: without `?buy=true` nothing is mounted yet.
+                <div class:hidden=move || !buying_view.get()>
+                    <Show when=move || shop_mounted.get()>
+                        <Suspense fallback=move || view! { <Loading /> }>
+                            <crate::components::list_shop::ListShop input=shop_input
+                                on_purchase=Callback::new(move |(key, delta): (String, i32)| {
+                                    if !view_caps.with_untracked(|c| c.can_write) { return; }
+                                    if let Ok(id) = key.parse::<i32>()
+                                        && let Some(key) = crate::list_doc::adapter::key_of(id)
+                                        && let Some(handle) = handle.get_untracked()
+                                        && let Err(error) = handle.apply(Edit::RecordPurchase { key, quantity: i64::from(delta.max(0)) })
+                                    { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
+                                })
+                                on_undo=Callback::new(move |()| {
+                                    if let Some(handle) = handle.get_untracked()
+                                        && let Err(error) = handle.apply(Edit::UndoPurchase) {
+                                        mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string())));
+                                    }
+                                })
+                                can_undo_purchase=Signal::derive(move || handle.get().is_some_and(|h| h.can_undo_purchase()))
+                                can_edit=Signal::derive(move || view_caps.with(|c| c.can_write))
+                                travel_policy=travel.policy />
+                        </Suspense>
+                    </Show>
+                </div>
+
+                <Show when=make_place_open>
+                    <Modal set_visible=set_make_place_open aria_label=Signal::derive(move || t_string!(i18n, list_view_make_place).to_string())>
+                        <div class="space-y-3">
+                            <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_make_place)}</h2>
+                            <MakePlaceImporter
+                                list_id=Signal::derive(move || {
+                                    params
+                                        .with(|p| {
+                                            p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
+                                        })
+                                        .flatten()
+                                        .unwrap_or_default()
+                                })
+                                refresh=move || set_listings_version.update(|v| *v += 1)
+                            />
+                        </div>
+                    </Modal>
+                </Show>
+
+                <div class:hidden=move || buying_view.get()>
+                    <Transition fallback=move || {
+                        view! {
+                            <section class="panel rounded-lg overflow-hidden">
+                                <TableSkeleton
+                                    columns=list_item_table_skeleton_columns()
+                                    rows=6
+                                    row_class="px-1"
+                                />
+                            </section>
+                        }
+                    }>
+                        {move || list_view.get().and_then(|result| result.err()).map(|e| view! {
+                            <div class="panel rounded-lg p-4">{format!("{}\n{}", t_string!(i18n, list_view_failed_to_get_items), workspace_error(i18n, &e))}</div>
+                        })}
+                        {move || if legacy_cart.get() {
+                            view! { <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                        } else {
+                            view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
+                        }}
                         // The compact cart owns its remaining-unit estimate. Only
                         // the legacy grid uses the whole-stack per-world summary.
                         <Show when=move || legacy_cart.get()>
-                            {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
+                            <div class="panel rounded-lg p-4 mt-3">
+                                {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
+                            </div>
                         </Show>
-                        <ActivityFeed activity=activity_view />
-                    </div>
-                </Transition>
-            </div>
+                        // Collaboration history, closed by default: present
+                        // without competing with the cart.
+                        <details class="panel rounded-lg p-4 mt-3" data-testid="list-activity">
+                            <summary class="cursor-pointer text-lg font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_activity_heading)}</summary>
+                            <div class="pt-3">
+                                <ActivityFeed activity=activity_view show_heading=false />
+                            </div>
+                        </details>
+                    </Transition>
+                </div>
 
-            <Show when=settings_open>
-                {move || {
-                    if drawer_key.get().is_none() {
-                        return view! { <div></div> }.into_any();
-                    }
-                    let Some(Ok((list_with_perm, _))) = list_view.get_untracked() else {
-                        return view! { <div></div> }.into_any();
-                    };
-                    view! {
-                        <ListSettingsDrawer
-                            list=list_with_perm.list.clone()
-                            permission=list_with_perm.permission
-                            self_user_id=self_user_id
-                            edit_list=edit_list_action
-                            refresh_signal=drawer_refresh
-                            set_visible=set_settings_open
-                        />
-                    }
-                    .into_any()
-                }}
-            </Show>
-            <Show when=move || access_open() && view_caps.with(|c|c.can_admin)>
-                // Capture the list only when this guarded dialog opens. A
-                // document or price refresh must not remount its live form.
-                // The outer capability guard still dismisses it on denial.
-                {move || list_view.get_untracked().and_then(Result::ok).map(|(list,_)|view! {
-                    <crate::components::list::share_list_modal::ShareListModal list=list.list set_visible=set_access_open />
-                })}
-            </Show>
+                <Show when=move || access_open() && can_admin.get()>
+                    // Capture the list only when this guarded dialog opens. A
+                    // document or price refresh must not remount its live form.
+                    // The outer capability guard still dismisses it on denial.
+                    {move || list_view.get_untracked().and_then(Result::ok).map(|(list,_)|view! {
+                        <crate::components::list::share_list_modal::ShareListModal list=list.list set_visible=set_access_open />
+                    })}
+                </Show>
+            </ListWorkspaceShell>
         </div>
     }.into_any()
 }

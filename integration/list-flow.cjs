@@ -290,7 +290,11 @@ async function main() {
 
     // ===== Step 2: Add a recipe via the current UI =====
     console.log("[step] owner adds a recipe");
-    if (!(await clickByText(ownerPage, ".list-toolbar button", "Add Recipe"))) {
+    // Lists 2.0: recipes come from the composer's Items / Recipes toggle.
+    const recipeToggle = LISTS_V2
+      ? ['[data-testid="inline-list-add"] button', "Recipes"]
+      : [".list-toolbar button", "Add Recipe"];
+    if (!(await clickByText(ownerPage, ...recipeToggle))) {
       fail(failures, "Add Recipe button not found");
     } else {
       try {
@@ -326,7 +330,7 @@ async function main() {
             const response = await fetch(`/api/v1/list/${id}/listings`);
             return response.ok && (await response.json())[1].length > 1;
           }, { timeout: TIMEOUT_MS }, listId);
-          await clickByText(ownerPage, ".list-toolbar button", "Add Recipe");
+          await clickByText(ownerPage, '[data-testid="inline-list-add"] button', "Items");
           pass("previewed and added recipe ingredients inline");
         } else {
         // The recipe modal renders its own search input. Use its placeholder
@@ -384,6 +388,11 @@ async function main() {
 
     // ===== Step 2b: Auto-mark purchases modal =====
     console.log("[step] owner opens the auto-mark purchases modal");
+    // Lists 2.0 keeps the button in the shell's More-options menu.
+    if (LISTS_V2) {
+      await ownerPage.click('[data-testid="list-settings-btn"]');
+      await waitFor(ownerPage, '[data-testid="list-auto-mark-btn"]', 10000);
+    }
     const autoMarkClicked = await ownerPage.evaluate(() => {
       const b = document.querySelector('[data-testid="list-auto-mark-btn"]');
       if (!b) return false;
@@ -396,8 +405,9 @@ async function main() {
       const modalShown = await ownerPage
         .waitForFunction(
           () => {
-            const dialog = document.querySelector('[role="dialog"]');
-            return !!dialog && (dialog.innerText || "").includes("Auto-mark Purchases");
+            // Topmost dialog: under Lists 2.0 the More-options menu sits beneath it.
+            const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1);
+            return !!dialog && !!dialog.querySelector('input[placeholder]');
           },
           { timeout: 10000 },
         )
@@ -407,7 +417,7 @@ async function main() {
         fail(failures, "auto-mark modal did not open");
       } else {
         const hasNameInput = await ownerPage.evaluate(() => {
-          const dialog = document.querySelector('[role="dialog"]');
+          const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1);
           return (
             !!dialog &&
             !!Array.from(dialog.querySelectorAll("input[placeholder]")).find((i) =>
@@ -421,6 +431,11 @@ async function main() {
           pass("auto-mark modal opens with character-name input");
         }
         await ownerPage.keyboard.press("Escape");
+        // Under Lists 2.0 the More-options menu is still open underneath.
+        if (LISTS_V2) {
+          await new Promise((r) => setTimeout(r, 300));
+          await ownerPage.keyboard.press("Escape");
+        }
         await ownerPage
           .waitForFunction(() => !document.querySelector('[role="dialog"]'), {
             timeout: 5000,
@@ -433,7 +448,11 @@ async function main() {
     console.log("[step] owner excludes the datacenter");
     // The test list is single-world, so excluding its DC must empty every
     // price cell ("No listing data") and write the query param; un-excluding
-    // must clear the param again.
+    // must clear the param again. Lists 2.0 has no exclusion chips: narrowing
+    // worlds is the Shop trip's and the travel limit's job.
+    if (LISTS_V2) {
+      pass("Lists 2.0 page has no exclusion chips by design (skipped)");
+    } else {
     const dcChipClicked = await ownerPage.evaluate(() => {
       const row = document.querySelector('[data-testid="list-filter-row"]');
       if (!row) return null;
@@ -489,6 +508,7 @@ async function main() {
       } else {
         pass("un-excluding the DC clears the query param");
       }
+    }
     }
 
     // ===== Step 3: Mark an item acquired via the row toggle =====
@@ -552,9 +572,12 @@ async function main() {
 
     }
 
-    // ===== Step 4: Settings drawer — rename + invite =====
-    console.log("[step] owner opens settings drawer");
-    const settingsClicked = await ownerPage.evaluate(() => {
+    // ===== Step 4: rename + invite =====
+    // Lists 2.0 has no settings drawer: the name is an inline input in the
+    // shared shell and sharing lives behind the Access button. The legacy
+    // page keeps both in its drawer.
+    console.log(LISTS_V2 ? "[step] owner renames inline and opens Access" : "[step] owner opens settings drawer");
+    const settingsClicked = LISTS_V2 || await ownerPage.evaluate(() => {
       const b = document.querySelector('[data-testid="list-settings-btn"]');
       if (!b) return false;
       b.click();
@@ -562,6 +585,72 @@ async function main() {
     });
     if (!settingsClicked) {
       fail(failures, "Settings button not found");
+    } else if (LISTS_V2) {
+      const newName = `${name} (renamed)`;
+      const nameInput = '[data-testid="list-name-input"]';
+      await ownerPage.waitForFunction(
+        selector => { const input = document.querySelector(selector); return !!input && !input.readOnly; },
+        { timeout: 10000 },
+        nameInput,
+      );
+      await ownerPage.locator(nameInput).fill(newName);
+      await ownerPage.keyboard.press("Enter");
+      await ownerPage
+        .waitForFunction(
+          () => (document.title || "").includes("(renamed)"),
+          { timeout: 10000 },
+        )
+        .catch(() => {});
+      const title = await ownerPage.title();
+      if (!title.includes("(renamed)")) {
+        fail(failures, `expected the document title to include '(renamed)', got '${title}'`);
+      } else {
+        pass("renamed list inline");
+      }
+      await ownerPage.click('[data-testid="list-access-btn"]');
+      await waitFor(ownerPage, '[data-testid="list-invite-create"]', 10000);
+      await ownerPage.click('[data-testid="list-invite-create"]');
+      await new Promise((r) => setTimeout(r, 2000));
+      const invitesResp = await api(ownerPage, "GET", `/api/v1/list/${listId}/invites`);
+      if (
+        invitesResp.status !== 200 ||
+        !Array.isArray(invitesResp.body) ||
+        invitesResp.body.length === 0
+      ) {
+        fail(
+          failures,
+          `expected at least 1 invite, got ${invitesResp.status} body=${JSON.stringify(invitesResp.body)}`,
+        );
+      } else {
+        pass(`created invite via Access (${invitesResp.body.length} invite(s))`);
+        const inviteId = invitesResp.body[invitesResp.body.length - 1].id;
+        const redeem = await api(readerPage, "POST", `/api/v1/invite/${inviteId}/use`);
+        if (redeem.status !== 200 || redeem.body !== listId) {
+          fail(
+            failures,
+            `invite redeem expected 200 + listId ${listId}, got ${redeem.status} body=${redeem.body}`,
+          );
+        } else {
+          pass("reader redeemed invite");
+          await readerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "domcontentloaded" });
+          await readerPage.waitForSelector('[data-testid="list-name-input"]', { timeout: TIMEOUT_MS });
+          await new Promise((r) => setTimeout(r, 1500));
+          const viewer = await readerPage.evaluate(() => ({
+            hasAddItem: !!document.querySelector('[data-testid="inline-list-add"]'),
+            hasMenu: !!document.querySelector('[data-testid="list-settings-btn"]'),
+            hasAccess: !!document.querySelector('[data-testid="list-access-btn"]'),
+            nameReadOnly: !!document.querySelector('[data-testid="list-name-input"]')?.readOnly,
+          }));
+          if (viewer.hasAddItem) fail(failures, "read-only viewer should NOT see the composer"); else pass("read-only viewer hides the composer");
+          if (!viewer.hasMenu) fail(failures, "read-only viewer should see the More menu (for Leave)"); else pass("read-only viewer sees the More menu");
+          if (viewer.hasAccess) fail(failures, "read-only viewer should NOT see Access"); else pass("read-only viewer hides Access");
+          if (!viewer.nameReadOnly) fail(failures, "read-only viewer's name input must be read-only"); else pass("read-only viewer cannot rename");
+        }
+      }
+      await ownerPage.keyboard.press("Escape");
+      await ownerPage
+        .waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 5000 })
+        .catch(() => {});
     } else {
       await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
       pass("settings drawer opened");
@@ -707,18 +796,20 @@ async function main() {
       return true;
     });
     if (settingsClicked2) {
-      await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
+      // Lists 2.0: the ⋮ menu modal, with a separate confirm button. Legacy:
+      // the settings drawer, whose delete button re-renders into a confirm.
+      await waitFor(ownerPage, LISTS_V2 ? '[data-testid="list-danger-zone"]' : '[data-testid="list-settings-drawer"]', 10000);
       // Click in-page by selector rather than through an element handle: the
       // drawer is re-rendered whenever the list resource changes (a market
       // update or a list broadcast), and a handle taken a moment earlier is
       // then "not clickable or not an Element".
-      const clickDelete = () =>
-        ownerPage.evaluate(() => {
-          const b = document.querySelector('[data-testid="list-delete-btn"]');
+      const clickDelete = (selector = '[data-testid="list-delete-btn"]') =>
+        ownerPage.evaluate((selector) => {
+          const b = document.querySelector(selector);
           if (!b) return false;
           b.click();
           return true;
-        });
+        }, selector);
       const deleteBtn = await clickDelete();
       if (!deleteBtn) {
         fail(failures, "delete button not found");
@@ -728,14 +819,16 @@ async function main() {
         // than sleeping — the dev-build WASM can take >500ms to apply it.
         await ownerPage
           .waitForFunction(
-            () =>
-              /confirm/i.test(
+            (labs) => labs
+              ? !!document.querySelector('[data-testid="list-confirm-delete"]')
+              : /confirm/i.test(
                 document.querySelector('[data-testid="list-delete-btn"]')?.innerText || "",
               ),
             { timeout: 10000 },
+            LISTS_V2,
           )
           .catch(() => {});
-        const deleteBtn2 = await clickDelete();
+        const deleteBtn2 = await clickDelete(LISTS_V2 ? '[data-testid="list-confirm-delete"]' : undefined);
         if (!deleteBtn2) {
           fail(failures, "delete confirm button not found");
         } else {
