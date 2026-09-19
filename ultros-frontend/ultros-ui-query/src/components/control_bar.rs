@@ -779,7 +779,8 @@ mod tests {
             assert!(parsed.contains("col3"));
 
             // Invalid values are filtered out
-            let parsed = parse_visible_cols(Some("col1,unknown,col3,invalid"), all_cols, default_cols);
+            let parsed =
+                parse_visible_cols(Some("col1,unknown,col3,invalid"), all_cols, default_cols);
             assert_eq!(parsed.len(), 2);
             assert!(parsed.contains("col1"));
             assert!(parsed.contains("col3"));
@@ -807,7 +808,10 @@ mod tests {
 
             // All columns
             let all_visible: HashSet<&'static str> = all_cols.iter().copied().collect();
-            assert_eq!(serialize_visible_cols(&all_visible, all_cols), "col1,col2,col3,col4");
+            assert_eq!(
+                serialize_visible_cols(&all_visible, all_cols),
+                "col1,col2,col3,col4"
+            );
         });
     }
 }
