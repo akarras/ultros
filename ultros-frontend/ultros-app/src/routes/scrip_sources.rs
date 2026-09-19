@@ -82,7 +82,7 @@ impl ScripSourceData {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScripType {
+pub enum ScripType {
     OrangeCrafters,
     OrangeGatherers,
     WhiteCrafters,
@@ -127,7 +127,7 @@ impl ScripType {
 
     /// The `?scrip=` query value that selects this type, as emitted by the
     /// toolbar `<select>`.
-    fn from_filter_key(key: &str) -> Option<Self> {
+    pub fn from_filter_key(key: &str) -> Option<Self> {
         match key {
             "OrangeCrafters" => Some(ScripType::OrangeCrafters),
             "OrangeGatherers" => Some(ScripType::OrangeGatherers),
@@ -137,6 +137,36 @@ impl ScripType {
             "PurpleGatherers" => Some(ScripType::PurpleGatherers),
             _ => None,
         }
+    }
+
+    /// Inverse of [`from_filter_key`](Self::from_filter_key): the `?scrip=`
+    /// value that selects this type, or `None` for a currency index the page
+    /// doesn't name.
+    pub fn filter_key(self) -> Option<&'static str> {
+        Some(match self {
+            ScripType::OrangeCrafters => "OrangeCrafters",
+            ScripType::OrangeGatherers => "OrangeGatherers",
+            ScripType::WhiteCrafters => "WhiteCrafters",
+            ScripType::PurpleCrafters => "PurpleCrafters",
+            ScripType::WhiteGatherers => "WhiteGatherers",
+            ScripType::PurpleGatherers => "PurpleGatherers",
+            ScripType::Other(_) => return None,
+        })
+    }
+
+    /// English item name of the scrip currency itself, for looking the item
+    /// up in the (English) game-data pack. The white scrips were retired in
+    /// 7.0 and have no item.
+    pub fn item_name(self) -> Option<&'static str> {
+        Some(match self {
+            ScripType::OrangeCrafters => "Orange Crafters' Scrip",
+            ScripType::OrangeGatherers => "Orange Gatherers' Scrip",
+            ScripType::PurpleCrafters => "Purple Crafters' Scrip",
+            ScripType::PurpleGatherers => "Purple Gatherers' Scrip",
+            ScripType::WhiteCrafters | ScripType::WhiteGatherers | ScripType::Other(_) => {
+                return None;
+            }
+        })
     }
 
     fn color_class(&self) -> &'static str {
@@ -152,7 +182,7 @@ impl ScripType {
     /// crafted, so the craft-cost model below can never price them. The page
     /// keeps the options selectable but explains the empty table instead of
     /// silently rendering nothing.
-    fn is_gatherer(&self) -> bool {
+    pub fn is_gatherer(&self) -> bool {
         matches!(
             self,
             ScripType::OrangeGatherers | ScripType::WhiteGatherers | ScripType::PurpleGatherers
@@ -185,10 +215,10 @@ fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
 /// A single collectables turn-in: the item handed in, the scrip it pays and how
 /// much it pays at maximum collectability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScripTurnIn {
-    item_id: i32,
-    scrip_type: ScripType,
-    scrip_amount: u32,
+pub struct ScripTurnIn {
+    pub item_id: i32,
+    pub scrip_type: ScripType,
+    pub scrip_amount: u32,
 }
 
 /// `CollectablesShop.RewardType` for the turn-in counters that pay scrip.
@@ -237,7 +267,7 @@ fn material_exchange_groups(data: &xiv_gen::Data) -> HashSet<i32> {
 /// `CollectablesShopRewardScrip.Currency` column the real turn-ins do, so
 /// reading that column alone lists every one of them as a scrip source paying a
 /// scrip it never awards.
-fn scrip_turn_ins(data: &xiv_gen::Data) -> Vec<ScripTurnIn> {
+pub fn scrip_turn_ins(data: &xiv_gen::Data) -> Vec<ScripTurnIn> {
     let exchange_only = material_exchange_groups(data);
     let mut turn_ins = Vec::new();
 

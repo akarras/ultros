@@ -264,9 +264,9 @@ Append inside `mod tests`:
 
     #[test]
     fn a_known_hunting_venture_is_listed() {
-        // Coeurl Skin is a classic hunting venture reward.
+        // Aldgoat Skin is a classic hunting venture reward.
         let rewards = venture_rewards(data());
-        assert!(rewards.iter().any(|r| name(r.item) == "Coeurl Skin"));
+        assert!(rewards.iter().any(|r| name(r.item) == "Aldgoat Skin"));
     }
 ```
 
@@ -699,7 +699,7 @@ const SEARCH_CANDIDATES: usize = 60;
 const KIND_BOOST: f32 = 2.0;
 
 /// Words that name a result type. Indexed in the `kind` field so that typing
-/// one of them ("iron ingot recipe", "coeurl skin venture") is an extra term
+/// one of them ("iron ingot recipe", "aldgoat skin venture") is an extra term
 /// match only that type's document gets — a nudge, not a filter.
 fn kind_terms(result_type: &str) -> &'static str {
     match result_type {
@@ -961,8 +961,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
         let data = xiv_gen_db::data();
         let reward = ultros_app::game_sources::venture_rewards(data)
             .into_iter()
-            .find(|r| data.items[&r.item].name == "Coeurl Skin")
-            .expect("Coeurl Skin venture");
+            .find(|r| data.items[&r.item].name == "Aldgoat Skin")
+            .expect("Aldgoat Skin venture");
         let label = venture_label(data, &reward);
         assert!(label.ends_with(&format!("Lv. {}", reward.level)), "{label}");
         assert!(!label.starts_with("Lv."), "{label}: job missing");
@@ -1621,7 +1621,7 @@ Build and serve per `AGENTS.md` (`cargo leptos build`, then run the binary with 
 Run: `BASE_URL=http://127.0.0.1:8093 node integration/search-deep-links.cjs`
 Expected: `search-deep-links: ok`. If `firstItemId` finds no `a[href^="/item/"]` in the row, inspect the row markup with `page.evaluate` and adjust the selector to the item-cell link the page renders.
 
-- [ ] **Step 3: Manually spot-check search** with the browser pane on the same server: type `wolf mark` (Currency row present), `merchant limsa` (NPC rows with Limsa zone first), `coeurl skin` (item first, venture below), `coeurl skin venture` (venture first). Click the venture row and confirm the analyzer scrolls to and highlights Coeurl Skin.
+- [ ] **Step 3: Manually spot-check search** with the browser pane on the same server: type `wolf mark` (Currency row present), `merchant limsa` (NPC rows with Limsa zone first), `aldgoat skin` (item first, venture below), `aldgoat skin venture` (venture first). Click the venture row and confirm the analyzer scrolls to and highlights Aldgoat Skin.
 
 - [ ] **Step 4: Commit**
 
