@@ -1,7 +1,7 @@
 use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{
-    duration_value, price_control, register_filters, toggle_control,
+    category_id_token, duration_value, price_control, register_filters, toggle_control,
 };
 use crate::analyzer_kit::{
     formula::PriceSignal,
@@ -56,24 +56,6 @@ use ultros_api_types::{
     recent_sales::{RecentSales, SaleData},
 };
 use xiv_gen::ItemId;
-
-/// Intern a category id as a `&'static str` token for
-/// [`FilterChip`](ultros_ui::components::filter_chip::FilterChip)'s
-/// `(&'static str, String)` options contract.
-///
-/// `item_search_categorys` is a small, fixed-size table read from the
-/// process-lifetime game data (`xiv_gen_db::data()`), so the set of ids ever
-/// asked for here is bounded — each one is leaked exactly once and cached,
-/// never per-render, so this cannot grow unbounded over a long session.
-fn category_id_token(id: i32) -> &'static str {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<i32, &'static str>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().expect("category token cache poisoned");
-    guard
-        .entry(id)
-        .or_insert_with(|| Box::leak(id.to_string().into_boxed_str()))
-}
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 struct VendorProfitKey {

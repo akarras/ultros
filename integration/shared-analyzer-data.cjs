@@ -377,6 +377,7 @@ async function main() {
         ['leve-analyzer', `/leve-analyzer/${world}`],
         ['fc-crafting-analyzer', `/fc-crafting-analyzer/${world}`],
         ['vendor-resale', `/vendor-resale/${world}`],
+        ['vendor-sell', `/vendor-sell/${world}`],
         ['scrip-sources', `/scrip-sources/${world}`],
       ];
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',

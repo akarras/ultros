@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Vendor Sell: listings an NPC will pay more for",
+  "blurb": "A new analyzer scans your region's cheapest listings for items priced below what an NPC vendor pays, after the 5% purchase tax. Buy the listing, sell it to any vendor, keep the difference. Sort by profit or margin and filter by category.",
+  "link": "/vendor-sell"
+}

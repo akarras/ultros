@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const puppeteer = require('puppeteer');
 const {marketFixture} = require('./shared-analyzer-market-fixture.cjs');
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
-const TOOLS = ['recipe-analyzer', 'venture-analyzer', 'leve-analyzer', 'scrip-sources'];
+const TOOLS = ['recipe-analyzer', 'venture-analyzer', 'leve-analyzer', 'scrip-sources', 'vendor-sell'];
 const PICKER = '[data-testid="analyzer-world-picker"]';
 const PROBE = 'ore & crystals=1 + HQ/材料';
 const query = () => new URLSearchParams({v: '1', 'min-sales': '0', 'buy-scope': 'region', 'cost-basis': 'sale-avg', probe: PROBE});

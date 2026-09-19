@@ -81,6 +81,11 @@ pub(crate) async fn generic_pages_sitemap(
             ChangeFrequency::Daily,
         ),
         (
+            "https://ultros.app/vendor-sell",
+            0.8,
+            ChangeFrequency::Daily,
+        ),
+        (
             "https://ultros.app/recipe-analyzer",
             0.8,
             ChangeFrequency::Daily,
@@ -169,6 +174,7 @@ pub(crate) async fn generic_pages_sitemap(
         "getting-started",
         "flip-finder",
         "vendor-resale",
+        "vendor-sell",
         "recipe-analyzer",
         "leve-analyzer",
         "fc-crafting",

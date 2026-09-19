@@ -79,6 +79,25 @@ pub fn duration_value(
         .unwrap_or(GridValue::Missing)
 }
 
+/// Intern a category id as a `&'static str` token for
+/// [`FilterChip`](ultros_ui::components::filter_chip::FilterChip)'s
+/// `(&'static str, String)` options contract.
+///
+/// `item_search_categorys` is a small, fixed-size table read from the
+/// process-lifetime game data (`xiv_gen_db::data()`), so the set of ids ever
+/// asked for here is bounded — each one is leaked exactly once and cached,
+/// never per-render, so this cannot grow unbounded over a long session.
+pub fn category_id_token(id: i32) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<i32, &'static str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("category token cache poisoned");
+    guard
+        .entry(id)
+        .or_insert_with(|| Box::leak(id.to_string().into_boxed_str()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

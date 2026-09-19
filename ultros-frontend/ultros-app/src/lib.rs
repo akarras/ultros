@@ -75,6 +75,7 @@ use crate::{
         settings::*,
         trends::*,
         vendor_resale::*,
+        vendor_sell::*,
         venture_analyzer::*,
         welcome::*,
     },
@@ -658,6 +659,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("leve-analyzer/:world?") view=LeveAnalyzer />
                         <Route path=path!("scrip-sources/:world?") view=ScripSources />
                         <Route path=path!("venture-analyzer/:world?") view=VentureAnalyzer />
+                        <Route path=path!("vendor-sell/:world?") view=VendorSell />
                         <Route path=path!("analyzer/:world") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
                             let params = leptos_router::hooks::use_params_map();
