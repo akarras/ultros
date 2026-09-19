@@ -753,4 +753,61 @@ mod tests {
         let first_opt = html.find("Sale minimum (7d)").unwrap();
         assert!(rev_at < first_opt, "{html}");
     }
+
+    #[test]
+    fn test_parse_visible_cols() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let all_cols: &[&str] = &["col1", "col2", "col3"];
+            let default_cols: &[&str] = &["col1", "col2"];
+
+            // None returns default
+            let parsed = parse_visible_cols(None, all_cols, default_cols);
+            assert_eq!(parsed.len(), 2);
+            assert!(parsed.contains("col1"));
+            assert!(parsed.contains("col2"));
+
+            // Empty string returns empty set
+            let parsed = parse_visible_cols(Some(""), all_cols, default_cols);
+            assert!(parsed.is_empty());
+
+            // Valid values
+            let parsed = parse_visible_cols(Some("col1,col3"), all_cols, default_cols);
+            assert_eq!(parsed.len(), 2);
+            assert!(parsed.contains("col1"));
+            assert!(parsed.contains("col3"));
+
+            // Invalid values are filtered out
+            let parsed = parse_visible_cols(Some("col1,unknown,col3,invalid"), all_cols, default_cols);
+            assert_eq!(parsed.len(), 2);
+            assert!(parsed.contains("col1"));
+            assert!(parsed.contains("col3"));
+        });
+    }
+
+    #[test]
+    fn test_serialize_visible_cols() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let all_cols: &[&str] = &["col1", "col2", "col3", "col4"];
+
+            let mut visible = HashSet::new();
+            visible.insert("col3");
+            visible.insert("col1");
+
+            // Serialized string should maintain the order from `all_cols`
+            let serialized = serialize_visible_cols(&visible, all_cols);
+            assert_eq!(serialized, "col1,col3");
+
+            // Empty set
+            let empty_visible = HashSet::new();
+            assert_eq!(serialize_visible_cols(&empty_visible, all_cols), "");
+
+            // All columns
+            let all_visible: HashSet<&'static str> = all_cols.iter().copied().collect();
+            assert_eq!(serialize_visible_cols(&all_visible, all_cols), "col1,col2,col3,col4");
+        });
+    }
 }
