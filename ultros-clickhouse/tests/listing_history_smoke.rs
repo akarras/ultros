@@ -74,6 +74,45 @@ async fn window_history_receipts_floors_stock_and_bounds() {
         .execute()
         .await
         .unwrap();
+    // Undercut shapes on a separate key. Only three count: the in-place
+    // update, the same-id pair 30 s apart, and the pair whose removal
+    // precedes `from` by less than 600 s. VALUES order: event_time, kind,
+    // source, item_id, hq, world_id, listing_id, pg_listing_id, retainer_id,
+    // price_per_unit, quantity, prev_price, prev_quantity, reviewed_at.
+    let reprice_item = item + 10;
+    ch.client()
+        .query(&format!(
+            "INSERT INTO listing_events VALUES
+        ({removal},'removed','websocket',{reprice_item},0,1,'pair-a',21,21,100,1,0,0,{removal}),
+        ({},'added','websocket',{reprice_item},0,1,'pair-a',21,21,80,1,0,0,{removal}),
+        ({removal},'removed','websocket',{reprice_item},0,1,'pair-up',22,22,100,1,0,0,{removal}),
+        ({},'added','websocket',{reprice_item},0,1,'pair-up',22,22,120,1,0,0,{removal}),
+        ({},'removed','websocket',{reprice_item},0,1,'pair-slow',23,23,100,1,0,0,{removal}),
+        ({removal},'added','websocket',{reprice_item},0,1,'pair-slow',23,23,50,1,0,0,{removal}),
+        ({removal},'removed','websocket',{reprice_item},0,1,'',24,24,100,1,0,0,{removal}),
+        ({},'added','websocket',{reprice_item},0,1,'',24,24,50,1,0,0,{removal}),
+        ({removal},'updated','snapshot',{reprice_item},0,1,'snap',25,25,50,1,100,1,{removal}),
+        ({removal},'updated','websocket',{reprice_item},0,1,'up',26,26,90,1,100,1,{removal}),
+        ({},'removed','websocket',{reprice_item},0,1,'pair-before',27,27,100,1,0,0,{removal}),
+        ({},'added','websocket',{reprice_item},0,1,'pair-before',27,27,60,1,0,0,{removal})",
+            removal + 30,
+            removal + 30,
+            removal - 3000,
+            removal + 30,
+            from - 100,
+            from + 100
+        ))
+        .execute()
+        .await
+        .unwrap();
+    // The same acknowledged-late retry as above: every row twice.
+    ch.client()
+        .query(&format!(
+            "INSERT INTO listing_events SELECT * FROM listing_events WHERE item_id = {reprice_item}"
+        ))
+        .execute()
+        .await
+        .unwrap();
     ch.client()
         .query(&format!(
             "INSERT INTO sale_receipts VALUES
@@ -123,6 +162,20 @@ async fn window_history_receipts_floors_stock_and_bounds() {
     assert_eq!(stats.floor_empty_secs, 86400 - 300);
     assert_eq!(stats.floor_unknown_secs, 0);
     assert!(!stats.listing_coverage.continuity_verified);
+    // The fixture's own 60 -> 50 update is the key's only undercut; the
+    // retainer-heuristic `repriced` pair uses two listing ids and does not count.
+    assert_eq!(stats.undercuts, 1);
+    assert!((stats.undercut_median.unwrap() - 1.0 / 6.0).abs() < 1e-9);
+    // Scope span: first in-window observation at `from`, last at `to - 100`,
+    // floored to one day.
+    assert!((stats.undercuts_per_day.unwrap() - 1.0).abs() < 1e-9);
+    let reprices = &rows[&(reprice_item, false)];
+    assert_eq!(
+        reprices.undercuts, 3,
+        "update, 30 s pair, pre-window removal pair"
+    );
+    assert!((reprices.undercut_median.unwrap() - 0.2).abs() < 1e-9);
+    assert!((reprices.undercuts_per_day.unwrap() - 3.0).abs() < 1e-9);
     // A scope world with no floor row at all keeps the floor unknown until a
     // boot anchor proves it empty; then the scope reads exactly as [1, 2].
     let wider = listing_history::window(&ch, &[1, 2, 3], 1, to)

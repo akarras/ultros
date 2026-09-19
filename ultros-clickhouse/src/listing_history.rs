@@ -71,7 +71,94 @@ pub async fn window(
     while let Some(batch) = pending.try_next().await? {
         output.extend(batch);
     }
+    set_undercut_rates(&mut output, from, to);
     Ok(output)
+}
+
+/// A key the scope knows about (a sale, a reprice) without any listing
+/// observation of its own: the floor is unknown for the whole window.
+fn empty_window(days: u16, from: i64, to: i64) -> ListingWindowStats {
+    ListingWindowStats {
+        window_days: days,
+        from,
+        to,
+        floor_unknown_secs: (to - from) as u64,
+        matches: MatchedSalesStats {
+            settled_through_unix: to - 601,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// `undercuts` per day of scope-wide listing coverage. One denominator for
+/// every key: an item's own span measures its activity, not ingestion
+/// coverage (two undercuts three hours apart would read as 16/day), and a
+/// 30/90-day window that history has not filled yet needs the real span.
+/// Observations before `from` come from the reducer's `from - 600` read and
+/// do not count; the span is floored to one day and capped at the window.
+pub fn set_undercut_rates(
+    output: &mut BTreeMap<(i32, bool), ListingWindowStats>,
+    from: i64,
+    to: i64,
+) {
+    let mut first: Option<i64> = None;
+    let mut last: Option<i64> = None;
+    for stats in output.values() {
+        if let Some(f) = stats.listing_coverage.first_observed_unix {
+            first = Some(first.map_or(f, |v| v.min(f)));
+        }
+        if let Some(l) = stats.listing_coverage.last_observed_unix {
+            last = Some(last.map_or(l, |v| v.max(l)));
+        }
+    }
+    let (Some(first), Some(last)) = (first, last) else {
+        return;
+    };
+    let span = (last - first.max(from)).clamp(86400, (to - from).max(86400));
+    let days = span as f64 / 86400.0;
+    for stats in output.values_mut() {
+        stats.undercuts_per_day = Some(stats.undercuts as f64 / days);
+    }
+}
+
+/// Same-listing price drops, paired in ClickHouse so no listing id string
+/// reaches the Rust reducer. `DISTINCT` mirrors the events read: a retried
+/// writer batch stores every row twice. The first row of a partition has no
+/// predecessor; `lagInFrame` yields the type default (0) and the
+/// `prev_removed = 1` test rejects it.
+fn reprice_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
+    format!(
+        "SELECT item_id, hq, count() AS undercuts, quantileExact(0.5)(drop) AS undercut_median FROM (
+        SELECT item_id, hq, (prev_price - price_per_unit) / prev_price AS drop
+        FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, event_time, price_per_unit, prev_price FROM listing_events
+              WHERE kind = 'updated' AND source != 'snapshot' AND item_id IN ({item_sql}) AND world_id IN ({world_sql})
+                AND event_time >= toDateTime({from}) AND event_time < toDateTime({to}))
+        WHERE prev_price > price_per_unit
+        UNION ALL
+        SELECT item_id, hq, (prev_price - price_per_unit) / prev_price AS drop
+        FROM (SELECT item_id, hq, kind, event_time, price_per_unit,
+                     lagInFrame(kind = 'removed') OVER w AS prev_removed,
+                     lagInFrame(price_per_unit) OVER w AS prev_price,
+                     lagInFrame(event_time) OVER w AS prev_time
+              FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, kind, event_time, price_per_unit FROM listing_events
+                    WHERE kind IN ('removed', 'added') AND source != 'snapshot' AND listing_id != ''
+                      AND item_id IN ({item_sql}) AND world_id IN ({world_sql})
+                      AND event_time >= toDateTime({}) AND event_time < toDateTime({to}))
+              WINDOW w AS (PARTITION BY item_id, hq, world_id, listing_id ORDER BY event_time ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
+        WHERE kind = 'added' AND prev_removed = 1 AND event_time >= toDateTime({from})
+          AND dateDiff('second', prev_time, event_time) <= 600 AND prev_price > price_per_unit
+    ) GROUP BY item_id, hq{LIMITS}",
+        from - 600
+    )
+}
+
+#[derive(Row, Deserialize)]
+struct RepriceRow {
+    item_id: i32,
+    hq: u8,
+    undercuts: u64,
+    undercut_median: f64,
 }
 
 // Reconcile authoritative sales in the SAME bounded item batches as the
@@ -99,17 +186,7 @@ async fn add_missing_receipts(
     for row in missing {
         output
             .entry((row.item_id, row.hq != 0))
-            .or_insert_with(|| ListingWindowStats {
-                window_days: days,
-                from,
-                to,
-                floor_unknown_secs: (to - from) as u64,
-                matches: MatchedSalesStats {
-                    settled_through_unix: to - 601,
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
+            .or_insert_with(|| empty_window(days, from, to))
             .matches
             .sales_without_receipt = row.n;
     }
@@ -175,6 +252,11 @@ async fn window_items(
     // Deduplicate receipts by stable PG identity, preserving the earliest actual
     // observation. An old sale replay cannot acquire a fresh matching timestamp.
     let receipts = ch.client().query(&format!("SELECT ?fields FROM sale_receipts WHERE item_id IN ({item_sql}) AND world_id IN ({world_sql}) AND received_at >= toDateTime({}) AND received_at < toDateTime({to}){LIMITS}", from-600)).fetch_all::<SaleReceiptRow>().await?;
+    let reprices = ch
+        .client()
+        .query(&reprice_sql(&item_sql, &world_sql, from, to))
+        .fetch_all::<RepriceRow>()
+        .await?;
     let mut unique = HashMap::<(i32, i32), SaleReceiptRow>::new();
     for (index, receipt) in receipts.into_iter().enumerate() {
         if index.is_multiple_of(4096) {
@@ -271,6 +353,15 @@ async fn window_items(
                 ..Default::default()
             },
         );
+    }
+    // A reprice always has its add/update event in the same read, so the key
+    // exists; merge defensively anyway.
+    for row in reprices {
+        let stats = output
+            .entry((row.item_id, row.hq != 0))
+            .or_insert_with(|| empty_window(days, from, to));
+        stats.undercuts = row.undercuts;
+        stats.undercut_median = (row.undercuts > 0).then_some(row.undercut_median);
     }
     add_missing_receipts(ch, &mut output, &world_sql, &item_sql, days, from, to).await?;
     Ok(output)
@@ -720,5 +811,47 @@ mod tests {
         assert_eq!(stats.days_of_stock, Some(2.0));
         set_stock(&mut stats, 0, Some(350));
         assert_eq!(stats.days_of_stock, Some(0.0));
+    }
+
+    #[test]
+    fn undercut_rate_uses_scope_coverage_with_a_day_floor_and_window_cap() {
+        let key = |i: i32| (i, false);
+        let with = |undercuts: u64, first: Option<i64>, last: Option<i64>| ListingWindowStats {
+            undercuts,
+            listing_coverage: HistoryCoverage {
+                first_observed_unix: first,
+                last_observed_unix: last,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // No key observed anything: the rate stays unknown, never zero.
+        let mut none = BTreeMap::from([(key(1), with(2, None, None))]);
+        set_undercut_rates(&mut none, 0, 7 * 86400);
+        assert_eq!(none[&key(1)].undercuts_per_day, None);
+        // A five-minute scope span is floored to one day; a key without its
+        // own observations still gets the scope's denominator.
+        let mut short = BTreeMap::from([
+            (key(1), with(4, Some(1000), Some(1300))),
+            (key(2), with(0, None, None)),
+        ]);
+        set_undercut_rates(&mut short, 0, 7 * 86400);
+        assert_eq!(short[&key(1)].undercuts_per_day, Some(4.0));
+        assert_eq!(short[&key(2)].undercuts_per_day, Some(0.0));
+        // Observations before `from` (the reducer reads from - 600) do not
+        // stretch the span; a span longer than the window is capped.
+        let from = 100 * 86400;
+        let to = from + 30 * 86400;
+        let mut long = BTreeMap::from([
+            (key(1), with(30, Some(from - 600), Some(to - 1))),
+            (
+                key(2),
+                with(15, Some(from - 40 * 86400), Some(from + 10 * 86400)),
+            ),
+        ]);
+        set_undercut_rates(&mut long, from, to);
+        let rate = long[&key(1)].undercuts_per_day.unwrap();
+        assert!((rate - 1.0).abs() < 1e-3, "{rate}");
+        assert!((long[&key(2)].undercuts_per_day.unwrap() - 0.5).abs() < 1e-3);
     }
 }
