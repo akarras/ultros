@@ -658,8 +658,14 @@ where
                 };
                 for (width, texts) in widths.iter_mut().zip(candidates) {
                     let mut texts: Vec<(String, f64)> = texts.into_iter().collect();
-                    texts.sort_by(|a, b| estimate(&b.0, b.1).total_cmp(&estimate(&a.0, a.1)));
-                    for (text, adornments) in texts.into_iter().take(FIT_MEASURE_CANDIDATES) {
+                    // ⚡ Bolt Optimization: Use select_nth_unstable_by to avoid O(N log N) full sort
+                    if texts.len() > FIT_MEASURE_CANDIDATES {
+                        texts.select_nth_unstable_by(FIT_MEASURE_CANDIDATES, |a, b| {
+                            estimate(&b.0, b.1).total_cmp(&estimate(&a.0, a.1))
+                        });
+                        texts.truncate(FIT_MEASURE_CANDIDATES);
+                    }
+                    for (text, adornments) in texts {
                         let text_width = ctx.measure_text(&text).map(|m| m.width()).unwrap_or(0.0);
                         *width = width.max(text_width + adornments);
                     }
