@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "See how often listings get undercut",
+  "blurb": "Every analyzer's column picker gains two Listings columns: Undercuts/day counts how often sellers drop the price of an existing listing over the selected window, and Undercut % shows the typical size of those drops."
+}
