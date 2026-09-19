@@ -381,7 +381,10 @@ pub fn sale_tax_for(gross: i32, math: TaxMath) -> i32 {
 /// so a 1-gil edge never flatters the buyer. The real rate is 3–5% depending
 /// on the retainer's city; we assume the worst case.
 pub fn purchase_tax_for(listing: i32) -> i32 {
-    ((listing as i64 * MARKET_TAX_PERCENT + 100 - 1) / 100) as i32
+    // i64::div_ceil is gated behind the unstable `int_roundings` feature for
+    // signed integers on this toolchain; listing prices are never negative,
+    // so u64 gets the stable method with identical results.
+    (listing as u64 * MARKET_TAX_PERCENT as u64).div_ceil(100) as i32
 }
 
 /// One "buy off the board, sell to an NPC" row.

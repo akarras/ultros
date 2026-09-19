@@ -13,6 +13,7 @@ pub fn analyzer(path: &str) -> Option<&'static str> {
         "leve-analyzer",
         "venture-analyzer",
         "vendor-resale",
+        "vendor-sell",
         "scrip-sources",
         "fc-crafting-analyzer",
     ]

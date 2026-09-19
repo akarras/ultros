@@ -470,6 +470,11 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                         let item = items.get(&ItemId(item_id)).map(|i| i.name.as_str()).unwrap_or_default();
                         let icon_loading = if index < 20 { "eager" } else { "" };
                         let world_name = worlds_view.get(&row.world_id).cloned().unwrap_or_default();
+                        let item_href = if world_name.is_empty() {
+                            format!("/item/{item_id}")
+                        } else {
+                            format!("/item/{world_name}/{item_id}")
+                        };
                         match id {
                             "hq" => view! {
                                 <div class="flex items-center justify-center w-full min-w-0">
@@ -479,7 +484,7 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                             "item" => view! {
                                 <div class="flex flex-row items-center gap-2 w-full min-w-0">
                                     <a class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                       href=format!("/item/{world_name}/{item_id}")>
+                                       href=item_href>
                                         <div class="shrink-0"><ItemIcon item_id icon_size=IconSize::Small loading=icon_loading /></div>
                                         {item}
                                     </a>
