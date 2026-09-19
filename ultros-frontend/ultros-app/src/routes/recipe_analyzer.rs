@@ -2923,10 +2923,16 @@ fn sort_recipes(
     // The table is virtualized, so retaining the full result set adds
     // browser-side rows without increasing DOM size or server work.
     kept.sort_by(|a, b| {
-        // Deterministic tiebreak: the input comes from a std HashMap, so
-        // without it ties could order differently on the server and the
-        // client and mismatch the SSR-rendered rows.
-        compare_recipes(mode, dir, a, b, stats_30)
+        // Unpriced rows (a sale-statistic revenue with no sale row) trail
+        // every priced row whatever the mode and direction: there is no
+        // figure to rank, and a fast-moving ingredient market is not one.
+        a.line
+            .is_none()
+            .cmp(&b.line.is_none())
+            .then_with(|| compare_recipes(mode, dir, a, b, stats_30))
+            // Deterministic tiebreak: the input comes from a std HashMap, so
+            // without it ties could order differently on the server and the
+            // client and mismatch the SSR-rendered rows.
             .then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
     });
     kept.into_iter().enumerate().collect()
@@ -7256,6 +7262,55 @@ mod test {
         let out = sort_recipes(&rows, SortMode::Profit, SortDir::Asc, None);
         assert_eq!(out[1].1.profit().unwrap(), 200);
         assert_eq!(out[1].1.recipe.key_id.0, keys[2]);
+    }
+
+    fn unpriced_row(key: i32, daily: f32) -> Arc<RecipeProfitData> {
+        let mut r = Arc::try_unwrap(row(key, 0, 0, daily, 1)).ok().unwrap();
+        r.revenue = Revenue::Unpriced;
+        r.line = None;
+        Arc::new(r)
+    }
+
+    /// An unpriced row has nothing to rank: it trails every priced row
+    /// whatever the header points at, in both directions — even under
+    /// Velocity, where its own daily rate would otherwise put it first.
+    #[test]
+    fn unpriced_rows_sort_last_under_every_mode_and_direction() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(3)
+            .map(|r| r.key_id.0)
+            .collect();
+        let rows = vec![
+            unpriced_row(keys[0], 9.0),
+            row(keys[1], 100, 10, 1.0, 7),
+            row(keys[2], 300, 30, 0.5, 8),
+        ];
+        let modes = [
+            SortMode::Profit,
+            SortMode::Roi,
+            SortMode::Price,
+            SortMode::Tax,
+            SortMode::Velocity,
+            SortMode::CostPerUnit,
+            SortMode::ProfitPerDay,
+            SortMode::LastSold,
+        ];
+        for (i, mode) in modes.into_iter().enumerate() {
+            for dir in [SortDir::Asc, SortDir::Desc] {
+                let out = sort_recipes(&rows, mode, dir, None);
+                assert_eq!(
+                    out.last().unwrap().1.recipe.key_id.0,
+                    keys[0],
+                    "mode #{i} {dir:?}: the unpriced row must be last"
+                );
+                assert!(out[..2].iter().all(|(_, r)| r.line.is_some()));
+            }
+        }
+        // Priced rows still order among themselves.
+        let out = sort_recipes(&rows, SortMode::Profit, SortDir::Desc, None);
+        assert_eq!(out[0].1.profit(), Some(300));
+        assert_eq!(out[1].1.profit(), Some(100));
     }
 
     /// The old row-filter keys are read as the grid's metric filters on the
