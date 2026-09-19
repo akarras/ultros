@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Japanese, Chinese and Korean visitors get their language from the first byte",
+  "blurb": "Pages for visitors in Japan, China and Korea are now served in their language straight from the server instead of switching after load, which removes a crash some item pages hit mid-load in those regions. Picking a language yourself still wins: once you have chosen English (or anything else), reloading no longer flips you back."
+}
