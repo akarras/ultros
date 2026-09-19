@@ -174,7 +174,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
             <div class:hidden=unfilled class="ad">
                 <div class="flex flex-col h-full">
                     <span class="text-sm px-2 py-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text-muted)] shrink max-w-fit">
-                        "Advertisements"
+                        {t!(i18n, ads_label)}
                     </span>
                     // <!-- Ultros-Ad-Main -->
                     <ins
@@ -186,7 +186,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                         node_ref=node
                     ></ins>
                     <span class="text-neutral-500 italic text-sm">
-                        "ads are optional. you may disable or enable them under "
+                        {t!(i18n, ads_optional_prefix)}
                         <AppLink href="/settings">{t!(i18n, ad_settings_link)}</AppLink>
                     </span>
                 </div>
@@ -206,7 +206,9 @@ pub fn DesktopAdRail() -> impl IntoView {
         <Show when=ads_visible>
             <aside class="app-ad-rail" aria-label=t_string!(i18n, ad_aria_label)>
                 <div class="ad-rail-slot sticky top-24">
-                    <Ad class="h-[600px] w-full" />
+                    // Sized in tailwind.css (.ad-rail-ins): 300x600, or
+                    // 300x1050 on viewports tall enough to fit it.
+                    <Ad class="ad-rail-ins" />
                 </div>
             </aside>
         </Show>
