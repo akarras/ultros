@@ -96,8 +96,9 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[data-testid="list-estimate-total"]')?.textContent === "60 gil");
     console.log("[ok] real account rows and deterministic market offers loaded");
     assert(lookups > 0, "deterministic offers reached editor");
-    assert.deepEqual(await page.$$eval('#list-sort-select option[value^="acquired"]', options => options.map(option => option.textContent)),
-      ["Fewest needed first", "Most needed first"], "the account toolbar names the same requested-quantity sort as the cart");
+    // Lists 2.0 has one sort surface: the cart's own group below. The
+    // toolbar's duplicate select left with the filter row.
+    assert.equal(await page.$$eval("#list-sort-select", nodes => nodes.length), 0, "no duplicate toolbar sort select");
     assert.equal(await page.$$eval(`${cart} [role="columnheader"], ${cart} [aria-sort], ${cart} [role="row"]`, nodes => nodes.length), 0, "list controls have no unsupported table roles or attributes");
     assert(await page.$eval(`${cart} [role="group"][aria-label="Sort by"]`, group => group.querySelectorAll("button[aria-controls='cart-row-list']").length === 3));
     const any = await rowSelector("any");

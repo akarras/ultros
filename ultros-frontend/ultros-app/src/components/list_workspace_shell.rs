@@ -40,6 +40,12 @@ pub fn ListWorkspaceShell(
     /// connection label). Rendered after a separator when `status` is set.
     #[prop(optional, into)]
     status_detail: Option<Signal<String>>,
+    /// The raw status keyword behind `status_detail` (`live`, `offline`,
+    /// ...). Exposed as `data-status` on the detail span so the sync E2E
+    /// scripts keep their `realtime-status-indicator` hook now that the
+    /// badge component no longer renders on this page.
+    #[prop(optional, into)]
+    status_detail_key: Option<Signal<String>>,
     /// Buttons that belong to the status (retry a failed save, download a
     /// recovery copy). Rendered inline after the text.
     #[prop(optional, into)]
@@ -121,7 +127,10 @@ pub fn ListWorkspaceShell(
                     />
                     <p class="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs text-[color:var(--color-text-muted)]">
                         <span data-testid=status_testid role="status" aria-live="polite">{move || status.get()}</span>
-                        <span>{status_detail_text}</span>
+                        <span
+                            data-testid=status_detail_key.map(|_| "realtime-status-indicator")
+                            data-status=move || status_detail_key.map(|key| key.get())
+                        >{status_detail_text}</span>
                         {status_actions.map(|actions| actions.run())}
                     </p>
                 </div>

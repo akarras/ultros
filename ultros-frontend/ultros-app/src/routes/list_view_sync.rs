@@ -2292,6 +2292,7 @@ pub fn ListViewSync() -> impl IntoView {
                 status=doc_status
                 status_testid="account-list-save-state"
                 status_detail=live_status
+                status_detail_key=realtime_status
                 status_actions=move || view! {
                     <Show when=move || save_failed.get()>
                         <button type="button" class="btn-secondary" on:click=move |_| { if let Some(doc) = handle.get_untracked() { doc.save_now(); } }>{t!(i18n, account_list_save_retry)}</button>
