@@ -309,6 +309,13 @@ pub async fn get_listing_stats(scope_name: &str) -> AppResult<BulkListingStats> 
     fetch_api(&format!("/api/v1/listing_stats/{scope_name}")).await
 }
 
+/// The alive set plus `window` history for `days` (1/7/30/90) from the
+/// committed exact-scope snapshot. A cold scope/window pair is 503 until the
+/// server's background worker publishes a generation; callers retry.
+pub async fn get_listing_stats_window(scope_name: &str, days: u16) -> AppResult<BulkListingStats> {
+    fetch_api(&format!("/api/v1/listing_stats/{scope_name}?window={days}")).await
+}
+
 /// Get most expensive
 pub async fn get_recent_sales_for_world(region_name: &str) -> AppResult<RecentSales> {
     fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
