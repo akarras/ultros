@@ -25,7 +25,7 @@ use crate::analyzer_kit::needed::{
     SignalWants, needed_bodies, needed_signals,
 };
 use crate::analyzer_kit::signals::{
-    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
+    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_price, stats_index,
 };
 use crate::analyzer_kit::stat_columns::{
     StatKind, Window, market_picker_options, shared_cols_in, stat_label, toggle_shared_col,
@@ -235,8 +235,11 @@ struct RecipeProfitData {
     /// page window among the ingredient lines the cost pass bought on the
     /// buy scope. `None` = no market-bought line, or no buy-scope body.
     cost_gil: Option<u64>,
-    /// World of the revenue-side listing the price was read from; 0 when
-    /// the sell place has no listing (the price came from a statistic).
+    /// World of the listing the price was read from, when the price IS a
+    /// listing — including a listing that fell back to the buy scope. 0
+    /// when the price came from a sell-place statistic instead: the
+    /// statistic's own world is not what this field answers, and no
+    /// listing (same world or not) stands in for it.
     revenue_world_id: i32,
 }
 
@@ -2630,16 +2633,31 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         // are selected.
         let scope_summary = inp.buy_listings.find_matching_listings(recipe.item_result);
         let cheapest_world_id = scope_summary.chosen(false).map(|d| d.world_id).unwrap_or(0);
-        // The revenue-side listing's world: the same layered view
-        // (`revenue_summary`) that priced the row, so a price that fell
-        // back to the buy scope's listing reports THAT listing's world
-        // rather than silently reading 0. 0 means what the doc comment
-        // says: no listing anywhere backs this price (it came from a bare
-        // statistic, or there is no price at all).
-        let revenue_world_id = revenue_summary
-            .chosen(price_hq)
-            .map(|d| d.world_id)
-            .unwrap_or(0);
+        // The revenue-side listing's world — but only when the price IS a
+        // listing. `revenue_summary` layers a sale statistic over the
+        // listing (`SignalView::quality`) and, when the stat backs the
+        // price, still carries the LISTING's world alongside it; reading
+        // `.chosen(..).world_id` unconditionally would misreport that
+        // listing's (possibly foreign) world as where the statistic-priced
+        // row's revenue came from. So: resolve whether the chosen quality's
+        // price actually came from the statistic first, and zero the world
+        // in that case; only a listing (same-world or the buy-scope
+        // fallback) reports a world here.
+        let stat_backed_price = match revenue_signal.sale_stat() {
+            Some(stat) => inp
+                .revenue_stats
+                .and_then(|s| s.get(&(recipe.item_result, price_hq)))
+                .is_some_and(|row| stat_price(row, stat) > 0),
+            None => false,
+        };
+        let revenue_world_id = if stat_backed_price {
+            0
+        } else {
+            revenue_summary
+                .chosen(price_hq)
+                .map(|d| d.world_id)
+                .unwrap_or(0)
+        };
 
         // One `compute_cost` under `view`, over a fresh on-hand snapshot:
         // compute_cost consumes from the snapshot, and reusing one across
@@ -8422,6 +8440,14 @@ mod test {
         assert_eq!(
             profit_query_value(r),
             GridValue::Number(f64::from(r.profit().unwrap()))
+        );
+        // The price came from the sell place's own statistic, not a
+        // listing: the buy scope's listing on world 2 must not leak in as
+        // this row's revenue world.
+        assert_eq!(
+            r.revenue_world_id, 0,
+            "a statistic-priced row reports no listing world, even though \
+             a buy-scope listing exists"
         );
     }
 
