@@ -18,11 +18,12 @@ pub const DATAMINING_LANGS: [&str; 4] = ["en", "ja", "de", "fr"];
 /// there means adding it here, or the sparse checkout will not contain it.
 ///
 /// Several of these are read only to compute a derived field and are never
-/// stored in the pack — `ENpcBase`/`TopicSelect`/`PreHandler` collapse into
-/// `Data::gil_shop_npcs`, and `Achievement`/`Quest` into each shop item's
-/// `availability`. A sheet costs checkout time here but zero pack bytes, so
+/// stored in the pack — `ENpcBase` and the handler sheets (`TopicSelect`,
+/// `PreHandler`, `InclusionShop*`, `CustomTalk*`) collapse into the
+/// `Data::*_shop_npcs` indexes, `TomestonesItem` into special-shop costs, and
+/// `Achievement`/`Quest` into each shop item's `availability`. A sheet costs checkout time here but zero pack bytes, so
 /// prefer resolving upstream data at generation time over shipping it.
-pub const SHEETS: [&str; 37] = [
+pub const SHEETS: [&str; 43] = [
     "Map",
     "PlaceName",
     "TerritoryType",
@@ -43,6 +44,12 @@ pub const SHEETS: [&str; 37] = [
     "GilShopItem",
     "TopicSelect",
     "PreHandler",
+    "InclusionShop",
+    "InclusionShopCategory",
+    "InclusionShopSeries",
+    "CustomTalk",
+    "CustomTalkNestHandlers",
+    "TomestonesItem",
     "ItemSearchCategory",
     "ItemUICategory",
     "ItemSortCategory",
@@ -251,7 +258,7 @@ mod tests {
 
     #[test]
     fn sheets_list_covers_every_read_sheet() {
-        assert_eq!(SHEETS.len(), 37);
+        assert_eq!(SHEETS.len(), 43);
         let mut sorted = SHEETS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -267,8 +274,21 @@ mod tests {
         // missing CSV long before that, which is the point of listing them.
         assert!(SHEETS.contains(&"Achievement"));
         assert!(SHEETS.contains(&"Quest"));
-        // Likewise read-and-dropped, for `Data::gil_shop_npcs`.
-        for sheet in ["ENpcBase", "TopicSelect", "PreHandler"] {
+        // Likewise read-and-dropped, for the `Data::*_shop_npcs` indexes.
+        // Without the `InclusionShop*` trio every scrip and tomestone exchange
+        // NPC loses its shops; without `TomestonesItem` a Poetics cost reads
+        // as "1 x Gil".
+        for sheet in [
+            "ENpcBase",
+            "TopicSelect",
+            "PreHandler",
+            "InclusionShop",
+            "InclusionShopCategory",
+            "InclusionShopSeries",
+            "CustomTalk",
+            "CustomTalkNestHandlers",
+            "TomestonesItem",
+        ] {
             assert!(SHEETS.contains(&sheet), "{sheet} missing from SHEETS");
         }
         // Stored: zone names for NPC placements, and the map transforms the

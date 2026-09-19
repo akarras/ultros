@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Scrip and tomestone prices show the right currency",
+  "blurb": "Exchange sources priced in crafters' or gatherers' scrips and Allagan tomestones used to show up as shards or gil. They now name the scrip or tomestone they cost, and Currency Exchange can price them too."
+}

@@ -180,9 +180,9 @@ fn run() -> anyhow::Result<()> {
         .save(&placements_path)?;
     println!("npc placements -> {}", placements_path.display());
     println!(
-        "  {placed_vendors} NPCs with a placement ({} gil-shop vendors in the en data; the rest \
-         are housing servants and seasonal stalls)",
-        output.en_vendor_npcs
+        "  {placed_vendors} NPCs with a placement ({} gil-shop vendors and {} exchange NPCs in \
+         the en data; the rest are housing servants and seasonal stalls)",
+        output.en_vendor_npcs, output.en_exchange_npcs
     );
 
     println!("\nextracting maps from FFXIV {}", install.version);
