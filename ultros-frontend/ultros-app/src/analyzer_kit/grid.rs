@@ -477,8 +477,13 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
 fn query_cell(value: CellValue, i18n: I18nContext<Locale, I18nKeys>) -> GridValue {
     use super::{cells::Enrich, hop::HopGain};
     match value {
-        CellValue::Gil(n) | CellValue::RoiBadge(n) | CellValue::GilWithNote { amount: n, .. } => {
-            GridValue::Number(n as f64)
+        CellValue::Gil(n)
+        | CellValue::RoiBadge(Some(n))
+        | CellValue::GilWithNote {
+            amount: Some(n), ..
+        } => GridValue::Number(n as f64),
+        CellValue::RoiBadge(None) | CellValue::GilWithNote { amount: None, .. } => {
+            GridValue::Missing
         }
         CellValue::Count(n) => GridValue::Number(n as f64),
         CellValue::LastSoldUnix(n) => {
@@ -591,10 +596,14 @@ fn measure_cell(
 ) -> (String, f64) {
     use super::cells::Enrich;
     match value {
-        CellValue::Gil(n)
-        | CellValue::GilWithPct { amount: n, .. }
-        | CellValue::GilWithNote { amount: n, .. } => (n.separate_with_commas(), 42.0),
-        CellValue::RoiBadge(n) => (format!("{n}%"), 30.0),
+        CellValue::Gil(n) | CellValue::GilWithPct { amount: n, .. } => {
+            (n.separate_with_commas(), 42.0)
+        }
+        CellValue::GilWithNote { amount, .. } => (
+            amount.map(|n| n.separate_with_commas()).unwrap_or_default(),
+            42.0,
+        ),
+        CellValue::RoiBadge(n) => (n.map(|n| format!("{n}%")).unwrap_or_default(), 30.0),
         CellValue::Count(n) | CellValue::LateCount(Enrich::Ready(n)) => {
             (n.separate_with_commas(), 24.0)
         }

@@ -700,6 +700,8 @@
     "analyzer_scope_vs_home_unavailable": "两个市场中有一方没有该信号的数值",
     "analyzer_scope_vs_home_off": "销售范围就是你的销售服务器",
     "analyzer_price_listing_fallback": "挂单",
+    "analyzer_price_no_sales": "窗口内无销售",
+    "analyzer_price_no_sales_title": "所选时间窗口内该出售市场没有成交记录，因此没有可用于计算利润的成交价",
     "analyzer_cost_unpriced": "{{n}} 项无价格",
     "analyzer_cost_unpriced_title": "{{n}} 种材料在购买范围内没有挂单也没有 NPC 出售，此处按 0 计算",
     "recipe_analyzer_calc_signal_semantics": "备选列遵循相同的每信号规则：材料取最便宜的匹配挂单（勾选“需要 HQ”时优先 HQ）或所选的销售统计，收入取售出服务器上 NQ 与 HQ 中较低者。统计缺失或为零时按材料回退到挂单价，绝不为 0；售出服务器没有销售历史时，备选收入显示 —。",

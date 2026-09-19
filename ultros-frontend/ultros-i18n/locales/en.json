@@ -700,6 +700,8 @@
     "analyzer_scope_vs_home_unavailable": "One of the two markets has no figure for this signal",
     "analyzer_scope_vs_home_off": "The sell scope is your sell world",
     "analyzer_price_listing_fallback": "listing",
+    "analyzer_price_no_sales": "no sales in window",
+    "analyzer_price_no_sales_title": "No sales in the selected window on the sell market, so there is no sale price to profit against",
     "analyzer_cost_unpriced": "{{n}} unpriced",
     "analyzer_cost_unpriced_title": "Unpriced ingredients: {{n}} — no listing in the buy scope and no vendor; they cost 0 here",
     "recipe_analyzer_calc_signal_semantics": "Alternative columns follow the same rule per signal: ingredients take the cheapest matching listing (HQ-preferred under Require HQ) or the chosen sale statistic, revenue the cheaper of NQ and HQ on the sell world. A missing or zero statistic falls through to the listing per ingredient, never to 0; alternative revenue shows — when the sell world has no sale history.",

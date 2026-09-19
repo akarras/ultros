@@ -700,6 +700,8 @@
     "analyzer_scope_vs_home_unavailable": "두 시장 중 한쪽에 이 신호의 값이 없습니다",
     "analyzer_scope_vs_home_off": "판매 범위가 판매 서버와 같습니다",
     "analyzer_price_listing_fallback": "매물",
+    "analyzer_price_no_sales": "기간 내 판매 없음",
+    "analyzer_price_no_sales_title": "선택한 기간 동안 판매 시장에 판매 기록이 없어 수익을 계산할 판매 가격이 없습니다",
     "analyzer_cost_unpriced": "가격 없음 {{n}}",
     "analyzer_cost_unpriced_title": "{{n}}종의 재료는 구매 범위에 매물도 NPC 판매도 없어 여기서는 0으로 계산됩니다",
     "recipe_analyzer_calc_signal_semantics": "대체 열도 신호별로 같은 규칙을 따릅니다. 재료는 가장 싼 매물(“HQ 필요” 시 HQ 우선) 또는 선택한 판매 통계를, 매출은 판매 서버의 NQ/HQ 중 싼 쪽을 씁니다. 통계가 없거나 0이면 재료별로 매물 가격으로 돌아가며 0이 되지 않습니다. 판매 서버에 판매 기록이 없으면 대체 매출은 —로 표시됩니다.",

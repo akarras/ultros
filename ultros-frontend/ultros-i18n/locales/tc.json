@@ -700,6 +700,8 @@
     "analyzer_scope_vs_home_unavailable": "兩個市場中有一方沒有該訊號的數值",
     "analyzer_scope_vs_home_off": "銷售範圍就是你的銷售伺服器",
     "analyzer_price_listing_fallback": "掛單",
+    "analyzer_price_no_sales": "窗口內無銷售",
+    "analyzer_price_no_sales_title": "所選時間窗口內該出售市場沒有成交記錄，因此沒有可用於計算利潤的成交價",
     "analyzer_cost_unpriced": "{{n}} 項無價格",
     "analyzer_cost_unpriced_title": "{{n}} 種材料在購買範圍內沒有掛單也沒有 NPC 販售，此處按 0 計算",
     "recipe_analyzer_calc_signal_semantics": "替代欄位遵循相同的每訊號規則：材料取最便宜的相符掛單（勾選「需要 HQ」時優先 HQ）或所選的銷售統計，收入取售出伺服器上 NQ 與 HQ 中較低者。統計缺失或為零時按材料回退到掛單價，絕不為 0；售出伺服器沒有銷售歷史時，替代收入顯示 —。",

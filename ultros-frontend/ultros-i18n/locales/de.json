@@ -700,6 +700,8 @@
     "analyzer_scope_vs_home_unavailable": "Einer der beiden Märkte hat keinen Wert für dieses Signal",
     "analyzer_scope_vs_home_off": "Der Verkaufsbereich ist deine Verkaufswelt",
     "analyzer_price_listing_fallback": "Angebot",
+    "analyzer_price_no_sales": "keine Verkäufe im Zeitraum",
+    "analyzer_price_no_sales_title": "Keine Verkäufe im gewählten Zeitraum auf dem Verkaufsmarkt, also gibt es keinen Verkaufspreis für einen Gewinn",
     "analyzer_cost_unpriced": "{{n}} ohne Preis",
     "analyzer_cost_unpriced_title": "Zutaten ohne Preis: {{n}} — weder Angebot im Kaufbereich noch Händler; sie zählen hier mit 0",
     "recipe_analyzer_calc_signal_semantics": "Alternative Spalten folgen derselben Regel je Signal: Zutaten nehmen das günstigste passende Angebot (HQ bevorzugt bei „HQ erforderlich“) oder die gewählte Verkaufsstatistik, der Erlös das günstigere von NQ und HQ auf der Verkaufswelt. Eine fehlende oder leere Statistik fällt je Zutat auf das Angebot zurück, nie auf 0; ein alternativer Erlös zeigt —, wenn die Verkaufswelt keine Verkaufshistorie hat.",
