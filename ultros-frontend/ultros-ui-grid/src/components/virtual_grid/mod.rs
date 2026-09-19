@@ -150,6 +150,12 @@ pub fn VirtualGrid<T, K, KF, H, F, M>(
     #[prop(into)] reset_scroll: Signal<String>,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
     #[prop(default = 40.0)] row_height: f64,
+    /// Data-row index to scroll into view and make active when it changes.
+    /// Emitted by pages that deep-link to a row (`?item=`); the grid does
+    /// not debounce repeated values, so callers emit each index once.
+    // `optional_no_strip`: forwarded as an `Option` from the layer above.
+    #[prop(optional_no_strip)]
+    reveal_index: Option<Signal<Option<usize>>>,
     key: KF,
     header: H,
     view: F,
@@ -474,6 +480,16 @@ where
             let _ = el.focus();
         }
     };
+    if let Some(reveal_index) = reveal_index {
+        Effect::new(move |_| {
+            let Some(index) = reveal_index.get() else {
+                return;
+            };
+            if index < count.get() {
+                reveal(index + 1, active.get_untracked().1);
+            }
+        });
+    }
     let close_menu = move || {
         menu.set(None);
         insert_side.set(None);

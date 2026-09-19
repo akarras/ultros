@@ -236,6 +236,28 @@ fn VentureAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+
+    // `?item=` is a navigation target from search, not a filter: plain
+    // `query_signal`, and revealed once per value (see `RevealOnce`) so live
+    // re-sorts don't keep yanking the scroll position.
+    let (reveal_item, _set_reveal_item) = query_signal::<i32>("item");
+    let shown_rows = RwSignal::new(Vec::<(usize, Arc<VentureProfitData>)>::new());
+    let reveal_once = StoredValue::new(crate::components::reveal_once::RevealOnce::default());
+    let reveal_index = RwSignal::new(None::<usize>);
+    Effect::new(move |_| {
+        let item = reveal_item.get();
+        let mut hit = None;
+        shown_rows.with(|rows| {
+            reveal_once.update_value(|once| {
+                hit = once.next(item, |item| {
+                    rows.iter().position(|(_, row)| row.item_id == item)
+                });
+            })
+        });
+        if hit.is_some() {
+            reveal_index.set(hit);
+        }
+    });
     let (filter_outliers, _set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
     let query = use_query_map_or_default();
 
@@ -470,7 +492,7 @@ fn VentureAnalyzerTable(
                 />
 
                 <div>
-                    <MarketGrid show_saved_views=false market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
+                    <MarketGrid show_saved_views=false on_rows=Callback::new(move |rows| shown_rows.set(rows)) reveal_index market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
         let mut subject = MarketSubject::new(row.item_id, row.hq, row.cheapest_world_id);
         subject.listing_price = row.listing_price;
         subject.label = t_string!(i18n, market_returned_item).to_string();
