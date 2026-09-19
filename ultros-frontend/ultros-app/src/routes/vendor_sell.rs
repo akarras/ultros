@@ -7,7 +7,6 @@ use crate::global_state::xiv_data::tracked_data;
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use ultros_api_types::cheapest_listings::CheapestListings;
 use ultros_calc::formula::vendor_sell_line;
-use xiv_gen::ItemId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VendorSellRow {
