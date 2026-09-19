@@ -522,7 +522,7 @@ mod browser {
             });
         });
         view! {
-            <a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline mb-2" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a>
+            <Show when=move || loaded.with(Option::is_none)><a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline mb-2" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a></Show>
             <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
             <Show when=move ||account_required.get()><div class="panel rounded-xl p-5 space-y-3" data-testid="list-online-account-required">
                 <p>{t!(i18n,online_account_required)}</p>
@@ -696,7 +696,7 @@ mod browser {
         });
         on_cleanup(move || auto_timer.set_value(None));
         let recipe_open = RwSignal::new(false);
-        let (storage_open, set_storage_open) = signal(recovery.get_untracked());
+        let storage_open = RwSignal::new(recovery.get_untracked());
         let confirm_delete = RwSignal::new(false);
         let deleting = RwSignal::new(false);
         let navigate = StoredValue::new_local(use_navigate());
@@ -711,7 +711,7 @@ mod browser {
             // Keep these dependencies while an auth check is in flight, so
             // closing a dialog can resume a handoff it temporarily deferred.
             let recipe_visible = recipe_open.get();
-            let storage_visible = storage_open();
+            let storage_visible = storage_open.get();
             if recovery.get()
                 || following.get_untracked()
                 || recipe_visible
@@ -828,10 +828,12 @@ mod browser {
             undo,
             redo,
             modal_open: Signal::derive(move || {
-                confirm_delete.get() || storage_open() || recovery.get()
+                confirm_delete.get() || storage_open.get() || recovery.get()
             }),
         });
         let sort = RwSignal::new(None::<SortSpec>);
+        // In-memory: device lists have no URL-carried filters.
+        let hide_acquired = RwSignal::new(false);
         let guest_rows = Signal::derive(move || {
             revision.track();
             let policy = travel.policy.get();
@@ -853,8 +855,9 @@ mod browser {
             })
         });
         let source = ListWorkspaceSource {
-            hide_acquired: Signal::derive(|| false),
-            reset_filters: Callback::new(|()| {}),
+            hide_acquired: hide_acquired.into(),
+            set_hide_acquired: Callback::new(move |hide| hide_acquired.set(hide)),
+            reset_filters: Callback::new(move |()| hide_acquired.set(false)),
             list_id: Signal::derive(|| 0),
             add: Callback::new(move |item| apply.run(Edit::Add(item))),
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
@@ -896,67 +899,47 @@ mod browser {
         };
         let highlighted = crate::components::cart::use_changed_row_highlight(source.rows);
         let legacy_cart = use_legacy_cart();
+        let name = Signal::derive(move || {
+            revision.track();
+            handle.with_value(|h| h.meta().name)
+        });
+        let refreshing = Signal::derive(move || busy.get() && scope.get() == pending_scope.get());
         view! {
-            <section class="space-y-3" data-testid="device-list-editor"
+            <section data-testid="device-list-editor"
                 on:input=move |_| draft_changed.update(|value| *value += 1)
                 on:change=move |_| draft_changed.update(|value| *value += 1)
                 on:keyup=move |_| draft_changed.update(|value| *value += 1)
                 on:focusout=move |_| draft_changed.update(|value| *value += 1)>
-                <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                    <div class="min-w-0 flex-1 basis-56">
-                        <input class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] px-1 py-0.5" aria-label={move || t_string!(i18n, guest_workspace_name).to_string()} readonly=move || recovery.get() prop:value=move || { revision.track(); handle.with_value(|h| h.meta().name) } data-committed=move || { revision.track(); handle.with_value(|h| h.meta().name) } maxlength="100" on:keydown=move |ev| { if ev.key() == "Escape" { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&handle.with_value(|h| h.meta().name)); ev.stop_propagation(); } else if ev.key() == "Enter" { let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); } } on:change=move |ev| { if let Err(e) = handle.with_value(|h| h.rename(&event_target_value(&ev))) { error.set(e); } } />
-                        <p class="text-xs text-[color:var(--color-text-muted)] px-1" data-testid="device-list-status" role="status">{move || status.get()}</p>
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                    <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
-                    <button class="btn-secondary inline-flex min-h-11 min-w-11 items-center justify-center !px-2" data-testid="device-list-storage-toggle" aria-label=move || t_string!(i18n,online_more).to_string() title=move || t_string!(i18n,online_more).to_string() aria-haspopup="dialog" on:click=move |_|set_storage_open(true)><crate::components::icon::Icon icon=icondata::BsThreeDotsVertical aria_hidden=true /></button>
-                    <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
+                <crate::components::list_workspace_shell::ListWorkspaceShell
+                    name
+                    can_rename=Signal::derive(move || !recovery.get())
+                    on_rename=Callback::new(move |value: String| {
+                        if let Err(e) = handle.with_value(|h| h.rename(&value)) {
+                            error.set(e);
+                        }
+                    })
+                    status
+                    status_testid="device-list-status"
+                    primary=move || view! {
+                        <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
+                        <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
+                            <button class="btn-secondary" on:click=move |_| {
+                                apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
+                                selected.set(HashSet::new());
+                            }>{t!(i18n, guest_workspace_remove_selected)}</button>
+                        </Show>
+                        <Show when=move || handle.with_value(|h| h.needs_save_retry())>
                         <button class="btn-secondary" on:click=move |_| {
-                            apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
-                            selected.set(HashSet::new());
-                        }>{t!(i18n, guest_workspace_remove_selected)}</button>
-                    </Show>
-                    <Show when=move || handle.with_value(|h| h.needs_save_retry())>
-                    <button class="btn-secondary" on:click=move |_| {
-                        let h = handle.get_value();
-                        leptos::task::spawn_local(async move { if let Err(e) = h.flush().await { let _ = error.try_set(e); } });
-                    }>{t!(i18n, guest_workspace_retry)}</button>
-                    </Show>
-                    </div>
-                </header>
-                <Show when=move || !storage_open() && !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
-                <Show when=move || {
-                    draft_changed.track();
-                    handle.with_value(|h| h.online().is_some_and(|online| online.list_id.is_some())) && editor_has_drafts()
-                }><p class="text-sm" role="status">{t!(i18n, online_finish_edit)}</p></Show>
-                <Show when=move || !recovery.get()><crate::routes::list_view_sync::ListWorkspaceModes shop=shop.into() set_shop=Callback::new(move |value| shop.set(value)) /></Show>
-                <Show when=move || !recovery.get()>
-                    <div class="flex flex-wrap items-center gap-2" data-testid="device-price-controls">
-                        <crate::components::world_picker::WorldPicker current_world=scope set_current_world=leptos::reactive::wrappers::write::SignalSetter::map(set_scope) />
-                        <button type="button" class="btn-secondary" data-testid="device-prices-refresh" aria-busy=move || busy.get().to_string() disabled=move || scope.get().is_none() || (busy.get() && scope.get() == pending_scope.get()) on:click=refresh_prices>
-                            {move || if busy.get() && scope.get() == pending_scope.get() { t_string!(i18n, guest_workspace_refreshing).to_string() } else if feed.get().has_prices() { t_string!(i18n, guest_workspace_refresh_prices).to_string() } else { t_string!(i18n, guest_workspace_prices).to_string() }}
-                        </button>
-                    </div>
-                    <crate::components::list_travel_state::ListTravelPanel state=travel />
-                    <Show when=move || !price_error.get().is_empty()><p role="alert" class="text-sm text-red-400" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
-                </Show>
-                // Mounted on first use and then only hidden, so a return to
-                // Build keeps the chosen trip and its recorded stacks.
-                <div class:hidden=move || !shop.get()>
-                    <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy trip_active /></Show>
-                </div>
-                <div class:hidden=move || shop.get()>
-                {move || if legacy_cart.get() {
-                    view! { <ListBuildWorkspace source selected_items=selected highlighted /> }.into_any()
-                } else {
-                    view! { <ListCart source selected_items=selected highlighted /> }.into_any()
-                }}
-                </div>
-                <Show when=storage_open><crate::components::modal::Modal set_visible=set_storage_open aria_label=Signal::derive(move || t_string!(i18n,online_more).to_string())>
-                    <h2 class="text-xl font-bold">{t!(i18n,online_more)}</h2>
-                    <div class="space-y-3 pt-3">
+                            let h = handle.get_value();
+                            leptos::task::spawn_local(async move { if let Err(e) = h.flush().await { let _ = error.try_set(e); } });
+                        }>{t!(i18n, guest_workspace_retry)}</button>
+                        </Show>
+                    }
+                    menu_testid="device-list-storage-toggle"
+                    menu_open=storage_open
+                    menu=move || view! {
                         <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
-                        <crate::routes::guest_list_adoption::DeviceListSeparateUpload handle=handle.get_value() on_connect=Callback::new(move |()| set_storage_open(false)) />
+                        <crate::routes::guest_list_adoption::DeviceListSeparateUpload handle=handle.get_value() on_connect=Callback::new(move |()| storage_open.set(false)) />
                         <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_backup_warning)}</p>
                         <div class="flex flex-wrap gap-2">
                             <button class="btn-secondary" data-testid="device-list-export" on:click=move |_| {
@@ -989,8 +972,42 @@ mod browser {
                                 </div>
                             </div>
                         </Show>
+                    }
+                    notices=move || view! {
+                        <Show when=move || !storage_open.get() && !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                        <Show when=move || {
+                            draft_changed.track();
+                            handle.with_value(|h| h.online().is_some_and(|online| online.list_id.is_some())) && editor_has_drafts()
+                        }><p class="text-sm" role="status">{t!(i18n, online_finish_edit)}</p></Show>
+                        <Show when=move || !recovery.get() && !price_error.get().is_empty()><p role="alert" class="text-sm text-red-400" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
+                    }
+                    show_controls=Signal::derive(move || !recovery.get())
+                    shop
+                    set_shop=Callback::new(move |value| shop.set(value))
+                    scope
+                    set_scope=Callback::new(set_scope)
+                    can_set_scope=Signal::derive(|| true)
+                    refresh=move || view! {
+                        <button type="button" class="btn-secondary" data-testid="device-prices-refresh" aria-busy=move || busy.get().to_string() disabled=move || scope.get().is_none() || refreshing.get() on:click=refresh_prices>
+                            {move || if refreshing.get() { t_string!(i18n, guest_workspace_refreshing).to_string() } else if feed.get().has_prices() { t_string!(i18n, guest_workspace_refresh_prices).to_string() } else { t_string!(i18n, guest_workspace_prices).to_string() }}
+                        </button>
+                    }
+                    price_row_testid="device-price-controls"
+                    travel
+                >
+                    // Mounted on first use and then only hidden, so a return to
+                    // Build keeps the chosen trip and its recorded stacks.
+                    <div class:hidden=move || !shop.get()>
+                        <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy trip_active /></Show>
                     </div>
-                </crate::components::modal::Modal></Show>
+                    <div class:hidden=move || shop.get()>
+                    {move || if legacy_cart.get() {
+                        view! { <ListBuildWorkspace source selected_items=selected highlighted /> }.into_any()
+                    } else {
+                        view! { <ListCart source selected_items=selected highlighted /> }.into_any()
+                    }}
+                    </div>
+                </crate::components::list_workspace_shell::ListWorkspaceShell>
             </section>
         }
     }

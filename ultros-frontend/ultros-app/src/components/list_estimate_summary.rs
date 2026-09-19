@@ -92,6 +92,10 @@ pub fn ListEstimateSummary(
     /// The world, datacenter or region the listings were served for.
     #[prop(default = Signal::derive(|| None))]
     scope: Signal<Option<String>>,
+    /// `(acquired, needed)` units across the whole cart, before any filter.
+    /// `None` hides the line (an empty cart has no progress to report).
+    #[prop(default = Signal::derive(|| None))]
+    progress: Signal<Option<(i32, i32)>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let total = move || {
@@ -143,6 +147,14 @@ pub fn ListEstimateSummary(
                     {status}
                 </p>
             </div>
+            {move || progress.get().filter(|(_, needed)| *needed > 0).map(|(acquired, needed)| {
+                let pct = 100 * i64::from(acquired) / i64::from(needed);
+                view! {
+                    <p class="text-xs text-[color:var(--color-text-muted)]" data-testid="list-estimate-progress">
+                        {t_string!(i18n, list_view_units_acquired_progress, acquired = acquired, quantity = needed, pct = pct).to_string()}
+                    </p>
+                }
+            })}
             <Show when=move || feed.get().has_prices()>
                 <p class="text-xs text-[color:var(--color-text-muted)]" data-testid="list-estimate-freshness">
                     {move || feed.get().fetched_at().map(|fetched_at| view! {
