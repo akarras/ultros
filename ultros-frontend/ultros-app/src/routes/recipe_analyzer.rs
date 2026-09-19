@@ -464,6 +464,9 @@ const FILTER_USE_ON_HAND: &str = "on-hand";
 /// Last sold column is pinned to the seven-day context body, so a grid
 /// metric over it would read "never" for everything at a wider window.
 const FILTER_SOLD: &str = "sold";
+/// Last sold within: a humantime duration (`90d`, `1d 12h`), the same
+/// grammar the flip finder's `last-sold` key uses. Inclusive.
+const FILTER_LAST_SOLD: &str = "last-sold";
 
 /// The page's built-in views, offered above the reader's own saved ones.
 ///
@@ -590,6 +593,11 @@ fn recipe_filter_controls(
         toggle_control(
             FILTER_SOLD,
             t_string!(i18n, recipe_analyzer_filter_sold_label).to_string(),
+        ),
+        ColumnFilter::new(
+            FILTER_LAST_SOLD,
+            t_string!(i18n, analyzer_last_sold_within).to_string(),
+            false,
         ),
     ]
 }
@@ -2450,6 +2458,11 @@ struct PriceInputs<'a> {
     /// Sold in window: drop rows with no sale on the sell place in the
     /// page window.
     sold_only: bool,
+    /// Last sold within: drop rows whose newest sale in the window body is
+    /// older than this many seconds; `None` = no filter.
+    last_sold_within_secs: Option<u64>,
+    /// The clock the recency filter reads. See [`hour_now_unix`].
+    now_unix: i64,
     shards: ShardsMode,
     /// The on-hand stockpile when the on-hand toggle is on.
     // TODO(follow-up): when `CraftOptions::active_craft_list` is set, fetch
@@ -2519,6 +2532,23 @@ fn rev_signal_at(
             .filter(|p| *p > 0),
         Some(stat) => stats.and_then(|s| stat_only_cheapest(s, item, stat)),
     }
+}
+
+/// The clock the recency filter reads, floored to the hour. The row set is
+/// computed on the server and again on the client, and a different set
+/// on the two sides is a hydration mismatch; flooring makes them agree
+/// except across an hour boundary that falls inside the page load.
+fn hour_now_unix() -> i64 {
+    let now = chrono::Utc::now().timestamp();
+    now - now.rem_euclid(3_600)
+}
+
+/// `?last-sold=` as seconds, `None` for absent, blank or unparsable.
+fn last_sold_within_secs(raw: Option<&str>) -> Option<u64> {
+    raw.map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(|v| humantime::parse_duration(v).ok())
+        .map(|d| d.as_secs())
 }
 
 /// One priced row per craftable recipe with a sell price, under the
@@ -2612,6 +2642,12 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             .filter(|t| *t > 0)
             .max();
         if inp.sold_only && !sold_in_window {
+            continue;
+        }
+        if let Some(within) = inp.last_sold_within_secs
+            && !window_last_sold_unix
+                .is_some_and(|t| inp.now_unix.saturating_sub(t) <= within as i64)
+        {
             continue;
         }
 
@@ -3326,6 +3362,7 @@ fn RecipeAnalyzerTable(
     let (exclude_shards_url, _) = filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
     let (use_on_hand_url, _) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
     let (sold_only, _) = filter_query_signal::<bool>(FILTER_SOLD);
+    let (last_sold_within, _) = filter_query_signal::<String>(FILTER_LAST_SOLD);
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
@@ -3696,6 +3733,8 @@ fn RecipeAnalyzerTable(
                 require_hq: require_hq().unwrap_or(false),
                 filter_outliers: filter_outliers().unwrap_or(false),
                 sold_only: sold_only().unwrap_or(false),
+                last_sold_within_secs: last_sold_within_secs(last_sold_within().as_deref()),
+                now_unix: hour_now_unix(),
                 shards: if exclude_shards_enabled() {
                     ShardsMode::ExcludeShards
                 } else {
@@ -4222,6 +4261,7 @@ fn RecipeAnalyzerTable(
                             ColumnKind::Item => &[FILTER_JOB],
                             ColumnKind::CostSlot => &[FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
                             ColumnKind::RevenueSlot => &[FILTER_SOLD],
+                            ColumnKind::LastSold => &[FILTER_LAST_SOLD],
                             _ => &[],
                         };
                         let controls = recipe_filter_controls(i18n, window);
@@ -4417,7 +4457,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The evidence row filters read the sell place's window body; either
     // being set is what makes the fetch gate request it.
     let (sold_page, _) = filter_query_signal::<bool>(FILTER_SOLD);
-    let evidence_wanted = Memo::new(move |_| sold_page.get().unwrap_or(false));
+    let (last_sold_page, _) = filter_query_signal::<String>(FILTER_LAST_SOLD);
+    let evidence_wanted = Memo::new(move |_| {
+        sold_page.get().unwrap_or(false)
+            || last_sold_within_secs(last_sold_page.get().as_deref()).is_some()
+    });
 
     // The one page window (#1328): every sale signal on both sides reads
     // it, its chip sits beside the formula strip, and the column labels
@@ -5257,6 +5301,7 @@ mod test {
                     "shards-exclude",
                     "on-hand",
                     "sold",
+                    "last-sold",
                 ]
             );
             // The bases and scopes are view-level calculation choices:
@@ -5289,6 +5334,17 @@ mod test {
                 assert!(control.clear_with_filters, "{key}");
                 assert!(control.default_value.is_none(), "{key}");
             }
+            // Last sold within is free text (a humantime duration), not a
+            // toggle or a select.
+            let within = controls
+                .iter()
+                .find(|c| c.key == FILTER_LAST_SOLD)
+                .expect("last-sold");
+            assert!(
+                !within.numeric && within.options.is_empty(),
+                "free text like the flip finder's"
+            );
+            assert!(within.clear_with_filters);
             // The sale bases are labelled for the window the page selected.
             let basis = controls
                 .iter()
@@ -5311,6 +5367,7 @@ mod test {
                 FILTER_EXCLUDE_SHARDS,
                 FILTER_USE_ON_HAND,
                 FILTER_SOLD,
+                FILTER_LAST_SOLD,
             ],
             [
                 "profit",
@@ -5323,6 +5380,7 @@ mod test {
                 "shards-exclude",
                 "on-hand",
                 "sold",
+                "last-sold",
             ]
         );
         // Pricing params left the filter menu (#1233) but their URL keys
@@ -6310,6 +6368,8 @@ mod test {
             require_hq: o.require_hq,
             filter_outliers: o.outliers,
             sold_only: false,
+            last_sold_within_secs: None,
+            now_unix: 1_700_000_000,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &o.needs,
@@ -8425,6 +8485,7 @@ mod test {
         revenue: PriceSignal,
         output_history: Option<(i64, i64)>,
         sold_only: bool,
+        last_sold_within_secs: Option<u64>,
     ) -> Vec<RecipeProfitData> {
         static RECIPE: Recipe = Recipe {
             key_id: xiv_gen::RecipeId(9999100),
@@ -8495,6 +8556,8 @@ mod test {
             require_hq: false,
             filter_outliers: false,
             sold_only,
+            last_sold_within_secs,
+            now_unix: 1_700_000_000,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &needed_signals(&formula, &SignalWants::default(), false),
@@ -8506,7 +8569,7 @@ mod test {
 
     #[test]
     fn sale_stat_revenue_with_no_sale_row_is_unpriced_not_a_listing() {
-        let rows = evidence_fixture(PriceSignal::SaleMedian, None, false);
+        let rows = evidence_fixture(PriceSignal::SaleMedian, None, false, None);
         assert_eq!(rows.len(), 1, "the row is kept, not dropped");
         let r = &rows[0];
         assert_eq!(r.revenue, Revenue::Unpriced);
@@ -8543,7 +8606,12 @@ mod test {
 
     #[test]
     fn a_sale_row_in_the_window_prices_the_row_from_the_statistic() {
-        let rows = evidence_fixture(PriceSignal::SaleMedian, Some((1_699_000_000, 3)), false);
+        let rows = evidence_fixture(
+            PriceSignal::SaleMedian,
+            Some((1_699_000_000, 3)),
+            false,
+            None,
+        );
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(
@@ -8570,7 +8638,7 @@ mod test {
 
     #[test]
     fn listing_revenue_keeps_the_buy_scope_fallback_and_its_tell() {
-        let rows = evidence_fixture(PriceSignal::ListingMin, None, false);
+        let rows = evidence_fixture(PriceSignal::ListingMin, None, false, None);
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(
@@ -8587,19 +8655,56 @@ mod test {
     #[test]
     fn sold_in_window_hides_rows_with_no_sale_on_the_sell_place() {
         // No output history: hidden under the toggle, kept (unpriced) without it.
-        assert!(evidence_fixture(PriceSignal::SaleMedian, None, true).is_empty());
-        let kept = evidence_fixture(PriceSignal::SaleMedian, None, false);
+        assert!(evidence_fixture(PriceSignal::SaleMedian, None, true, None).is_empty());
+        let kept = evidence_fixture(PriceSignal::SaleMedian, None, false, None);
         assert_eq!(kept.len(), 1);
         assert!(!kept[0].sold_in_window);
         assert_eq!(kept[0].window_last_sold_unix, None);
         // The toggle reads the sale body, not the price: a listing revenue
         // is hidden the same way.
-        assert!(evidence_fixture(PriceSignal::ListingMin, None, true).is_empty());
+        assert!(evidence_fixture(PriceSignal::ListingMin, None, true, None).is_empty());
         // A sale in the window passes and records when.
-        let rows = evidence_fixture(PriceSignal::ListingMin, Some((1_699_000_000, 3)), true);
+        let rows = evidence_fixture(
+            PriceSignal::ListingMin,
+            Some((1_699_000_000, 3)),
+            true,
+            None,
+        );
         assert_eq!(rows.len(), 1);
         assert!(rows[0].sold_in_window);
         assert_eq!(rows[0].window_last_sold_unix, Some(1_699_000_000));
+    }
+
+    /// The recency filter reads the window body (Task 3's evidence), not
+    /// the seven-day context, so at a 90-day window a sale 30 days ago
+    /// passes and one 176 days ago does not.
+    #[test]
+    fn last_sold_within_is_inclusive_and_reads_the_window_body() {
+        let now = 1_700_000_000_i64;
+        let day = 86_400_i64;
+        let within_90d = Some(90 * 86_400_u64);
+        let at = |days_ago: i64| Some((now - days_ago * day, 2_i64));
+        assert_eq!(
+            evidence_fixture(PriceSignal::SaleMedian, at(30), false, within_90d).len(),
+            1
+        );
+        // Exactly on the bound: kept (inclusive, the repo convention).
+        assert_eq!(
+            evidence_fixture(PriceSignal::SaleMedian, at(90), false, within_90d).len(),
+            1
+        );
+        assert!(evidence_fixture(PriceSignal::SaleMedian, at(176), false, within_90d).is_empty());
+        assert!(evidence_fixture(PriceSignal::SaleMedian, None, false, within_90d).is_empty());
+        // No filter: everything kept.
+        assert_eq!(
+            evidence_fixture(PriceSignal::SaleMedian, None, false, None).len(),
+            1
+        );
+        // The URL value is a humantime duration, like the flip finder's.
+        assert_eq!(
+            humantime::parse_duration("90d").map(|d| d.as_secs()).ok(),
+            within_90d
+        );
     }
 
     /// One deterministic recipe with independent ingredient and output prices.
@@ -8738,6 +8843,8 @@ mod test {
             require_hq,
             filter_outliers: false,
             sold_only: false,
+            last_sold_within_secs: None,
+            now_unix: 1_700_000_000,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &needed_signals(
@@ -10785,6 +10892,8 @@ mod test {
                 require_hq,
                 filter_outliers: false,
                 sold_only: false,
+                last_sold_within_secs: None,
+                now_unix: 1_700_000_000,
                 shards: ShardsMode::ExcludeShards,
                 on_hand: None,
                 needs: &needed_signals(&formula, &SignalWants::default(), false),
