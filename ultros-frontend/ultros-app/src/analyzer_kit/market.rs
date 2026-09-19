@@ -726,7 +726,8 @@ fn listing_value(
 /// A row absent from a successful body, or one the server synthesized for a
 /// newly alive key without a snapshot row (`window` is `None`), has no
 /// history to show. A zero rate is a real zero; a missing median means no
-/// undercuts happened.
+/// undercuts happened. `undercut_median` is a fraction on the wire; it is
+/// scaled to a percentage here and `display_value` adds the `%`.
 fn listing_window_value(kind: ListingWindowKind, stats: Option<&ItemListingStats>) -> GridValue {
     let Some(window) = stats.and_then(|s| s.window.as_ref()) else {
         return GridValue::Missing;

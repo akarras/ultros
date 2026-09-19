@@ -97,7 +97,7 @@ fn empty_window(days: u16, from: i64, to: i64) -> ListingWindowStats {
 /// 30/90-day window that history has not filled yet needs the real span.
 /// Observations before `from` come from the reducer's `from - 600` read and
 /// do not count; the span is floored to one day and capped at the window.
-pub fn set_undercut_rates(
+pub(crate) fn set_undercut_rates(
     output: &mut BTreeMap<(i32, bool), ListingWindowStats>,
     from: i64,
     to: i64,
@@ -126,7 +126,12 @@ pub fn set_undercut_rates(
 /// reaches the Rust reducer. `DISTINCT` mirrors the events read: a retried
 /// writer batch stores every row twice. The first row of a partition has no
 /// predecessor; `lagInFrame` yields the type default (0) and the
-/// `prev_removed = 1` test rejects it.
+/// `prev_removed = 1` test rejects it. `event_time` has only second
+/// resolution and a remove-then-add reprice commonly arrives as two
+/// websocket messages within the same second, so the window orders by
+/// `event_time, kind = 'added'` to break same-second ties with `removed`
+/// first — without it, ties are undefined and a pair can silently sort
+/// `added` before `removed` and get dropped.
 fn reprice_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
     format!(
         "SELECT item_id, hq, count() AS undercuts, quantileExact(0.5)(drop) AS undercut_median FROM (
@@ -145,7 +150,7 @@ fn reprice_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
                     WHERE kind IN ('removed', 'added') AND source != 'snapshot' AND listing_id != ''
                       AND item_id IN ({item_sql}) AND world_id IN ({world_sql})
                       AND event_time >= toDateTime({}) AND event_time < toDateTime({to}))
-              WINDOW w AS (PARTITION BY item_id, hq, world_id, listing_id ORDER BY event_time ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
+              WINDOW w AS (PARTITION BY item_id, hq, world_id, listing_id ORDER BY event_time, kind = 'added' ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
         WHERE kind = 'added' AND prev_removed = 1 AND event_time >= toDateTime({from})
           AND dateDiff('second', prev_time, event_time) <= 600 AND prev_price > price_per_unit
     ) GROUP BY item_id, hq{LIMITS}",

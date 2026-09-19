@@ -170,8 +170,9 @@ listing_windows_wanted: [RwSignal<bool>; Window::ALL.len()],
   scope and window returns 503 until the background worker publishes a
   generation (about a minute for a world, longer for a DC). A failed windowed
   fetch keeps the slot `None` (cells show the pending label) and retries after
-  15 s, 30 s and 60 s. After the third failure the slot is `Some` with
-  `failed = true`. The window-free body keeps its no-retry behaviour.
+  15 s, 30 s and 60 s. After the fourth failed attempt (three retries) the
+  slot is `Some` with `failed = true`. The window-free body keeps its
+  no-retry behaviour.
 - The `needs` effect: `if listing_window_wanted(n) { market.want_listing_window(selected) }`
   where `listing_window_wanted(needs) -> bool` is true when any
   `LISTING_WINDOW_COLUMNS` id is in the wanted set (visible column, `?cols=`,

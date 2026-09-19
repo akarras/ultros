@@ -74,9 +74,12 @@ async fn window_history_receipts_floors_stock_and_bounds() {
         .execute()
         .await
         .unwrap();
-    // Undercut shapes on a separate key. Only three count: the in-place
-    // update, the same-id pair 30 s apart, and the pair whose removal
-    // precedes `from` by less than 600 s. VALUES order: event_time, kind,
+    // Undercut shapes on a separate key. Four count: the in-place update,
+    // the same-id pair 30 s apart, the pair whose removal precedes `from`
+    // by less than 600 s, and a same-second removed/added pair that only
+    // sorts deterministically because the window orders ties with
+    // `removed` before `added`. A same-second pair at an unchanged price,
+    // and an `updated` raise, are excluded. VALUES order: event_time, kind,
     // source, item_id, hq, world_id, listing_id, pg_listing_id, retainer_id,
     // price_per_unit, quantity, prev_price, prev_quantity, reviewed_at.
     let reprice_item = item + 10;
@@ -94,13 +97,19 @@ async fn window_history_receipts_floors_stock_and_bounds() {
         ({removal},'updated','snapshot',{reprice_item},0,1,'snap',25,25,50,1,100,1,{removal}),
         ({removal},'updated','websocket',{reprice_item},0,1,'up',26,26,90,1,100,1,{removal}),
         ({},'removed','websocket',{reprice_item},0,1,'pair-before',27,27,100,1,0,0,{removal}),
-        ({},'added','websocket',{reprice_item},0,1,'pair-before',27,27,60,1,0,0,{removal})",
+        ({},'added','websocket',{reprice_item},0,1,'pair-before',27,27,60,1,0,0,{removal}),
+        ({removal},'removed','websocket',{reprice_item},0,1,'pair-tie',28,28,100,1,0,0,{removal}),
+        ({removal},'added','websocket',{reprice_item},0,1,'pair-tie',28,28,70,1,0,0,{removal}),
+        ({removal},'removed','websocket',{reprice_item},0,1,'pair-same',29,29,100,1,0,0,{removal}),
+        ({},'added','websocket',{reprice_item},0,1,'pair-same',29,29,100,1,0,0,{removal}),
+        ({removal},'updated','websocket',{reprice_item},0,1,'up-raise',30,30,120,1,100,1,{removal})",
             removal + 30,
             removal + 30,
             removal - 3000,
             removal + 30,
             from - 100,
-            from + 100
+            from + 100,
+            removal + 30
         ))
         .execute()
         .await
@@ -171,11 +180,15 @@ async fn window_history_receipts_floors_stock_and_bounds() {
     assert!((stats.undercuts_per_day.unwrap() - 1.0).abs() < 1e-9);
     let reprices = &rows[&(reprice_item, false)];
     assert_eq!(
-        reprices.undercuts, 3,
-        "update, 30 s pair, pre-window removal pair"
+        reprices.undercuts, 4,
+        "update, 30 s pair, pre-window removal pair, same-second tie-broken pair"
     );
-    assert!((reprices.undercut_median.unwrap() - 0.2).abs() < 1e-9);
-    assert!((reprices.undercuts_per_day.unwrap() - 3.0).abs() < 1e-9);
+    // quantileExact does not interpolate between the two middle values of an
+    // even-sized set; it picks one element from the sorted array (index
+    // round(level * (n - 1))), so {0.1, 0.2, 0.3, 0.4} yields 0.3, not the
+    // arithmetic-average 0.25.
+    assert!((reprices.undercut_median.unwrap() - 0.3).abs() < 1e-9);
+    assert!((reprices.undercuts_per_day.unwrap() - 4.0).abs() < 1e-9);
     // A scope world with no floor row at all keeps the floor unknown until a
     // boot anchor proves it empty; then the scope reads exactly as [1, 2].
     let wider = listing_history::window(&ch, &[1, 2, 3], 1, to)
