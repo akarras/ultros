@@ -75,6 +75,14 @@ static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
         },
         SearchResult {
             score: 100.0,
+            title: "Vendor Sell".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/vendor-sell".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
             title: "FC Crafting Analyzer".to_string(),
             result_type: "Tool".to_string(),
             url: "/fc-crafting-analyzer".to_string(),
