@@ -41,9 +41,17 @@ function marketFixture(itemIds = ids) {
         median_price: row.median_price * multiplier, avg_price: row.avg_price * multiplier })) };
     }
     if (kind === 'listing_stats') {
+      const days = Number(url.searchParams.get('window'));
+      const now = Math.floor(Date.now() / 1000);
+      const coverage = { first_observed_unix: now - 86400, last_observed_unix: now, observed_span_secs: 86400, continuity_verified: false };
+      const window = days ? { window_days: days, from: now - days * 86400, to: now, additions: 0, removals: 0, listing_coverage: coverage,
+        floor_min: null, floor_max: null, floor_known_secs: 0, floor_empty_secs: 0, floor_unknown_secs: 0,
+        matches: { matched: 0, ambiguous: 0, repriced: 0, unmatched: 0, sales_without_receipt: 0, receipt_coverage: coverage,
+          received_sales: 0, settled_through_unix: now - 601, pending: 0, median_time_to_sell_secs: null, age_origin: 'last_review_time' },
+        stock_status: 'unavailable', days_of_stock: null, undercuts: 4, undercuts_per_day: 0.5, undercut_median: 0.1 } : undefined;
       body = { stats: ids.flatMap(item_id => [false, true].map(hq => ({
         item_id, hq, alive_count: hq ? 2 : 5, alive_units: hq ? 4 : 25, distinct_retainers: hq ? 2 : 3,
-        oldest_reviewed_unix: Math.floor(now / 1000) - 7200, median_age_secs: 1800, floor_alive: hq ? 1200 : 600,
+        oldest_reviewed_unix: now - 7200, median_age_secs: 1800, floor_alive: hq ? 1200 : 600, window,
       }))) };
     }
     if (kind === 'sparklines') {

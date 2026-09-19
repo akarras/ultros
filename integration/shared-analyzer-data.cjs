@@ -382,7 +382,7 @@ async function main() {
       const shared = ['market-sale-median-7', 'market-sale-min-7', 'market-sale-avg-7',
         'market-sale-median-30', 'market-sale-median', 'market-gil-7',
         'market-world', 'market-datacenter', 'market-sales-per-day-7', 'market-cadence-7', 'market-trend-7',
-        'market-alive', 'market-listing-age'];
+        'market-alive', 'market-listing-age', 'market-undercuts', 'market-undercut-pct'];
       await page.setViewport({ width: 1600, height: 1000 });
       await page.setCookie({ name: 'HOME_WORLD', value: world, url: BASE });
       for (const [tool, route] of routes) {
@@ -460,6 +460,10 @@ async function main() {
             .some(cell => /^[25]$/.test(cell.textContent.trim())), { timeout: 90000 });
           await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-listing-age"]')]
             .some(cell => cell.textContent.trim() === '30m'), { timeout: 90000 });
+          await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-undercuts"]')]
+            .some(cell => cell.textContent.trim() === '0.50'), { timeout: 90000 });
+          await page.waitForFunction(() => [...document.querySelectorAll('.virtual-grid-cell[data-column="market-undercut-pct"]')]
+            .some(cell => cell.textContent.trim() === '10.0%'), { timeout: 90000 });
           await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
         }
         if (fixture) {
