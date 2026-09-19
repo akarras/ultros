@@ -194,6 +194,21 @@ pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 2] = [
     (ListingWindowKind::UndercutMedian, "market-undercut-pct"),
 ];
 
+pub fn listing_window_id(kind: ListingWindowKind) -> &'static str {
+    LISTING_WINDOW_COLUMNS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .unwrap()
+        .1
+}
+
+/// Whether any windowed listing column is in the grid's wanted set.
+pub fn listing_window_wanted(needs: &HashSet<String>) -> bool {
+    LISTING_WINDOW_COLUMNS
+        .iter()
+        .any(|(_, id)| needs.contains(*id))
+}
+
 pub fn listing_window_label(kind: ListingWindowKind, window: Window) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let name = match kind {
@@ -494,7 +509,7 @@ mod tests {
     fn listing_window_columns_are_follow_window_ids_wanted_together() {
         let ids: HashSet<_> = LISTING_WINDOW_COLUMNS.iter().map(|(_, id)| *id).collect();
         assert_eq!(ids.len(), 2);
-        for (_, id) in &LISTING_WINDOW_COLUMNS {
+        for (kind, id) in &LISTING_WINDOW_COLUMNS {
             assert!(!STAT_COLUMNS.iter().any(|c| c.id == *id), "{id} collides");
             assert!(
                 !FOLLOW_COLUMNS.iter().any(|(_, f)| f == id),
@@ -507,11 +522,21 @@ mod tests {
             for window in Window::ALL {
                 assert!(!id.ends_with(&format!("-{}", window.days())), "{id}");
             }
+            assert_eq!(listing_window_id(*kind), *id);
         }
         assert_eq!(
             shared_cols_in(Some("profit,market-undercuts,market-alive")),
             HashSet::from(["market-undercuts", "market-alive"])
         );
+        let needs: HashSet<String> = ["market-undercut-pct", "roi"].map(str::to_owned).into();
+        assert!(listing_window_wanted(&needs));
+        assert!(
+            !listings_wanted(&needs),
+            "history columns never want the alive set"
+        );
+        assert!(required_windows(&needs, Window::D7, false).is_empty());
+        let none: HashSet<String> = ["market-alive"].map(str::to_owned).into();
+        assert!(!listing_window_wanted(&none));
     }
 
     #[test]
