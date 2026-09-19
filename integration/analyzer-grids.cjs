@@ -11,6 +11,7 @@ const routes=[
   ['leve-analyzer',`/leve-analyzer/${WORLD}`,'profit','profit'],
   ['venture-analyzer',`/venture-analyzer/${WORLD}`,'profit','profit'],
   ['vendor-resale',`/vendor-resale/${WORLD}`,'profit','profit'],
+  ['vendor-sell',`/vendor-sell/${WORLD}`,'profit','profit'],
   ['scrip-sources',`/scrip-sources/${WORLD}`,'scrip-type','scrip'],
   ['fc-crafting-analyzer',`/fc-crafting-analyzer/${WORLD}`,'profit','profit'],
 ];

@@ -37,6 +37,7 @@ pub mod scrip_sources;
 pub mod settings;
 pub mod trends;
 pub mod vendor_resale;
+pub mod vendor_sell;
 pub mod venture_analyzer;
 pub mod welcome;
 pub mod world_nav;

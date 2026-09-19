@@ -79,6 +79,7 @@ pub fn og_locale(locale: Locale) -> &'static str {
 const TOOLS: &[&str] = &[
     "flip-finder",
     "vendor-resale",
+    "vendor-sell",
     "recipe-analyzer",
     "fc-crafting-analyzer",
     "leve-analyzer",
@@ -97,6 +98,7 @@ const HELP_TOPICS: &[&str] = &[
     "getting-started",
     "flip-finder",
     "vendor-resale",
+    "vendor-sell",
     "recipe-analyzer",
     "leve-analyzer",
     "fc-crafting",
@@ -149,6 +151,7 @@ impl SocialCardKind {
             [
                 tool @ ("flip-finder"
                 | "vendor-resale"
+                | "vendor-sell"
                 | "fc-crafting-analyzer"
                 | "trends"
                 | "recipe-analyzer"
@@ -210,6 +213,7 @@ fn tool_copy(locale: Locale, slug: &str) -> Option<(String, String)> {
     Some(match slug {
         "flip-finder" => copy!(flip_finder, flip_finder_desc),
         "vendor-resale" => copy!(vendor_resale, vendor_resale_desc),
+        "vendor-sell" => copy!(vendor_sell, vendor_sell_desc),
         "recipe-analyzer" => copy!(recipe_analyzer, recipe_analyzer_desc),
         "fc-crafting-analyzer" => copy!(fc_crafting_analyzer_title, fc_crafting_desc),
         "leve-analyzer" => copy!(leve_analyzer, leve_analyzer_desc),

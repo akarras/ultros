@@ -184,6 +184,13 @@ pub fn SideNav() -> impl IntoView {
                     {t!(i18n, vendor_resale)}
                 </SideNavItem>
                 <SideNavItem
+                    href=with_world("/vendor-sell/{world}", "/vendor-sell")
+                    section="vendor-sell"
+                    icon=i::FaCashRegisterSolid
+                >
+                    {t!(i18n, vendor_sell)}
+                </SideNavItem>
+                <SideNavItem
                     href=with_world("/recipe-analyzer/{world}", "/recipe-analyzer")
                     section="recipe-analyzer"
                     icon=i::FaHammerSolid

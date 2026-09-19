@@ -280,6 +280,9 @@ pub fn HomePage() -> impl IntoView {
                             <ToolChip href="/vendor-resale" label=t!(i18n, vendor_resale).into_any() description=t!(i18n, vendor_resale_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaShopSolid />
                             </ToolChip>
+                            <ToolChip href="/vendor-sell" label=t!(i18n, vendor_sell).into_any() description=t!(i18n, vendor_sell_desc).into_any()>
+                                <Icon width="2em" height="2em" icon=i::FaCashRegisterSolid />
+                            </ToolChip>
                             <ToolChip href="/recipe-analyzer" label=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaHammerSolid />
                             </ToolChip>
