@@ -123,6 +123,33 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
         image: None,
     },
     HelpTopic {
+        slug: "vendor-sell",
+        title: "Vendor Sell",
+        category: "Market analysis",
+        summary: "Find market board listings that an NPC vendor will buy for more than they cost.",
+        purpose: "Use this for zero-risk gil: buy the listing, walk to any vendor, sell it.",
+        inputs: &[
+            "Selected world's region",
+            "Cheapest listing per item and quality",
+            "NPC vendor sell-back price",
+        ],
+        assumptions: &[
+            "A flat 5% purchase tax, rounded up; your retainer city may charge less.",
+            "HQ listings are valued at the NQ vendor price.",
+            "Each row is one unit; stack size is not shown.",
+        ],
+        results: &[
+            "Profit is vendor price minus listing minus tax.",
+            "Margin is profit over what you paid.",
+            "Only profitable rows are listed.",
+        ],
+        next_actions: &[
+            "Travel to the listing's world before it sells.",
+            "Sort by margin for the best return on small budgets.",
+        ],
+        image: None,
+    },
+    HelpTopic {
         slug: "recipe-analyzer",
         title: "Recipe Analyzer",
         category: "Crafting",
