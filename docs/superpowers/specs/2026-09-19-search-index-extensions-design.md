@@ -83,10 +83,11 @@ roles: `title` (searchable, high boost), `category` (searchable, low boost),
 
 Notes:
 
-- After the currency fix a crafter scrip appears twice with the same title:
-  `currency` (spend it → exchange page) and `scrip source` (earn it → sources
-  page). The subtitle distinguishes them. Gatherer scrips get only the
-  `currency` doc.
+- The crafter scrips get a `scrip source` doc (earn it → sources page). They
+  are *not* exchange currencies — no special shop takes them for a marketable
+  item, so neither the exchange page nor the `currency` docs list them
+  (verified against the pack; the only scrip that is one is Skybuilders').
+  Gatherer scrips get no doc of either kind.
 - The scrip currency items are resolved by matching `ScripType` to the scrip
   item in `data.items` by name (the same way the indexer already finds Gil and
   MGP); a test pins that each crafter `ScripType` resolves to exactly one item.
@@ -138,11 +139,15 @@ Rationale: a venture or scrip turn-in always shares its title with an item
 and/or recipe doc, so it must sit below both by default; NPC names almost
 never collide with item names, so there is nothing to demote against.
 
-Kind nudge: both query parsers add the `kind` field with an exact boost
-(starting value 2.0; pinned by the tests below rather than eyeballed) and no
-fuzzy matching on it — "recipt" should not play ranking games. The parsers
-stay OR-by-default, so "iron ingot recipe" still matches the item doc on two
-terms; the recipe doc matches three and overtakes despite its 0.8 weight.
+Kind nudge: the exact parser adds the `kind` field (boost 1.0, no fuzzy) for
+*recall* only — it keeps "bastard sword recipe" from treating "recipe" as a
+dead word so the recipe doc stays inside the candidate window. The ordering
+is decided in `rank`: a type whose kind word appears in the query gets
+`NUDGE_WEIGHT` = 1.5 instead of its `type_weight`, so it overtakes an equally
+good item match (1.0) while a much better title match still wins. A BM25
+boost alone cannot do this — a term shared by ten thousand documents never
+outscores a rare title term, however large the boost (measured: at 2.0 the
+recipe stayed below the item for every sampled craft).
 
 `SEARCH_CANDIDATES` 30 → 60. With up to five docs per title, 30 raw
 candidates can be exhausted by lookalike items before the weighted sort ever
