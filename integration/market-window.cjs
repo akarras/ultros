@@ -359,8 +359,15 @@ async function main() {
     // earlier request for the same scope may overwrite the newest response.
     holdListings = true;
     for (const [index, scope] of ['Gilgamesh', 'Cactuar', 'Gilgamesh'].entries()) {
+      // D30 stays wanted once an undercut column has asked for it, so a scope
+      // switch now also fires an auto-responding `?window=30` request; match
+      // only the window-free one this race actually holds.
+      const windowFree = request => {
+        const url = new URL(request.url());
+        return url.pathname === `/api/v1/listing_stats/${scope}` && !url.search;
+      };
       await Promise.all([
-        page.waitForRequest(request => request.url().includes(`/listing_stats/${scope}`)),
+        page.waitForRequest(windowFree),
         query(index === 0 ? { scope, cols: 'market-alive' } : { scope }),
       ]);
     }
