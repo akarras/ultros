@@ -377,6 +377,41 @@ pub fn sale_tax_for(gross: i32, math: TaxMath) -> i32 {
     gross - net_after_tax(gross, math)
 }
 
+/// The market board's cut charged to the *buyer* at purchase, rounded up
+/// so a 1-gil edge never flatters the buyer. The real rate is 3–5% depending
+/// on the retainer's city; we assume the worst case.
+pub fn purchase_tax_for(listing: i32) -> i32 {
+    ((listing as i64 * MARKET_TAX_PERCENT + 100 - 1) / 100) as i32
+}
+
+/// One "buy off the board, sell to an NPC" row.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct VendorSellLine {
+    pub listing: i32,
+    pub tax: i32,
+    /// `listing + tax`: what the buyer actually pays.
+    pub cost: i32,
+    pub vendor_price: i32,
+    pub profit: i32,
+    /// `profit / cost`, as a clamped percentage.
+    pub margin: i32,
+}
+
+/// `profit = vendor_price − (listing + purchase tax)`.
+pub fn vendor_sell_line(listing: i32, vendor_price: i32) -> VendorSellLine {
+    let tax = purchase_tax_for(listing);
+    let cost = listing.saturating_add(tax);
+    let profit = vendor_price.saturating_sub(cost);
+    VendorSellLine {
+        listing,
+        tax,
+        cost,
+        vendor_price,
+        profit,
+        margin: crate::analysis::return_on_investment(profit, cost),
+    }
+}
+
 /// Cost of one unit of output: one craft costs `craft_cost` and yields
 /// `amount_result` units. Yields of 0 (bad sheet rows) are treated as 1.
 pub fn per_unit_cost(craft_cost: i32, amount_result: i32) -> i32 {
@@ -594,5 +629,46 @@ mod tests {
         assert_eq!(region.tax, untouched.tax);
         assert_eq!(region.roi, untouched.roi);
         assert_eq!(region.drop, untouched.drop);
+    }
+
+    #[test]
+    fn purchase_tax_rounds_up_to_the_buyers_disadvantage() {
+        assert_eq!(purchase_tax_for(0), 0);
+        assert_eq!(purchase_tax_for(1), 1);
+        assert_eq!(purchase_tax_for(19), 1);
+        assert_eq!(purchase_tax_for(20), 1);
+        assert_eq!(purchase_tax_for(21), 2);
+        assert_eq!(purchase_tax_for(99), 5);
+        assert_eq!(purchase_tax_for(100), 5);
+        assert_eq!(purchase_tax_for(101), 6);
+        // i64 intermediate: must not overflow or panic.
+        assert_eq!(purchase_tax_for(i32::MAX), 107_374_183);
+    }
+
+    #[test]
+    fn vendor_sell_line_worked_example() {
+        let line = vendor_sell_line(101, 120);
+        assert_eq!(
+            line,
+            VendorSellLine {
+                listing: 101,
+                tax: 6,
+                cost: 107,
+                vendor_price: 120,
+                profit: 13,
+                margin: 12,
+            }
+        );
+    }
+
+    #[test]
+    fn vendor_sell_line_zero_and_negative_profit() {
+        assert_eq!(vendor_sell_line(100, 105).profit, 0);
+        assert_eq!(vendor_sell_line(100, 105).margin, 0);
+        let loss = vendor_sell_line(1_000, 500);
+        assert_eq!(loss.tax, 50);
+        assert_eq!(loss.cost, 1_050);
+        assert_eq!(loss.profit, -550);
+        assert_eq!(loss.margin, -52);
     }
 }
