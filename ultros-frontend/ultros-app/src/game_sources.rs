@@ -8,7 +8,8 @@
 //! the page's logic instead of calling it.
 
 use xiv_gen::{
-    ClassJobCategoryId, Data, ItemId, ItemUiCategoryId, RetainerTaskId, RetainerTaskNormalId,
+    ClassJobCategoryId, Data, ENpcResidentId, ItemId, ItemUiCategoryId, RetainerTaskId,
+    RetainerTaskNormalId,
 };
 
 /// `ItemUICategory` rows a special-shop cost can sit in and still count as a
@@ -126,6 +127,27 @@ pub fn venture_rewards(data: &Data) -> Vec<VentureReward> {
     rewards
 }
 
+/// Every NPC that offers a gil shop — the set `/npc/:id` has a page for —
+/// sorted and deduplicated so callers and SSR agree on order.
+pub fn gil_shop_npcs(data: &Data) -> Vec<ENpcResidentId> {
+    let mut ids: Vec<ENpcResidentId> = data.gil_shop_npcs.values().flatten().copied().collect();
+    ids.sort_by_key(|id| id.0);
+    ids.dedup();
+    ids
+}
+
+/// Zone of the NPC's first placement, as the NPC page labels it, or empty
+/// when the client layout files place it nowhere.
+pub fn npc_zone(data: &Data, npc: ENpcResidentId) -> String {
+    data.npc_placements
+        .get(&npc)
+        .and_then(|placements| placements.first())
+        .map(|placement| {
+            ultros_ui_game::components::npc_locations::placement_label(data, placement)
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +239,16 @@ mod tests {
         let turn_ins = scrip_turn_ins(data());
         assert!(turn_ins.iter().any(|t| !t.scrip_type.is_gatherer()));
         assert!(turn_ins.iter().any(|t| t.scrip_type.is_gatherer()));
+    }
+
+    #[test]
+    fn gil_shop_npcs_are_unique_sorted_and_named() {
+        let npcs = gil_shop_npcs(data());
+        assert!(!npcs.is_empty());
+        let mut sorted = npcs.clone();
+        sorted.sort_by_key(|id| id.0);
+        sorted.dedup();
+        assert_eq!(npcs, sorted);
+        assert!(npcs.iter().any(|id| !npc_zone(data(), *id).is_empty()));
     }
 }
