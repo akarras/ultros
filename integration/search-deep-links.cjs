@@ -39,8 +39,9 @@ async function main() {
       grid.scrollTop = 15 * rowHeight;
       await new Promise(resolve => setTimeout(resolve, 400));
       const row = [...grid.querySelectorAll('.virtual-grid-row')].find(r => Number(r.getAttribute('aria-rowindex')) === 17);
+      // Item links carry the market scope: /item/<region-or-world>/<id>.
       const link = row.querySelector('a[href*="/item/"]');
-      const id = Number(link.getAttribute('href').split('/item/').pop().split(/[/?]/)[0]);
+      const id = Number(link.getAttribute('href').split('?')[0].split('/').pop());
       return { id, name: link.textContent.trim() };
     }, ROW_HEIGHT);
   }
