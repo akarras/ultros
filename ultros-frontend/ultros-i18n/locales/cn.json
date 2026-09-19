@@ -1908,6 +1908,7 @@
     "recipe_analyzer_filter_require_hq_label": "需要 HQ",
     "recipe_analyzer_filter_exclude_crystals_label": "排除水晶",
     "recipe_analyzer_filter_use_on_hand_label": "使用现有库存",
+    "recipe_analyzer_filter_sold_label": "窗口内有销售",
     "recipe_analyzer_empty_set_levels_title": "设置生产职业等级以查看配方推荐",
     "recipe_analyzer_empty_set_levels_body": "配方分析器只列出你的角色能够制作的配方。请展开上方的生产职业等级设置，至少填写一个职业等级。",
     "recipe_analyzer_empty_read_help": "查看配方帮助",

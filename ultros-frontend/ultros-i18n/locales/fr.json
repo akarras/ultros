@@ -1908,6 +1908,7 @@
     "recipe_analyzer_filter_require_hq_label": "Exiger HQ",
     "recipe_analyzer_filter_exclude_crystals_label": "Exclure cristaux",
     "recipe_analyzer_filter_use_on_hand_label": "Utiliser stock",
+    "recipe_analyzer_filter_sold_label": "Vendu sur la période",
     "recipe_analyzer_empty_set_levels_title": "Définissez les niveaux d'artisans pour voir les recommandations de recette",
     "recipe_analyzer_empty_set_levels_body": "L'analyseur de recettes ne liste que les crafts que votre personnage peut réaliser. Ouvrez la section des niveaux d'artisans ci-dessus et saisissez au moins un niveau.",
     "recipe_analyzer_empty_read_help": "Lire l'aide sur les recettes",

@@ -185,6 +185,13 @@ struct RecipeProfitData {
     /// Presence of the selected-quality seven-day row; zero units and absent
     /// history must remain different values for shared column filters.
     has_sell_stats: bool,
+    /// The output sold at least once in the page window on the sell place
+    /// (the body a sale revenue signal reads). Read by the Sold in window
+    /// filter and reported so the pass and the bar agree.
+    sold_in_window: bool,
+    /// The newest sale of either quality in that same body; `None` = no
+    /// sale in the window.
+    window_last_sold_unix: Option<i64>,
     vwap: i32,
     /// Current sell price vs the window VWAP, as a percent. `None` when
     /// there is no VWAP to compare against.
@@ -452,6 +459,11 @@ const FILTER_REQUIRE_HQ: &str = "require-hq";
 const FILTER_OUTLIERS: &str = "filter-outliers";
 const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
 const FILTER_USE_ON_HAND: &str = "on-hand";
+/// Row filters over the sell place's sale evidence at the page window.
+/// Applied by the pricing pass like the job filter, not by the grid: the
+/// Last sold column is pinned to the seven-day context body, so a grid
+/// metric over it would read "never" for everything at a wider window.
+const FILTER_SOLD: &str = "sold";
 
 /// The page's built-in views, offered above the reader's own saved ones.
 ///
@@ -574,6 +586,10 @@ fn recipe_filter_controls(
         toggle_control(
             FILTER_USE_ON_HAND,
             t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string(),
+        ),
+        toggle_control(
+            FILTER_SOLD,
+            t_string!(i18n, recipe_analyzer_filter_sold_label).to_string(),
         ),
     ]
 }
@@ -2431,6 +2447,9 @@ struct PriceInputs<'a> {
     use_subcrafts: bool,
     require_hq: bool,
     filter_outliers: bool,
+    /// Sold in window: drop rows with no sale on the sell place in the
+    /// page window.
+    sold_only: bool,
     shards: ShardsMode,
     /// The on-hand stockpile when the on-hand toggle is on.
     // TODO(follow-up): when `CraftOptions::active_craft_list` is set, fetch
@@ -2569,6 +2588,30 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         if let Some(filter) = inp.job_filter
             && filter != job_code
         {
+            continue;
+        }
+
+        // The sale evidence both row filters read: the sell place's body
+        // at the page window, the sell world's own window body when a
+        // wider scope's was not fetched, the context body as a last
+        // resort. Both qualities count — the filters ask "does this sell",
+        // not "does this quality sell".
+        let evidence: &StatsIndex = inp
+            .revenue_stats
+            .or(inp.sell_window_stats)
+            .unwrap_or(inp.sell_stats);
+        let evidence_rows = [
+            evidence.get(&(recipe.item_result, false)),
+            evidence.get(&(recipe.item_result, true)),
+        ];
+        let sold_in_window = evidence_rows.iter().flatten().any(|s| s.num_sold > 0);
+        let window_last_sold_unix = evidence_rows
+            .iter()
+            .flatten()
+            .map(|s| s.last_sold_unix)
+            .filter(|t| *t > 0)
+            .max();
+        if inp.sold_only && !sold_in_window {
             continue;
         }
 
@@ -2871,6 +2914,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             last_sold_unix: sell_stat.map(|s| s.last_sold_unix).unwrap_or(0),
             units_sold: sell_stat.map(|s| s.units_sold).unwrap_or(0),
             has_sell_stats: sell_stat.is_some(),
+            sold_in_window,
+            window_last_sold_unix,
             vwap,
             // Suppressed at a wider sell scope for the same reason as
             // `sell_median` above, and it is the same mismatch one line
@@ -3280,6 +3325,7 @@ fn RecipeAnalyzerTable(
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
     let (exclude_shards_url, _) = filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
     let (use_on_hand_url, _) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
+    let (sold_only, _) = filter_query_signal::<bool>(FILTER_SOLD);
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
@@ -3649,6 +3695,7 @@ fn RecipeAnalyzerTable(
                 use_subcrafts: use_subcrafts().unwrap_or(false),
                 require_hq: require_hq().unwrap_or(false),
                 filter_outliers: filter_outliers().unwrap_or(false),
+                sold_only: sold_only().unwrap_or(false),
                 shards: if exclude_shards_enabled() {
                     ShardsMode::ExcludeShards
                 } else {
@@ -4174,7 +4221,7 @@ fn RecipeAnalyzerTable(
                         let keys: &[&str] = match kind {
                             ColumnKind::Item => &[FILTER_JOB],
                             ColumnKind::CostSlot => &[FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
-                            ColumnKind::RevenueSlot => &[],
+                            ColumnKind::RevenueSlot => &[FILTER_SOLD],
                             _ => &[],
                         };
                         let controls = recipe_filter_controls(i18n, window);
@@ -4367,6 +4414,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The sale-price market; the setter strips the default world scope.
     let (sell_scope, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+    // The evidence row filters read the sell place's window body; either
+    // being set is what makes the fetch gate request it.
+    let (sold_page, _) = filter_query_signal::<bool>(FILTER_SOLD);
+    let evidence_wanted = Memo::new(move |_| sold_page.get().unwrap_or(false));
 
     // The one page window (#1328): every sale signal on both sides reads
     // it, its chip sits beside the formula strip, and the column labels
@@ -4670,6 +4721,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             buy_scope_is_sell_world: buy_scope_is_sell_world.get(),
             cost_signals: signals.cost,
             rev_signals: signals.rev,
+            evidence: evidence_wanted.get(),
             ..RecipeNeeds::default()
         };
         sell_window_key(&formula, &needs, sell_world_name.get().as_deref())
@@ -4749,6 +4801,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             // that ships, and the dead-code lint could not say so: the
             // derived `Debug`/`PartialEq` count as reads.
             rev_signals: signals.rev,
+            evidence: evidence_wanted.get(),
             ..RecipeNeeds::default()
         };
         // The one name. `revenue_place` is what the strip chip, the picker
@@ -5203,6 +5256,7 @@ mod test {
                     "filter-outliers",
                     "shards-exclude",
                     "on-hand",
+                    "sold",
                 ]
             );
             // The bases and scopes are view-level calculation choices:
@@ -5229,6 +5283,7 @@ mod test {
                 FILTER_OUTLIERS,
                 FILTER_EXCLUDE_SHARDS,
                 FILTER_USE_ON_HAND,
+                FILTER_SOLD,
             ] {
                 let control = controls.iter().find(|c| c.key == key).expect(key);
                 assert!(control.clear_with_filters, "{key}");
@@ -5255,6 +5310,7 @@ mod test {
                 FILTER_OUTLIERS,
                 FILTER_EXCLUDE_SHARDS,
                 FILTER_USE_ON_HAND,
+                FILTER_SOLD,
             ],
             [
                 "profit",
@@ -5266,6 +5322,7 @@ mod test {
                 "filter-outliers",
                 "shards-exclude",
                 "on-hand",
+                "sold",
             ]
         );
         // Pricing params left the filter menu (#1233) but their URL keys
@@ -6252,6 +6309,7 @@ mod test {
             use_subcrafts: false,
             require_hq: o.require_hq,
             filter_outliers: o.outliers,
+            sold_only: false,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &o.needs,
@@ -7208,6 +7266,8 @@ mod test {
             last_sold_unix: 0,
             units_sold: 0,
             has_sell_stats: false,
+            sold_in_window: false,
+            window_last_sold_unix: None,
             vwap: 0,
             vwap_pct: None,
             confidence: ConfidenceBand::Unknown,
@@ -8364,6 +8424,7 @@ mod test {
     fn evidence_fixture(
         revenue: PriceSignal,
         output_history: Option<(i64, i64)>,
+        sold_only: bool,
     ) -> Vec<RecipeProfitData> {
         static RECIPE: Recipe = Recipe {
             key_id: xiv_gen::RecipeId(9999100),
@@ -8433,6 +8494,7 @@ mod test {
             use_subcrafts: false,
             require_hq: false,
             filter_outliers: false,
+            sold_only,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &needed_signals(&formula, &SignalWants::default(), false),
@@ -8444,7 +8506,7 @@ mod test {
 
     #[test]
     fn sale_stat_revenue_with_no_sale_row_is_unpriced_not_a_listing() {
-        let rows = evidence_fixture(PriceSignal::SaleMedian, None);
+        let rows = evidence_fixture(PriceSignal::SaleMedian, None, false);
         assert_eq!(rows.len(), 1, "the row is kept, not dropped");
         let r = &rows[0];
         assert_eq!(r.revenue, Revenue::Unpriced);
@@ -8481,7 +8543,7 @@ mod test {
 
     #[test]
     fn a_sale_row_in_the_window_prices_the_row_from_the_statistic() {
-        let rows = evidence_fixture(PriceSignal::SaleMedian, Some((1_699_000_000, 3)));
+        let rows = evidence_fixture(PriceSignal::SaleMedian, Some((1_699_000_000, 3)), false);
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(
@@ -8508,7 +8570,7 @@ mod test {
 
     #[test]
     fn listing_revenue_keeps_the_buy_scope_fallback_and_its_tell() {
-        let rows = evidence_fixture(PriceSignal::ListingMin, None);
+        let rows = evidence_fixture(PriceSignal::ListingMin, None, false);
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(
@@ -8520,6 +8582,24 @@ mod test {
         );
         assert_eq!(r.line.map(|l| l.revenue), Some(24_999_999));
         assert_eq!(r.revenue_world_id, 2);
+    }
+
+    #[test]
+    fn sold_in_window_hides_rows_with_no_sale_on_the_sell_place() {
+        // No output history: hidden under the toggle, kept (unpriced) without it.
+        assert!(evidence_fixture(PriceSignal::SaleMedian, None, true).is_empty());
+        let kept = evidence_fixture(PriceSignal::SaleMedian, None, false);
+        assert_eq!(kept.len(), 1);
+        assert!(!kept[0].sold_in_window);
+        assert_eq!(kept[0].window_last_sold_unix, None);
+        // The toggle reads the sale body, not the price: a listing revenue
+        // is hidden the same way.
+        assert!(evidence_fixture(PriceSignal::ListingMin, None, true).is_empty());
+        // A sale in the window passes and records when.
+        let rows = evidence_fixture(PriceSignal::ListingMin, Some((1_699_000_000, 3)), true);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].sold_in_window);
+        assert_eq!(rows[0].window_last_sold_unix, Some(1_699_000_000));
     }
 
     /// One deterministic recipe with independent ingredient and output prices.
@@ -8657,6 +8737,7 @@ mod test {
             use_subcrafts: false,
             require_hq,
             filter_outliers: false,
+            sold_only: false,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &needed_signals(
@@ -10703,6 +10784,7 @@ mod test {
                 use_subcrafts: !sub_recipes.is_empty(),
                 require_hq,
                 filter_outliers: false,
+                sold_only: false,
                 shards: ShardsMode::ExcludeShards,
                 on_hand: None,
                 needs: &needed_signals(&formula, &SignalWants::default(), false),

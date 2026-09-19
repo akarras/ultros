@@ -1908,6 +1908,7 @@
     "recipe_analyzer_filter_require_hq_label": "HQ 필요",
     "recipe_analyzer_filter_exclude_crystals_label": "크리스탈 제외",
     "recipe_analyzer_filter_use_on_hand_label": "보유 사용",
+    "recipe_analyzer_filter_sold_label": "기간 내 판매됨",
     "recipe_analyzer_empty_set_levels_title": "제작 직업 레벨을 설정하면 레시피 추천이 표시됩니다",
     "recipe_analyzer_empty_set_levels_body": "레시피 분석기는 캐릭터가 제작할 수 있는 레시피만 표시합니다. 위의 제작 직업 레벨 항목을 열고 레벨을 하나 이상 입력하세요.",
     "recipe_analyzer_empty_read_help": "레시피 도움말 보기",

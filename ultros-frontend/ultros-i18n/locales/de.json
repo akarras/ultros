@@ -1908,6 +1908,7 @@
     "recipe_analyzer_filter_require_hq_label": "HQ erforderlich",
     "recipe_analyzer_filter_exclude_crystals_label": "Kristalle ausschließen",
     "recipe_analyzer_filter_use_on_hand_label": "Bestand verwenden",
+    "recipe_analyzer_filter_sold_label": "Im Zeitraum verkauft",
     "recipe_analyzer_empty_set_levels_title": "Stelle Handwerkerstufen ein, um Rezeptempfehlungen zu sehen",
     "recipe_analyzer_empty_set_levels_body": "Der Rezept-Analyzer listet nur Rezepte, die dein Charakter herstellen kann. Öffne oben den Bereich für Handwerkerstufen und trage mindestens eine Stufe ein.",
     "recipe_analyzer_empty_read_help": "Rezept-Hilfe lesen",

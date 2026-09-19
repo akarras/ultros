@@ -110,6 +110,10 @@ pub struct RecipeNeeds {
     /// target. Not "the lab is on": the body costs 438 KB on the wire, so
     /// only actually asking for one of those columns fetches it.
     pub stats_30: bool,
+    /// A row filter that reads the sell place's sale body at the window
+    /// is set (Sold in window, Last sold within): the same body a sale
+    /// revenue signal and revenue-side gil read.
+    pub evidence: bool,
 }
 
 impl Default for RecipeNeeds {
@@ -127,6 +131,7 @@ impl Default for RecipeNeeds {
             sell_scope_is_buy_scope: false,
             rev_signals: BTreeSet::new(),
             stats_30: false,
+            evidence: false,
         }
     }
 }
@@ -180,7 +185,8 @@ pub fn needed_bodies(formula: &ProfitFormula, needs: &RecipeNeeds) -> BTreeSet<B
     }
     let wants_sell_stats = formula.revenue_signal().sale_stat().is_some()
         || needs.rev_signals.iter().any(|s| s.sale_stat().is_some())
-        || needs.rev_gil;
+        || needs.rev_gil
+        || needs.evidence;
     // Phase F. The sell scope only ever *adds*: at `Scope::World` — every
     // pre-Phase-F URL and every flag-off page — the revenue side reads the
     // sell world, whose seven-day body is already in the set; only a wider
@@ -341,6 +347,7 @@ mod tests {
         assert_eq!(RecipeNeeds::default().window, SALE_STATS_WINDOW_DAYS);
         assert!(!RecipeNeeds::default().rev_gil);
         assert!(!RecipeNeeds::default().cost_gil);
+        assert!(!RecipeNeeds::default().evidence);
     }
 
     /// At a wider window every sale signal reads that window's body: the
@@ -487,6 +494,32 @@ mod tests {
         };
         assert_eq!(
             needed_bodies(&listing, &rev7),
+            needed_bodies(&listing, &needs(false, false))
+        );
+    }
+
+    /// The evidence row filters (Sold in window, Last sold within) read
+    /// the sell-place body at the page window, exactly as revenue-side
+    /// gil does, so they request it the same way.
+    #[test]
+    fn evidence_filters_want_the_sell_place_body_at_the_window() {
+        let listing = ProfitFormula::recipe_from_query(None, None, None);
+        let ev = RecipeNeeds {
+            evidence: true,
+            ..at(30, needs(false, false))
+        };
+        let got = needed_bodies(&listing, &ev);
+        assert!(got.contains(&BodyRole::SellWorldStats(30)));
+        let wider = listing.with_sell_scope(SellScope(Scope::Datacenter));
+        assert!(needed_bodies(&wider, &ev).contains(&BodyRole::SellScopeStats(30)));
+        // At the default window and sell scope the context body already
+        // covers it: nothing is added.
+        let ev7 = RecipeNeeds {
+            evidence: true,
+            ..needs(false, false)
+        };
+        assert_eq!(
+            needed_bodies(&listing, &ev7),
             needed_bodies(&listing, &needs(false, false))
         );
     }
