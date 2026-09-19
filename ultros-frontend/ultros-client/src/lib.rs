@@ -581,6 +581,7 @@ pub fn hydrate() {
             let region = region.clone();
             let current_user = current_user.clone();
             provide_context(GuessedRegion(region));
+            provide_context(LoadedGameDataLocale(get_i18n_lang()));
             provide_context(world_data);
             if let Some(current_user) = current_user {
                 provide_context(BootstrapUser(current_user));

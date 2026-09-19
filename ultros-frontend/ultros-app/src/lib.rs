@@ -29,7 +29,9 @@ use i18n::*;
 
 use crate::components::icon::Icon;
 use crate::components::recently_viewed::RecentItems;
-pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
+pub use crate::global_state::{
+    BootstrapUser, LocalWorldData, home_world::GuessedRegion, xiv_data::LoadedGameDataLocale,
+};
 use crate::global_state::{
     app_update::provide_app_update_context, cheapest_prices::CheapestPrices,
     clipboard_text::GlobalLastCopiedText, cookies::Cookies, guest_alerts::provide_guest_alerts,
@@ -455,6 +457,33 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// Name of the cookie `leptos_i18n` stores an explicit language choice in.
+const I18N_PREF_COOKIE: &str = "i18n_pref_locale";
+
+/// The UI locale to start a first-time visitor in, from the region their IP
+/// resolved to. `None` means "leave the locale alone".
+///
+/// This is only an initial guess for visitors who never picked a language:
+/// an explicit `?lang=` on the URL or a stored preference cookie always wins,
+/// and it only ever moves *off* English (the default), so a visitor whose
+/// browser language already resolved to e.g. `ja` is untouched.
+pub(crate) fn region_locale_guess(
+    region: Option<&str>,
+    explicit_locale: Option<Locale>,
+    has_pref_cookie: bool,
+    current_locale: Locale,
+) -> Option<Locale> {
+    if explicit_locale.is_some() || has_pref_cookie || current_locale != Locale::en {
+        return None;
+    }
+    match region? {
+        "Japan" => Some(Locale::ja),
+        "中国" => Some(Locale::cn),
+        "한국" => Some(Locale::ko),
+        _ => None,
+    }
+}
+
 #[component]
 pub fn AppInner(cookies: Cookies) -> impl IntoView {
     let i18n = use_i18n();
@@ -465,62 +494,55 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     let region = use_context::<GuessedRegion>();
     #[cfg(feature = "hydrate")]
     let region_for_tags = region.clone();
-    Effect::new(move |_| {
-        if explicit_locale.is_none()
-            && let Some(region) = region.as_ref()
+    // The region guess is applied synchronously, on both sides, exactly like
+    // the explicit `?lang=` above. `GuessedRegion` comes from the same request
+    // (server: the resolved IP region; client: the SSR bootstrap payload), so
+    // the server renders ja/cn/ko HTML with a matching `<html lang>`, the
+    // client loads that locale's game-data pack before hydrating, and the
+    // hydration walk meets a DOM built from the very same locale.
+    //
+    // This used to run in an `Effect`, i.e. only on the client: the server
+    // rendered English, and the client's switch rewrote every translated text
+    // node while tachys was still hydrating across `Suspense` boundaries. The
+    // cursor then landed on a node the view tree did not expect and panicked
+    // (`Element::cast_from(cursor.current()).unwrap()`, tachys `svg/mod.rs:306`)
+    // — GlitchTip #7309, still firing from CN clients after deferring the
+    // switch by an animation frame (#1405), because the item page's boundaries
+    // hydrate several frames later than that.
+    let has_pref_cookie = cookies
+        .get_cookie(I18N_PREF_COOKIE)
+        .0
+        .get_untracked()
+        .is_some();
+    if let Some(new_locale) = region_locale_guess(
+        region.as_ref().map(|r| r.0.as_str()),
+        explicit_locale,
+        has_pref_cookie,
+        i18n.get_locale_untracked(),
+    ) {
+        i18n.set_locale(new_locale);
+        #[cfg(feature = "hydrate")]
         {
-            // This is an initial guess only. Subscribing here would override
-            // a later explicit switch back to English in these regions.
-            let current_locale = i18n.get_locale_untracked();
-            if current_locale == Locale::en {
-                let new_locale = match region.0.as_str() {
-                    "Japan" => Some(Locale::ja),
-                    "中国" => Some(Locale::cn),
-                    "한국" => Some(Locale::ko),
-                    _ => None,
-                };
-                if let Some(new_locale) = new_locale {
-                    // Switching the locale rewrites every translated text node
-                    // and bumps `DataRevision`, which re-renders everything that
-                    // reads `tracked_data()`. `GuessedRegion` is provided on both
-                    // sides, but this guess only runs in an `Effect`, so the SSR
-                    // HTML is always English while the client immediately wants
-                    // ja/cn/ko — every page load in these regions is a scheduled
-                    // DOM rewrite. Effects are queued on the executor, and
-                    // hydration continues asynchronously across `Suspense`
-                    // boundaries, so that rewrite can land *while* tachys is
-                    // still walking the SSR DOM. Its cursor then finds a node
-                    // the view tree does not expect and panics
-                    // (`Element::cast_from(cursor.current()).unwrap()`,
-                    // tachys `svg/mod.rs:306`) — GlitchTip #7309, reported from
-                    // a CN client whose breadcrumbs show `en.rkyv` loading and
-                    // the panic 63ms after `app run!`.
-                    //
-                    // Deferring to the next animation frame lets hydration
-                    // finish against the English DOM it was rendered as, then
-                    // re-translates reactively. Same fix, same reason, as the
-                    // `delay_during_hydration` on `RecentItems::new()`.
-                    let apply = move || {
-                        i18n.set_locale(new_locale);
-                        components::language_picker::reload_locale_data(new_locale);
-                    };
-                    #[cfg(feature = "hydrate")]
-                    {
-                        // `reload_locale_data` reads `DataRevision` out of
-                        // context, and a raw animation-frame callback runs with
-                        // no reactive owner, so carry this one across.
-                        let owner = Owner::current();
-                        leptos::leptos_dom::helpers::request_animation_frame(move || match owner {
-                            Some(owner) => owner.with(apply),
-                            None => apply(),
-                        });
-                    }
-                    #[cfg(not(feature = "hydrate"))]
-                    apply();
-                }
+            // The client picked its game-data pack from the SSR `<html lang>`,
+            // so after a server-side guess the right pack is already loaded and
+            // there is nothing to swap. Only a page whose HTML was not rendered
+            // with this guess (a mount without SSR, a cached English page)
+            // needs the pack reloaded — and that must not touch `DataRevision`
+            // until hydration is over, for the same reason as above.
+            let loaded = use_context::<LoadedGameDataLocale>();
+            if loaded.as_ref().map(|l| l.0.as_str()) != Some(new_locale.as_str()) {
+                // `reload_locale_data` reads `DataRevision` out of context, and
+                // a raw animation-frame callback runs with no reactive owner,
+                // so carry this one across.
+                let owner = Owner::current();
+                let apply = move || components::language_picker::reload_locale_data(new_locale);
+                leptos::leptos_dom::helpers::request_animation_frame(move || match owner {
+                    Some(owner) => owner.with(apply),
+                    None => apply(),
+                });
             }
         }
-    });
+    }
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
@@ -797,6 +819,60 @@ mod error_filter_wiring {
     }
 }
 pub mod script_escape;
+
+#[cfg(test)]
+mod region_locale_guess_tests {
+    use super::region_locale_guess;
+    use crate::i18n::Locale;
+
+    #[test]
+    fn first_visit_from_a_guessed_region_starts_in_that_language() {
+        assert_eq!(
+            region_locale_guess(Some("Japan"), None, false, Locale::en),
+            Some(Locale::ja)
+        );
+        assert_eq!(
+            region_locale_guess(Some("中国"), None, false, Locale::en),
+            Some(Locale::cn)
+        );
+        assert_eq!(
+            region_locale_guess(Some("한국"), None, false, Locale::en),
+            Some(Locale::ko)
+        );
+    }
+
+    #[test]
+    fn other_regions_and_no_region_leave_the_locale_alone() {
+        assert_eq!(
+            region_locale_guess(Some("North-America"), None, false, Locale::en),
+            None
+        );
+        assert_eq!(region_locale_guess(None, None, false, Locale::en), None);
+    }
+
+    #[test]
+    fn an_explicit_choice_always_wins() {
+        // `?lang=en` from Japan stays English.
+        assert_eq!(
+            region_locale_guess(Some("Japan"), Some(Locale::en), false, Locale::en),
+            None
+        );
+        // A stored preference (including one for English) is never overridden,
+        // otherwise switching back to English would undo itself on reload.
+        assert_eq!(
+            region_locale_guess(Some("中国"), None, true, Locale::en),
+            None
+        );
+    }
+
+    #[test]
+    fn a_browser_language_that_already_resolved_is_kept() {
+        assert_eq!(
+            region_locale_guess(Some("中国"), None, false, Locale::ja),
+            None
+        );
+    }
+}
 
 #[cfg(all(test, feature = "ssr"))]
 mod translation_boundary_tests {

@@ -10,6 +10,14 @@ pub fn provide_xiv_data_revision() {
     provide_context(DataRevision(RwSignal::new(0)));
 }
 
+/// The locale of the game-data pack the browser loaded *before* hydration
+/// (`en`, `ja`, `cn`, ...). Provided by `ultros-client`; absent on the server,
+/// where every pack is embedded and `tracked_data()` picks one per request.
+/// Lets a synchronous locale switch during hydration tell whether the loaded
+/// pack already matches (nothing to do) or must be swapped afterwards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadedGameDataLocale(pub String);
+
 /// Reactive equivalent of `xiv_gen_db::data()`. Registers the current reactive
 /// scope as a subscriber of `DataRevision`, so the surrounding view re-renders
 /// after a locale swap. Falls back to a plain read when no `DataRevision` is
