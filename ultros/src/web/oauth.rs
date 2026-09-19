@@ -518,7 +518,7 @@ where
                 Ok(Ok(user)) => user,
                 Ok(Err(error)) if invalid_discord_credentials(&error) => {
                     user_cache.remove_token(discord_auth.value()).await;
-                    return Err(ApiError::DiscordTokenInvalid(cookie_jar));
+                    return Err(ApiError::DiscordTokenInvalid(Box::new(cookie_jar)));
                 }
                 // Fail closed, but preserve the browser's cookie on a Discord
                 // outage or rate limit so retrying doesn't require another login.
@@ -572,9 +572,8 @@ struct DiscordAuthConfigImpl {
     /// Shared async HTTP client for OAuth token exchange / revocation. v5
     /// requires us to bring our own `AsyncHttpClient` and configure it not to
     /// follow redirects to avoid SSRF on the token endpoint. We use the
-    /// `reqwest` that oauth2 re-exports (0.12) rather than ultros's own
-    /// `reqwest = 0.11`, because the `AsyncHttpClient` trait is only
-    /// implemented for the 0.12 `reqwest::Client`.
+    /// `reqwest` that oauth2 re-exports so the `AsyncHttpClient` trait impl is
+    /// guaranteed to match — it is the same 0.12 `reqwest` ultros depends on.
     pub http_client: oauth2::reqwest::Client,
 }
 

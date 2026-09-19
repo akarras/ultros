@@ -47,19 +47,23 @@ use crate::i18n::{Locale, t, t_string, use_i18n};
 /// `pub` (not crate-private): the non-hydrate stub below would otherwise be
 /// unreachable dead code on the `ssr`-only build, same reasoning as
 /// `enable_browser_notifications`.
+///
+/// `None` when the Notification API is unavailable or the request itself
+/// failed (as opposed to the user answering it) — the caller shows nothing
+/// in that case.
 #[cfg(all(feature = "hydrate", target_arch = "wasm32"))]
-pub async fn request_notification_permission() -> Result<bool, ()> {
+pub async fn request_notification_permission() -> Option<bool> {
     use wasm_bindgen_futures::JsFuture;
     use web_sys::Notification;
 
-    let promise = Notification::request_permission().map_err(|_| ())?;
-    let result = JsFuture::from(promise).await.map_err(|_| ())?;
-    Ok(result.as_string().as_deref() == Some("granted"))
+    let promise = Notification::request_permission().ok()?;
+    let result = JsFuture::from(promise).await.ok()?;
+    Some(result.as_string().as_deref() == Some("granted"))
 }
 
 #[cfg(not(all(feature = "hydrate", target_arch = "wasm32")))]
-pub async fn request_notification_permission() -> Result<bool, ()> {
-    Err(())
+pub async fn request_notification_permission() -> Option<bool> {
+    None
 }
 
 /// Display strings for one [`GuestAlertRule`]'s row: item name, price
@@ -120,18 +124,18 @@ pub fn GuestAlertsView() -> impl IntoView {
     let enable_browser = move |_| {
         spawn_local(async move {
             match request_notification_permission().await {
-                Ok(true) => {
+                Some(true) => {
                     browser_notif_granted.set(true);
                     if let Some(t) = toasts {
                         t.success(t_string!(i18n, guest_alert_browser_enabled_toast).to_string());
                     }
                 }
-                Ok(false) => {
+                Some(false) => {
                     if let Some(t) = toasts {
                         t.error(t_string!(i18n, guest_alert_browser_denied_toast).to_string());
                     }
                 }
-                Err(()) => {}
+                None => {}
             }
         });
     };

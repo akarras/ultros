@@ -166,7 +166,7 @@ pub fn merge_inbox(server: &[InboxItem], local: &[InboxItem]) -> Vec<InboxItem> 
         merged.push(item.clone());
     }
 
-    merged.sort_by(|a, b| b.at.cmp(&a.at));
+    merged.sort_by_key(|a| std::cmp::Reverse(a.at));
     merged
 }
 

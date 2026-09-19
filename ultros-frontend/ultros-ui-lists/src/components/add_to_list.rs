@@ -19,6 +19,7 @@ use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
+use ultros_frontend_core::components::account_lists_failure::AccountListsFailure;
 use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 
 #[component]
@@ -86,7 +87,6 @@ fn AddToListModal(
                             {move || item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string())}
                         </div>
                     </div>
-                    <button class="btn-secondary" on:click=move |_| set_visible(false)>{t!(i18n, add_to_list_close)}</button>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
@@ -119,10 +119,9 @@ fn AddToListModal(
                 <div class="rounded p-1">
                     <Suspense fallback=Loading>
                         {move || {
-                            let Ok(lists) = lists.get()? else {
-                                return Some(Either::Right(view! {
-                                    <div class="text-red-400 text-sm">{t!(i18n, add_to_list_unable_to_load)}</div>
-                                }));
+                            let lists = match lists.get()? {
+                                Ok(lists) => lists,
+                                Err(error) => return Some(Either::Right(view! { <AccountListsFailure error /> })),
                             };
 
                             Some(Either::Left(

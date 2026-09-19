@@ -482,16 +482,30 @@ async fn send_webpush(
         .build()
         .map_err(|e| anyhow!("web push build failed: {e:?}"))?;
 
+    // `web-push` 0.11 builds an `http` 0.2 request while reqwest 0.12 speaks
+    // `http` 1.x, so `reqwest::Request::try_from` no longer applies. Re-emit
+    // the builder's output (method, endpoint URI, TTL/Urgency/crypto headers,
+    // encrypted body) onto a reqwest request by value — header names and
+    // values are plain bytes in both `http` majors.
     let http_req = request_builder::build_request::<reqwest::Body>(message);
-    let req = reqwest::Request::try_from(http_req)
+    let (parts, push_body) = http_req.into_parts();
+    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .map_err(|e| anyhow!("push request convert failed: {e}"))?;
+    let mut req = web_push_http_client()?.request(method, parts.uri.to_string());
+    for (name, value) in parts.headers.iter() {
+        req = req.header(name.as_str(), value.as_bytes());
+    }
 
-    let resp = web_push_http_client()?
-        .execute(req)
+    let resp = req
+        .body(push_body)
+        .send()
         .await
         .map_err(|e| anyhow!("push send failed: {e}"))?;
 
-    let status = resp.status();
+    // `parse_response` classifies via an `http` 0.2 status; the numeric code is
+    // the same in both majors.
+    let status = http02::StatusCode::from_u16(resp.status().as_u16())
+        .map_err(|e| anyhow!("push response status convert failed: {e}"))?;
     let body_bytes = resp
         .bytes()
         .await

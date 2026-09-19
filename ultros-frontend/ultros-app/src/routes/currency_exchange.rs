@@ -848,8 +848,8 @@ pub fn CurrencySelection() -> impl IntoView {
     ];
     let currencies = data
         .special_shops
-        .iter()
-        .flat_map(|(_shops, special_shop)| {
+        .values()
+        .flat_map(|special_shop| {
             shop_items(special_shop)
                 .filter(|items| items.recv.iter().any(|i| i.item.item_search_category != 0))
                 .flat_map(|f| f.cost.into_iter().map(|i| i.item.key_id))

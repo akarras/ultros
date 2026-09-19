@@ -2454,9 +2454,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
     let scope_view = |signal: PriceSignal| SignalView {
         over: None,
         base: inp.buy_listings,
-        stats: signal
-            .sale_stat()
-            .and_then(|stat| inp.buy_stats.map(|idx| (idx, stat))),
+        stats: inp.buy_stats.zip(signal.sale_stat()),
     };
     let ingredient_view = scope_view(selected);
     let sell_scope_is_world = inp.formula.sell_scope() == Scope::World;
@@ -2464,10 +2462,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         over: inp.revenue_listings,
         base: inp.buy_listings,
         stats: inp
-            .formula
-            .revenue_signal()
-            .sale_stat()
-            .and_then(|stat| inp.revenue_stats.map(|idx| (idx, stat))),
+            .revenue_stats
+            .zip(inp.formula.revenue_signal().sale_stat()),
     };
     // Hop's home side: the sell world alone (deliberately not layered over
     // the buy scope, or an ingredient with no home listing would be priced
@@ -2482,9 +2478,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
     let home_view = inp.sell_listings.map(|sell| SignalView {
         over: None,
         base: sell,
-        stats: hop_signal
-            .sale_stat()
-            .and_then(|stat| inp.sell_window_stats.map(|s| (s, stat))),
+        stats: inp.sell_window_stats.zip(hop_signal.sale_stat()),
     });
 
     for recipe in inp.recipes.iter().copied() {

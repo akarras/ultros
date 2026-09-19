@@ -354,9 +354,7 @@ fn FCCraftingAnalyzerTable(
         let cost_prices = SignalView {
             over: None,
             base: &prices,
-            stats: cost_signal
-                .sale_stat()
-                .and_then(|stat| stats.as_deref().map(|index| (index, stat))),
+            stats: stats.as_deref().zip(cost_signal.sale_stat()),
         };
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
             let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
