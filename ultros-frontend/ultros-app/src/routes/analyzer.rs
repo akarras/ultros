@@ -228,8 +228,10 @@ const COL_VOLUME_30D: &str = "volume_30d";
 /// long and vary wildly between filters, so fitting them shoved the numbers
 /// that matter off screen and moved the table around under the reader every
 /// time the rows changed. Long names truncate instead; the user can still
-/// drag the border or pick "Auto fit" from the column menu.
-const ITEM_COLUMN_WIDTH: f64 = 380.0;
+/// drag the border or pick "Auto fit" from the column menu. Shared with the
+/// other item-keyed analyzers (Vendor Sell, Vendor Resale) so their item
+/// columns match.
+pub(crate) const ITEM_COLUMN_WIDTH: f64 = 380.0;
 
 const ALL_OPTIONAL_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
