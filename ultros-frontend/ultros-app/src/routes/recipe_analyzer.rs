@@ -185,12 +185,16 @@ struct RecipeProfitData {
     /// Presence of the selected-quality seven-day row; zero units and absent
     /// history must remain different values for shared column filters.
     has_sell_stats: bool,
-    /// The output sold at least once in the page window on the sell place
-    /// (the body a sale revenue signal reads). Read by the Sold in window
-    /// filter and reported so the pass and the bar agree.
+    /// The evidence the Sold in window row filter was applied against: the
+    /// output sold at least once in the page window on the revenue body.
+    /// The filter reads its own local binding in `price_rows`, not this
+    /// field — it is recorded here so tests (and a future column) can see
+    /// what the pass decided.
     sold_in_window: bool,
-    /// The newest sale of either quality in that same body; `None` = no
-    /// sale in the window.
+    /// The evidence the Last sold within row filter was applied against:
+    /// the newest sale of either quality in that same body; `None` = no
+    /// sale in the window. Recorded for the same reason as
+    /// `sold_in_window`.
     window_last_sold_unix: Option<i64>,
     vwap: i32,
     /// Current sell price vs the window VWAP, as a percent. `None` when
@@ -2543,12 +2547,16 @@ fn hour_now_unix() -> i64 {
     now - now.rem_euclid(3_600)
 }
 
-/// `?last-sold=` as seconds, `None` for absent, blank or unparsable.
+/// `?last-sold=` as seconds, `None` for absent, blank or unparsable. A bare
+/// non-negative integer is read as a number of days before falling back to
+/// `humantime`'s duration syntax (`"90"` and `"90d"` both work).
 fn last_sold_within_secs(raw: Option<&str>) -> Option<u64> {
-    raw.map(str::trim)
-        .filter(|v| !v.is_empty())
-        .and_then(|v| humantime::parse_duration(v).ok())
-        .map(|d| d.as_secs())
+    raw.map(str::trim).filter(|v| !v.is_empty()).and_then(|v| {
+        v.parse::<u64>()
+            .ok()
+            .map(|d| d.saturating_mul(86_400))
+            .or_else(|| humantime::parse_duration(v).ok().map(|d| d.as_secs()))
+    })
 }
 
 /// One priced row per craftable recipe with a sell price, under the
@@ -2621,36 +2629,6 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             continue;
         }
 
-        // The sale evidence both row filters read: the sell place's body
-        // at the page window, the sell world's own window body when a
-        // wider scope's was not fetched, the context body as a last
-        // resort. Both qualities count — the filters ask "does this sell",
-        // not "does this quality sell".
-        let evidence: &StatsIndex = inp
-            .revenue_stats
-            .or(inp.sell_window_stats)
-            .unwrap_or(inp.sell_stats);
-        let evidence_rows = [
-            evidence.get(&(recipe.item_result, false)),
-            evidence.get(&(recipe.item_result, true)),
-        ];
-        let sold_in_window = evidence_rows.iter().flatten().any(|s| s.num_sold > 0);
-        let window_last_sold_unix = evidence_rows
-            .iter()
-            .flatten()
-            .map(|s| s.last_sold_unix)
-            .filter(|t| *t > 0)
-            .max();
-        if inp.sold_only && !sold_in_window {
-            continue;
-        }
-        if let Some(within) = inp.last_sold_within_secs
-            && !window_last_sold_unix
-                .is_some_and(|t| inp.now_unix.saturating_sub(t) <= within as i64)
-        {
-            continue;
-        }
-
         // Check if the user can realistically craft this recipe.
         // If we have a required_level from RecipeLevelTable, ensure user_level >= required_level.
         // If we don't, fall back to "any non-zero level can craft".
@@ -2660,6 +2638,41 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         if required_level > 0 && user_level < required_level {
             continue;
         }
+
+        // The sale evidence both row filters read: the sell place's body
+        // at the page window, which `RecipeNeeds::evidence` requests
+        // whenever either filter is set. Until it lands the filters do not
+        // apply — rows are kept, `sold_in_window` is `false` and
+        // `window_last_sold_unix` is `None` — because dropping rows
+        // against the wrong body (a narrower context that can read "never
+        // sold" while the wider window says otherwise) is worse than not
+        // filtering at all. Both qualities count when the body IS here —
+        // the filters ask "does this sell", not "does this quality sell".
+        let (sold_in_window, window_last_sold_unix) = if let Some(evidence) = inp.revenue_stats {
+            let evidence_rows = [
+                evidence.get(&(recipe.item_result, false)),
+                evidence.get(&(recipe.item_result, true)),
+            ];
+            let sold_in_window = evidence_rows.iter().flatten().any(|s| s.num_sold > 0);
+            let window_last_sold_unix = evidence_rows
+                .iter()
+                .flatten()
+                .map(|s| s.last_sold_unix)
+                .filter(|t| *t > 0)
+                .max();
+            if inp.sold_only && !sold_in_window {
+                continue;
+            }
+            if let Some(within) = inp.last_sold_within_secs
+                && !window_last_sold_unix
+                    .is_some_and(|t| inp.now_unix.saturating_sub(t) <= within as i64)
+            {
+                continue;
+            }
+            (sold_in_window, window_last_sold_unix)
+        } else {
+            (false, None)
+        };
 
         let sales_stats = if inp.filter_outliers {
             inp.raw_sales
@@ -2721,7 +2734,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         // row's revenue came from. So: resolve whether the chosen quality's
         // price actually came from the statistic first, and zero the world
         // in that case; only a listing (same-world or the buy-scope
-        // fallback) reports a world here.
+        // fallback) reports a world here. An unpriced row is zeroed the
+        // same way — it has no listing to point at either.
         let stat_backed_price = match revenue_signal.sale_stat() {
             Some(stat) => inp
                 .revenue_stats
@@ -2729,7 +2743,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
                 .is_some_and(|row| stat_price(row, stat) > 0),
             None => false,
         };
-        let revenue_world_id = if stat_backed_price {
+        let revenue_world_id = if stat_backed_price || unpriced {
             0
         } else {
             revenue_summary
@@ -2978,7 +2992,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             price_is_sell_world: sell_scope_is_world,
             rev_gil,
             cost_gil,
-            revenue_world_id: if unpriced { 0 } else { revenue_world_id },
+            revenue_world_id,
         });
     }
 
@@ -4260,8 +4274,7 @@ fn RecipeAnalyzerTable(
                         let keys: &[&str] = match kind {
                             ColumnKind::Item => &[FILTER_JOB],
                             ColumnKind::CostSlot => &[FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
-                            ColumnKind::RevenueSlot => &[FILTER_SOLD],
-                            ColumnKind::LastSold => &[FILTER_LAST_SOLD],
+                            ColumnKind::RevenueSlot => &[FILTER_SOLD, FILTER_LAST_SOLD],
                             _ => &[],
                         };
                         let controls = recipe_filter_controls(i18n, window);
@@ -6730,9 +6743,14 @@ mod test {
         // row on the sell place is now `Unpriced` (price `None`) rather
         // than priced off the buy-scope listing that used to sit under
         // `rev_alt[SaleMedian]`'s `None` — rows 0, 1, 2, 6, 7, 9, 11 in
-        // `WITH` and 0, 1, 2, 6, 7, 9, 11 in `WITHOUT` all had a listing
-        // fallback price before and have no price now. The row set and its
-        // order are unchanged: unpriced rows still survive `price_rows`.
+        // `WITH` had a listing fallback price before and have no price now.
+        // `WITHOUT`'s row set DID change, because unpriced rows are now
+        // kept and exempt from the formula's drop rule: recipe 0, which had
+        // no sell-world listing and no fallback price and so used to be
+        // dropped outright, is newly present here as an unpriced row.
+        // That pushes the window by one slot, so recipe 12 — which used to
+        // fill the twelfth `WITHOUT` row — falls out of `take(12)` and no
+        // longer appears.
         const WITH: &[RevProjection] = &[
             (0, None, [Some(120), None, None, None], false, None, false),
             (1, None, [Some(220), None, None, None], false, None, false),
@@ -8486,6 +8504,7 @@ mod test {
         output_history: Option<(i64, i64)>,
         sold_only: bool,
         last_sold_within_secs: Option<u64>,
+        revenue_body: bool,
     ) -> Vec<RecipeProfitData> {
         static RECIPE: Recipe = Recipe {
             key_id: xiv_gen::RecipeId(9999100),
@@ -8534,8 +8553,8 @@ mod test {
                 stat(RECIPE.item_result, true, 50_000, last_sold_unix, num_sold),
             );
         }
-        let formula =
-            ProfitFormula::recipe_from_query(None, Some(revenue), None).effective(false, true);
+        let formula = ProfitFormula::recipe_from_query(None, Some(revenue), None)
+            .effective(false, revenue_body);
         let (rows, _) = price_rows(&PriceInputs {
             stats_failed: StatFailures::default(),
             recipes: &[&RECIPE],
@@ -8547,7 +8566,7 @@ mod test {
             sell_stats: &stats,
             sell_window_stats: Some(&stats),
             revenue_listings: Some(&sell),
-            revenue_stats: Some(&stats),
+            revenue_stats: revenue_body.then_some(&stats),
             raw_sales: &HashMap::new(),
             formula,
             levels: &CrafterLevels::default(),
@@ -8569,7 +8588,7 @@ mod test {
 
     #[test]
     fn sale_stat_revenue_with_no_sale_row_is_unpriced_not_a_listing() {
-        let rows = evidence_fixture(PriceSignal::SaleMedian, None, false, None);
+        let rows = evidence_fixture(PriceSignal::SaleMedian, None, false, None, true);
         assert_eq!(rows.len(), 1, "the row is kept, not dropped");
         let r = &rows[0];
         assert_eq!(r.revenue, Revenue::Unpriced);
@@ -8611,6 +8630,7 @@ mod test {
             Some((1_699_000_000, 3)),
             false,
             None,
+            true,
         );
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
@@ -8638,7 +8658,7 @@ mod test {
 
     #[test]
     fn listing_revenue_keeps_the_buy_scope_fallback_and_its_tell() {
-        let rows = evidence_fixture(PriceSignal::ListingMin, None, false, None);
+        let rows = evidence_fixture(PriceSignal::ListingMin, None, false, None, true);
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(
@@ -8655,20 +8675,21 @@ mod test {
     #[test]
     fn sold_in_window_hides_rows_with_no_sale_on_the_sell_place() {
         // No output history: hidden under the toggle, kept (unpriced) without it.
-        assert!(evidence_fixture(PriceSignal::SaleMedian, None, true, None).is_empty());
-        let kept = evidence_fixture(PriceSignal::SaleMedian, None, false, None);
+        assert!(evidence_fixture(PriceSignal::SaleMedian, None, true, None, true).is_empty());
+        let kept = evidence_fixture(PriceSignal::SaleMedian, None, false, None, true);
         assert_eq!(kept.len(), 1);
         assert!(!kept[0].sold_in_window);
         assert_eq!(kept[0].window_last_sold_unix, None);
         // The toggle reads the sale body, not the price: a listing revenue
         // is hidden the same way.
-        assert!(evidence_fixture(PriceSignal::ListingMin, None, true, None).is_empty());
+        assert!(evidence_fixture(PriceSignal::ListingMin, None, true, None, true).is_empty());
         // A sale in the window passes and records when.
         let rows = evidence_fixture(
             PriceSignal::ListingMin,
             Some((1_699_000_000, 3)),
             true,
             None,
+            true,
         );
         assert_eq!(rows.len(), 1);
         assert!(rows[0].sold_in_window);
@@ -8685,19 +8706,23 @@ mod test {
         let within_90d = Some(90 * 86_400_u64);
         let at = |days_ago: i64| Some((now - days_ago * day, 2_i64));
         assert_eq!(
-            evidence_fixture(PriceSignal::SaleMedian, at(30), false, within_90d).len(),
+            evidence_fixture(PriceSignal::SaleMedian, at(30), false, within_90d, true).len(),
             1
         );
         // Exactly on the bound: kept (inclusive, the repo convention).
         assert_eq!(
-            evidence_fixture(PriceSignal::SaleMedian, at(90), false, within_90d).len(),
+            evidence_fixture(PriceSignal::SaleMedian, at(90), false, within_90d, true).len(),
             1
         );
-        assert!(evidence_fixture(PriceSignal::SaleMedian, at(176), false, within_90d).is_empty());
-        assert!(evidence_fixture(PriceSignal::SaleMedian, None, false, within_90d).is_empty());
+        assert!(
+            evidence_fixture(PriceSignal::SaleMedian, at(176), false, within_90d, true).is_empty()
+        );
+        assert!(
+            evidence_fixture(PriceSignal::SaleMedian, None, false, within_90d, true).is_empty()
+        );
         // No filter: everything kept.
         assert_eq!(
-            evidence_fixture(PriceSignal::SaleMedian, None, false, None).len(),
+            evidence_fixture(PriceSignal::SaleMedian, None, false, None, true).len(),
             1
         );
         // The URL value is a humantime duration, like the flip finder's.
@@ -8705,6 +8730,32 @@ mod test {
             humantime::parse_duration("90d").map(|d| d.as_secs()).ok(),
             within_90d
         );
+        // A bare integer is read as days, not seconds.
+        assert_eq!(last_sold_within_secs(Some("90")), Some(90 * 86_400));
+        assert_eq!(last_sold_within_secs(Some(" ")), None);
+    }
+
+    /// Without the revenue body (`RecipeNeeds::evidence` not yet wired up),
+    /// both row filters must be no-ops: dropping rows against the wrong
+    /// body is worse than not filtering. `.effective(false, false)`
+    /// downgrades the sale signal to a listing, matching what the formula
+    /// itself does when the stats it would read are not loaded.
+    #[test]
+    fn evidence_filters_are_inactive_without_the_revenue_body() {
+        let rows = evidence_fixture(
+            PriceSignal::SaleMedian,
+            None,
+            true,
+            Some(90 * 86_400),
+            false,
+        );
+        assert_eq!(
+            rows.len(),
+            1,
+            "sold_only and last_sold_within must not drop rows when the revenue body is absent"
+        );
+        assert!(!rows[0].sold_in_window);
+        assert_eq!(rows[0].window_last_sold_unix, None);
     }
 
     /// One deterministic recipe with independent ingredient and output prices.
