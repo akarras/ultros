@@ -1387,11 +1387,17 @@ pub fn ListView() -> impl IntoView {
 #[component]
 pub(crate) fn ActivityFeed(
     activity: Resource<Result<Vec<ListActivity>, crate::error::AppError>>,
+    /// The Lists 2.0 page wraps the feed in a `<details>` whose summary is
+    /// the heading, so it asks for none here.
+    #[prop(default = true)]
+    show_heading: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
     view! {
         <section class="flex flex-col gap-3">
-            <h2 class="text-lg font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_activity_heading)}</h2>
+            <Show when=move || show_heading>
+                <h2 class="text-lg font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_activity_heading)}</h2>
+            </Show>
             <Suspense fallback=move || {
                 view! { <div class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_loading_activity)}</div> }
             }>

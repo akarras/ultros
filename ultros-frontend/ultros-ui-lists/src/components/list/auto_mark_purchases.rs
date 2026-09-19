@@ -19,6 +19,10 @@ pub fn AutoMarkPurchases(
     /// resource-plus-REST path; without it, behaviour is unchanged.
     #[prop(optional, into)]
     on_purchase: Option<Callback<(i32, bool)>>,
+    /// Button styling for hosts outside a sticky bar (the Lists 2.0 page
+    /// offers this from its More-options menu). Defaults to the bar's.
+    #[prop(optional)]
+    button_class: Option<&'static str>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (watch_character_name, set_watch_character_name) = signal("".to_string());
@@ -70,7 +74,7 @@ pub fn AutoMarkPurchases(
 
     view! {
         <button
-            class="sticky-bar-button sticky-bar-button-shrink"
+            class=button_class.unwrap_or("sticky-bar-button sticky-bar-button-shrink")
             class:bg-brand-900=is_watching
             class:border-brand-500=is_watching
             data-testid="list-auto-mark-btn"
@@ -78,7 +82,7 @@ pub fn AutoMarkPurchases(
             on:click=move |_| set_modal_open(true)
         >
             <Icon icon=i::BiPurchaseTagSolid />
-            <span class="sticky-bar-button-label">{t!(i18n, list_auto_mark_title)}</span>
+            <span class=if button_class.is_some() { "" } else { "sticky-bar-button-label" }>{t!(i18n, list_auto_mark_title)}</span>
         </button>
         <Show when=modal_open>
             <Modal set_visible=set_modal_open>

@@ -292,6 +292,8 @@ pub fn ListCart(
     // units; every visible cost, detail and total uses this same result.
     let estimate = source.estimate;
     let allocated_lines = Memo::new(move |_| estimate.with(estimate::lines_by_id));
+    // Whole-cart progress, before the filter or Hide-acquired narrows rows.
+    let progress = Memo::new(move |_| source.rows.with(|rows| estimate::progress_units(rows)));
     let visible = Memo::new(
         move |previous: Option<&Vec<(ListItem, Vec<ActiveListing>)>>| {
             let query = filter.get().to_lowercase();
@@ -602,11 +604,12 @@ pub fn ListCart(
             </div>
             <div class="space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
             <Show when=move || source.estimate_available.get()>
-                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name />
+                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name progress=Signal::from(progress) />
             </Show>
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <div class="flex flex-wrap items-center gap-2">
                 <input class="input min-w-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+                <button type="button" class="btn-secondary px-3 py-1 text-xs" class:bg-brand-950=move || source.hide_acquired.get() data-testid="cart-hide-acquired" aria-pressed=move || source.hide_acquired.get().to_string() on:click=move |_| source.set_hide_acquired.run(!source.hide_acquired.get_untracked())>{t!(i18n, list_view_hide_acquired)}</button>
                 <label class="flex items-center gap-2 text-sm sm:hidden">
                     <span class="text-[color:var(--color-text-muted)]">{t!(i18n, cart_sort_by)}</span>
                     <select class="input" aria-label=t_string!(i18n, cart_sort_by) prop:value=move || sort_option(source.sort.get()) on:change=move |ev| source.set_sort.run(parse_sort_option(&event_target_value(&ev)))>

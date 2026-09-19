@@ -364,9 +364,10 @@ async function main() {
     await login(page,other,`/list/${firstId}?labs=lists-sync`);
     await page.waitForSelector(tid('list-settings-btn'));
     assert.equal((await page.$$(tid('list-access-btn'))).length,0,'viewers cannot manage access');
-    await page.click(tid('list-settings-btn'));await page.waitForSelector(tid('list-settings-drawer'));
-    assert.equal((await page.$$(tid('list-settings-sharing'))).length,0);
-    assert.equal((await page.$$(tid('list-delete-btn'))).length,0);
+    await page.click(tid('list-settings-btn'));await page.waitForSelector('[role="dialog"]');
+    assert.equal((await page.$$(tid('list-delete-btn'))).length,0,'viewers cannot delete');
+    assert.equal((await page.$$(tid('list-leave-btn'))).length,1,'viewers can leave from the More menu');
+    await page.keyboard.press('Escape');await page.waitForSelector('[role="dialog"]',{hidden:true});
     await login(page,owner,`/list/${firstId}?labs=lists-sync`);
     await api(page,'POST',`/api/v1/list/${firstId}/share/user`,{user_id:other,permission:'Write'});
     await login(page,other,`/list/${firstId}?labs=lists-sync`);await page.waitForSelector(needed);

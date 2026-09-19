@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Lists 2.0: online lists get the same tidy page as device lists",
+  "blurb": "An online list now opens with the same frame as a list on your device: the name is edited in place, one line says where the list stands, and the extra tools (Notify, Make Place import, auto-mark, recovery copy, leave and delete) sit behind a single More-options menu instead of a six-button bar and a settings drawer. The stats card and the separate filter row are gone; the estimate shows how many units you have acquired, and a Hide-acquired toggle now sits beside the cart's search box on both kinds of list. Activity history is still there, folded up below the cart."
+}
