@@ -2577,6 +2577,19 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
     // pricing time in the 2026-09 profile of a filter toggle.
     let shard_ids = shard_item_ids();
     let is_shard = |id: ItemId| shard_ids.binary_search(&id.0).is_ok();
+    // A row kept *unpriced* must at least be sellable. A result that cannot
+    // be listed on the market board (quest and untradeable crafts, the
+    // sheet's empty placeholder recipes) has no sales by definition, and
+    // under a sale signal every one of them would otherwise survive as a
+    // "no sales in window" row — ~6,000 extra rows on Gilgamesh, doubling
+    // the table. Ids the pack does not know pass (fixtures).
+    let items = &tracked_data().items;
+    let sellable = |id: i32| {
+        id != 0
+            && items
+                .get(&ItemId(id))
+                .is_none_or(|item| item.item_search_category != 0)
+    };
     let selected = inp.formula.cost_signal();
     let scope_is_home = inp.formula.buy_scope() == BuyScope::World;
     // A buy-scope view under `signal`: the listing, or the stat over it.
@@ -2716,6 +2729,9 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             .is_none();
 
         if market_price == 0 && !unpriced {
+            continue;
+        }
+        if unpriced && !sellable(recipe.item_result) {
             continue;
         }
 
@@ -6744,15 +6760,12 @@ mod test {
         // than priced off the buy-scope listing that used to sit under
         // `rev_alt[SaleMedian]`'s `None` — rows 0, 1, 2, 6, 7, 9, 11 in
         // `WITH` had a listing fallback price before and have no price now.
-        // `WITHOUT`'s row set DID change, because unpriced rows are now
-        // kept and exempt from the formula's drop rule: recipe 0, which had
-        // no sell-world listing and no fallback price and so used to be
-        // dropped outright, is newly present here as an unpriced row.
-        // That pushes the window by one slot, so recipe 12 — which used to
-        // fill the twelfth `WITHOUT` row — falls out of `take(12)` and no
-        // longer appears.
+        // The row set is unchanged: unpriced rows are kept and exempt from
+        // the formula's drop rule, but only when the result can be sold at
+        // all. Fixture recipe 0 is the sheet's empty placeholder (item 0),
+        // so it is dropped under every signal and recipe 12 fills the
+        // twelfth row as before.
         const WITH: &[RevProjection] = &[
-            (0, None, [Some(120), None, None, None], false, None, false),
             (1, None, [Some(220), None, None, None], false, None, false),
             (2, None, [Some(321), None, None, None], false, None, true),
             (
@@ -6799,9 +6812,16 @@ mod test {
                 false,
             ),
             (11, None, [Some(229), None, None, None], false, None, false),
+            (
+                12,
+                Some(378),
+                [Some(447), Some(363), Some(378), Some(382)],
+                false,
+                Some(378),
+                false,
+            ),
         ];
         const WITHOUT: &[RevProjection] = &[
-            (0, None, [None, None, None, None], false, None, false),
             (1, None, [None, None, None, None], false, None, false),
             (2, None, [None, None, None, None], false, None, false),
             (
@@ -6848,6 +6868,14 @@ mod test {
                 false,
             ),
             (11, None, [None, None, None, None], false, None, false),
+            (
+                12,
+                Some(378),
+                [None, Some(363), Some(378), Some(382)],
+                false,
+                Some(378),
+                false,
+            ),
         ];
         assert_eq!(with.as_slice(), WITH);
         assert_eq!(without.as_slice(), WITHOUT, "no sell-world listing");
@@ -8621,6 +8649,66 @@ mod test {
             }
         );
         assert_eq!(profit_query_value(r), GridValue::Missing);
+    }
+
+    /// Only a sellable result survives as unpriced. A recipe whose output
+    /// cannot be listed on the market board (search category 0) has no
+    /// sales by definition and must not become a "no sales in window" row;
+    /// with every job at cap that was ~6,000 rows on Gilgamesh.
+    #[test]
+    fn an_unsellable_result_is_dropped_rather_than_kept_unpriced() {
+        let data = xiv_gen_db::data();
+        let recipe = data
+            .recipes
+            .values()
+            .find(|r| {
+                r.item_result != 0
+                    && data
+                        .items
+                        .get(&ItemId(r.item_result))
+                        .is_some_and(|item| item.item_search_category == 0)
+            })
+            .expect("the pack has a recipe for an unlistable item");
+        let empty_listings = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: Vec::new(),
+        });
+        let stats: StatsIndex = HashMap::new();
+        let formula = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None)
+            .effective(false, true);
+        let (rows, _) = price_rows(&PriceInputs {
+            stats_failed: StatFailures::default(),
+            recipes: &[recipe],
+            recipe_level_tables: &data.recipe_level_tables,
+            recipes_by_output: &HashMap::new(),
+            buy_listings: &empty_listings,
+            sell_listings: Some(&empty_listings),
+            buy_stats: None,
+            sell_stats: &stats,
+            sell_window_stats: Some(&stats),
+            revenue_listings: Some(&empty_listings),
+            revenue_stats: Some(&stats),
+            raw_sales: &HashMap::new(),
+            formula,
+            levels: &CrafterLevels::default(),
+            job_filter: None,
+            use_subcrafts: false,
+            require_hq: false,
+            filter_outliers: false,
+            sold_only: false,
+            last_sold_within_secs: None,
+            now_unix: 1_700_000_000,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: None,
+            needs: &needed_signals(&formula, &SignalWants::default(), false),
+            home_world_id: 1,
+            dc_of: &|_| None,
+        });
+        assert!(
+            rows.is_empty(),
+            "recipe {} for unlistable item {} was kept unpriced",
+            recipe.key_id.0,
+            recipe.item_result
+        );
     }
 
     #[test]
