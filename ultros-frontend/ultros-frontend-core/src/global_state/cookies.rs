@@ -88,7 +88,9 @@ impl Cookies {
     {
         let (cookie, set_cookie) = self.get_cookie(cookie_name);
         let typed_cookie = Memo::new(move |_| {
-            let cookie = cookie();
+            // The slice's own memo may be gone by the time this runs — same
+            // end-of-response teardown as `create_slice_non_copy`.
+            let cookie = cookie.try_get().flatten();
             cookie.and_then(|c| {
                 T::from_str(c.value())
                     .map_err(|e| {
@@ -162,16 +164,24 @@ fn remove_cookie(jar: &mut CookieJar, cookie_name: &str) {
     jar.remove(removal);
 }
 
+/// A derived read/write view of one field of `signal`.
+///
+/// The getter memo tolerates a disposed `signal` and yields `O::default()`
+/// instead of panicking. On the server the jar signal lives in the request's
+/// root owner, and a slice can still be evaluated — by a `<Suspense>` effect
+/// body or a `<Title>` closure — while `from_app` is tearing that root down at
+/// the end of the response stream (GlitchTip #7388). Nothing reads the value
+/// after that point, and a jar that is gone has no cookie to offer either.
 pub fn create_slice_non_copy<T, O>(
     signal: RwSignal<T>,
     getter: impl Fn(&T) -> O + Clone + Send + Sync + 'static,
     setter: impl Fn(&mut T, O) + Clone + Send + Sync + 'static,
 ) -> (Signal<O>, SignalSetter<O>)
 where
-    O: PartialEq + Send + Sync,
+    O: PartialEq + Default + Send + Sync,
     T: Send + Sync + 'static,
 {
-    let getter = Memo::new(move |_| signal.with(getter.clone()));
+    let getter = Memo::new(move |_| signal.try_with(getter.clone()).unwrap_or_default());
     let setter = move |value| signal.update(|x| setter(x, value));
     (getter.into(), setter.into_signal_setter())
 }
@@ -295,6 +305,39 @@ mod tests {
 
         assert!(jar.get("HIDE_ADS").is_none());
         assert_eq!(delta_headers(&jar).len(), 1);
+    }
+
+    /// GlitchTip #7388: `cookies.rs:174:44 … defined at cookies.rs:44:23 …
+    /// already been disposed`. On the server the jar signal lives in the
+    /// request's root owner and a cookie slice can still be evaluated (a
+    /// `<Suspense>` effect body, a `<Title>` read) while that root is being
+    /// torn down at the end of the response stream. A disposed jar has no
+    /// cookies to give, so the slice reads as unset instead of panicking.
+    #[test]
+    fn a_slice_over_a_disposed_jar_reads_as_unset_instead_of_panicking() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        // One root (one arena, as on the server) with the jar and its reader
+        // in sibling scopes, so the jar can go away while the slice stays.
+        let root = Owner::new();
+        let jar_owner = root.with(Owner::new);
+        let jar = jar_owner.with(|| {
+            let mut jar = CookieJar::new();
+            jar.add_original(Cookie::new("HIDE_ADS", "true"));
+            RwSignal::new(jar)
+        });
+        let reader = root.with(Owner::new);
+        let (cookie, _set_cookie) = reader.with(|| {
+            create_slice_non_copy(
+                jar,
+                |jar| jar.get("HIDE_ADS").map(|c| c.clone().into_owned()),
+                |_, _: Option<Cookie<'static>>| {},
+            )
+        });
+        // The slice is evaluated for the first time only after the jar is
+        // gone — a memo caches, so an earlier read would mask the disposal.
+        jar_owner.cleanup();
+
+        assert_eq!(reader.with(|| cookie.get()), None);
     }
 
     /// Guards the serialized form itself, since that string is what both
