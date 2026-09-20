@@ -452,9 +452,30 @@ where
     }
 }
 
+/// The `(world, item)` pairs a retainer page's live subscription watches, as
+/// a sorted set. Both pages feed this to [`use_retainer_live`] through a
+/// `Memo`, so a live refetch that returns the same items in a different
+/// order — or the same listings with new prices — does not re-run the
+/// subscription effect and tear the websocket subscription down to rebuild
+/// it identically (with the status flipping back to "connecting").
+fn watched_pairs(pairs: impl IntoIterator<Item = ListedPair>) -> Vec<ListedPair> {
+    let mut pairs: Vec<ListedPair> = pairs.into_iter().collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    pairs
+}
+
 /// Where a retainer page's resource is, with the payload left out so a
 /// refetch that only changes listings does not change the phase — the
 /// loaded view is gated on this and so survives the refetch intact.
+///
+/// The boundary around it must be a `<Transition>`, not a `<Suspense>`: a
+/// refetch re-registers the resource as pending with whichever boundary
+/// read it, and `<Suspense>` answers that by swapping the whole loaded tree
+/// out for the fallback skeleton and back — every table on the page
+/// vanishing and reappearing on each live update, however carefully the
+/// rows underneath are keyed. `<Transition>` keeps the loaded children
+/// mounted after the first load and lets the keyed `<For>`s do the diff.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Phase {
     Loading,
@@ -491,12 +512,12 @@ pub fn RetainerUndercuts() -> impl IntoView {
     // Watch everything the retainers list, not just the rows currently
     // undercut — the whole point is catching the moment a cheapest listing
     // stops being cheapest.
-    let listed_pairs = Signal::derive(move || {
+    let listed_pairs = Memo::new(move |_| {
         retainers
             .get()
-            .and_then(|result| result.ok().map(|report| report.listed))
+            .and_then(|result| result.ok().map(|report| watched_pairs(report.listed)))
     });
-    let live = use_retainer_live(listed_pairs, move || retainers.refetch());
+    let live = use_retainer_live(listed_pairs.into(), move || retainers.refetch());
     let phase = Memo::new(move |_| Phase::of(retainers.get()));
     let groups = Memo::new(move |_| {
         retainers
@@ -507,7 +528,7 @@ pub fn RetainerUndercuts() -> impl IntoView {
     let (drawer_visible, set_drawer_visible) = signal(false);
     view! {
         <MetaTitle title=t_string!(i18n, retainers_undercuts_title).to_string() />
-        <Suspense fallback=move || {
+        <Transition fallback=move || {
             view! { <TableSkeleton columns=undercut_skeleton_columns() rows=5 /> }
         }>
             {move || {
@@ -596,7 +617,7 @@ pub fn RetainerUndercuts() -> impl IntoView {
                     }
                 }
             }}
-        </Suspense>
+        </Transition>
     }
 }
 
@@ -717,19 +738,20 @@ pub fn RetainerListings() -> impl IntoView {
         },
     );
     let (drawer_visible, set_drawer_visible) = signal(false);
-    let listed_pairs = Signal::derive(move || {
+    let listed_pairs = Memo::new(move |_| {
         retainers.get().and_then(|result| {
             result.ok().map(|data| {
-                data.retainers
-                    .iter()
-                    .flat_map(|(_, retainers)| retainers.iter())
-                    .flat_map(|(_, listings)| listings.iter())
-                    .map(|listing| (listing.world_id, listing.item_id))
-                    .collect::<Vec<ListedPair>>()
+                watched_pairs(
+                    data.retainers
+                        .iter()
+                        .flat_map(|(_, retainers)| retainers.iter())
+                        .flat_map(|(_, listings)| listings.iter())
+                        .map(|listing| (listing.world_id, listing.item_id)),
+                )
             })
         })
     });
-    let live = use_retainer_live(listed_pairs, move || retainers.refetch());
+    let live = use_retainer_live(listed_pairs.into(), move || retainers.refetch());
     let phase = Memo::new(move |_| Phase::of(retainers.get()));
     let groups = Memo::new(move |_| {
         retainers
@@ -741,7 +763,7 @@ pub fn RetainerListings() -> impl IntoView {
     view! {
         <MetaTitle title=t_string!(i18n, retainers_all_listings_title).to_string() />
         <MetaDescription text=t_string!(i18n, retainers_all_listings_desc).to_string() />
-        <Suspense fallback=move || {
+        <Transition fallback=move || {
             view! { <TableSkeleton columns=listing_skeleton_columns() rows=5 /> }
         }>
             {move || {
@@ -838,7 +860,7 @@ pub fn RetainerListings() -> impl IntoView {
                     }
                 }
             }}
-        </Suspense>
+        </Transition>
     }.into_any()
 }
 
@@ -881,7 +903,18 @@ pub fn Retainers() -> impl IntoView {
 #[cfg(test)]
 mod test {
 
-    use super::ItemSortKey;
+    use super::{ItemSortKey, watched_pairs};
+
+    /// The live subscription's `Memo` only holds still across a refetch if
+    /// the watched set is order-independent and free of the duplicates a
+    /// retainer with several listings of one item produces.
+    #[test]
+    fn watched_pairs_is_a_sorted_set() {
+        let a = watched_pairs([(34, 5), (34, 5), (40, 9), (34, 7)]);
+        let b = watched_pairs([(40, 9), (34, 7), (34, 5)]);
+        assert_eq!(a, vec![(34, 5), (34, 7), (40, 9)]);
+        assert_eq!(a, b);
+    }
 
     #[cfg(feature = "ssr")]
     #[test]
