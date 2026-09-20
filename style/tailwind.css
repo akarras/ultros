@@ -1884,10 +1884,34 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 
 /* Fill the rail's grid track instead of naming a width. A fixed 18.75rem here
-   used to exceed the ≥1660px track (300px minus the rail's own padding) and
-   gave the whole document a 16px horizontal scrollbar. */
+   used to exceed the rail track (minus the rail's own padding) and gave the
+   whole document a 16px horizontal scrollbar. */
 .ad-rail-slot {
     width: 100%;
+}
+
+/* The rail's <ins> is a fixed-size AdSense slot (no data-ad-format), so
+   Google fills it with the largest standard creative that FITS the CSS box.
+   The box therefore has to be exactly a standard size, or the next size
+   down gets served into it: a 268px-wide box got a 160x600 skyscraper, not
+   the 300x600 half-page it looked like it was for. The rail track is sized
+   so this is a true 300px (see .app-shell below).
+
+   Height snaps between the two standard 300-wide tall creatives instead of
+   tracking the viewport continuously — a 760px box would still only get a
+   300x600, plus 160px of dead space under it. The 1050px "portrait" needs
+   the sticky offset (6rem) + rail padding + the two caption lines above and
+   below it (~5.5rem) on top of its own height, so it kicks in at 1240px of
+   viewport height: 1440p@100% and 4K@150% get it, 1080p and 1440p@125%
+   physically can't fit it and stay at 600. */
+.ad-rail-ins {
+    width: 100%;
+    height: 600px;
+}
+@media (min-height: 1240px) {
+    .ad-rail-ins {
+        height: 1050px;
+    }
 }
 
 @media (min-width: 1536px) {
@@ -2017,14 +2041,17 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     }
 }
 
-/* Wide viewport: ad rail appears in the third column. */
+/* Wide viewport: ad rail appears in the third column.
+   The track is 300px of ad + the rail's own 2 x 1rem padding, so the
+   <ins> inside is a true 300px and AdSense can serve 300x600 / 300x1050
+   (see .ad-rail-ins). A narrower track only ever earns a 160x600. */
 @media (min-width: 1536px) {
     .app-shell {
-        grid-template-columns: 240px minmax(0, 1fr) 240px;
+        grid-template-columns: 240px minmax(0, 1fr) 332px;
         grid-template-areas: "side  main  ads";
     }
     .app-shell.app-shell-collapsed {
-        grid-template-columns: 56px minmax(0, 1fr) 240px;
+        grid-template-columns: 56px minmax(0, 1fr) 332px;
     }
     .app-shell > .app-shell-ad-rail {
         display: block;
@@ -2037,16 +2064,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     }
     .app-shell > .app-shell-content {
         padding: 1.5rem;
-    }
-}
-
-@media (min-width: 1660px) {
-    .app-shell {
-        grid-template-columns: 240px minmax(0, 1fr) 300px;
-        grid-template-areas: "side  main  ads";
-    }
-    .app-shell.app-shell-collapsed {
-        grid-template-columns: 56px minmax(0, 1fr) 300px;
     }
 }
 

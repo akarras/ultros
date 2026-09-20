@@ -33,8 +33,17 @@ Follow `ultros-changelog/README.md`: choose a category (`features`,
 `improvements`, or `bug_fixes`) and importance (`high`, `medium`, or `low`).
 The crate's `build.rs` generates the static entry list; do not edit a shared
 array or generated output. Write the blurb for a player ("Get pinged when an
-item crosses the price you set"), not for a reviewer. Refactors, dependency
-bumps, and CI work don't belong there.
+item crosses the price you set"), not for a reviewer.
+
+The bar is "would a player want to be told about this?", not "did the UI
+change?". The changelog is a what's-new feed — it lights up a badge in the
+sidebar, so every entry spends a little of the player's attention. Only add
+one for an interesting or new feature, or a bug fix a player would have
+felt. Do **not** add one for refactors, dependency bumps, CI work, copy
+tweaks, spacing/colour polish, ad-unit sizing, or anything else where the
+honest blurb would be "we moved some pixels". If you're unsure, leave it out
+— a missing entry costs nothing, a noise entry trains players to ignore the
+badge.
 
 ## Git hooks (optional but recommended)
 
