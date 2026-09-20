@@ -26,3 +26,7 @@ sample-chart.svg
 # (#1197 shipped a .orig, a .rej and three loose .patch/.diff files).
 *.orig
 *.rej
+
+# local CI / e2e logs
+ci-undercut.log
+e2e-server.log

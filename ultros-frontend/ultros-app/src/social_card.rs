@@ -5,7 +5,7 @@
 
 use crate::i18n::*;
 use crate::routes::item_explorer::canonical_job_acronym;
-use crate::routes::npc_view::shops_for_npc;
+use crate::routes::npc_view::{collectables_for_npc, exchanges_for_npc, shops_for_npc};
 use ultros_ui_game::components::npc_locations::placement_label;
 #[cfg(test)]
 use xiv_gen::Language;
@@ -308,16 +308,30 @@ pub fn social_card_content(
                 .filter(|resident| !resident.singular.trim().is_empty())?;
             let shops = shops_for_npc(data(), ENpcResidentId(*id));
             let item_count: usize = shops.iter().map(|(_, rows)| rows.len()).sum();
+            let exchanges = exchanges_for_npc(data(), ENpcResidentId(*id));
+            let trade_count: usize = exchanges.iter().map(|shop| shop.entries().count()).sum();
+            let collectable_count: usize = collectables_for_npc(data(), ENpcResidentId(*id))
+                .iter()
+                .map(|group| group.items.len())
+                .sum();
+            // Gil stock first, then what the exchanges hand over.
             let mut hero = [None; VENDOR_HERO_SLOTS];
             let mut filled = 0;
-            for row in shops.iter().flat_map(|(_, rows)| rows.iter()) {
+            let sold = shops
+                .iter()
+                .flat_map(|(_, rows)| rows.iter().map(|row| row.item));
+            let traded = exchanges
+                .iter()
+                .flat_map(|shop| shop.entries().flat_map(|entry| entry.receive))
+                .map(|(item, _)| item.0);
+            for item in sold.chain(traded) {
                 if filled == VENDOR_HERO_SLOTS {
                     break;
                 }
-                if lookup_item(row.item).is_none() || hero.contains(&Some(row.item)) {
+                if lookup_item(item).is_none() || hero.contains(&Some(item)) {
                     continue;
                 }
-                hero[filled] = Some(row.item);
+                hero[filled] = Some(item);
                 filled += 1;
             }
             let zone = data()
@@ -327,10 +341,19 @@ pub fn social_card_content(
                 .map(|placement| placement_label(data(), placement))
                 .filter(|zone| !zone.is_empty());
             content.title = resident.singular.clone();
-            content.subtitle = if item_count == 0 {
-                td_string!(locale, npc_no_items).to_string()
-            } else {
+            content.subtitle = if item_count > 0 {
                 td_string!(locale, social_card_npc_subtitle, n = item_count).to_string()
+            } else if trade_count > 0 {
+                td_string!(locale, social_card_npc_subtitle_exchanges, n = trade_count).to_string()
+            } else if collectable_count > 0 {
+                td_string!(
+                    locale,
+                    social_card_npc_subtitle_collectables,
+                    n = collectable_count
+                )
+                .to_string()
+            } else {
+                td_string!(locale, npc_no_items).to_string()
             };
             content.eyebrow = td_string!(locale, social_card_npc_eyebrow).to_string();
             content.footer = zone
@@ -565,6 +588,18 @@ mod tests {
         let card = social_card_content(Locale::en, &SocialCardKind::Npc(1000101), None).unwrap();
         assert_eq!(card.subtitle, td_string!(Locale::en, npc_no_items));
         assert_eq!(card.hero, SocialCardHero::Vendor([None; VENDOR_HERO_SLOTS]));
+        // The Mor Dhona scrip exchange sells nothing for gil: the card counts
+        // its trades and draws what they hand over.
+        let card = social_card_content(Locale::en, &SocialCardKind::Npc(1001617), None).unwrap();
+        assert!(card.subtitle.ends_with("exchanges"), "{}", card.subtitle);
+        assert!(!card.subtitle.starts_with("Offers 0 "), "{}", card.subtitle);
+        let SocialCardHero::Vendor(icons) = card.hero else {
+            panic!("vendor hero expected, got {:?}", card.hero);
+        };
+        assert!(icons.iter().all(Option::is_some), "{icons:?}");
+        // A Collectable Appraiser neither sells nor exchanges.
+        let card = social_card_content(Locale::en, &SocialCardKind::Npc(1001616), None).unwrap();
+        assert!(card.subtitle.ends_with("collectables"), "{}", card.subtitle);
         for id in [0, -1, i32::MAX] {
             assert!(social_card_content(Locale::en, &SocialCardKind::Npc(id), None).is_none());
         }

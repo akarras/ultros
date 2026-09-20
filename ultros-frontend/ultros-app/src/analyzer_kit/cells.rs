@@ -53,7 +53,7 @@ impl<V> Enrich<V> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CellValue {
     Gil(i32),
-    RoiBadge(i32),
+    RoiBadge(Option<i32>),
     Count(u64),
     Confidence(ConfidenceBand),
     LastSoldUnix(i64),
@@ -73,9 +73,10 @@ pub enum CellValue {
         capped: bool,
     },
     /// A gil amount with an always-present note sub-line (the Price slot's
-    /// "listing" fallback tell).
+    /// "listing" fallback tell). `None` renders the dash: a sale-statistic
+    /// revenue with no sale row (`CellNote::NoSales`).
     GilWithNote {
-        amount: i32,
+        amount: Option<i32>,
         note: CellNote,
     },
     /// A lazily fetched hourly price series, coloured by its own
@@ -123,6 +124,10 @@ pub enum CellNote {
     /// The price fell back to a listing (the selected signal had no row on
     /// the sell world, or the sell world had no listing at all).
     ListingFallback,
+    /// The selected sale statistic has no sale row for the window on the
+    /// sell place, and no listing stands in for it. The cell is a dash and
+    /// this is its reason.
+    NoSales,
     /// This price against the sell world's 7-day sale median, signed and
     /// coloured; `listing` keeps the fallback tell in front of it, so the
     /// line reads `listing · vs median +4%`.
@@ -221,7 +226,16 @@ pub fn render_cell(
         .into_any(),
         CellValue::RoiBadge(roi) => view! {
             <div  class=class>
-                <span class=roi_badge_class(roi)>{format!("{roi}%")}</span>
+                {match roi {
+                    Some(roi) => view! {
+                        <span class=roi_badge_class(roi)>{format!("{roi}%")}</span>
+                    }
+                    .into_any(),
+                    None => view! {
+                        <span class="text-[color:var(--color-text-muted)]">"—"</span>
+                    }
+                    .into_any(),
+                }}
             </div>
         }
         .into_any(),
@@ -285,6 +299,10 @@ pub fn render_cell(
                     t_string!(i18n, analyzer_price_listing_fallback).to_string(),
                     SUB_LINE.to_string(),
                 ),
+                CellNote::NoSales => (
+                    t_string!(i18n, analyzer_price_no_sales).to_string(),
+                    SUB_LINE.to_string(),
+                ),
                 CellNote::VsMedian { listing, pct } => {
                     let tell =
                         t_string!(i18n, analyzer_price_vs_median, pct = format!("{pct:+.0}%"))
@@ -321,9 +339,11 @@ pub fn render_cell(
                     format!("{SUB_LINE_GEOM} {SUB_LINE_WARN}"),
                 ),
             };
+            let title = matches!(note, CellNote::NoSales)
+                .then(|| t_string!(i18n, analyzer_price_no_sales_title).to_string());
             view! {
-                <div  class=class>
-                    <Gil amount=amount />
+                <div  class=class title=title>
+                    <GilOrDash amount=amount />
                     <div class=note_class>{text}</div>
                 </div>
             }
@@ -642,11 +662,11 @@ mod tests {
             );
 
             let plain = render(CellValue::GilWithNote {
-                amount: 120,
+                amount: Some(120),
                 note: CellNote::None,
             });
             let tell = render(CellValue::GilWithNote {
-                amount: 120,
+                amount: Some(120),
                 note: CellNote::ListingFallback,
             });
             assert_eq!(count(&plain, "<div"), count(&tell, "<div"));
@@ -874,7 +894,10 @@ mod tests {
             let render = |note| {
                 render_cell(
                     "w-32",
-                    CellValue::GilWithNote { amount: 120, note },
+                    CellValue::GilWithNote {
+                        amount: Some(120),
+                        note,
+                    },
                     i18n,
                     &ctx,
                 )

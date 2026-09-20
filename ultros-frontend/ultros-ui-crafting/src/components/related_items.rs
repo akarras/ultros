@@ -727,48 +727,11 @@ type Cost = (ItemId, u32);
 type TradeCosts = Vec<Cost>;
 
 fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
-    let mut results = Vec::new();
-    // SpecialShop has 60 entries, each with up to 2 receive items and 3 cost items
-    for i in 0..60 {
-        let is_receive_0 = shop
-            .item_receive_0
-            .get(i)
-            .map(|&id| id as i32 == item_id)
-            .unwrap_or(false);
-        let is_receive_1 = shop
-            .item_receive_1
-            .get(i)
-            .map(|&id| id as i32 == item_id)
-            .unwrap_or(false);
-
-        if is_receive_0 || is_receive_1 {
-            let mut costs = Vec::new();
-            // Check all three possible cost slots
-            if let Some(&cost_item) = shop.item_cost_0.get(i)
-                && cost_item > 0
-            {
-                let count = shop.count_cost_0.get(i).cloned().unwrap_or(0);
-                costs.push((ItemId(cost_item as i32), count));
-            }
-            if let Some(&cost_item) = shop.item_cost_1.get(i)
-                && cost_item > 0
-            {
-                let count = shop.count_cost_1.get(i).cloned().unwrap_or(0);
-                costs.push((ItemId(cost_item as i32), count));
-            }
-            if let Some(&cost_item) = shop.item_cost_2.get(i)
-                && cost_item > 0
-            {
-                let count = shop.count_cost_2.get(i).cloned().unwrap_or(0);
-                costs.push((ItemId(cost_item as i32), count));
-            }
-
-            if !costs.is_empty() {
-                results.push(costs);
-            }
-        }
-    }
-    results
+    shop.entries()
+        .filter(|entry| entry.receive.iter().any(|(item, _)| item.0 == item_id))
+        .filter(|entry| !entry.cost.is_empty())
+        .map(|entry| entry.cost)
+        .collect()
 }
 
 /// Collect the special shops that trade for `item_id`, in a stable,
@@ -816,10 +779,16 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .iter()
                    .flat_map(|shop| {
                         let trades = get_trade_costs(shop, item_id());
+                        let npcs = data
+                            .special_shop_npcs
+                            .get(&shop.key_id)
+                            .cloned()
+                            .unwrap_or_default();
                         trades.into_iter().map(move |costs| {
                             view! {
                                 <div class="group flex flex-col gap-2 panel p-3">
                                     <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
+                                    <super::npc_locations::NpcLinkList npcs=npcs.clone() />
                                     <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
                                         <span class="font-semibold text-brand-300">{t!(i18n, related_items_costs_label)}</span>
                                         {

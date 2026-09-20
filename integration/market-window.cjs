@@ -16,7 +16,7 @@ async function main() {
   const isExpectedFailure = value => {
     const url = new URL(value, BASE);
     return url.origin === new URL(BASE).origin && (
-      url.pathname === '/api/v1/listing_stats/Cactuar' && !url.search
+      url.pathname === '/api/v1/listing_stats/Cactuar' && (!url.search || url.search === '?window=30')
       || ['/api/v1/sale_stats/Cactuar', '/api/v1/sale_stats/Gilgamesh'].includes(url.pathname)
         && url.search === '?window=1');
   };
@@ -34,6 +34,18 @@ async function main() {
   });
   const hits = new Map();
   const listingHits = new Map();
+  const listingWindowHits = new Map();
+  // Every field of ListingWindowStats is required by the wire except the
+  // undercut trio; row 42 carries history, row 43 is a synthesized alive row.
+  const windowBody = (days, now) => {
+    const coverage = { first_observed_unix: now - days * 86400, last_observed_unix: now, observed_span_secs: days * 86400, continuity_verified: false };
+    return { window_days: days, from: now - days * 86400, to: now, additions: 0, removals: 0, listing_coverage: coverage,
+      floor_min: null, floor_max: null, floor_known_secs: 0, floor_empty_secs: 0, floor_unknown_secs: 0,
+      matches: { matched: 0, ambiguous: 0, repriced: 0, unmatched: 0, sales_without_receipt: 0, receipt_coverage: coverage,
+        received_sales: 0, settled_through_unix: now - 601, pending: 0, median_time_to_sell_secs: null, age_origin: 'last_review_time' },
+      stock_status: 'unavailable', days_of_stock: null,
+      undercuts: days, undercuts_per_day: days === 7 ? 0.29 : 1.5, undercut_median: 0.026 };
+  };
   let holdListings = false;
   const heldListings = [];
   let listingWindowed = false;
@@ -48,6 +60,11 @@ async function main() {
       const scope = decodeURIComponent(url.pathname.split('/').at(-1));
       listingHits.set(scope, (listingHits.get(scope) || 0) + 1);
       if (url.searchParams.has('window')) listingWindowed = true;
+      const days = Number(url.searchParams.get('window'));
+      if (days) {
+        const key = `${scope}/${days}`;
+        listingWindowHits.set(key, (listingWindowHits.get(key) || 0) + 1);
+      }
       const now = Math.floor(Date.now() / 1000);
       const body = { stats: [
         { item_id: 42, hq: false, alive_count: 3, alive_units: 30, distinct_retainers: 2,
@@ -55,14 +72,21 @@ async function main() {
         { item_id: 43, hq: false, alive_count: 0, alive_units: 0, distinct_retainers: 0,
           oldest_reviewed_unix: 0, median_age_secs: 0, floor_alive: 0 },
       ] };
-      if (holdListings) {
+      if (days) body.stats[0].window = windowBody(days, now);
+      // holdListings drives the window-free alive-set race below; a windowed
+      // fetch may run concurrently once want_listing_window has ever fired
+      // for a window (it "never un-wants," per market.rs), but that request
+      // is orthogonal to this race and must not be captured into it.
+      if (holdListings && !days) {
         heldListings.push({ scope, respond: count => {
           body.stats[0].alive_count = count;
           return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
         } });
         return;
       }
-      return request.respond(scope === 'Cactuar'
+      // A cold Cactuar window is 503 once, then publishes; the alive set fails for good.
+      const unavailable = scope === 'Cactuar' && (!days || listingWindowHits.get(`${scope}/${days}`) === 1);
+      return request.respond(unavailable
         ? { status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Listing statistics temporarily unavailable' }) }
         : { status: 200, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
     }
@@ -228,6 +252,35 @@ async function main() {
     await query({ gf: null, cols: 'market-sale-median,market-sale-median-7' });
     await rows(3);
 
+    // Windowed listing columns fetch the selected window's body, only once wanted.
+    assert.equal(listingWindowHits.size, 0, 'no windowed listing body before an undercut column is wanted');
+    await query({ cols: 'market-sale-median,market-undercuts,market-undercut-pct' });
+    await cell('market-undercuts', '1.50');
+    await cell('market-undercut-pct', '2.6%');
+    await cell('market-undercuts', '—'); // row 43: alive without a snapshot row; row 44 absent
+    await heading('market-undercuts', 'Undercuts/day (30d)');
+    assert.equal(listingWindowHits.get('Gilgamesh/30'), 1, 'both undercut columns share one request');
+    // listingHits counts every listing_stats hit regardless of window: 1 from
+    // the earlier window-free alive set plus this one new windowed fetch. A
+    // third hit here would mean the alive-set body was needlessly refetched.
+    assert.equal(listingHits.get('Gilgamesh'), 2, 'the windowed fetch does not also refetch the alive set');
+    assert.match(await page.$eval('[data-metric-sort="market-undercuts"]', el => el.parentElement.title), /price drops per day/);
+    await Promise.all([
+      page.waitForRequest(request => request.url().includes('listing_stats/Gilgamesh?window=7')),
+      page.select('[data-market-window]', '7'),
+    ]);
+    await heading('market-undercuts', '(7d)');
+    await cell('market-undercuts', '0.29');
+    await page.click('[data-metric-sort="market-undercuts"]');
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('sort') === 'grid:market-undercuts');
+    await first(42); // desc: 0.29, then the rows without history
+    await page.select('[data-market-window]', '30');
+    await heading('market-undercuts', '(30d)');
+    await cell('market-undercuts', '1.50');
+    assert.equal(listingWindowHits.get('Gilgamesh/30'), 1, 'returning to a window reuses its slot');
+    await query({ cols: 'market-sale-median,market-sale-median-7', sort: 'grid:market-sale-median', dir: 'asc' });
+    await rows(3);
+
     // Save/reload/restore retains the page window alongside basis and grid state.
     await page.click('[data-grid-saved-views] > button');
     await page.type('[data-grid-saved-views] form input', 'Thirty days');
@@ -283,7 +336,19 @@ async function main() {
     await query({ cols: 'market-sale-median,market-alive' });
     await cell('market-alive', '—');
     assert.equal(listingHits.get('Cactuar'), 1);
-    assert.equal(listingHits.get('Gilgamesh'), 1, 'the old scope is not refetched');
+    // 1 window-free alive set + the window=30 and window=7 undercut fetches
+    // from the windowed-column block above; switching scope adds no more.
+    assert.equal(listingHits.get('Gilgamesh'), 3, 'the old scope is not refetched');
+    // A cold scope/window pair is 503 until the snapshot publishes: the cell
+    // waits and the loader retries instead of settling on a failure.
+    const windowed = request => request.url().includes('listing_stats/Cactuar?window=30');
+    const firstTry = page.waitForRequest(windowed);
+    await query({ cols: 'market-sale-median,market-undercuts' });
+    await firstTry;
+    await page.waitForRequest(windowed, { timeout: 25000 }); // the 15 s retry
+    await cell('market-undercuts', '1.50');
+    assert.equal(listingWindowHits.get('Cactuar/30'), 2);
+    await query({ cols: 'market-sale-median,market-alive' });
     await query({ gf: JSON.stringify({ 'market-alive': { op: 'present' } }) });
     await rows(3); // unavailable is unknown, not an empty successful body
     await query({ gf: null, cols: 'market-sale-median,market-sale-median-7' });
@@ -294,8 +359,15 @@ async function main() {
     // earlier request for the same scope may overwrite the newest response.
     holdListings = true;
     for (const [index, scope] of ['Gilgamesh', 'Cactuar', 'Gilgamesh'].entries()) {
+      // D30 stays wanted once an undercut column has asked for it, so a scope
+      // switch now also fires an auto-responding `?window=30` request; match
+      // only the window-free one this race actually holds.
+      const windowFree = request => {
+        const url = new URL(request.url());
+        return url.pathname === `/api/v1/listing_stats/${scope}` && !url.search;
+      };
       await Promise.all([
-        page.waitForRequest(request => request.url().includes(`/listing_stats/${scope}`)),
+        page.waitForRequest(windowFree),
         query(index === 0 ? { scope, cols: 'market-alive' } : { scope }),
       ]);
     }
@@ -352,11 +424,11 @@ async function main() {
     await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 7)), page.select('[data-market-window]', '7')]);
     await cell('vwap', '507');
     await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
-    for (const endpoint of ['/api/v1/listing_stats/Cactuar', '/api/v1/sale_stats/Cactuar?window=1', '/api/v1/sale_stats/Gilgamesh?window=1']) {
+    for (const endpoint of ['/api/v1/listing_stats/Cactuar', '/api/v1/listing_stats/Cactuar?window=30', '/api/v1/sale_stats/Cactuar?window=1', '/api/v1/sale_stats/Gilgamesh?window=1']) {
       assert(expectedFailures.has(BASE + endpoint), `expected failing fixture was exercised: ${endpoint}`);
     }
     assert.deepEqual(errors, []);
-    console.log('PASS market windows: defaults, pinned comparisons, prices, pending filters/sorts, hidden requirements, deduplication, saved URLs, SSR, scope/window races, failures, missing rows, current-listing columns and Trends refetch');
+    console.log('PASS market windows: defaults, pinned comparisons, prices, pending filters/sorts, hidden requirements, deduplication, saved URLs, SSR, scope/window races, failures, missing rows, current-listing columns, windowed listing history and Trends refetch');
   } catch (error) {
     const artifacts = path.join(__dirname, 'artifacts', 'market-window');
     fs.mkdirSync(artifacts, { recursive: true });

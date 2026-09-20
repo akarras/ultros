@@ -2,6 +2,7 @@
 //!
 //! Spec: docs/superpowers/specs/2026-09-18-vendor-sell-analyzer-design.md
 
+use super::analyzer::ITEM_COLUMN_WIDTH;
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{category_id_token, register_filters};
@@ -424,7 +425,9 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                         let (world_on, world_asc) = sorted(SortMode::World);
                         vec![
                             GridColumn::new("hq", t_string!(i18n, vendor_sell_col_hq).to_string(), 60.0, true, true),
-                            GridColumn::new("item", t_string!(i18n, vendor_sell_col_item).to_string(), 320.0, false, true),
+                            // Same fixed width as Flip Finder: item names run long, so
+                            // auto-fitting this column shoved the numbers off screen.
+                            GridColumn::new("item", t_string!(i18n, vendor_sell_col_item).to_string(), ITEM_COLUMN_WIDTH, false, true).fixed_width(),
                             GridColumn::new("world", t_string!(i18n, vendor_sell_col_world).to_string(), 130.0, false, true).sorted(world_on, world_asc),
                             GridColumn::new("listing", t_string!(i18n, vendor_sell_col_listing).to_string(), 120.0, true, true).sorted(listing_on, listing_asc),
                             GridColumn::new("tax", t_string!(i18n, vendor_sell_col_tax).to_string(), 90.0, true, true).sorted(tax_on, tax_asc),
@@ -483,7 +486,7 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                             }.into_any(),
                             "item" => view! {
                                 <div class="flex flex-row items-center gap-2 w-full min-w-0">
-                                    <a class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                    <a class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                        href=item_href>
                                         <div class="shrink-0"><ItemIcon item_id icon_size=IconSize::Small loading=icon_loading /></div>
                                         {item}
