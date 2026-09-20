@@ -207,7 +207,9 @@ const OPEN_BY_DEFAULT_UP_TO: usize = 3;
 /// A titled, collapsible group whose body is rendered only while open.
 ///
 /// Closed groups ship no rows in the SSR HTML and build none on hydration;
-/// the `toggle` event flips the signal, so the body appears on first open.
+/// the `toggle` event copies the element's own `open` state into the signal
+/// (rather than flipping it), so a click that lands before hydration cannot
+/// leave the box open with no rows in it.
 #[component]
 fn CollapsibleGroup(
     title: String,
@@ -217,7 +219,16 @@ fn CollapsibleGroup(
 ) -> impl IntoView {
     let open = RwSignal::new(open_by_default);
     view! {
-        <details class="group flex flex-col gap-2" open=open_by_default on:toggle=move |_| open.update(|o| *o = !*o)>
+        <details
+            class="group flex flex-col gap-2"
+            open=open_by_default
+            on:toggle=move |ev| {
+                let is_open = event_target::<web_sys::Element>(&ev).has_attribute("open");
+                if open.get_untracked() != is_open {
+                    open.set(is_open);
+                }
+            }
+        >
             <summary class="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-[color:var(--color-text-muted)] hover:text-brand-200">
                 <Icon icon=icondata::BiChevronDownRegular attr:class="shrink-0 transition-transform group-open:rotate-180" />
                 <span class="truncate">{title}</span>
