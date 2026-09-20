@@ -232,6 +232,9 @@ pub fn GridSavedViews(
         .filter(|state| state.id == id)
         .unwrap_or_else(|| saved_views_state(id));
     let (views, set_views) = (state.views, state.set_views);
+    // Explicit `for`/`id` pairing for assistive tech; derived from the grid id
+    // so two grids on one page never share an input id.
+    let name_input_id = format!("{}-view-name", state.id);
     let open = RwSignal::new(false);
     let name = RwSignal::new(String::new());
     let container = NodeRef::<Div>::new();
@@ -274,10 +277,10 @@ pub fn GridSavedViews(
                             name.set(String::new());
                         }
                     >
-                        <label class="flex flex-col gap-1" for="grid-view-name-input">
+                        <label class="flex flex-col gap-1" for=name_input_id.clone()>
                             <span>{t!(i18n, grid_view_name)}</span>
                             <input
-                                id="grid-view-name-input"
+                                id=name_input_id.clone()
                                 type="text"
                                 class="input input-sm"
                                 maxlength="100"
