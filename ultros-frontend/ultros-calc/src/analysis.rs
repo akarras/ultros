@@ -364,19 +364,21 @@ pub fn derived_confidence(summary: &SaleSummary) -> DerivedConfidence {
 /// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
 const SNIPER_FRACTION: f64 = 0.1;
 
+/// Flip-estimate median: picks the **lower** middle on even-length input,
+/// mirroring the backend's `resale_eligibility::conservative_median`.
+///
+/// Averaging the two middles (or taking the upper one) lets a laundering
+/// pair in the six-sale buffer drag the estimate into the hundreds of
+/// millions — and because [`sniper_clamp`] floors at 10% of this value, it
+/// then discards every *real* sale as a "snipe". The lower middle keeps the
+/// estimate on the real side as long as laundering fills at most half the
+/// buffer. Returns 0 for empty input.
 pub fn median_in_place_i32(sorted: &mut [i32]) -> i32 {
     if sorted.is_empty() {
         return 0;
     }
-    let n = sorted.len();
-    if n % 2 == 1 {
-        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
-        val
-    } else {
-        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
-        let left_max = *left.iter().max().unwrap();
-        ((left_max as i64 + right as i64) / 2) as i32
-    }
+    let (_, &mut val, _) = sorted.select_nth_unstable((sorted.len() - 1) / 2);
+    val
 }
 
 /// Listings whose price is at least this multiple of the row's median sale are treated as troll
@@ -517,6 +519,49 @@ mod tests {
         let clamped = sorted_clamp(prices);
         assert_eq!(clamped.len(), 64);
         assert!(!clamped.contains(&5));
+    }
+
+    /// Fang Earrings NQ on Gilgamesh, 2026-09-06: three laundering sales at
+    /// ~916M sat in the six-sale buffer beside three real ~20k sales. Averaging
+    /// the two middles put the raw median at ~458M, and the sniper clamp then
+    /// dropped every *real* sale as a "snipe", leaving a 916M estimate.
+    #[test]
+    fn sniper_clamp_keeps_real_sales_when_half_the_buffer_is_laundering() {
+        let buffer = vec![
+            23_005,
+            20_005,
+            918_000_000,
+            916_000_000,
+            916_000_000,
+            13_005,
+        ];
+        let clamped = sorted_clamp(buffer);
+        assert!(clamped.contains(&13_005), "real sales dropped: {clamped:?}");
+        assert_eq!(clamped.len(), 6);
+    }
+
+    #[test]
+    fn even_median_picks_the_lower_middle() {
+        // Mirrors the backend's `conservative_median`: a two-sale laundering
+        // pair must resolve to the lower of the two, never an average.
+        assert_eq!(median_in_place_i32(&mut [10, 252_000_000]), 10);
+        assert_eq!(median_in_place_i32(&mut [1, 2, 3, 4]), 2);
+        assert_eq!(median_in_place_i32(&mut [4, 3, 2, 1]), 2);
+        assert_eq!(
+            median_in_place_i32(&mut [
+                23_005,
+                20_005,
+                918_000_000,
+                916_000_000,
+                916_000_000,
+                13_005
+            ]),
+            23_005
+        );
+        // Odd lengths and single elements are unchanged.
+        assert_eq!(median_in_place_i32(&mut [1, 2, 3]), 2);
+        assert_eq!(median_in_place_i32(&mut [42]), 42);
+        assert_eq!(median_in_place_i32(&mut []), 0);
     }
 
     #[test]
