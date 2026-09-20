@@ -1,3 +1,4 @@
+use super::analyzer::ITEM_COLUMN_WIDTH;
 use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{
@@ -736,7 +737,7 @@ fn VendorResaleTable(
                 <MarketGrid show_saved_views=false id="vendor-resale-grid" label=t_string!(i18n, vendor_resale_hq).to_string()
  row_height=40.0
  columns=Signal::derive(move || vec![GridColumn::new("hq",t_string!(i18n, vendor_resale_hq).to_string(), 60.0, true, true),
-GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), 320.0, false, true),
+GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), ITEM_COLUMN_WIDTH, false, true).fixed_width(),
 { let mut col = GridColumn::new("profit",t_string!(i18n, vendor_resale_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
 { let mut col = GridColumn::new("roi",t_string!(i18n, vendor_resale_roi).to_string(), 100.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
 GridColumn::new("vendor-price",t_string!(i18n, vendor_resale_vendor_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::VendorPrice, sort_dir.get().unwrap_or_else(||SortMode::VendorPrice.default_dir()) == SortDir::Asc),
@@ -817,7 +818,7 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
                                     </div>}.into_any(),
 "item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
                                         <a
-                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
                                             <div class="shrink-0">

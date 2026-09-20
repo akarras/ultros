@@ -680,7 +680,7 @@ fn TrendsGrid(
                 view! {
                     <div class="flex flex-row items-center gap-2 w-full min-w-0 px-3">
                         <a
-                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full text-[color:var(--color-text)]"
+                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0 text-[color:var(--color-text)]"
                             href=format!("/item/{}/{item_id}", world.get())
                         >
                             <div class="shrink-0">
