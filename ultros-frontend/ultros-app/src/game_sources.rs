@@ -127,10 +127,18 @@ pub fn venture_rewards(data: &Data) -> Vec<VentureReward> {
     rewards
 }
 
-/// Every NPC that offers a gil shop — the set `/npc/:id` has a page for —
-/// sorted and deduplicated so callers and SSR agree on order.
-pub fn gil_shop_npcs(data: &Data) -> Vec<ENpcResidentId> {
-    let mut ids: Vec<ENpcResidentId> = data.gil_shop_npcs.values().flatten().copied().collect();
+/// Every NPC `/npc/:id` has a page for — a gil shop, an exchange (special
+/// shop) or a collectables counter, the same three indexes the sitemap
+/// walks — sorted and deduplicated so callers and SSR agree on order.
+pub fn shop_npcs(data: &Data) -> Vec<ENpcResidentId> {
+    let mut ids: Vec<ENpcResidentId> = data
+        .gil_shop_npcs
+        .values()
+        .chain(data.special_shop_npcs.values())
+        .chain(data.collectables_shop_npcs.values())
+        .flatten()
+        .copied()
+        .collect();
     ids.sort_by_key(|id| id.0);
     ids.dedup();
     ids
@@ -242,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn gil_shop_npcs_are_unique_sorted_and_named() {
-        let npcs = gil_shop_npcs(data());
+    fn shop_npcs_are_unique_sorted_and_named() {
+        let npcs = shop_npcs(data());
         assert!(!npcs.is_empty());
         let mut sorted = npcs.clone();
         sorted.sort_by_key(|id| id.0);

@@ -2,5 +2,5 @@
   "category": "features",
   "importance": "medium",
   "title": "Search finds vendors, ventures, scrip turn-ins — and every currency",
-  "blurb": "The Ctrl+K search now covers gil-shop vendors (with their zone, so \"merchant limsa\" works), retainer venture rewards and crafted collectable turn-ins, each landing on the right row of the Venture Analyzer or Scrip Sources. Currencies were only half-indexed before — Wolf Marks and Fae Fancy were unfindable — and now match the Currency Exchange page exactly. Add a type word to nudge results: \"iron ingot recipe\" puts the recipe first."
+  "blurb": "The Ctrl+K search now covers every NPC with a page — gil-shop vendors, scrip and tomestone exchanges, collectable appraisers — with their zone, so \"merchant limsa\" and \"scrip exchange\" work, retainer venture rewards and crafted collectable turn-ins, each landing on the right row of the Venture Analyzer or Scrip Sources. Currencies were only half-indexed before — Wolf Marks and Fae Fancy were unfindable — and now match the Currency Exchange page exactly. Add a type word to nudge results: \"iron ingot recipe\" puts the recipe first."
 }

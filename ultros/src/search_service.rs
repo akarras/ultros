@@ -7,8 +7,8 @@ use tantivy::{Index, IndexReader, ReloadPolicy, doc};
 use tracing::{error, info, warn};
 use ultros_api_types::search::SearchResult;
 use ultros_app::game_sources::{
-    ScripType, VentureReward, exchange_currencies, gil_shop_npcs, npc_zone, scrip_item,
-    scrip_turn_ins, venture_rewards,
+    ScripType, VentureReward, exchange_currencies, npc_zone, scrip_item, scrip_turn_ins, shop_npcs,
+    venture_rewards,
 };
 use xiv_gen::{
     ClassJobId, Data, ItemId, ItemSearchCategoryId, ItemUiCategoryId, Recipe, RecipeId,
@@ -386,10 +386,11 @@ impl SearchService {
             ))?;
         }
 
-        // Index NPCs — every vendor with a gil shop has a `/npc/:id` page.
+        // Index NPCs — every vendor, exchange or collectables counter with a
+        // `/npc/:id` page.
         // Generic names ("Merchant & Mender") repeat across the world, so the
         // zone is both the subtitle and a low-weight searchable term.
-        for id in gil_shop_npcs(data) {
+        for id in shop_npcs(data) {
             let Some(resident) = data.e_npc_residents.get(&id) else {
                 continue;
             };
@@ -980,12 +981,34 @@ mod tests {
         assert_eq!(title_case(""), "");
     }
 
-    /// Every NPC with a gil shop has a page and is findable by name plus zone.
+    /// The exchange and collectables NPCs #1562 gave pages to are indexed
+    /// too, not only the gil-shop vendors: a scrip exchange and a collectable
+    /// appraiser (neither has a gil shop) each surface as an NPC result.
     #[test]
-    fn gil_shop_npcs_are_findable_with_their_zone() {
+    fn exchange_and_collectables_npcs_are_indexed() {
+        let service = SearchService::new().expect("index builds from embedded data");
+        for (query, title) in [
+            ("scrip exchange", "Scrip Exchange"),
+            ("collectable appraiser", "Collectable Appraiser"),
+        ] {
+            let results = service.search(query);
+            assert!(
+                results
+                    .iter()
+                    .any(|r| r.result_type == "npc" && r.title == title),
+                "{query:?} did not surface an NPC titled {title:?}: {:?}",
+                summary(&results)
+            );
+        }
+    }
+
+    /// Every NPC with a page (gil shop, exchange, collectables counter) is
+    /// findable by name plus zone.
+    #[test]
+    fn shop_npcs_are_findable_with_their_zone() {
         let service = SearchService::new().expect("index builds from embedded data");
         let data = xiv_gen_db::data();
-        let ids = gil_shop_npcs(data);
+        let ids = shop_npcs(data);
         assert!(!ids.is_empty());
         let mut checked = 0;
         for id in ids.iter().step_by((ids.len() / 30).max(1)).take(30) {
