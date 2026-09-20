@@ -11,7 +11,8 @@ use crate::analyzer_kit::enrichment::{
 };
 use crate::analyzer_kit::filters::{register_filters, toggle_control};
 use crate::analyzer_kit::formula::{
-    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, Scope, SellScope, per_unit_cost, profit_line,
+    FormulaMarks, PriceSignal, ProfitFormula, ProfitLine, RoiMath, Scope, SellScope, per_unit_cost,
+    profit_line,
 };
 use crate::analyzer_kit::grid::{
     AnalyzerGrid, AnalyzerRow, CustomCell, HeaderExtra, HeaderExtras, HeaderLine2, HeaderPill,
@@ -24,7 +25,7 @@ use crate::analyzer_kit::needed::{
     SignalWants, needed_bodies, needed_signals,
 };
 use crate::analyzer_kit::signals::{
-    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
+    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_price, stats_index,
 };
 use crate::analyzer_kit::stat_columns::{
     StatKind, Window, market_picker_options, shared_cols_in, stat_label, toggle_shared_col,
@@ -109,14 +110,67 @@ struct StatFailures {
     revenue: bool,
 }
 
+/// Where the row's revenue came from. `Unpriced` is a value the cells
+/// render as "—", not a zero sentinel: a sale-statistic revenue with no
+/// sale row for the window on the sell place. No listing stands in for
+/// it — the 2026-09-18 Gilgamesh row was a 24,999,999 listing on another
+/// world wearing a "sale median" heading.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Revenue {
+    Priced {
+        price: i32,
+        /// `price` is not the selected signal on the sell world: the
+        /// listing fell back to the buy scope.
+        fell_back: bool,
+    },
+    Unpriced,
+}
+
+impl RecipeProfitData {
+    fn price(&self) -> Option<i32> {
+        match self.revenue {
+            Revenue::Priced { price, .. } => Some(price),
+            Revenue::Unpriced => None,
+        }
+    }
+    fn fell_back(&self) -> bool {
+        matches!(
+            self.revenue,
+            Revenue::Priced {
+                fell_back: true,
+                ..
+            }
+        )
+    }
+    fn profit(&self) -> Option<i32> {
+        self.line.map(|l| l.profit)
+    }
+    fn roi(&self) -> Option<i32> {
+        self.line.map(|l| l.roi)
+    }
+    fn tax(&self) -> Option<i32> {
+        self.line.map(|l| l.tax)
+    }
+}
+
+/// The Profit column's query value: the number, or `Missing` for an
+/// unpriced row so a threshold hides it rather than ranking it at zero.
+fn profit_query_value(r: &RecipeProfitData) -> GridValue {
+    r.profit()
+        .map(|p| GridValue::Number(f64::from(p)))
+        .unwrap_or(GridValue::Missing)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct RecipeProfitData {
     stats_failed: StatFailures,
     recipe: &'static Recipe,
-    profit: i32,
-    return_on_investment: i32,
+    /// The selected revenue signal at the sell place, or nothing.
+    revenue: Revenue,
+    /// The ledger line under the selected formula; `None` exactly when
+    /// `revenue` is `Unpriced`.
+    line: Option<ProfitLine>,
     cost: i32,
-    market_price: i32,
     cheapest_world_id: i32,
     sub_crafts: Vec<SubcraftInfo>,
     daily_sales: f32,
@@ -131,12 +185,21 @@ struct RecipeProfitData {
     /// Presence of the selected-quality seven-day row; zero units and absent
     /// history must remain different values for shared column filters.
     has_sell_stats: bool,
+    /// The evidence the Sold in window row filter was applied against: the
+    /// output sold at least once in the page window on the revenue body.
+    /// The filter reads its own local binding in `price_rows`, not this
+    /// field — it is recorded here so tests (and a future column) can see
+    /// what the pass decided.
+    sold_in_window: bool,
+    /// The evidence the Last sold within row filter was applied against:
+    /// the newest sale of either quality in that same body; `None` = no
+    /// sale in the window. Recorded for the same reason as
+    /// `sold_in_window`.
+    window_last_sold_unix: Option<i64>,
     vwap: i32,
     /// Current sell price vs the window VWAP, as a percent. `None` when
     /// there is no VWAP to compare against.
     vwap_pct: Option<f32>,
-    /// The market board's cut of one unit's sale at `market_price`.
-    tax: i32,
     confidence: ConfidenceBand,
     /// Quality of the selected revenue price. All quality-specific market
     /// context, including the lazy feeds, uses this exact quality. Requiring
@@ -160,9 +223,6 @@ struct RecipeProfitData {
     /// showed the cost of confusing them: an HQ price measured against an
     /// NQ median read "vs median +399900%", in green.
     sell_median: Option<i32>,
-    /// `market_price` is not the selected signal on the sell world: the
-    /// stat was missing, or the listing fell back to the buy scope.
-    revenue_fell_back: bool,
     /// Marketable ingredient lines no listing priced, under the selected
     /// signal. They cost 0 here (row membership unchanged) and are said so.
     unpriced: u16,
@@ -186,8 +246,11 @@ struct RecipeProfitData {
     /// page window among the ingredient lines the cost pass bought on the
     /// buy scope. `None` = no market-bought line, or no buy-scope body.
     cost_gil: Option<u64>,
-    /// World of the revenue-side listing the price was read from; 0 when
-    /// the sell place has no listing (the price came from a statistic).
+    /// World of the listing the price was read from, when the price IS a
+    /// listing — including a listing that fell back to the buy scope. 0
+    /// when the price came from a sell-place statistic instead: the
+    /// statistic's own world is not what this field answers, and no
+    /// listing (same world or not) stands in for it.
     revenue_world_id: i32,
 }
 
@@ -400,6 +463,14 @@ const FILTER_REQUIRE_HQ: &str = "require-hq";
 const FILTER_OUTLIERS: &str = "filter-outliers";
 const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
 const FILTER_USE_ON_HAND: &str = "on-hand";
+/// Row filters over the sell place's sale evidence at the page window.
+/// Applied by the pricing pass like the job filter, not by the grid: the
+/// Last sold column is pinned to the seven-day context body, so a grid
+/// metric over it would read "never" for everything at a wider window.
+const FILTER_SOLD: &str = "sold";
+/// Last sold within: a humantime duration (`90d`, `1d 12h`), the same
+/// grammar the flip finder's `last-sold` key uses. Inclusive.
+const FILTER_LAST_SOLD: &str = "last-sold";
 
 /// The page's built-in views, offered above the reader's own saved ones.
 ///
@@ -522,6 +593,15 @@ fn recipe_filter_controls(
         toggle_control(
             FILTER_USE_ON_HAND,
             t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string(),
+        ),
+        toggle_control(
+            FILTER_SOLD,
+            t_string!(i18n, recipe_analyzer_filter_sold_label).to_string(),
+        ),
+        ColumnFilter::new(
+            FILTER_LAST_SOLD,
+            t_string!(i18n, analyzer_last_sold_within).to_string(),
+            false,
         ),
     ]
 }
@@ -1087,13 +1167,19 @@ fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::Custom
 }
 fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
-    CellValue::RoiBadge(r.return_on_investment)
+    CellValue::RoiBadge(r.roi())
 }
 /// Compare the expected price with the same-quality sell-world median.
 fn cell_price(r: &RecipeRow, _: &CellCtx) -> CellValue {
-    CellValue::GilWithNote {
-        amount: r.market_price,
-        note: price_note(r.market_price, r.sell_median, r.revenue_fell_back),
+    match r.price() {
+        Some(price) => CellValue::GilWithNote {
+            amount: Some(price),
+            note: price_note(price, r.sell_median, r.fell_back()),
+        },
+        None => CellValue::GilWithNote {
+            amount: None,
+            note: CellNote::NoSales,
+        },
     }
 }
 
@@ -1174,7 +1260,13 @@ fn cell_vwap(r: &RecipeRow, _: &CellCtx) -> CellValue {
     }
 }
 fn cell_tax(r: &RecipeRow, _: &CellCtx) -> CellValue {
-    CellValue::Gil(r.tax)
+    match r.tax() {
+        Some(tax) => CellValue::Gil(tax),
+        None => CellValue::GilWithNote {
+            amount: None,
+            note: CellNote::NoSales,
+        },
+    }
 }
 
 /// Percent of an alternative against the same-side formula input; `None`
@@ -1204,7 +1296,7 @@ fn rev_alt_cell(r: &RecipeRow, s: PriceSignal) -> CellValue {
     let alt = r.rev_alt[s.index()];
     CellValue::MutedGil {
         amount: alt,
-        pct: delta_pct(alt, r.market_price),
+        pct: delta_pct(alt, r.price().unwrap_or(0)),
         side: TermRole::Revenue,
         capped: false,
     }
@@ -1303,7 +1395,13 @@ fn cell_scope_vs_home(r: &RecipeRow, _: &CellCtx) -> CellValue {
 }
 
 fn cell_profit_per_day(r: &RecipeRow, _: &CellCtx) -> CellValue {
-    CellValue::Gil(profit_per_day_from_rate(r.profit, r.daily_sales))
+    match r.profit() {
+        Some(profit) => CellValue::Gil(profit_per_day_from_rate(profit, r.daily_sales)),
+        None => CellValue::GilWithNote {
+            amount: None,
+            note: CellNote::NoSales,
+        },
+    }
 }
 
 /// One read of the page's sparkline store, projected. The read happens
@@ -1361,7 +1459,7 @@ fn cell_volume_30(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
 /// says so; only the comparison against a price from somewhere else is
 /// meaningless.
 fn cell_vwap_30(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
-    let price = r.price_is_sell_world.then_some(r.market_price);
+    let price = r.price_is_sell_world.then(|| r.price()).flatten();
     CellValue::LateGilWithPct(late_30(r, ctx, move |s| {
         (s.vwap, price.and_then(|p| vwap_pct(p, s.vwap)))
     }))
@@ -2254,21 +2352,21 @@ fn compare_recipes(
         SortDir::Desc => o.reverse(),
     };
     match mode {
-        SortMode::Roi => oriented(a.return_on_investment.cmp(&b.return_on_investment)),
-        SortMode::Profit => oriented(a.profit.cmp(&b.profit)),
+        SortMode::Roi => cmp_none_last(a.roi(), b.roi(), dir, i32::cmp),
+        SortMode::Profit => cmp_none_last(a.profit(), b.profit(), dir, i32::cmp),
         SortMode::Velocity => oriented(
             a.daily_sales
                 .partial_cmp(&b.daily_sales)
                 .unwrap_or(Ordering::Equal),
         ),
         SortMode::CostPerUnit => oriented(a.cost.cmp(&b.cost)),
-        SortMode::Price => oriented(a.market_price.cmp(&b.market_price)),
+        SortMode::Price => cmp_none_last(a.price(), b.price(), dir, i32::cmp),
         SortMode::AvgPrice => oriented(a.avg_price.cmp(&b.avg_price)),
         // Desc (the default) = most recent first: larger unix is newer.
         SortMode::LastSold => oriented(a.last_sold_unix.cmp(&b.last_sold_unix)),
         SortMode::Volume => oriented(a.units_sold.cmp(&b.units_sold)),
         SortMode::Vwap => oriented(a.vwap.cmp(&b.vwap)),
-        SortMode::Tax => oriented(a.tax.cmp(&b.tax)),
+        SortMode::Tax => cmp_none_last(a.tax(), b.tax(), dir, i32::cmp),
         SortMode::Confidence => {
             oriented(confidence_rank(a.confidence).cmp(&confidence_rank(b.confidence)))
         }
@@ -2285,9 +2383,13 @@ fn compare_recipes(
             dir,
             usize::cmp,
         ),
-        SortMode::ProfitPerDay => oriented(
-            profit_per_day_from_rate(a.profit, a.daily_sales)
-                .cmp(&profit_per_day_from_rate(b.profit, b.daily_sales)),
+        SortMode::ProfitPerDay => cmp_none_last(
+            a.profit()
+                .map(|p| profit_per_day_from_rate(p, a.daily_sales)),
+            b.profit()
+                .map(|p| profit_per_day_from_rate(p, b.daily_sales)),
+            dir,
+            i32::cmp,
         ),
         SortMode::Volume30 => cmp_none_last(
             stat_30(stats_30, a).map(|s| s.units_sold),
@@ -2357,6 +2459,14 @@ struct PriceInputs<'a> {
     use_subcrafts: bool,
     require_hq: bool,
     filter_outliers: bool,
+    /// Sold in window: drop rows with no sale on the sell place in the
+    /// page window.
+    sold_only: bool,
+    /// Last sold within: drop rows whose newest sale in the window body is
+    /// older than this many seconds; `None` = no filter.
+    last_sold_within_secs: Option<u64>,
+    /// The clock the recency filter reads. See [`hour_now_unix`].
+    now_unix: i64,
     shards: ShardsMode,
     /// The on-hand stockpile when the on-hand toggle is on.
     // TODO(follow-up): when `CraftOptions::active_craft_list` is set, fetch
@@ -2428,6 +2538,27 @@ fn rev_signal_at(
     }
 }
 
+/// The clock the recency filter reads, floored to the hour. The row set is
+/// computed on the server and again on the client, and a different set
+/// on the two sides is a hydration mismatch; flooring makes them agree
+/// except across an hour boundary that falls inside the page load.
+fn hour_now_unix() -> i64 {
+    let now = chrono::Utc::now().timestamp();
+    now - now.rem_euclid(3_600)
+}
+
+/// `?last-sold=` as seconds, `None` for absent, blank or unparsable. A bare
+/// non-negative integer is read as a number of days before falling back to
+/// `humantime`'s duration syntax (`"90"` and `"90d"` both work).
+fn last_sold_within_secs(raw: Option<&str>) -> Option<u64> {
+    raw.map(str::trim).filter(|v| !v.is_empty()).and_then(|v| {
+        v.parse::<u64>()
+            .ok()
+            .map(|d| d.saturating_mul(86_400))
+            .or_else(|| humantime::parse_duration(v).ok().map(|d| d.as_secs()))
+    })
+}
+
 /// One priced row per craftable recipe with a sell price, under the
 /// selected formula. Unprofitable rows are dropped here (the formula's
 /// drop rule); thresholds and sorting happen in [`filter_and_sort`].
@@ -2446,6 +2577,19 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
     // pricing time in the 2026-09 profile of a filter toggle.
     let shard_ids = shard_item_ids();
     let is_shard = |id: ItemId| shard_ids.binary_search(&id.0).is_ok();
+    // A row kept *unpriced* must at least be sellable. A result that cannot
+    // be listed on the market board (quest and untradeable crafts, the
+    // sheet's empty placeholder recipes) has no sales by definition, and
+    // under a sale signal every one of them would otherwise survive as a
+    // "no sales in window" row — ~6,000 extra rows on Gilgamesh, doubling
+    // the table. Ids the pack does not know pass (fixtures).
+    let items = &tracked_data().items;
+    let sellable = |id: i32| {
+        id != 0
+            && items
+                .get(&ItemId(id))
+                .is_none_or(|item| item.item_search_category != 0)
+    };
     let selected = inp.formula.cost_signal();
     let scope_is_home = inp.formula.buy_scope() == BuyScope::World;
     // A buy-scope view under `signal`: the listing, or the stat over it.
@@ -2508,6 +2652,41 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             continue;
         }
 
+        // The sale evidence both row filters read: the sell place's body
+        // at the page window, which `RecipeNeeds::evidence` requests
+        // whenever either filter is set. Until it lands the filters do not
+        // apply — rows are kept, `sold_in_window` is `false` and
+        // `window_last_sold_unix` is `None` — because dropping rows
+        // against the wrong body (a narrower context that can read "never
+        // sold" while the wider window says otherwise) is worse than not
+        // filtering at all. Both qualities count when the body IS here —
+        // the filters ask "does this sell", not "does this quality sell".
+        let (sold_in_window, window_last_sold_unix) = if let Some(evidence) = inp.revenue_stats {
+            let evidence_rows = [
+                evidence.get(&(recipe.item_result, false)),
+                evidence.get(&(recipe.item_result, true)),
+            ];
+            let sold_in_window = evidence_rows.iter().flatten().any(|s| s.num_sold > 0);
+            let window_last_sold_unix = evidence_rows
+                .iter()
+                .flatten()
+                .map(|s| s.last_sold_unix)
+                .filter(|t| *t > 0)
+                .max();
+            if inp.sold_only && !sold_in_window {
+                continue;
+            }
+            if let Some(within) = inp.last_sold_within_secs
+                && !window_last_sold_unix
+                    .is_some_and(|t| inp.now_unix.saturating_sub(t) <= within as i64)
+            {
+                continue;
+            }
+            (sold_in_window, window_last_sold_unix)
+        } else {
+            (false, None)
+        };
+
         let sales_stats = if inp.filter_outliers {
             inp.raw_sales
                 .get(&recipe.item_result)
@@ -2534,8 +2713,25 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             _ => false,
         };
         let market_price = revenue_summary.lowest_gil().unwrap_or(0);
+        // A sale-statistic revenue with no sale row for the window on the
+        // sell place has NO revenue. The listing layers under the stat in
+        // `revenue_view` are the cost side's fallback, not this side's:
+        // absence of sales is the signal, and no listing (least of all
+        // another world's) stands in for it.
+        let revenue_signal = inp.formula.revenue_signal();
+        let unpriced = revenue_signal.sale_stat().is_some()
+            && rev_signal_at(
+                inp.revenue_listings,
+                inp.revenue_stats,
+                recipe.item_result,
+                revenue_signal,
+            )
+            .is_none();
 
-        if market_price == 0 {
+        if market_price == 0 && !unpriced {
+            continue;
+        }
+        if unpriced && !sellable(recipe.item_result) {
             continue;
         }
 
@@ -2545,15 +2741,32 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         // are selected.
         let scope_summary = inp.buy_listings.find_matching_listings(recipe.item_result);
         let cheapest_world_id = scope_summary.chosen(false).map(|d| d.world_id).unwrap_or(0);
-        // The revenue-side listing's world, un-overlaid for the same
-        // reason: the shared columns locate the output where it sells.
-        let revenue_world_id = inp
-            .revenue_listings
-            .unwrap_or(inp.buy_listings)
-            .find_matching_listings(recipe.item_result)
-            .chosen(price_hq)
-            .map(|d| d.world_id)
-            .unwrap_or(0);
+        // The revenue-side listing's world — but only when the price IS a
+        // listing. `revenue_summary` layers a sale statistic over the
+        // listing (`SignalView::quality`) and, when the stat backs the
+        // price, still carries the LISTING's world alongside it; reading
+        // `.chosen(..).world_id` unconditionally would misreport that
+        // listing's (possibly foreign) world as where the statistic-priced
+        // row's revenue came from. So: resolve whether the chosen quality's
+        // price actually came from the statistic first, and zero the world
+        // in that case; only a listing (same-world or the buy-scope
+        // fallback) reports a world here. An unpriced row is zeroed the
+        // same way — it has no listing to point at either.
+        let stat_backed_price = match revenue_signal.sale_stat() {
+            Some(stat) => inp
+                .revenue_stats
+                .and_then(|s| s.get(&(recipe.item_result, price_hq)))
+                .is_some_and(|row| stat_price(row, stat) > 0),
+            None => false,
+        };
+        let revenue_world_id = if stat_backed_price || unpriced {
+            0
+        } else {
+            revenue_summary
+                .chosen(price_hq)
+                .map(|d| d.world_id)
+                .unwrap_or(0)
+        };
 
         // One `compute_cost` under `view`, over a fresh on-hand snapshot:
         // compute_cost consumes from the snapshot, and reusing one across
@@ -2582,7 +2795,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         let cost_per_unit = per_unit_cost(breakdown.cost, recipe.amount_result);
 
         let (line, dropped) = profit_line(market_price, cost_per_unit, &inp.formula);
-        if dropped {
+        // An unpriced row has no net for the drop rule to compare against.
+        if dropped && !unpriced {
             continue;
         }
 
@@ -2678,7 +2892,14 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
                 PriceSignal::SaleAvg,
             ),
         ];
-        let revenue_fell_back = rev_alt[inp.formula.revenue_signal().index()] != Some(market_price);
+        let revenue = if unpriced {
+            Revenue::Unpriced
+        } else {
+            Revenue::Priced {
+                price: market_price,
+                fell_back: rev_alt[revenue_signal.index()] != Some(market_price),
+            }
+        };
 
         // Scope vs home: the selected revenue signal at the sell place and
         // on the sell world's own map.
@@ -2747,10 +2968,9 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         results.push(RecipeProfitData {
             stats_failed: inp.stats_failed,
             recipe,
-            profit: line.profit,
-            return_on_investment: line.roi,
+            revenue,
+            line: (!unpriced).then_some(line),
             cost: line.cost,
-            market_price: line.revenue,
             cheapest_world_id,
             sub_crafts: breakdown.sub_crafts,
             daily_sales: sales_stats.daily_sales,
@@ -2760,6 +2980,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             last_sold_unix: sell_stat.map(|s| s.last_sold_unix).unwrap_or(0),
             units_sold: sell_stat.map(|s| s.units_sold).unwrap_or(0),
             has_sell_stats: sell_stat.is_some(),
+            sold_in_window,
+            window_last_sold_unix,
             vwap,
             // Suppressed at a wider sell scope for the same reason as
             // `sell_median` above, and it is the same mismatch one line
@@ -2771,16 +2993,14 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             // price from somewhere else is meaningless. The decision table
             // lists `vwap_pct` under "stays on the sell world" without
             // noticing its numerator moved; this makes the code match that.
-            vwap_pct: sell_scope_is_world
+            vwap_pct: (sell_scope_is_world && !unpriced)
                 .then(|| vwap_pct(market_price, vwap))
                 .flatten(),
-            tax: line.tax,
             confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
             stat_hq,
             cost_alt,
             rev_alt,
             sell_median,
-            revenue_fell_back,
             unpriced: breakdown.unpriced_market_lines,
             hop,
             worlds,
@@ -2814,10 +3034,16 @@ fn sort_recipes(
     // The table is virtualized, so retaining the full result set adds
     // browser-side rows without increasing DOM size or server work.
     kept.sort_by(|a, b| {
-        // Deterministic tiebreak: the input comes from a std HashMap, so
-        // without it ties could order differently on the server and the
-        // client and mismatch the SSR-rendered rows.
-        compare_recipes(mode, dir, a, b, stats_30)
+        // Unpriced rows (a sale-statistic revenue with no sale row) trail
+        // every priced row whatever the mode and direction: there is no
+        // figure to rank, and a fast-moving ingredient market is not one.
+        a.line
+            .is_none()
+            .cmp(&b.line.is_none())
+            .then_with(|| compare_recipes(mode, dir, a, b, stats_30))
+            // Deterministic tiebreak: the input comes from a std HashMap, so
+            // without it ties could order differently on the server and the
+            // client and mismatch the SSR-rendered rows.
             .then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
     });
     kept.into_iter().enumerate().collect()
@@ -3165,6 +3391,8 @@ fn RecipeAnalyzerTable(
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
     let (exclude_shards_url, _) = filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
     let (use_on_hand_url, _) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
+    let (sold_only, _) = filter_query_signal::<bool>(FILTER_SOLD);
+    let (last_sold_within, _) = filter_query_signal::<String>(FILTER_LAST_SOLD);
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
@@ -3534,6 +3762,9 @@ fn RecipeAnalyzerTable(
                 use_subcrafts: use_subcrafts().unwrap_or(false),
                 require_hq: require_hq().unwrap_or(false),
                 filter_outliers: filter_outliers().unwrap_or(false),
+                sold_only: sold_only().unwrap_or(false),
+                last_sold_within_secs: last_sold_within_secs(last_sold_within().as_deref()),
+                now_unix: hour_now_unix(),
                 shards: if exclude_shards_enabled() {
                     ShardsMode::ExcludeShards
                 } else {
@@ -3705,22 +3936,24 @@ fn RecipeAnalyzerTable(
                 let readout = {
                     let data = data.clone();
                     move || {
-                        Some({
-                            t_string!(
+                        Some(match data.line {
+                            Some(line) => t_string!(
                                 i18n,
                                 recipe_analyzer_profit_readout,
-                                price = data.market_price.separate_with_commas(),
-                                tax = data.tax.separate_with_commas(),
-                                cost = data.cost.separate_with_commas(),
-                                profit = data.profit.separate_with_commas()
+                                price = line.revenue.separate_with_commas(),
+                                tax = line.tax.separate_with_commas(),
+                                cost = line.cost.separate_with_commas(),
+                                profit = line.profit.separate_with_commas()
                             )
-                            .to_string()
+                            .to_string(),
+                            None => t_string!(i18n, analyzer_price_no_sales_title).to_string(),
                         })
                     }
                 };
+                let profit = data.profit();
                 view! {
                     <div  class=class title=readout>
-                        <Gil amount=data.profit />
+                        <GilOrDash amount=profit />
                     </div>
                 }
                 .into_any()
@@ -4018,7 +4251,7 @@ fn RecipeAnalyzerTable(
                             ColumnKind::Item => items.get(&ItemId(data.recipe.item_result))
                                 .map(|item| GridValue::Text(item.name.clone()))
                                 .unwrap_or(GridValue::Missing),
-                            ColumnKind::Profit => GridValue::Number(f64::from(data.profit)),
+                            ColumnKind::Profit => profit_query_value(data),
                             ColumnKind::CostSlot => GridValue::Number(f64::from(data.cost)),
                             // A number even at zero: the seeded `min-sales`
                             // floor is a metric filter now and must keep
@@ -4057,7 +4290,7 @@ fn RecipeAnalyzerTable(
                         let keys: &[&str] = match kind {
                             ColumnKind::Item => &[FILTER_JOB],
                             ColumnKind::CostSlot => &[FILTER_SUBCRAFTS, FILTER_EXCLUDE_SHARDS, FILTER_USE_ON_HAND],
-                            ColumnKind::RevenueSlot => &[],
+                            ColumnKind::RevenueSlot => &[FILTER_SOLD, FILTER_LAST_SOLD],
                             _ => &[],
                         };
                         let controls = recipe_filter_controls(i18n, window);
@@ -4067,7 +4300,7 @@ fn RecipeAnalyzerTable(
                     custom_measure=Arc::new(move |data: &RecipeRow, kind| {
                         match kind {
                             ColumnKind::Item => (items.get(&ItemId(data.recipe.item_result)).map(|i|i.name.as_str()).unwrap_or_default().to_string(),80.0),
-                            ColumnKind::Profit => (data.profit.separate_with_commas(),42.0),
+                            ColumnKind::Profit => (data.profit().map(|p| p.separate_with_commas()).unwrap_or_default(), 42.0),
                             ColumnKind::CostSlot => (data.cost.separate_with_commas(),42.0),
                             ColumnKind::SalesPerDay7 => (format!("{:.1}",data.daily_sales),40.0),
                             ColumnKind::ListingWorld => (world_names_for_measure.get(&data.cheapest_world_id).map(|(world,_)|world.clone()).unwrap_or_default(),24.0),
@@ -4250,6 +4483,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The sale-price market; the setter strips the default world scope.
     let (sell_scope, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+    // The evidence row filters read the sell place's window body; either
+    // being set is what makes the fetch gate request it.
+    let (sold_page, _) = filter_query_signal::<bool>(FILTER_SOLD);
+    let (last_sold_page, _) = filter_query_signal::<String>(FILTER_LAST_SOLD);
+    let evidence_wanted = Memo::new(move |_| {
+        sold_page.get().unwrap_or(false)
+            || last_sold_within_secs(last_sold_page.get().as_deref()).is_some()
+    });
 
     // The one page window (#1328): every sale signal on both sides reads
     // it, its chip sits beside the formula strip, and the column labels
@@ -4553,6 +4794,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             buy_scope_is_sell_world: buy_scope_is_sell_world.get(),
             cost_signals: signals.cost,
             rev_signals: signals.rev,
+            evidence: evidence_wanted.get(),
             ..RecipeNeeds::default()
         };
         sell_window_key(&formula, &needs, sell_world_name.get().as_deref())
@@ -4632,6 +4874,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             // that ships, and the dead-code lint could not say so: the
             // derived `Debug`/`PartialEq` count as reads.
             rev_signals: signals.rev,
+            evidence: evidence_wanted.get(),
             ..RecipeNeeds::default()
         };
         // The one name. `revenue_place` is what the strip chip, the picker
@@ -5086,6 +5329,8 @@ mod test {
                     "filter-outliers",
                     "shards-exclude",
                     "on-hand",
+                    "sold",
+                    "last-sold",
                 ]
             );
             // The bases and scopes are view-level calculation choices:
@@ -5112,11 +5357,23 @@ mod test {
                 FILTER_OUTLIERS,
                 FILTER_EXCLUDE_SHARDS,
                 FILTER_USE_ON_HAND,
+                FILTER_SOLD,
             ] {
                 let control = controls.iter().find(|c| c.key == key).expect(key);
                 assert!(control.clear_with_filters, "{key}");
                 assert!(control.default_value.is_none(), "{key}");
             }
+            // Last sold within is free text (a humantime duration), not a
+            // toggle or a select.
+            let within = controls
+                .iter()
+                .find(|c| c.key == FILTER_LAST_SOLD)
+                .expect("last-sold");
+            assert!(
+                !within.numeric && within.options.is_empty(),
+                "free text like the flip finder's"
+            );
+            assert!(within.clear_with_filters);
             // The sale bases are labelled for the window the page selected.
             let basis = controls
                 .iter()
@@ -5138,6 +5395,8 @@ mod test {
                 FILTER_OUTLIERS,
                 FILTER_EXCLUDE_SHARDS,
                 FILTER_USE_ON_HAND,
+                FILTER_SOLD,
+                FILTER_LAST_SOLD,
             ],
             [
                 "profit",
@@ -5149,6 +5408,8 @@ mod test {
                 "filter-outliers",
                 "shards-exclude",
                 "on-hand",
+                "sold",
+                "last-sold",
             ]
         );
         // Pricing params left the filter menu (#1233) but their URL keys
@@ -6135,6 +6396,9 @@ mod test {
             use_subcrafts: false,
             require_hq: o.require_hq,
             filter_outliers: o.outliers,
+            sold_only: false,
+            last_sold_within_secs: None,
+            now_unix: 1_700_000_000,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &o.needs,
@@ -6188,8 +6452,18 @@ mod test {
         for (a, b) in base.iter().zip(&full) {
             assert_eq!(a.recipe.key_id, b.recipe.key_id);
             assert_eq!(
-                (a.profit, a.cost, a.market_price, a.return_on_investment),
-                (b.profit, b.cost, b.market_price, b.return_on_investment)
+                (
+                    a.profit().unwrap(),
+                    a.cost,
+                    a.price().unwrap(),
+                    a.roi().unwrap()
+                ),
+                (
+                    b.profit().unwrap(),
+                    b.cost,
+                    b.price().unwrap(),
+                    b.roi().unwrap()
+                )
             );
             assert_eq!(
                 b.cost_alt[PriceSignal::ListingMin.index()],
@@ -6253,10 +6527,7 @@ mod test {
             },
         );
         assert!(none.len() > 20);
-        assert!(
-            none.iter()
-                .all(|r| r.rev_alt == [None; 4] && r.revenue_fell_back)
-        );
+        assert!(none.iter().all(|r| r.rev_alt == [None; 4] && r.fell_back()));
         let some = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
         for r in &some {
             let out = r.recipe.item_result;
@@ -6290,12 +6561,12 @@ mod test {
             // The buy scope's HQ listing (nq + 50) undercuts the sell world
             // once nq > 250: that price came from the buy scope.
             assert_eq!(
-                r.revenue_fell_back,
-                r.market_price != sell_price,
+                r.fell_back(),
+                r.price().unwrap() != sell_price,
                 "recipe {}",
                 r.recipe.key_id.0
             );
-            fell += usize::from(r.revenue_fell_back);
+            fell += usize::from(r.fell_back());
         }
         assert!(fell > 0 && fell < rows.len(), "{fell} of {}", rows.len());
     }
@@ -6357,25 +6628,25 @@ mod test {
         let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
         assert!(rows.len() > 50, "fixture priced only {} rows", rows.len());
         for r in &rows {
-            let net = r.market_price as i64 * 95 / 100;
+            let net = r.price().unwrap() as i64 * 95 / 100;
             assert!(
                 (r.cost as i64) < net,
                 "row kept with cost >= net: {:?}",
                 r.recipe.key_id
             );
-            assert_eq!(r.profit as i64, net - r.cost as i64);
-            assert_eq!(r.tax as i64, r.market_price as i64 - net);
+            assert_eq!(r.profit().unwrap() as i64, net - r.cost as i64);
+            assert_eq!(r.tax().unwrap() as i64, r.price().unwrap() as i64 - net);
             let roi = if r.cost > 0 {
-                (r.profit as f64 / r.cost as f64 * 100.0) as i32
+                (r.profit().unwrap() as f64 / r.cost as f64 * 100.0) as i32
             } else {
                 0
             };
-            assert_eq!(r.return_on_investment, roi);
+            assert_eq!(r.roi().unwrap(), roi);
             // Revenue is `lowest_gil()` over the sell world's NQ listing (20% up)
             // and the buy scope's HQ listing (`nq + 50`), whichever is lower:
             // exactly today's `override_listings` + `lowest_gil` behaviour.
             let nq = 100 + (r.recipe.item_result % 97) * 7;
-            assert_eq!(r.market_price, (nq * 12 / 10).min(nq + 50));
+            assert_eq!(r.price().unwrap(), (nq * 12 / 10).min(nq + 50));
         }
     }
 
@@ -6390,11 +6661,11 @@ mod test {
             .map(|r| {
                 (
                     r.recipe.key_id.0,
-                    r.profit,
-                    r.return_on_investment,
+                    r.profit().unwrap(),
+                    r.roi().unwrap(),
                     r.cost,
-                    r.market_price,
-                    r.tax,
+                    r.price().unwrap(),
+                    r.tax().unwrap(),
                 )
             })
             .collect();
@@ -6424,7 +6695,7 @@ mod test {
     /// One row of the revenue projection: everything the sell-stat lookup
     /// produces that `price_rows_matches_recorded_oracle_on_fixture` cannot
     /// see.
-    type RevProjection = (i32, i32, [Option<i32>; 4], bool, Option<i32>, bool);
+    type RevProjection = (i32, Option<i32>, [Option<i32>; 4], bool, Option<i32>, bool);
 
     fn revenue_projection(rows: &[RecipeProfitData]) -> Vec<RevProjection> {
         rows.iter()
@@ -6432,9 +6703,9 @@ mod test {
             .map(|r| {
                 (
                     r.recipe.key_id.0,
-                    r.market_price,
+                    r.price(),
                     r.rev_alt,
-                    r.revenue_fell_back,
+                    r.fell_back(),
                     r.sell_median,
                     r.stat_hq,
                 )
@@ -6484,13 +6755,22 @@ mod test {
         // rows were captured while `CRYSTAL_SEARCH_CATEGORY` pointed at 59
         // ("Catalysts"), so `is_shard_item` never matched and the fixture's
         // crystal ingredients were priced into every cost despite the mode.
+        // Re-recorded for Task 1: a sale-stat revenue signal with no sale
+        // row on the sell place is now `Unpriced` (price `None`) rather
+        // than priced off the buy-scope listing that used to sit under
+        // `rev_alt[SaleMedian]`'s `None` — rows 0, 1, 2, 6, 7, 9, 11 in
+        // `WITH` had a listing fallback price before and have no price now.
+        // The row set is unchanged: unpriced rows are kept and exempt from
+        // the formula's drop rule, but only when the result can be sold at
+        // all. Fixture recipe 0 is the sheet's empty placeholder (item 0),
+        // so it is dropped under every signal and recipe 12 fills the
+        // twelfth row as before.
         const WITH: &[RevProjection] = &[
-            (0, 120, [Some(120), None, None, None], true, None, false),
-            (1, 220, [Some(220), None, None, None], true, None, false),
-            (2, 318, [Some(321), None, None, None], true, None, true),
+            (1, None, [Some(220), None, None, None], false, None, false),
+            (2, None, [Some(321), None, None, None], false, None, true),
             (
                 3,
-                455,
+                Some(455),
                 [Some(540), Some(440), Some(455), Some(459)],
                 false,
                 Some(455),
@@ -6498,7 +6778,7 @@ mod test {
             ),
             (
                 4,
-                294,
+                Some(294),
                 [Some(346), Some(279), Some(294), Some(298)],
                 false,
                 Some(294),
@@ -6506,39 +6786,47 @@ mod test {
             ),
             (
                 5,
-                434,
+                Some(434),
                 [Some(514), Some(419), Some(434), Some(438)],
                 false,
                 Some(434),
                 false,
             ),
-            (6, 153, [Some(153), None, None, None], true, None, false),
-            (7, 514, [Some(556), None, None, None], true, None, true),
+            (6, None, [Some(153), None, None, None], false, None, false),
+            (7, None, [Some(556), None, None, None], false, None, true),
             (
                 8,
-                140,
+                Some(140),
                 [Some(162), Some(125), Some(140), Some(144)],
                 false,
                 Some(140),
                 false,
             ),
-            (9, 738, [Some(825), None, None, None], true, None, true),
+            (9, None, [Some(825), None, None, None], false, None, true),
             (
                 10,
-                105,
+                Some(105),
                 [Some(120), Some(90), Some(105), Some(109)],
                 false,
                 Some(105),
                 false,
             ),
-            (11, 229, [Some(229), None, None, None], true, None, false),
+            (11, None, [Some(229), None, None, None], false, None, false),
+            (
+                12,
+                Some(378),
+                [Some(447), Some(363), Some(378), Some(382)],
+                false,
+                Some(378),
+                false,
+            ),
         ];
         const WITHOUT: &[RevProjection] = &[
-            (1, 184, [None, None, None, None], true, None, false),
-            (2, 268, [None, None, None, None], true, None, false),
+            (1, None, [None, None, None, None], false, None, false),
+            (2, None, [None, None, None, None], false, None, false),
             (
                 3,
-                455,
+                Some(455),
                 [None, Some(440), Some(455), Some(459)],
                 false,
                 Some(455),
@@ -6546,7 +6834,7 @@ mod test {
             ),
             (
                 4,
-                294,
+                Some(294),
                 [None, Some(279), Some(294), Some(298)],
                 false,
                 Some(294),
@@ -6554,35 +6842,35 @@ mod test {
             ),
             (
                 5,
-                434,
+                Some(434),
                 [None, Some(419), Some(434), Some(438)],
                 false,
                 Some(434),
                 false,
             ),
-            (6, 128, [None, None, None, None], true, None, false),
-            (7, 464, [None, None, None, None], true, None, false),
+            (6, None, [None, None, None, None], false, None, false),
+            (7, None, [None, None, None, None], false, None, false),
             (
                 8,
-                140,
+                Some(140),
                 [None, Some(125), Some(140), Some(144)],
                 false,
                 Some(140),
                 false,
             ),
-            (9, 688, [None, None, None, None], true, None, false),
+            (9, None, [None, None, None, None], false, None, false),
             (
                 10,
-                105,
+                Some(105),
                 [None, Some(90), Some(105), Some(109)],
                 false,
                 Some(105),
                 false,
             ),
-            (11, 191, [None, None, None, None], true, None, false),
+            (11, None, [None, None, None, None], false, None, false),
             (
                 12,
-                378,
+                Some(378),
                 [None, Some(363), Some(378), Some(382)],
                 false,
                 Some(378),
@@ -6636,7 +6924,7 @@ mod test {
                  has no figure, and the buy scope's is not its figure"
             );
             assert!(
-                r.revenue_fell_back,
+                r.fell_back(),
                 "the selected signal did not come from the sell place"
             );
             // The fixture lists every item NQ at `100 + (id % 97) * 7` on
@@ -6644,7 +6932,7 @@ mod test {
             // row rather than merely "some number".
             let out = r.recipe.item_result;
             assert_eq!(
-                r.market_price,
+                r.price().unwrap(),
                 100 + (out % 97) * 7,
                 "the price must come from the buy-scope base layer"
             );
@@ -6674,8 +6962,8 @@ mod test {
                 continue;
             }
             assert_ne!(
-                (r.market_price, r.rev_alt),
-                (a.market_price, a.rev_alt),
+                (r.price().unwrap(), r.rev_alt),
+                (a.price().unwrap(), a.rev_alt),
                 "recipe {}: a missing body must not price like a present one",
                 r.recipe.key_id.0
             );
@@ -6732,19 +7020,30 @@ mod test {
                 match (r.rev_alt[li], h.rev_alt[li]) {
                     (None, Some(_)) => {
                         fell_through += 1;
-                        assert!(
-                            r.market_price > 0,
-                            "the base layer must keep a scope-missing row priceable"
-                        );
+                        // Priceable via the base (buy-scope) listing layer
+                        // — unless the row is unpriced outright (a
+                        // sale-stat signal with no sale row anywhere for
+                        // it), which is a real "no revenue" state this
+                        // pattern does not rule out.
+                        if let Some(rp) = r.price() {
+                            assert!(
+                                rp > 0,
+                                "the base layer must keep a scope-missing row priceable"
+                            );
+                        }
                     }
                     (Some(s), Some(hh)) if s < hh => cheaper += 1,
                     (Some(s), Some(hh)) if s > hh => dearer += 1,
                     pair => panic!("{signal:?}: undiscriminating row {pair:?}"),
                 }
-                match r.market_price.cmp(&h.market_price) {
-                    Ordering::Less => price_down += 1,
-                    Ordering::Greater => price_up += 1,
-                    Ordering::Equal => {}
+                // An unpriced pair (no sale row for the selected stat) has
+                // no headline price to compare.
+                if let (Some(rp), Some(hp)) = (r.price(), h.price()) {
+                    match rp.cmp(&hp) {
+                        Ordering::Less => price_down += 1,
+                        Ordering::Greater => price_up += 1,
+                        Ordering::Equal => {}
+                    }
                 }
             }
             assert!(
@@ -6778,13 +7077,17 @@ mod test {
                     let Some(stat) = r.rev_alt[signal.index()] else {
                         continue;
                     };
+                    // A row with a sell-place statistic is priced (never
+                    // unpriced: `unpriced` requires that statistic to be
+                    // absent), so this unwrap is safe.
+                    let price = r.price().unwrap();
                     assert!(
-                        r.market_price <= stat,
+                        price <= stat,
                         "row {} priced at {} above its own sell-place {signal:?} of {stat}",
                         r.recipe.key_id.0,
-                        r.market_price
+                        price
                     );
-                    priced_at_the_sell_places_statistic += usize::from(r.market_price == stat);
+                    priced_at_the_sell_places_statistic += usize::from(price == stat);
                 }
                 assert!(
                     priced_at_the_sell_places_statistic > 0,
@@ -6896,11 +7199,14 @@ mod test {
             scoped.iter().all(|r| r.sell_median.is_none()),
             "a wider sell scope must leave the median tell's operand empty"
         );
-        // ...and the note therefore never carries a percentage.
+        // ...and the note therefore never carries a percentage. Unpriced
+        // rows (no sale row for the widened scope's stat) have no price to
+        // note at all.
         for r in &scoped {
+            let Some(price) = r.price() else { continue };
             assert!(
                 !matches!(
-                    price_note(r.market_price, r.sell_median, r.revenue_fell_back),
+                    price_note(price, r.sell_median, r.fell_back()),
                     CellNote::VsMedian { .. } | CellNote::Troll { .. }
                 ),
                 "row {} still renders a median tell",
@@ -7045,10 +7351,18 @@ mod test {
         Arc::new(RecipeProfitData {
             stats_failed: StatFailures::default(),
             recipe,
-            profit,
-            return_on_investment: roi,
+            revenue: Revenue::Priced {
+                price: 2,
+                fell_back: false,
+            },
+            line: Some(ProfitLine {
+                revenue: 2,
+                tax: 0,
+                cost: 1,
+                profit,
+                roi,
+            }),
             cost: 1,
-            market_price: 2,
             cheapest_world_id: world,
             sub_crafts: vec![],
             daily_sales: daily,
@@ -7058,15 +7372,15 @@ mod test {
             last_sold_unix: 0,
             units_sold: 0,
             has_sell_stats: false,
+            sold_in_window: false,
+            window_last_sold_unix: None,
             vwap: 0,
             vwap_pct: None,
-            tax: 0,
             confidence: ConfidenceBand::Unknown,
             stat_hq: false,
             cost_alt: [None; 4],
             rev_alt: [None; 4],
             sell_median: None,
-            revenue_fell_back: false,
             unpriced: 0,
             hop: None,
             worlds: None,
@@ -7099,7 +7413,7 @@ mod test {
         // ascending; indexes renumbered.
         let got: Vec<(usize, i32, i32)> = out
             .iter()
-            .map(|(i, r)| (*i, r.profit, r.recipe.key_id.0))
+            .map(|(i, r)| (*i, r.profit().unwrap(), r.recipe.key_id.0))
             .collect();
         assert_eq!(
             got,
@@ -7112,8 +7426,57 @@ mod test {
         );
         // Ascending flips the order but keeps the same tiebreak direction.
         let out = sort_recipes(&rows, SortMode::Profit, SortDir::Asc, None);
-        assert_eq!(out[1].1.profit, 200);
+        assert_eq!(out[1].1.profit().unwrap(), 200);
         assert_eq!(out[1].1.recipe.key_id.0, keys[2]);
+    }
+
+    fn unpriced_row(key: i32, daily: f32) -> Arc<RecipeProfitData> {
+        let mut r = Arc::try_unwrap(row(key, 0, 0, daily, 1)).ok().unwrap();
+        r.revenue = Revenue::Unpriced;
+        r.line = None;
+        Arc::new(r)
+    }
+
+    /// An unpriced row has nothing to rank: it trails every priced row
+    /// whatever the header points at, in both directions — even under
+    /// Velocity, where its own daily rate would otherwise put it first.
+    #[test]
+    fn unpriced_rows_sort_last_under_every_mode_and_direction() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(3)
+            .map(|r| r.key_id.0)
+            .collect();
+        let rows = vec![
+            unpriced_row(keys[0], 9.0),
+            row(keys[1], 100, 10, 1.0, 7),
+            row(keys[2], 300, 30, 0.5, 8),
+        ];
+        let modes = [
+            SortMode::Profit,
+            SortMode::Roi,
+            SortMode::Price,
+            SortMode::Tax,
+            SortMode::Velocity,
+            SortMode::CostPerUnit,
+            SortMode::ProfitPerDay,
+            SortMode::LastSold,
+        ];
+        for (i, mode) in modes.into_iter().enumerate() {
+            for dir in [SortDir::Asc, SortDir::Desc] {
+                let out = sort_recipes(&rows, mode, dir, None);
+                assert_eq!(
+                    out.last().unwrap().1.recipe.key_id.0,
+                    keys[0],
+                    "mode #{i} {dir:?}: the unpriced row must be last"
+                );
+                assert!(out[..2].iter().all(|(_, r)| r.line.is_some()));
+            }
+        }
+        // Priced rows still order among themselves.
+        let out = sort_recipes(&rows, SortMode::Profit, SortDir::Desc, None);
+        assert_eq!(out[0].1.profit(), Some(300));
+        assert_eq!(out[1].1.profit(), Some(100));
     }
 
     /// The old row-filter keys are read as the grid's metric filters on the
@@ -7373,7 +7736,10 @@ mod test {
         owner.with(|| {
             let key = fixture_recipes()[0].key_id.0;
             let mut home = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
-            home.market_price = 150;
+            home.revenue = Revenue::Priced {
+                price: 150,
+                fell_back: false,
+            };
             let item = home.recipe.item_result;
             let mut scoped = home.clone();
             scoped.price_is_sell_world = false;
@@ -7472,9 +7838,12 @@ mod test {
 
     fn price_row(key: i32, price: i32, median: Option<i32>, fell_back: bool) -> RecipeRow {
         let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
-        r.market_price = price;
+        r.revenue = Revenue::Priced { price, fell_back };
+        r.line = r.line.map(|l| ProfitLine {
+            revenue: price,
+            ..l
+        });
         r.sell_median = median;
-        r.revenue_fell_back = fell_back;
         Arc::new(r)
     }
 
@@ -7488,7 +7857,7 @@ mod test {
         assert_eq!(
             cell_price(&price_row(key, 138, Some(100), false), &ctx),
             CellValue::GilWithNote {
-                amount: 138,
+                amount: Some(138),
                 note: CellNote::VsMedian {
                     listing: false,
                     pct: 38.0
@@ -7499,7 +7868,7 @@ mod test {
         assert_eq!(
             cell_price(&price_row(key, 75, Some(100), true), &ctx),
             CellValue::GilWithNote {
-                amount: 75,
+                amount: Some(75),
                 note: CellNote::VsMedian {
                     listing: true,
                     pct: -25.0
@@ -7532,7 +7901,7 @@ mod test {
         assert_eq!(
             cell_price(&price_row(key, 100, None, true), &ctx),
             CellValue::GilWithNote {
-                amount: 100,
+                amount: Some(100),
                 note: CellNote::ListingFallback
             }
         );
@@ -7540,7 +7909,7 @@ mod test {
         assert_eq!(
             cell_price(&price_row(key, 100, Some(100), false), &ctx),
             CellValue::GilWithNote {
-                amount: 100,
+                amount: Some(100),
                 note: CellNote::None
             }
         );
@@ -7556,7 +7925,10 @@ mod test {
         let key = fixture_recipes()[0].key_id.0;
         let ctx = test_ctx();
         let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
-        r.market_price = 40_000_000;
+        r.revenue = Revenue::Priced {
+            price: 40_000_000,
+            fell_back: false,
+        };
         // The alternative-revenue column's basis: present, and wildly below
         // the price. Under #1264 this alone rendered "+399900%" in emerald.
         r.rev_alt[PriceSignal::SaleMedian.index()] = Some(10_000);
@@ -7564,7 +7936,7 @@ mod test {
         assert_eq!(
             cell_price(&Arc::new(r), &ctx),
             CellValue::GilWithNote {
-                amount: 40_000_000,
+                amount: Some(40_000_000),
                 note: CellNote::None
             },
             "no quality-matched median means no tell, whatever rev_alt holds"
@@ -7626,7 +7998,7 @@ mod test {
         assert_eq!(
             cell_price(&price_row(key, 40_000_000, Some(10_000), true), &ctx),
             CellValue::GilWithNote {
-                amount: 40_000_000,
+                amount: Some(40_000_000),
                 note: CellNote::Troll { listing: true }
             }
         );
@@ -8149,6 +8521,331 @@ mod test {
         });
     }
 
+    /// The prod shape of 2026-09-18 (Gilgamesh, item 13047): the output
+    /// has no listing and no sale on the sell world, and exactly one
+    /// listing elsewhere on the buy scope, at a troll price. Returns the
+    /// rows the pass kept (zero or one). `output_history` = the HQ
+    /// output's `(last_sold_unix, num_sold)` on the sell world, priced at
+    /// 50,000; `None` = never sold.
+    fn evidence_fixture(
+        revenue: PriceSignal,
+        output_history: Option<(i64, i64)>,
+        sold_only: bool,
+        last_sold_within_secs: Option<u64>,
+        revenue_body: bool,
+    ) -> Vec<RecipeProfitData> {
+        static RECIPE: Recipe = Recipe {
+            key_id: xiv_gen::RecipeId(9999100),
+            item_result: 9999101,
+            amount_result: 1,
+            ingredient: [9999102, 0, 0, 0, 0, 0, 0, 0],
+            amount_ingredient: [1, 0, 0, 0, 0, 0, 0, 0],
+            craft_type: 0,
+            recipe_level_table: 0,
+        };
+        let listing = |item_id, hq, cheapest_price, world_id| CheapestListingItem {
+            item_id,
+            hq,
+            cheapest_price,
+            world_id,
+        };
+        // The buy scope (a datacenter): the ingredient at home, the output
+        // only on another world.
+        let buy = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![
+                listing(9999102, false, 10, 1),
+                listing(RECIPE.item_result, true, 24_999_999, 2),
+            ],
+        });
+        // The sell world: the ingredient only.
+        let sell = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![listing(9999102, false, 10, 1)],
+        });
+        let stat = |item_id, hq, price, last_sold_unix, num_sold| ItemSaleStats {
+            item_id,
+            hq,
+            min_price: price,
+            median_price: price,
+            avg_price: price,
+            vwap: price,
+            units_sold: num_sold as u64,
+            num_sold,
+            last_sold_unix,
+            ..Default::default()
+        };
+        let mut stats: StatsIndex = HashMap::new();
+        stats.insert((9999102, false), stat(9999102, false, 10, 1_699_990_000, 7));
+        if let Some((last_sold_unix, num_sold)) = output_history {
+            stats.insert(
+                (RECIPE.item_result, true),
+                stat(RECIPE.item_result, true, 50_000, last_sold_unix, num_sold),
+            );
+        }
+        let formula = ProfitFormula::recipe_from_query(None, Some(revenue), None)
+            .effective(false, revenue_body);
+        let (rows, _) = price_rows(&PriceInputs {
+            stats_failed: StatFailures::default(),
+            recipes: &[&RECIPE],
+            recipe_level_tables: &xiv_gen_db::data().recipe_level_tables,
+            recipes_by_output: &HashMap::new(),
+            buy_listings: &buy,
+            sell_listings: Some(&sell),
+            buy_stats: None,
+            sell_stats: &stats,
+            sell_window_stats: Some(&stats),
+            revenue_listings: Some(&sell),
+            revenue_stats: revenue_body.then_some(&stats),
+            raw_sales: &HashMap::new(),
+            formula,
+            levels: &CrafterLevels::default(),
+            job_filter: None,
+            use_subcrafts: false,
+            require_hq: false,
+            filter_outliers: false,
+            sold_only,
+            last_sold_within_secs,
+            now_unix: 1_700_000_000,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: None,
+            needs: &needed_signals(&formula, &SignalWants::default(), false),
+            home_world_id: 1,
+            dc_of: &|_| None,
+        });
+        rows
+    }
+
+    #[test]
+    fn sale_stat_revenue_with_no_sale_row_is_unpriced_not_a_listing() {
+        let rows = evidence_fixture(PriceSignal::SaleMedian, None, false, None, true);
+        assert_eq!(rows.len(), 1, "the row is kept, not dropped");
+        let r = &rows[0];
+        assert_eq!(r.revenue, Revenue::Unpriced);
+        assert_eq!(r.line, None);
+        assert_eq!(r.price(), None);
+        assert_eq!(r.profit(), None);
+        assert_eq!(r.roi(), None);
+        assert_eq!(r.tax(), None);
+        assert!(!r.fell_back());
+        assert_eq!(r.cost, 10, "the cost side still prices from the buy scope");
+        assert_eq!(
+            r.revenue_world_id, 0,
+            "no listing world for a price that does not exist"
+        );
+        assert_eq!(r.vwap_pct, None);
+        let row: RecipeRow = Arc::new(r.clone());
+        assert_eq!(
+            cell_price(&row, &test_ctx()),
+            CellValue::GilWithNote {
+                amount: None,
+                note: CellNote::NoSales
+            }
+        );
+        assert_eq!(cell_roi(&row, &test_ctx()), CellValue::RoiBadge(None));
+        assert_eq!(
+            cell_tax(&row, &test_ctx()),
+            CellValue::GilWithNote {
+                amount: None,
+                note: CellNote::NoSales
+            }
+        );
+        assert_eq!(profit_query_value(r), GridValue::Missing);
+    }
+
+    /// Only a sellable result survives as unpriced. A recipe whose output
+    /// cannot be listed on the market board (search category 0) has no
+    /// sales by definition and must not become a "no sales in window" row;
+    /// with every job at cap that was ~6,000 rows on Gilgamesh.
+    #[test]
+    fn an_unsellable_result_is_dropped_rather_than_kept_unpriced() {
+        let data = xiv_gen_db::data();
+        let recipe = data
+            .recipes
+            .values()
+            .find(|r| {
+                r.item_result != 0
+                    && data
+                        .items
+                        .get(&ItemId(r.item_result))
+                        .is_some_and(|item| item.item_search_category == 0)
+            })
+            .expect("the pack has a recipe for an unlistable item");
+        let empty_listings = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: Vec::new(),
+        });
+        let stats: StatsIndex = HashMap::new();
+        let formula = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None)
+            .effective(false, true);
+        let (rows, _) = price_rows(&PriceInputs {
+            stats_failed: StatFailures::default(),
+            recipes: &[recipe],
+            recipe_level_tables: &data.recipe_level_tables,
+            recipes_by_output: &HashMap::new(),
+            buy_listings: &empty_listings,
+            sell_listings: Some(&empty_listings),
+            buy_stats: None,
+            sell_stats: &stats,
+            sell_window_stats: Some(&stats),
+            revenue_listings: Some(&empty_listings),
+            revenue_stats: Some(&stats),
+            raw_sales: &HashMap::new(),
+            formula,
+            levels: &CrafterLevels::default(),
+            job_filter: None,
+            use_subcrafts: false,
+            require_hq: false,
+            filter_outliers: false,
+            sold_only: false,
+            last_sold_within_secs: None,
+            now_unix: 1_700_000_000,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: None,
+            needs: &needed_signals(&formula, &SignalWants::default(), false),
+            home_world_id: 1,
+            dc_of: &|_| None,
+        });
+        assert!(
+            rows.is_empty(),
+            "recipe {} for unlistable item {} was kept unpriced",
+            recipe.key_id.0,
+            recipe.item_result
+        );
+    }
+
+    #[test]
+    fn a_sale_row_in_the_window_prices_the_row_from_the_statistic() {
+        let rows = evidence_fixture(
+            PriceSignal::SaleMedian,
+            Some((1_699_000_000, 3)),
+            false,
+            None,
+            true,
+        );
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(
+            r.revenue,
+            Revenue::Priced {
+                price: 50_000,
+                fell_back: false
+            }
+        );
+        assert_eq!(r.line.map(|l| l.revenue), Some(50_000));
+        assert_eq!(
+            profit_query_value(r),
+            GridValue::Number(f64::from(r.profit().unwrap()))
+        );
+        // The price came from the sell place's own statistic, not a
+        // listing: the buy scope's listing on world 2 must not leak in as
+        // this row's revenue world.
+        assert_eq!(
+            r.revenue_world_id, 0,
+            "a statistic-priced row reports no listing world, even though \
+             a buy-scope listing exists"
+        );
+    }
+
+    #[test]
+    fn listing_revenue_keeps_the_buy_scope_fallback_and_its_tell() {
+        let rows = evidence_fixture(PriceSignal::ListingMin, None, false, None, true);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(
+            r.revenue,
+            Revenue::Priced {
+                price: 24_999_999,
+                fell_back: true
+            }
+        );
+        assert_eq!(r.line.map(|l| l.revenue), Some(24_999_999));
+        assert_eq!(r.revenue_world_id, 2);
+    }
+
+    #[test]
+    fn sold_in_window_hides_rows_with_no_sale_on_the_sell_place() {
+        // No output history: hidden under the toggle, kept (unpriced) without it.
+        assert!(evidence_fixture(PriceSignal::SaleMedian, None, true, None, true).is_empty());
+        let kept = evidence_fixture(PriceSignal::SaleMedian, None, false, None, true);
+        assert_eq!(kept.len(), 1);
+        assert!(!kept[0].sold_in_window);
+        assert_eq!(kept[0].window_last_sold_unix, None);
+        // The toggle reads the sale body, not the price: a listing revenue
+        // is hidden the same way.
+        assert!(evidence_fixture(PriceSignal::ListingMin, None, true, None, true).is_empty());
+        // A sale in the window passes and records when.
+        let rows = evidence_fixture(
+            PriceSignal::ListingMin,
+            Some((1_699_000_000, 3)),
+            true,
+            None,
+            true,
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].sold_in_window);
+        assert_eq!(rows[0].window_last_sold_unix, Some(1_699_000_000));
+    }
+
+    /// The recency filter reads the window body (Task 3's evidence), not
+    /// the seven-day context, so at a 90-day window a sale 30 days ago
+    /// passes and one 176 days ago does not.
+    #[test]
+    fn last_sold_within_is_inclusive_and_reads_the_window_body() {
+        let now = 1_700_000_000_i64;
+        let day = 86_400_i64;
+        let within_90d = Some(90 * 86_400_u64);
+        let at = |days_ago: i64| Some((now - days_ago * day, 2_i64));
+        assert_eq!(
+            evidence_fixture(PriceSignal::SaleMedian, at(30), false, within_90d, true).len(),
+            1
+        );
+        // Exactly on the bound: kept (inclusive, the repo convention).
+        assert_eq!(
+            evidence_fixture(PriceSignal::SaleMedian, at(90), false, within_90d, true).len(),
+            1
+        );
+        assert!(
+            evidence_fixture(PriceSignal::SaleMedian, at(176), false, within_90d, true).is_empty()
+        );
+        assert!(
+            evidence_fixture(PriceSignal::SaleMedian, None, false, within_90d, true).is_empty()
+        );
+        // No filter: everything kept.
+        assert_eq!(
+            evidence_fixture(PriceSignal::SaleMedian, None, false, None, true).len(),
+            1
+        );
+        // The URL value is a humantime duration, like the flip finder's.
+        assert_eq!(
+            humantime::parse_duration("90d").map(|d| d.as_secs()).ok(),
+            within_90d
+        );
+        // A bare integer is read as days, not seconds.
+        assert_eq!(last_sold_within_secs(Some("90")), Some(90 * 86_400));
+        assert_eq!(last_sold_within_secs(Some(" ")), None);
+    }
+
+    /// Without the revenue body (`RecipeNeeds::evidence` not yet wired up),
+    /// both row filters must be no-ops: dropping rows against the wrong
+    /// body is worse than not filtering. `.effective(false, false)`
+    /// downgrades the sale signal to a listing, matching what the formula
+    /// itself does when the stats it would read are not loaded.
+    #[test]
+    fn evidence_filters_are_inactive_without_the_revenue_body() {
+        let rows = evidence_fixture(
+            PriceSignal::SaleMedian,
+            None,
+            true,
+            Some(90 * 86_400),
+            false,
+        );
+        assert_eq!(
+            rows.len(),
+            1,
+            "sold_only and last_sold_within must not drop rows when the revenue body is absent"
+        );
+        assert!(!rows[0].sold_in_window);
+        assert_eq!(rows[0].window_last_sold_unix, None);
+    }
+
     /// One deterministic recipe with independent ingredient and output prices.
     /// Its synthetic IDs deliberately have no vendor or shard special cases.
     fn quality_fixture(
@@ -8284,6 +8981,9 @@ mod test {
             use_subcrafts: false,
             require_hq,
             filter_outliers: false,
+            sold_only: false,
+            last_sold_within_secs: None,
+            now_unix: 1_700_000_000,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
             needs: &needed_signals(
@@ -8324,13 +9024,13 @@ mod test {
                     );
                     let sale = signal.sale_stat().is_some();
                     let price = if sale { 120 } else { 80 };
-                    assert_eq!(row.market_price, price);
+                    assert_eq!(row.price().unwrap(), price);
                     assert!(
                         row.stat_hq,
                         "the wider market selects HQ even though home selects NQ"
                     );
                     assert_eq!(row.cost, if require_hq { 20 } else { 10 });
-                    assert_eq!(row.profit, price * 95 / 100 - row.cost);
+                    assert_eq!(row.profit().unwrap(), price * 95 / 100 - row.cost);
                     assert_eq!(
                         row.vwap, 550,
                         "VWAP stays on the home world's winning-quality history"
@@ -8373,12 +9073,12 @@ mod test {
                         history: (!missing_body).then_some(&[(false, 200)][..]),
                     }),
                 );
-                assert_eq!(row.market_price, if missing_body { 100 } else { 80 });
+                assert_eq!(row.price().unwrap(), if missing_body { 100 } else { 80 });
                 assert_eq!(row.stat_hq, !missing_body);
                 assert_eq!(row.vwap, if missing_body { 110 } else { 550 });
                 assert_eq!(row.sell_median, None);
                 assert_eq!(row.vwap_pct, None);
-                assert!(row.revenue_fell_back);
+                assert!(row.fell_back());
                 assert!(!row.price_is_sell_world);
                 assert_eq!(row.daily_sales, 2.0);
             }
@@ -8403,9 +9103,9 @@ mod test {
                     PriceSignal::ListingMin,
                 );
                 let median = if expected_hq { 45_000 } else { 100 };
-                assert_eq!(r.market_price, price);
+                assert_eq!(r.price().unwrap(), price);
                 assert_eq!(r.cost, if require_hq { 20 } else { 10 });
-                assert_eq!(r.profit, price * 95 / 100 - r.cost);
+                assert_eq!(r.profit().unwrap(), price * 95 / 100 - r.cost);
                 assert_eq!(r.stat_hq, expected_hq);
                 assert_eq!(r.sell_median, Some(median));
                 assert_eq!(r.vwap, median);
@@ -8456,10 +9156,10 @@ mod test {
             PriceSignal::SaleMedian,
         );
         assert_eq!(
-            (r.market_price, r.stat_hq, r.sell_median),
+            (r.price().unwrap(), r.stat_hq, r.sell_median),
             (200, true, Some(200))
         );
-        assert!(!r.revenue_fell_back);
+        assert!(!r.fell_back());
         let r = quality_fixture(
             Some(100),
             Some(40_000),
@@ -8468,11 +9168,11 @@ mod test {
             PriceSignal::SaleMedian,
         );
         assert_eq!(
-            (r.market_price, r.stat_hq, r.sell_median),
+            (r.price().unwrap(), r.stat_hq, r.sell_median),
             (100, false, None)
         );
         assert_eq!(r.vwap_pct, None);
-        assert!(r.revenue_fell_back);
+        assert!(r.fell_back());
     }
 
     #[test]
@@ -8888,7 +9588,7 @@ mod test {
             cost_alt_cell(&data, &ctx, PriceSignal::ListingMin),
             listing_cost
         );
-        assert_eq!(data.profit, 100);
+        assert_eq!(data.profit().unwrap(), 100);
     }
 
     #[test]
@@ -10330,6 +11030,9 @@ mod test {
                 use_subcrafts: !sub_recipes.is_empty(),
                 require_hq,
                 filter_outliers: false,
+                sold_only: false,
+                last_sold_within_secs: None,
+                now_unix: 1_700_000_000,
                 shards: ShardsMode::ExcludeShards,
                 on_hand: None,
                 needs: &needed_signals(&formula, &SignalWants::default(), false),
