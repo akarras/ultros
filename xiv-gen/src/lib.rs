@@ -397,6 +397,10 @@ pub struct SpecialShop {
     pub item_receive_1: Vec<u16>,
     #[xiv_gen(column = "Item[{}].ReceiveCount[1]", count = 60)]
     pub count_receive_1: Vec<u32>,
+    /// The item paid, as an item id. In the sheet a tomestone or scrip cost is
+    /// not an item id but an index (`Item[n].CostType[k]` 2 or 3, see
+    /// `csv_to_rkyv::resolve_currency_costs`); the pack generator rewrites
+    /// those to the item they stand for, so every value here is an `Item` key.
     #[xiv_gen(column = "Item[{}].ItemCost[0]", count = 60)]
     pub item_cost_0: Vec<u16>,
     #[xiv_gen(column = "Item[{}].CurrencyCost[0]", count = 60)]
@@ -409,6 +413,68 @@ pub struct SpecialShop {
     pub item_cost_2: Vec<u16>,
     #[xiv_gen(column = "Item[{}].CurrencyCost[2]", count = 60)]
     pub count_cost_2: Vec<u32>,
+}
+
+/// One line of a special shop: what is handed over and what it costs, with
+/// the empty slots of the sheet's fixed-width layout already dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecialShopEntry {
+    /// Slot index within the shop, for stable keys.
+    pub slot: usize,
+    pub receive: Vec<(ItemId, u32)>,
+    pub cost: Vec<(ItemId, u32)>,
+}
+
+impl SpecialShop {
+    /// The shop's trades in slot order, skipping slots that hand over nothing.
+    /// A trade with no cost at all is kept (a handful of quest hand-outs are
+    /// modelled that way).
+    pub fn entries(&self) -> impl Iterator<Item = SpecialShopEntry> + '_ {
+        let pair = |items: &[u16], counts: &[u32], slot: usize| -> Option<(ItemId, u32)> {
+            let item = *items.get(slot)?;
+            (item != 0).then(|| (ItemId(item as i32), counts.get(slot).copied().unwrap_or(0)))
+        };
+        (0..self.item_receive_0.len().max(self.item_receive_1.len())).filter_map(move |slot| {
+            let receive: Vec<_> = [
+                pair(&self.item_receive_0, &self.count_receive_0, slot),
+                pair(&self.item_receive_1, &self.count_receive_1, slot),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if receive.is_empty() {
+                return None;
+            }
+            let cost = [
+                pair(&self.item_cost_0, &self.count_cost_0, slot),
+                pair(&self.item_cost_1, &self.count_cost_1, slot),
+                pair(&self.item_cost_2, &self.count_cost_2, slot),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            Some(SpecialShopEntry {
+                slot,
+                receive,
+                cost,
+            })
+        })
+    }
+}
+
+/// The scrip a `CollectablesShopRewardScrip.Currency` value (or a
+/// `SpecialShop` scrip-index cost) stands for. The numbering is the game's
+/// own and has no sheet: `2`/`4` are the purple crafter/gatherer pair and
+/// `6`/`7` the orange (level 100) pair; `2`/`4` were the white scrips until
+/// 7.0 retired them, and the rows still using them are purple exchanges now.
+pub fn scrip_item(currency: u32) -> Option<ItemId> {
+    match currency {
+        2 => Some(ItemId(33913)), // Purple Crafters' Scrip
+        4 => Some(ItemId(33914)), // Purple Gatherers' Scrip
+        6 => Some(ItemId(41784)), // Orange Crafters' Scrip
+        7 => Some(ItemId(41785)), // Orange Gatherers' Scrip
+        _ => None,
+    }
 }
 
 #[derive(
@@ -1196,6 +1262,10 @@ pub struct RecipeLevelTable {
 pub struct CollectablesShop {
     #[xiv_gen(column = "#")]
     pub key_id: CollectablesShopId,
+    /// Named for the material exchanges; the scrip counters' rows carry a
+    /// Japanese label in every locale, so never title those by it.
+    #[xiv_gen(column = "Name")]
+    pub name: String,
     /// The `CollectablesShopItem` groups this shop offers, i.e. the integer half
     /// of that sheet's `<group>.<index>` key. Trailing slots are `0`.
     #[xiv_gen(column = "ShopItems[{}]", count = 11)]
@@ -1316,6 +1386,18 @@ pub struct Data {
     /// `ENpcResident` row (the ones that can actually be displayed), sorted
     /// ascending so render order is stable between SSR and hydration.
     pub gil_shop_npcs: HashMap<GilShopId, Vec<ENpcResidentId>>,
+    /// Which NPCs offer each special shop (currency and item exchanges), built
+    /// the same way as [`Data::gil_shop_npcs`] and by the same walk. Special
+    /// shops sit behind two more kinds of handler than gil shops do: the
+    /// tabbed scrip/tomestone exchanges are `InclusionShop`s (category ->
+    /// series -> special shop), and a few dozen sit in a `CustomTalk` script's
+    /// arguments or nested handlers. See `csv_to_rkyv::ShopRoutes`.
+    pub special_shop_npcs: HashMap<SpecialShopId, Vec<ENpcResidentId>>,
+    /// Which NPCs run each collectables shop. The material exchanges reference
+    /// their shop from an NPC data slot like any other; the scrip turn-in
+    /// counters (Collectable Appraisers) are all one `CustomTalk` script, so
+    /// they are attributed to every `RewardType = 1` shop by rule.
+    pub collectables_shop_npcs: HashMap<CollectablesShopId, Vec<ENpcResidentId>>,
     pub item_search_categorys: HashMap<ItemSearchCategoryId, ItemSearchCategory>,
     pub item_ui_categorys: HashMap<ItemUiCategoryId, ItemUiCategory>,
     pub item_sort_categorys: HashMap<ItemSortCategoryId, ItemSortCategory>,
@@ -1338,9 +1420,9 @@ pub struct Data {
     pub place_names: HashMap<PlaceNameId, PlaceName>,
     pub maps: HashMap<MapId, Map>,
     pub territory_types: HashMap<TerritoryTypeId, TerritoryType>,
-    /// Placements of the NPCs the app can show: gil-shop vendors and leve
-    /// issuers. Sorted by (territory, x, y) so render order is stable between
-    /// SSR and hydration.
+    /// Placements of the NPCs the app can show: gil-shop vendors, exchange
+    /// and collectables NPCs, and leve issuers. Sorted by (territory, x, y)
+    /// so render order is stable between SSR and hydration.
     pub npc_placements: HashMap<ENpcResidentId, Vec<NpcPlacement>>,
     /// Which NPCs offer each leve, from Teamcraft's hand-kept levemete table
     /// (`data/npc-locations/leve-issuers.json`). `Leve.LevelLevemete` is the
@@ -1564,6 +1646,58 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn special_shop_entries_skip_empty_slots_and_keep_free_trades() {
+        let mut shop = SpecialShop {
+            key_id: SpecialShopId(1),
+            name: String::new(),
+            item: vec![0; 60],
+            item_receive_0: vec![0; 60],
+            count_receive_0: vec![0; 60],
+            item_receive_1: vec![0; 60],
+            count_receive_1: vec![0; 60],
+            item_cost_0: vec![0; 60],
+            count_cost_0: vec![0; 60],
+            item_cost_1: vec![0; 60],
+            count_cost_1: vec![0; 60],
+            item_cost_2: vec![0; 60],
+            count_cost_2: vec![0; 60],
+        };
+        // slot 0: two items received for two costs; slot 2: one item for nothing
+        shop.item_receive_0[0] = 100;
+        shop.count_receive_0[0] = 3;
+        shop.item_receive_1[0] = 101;
+        shop.count_receive_1[0] = 1;
+        shop.item_cost_0[0] = 33913;
+        shop.count_cost_0[0] = 250;
+        shop.item_cost_2[0] = 5;
+        shop.count_cost_2[0] = 9;
+        shop.item_receive_0[2] = 102;
+        shop.count_receive_0[2] = 1;
+        // a cost with nothing received is not a trade
+        shop.item_cost_0[3] = 7;
+        shop.count_cost_0[3] = 1;
+        let entries: Vec<_> = shop.entries().collect();
+        assert_eq!(
+            entries,
+            vec![
+                SpecialShopEntry {
+                    slot: 0,
+                    receive: vec![(ItemId(100), 3), (ItemId(101), 1)],
+                    cost: vec![(ItemId(33913), 250), (ItemId(5), 9)],
+                },
+                SpecialShopEntry {
+                    slot: 2,
+                    receive: vec![(ItemId(102), 1)],
+                    cost: vec![],
+                },
+            ]
+        );
+        assert_eq!(scrip_item(2), Some(ItemId(33913)));
+        assert_eq!(scrip_item(7), Some(ItemId(41785)));
+        assert_eq!(scrip_item(0), None);
+    }
 
     fn new_gridania() -> Map {
         Map {

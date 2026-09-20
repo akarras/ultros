@@ -81,6 +81,96 @@ fn en_pack_carries_the_derived_vendor_fields() {
     );
 }
 
+/// The exchange indexes and the tomestone/scrip cost rewrite come from sheets
+/// read only at generation (`InclusionShop*`, `CustomTalk*`, `TomestonesItem`
+/// and `SpecialShop.CostType`). Losing any of them is silent at runtime: the
+/// scrip exchange NPC pages go empty, or a Purple Scrip item goes back to
+/// costing "250 x Fire Shard".
+#[test]
+fn en_pack_carries_the_exchange_indexes_and_resolved_costs() {
+    let Some(data) = decode_en_pack("en_pack_carries_the_exchange_indexes_and_resolved_costs")
+    else {
+        return;
+    };
+    let npcs_of = |shop: i32| {
+        data.special_shop_npcs
+            .get(&xiv_gen::SpecialShopId(shop))
+            .cloned()
+            .unwrap_or_default()
+    };
+    // Purple Scrip Exchange (Lv. 90 Materials): behind the InclusionShop
+    // window of every scrip exchange NPC, and the cost row of item 39595.
+    let scrip_exchange = xiv_gen::ENpcResidentId(1001617);
+    assert!(
+        npcs_of(1770488).contains(&scrip_exchange),
+        "{:?}",
+        npcs_of(1770488)
+    );
+    let scrip_shops = data
+        .special_shop_npcs
+        .iter()
+        .filter(|(_, npcs)| npcs.contains(&scrip_exchange))
+        .count();
+    assert!(
+        scrip_shops > 40,
+        "scrip exchange offers {scrip_shops} shops"
+    );
+    let purple = &data.special_shops[&xiv_gen::SpecialShopId(1770488)];
+    let slot = purple
+        .item_receive_0
+        .iter()
+        .position(|i| *i == 39595)
+        .expect("item 39595 left the Purple Scrip Exchange");
+    assert_eq!(
+        (purple.item_cost_0[slot], purple.count_cost_0[slot]),
+        (33913, 250),
+        "Purple Crafters' Scrip cost"
+    );
+    // Allagan Tomestones of Poetics (DoW, IL 630): a tomestone index cost.
+    let poetics = &data.special_shops[&xiv_gen::SpecialShopId(1770606)];
+    assert!(
+        poetics.item_cost_0.contains(&28) && !poetics.item_cost_0.contains(&1),
+        "{:?}",
+        &poetics.item_cost_0[..5]
+    );
+    // Seika (Kugane) reaches her reoutfitting shops only through a CustomTalk
+    // argument; the Grand Company quartermasters only through nested handlers.
+    assert!(npcs_of(1769572).contains(&xiv_gen::ENpcResidentId(1013747)));
+    assert!(npcs_of(1770340).contains(&xiv_gen::ENpcResidentId(1000200)));
+    // Every Collectable Appraiser runs one script; the scrip turn-in shops are
+    // attributed by rule, the material exchanges by their own slot.
+    let appraiser = xiv_gen::ENpcResidentId(1001616);
+    assert!(
+        data.collectables_shop_npcs[&xiv_gen::CollectablesShopId(3866626)].contains(&appraiser)
+    );
+    assert_eq!(
+        data.collectables_shop_npcs[&xiv_gen::CollectablesShopId(3866630)],
+        vec![xiv_gen::ENpcResidentId(1027566)],
+        "Limbeth, Resplendent Materials Exchange"
+    );
+    let lists = data
+        .special_shop_npcs
+        .values()
+        .map(|npcs| ("special", npcs))
+        .chain(
+            data.collectables_shop_npcs
+                .values()
+                .map(|npcs| ("collectables", npcs)),
+        );
+    for (name, npcs) in lists {
+        assert!(!npcs.is_empty(), "{name}: an indexed shop names no NPC");
+        assert!(
+            npcs.windows(2).all(|w| w[0].0 < w[1].0),
+            "{name}: NPC list not sorted+deduped: {npcs:?}"
+        );
+    }
+    // The placements walk must have widened with the indexes.
+    assert!(
+        data.npc_placements.contains_key(&scrip_exchange),
+        "the scrip exchange NPC has no placement"
+    );
+}
+
 /// The client-derived placements and the sheets the map pins need are folded
 /// in at generation; a generator that dropped them would only show up as an
 /// item page with every vendor "Location unavailable".

@@ -82,6 +82,45 @@ pub fn NpcLocations(npc_id: i32) -> impl IntoView {
     }
 }
 
+/// One link per NPC, name plus the zone they stand in — the compact form for
+/// a shop that a dozen NPCs offer (every city's scrip exchange), where a full
+/// [`NpcLocations`] block per NPC would swamp the card. Renders nothing for an
+/// empty list, so a shop with no known NPC looks as it did before.
+#[component]
+pub fn NpcLinkList(npcs: Vec<ENpcResidentId>) -> impl IntoView {
+    let data = tracked_data();
+    if npcs.is_empty() {
+        return None;
+    }
+    Some(view! {
+        <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            {npcs.into_iter().map(|npc_id| {
+                let name = data
+                    .e_npc_residents
+                    .get(&npc_id)
+                    .map(|npc| npc.singular.clone())
+                    .unwrap_or_else(|| npc_id.0.to_string());
+                let zone = data
+                    .npc_placements
+                    .get(&npc_id)
+                    .and_then(|p| p.first())
+                    .map(|p| placement_label(data, p))
+                    .unwrap_or_default();
+                view! {
+                    <span class="inline-flex items-baseline gap-1 min-w-0">
+                        <AppLink href=npc_href(npc_id.0) attr:class="text-brand-200 hover:underline">
+                            {name}
+                        </AppLink>
+                        {(!zone.is_empty()).then(|| view! {
+                            <span class="text-[color:var(--color-text-muted)] truncate">"· " {zone}</span>
+                        })}
+                    </span>
+                }
+            }).collect_view()}
+        </div>
+    })
+}
+
 #[component]
 pub fn LeveIssuers(leve_id: i32) -> impl IntoView {
     let i18n = use_i18n();

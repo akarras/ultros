@@ -339,12 +339,15 @@ pub(crate) async fn item_sitemap(
     Ok(Xml(url_xml))
 }
 
-/// `/npc/<id>` for every NPC that offers a gil shop, ascending. Their pages
-/// are static game data, so they sit at one low, weekly priority.
+/// `/npc/<id>` for every NPC that offers a gil shop, an exchange or a
+/// collectables counter, ascending. Their pages are static game data, so they
+/// sit at one low, weekly priority.
 pub(crate) fn npc_page_ids(data: &xiv_gen::Data) -> Vec<i32> {
     let mut ids: Vec<i32> = data
         .gil_shop_npcs
         .values()
+        .chain(data.special_shop_npcs.values())
+        .chain(data.collectables_shop_npcs.values())
         .flatten()
         .map(|npc| npc.0)
         .collect();

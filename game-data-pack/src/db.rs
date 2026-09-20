@@ -36,15 +36,17 @@ pub struct DbOutput {
     /// `(item id, icon id)` of the *named* items in the `en` data, ascending by
     /// item id — the icon extraction reads exactly these out of the game files.
     pub en_named_items: Vec<(i32, i32)>,
-    /// The placements that made it into the `en` pack (vendors and leve
-    /// issuers only) — what `data/npc-placements.json` records and what the
-    /// map pack has to cover.
+    /// The placements that made it into the `en` pack (shop and exchange NPCs
+    /// and leve issuers only) — what `data/npc-placements.json` records and
+    /// what the map pack has to cover.
     pub en_npc_placements: HashMap<ENpcResidentId, Vec<NpcPlacement>>,
     /// `(map id, Map.Id texture stem)` for every map a packed placement sits
     /// on, ascending by map id.
     pub en_maps_used: Vec<(i32, String)>,
     /// Distinct gil-shop vendor NPCs in the `en` data, for the coverage report.
     pub en_vendor_npcs: usize,
+    /// Distinct special-shop (exchange) NPCs in the `en` data, likewise.
+    pub en_exchange_npcs: usize,
 }
 
 /// Items worth extracting an icon for: the rows that actually have a name, as
@@ -77,6 +79,7 @@ pub fn build_packs(
     let mut en_npc_placements = HashMap::new();
     let mut en_maps_used = Vec::new();
     let mut en_vendor_npcs = 0;
+    let mut en_exchange_npcs = 0;
     for lang in LANGUAGES {
         let data = read_data_with(datamining_root, lang, supplements);
         if lang == Language::En {
@@ -89,6 +92,12 @@ pub fn build_packs(
             en_maps_used = maps_used(&data.npc_placements, &data.maps);
             en_vendor_npcs = data
                 .gil_shop_npcs
+                .values()
+                .flatten()
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            en_exchange_npcs = data
+                .special_shop_npcs
                 .values()
                 .flatten()
                 .collect::<std::collections::HashSet<_>>()
@@ -137,6 +146,7 @@ pub fn build_packs(
         en_npc_placements,
         en_maps_used,
         en_vendor_npcs,
+        en_exchange_npcs,
     })
 }
 
