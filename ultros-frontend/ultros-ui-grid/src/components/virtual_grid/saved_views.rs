@@ -274,9 +274,10 @@ pub fn GridSavedViews(
                             name.set(String::new());
                         }
                     >
-                        <label class="flex flex-col gap-1">
+                        <label class="flex flex-col gap-1" for="grid-view-name-input">
                             <span>{t!(i18n, grid_view_name)}</span>
                             <input
+                                id="grid-view-name-input"
                                 type="text"
                                 class="input input-sm"
                                 maxlength="100"
