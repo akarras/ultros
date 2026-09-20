@@ -82,7 +82,7 @@ impl ScripSourceData {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScripType {
+pub enum ScripType {
     OrangeCrafters,
     OrangeGatherers,
     WhiteCrafters,
@@ -127,7 +127,7 @@ impl ScripType {
 
     /// The `?scrip=` query value that selects this type, as emitted by the
     /// toolbar `<select>`.
-    fn from_filter_key(key: &str) -> Option<Self> {
+    pub fn from_filter_key(key: &str) -> Option<Self> {
         match key {
             "OrangeCrafters" => Some(ScripType::OrangeCrafters),
             "OrangeGatherers" => Some(ScripType::OrangeGatherers),
@@ -137,6 +137,36 @@ impl ScripType {
             "PurpleGatherers" => Some(ScripType::PurpleGatherers),
             _ => None,
         }
+    }
+
+    /// Inverse of [`from_filter_key`](Self::from_filter_key): the `?scrip=`
+    /// value that selects this type, or `None` for a currency index the page
+    /// doesn't name.
+    pub fn filter_key(self) -> Option<&'static str> {
+        Some(match self {
+            ScripType::OrangeCrafters => "OrangeCrafters",
+            ScripType::OrangeGatherers => "OrangeGatherers",
+            ScripType::WhiteCrafters => "WhiteCrafters",
+            ScripType::PurpleCrafters => "PurpleCrafters",
+            ScripType::WhiteGatherers => "WhiteGatherers",
+            ScripType::PurpleGatherers => "PurpleGatherers",
+            ScripType::Other(_) => return None,
+        })
+    }
+
+    /// English item name of the scrip currency itself, for looking the item
+    /// up in the (English) game-data pack. The white scrips were retired in
+    /// 7.0 and have no item.
+    pub fn item_name(self) -> Option<&'static str> {
+        Some(match self {
+            ScripType::OrangeCrafters => "Orange Crafters' Scrip",
+            ScripType::OrangeGatherers => "Orange Gatherers' Scrip",
+            ScripType::PurpleCrafters => "Purple Crafters' Scrip",
+            ScripType::PurpleGatherers => "Purple Gatherers' Scrip",
+            ScripType::WhiteCrafters | ScripType::WhiteGatherers | ScripType::Other(_) => {
+                return None;
+            }
+        })
     }
 
     fn color_class(&self) -> &'static str {
@@ -152,7 +182,7 @@ impl ScripType {
     /// crafted, so the craft-cost model below can never price them. The page
     /// keeps the options selectable but explains the empty table instead of
     /// silently rendering nothing.
-    fn is_gatherer(&self) -> bool {
+    pub fn is_gatherer(&self) -> bool {
         matches!(
             self,
             ScripType::OrangeGatherers | ScripType::WhiteGatherers | ScripType::PurpleGatherers
@@ -185,10 +215,10 @@ fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
 /// A single collectables turn-in: the item handed in, the scrip it pays and how
 /// much it pays at maximum collectability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScripTurnIn {
-    item_id: i32,
-    scrip_type: ScripType,
-    scrip_amount: u32,
+pub struct ScripTurnIn {
+    pub item_id: i32,
+    pub scrip_type: ScripType,
+    pub scrip_amount: u32,
 }
 
 /// `CollectablesShop.RewardType` for the turn-in counters that pay scrip.
@@ -237,7 +267,7 @@ fn material_exchange_groups(data: &xiv_gen::Data) -> HashSet<i32> {
 /// `CollectablesShopRewardScrip.Currency` column the real turn-ins do, so
 /// reading that column alone lists every one of them as a scrip source paying a
 /// scrip it never awards.
-fn scrip_turn_ins(data: &xiv_gen::Data) -> Vec<ScripTurnIn> {
+pub fn scrip_turn_ins(data: &xiv_gen::Data) -> Vec<ScripTurnIn> {
     let exchange_only = material_exchange_groups(data);
     let mut turn_ins = Vec::new();
 
@@ -443,6 +473,28 @@ fn ScripSourceTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+
+    // `?item=` is a navigation target from search, not a filter: plain
+    // `query_signal`, and revealed once per value (see `RevealOnce`) so live
+    // re-sorts don't keep yanking the scroll position.
+    let (reveal_item, _set_reveal_item) = query_signal::<i32>("item");
+    let shown_rows = RwSignal::new(Vec::<(usize, Arc<ScripSourceData>)>::new());
+    let reveal_once = StoredValue::new(crate::components::reveal_once::RevealOnce::default());
+    let reveal_index = RwSignal::new(None::<usize>);
+    Effect::new(move |_| {
+        let item = reveal_item.get();
+        let mut hit = None;
+        shown_rows.with(|rows| {
+            reveal_once.update_value(|once| {
+                hit = once.next(item, |item| {
+                    rows.iter().position(|(_, row)| row.item_id.0 == item)
+                });
+            })
+        });
+        if hit.is_some() {
+            reveal_index.set(hit);
+        }
+    });
     let query = crate::components::app_link::use_query_map_or_default();
     let scrip_filter = Memo::new(move |_| {
         let filters = crate::components::virtual_grid::registry::resolve_filters(
@@ -777,7 +829,7 @@ fn ScripSourceTable(
                 </Show>
 
                 <div>
-                    <MarketGrid show_saved_views=false id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
+                    <MarketGrid show_saved_views=false on_rows=Callback::new(move |rows| shown_rows.set(rows)) reveal_index id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
      market=market
      subject=Arc::new(move |(_, row): &(usize, Arc<ScripSourceData>)| {
          let mut subject = MarketSubject::new(row.market_item_id, row.market_hq, row.cheapest_world_id);

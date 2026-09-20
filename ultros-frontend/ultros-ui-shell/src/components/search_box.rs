@@ -7,6 +7,7 @@ use crate::i18n::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
+use leptos_i18n::I18nContext;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -47,6 +48,62 @@ static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
             url: "/currency-exchange".to_string(),
             icon_id: None,
             category: Some("Currencies".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Venture Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/venture-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Retainers".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Scrip Sources".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/scrip-sources".to_string(),
+            icon_id: None,
+            category: Some("Crafting".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Vendor Resale".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/vendor-resale".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Vendor Sell".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/vendor-sell".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "FC Crafting Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/fc-crafting-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Crafting".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Market Trends".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/trends".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Leve Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/leve-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Leveling".to_string()),
         },
         SearchResult {
             score: 100.0,
@@ -130,6 +187,42 @@ const JOB_EXAMPLES: [&str; 3] = ["SAM", "WHM", "BLM"];
 
 fn get_static_pages() -> &'static [SearchResult] {
     &STATIC_PAGES
+}
+
+/// Backend result types are English identifiers; show the reader their
+/// language. Unknown types fall through untranslated rather than blank.
+fn result_type_label(i18n: I18nContext<Locale, I18nKeys>, result_type: &str) -> String {
+    match result_type {
+        "item" => t_string!(i18n, search_type_item).to_string(),
+        "category" => t_string!(i18n, search_type_category).to_string(),
+        "job equipment" => t_string!(i18n, search_type_job_equipment).to_string(),
+        "currency" => t_string!(i18n, search_type_currency).to_string(),
+        "recipe" => t_string!(i18n, search_type_recipe).to_string(),
+        "venture" => t_string!(i18n, search_type_venture).to_string(),
+        "npc" => t_string!(i18n, search_type_npc).to_string(),
+        "scrip source" => t_string!(i18n, search_type_scrip_source).to_string(),
+        "Tool" => t_string!(i18n, search_type_tool).to_string(),
+        "Page" => t_string!(i18n, search_type_page).to_string(),
+        "Help" => t_string!(i18n, search_type_help).to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Fallback glyph for a result that has no item icon of its own.
+fn type_icon(result_type: &str) -> AnyView {
+    match result_type {
+        "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
+        "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
+        "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
+        "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+        "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
+        "venture" => view! { <Icon icon=i::FaBriefcaseSolid /> }.into_any(),
+        "npc" => view! { <Icon icon=i::FaStoreSolid /> }.into_any(),
+        "scrip source" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
+        "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
+        "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
+        _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
+    }
 }
 
 const SEARCH_CACHE_SIZE: usize = 32;
@@ -527,6 +620,10 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                     <span>{t!(i18n, search_hint_recipes)}</span>
                 </div>
                 <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaStoreSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_sources)}</span>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
                     <Icon icon=i::FaWrenchSolid attr:class="text-[color:var(--color-text-muted)]" />
                     <span>{t!(i18n, search_hint_tools)}</span>
                 </div>
@@ -622,42 +719,20 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                                                     </div>
                                                 }.into_any()
                                             } else {
-                                                match result.result_type.as_str() {
-                                                    "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
-                                                    "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
-                                                    "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
-                                                    "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
-                                                    "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
-                                                    "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
-                                                    "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
-                                                    _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
-                                                }
+                                                type_icon(&result.result_type)
                                             }
                                         } else {
-                                            match result.result_type.as_str() {
-                                                "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
-                                                "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
-                                                "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
-                                                "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
-                                                "recipe" => view! { <Icon icon=i::FaHammerSolid /> }.into_any(),
-                                                "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
-                                                "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
-                                                _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
-                                            }
+                                            type_icon(&result.result_type)
                                         }
                                     }
                                     <div class="flex flex-col">
                                         <span class="font-medium">{result.title.clone()}</span>
                                         <span class="text-xs text-[color:var(--color-text-muted)]">
                                             {
-                                                if let Some(cat) = &result.category {
-                                                    if !cat.is_empty() {
-                                                        format!("{} - {}", result.result_type, cat)
-                                                    } else {
-                                                        result.result_type.clone()
-                                                    }
-                                                } else {
-                                                    result.result_type.clone()
+                                                let label = result_type_label(i18n, &result.result_type);
+                                                match result.category.as_deref() {
+                                                    Some(cat) if !cat.is_empty() => format!("{label} - {cat}"),
+                                                    _ => label,
                                                 }
                                             }
                                         </span>

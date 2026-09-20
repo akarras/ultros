@@ -951,6 +951,10 @@ pub fn MarketGrid<T, K, KF, H, F, M>(
     #[prop(default = true)] show_saved_views: bool,
     #[prop(default = 40.0)] row_height: f64,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
+    /// Forwarded to the grid: data-row index (in the rows `on_rows` reports)
+    /// to scroll into view.
+    #[prop(optional, into)]
+    reveal_index: Option<Signal<Option<usize>>>,
     #[prop(into)] id: String,
     #[prop(into)] label: String,
 ) -> impl IntoView
@@ -1187,7 +1191,7 @@ where
         }
     });
     view! {
-        <QueryGrid each columns=all_columns key row_height visible_range=range id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
+        <QueryGrid each columns=all_columns key row_height visible_range=range reveal_index id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| {
                 let header = match metric_by_id(id) {
                 Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {

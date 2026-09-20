@@ -53,6 +53,7 @@ pub use ultros_ui_market::components::market_heat;
 pub use ultros_ui_market::components::market_movers;
 pub use ultros_ui_market::components::market_pulse;
 pub mod meta;
+pub mod reveal_once;
 pub use ultros_ui::components::modal;
 pub use ultros_ui::components::patreon;
 pub use ultros_ui::components::relative_time;

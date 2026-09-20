@@ -835,43 +835,12 @@ pub fn CurrencySelection() -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
     let ui_categories = &data.item_ui_categorys;
-    let disallowed_items = &["Gil", "MGP"];
-    // `ItemUICategory` row IDs are stable across game locales; only the `name`
-    // column is translated. Matching by the English name panicked on every
-    // non-English dataset (e.g. `cn` names these "货币"/"杂货"/"其他"), which
-    // crashed `/currency-exchange` for all localized users — GlitchTip #6849.
-    // Match by the stable IDs instead: Currency = 100, Miscellany = 61, Other = 63.
-    let allowed_item_ui_categories = [
-        ItemUiCategoryId(100),
-        ItemUiCategoryId(61),
-        ItemUiCategoryId(63),
-    ];
-    let currencies = data
-        .special_shops
-        .values()
-        .flat_map(|special_shop| {
-            shop_items(special_shop)
-                .filter(|items| items.recv.iter().any(|i| i.item.item_search_category != 0))
-                .flat_map(|f| f.cost.into_iter().map(|i| i.item.key_id))
-        })
-        .filter(|f| {
-            let Some(item) = data.items.get(f) else {
-                return false;
-            };
-            allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category))
-        })
-        .unique_by(|i| i.0)
-        .collect::<Vec<_>>();
     let items = &data.items;
-    let currencies = currencies
+    let currencies = crate::game_sources::exchange_currencies(data)
         .into_iter()
-        .sorted_by_key(|item| item.0)
         .filter_map(|c| {
             let item = items.get(&c)?;
-            if disallowed_items.contains(&item.name.as_str()) {
-                return None;
-            }
-            let ui_category = ItemUiCategoryId(item.item_ui_category as i32);
+            let ui_category = ItemUiCategoryId(item.item_ui_category);
             let category = ui_categories.get(&ui_category)?;
             Some((item.key_id.0, item.name.as_str(), category.name.as_str()))
         })

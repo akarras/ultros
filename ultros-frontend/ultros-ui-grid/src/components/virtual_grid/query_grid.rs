@@ -25,6 +25,10 @@ pub fn QueryGrid<T, K, KF, H, F, M>(
     #[prop(default = true)] show_saved_views: bool,
     #[prop(default = 40.0)] row_height: f64,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
+    /// Forwarded to [`VirtualGrid`]: data-row index to scroll into view.
+    // `optional_no_strip`: forwarded as an `Option` from the layer above.
+    #[prop(optional_no_strip)]
+    reveal_index: Option<Signal<Option<usize>>>,
     #[prop(into)] id: String,
     #[prop(into)] label: String,
 ) -> impl IntoView
@@ -222,6 +226,6 @@ where
         })}
         {move || result.with(|r|r.sort_pending).then(||view! {<div class="px-3 py-2 text-xs" role="status">{t!(i18n,grid_query_pending)}</div>})}
         <VirtualGrid each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
-            key header view measure measure_version row_height id label/>
+            reveal_index key header view measure measure_version row_height id label/>
     }
 }

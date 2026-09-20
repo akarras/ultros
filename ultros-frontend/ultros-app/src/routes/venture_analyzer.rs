@@ -233,10 +233,31 @@ fn VentureAnalyzerTable(
     let data = tracked_data();
     let items = &data.items;
     let retainer_tasks = &data.retainer_tasks;
-    let retainer_task_normals = &data.retainer_task_normals;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+
+    // `?item=` is a navigation target from search, not a filter: plain
+    // `query_signal`, and revealed once per value (see `RevealOnce`) so live
+    // re-sorts don't keep yanking the scroll position.
+    let (reveal_item, _set_reveal_item) = query_signal::<i32>("item");
+    let shown_rows = RwSignal::new(Vec::<(usize, Arc<VentureProfitData>)>::new());
+    let reveal_once = StoredValue::new(crate::components::reveal_once::RevealOnce::default());
+    let reveal_index = RwSignal::new(None::<usize>);
+    Effect::new(move |_| {
+        let item = reveal_item.get();
+        let mut hit = None;
+        shown_rows.with(|rows| {
+            reveal_once.update_value(|once| {
+                hit = once.next(item, |item| {
+                    rows.iter().position(|(_, row)| row.item_id == item)
+                });
+            })
+        });
+        if hit.is_some() {
+            reveal_index.set(hit);
+        }
+    });
     let (filter_outliers, _set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
     let query = use_query_map_or_default();
 
@@ -299,89 +320,68 @@ fn VentureAnalyzerTable(
             HashMap::new()
         };
 
-        // Iterate over RetainerTasks to find normal ventures
-        for (task_id, task) in retainer_tasks.iter() {
-            if task.is_random {
-                continue;
-            }
-
+        for reward in crate::game_sources::venture_rewards(data) {
             if let Some(ids) = &selected_ids
-                && !ids.contains(&task.class_job_category)
+                && !ids.contains(&reward.class_job_category.0)
             {
                 continue;
             }
+            let task_id = reward.task;
+            let item_id = reward.item.0;
+            let quantity = reward.quantity;
+            let task_level = reward.level as i32;
+            // Market Price
+            let Some(resolved) = resolve_price(
+                &prices,
+                stats.as_deref(),
+                item_id,
+                None,
+                revenue_basis.get().unwrap_or_default(),
+            ) else {
+                continue;
+            };
+            let market_price = resolved.price;
+            let hq = resolved.hq;
+            let listing = prices.find_matching_listings(item_id);
+            let listing = if hq { listing.hq } else { listing.lq };
+            let listing_price = listing.map(|entry| entry.price);
+            let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
+            let price_fallback = resolved.fallback;
 
-            // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
-            // We need to cast RowId to RetainerTaskNormalId?
-            // Since RowId is just u16 wrapper, and RetainerTaskNormalId is i32 wrapper.
-            let normal_id = xiv_gen::RetainerTaskNormalId(task.task);
-
-            if let Some(normal_task) = retainer_task_normals.get(&normal_id) {
-                let item_id = normal_task.item;
-                if item_id == 0 {
-                    continue;
-                }
-
-                let quantity = normal_task.quantity_0; // taking base quantity
-                if quantity == 0 {
-                    continue;
-                }
-
-                let task_level = task.retainer_level as i32;
-
-                // Market Price
-                let Some(resolved) = resolve_price(
-                    &prices,
-                    stats.as_deref(),
-                    item_id,
-                    None,
-                    revenue_basis.get().unwrap_or_default(),
-                ) else {
-                    continue;
-                };
-                let market_price = resolved.price;
-                let hq = resolved.hq;
-                let listing = prices.find_matching_listings(item_id);
-                let listing = if hq { listing.hq } else { listing.lq };
-                let listing_price = listing.map(|entry| entry.price);
-                let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
-                let price_fallback = resolved.fallback;
-
-                if market_price == 0 {
-                    continue;
-                }
-
-                let sales_stats = if let Some(item_sales) = sales_map.get(&{ item_id }) {
-                    analyze_sales(item_sales, filter_outliers)
-                } else {
-                    SalesStats {
-                        daily_sales: 0.0,
-                        avg_price: 0,
-                        total_sales: 0,
-                    }
-                };
-
-                // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
-                // If we ever convert ventures to a gil-equivalent cost, subtract it here.
-                let revenue = market_price * quantity;
-                let profit = revenue;
-
-                results.push(VentureProfitData {
-                    task_id: task_id.0,
-                    task_level,
-                    item_id,
-                    quantity,
-                    market_price,
-                    cheapest_world_id,
-                    hq,
-                    listing_price,
-                    price_fallback,
-                    pricing_pending,
-                    profit,
-                    avg_price: sales_stats.avg_price,
-                    daily_sales: sales_stats.daily_sales,
-                });
+            if market_price == 0 {
+                continue;
             }
+
+            let sales_stats = if let Some(item_sales) = sales_map.get(&{ item_id }) {
+                analyze_sales(item_sales, filter_outliers)
+            } else {
+                SalesStats {
+                    daily_sales: 0.0,
+                    avg_price: 0,
+                    total_sales: 0,
+                }
+            };
+
+            // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
+            // If we ever convert ventures to a gil-equivalent cost, subtract it here.
+            let revenue = market_price * quantity;
+            let profit = revenue;
+
+            results.push(VentureProfitData {
+                task_id: task_id.0,
+                task_level,
+                item_id,
+                quantity,
+                market_price,
+                cheapest_world_id,
+                hq,
+                listing_price,
+                price_fallback,
+                pricing_pending,
+                profit,
+                avg_price: sales_stats.avg_price,
+                daily_sales: sales_stats.daily_sales,
+            });
         }
 
         // Keep every eligible row; the grid virtualizes rendering, not the result set.
@@ -492,7 +492,7 @@ fn VentureAnalyzerTable(
                 />
 
                 <div>
-                    <MarketGrid show_saved_views=false market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
+                    <MarketGrid show_saved_views=false on_rows=Callback::new(move |rows| shown_rows.set(rows)) reveal_index market subject=Arc::new(move |(_, row): &(usize, Arc<VentureProfitData>)| {
         let mut subject = MarketSubject::new(row.item_id, row.hq, row.cheapest_world_id);
         subject.listing_price = row.listing_price;
         subject.label = t_string!(i18n, market_returned_item).to_string();
