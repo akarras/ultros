@@ -84,8 +84,14 @@ ENV CARGO_BUILD_JOBS=${APP_BUILD_JOBS} \
 # it cannot launch a second server compilation, even if a fingerprint changes.
 RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
     --bin-cargo-args=--timings -vv
+# `--precompress` writes `.br` and `.gz` siblings (brotli -q 11 / gzip -9) for
+# every file in the pkg dir. The server's `/pkg/` ServeDir serves those directly
+# (see `pkg_service` in ultros/src/leptos.rs) instead of the CompressionLayer
+# re-compressing the 16 MB wasm on the fly at tower-http's default quality —
+# that default was the difference between 7.2 MB and 4.9 MB on the wire for the
+# same file.
 RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
-    --lib-cargo-args=--timings -vv
+    --precompress --lib-cargo-args=--timings -vv
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the

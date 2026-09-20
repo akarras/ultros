@@ -164,12 +164,25 @@ opt-level = "z"
 strip = "debuginfo"
 
 # Keep browser-only size tuning out of the native server profile.
+#
+# Whole-program LTO with a single codegen unit is the Leptos book's wasm
+# profile. Unlike the native server (where LTO grew the binary, see
+# [profile.server-release]), it shrinks the client: measured on 7fe53c70 with
+# `--cfg=erase_components` already on (see .cargo/config.toml), the bundle went
+# 17.17 MB -> 16.45 MB raw and 3.48 MB -> 3.34 MB brotli, for about two extra
+# minutes of frontend build. The final LTO link is one rustc at ~3 GB RSS, well
+# inside the 16 GiB CI runner. `panic = "abort"` is deliberately NOT set: the
+# wasm32-unknown-unknown target already aborts on panic (its target spec says
+# so), the panic hook that feeds GlitchTip runs before that trap either way,
+# and the flag measured as a no-op (+15 KB).
+#
+# This supersedes the per-package `loro-internal` codegen-units = 1 override
+# from the Lists bundle experiment (docs/qa/lists-bundle-budget.md); the
+# profile-wide setting covers it. Loro's counter feature is still required for
+# acquired quantities and undo.
 [profile.wasm-release]
 inherits = "release"
-
-# The controlled Lists bundle experiment saved 20,883 gzip bytes with this
-# setting. Keep Loro's counter feature for acquired quantities and undo.
-[profile.wasm-release.package.loro-internal]
+lto = "fat"
 codegen-units = 1
 
 # Server binary profile. cargo-leptos builds the bin with this when set as

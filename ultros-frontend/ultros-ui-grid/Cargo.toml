@@ -74,3 +74,8 @@ hydrate = [
 any_spawner = { version = "0.3", features = [
     "futures-executor",
 ] }
+
+# `cfg!(erase_components)` in the sort-header markup tests: the cfg comes from
+# .cargo/config.toml rustflags, so declare it or `unexpected_cfgs` fires.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(erase_components)"] }

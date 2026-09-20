@@ -528,9 +528,16 @@ mod test {
                 />
             }
             .to_html();
+            // Type-erased components (`--cfg=erase_components`, on for every
+            // build via .cargo/config.toml) end each child view with its own
+            // `<!>` marker, so the cell's one erased child (the `SortHeader`)
+            // legitimately costs a single marker. Anything beyond that is an
+            // `Option` placeholder from an unset prop, which is what this
+            // guards against.
+            let erased_child_markers = if cfg!(erase_components) { 1 } else { 0 };
             assert_eq!(
                 plain.matches("<!>").count(),
-                bare.matches("<!>").count(),
+                bare.matches("<!>").count() + erased_child_markers,
                 "cell added its own hydration marker(s): {plain}"
             );
             assert_eq!(plain.matches("role=\"columnheader\"").count(), 1, "{plain}");
@@ -575,7 +582,9 @@ mod test {
             assert!(!without.contains("<button"), "{without}");
             assert!(!without.contains("flex items-center gap-1"), "{without}");
             assert!(
-                without.contains("text-[color:var(--color-text-muted)] truncate max-w-full\">7d median · Aether</div>"),
+                // `>7d median · Aether<` rather than `…Aether</div>`: erased
+                // components end the text with a `<!>` hydration marker.
+                without.contains("text-[color:var(--color-text-muted)] truncate max-w-full\">7d median · Aether<"),
                 "{without}"
             );
         });

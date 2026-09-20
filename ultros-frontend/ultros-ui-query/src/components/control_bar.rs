@@ -689,7 +689,9 @@ mod tests {
             2,
             "{html}"
         );
-        assert!(html.contains("<span>Tax</span>"), "{html}");
+        // `<span>Tax<` rather than `<span>Tax</span>`: erased components end
+        // the text with a `<!>` hydration marker.
+        assert!(html.contains("<span>Tax<"), "{html}");
         assert!(!html.contains("basis-full"), "{html}");
         assert!(!html.contains("disabled"), "{html}");
         assert!(!html.contains("title="), "{html}");
