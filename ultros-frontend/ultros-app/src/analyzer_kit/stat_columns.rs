@@ -176,6 +176,59 @@ pub fn listing_title(kind: ListingKind) -> Option<String> {
         .then(|| t_string!(i18n, market_listing_age_title).to_string())
 }
 
+/// One statistic read from `ItemListingStats::window`: listing history over
+/// the page window, so labels carry the window suffix like the
+/// follow-window sale columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ListingWindowKind {
+    /// Same-listing price drops per day of scope-wide listing coverage.
+    UndercutsPerDay,
+    /// Median relative drop across those undercuts, shown as a percentage.
+    UndercutMedian,
+}
+
+/// Follow-window ids only: one body per scope and selected window, never a
+/// pinned `-N` variant, because every window body is a separate fetch.
+pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 2] = [
+    (ListingWindowKind::UndercutsPerDay, "market-undercuts"),
+    (ListingWindowKind::UndercutMedian, "market-undercut-pct"),
+];
+
+pub fn listing_window_id(kind: ListingWindowKind) -> &'static str {
+    LISTING_WINDOW_COLUMNS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .unwrap()
+        .1
+}
+
+/// Whether any windowed listing column is in the grid's wanted set.
+pub fn listing_window_wanted(needs: &HashSet<String>) -> bool {
+    LISTING_WINDOW_COLUMNS
+        .iter()
+        .any(|(_, id)| needs.contains(*id))
+}
+
+pub fn listing_window_label(kind: ListingWindowKind, window: Window) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let name = match kind {
+        ListingWindowKind::UndercutsPerDay => t_string!(i18n, market_undercuts),
+        ListingWindowKind::UndercutMedian => t_string!(i18n, market_undercut_pct),
+    }
+    .to_string();
+    with_window(name, window)
+}
+
+/// Hover text: what counts as an undercut, and what the percentage is of.
+pub fn listing_window_title(kind: ListingWindowKind) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    match kind {
+        ListingWindowKind::UndercutsPerDay => t_string!(i18n, market_undercuts_title),
+        ListingWindowKind::UndercutMedian => t_string!(i18n, market_undercut_pct_title),
+    }
+    .to_string()
+}
+
 pub fn shared_cols_in(raw: Option<&str>) -> HashSet<&'static str> {
     let selected: HashSet<_> = raw.unwrap_or("").split(',').collect();
     FOLLOW_COLUMNS
@@ -183,6 +236,7 @@ pub fn shared_cols_in(raw: Option<&str>) -> HashSet<&'static str> {
         .map(|(_, id)| *id)
         .chain(STAT_COLUMNS.iter().map(|c| c.id))
         .chain(LISTING_COLUMNS.iter().map(|(_, id)| *id))
+        .chain(LISTING_WINDOW_COLUMNS.iter().map(|(_, id)| *id))
         .filter(|id| selected.contains(id))
         .collect()
 }
@@ -292,7 +346,7 @@ pub fn market_picker_group_listings() -> String {
 
 /// Every stat column as a toolbar-picker option, grouped under one
 /// "Sale history (Nd)" heading per window, then the current-listing
-/// columns under "Listings".
+/// columns and the windowed listing history under "Listings".
 pub fn market_picker_options(window: Window) -> Vec<ColumnOption> {
     FOLLOW_COLUMNS
         .iter()
@@ -326,6 +380,20 @@ pub fn market_picker_options(window: Window) -> Vec<ColumnOption> {
             disabled: false,
             hint: listing_title(*kind),
         }))
+        .chain(
+            LISTING_WINDOW_COLUMNS
+                .iter()
+                .map(|(kind, id)| ColumnOption {
+                    id,
+                    label: listing_window_label(*kind, window),
+                    group: Some(PickerHeading {
+                        label: market_picker_group_listings(),
+                        title: None,
+                    }),
+                    disabled: false,
+                    hint: Some(listing_window_title(*kind)),
+                }),
+        )
         .collect()
 }
 
@@ -438,6 +506,40 @@ mod tests {
     }
 
     #[test]
+    fn listing_window_columns_are_follow_window_ids_wanted_together() {
+        let ids: HashSet<_> = LISTING_WINDOW_COLUMNS.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids.len(), 2);
+        for (kind, id) in &LISTING_WINDOW_COLUMNS {
+            assert!(!STAT_COLUMNS.iter().any(|c| c.id == *id), "{id} collides");
+            assert!(
+                !FOLLOW_COLUMNS.iter().any(|(_, f)| f == id),
+                "{id} collides"
+            );
+            assert!(
+                !LISTING_COLUMNS.iter().any(|(_, f)| f == id),
+                "{id} collides"
+            );
+            for window in Window::ALL {
+                assert!(!id.ends_with(&format!("-{}", window.days())), "{id}");
+            }
+            assert_eq!(listing_window_id(*kind), *id);
+        }
+        assert_eq!(
+            shared_cols_in(Some("profit,market-undercuts,market-alive")),
+            HashSet::from(["market-undercuts", "market-alive"])
+        );
+        let needs: HashSet<String> = ["market-undercut-pct", "roi"].map(str::to_owned).into();
+        assert!(listing_window_wanted(&needs));
+        assert!(
+            !listings_wanted(&needs),
+            "history columns never want the alive set"
+        );
+        assert!(required_windows(&needs, Window::D7, false).is_empty());
+        let none: HashSet<String> = ["market-alive"].map(str::to_owned).into();
+        assert!(!listing_window_wanted(&none));
+    }
+
+    #[test]
     fn a_window_is_wanted_only_when_one_of_its_columns_is() {
         let needs: HashSet<String> = ["market-sale-median-30", "roi"].map(str::to_owned).into();
         assert!(window_wanted(&needs, Window::D30));
@@ -459,7 +561,10 @@ mod tests {
             let options = market_picker_options(Window::D7);
             assert_eq!(
                 options.len(),
-                STAT_COLUMNS.len() + FOLLOW_COLUMNS.len() + LISTING_COLUMNS.len()
+                STAT_COLUMNS.len()
+                    + FOLLOW_COLUMNS.len()
+                    + LISTING_COLUMNS.len()
+                    + LISTING_WINDOW_COLUMNS.len()
             );
             let alive = options.iter().find(|o| o.id == "market-alive").unwrap();
             assert_eq!(alive.label, "Active listings");
@@ -477,7 +582,25 @@ mod tests {
                 oldest.hint.as_deref(),
                 Some("Time since the retainer last touched the listing, not how long it has been for sale. An old listing may be an unrelated expensive one; it says nothing about how fresh the price data is.")
             );
-            assert_eq!(options.last().unwrap().id, "market-oldest-listing");
+            assert_eq!(options.last().unwrap().id, "market-undercut-pct");
+            let undercuts = options.iter().find(|o| o.id == "market-undercuts").unwrap();
+            assert_eq!(undercuts.label, "Undercuts/day (7d)");
+            assert_eq!(
+                undercuts.group.as_ref().map(|g| g.label.as_str()),
+                Some("Listings")
+            );
+            assert_eq!(
+                undercuts.hint.as_deref(),
+                Some("Same-listing price drops per day across the scope, both edit-in-place and remove-and-relist. Raises and new listings are not counted.")
+            );
+            assert_eq!(
+                listing_window_label(ListingWindowKind::UndercutMedian, Window::D30),
+                "Undercut % (30d)"
+            );
+            assert_eq!(
+                listing_window_title(ListingWindowKind::UndercutMedian),
+                "Median drop as a share of the previous price across those undercuts."
+            );
             let median = options
                 .iter()
                 .find(|o| o.id == "market-sale-median-7")

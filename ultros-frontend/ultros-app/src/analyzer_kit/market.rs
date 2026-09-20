@@ -18,7 +18,7 @@ use ultros_api_types::{
 
 use crate::{
     analysis::format_duration_short,
-    api::{get_listing_stats, get_sale_stats, post_sparklines},
+    api::{get_listing_stats, get_listing_stats_window, get_sale_stats, post_sparklines},
     components::{
         app_link::use_location_or_default,
         sparkline::Sparkline,
@@ -40,9 +40,11 @@ use super::{
     formula::PriceSignal,
     signals::{StatsIndex, stat_only, stats_index},
     stat_columns::{
-        FOLLOW_COLUMNS, LISTING_COLUMNS, ListingKind, STAT_COLUMNS, StatKind, Window, follow_id,
-        listing_id, listing_label, listing_title, listings_wanted, market_picker_group,
-        market_picker_group_listings, required_windows, stat_column, stat_label,
+        FOLLOW_COLUMNS, LISTING_COLUMNS, LISTING_WINDOW_COLUMNS, ListingKind, ListingWindowKind,
+        STAT_COLUMNS, StatKind, Window, follow_id, listing_id, listing_label, listing_title,
+        listing_window_id, listing_window_label, listing_window_title, listing_window_wanted,
+        listings_wanted, market_picker_group, market_picker_group_listings, required_windows,
+        stat_column, stat_label,
     },
     window::MarketWindow,
 };
@@ -82,6 +84,11 @@ pub struct MarketData {
     /// The alive set is window-independent: one slot, one gate.
     listings: RwSignal<ScopedListings>,
     listings_wanted: RwSignal<bool>,
+    /// Listing history per window, fetched with `?window=N` only when a
+    /// windowed listing column wants the selected window. Each window body
+    /// is a separate multi-megabyte fetch, so nothing pins a window.
+    listing_windows: [RwSignal<ScopedListings>; Window::ALL.len()],
+    listing_windows_wanted: [RwSignal<bool>; Window::ALL.len()],
 }
 
 impl MarketData {
@@ -105,6 +112,22 @@ impl MarketData {
     fn want_listings(self) {
         if !self.listings_wanted.get_untracked() {
             self.listings_wanted.set(true);
+        }
+    }
+
+    /// The windowed listing body for the present scope and `window`, once it
+    /// has landed. `failed` is set only after the retry ladder is exhausted.
+    pub fn listing_window(self, window: Window) -> Option<ListingSlot> {
+        let scope = self.scope.get();
+        self.listing_windows[window.index()]
+            .with(|v| v.as_ref().filter(|slot| slot.scope == scope).cloned())
+    }
+
+    /// Ask for a window's listing history. Idempotent; never un-wants.
+    pub fn want_listing_window(self, window: Window) {
+        let flag = self.listing_windows_wanted[window.index()];
+        if !flag.get_untracked() {
+            flag.set(true);
         }
     }
 
@@ -160,6 +183,9 @@ impl MarketData {
             slot.with(|_| ());
         }
         self.listings.with(|_| ());
+        for slot in self.listing_windows {
+            slot.with(|_| ());
+        }
     }
 }
 
@@ -215,6 +241,8 @@ fn use_market_data_configured(
         wanted: std::array::from_fn(|i| RwSignal::new(prefetch.is_some_and(|w| w.index() == i))),
         listings: RwSignal::new(None),
         listings_wanted: RwSignal::new(false),
+        listing_windows: std::array::from_fn(|_| RwSignal::new(None)),
+        listing_windows_wanted: std::array::from_fn(|_| RwSignal::new(false)),
     };
     for window in Window::ALL {
         fetch_stats(
@@ -225,17 +253,28 @@ fn use_market_data_configured(
             window.days(),
         );
     }
-    fetch_listing_stats(scope, market.listings, market.listings_wanted.into());
+    fetch_listing_stats(scope, market.listings, market.listings_wanted.into(), None);
+    for window in Window::ALL {
+        fetch_listing_stats(
+            scope,
+            market.listing_windows[window.index()],
+            market.listing_windows_wanted[window.index()].into(),
+            Some(window.days()),
+        );
+    }
     market
 }
 
 /// Same scope-change guard as `fetch_stats`. Unlike `sale_stats`, an empty
 /// board is a successful `200 {"stats":[]}`: only a transport error sets
-/// `failed`, so cells can tell "nothing alive" from "could not ask".
+/// `failed`, so cells can tell "nothing alive" from "could not ask". A
+/// windowed body (`days` is `Some`) retries a failure three times before it
+/// settles as failed.
 fn fetch_listing_stats(
     scope: Signal<String>,
     output: RwSignal<ScopedListings>,
     wanted: Signal<bool>,
+    days: Option<u16>,
 ) {
     let generation = StoredValue::new(0u64);
     Effect::new(move |_| {
@@ -257,9 +296,28 @@ fn fetch_listing_stats(
             return;
         }
         leptos::task::spawn_local(async move {
-            let result = get_listing_stats(&name)
-                .await
-                .map(|body| listing_index(&body.stats));
+            // A cold scope/window pair is 503 until the snapshot worker
+            // publishes (about a minute for a world, longer for a DC), so a
+            // windowed body waits and retries; the alive set never retries.
+            const RETRY_MS: [u32; 3] = [15_000, 30_000, 60_000];
+            let mut attempt = 0usize;
+            let result = loop {
+                let result = match days {
+                    Some(days) => get_listing_stats_window(&name, days).await,
+                    None => get_listing_stats(&name).await,
+                };
+                if result.is_ok() || days.is_none() || attempt == RETRY_MS.len() {
+                    break result;
+                }
+                gloo_timers::future::TimeoutFuture::new(RETRY_MS[attempt]).await;
+                attempt += 1;
+                if scope.try_get_untracked().as_ref() != Some(&name)
+                    || generation.try_get_value() != Some(epoch)
+                {
+                    return;
+                }
+            };
+            let result = result.map(|body| listing_index(&body.stats));
             let failed = result.is_err();
             let index = result.unwrap_or_default();
             if scope.try_get_untracked().as_ref() != Some(&name)
@@ -467,12 +525,16 @@ enum MarketMetric {
     Drift7,
     /// The board as it stands now; ids and labels come from `LISTING_COLUMNS`.
     Listings(ListingKind),
+    /// Listing history over the selected window; ids and labels come from
+    /// `LISTING_WINDOW_COLUMNS`.
+    ListingWindow(ListingWindowKind),
 }
 
 impl MarketMetric {
     fn id(self) -> &'static str {
         match self {
             Self::Listings(kind) => listing_id(kind),
+            Self::ListingWindow(kind) => listing_window_id(kind),
             Self::Subject => "market-subject",
             Self::Scope => "market-scope",
             Self::Quality => "market-quality",
@@ -514,6 +576,7 @@ impl MarketMetric {
             Self::Stat(_, window) => Some(window),
             Self::Follow(_) => Some(selected),
             Self::LastSold | Self::Confidence => Some(Window::D7),
+            Self::ListingWindow(_) => Some(selected),
             _ => None,
         }
     }
@@ -557,6 +620,11 @@ fn market_metrics() -> impl Iterator<Item = MarketMetric> {
                 .iter()
                 .map(|(kind, _)| MarketMetric::Listings(*kind)),
         )
+        .chain(
+            LISTING_WINDOW_COLUMNS
+                .iter()
+                .map(|(kind, _)| MarketMetric::ListingWindow(*kind)),
+        )
 }
 
 fn metric_by_id(id: &str) -> Option<MarketMetric> {
@@ -567,6 +635,7 @@ fn metric_by_id(id: &str) -> Option<MarketMetric> {
 fn metric_title(metric: MarketMetric) -> Option<String> {
     match metric {
         MarketMetric::Listings(kind) => listing_title(kind),
+        MarketMetric::ListingWindow(kind) => Some(listing_window_title(kind)),
         _ => None,
     }
 }
@@ -575,6 +644,7 @@ fn metric_label(metric: MarketMetric, selected: Window) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     match metric {
         MarketMetric::Listings(kind) => return listing_label(kind),
+        MarketMetric::ListingWindow(kind) => return listing_window_label(kind, selected),
         MarketMetric::Subject => t_string!(i18n, market_subject),
         MarketMetric::Scope => t_string!(i18n, market_scope),
         MarketMetric::Quality => t_string!(i18n, market_quality),
@@ -650,6 +720,21 @@ fn listing_value(
             (alive && s.oldest_reviewed_unix > 0)
                 .then(|| (fetched_unix - s.oldest_reviewed_unix).max(0) as f64),
         ),
+    }
+}
+
+/// A row absent from a successful body, or one the server synthesized for a
+/// newly alive key without a snapshot row (`window` is `None`), has no
+/// history to show. A zero rate is a real zero; a missing median means no
+/// undercuts happened. `undercut_median` is a fraction on the wire; it is
+/// scaled to a percentage here and `display_value` adds the `%`.
+fn listing_window_value(kind: ListingWindowKind, stats: Option<&ItemListingStats>) -> GridValue {
+    let Some(window) = stats.and_then(|s| s.window.as_ref()) else {
+        return GridValue::Missing;
+    };
+    match kind {
+        ListingWindowKind::UndercutsPerDay => number(window.undercuts_per_day),
+        ListingWindowKind::UndercutMedian => number(window.undercut_median.map(|m| m * 100.0)),
     }
 }
 
@@ -755,6 +840,15 @@ fn market_value(
                 slot.fetched_unix,
             ),
         },
+        MarketMetric::ListingWindow(kind) => {
+            match market.listing_window(market.window.selected.get()) {
+                None => GridValue::Pending,
+                Some(slot) if slot.failed => GridValue::Unavailable,
+                Some(slot) => {
+                    listing_window_value(kind, slot.index.get(&(subject.item_id, subject.hq)))
+                }
+            }
+        }
         _ => {
             let Some(window) = metric.window(market.window.selected.get()) else {
                 return GridValue::Missing;
@@ -791,8 +885,17 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
         GridValue::Number(n)
             if matches!(
                 metric,
+                MarketMetric::ListingWindow(ListingWindowKind::UndercutMedian)
+            ) =>
+        {
+            format!("{n:.1}%")
+        }
+        GridValue::Number(n)
+            if matches!(
+                metric,
                 MarketMetric::Stat(StatKind::SalesPerDay | StatKind::Cadence, _)
                     | MarketMetric::Follow(StatKind::SalesPerDay | StatKind::Cadence)
+                    | MarketMetric::ListingWindow(ListingWindowKind::UndercutsPerDay)
             ) =>
         {
             format!("{n:.2}")
@@ -981,6 +1084,9 @@ where
             }
             if listings_wanted(n) {
                 market.want_listings();
+            }
+            if listing_window_wanted(n) {
+                market.want_listing_window(market.window.selected.get());
             }
         });
     });
@@ -1378,6 +1484,179 @@ mod tests {
             scope.set("Cactuar".into());
             assert_eq!(value(ListingKind::Alive), GridValue::Pending);
         });
+    }
+
+    #[test]
+    fn listing_window_columns_follow_the_selected_window_and_its_states() {
+        use ultros_api_types::listing_stats::ListingWindowStats;
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let scope = RwSignal::new("Gilgamesh".to_owned());
+            let selected = RwSignal::new(Window::D7);
+            let mut market = use_market_data(scope.into());
+            market.window.selected = Memo::new(move |_| selected.get());
+            let sparks = RwSignal::new(MarketSparkStore::default());
+            let scope_world = Memo::new(|_| None);
+            let worlds = Arc::new(HashMap::new());
+            let subject = MarketSubject::new(42, true, 7);
+            let value = |kind| {
+                market_value(
+                    MarketMetric::ListingWindow(kind),
+                    &subject,
+                    market,
+                    sparks,
+                    scope_world,
+                    &worlds,
+                )
+            };
+            let with_window = |undercuts_per_day, undercut_median| ItemListingStats {
+                window: Some(ListingWindowStats {
+                    window_days: 7,
+                    undercuts: 3,
+                    undercuts_per_day,
+                    undercut_median,
+                    ..Default::default()
+                }),
+                ..row(42, true, 3)
+            };
+            let slot = |scope: &str, rows: Vec<ItemListingStats>, failed| {
+                Some(ListingSlot {
+                    scope: scope.into(),
+                    index: Arc::new(listing_index(&rows)),
+                    failed,
+                    fetched_unix: 1_000_000,
+                })
+            };
+            // Nothing wanted yet: the slot is empty and cells wait.
+            assert!(!market.listing_windows_wanted[Window::D7.index()].get_untracked());
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Pending
+            );
+            market.want_listing_window(Window::D7);
+            assert!(market.listing_windows_wanted[Window::D7.index()].get_untracked());
+            assert!(!market.listing_windows_wanted[Window::D30.index()].get_untracked());
+            // Another scope's body never answers; a failed body is unknown.
+            market.listing_windows[Window::D7.index()].set(slot(
+                "Cactuar",
+                vec![with_window(Some(0.5), Some(0.25))],
+                false,
+            ));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Pending
+            );
+            market.listing_windows[Window::D7.index()].set(slot("Gilgamesh", Vec::new(), true));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Unavailable
+            );
+            assert_eq!(
+                value(ListingWindowKind::UndercutMedian),
+                GridValue::Unavailable
+            );
+            // An empty successful body, a row without history, and an
+            // NQ row for an HQ subject are all missing, never zero.
+            market.listing_windows[Window::D7.index()].set(slot("Gilgamesh", Vec::new(), false));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Missing
+            );
+            market.listing_windows[Window::D7.index()].set(slot(
+                "Gilgamesh",
+                vec![row(42, true, 3)],
+                false,
+            ));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Missing
+            );
+            market.listing_windows[Window::D7.index()].set(slot(
+                "Gilgamesh",
+                vec![ItemListingStats {
+                    hq: false,
+                    ..with_window(Some(0.5), Some(0.25))
+                }],
+                false,
+            ));
+            assert_eq!(value(ListingWindowKind::UndercutMedian), GridValue::Missing);
+            market.listing_windows[Window::D7.index()].set(slot(
+                "Gilgamesh",
+                vec![with_window(Some(0.5), Some(0.25))],
+                false,
+            ));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Number(0.5)
+            );
+            assert_eq!(
+                value(ListingWindowKind::UndercutMedian),
+                GridValue::Number(25.0)
+            );
+            // No undercuts: the rate is a real zero, the median is missing.
+            market.listing_windows[Window::D7.index()].set(slot(
+                "Gilgamesh",
+                vec![with_window(Some(0.0), None)],
+                false,
+            ));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Number(0.0)
+            );
+            assert_eq!(value(ListingWindowKind::UndercutMedian), GridValue::Missing);
+            // The column reads the selected window's slot, not the seven-day one.
+            selected.set(Window::D30);
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Pending
+            );
+            assert_eq!(
+                metric_by_id("market-undercuts")
+                    .unwrap()
+                    .window(selected.get()),
+                Some(Window::D30)
+            );
+            market.listing_windows[Window::D30.index()].set(slot(
+                "Gilgamesh",
+                vec![with_window(Some(1.5), Some(0.1))],
+                false,
+            ));
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Number(1.5)
+            );
+            scope.set("Cactuar".into());
+            assert_eq!(
+                value(ListingWindowKind::UndercutsPerDay),
+                GridValue::Pending
+            );
+        });
+    }
+
+    #[test]
+    fn undercut_cells_format_as_rate_and_percent() {
+        assert_eq!(
+            display_value(
+                MarketMetric::ListingWindow(ListingWindowKind::UndercutsPerDay),
+                GridValue::Number(0.29)
+            ),
+            "0.29"
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::ListingWindow(ListingWindowKind::UndercutMedian),
+                GridValue::Number(2.6)
+            ),
+            "2.6%"
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::ListingWindow(ListingWindowKind::UndercutMedian),
+                GridValue::Missing
+            ),
+            "—"
+        );
     }
 
     fn row(item_id: i32, hq: bool, alive_count: u32) -> ItemListingStats {
