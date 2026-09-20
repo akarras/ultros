@@ -104,6 +104,83 @@ pub(crate) fn parse_endpoint_config(
         .map_err(|e| anyhow!("bad endpoint config: {e}"))
 }
 
+/// Which tracker produced a notification. Only Web Push cares: it derives the
+/// push service's store-and-forward policy from the kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AlertKind {
+    Undercut,
+    Sold,
+    Price,
+    ListUpdate,
+}
+
+impl AlertKind {
+    /// How long the push service may hold the message for an offline browser
+    /// before dropping it. Market alerts go stale fast: a browser that was
+    /// asleep overnight should wake to nothing, not to a queue of dead news.
+    /// Undercut rollups re-fire on the next scan anyway, so they get the
+    /// shortest window.
+    fn push_ttl_secs(self) -> u32 {
+        match self {
+            AlertKind::Undercut => 60 * 60,
+            AlertKind::Sold | AlertKind::Price | AlertKind::ListUpdate => 4 * 60 * 60,
+        }
+    }
+
+    fn topic_prefix(self) -> &'static str {
+        match self {
+            AlertKind::Undercut => "undercut",
+            AlertKind::Sold => "sold",
+            AlertKind::Price => "price",
+            AlertKind::ListUpdate => "list",
+        }
+    }
+}
+
+/// Web Push delivery policy for one notification. The other endpoint methods
+/// only read `click_url` (and Discord/webhook ignore even that — their bodies
+/// carry full links).
+///
+/// `topic` maps to the RFC 8030 `Topic` header: while the browser is offline,
+/// the push service keeps only the newest queued message per topic, so a
+/// backlog of undercut rollups for one alert collapses to the latest one
+/// instead of draining as a burst of toasts when the browser reconnects. The
+/// same string is echoed in the payload so the service worker can use it as
+/// the notification `tag` and replace an on-screen toast in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PushOptions {
+    /// In-app path the notification opens when clicked (e.g.
+    /// `/retainers/undercuts`); `/alerts` when nothing more specific applies.
+    pub click_url: String,
+    /// `TTL` header — seconds the push service may queue the message.
+    pub ttl_secs: u32,
+    /// `Topic` header + notification `tag`. `None` sends an untagged push.
+    pub topic: Option<String>,
+}
+
+impl PushOptions {
+    /// Policy for a tracker-fired alert: kind-specific TTL and one topic per
+    /// alert rule, so successive fires of the same rule supersede each other.
+    pub(crate) fn for_alert(kind: AlertKind, alert_id: i32, click_url: impl Into<String>) -> Self {
+        Self {
+            click_url: click_url.into(),
+            ttl_secs: kind.push_ttl_secs(),
+            topic: Some(format!("{}-{alert_id}", kind.topic_prefix())),
+        }
+    }
+
+    /// Policy for a user-initiated send (endpoint test, inbox resend): short
+    /// TTL because the user is sitting there waiting for it, and no topic so
+    /// it never displaces or gets displaced by a real alert.
+    pub(crate) fn immediate(click_url: impl Into<String>) -> Self {
+        Self {
+            click_url: click_url.into(),
+            ttl_secs: 5 * 60,
+            topic: None,
+        }
+    }
+}
+
 /// Deliver a single message to one endpoint. Returns `Ok(())` on success.
 ///
 /// Used by [`dispatch_alert`] (fan-out from the price-alert tracker) and by the web handlers
@@ -111,15 +188,13 @@ pub(crate) fn parse_endpoint_config(
 /// signature so future endpoint methods (e.g. ones that need to look up retainer info) can
 /// be added without rippling the call sites.
 ///
-/// `click_url` is the in-app path a Web Push notification opens when clicked
-/// (e.g. `/retainers/undercuts` for undercut alerts); use `/alerts` when no
-/// more specific destination applies. Other endpoint methods ignore it — their
-/// bodies already carry full links.
+/// `push` carries the Web Push click target and queueing policy; see
+/// [`PushOptions`]. Other endpoint methods ignore it.
 pub(crate) async fn deliver_to_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
-    click_url: &str,
+    push: &PushOptions,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
@@ -133,7 +208,7 @@ pub(crate) async fn deliver_to_endpoint(
         EndpointConfig::WebPush { subscription_id } => {
             let cfg = get_web_push_config()
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
-            send_webpush(subscription_id, title, body, click_url, db, cfg).await
+            send_webpush(subscription_id, title, body, push, db, cfg).await
         }
         // No-op: the tracker calls `record_fire` right after dispatch returns,
         // which writes the `alert_event` row and broadcasts it on the
@@ -152,7 +227,7 @@ pub(crate) async fn deliver_non_discord_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
-    click_url: &str,
+    push: &PushOptions,
     db: &UltrosDb,
 ) -> Result<()> {
     let parsed = parse_endpoint_config(&endpoint.method, &endpoint.config)?;
@@ -164,7 +239,7 @@ pub(crate) async fn deliver_non_discord_endpoint(
         EndpointConfig::WebPush { subscription_id } => {
             let cfg = get_web_push_config()
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
-            send_webpush(subscription_id, title, body, click_url, db, cfg).await
+            send_webpush(subscription_id, title, body, push, db, cfg).await
         }
         // No-op: the tracker calls `record_fire` right after dispatch returns,
         // which writes the `alert_event` row and broadcasts it on the
@@ -249,7 +324,7 @@ pub(crate) async fn dispatch_alert_detailed(
     alert_id: i32,
     title: &str,
     body: &str,
-    click_url: &str,
+    push: &PushOptions,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> DispatchOutcome {
@@ -273,7 +348,7 @@ pub(crate) async fn dispatch_alert_detailed(
     let mut any_transient = false;
 
     for endpoint in endpoints {
-        match deliver_to_endpoint(&endpoint, title, body, click_url, db, ctx).await {
+        match deliver_to_endpoint(&endpoint, title, body, push, db, ctx).await {
             Ok(()) => {
                 any_ok = true;
                 // Only touch the DB when there is actually stale failure state
@@ -333,11 +408,11 @@ pub(crate) async fn dispatch_alert(
     alert_id: i32,
     title: &str,
     body: &str,
-    click_url: &str,
+    push: &PushOptions,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
-    match dispatch_alert_detailed(alert_id, title, body, click_url, db, ctx).await {
+    match dispatch_alert_detailed(alert_id, title, body, push, db, ctx).await {
         DispatchOutcome::Delivered => Ok(()),
         DispatchOutcome::TransientFailure(e) => Err(e),
         DispatchOutcome::PermanentFailure(reason) => Err(anyhow!("{reason}")),
@@ -393,11 +468,12 @@ async fn send_dm(
 /// Build the JSON body the service worker reads out of `event.data.json()`.
 /// `click_url` becomes `data.url`, which `notificationclick` opens — an alert
 /// that hardcodes this loses the user's actual destination.
-fn build_push_payload(title: &str, body: &str, click_url: &str) -> Result<Vec<u8>> {
+fn build_push_payload(title: &str, body: &str, push: &PushOptions) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(&serde_json::json!({
         "title": title,
         "body": body,
-        "url": click_url,
+        "url": push.click_url,
+        "topic": push.topic,
     }))?)
 }
 
@@ -453,7 +529,7 @@ async fn send_webpush(
     subscription_id: i32,
     title: &str,
     body: &str,
-    click_url: &str,
+    push: &PushOptions,
     db: &UltrosDb,
     config: &WebPushConfig,
 ) -> Result<()> {
@@ -473,11 +549,18 @@ async fn send_webpush(
         .build()
         .map_err(|e| anyhow!("VAPID build failed: {e:?}"))?;
 
-    let payload = build_push_payload(title, body, click_url)?;
+    let payload = build_push_payload(title, body, push)?;
 
     let mut builder = WebPushMessageBuilder::new(&info);
     builder.set_payload(ContentEncoding::Aes128Gcm, &payload);
     builder.set_vapid_signature(signature);
+    // Without these the crate defaults to a four-week TTL and no topic, so a
+    // browser that was closed for a while drains every queued alert as a
+    // burst of toasts on reconnect.
+    builder.set_ttl(push.ttl_secs);
+    if let Some(topic) = push.topic.clone() {
+        builder.set_topic(topic);
+    }
     let message = builder
         .build()
         .map_err(|e| anyhow!("web push build failed: {e:?}"))?;
@@ -717,11 +800,53 @@ mod tests {
 
     #[test]
     fn push_payload_carries_the_callers_click_url() {
-        let payload = build_push_payload("Undercut Alert", "body", "/retainers/undercuts").unwrap();
+        let push = PushOptions::for_alert(AlertKind::Undercut, 7, "/retainers/undercuts");
+        let payload = build_push_payload("Undercut Alert", "body", &push).unwrap();
         let decoded: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(decoded["url"], json!("/retainers/undercuts"));
         assert_eq!(decoded["title"], json!("Undercut Alert"));
         assert_eq!(decoded["body"], json!("body"));
+        assert_eq!(decoded["topic"], json!("undercut-7"));
+    }
+
+    #[test]
+    fn immediate_push_payload_has_no_topic() {
+        let payload = build_push_payload("t", "b", &PushOptions::immediate("/alerts")).unwrap();
+        let decoded: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(decoded["topic"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn alert_topics_are_valid_web_push_topics() {
+        // RFC 8030 §5.4: at most 32 base64url characters. The crate rejects
+        // anything else at build time, which would fail every send.
+        for kind in [
+            AlertKind::Undercut,
+            AlertKind::Sold,
+            AlertKind::Price,
+            AlertKind::ListUpdate,
+        ] {
+            let topic = PushOptions::for_alert(kind, i32::MAX, "/alerts")
+                .topic
+                .unwrap();
+            assert!(topic.len() <= 32, "{topic}");
+            assert!(
+                topic
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "{topic}"
+            );
+        }
+    }
+
+    #[test]
+    fn undercut_ttl_is_shorter_than_the_other_kinds() {
+        let undercut = PushOptions::for_alert(AlertKind::Undercut, 1, "/").ttl_secs;
+        for kind in [AlertKind::Sold, AlertKind::Price, AlertKind::ListUpdate] {
+            assert!(undercut < PushOptions::for_alert(kind, 1, "/").ttl_secs);
+        }
+        // All far shorter than the crate's four-week default.
+        assert!(PushOptions::for_alert(AlertKind::Sold, 1, "/").ttl_secs < 24 * 60 * 60);
     }
 
     #[test]

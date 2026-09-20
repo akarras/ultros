@@ -211,6 +211,11 @@ self.addEventListener('push', (event) => {
     badge: '/static/favicon-32x32.png',
     data: { url: data.url || '/alerts' },
   };
+  // The server sets one topic per alert rule (the same string it sends as the
+  // push service's `Topic` header). Reusing it as the tag makes a newer
+  // notification for that rule replace the one already on screen instead of
+  // stacking beside it, so a burst of pushes collapses to one toast per rule.
+  if (typeof data.topic === 'string' && data.topic) options.tag = data.topic;
   event.waitUntil(self.registration.showNotification(title, options));
 });
 

@@ -10,7 +10,7 @@ use ultros_db::{UltrosDb, entity::alert};
 
 use crate::{
     alerts::{
-        delivery::dispatch_alert,
+        delivery::{AlertKind, PushOptions, dispatch_alert},
         inbox::{AlertFire, record_fire},
         price_alert_tracker::is_off_cooldown_at,
     },
@@ -178,8 +178,8 @@ async fn handle_list_event(
             rule.list_id
         );
         let click_url = format!("/list/{}", rule.list_id);
-        let delivery_result =
-            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
+        let push = PushOptions::for_alert(AlertKind::ListUpdate, rule.alert_id, &click_url);
+        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 

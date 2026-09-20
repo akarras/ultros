@@ -713,6 +713,7 @@ pub(crate) async fn resend_alert_event(
         "Resending alert for item {} (matched price: {:?})",
         event.item_id, event.matched_price
     );
+    let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
     let mut last_err: Option<String> = None;
     let mut any_ok = false;
     let owner = user.id as i64;
@@ -733,7 +734,7 @@ pub(crate) async fn resend_alert_event(
             match serenity_ctx.as_ref() {
                 Some(ctx) => {
                     crate::alerts::delivery::deliver_to_endpoint(
-                        &endpoint, title, &body, "/alerts", &db, ctx,
+                        &endpoint, title, &body, &push, &db, ctx,
                     )
                     .await
                 }
@@ -741,7 +742,7 @@ pub(crate) async fn resend_alert_event(
             }
         } else {
             crate::alerts::delivery::deliver_non_discord_endpoint(
-                &endpoint, title, &body, "/alerts", &db,
+                &endpoint, title, &body, &push, &db,
             )
             .await
         };

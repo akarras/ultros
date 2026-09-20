@@ -85,6 +85,15 @@ keys.
   uninstalled the PWA, cleared site data, etc.) come back from the push
   service as `EndpointNotFound`/`EndpointNotValid`. The delivery path
   soft-deletes those `push_subscription` rows automatically.
+* Every push carries a `TTL` and (for tracker-fired alerts) a `Topic` header
+  (RFC 8030), set from `PushOptions` in `ultros/src/alerts/delivery.rs`. The
+  TTL is 1h for undercut rollups and 4h for sold/price/list alerts, so a
+  browser that was closed overnight wakes to nothing rather than a backlog.
+  The topic is one per alert rule (`undercut-<alert_id>` etc.), so within the
+  TTL window the push service keeps only the newest queued message per rule.
+  The same topic is echoed in the JSON payload; the service worker uses it as
+  the notification `tag` so a newer toast for that rule replaces the one on
+  screen. Endpoint tests and inbox resends use a 5-minute TTL and no topic.
 * `notification_endpoint` rows of method `WebPush` cannot be created via
   `POST /api/v1/endpoints` — they must come from
   `POST /api/v1/push/subscribe`, since the row is useless without an

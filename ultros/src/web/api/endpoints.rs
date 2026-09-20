@@ -390,12 +390,13 @@ pub(crate) async fn test_endpoint(
         crate::alerts::delivery::get_serenity_ctx()
     };
 
+    let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
     let result = if let Some(ctx) = serenity_ctx.as_ref() {
         crate::alerts::delivery::deliver_to_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
-            "/alerts",
+            &push,
             &db,
             ctx,
         )
@@ -406,7 +407,7 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
-            "/alerts",
+            &push,
             &db,
         )
         .await
