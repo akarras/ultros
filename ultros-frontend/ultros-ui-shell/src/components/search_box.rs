@@ -650,7 +650,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                 </Show>
 
                 <div
-                    class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42"
+                    class="scroll-panel contain-layout contain-paint forced-layer"
                     class:hidden=move || search_results.with(|v| v.is_empty())
                 >
                     <VirtualScroller
