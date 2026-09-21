@@ -42,7 +42,7 @@ jobs:
             - name: Install Rust toolchain
               uses: dtolnay/rust-toolchain@master
               with:
-                  toolchain: nightly-2026-08-20
+                  toolchain: nightly-2026-09-20
                   components: rustfmt, clippy
             # Restore on every run, but only *save* from main. Actions caches
             # are scoped per-ref, so a plain actions/cache here wrote a fresh
