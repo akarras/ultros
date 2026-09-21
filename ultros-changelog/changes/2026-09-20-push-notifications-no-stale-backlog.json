@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Reopening your browser no longer floods you with stale push notifications",
+  "blurb": "Push notifications that fired while your browser was closed used to queue up for weeks and then all arrive at once when it reopened. Alerts now expire after a few hours (one hour for undercut rollups), and a newer notification for the same alert replaces the older one instead of stacking beside it. The Alerts inbox still keeps every event.",
+  "link": "/alerts"
+}
