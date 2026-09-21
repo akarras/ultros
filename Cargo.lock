@@ -2910,7 +2910,8 @@ name = "game-data-pack"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "flate2",
+ "brotli",
+ "brotli-decompressor",
  "icon-extract",
  "image",
  "rayon",
@@ -11973,8 +11974,9 @@ name = "xiv-gen-db"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "flate2",
+ "brotli-decompressor",
  "rkyv",
+ "sha2 0.11.0",
  "xiv-gen",
 ]
 

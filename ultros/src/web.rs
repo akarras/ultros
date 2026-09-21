@@ -3416,10 +3416,19 @@ async fn delete_user(
     Ok((cookie_jar, Redirect::to("/")))
 }
 
+/// Serves the game-data pack the client decodes with `xiv_gen_db::try_init`.
+///
+/// `version` is the pack's content hash (`xiv_gen_db::pack_version`), so a
+/// URL that names the current pack is immutable and cached for a year, at the
+/// edge and in the browser. A URL naming any other version (a tab still
+/// running an older build after a game-data bump) gets the current bytes too,
+/// since that is all this binary has, but marked `no-store` so neither cache
+/// files the wrong pack under that key.
 async fn get_xiv_data_bytes(
-    Path((_version, lang)): Path<(String, String)>,
-) -> Result<&'static [u8], WebError> {
-    let lang = match lang.strip_suffix(".rkyv").unwrap_or(&lang) {
+    Path((version, lang)): Path<(String, String)>,
+) -> Result<axum::response::Response, WebError> {
+    let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
+    let lang = match lang_code {
         "en" => xiv_gen::Language::En,
         "ja" => xiv_gen::Language::Ja,
         "de" => xiv_gen::Language::De,
@@ -3429,7 +3438,21 @@ async fn get_xiv_data_bytes(
         "tc" => xiv_gen::Language::Tc,
         _ => return Err(anyhow::anyhow!("Unsupported language").into()),
     };
-    Ok(xiv_gen_db::embedded_bytes(lang))
+    let cache_control = if version == xiv_gen_db::pack_version(lang_code) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    let mut response = xiv_gen_db::embedded_bytes(lang).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    Ok(response)
 }
 
 /// Returns a region- attempts to guess it from the CF Region header
@@ -3774,7 +3797,12 @@ pub(crate) async fn start_web(
             CompressionLayer::new().compress_when(
                 SizeAbove::new(256)
                     // don't compress images
-                    .and(NotForContentType::IMAGES),
+                    .and(NotForContentType::IMAGES)
+                    // The game-data pack (`get_xiv_data_bytes`) is the only
+                    // octet-stream and is already a brotli container: on prod
+                    // this layer spent CPU re-compressing 4.5 MB of it per
+                    // origin request for a 0.03% gain. Serve it as-is.
+                    .and(NotForContentType::const_new("application/octet-stream")),
             ),
         )
         .layer(SetResponseHeaderLayer::overriding(
