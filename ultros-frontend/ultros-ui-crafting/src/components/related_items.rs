@@ -157,7 +157,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     use crate::global_state::craft_options::{self, CraftOptions};
 
     let i18n = use_i18n();
-    let cheapest_prices = use_context::<CheapestPrices>().unwrap();
+    let cheapest_listings = use_context::<CheapestPrices>().unwrap().demand();
     let cookies = use_context::<Cookies>().unwrap();
     let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
     let on_hand_map = use_context::<OnHandMap>();
@@ -184,7 +184,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                 if !hydrated.get() {
                     return view! { <SingleLineSkeleton /> }.into_any();
                 }
-                cheapest_prices.read_listings.with(|prices| {
+                cheapest_listings.with(|prices| {
                     let prices = prices.as_ref()?.as_ref().ok()?;
                     let opts_value = opts_cookie.get().unwrap_or_default();
                     let shards = if opts_value.exclude_shards {
@@ -398,6 +398,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     Effect::new(move |_| {
         profit_hydrated.set(true);
     });
+    let profit_listings = use_context::<CheapestPrices>().unwrap().demand();
 
     Some(view! {
         <div class="panel p-4 sm:p-5 space-y-4 min-w-0">
@@ -458,7 +459,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                         let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
                         let on_hand_map = use_context::<OnHandMap>();
 
-                        use_context::<CheapestPrices>().unwrap().read_listings.with(|data| {
+                        profit_listings.with(|data| {
                             let data = data.as_ref()?.as_ref().ok()?;
                             let opts_value = opts_cookie.get().unwrap_or_default();
                             let shards = if opts_value.exclude_shards {

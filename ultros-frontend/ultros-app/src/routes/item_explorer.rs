@@ -797,7 +797,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     let (hq_only, _set_hq_only) = filter_query_signal::<bool>(FILTER_HQ);
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
-    let listings_resource = cheapest_prices.read_listings;
+    let listings_resource = cheapest_prices.demand();
     let scope = use_context::<ExplorerPriceScope>()
         .expect("ItemList is always rendered inside ItemExplorer, which provides the scope");
     let scope_name = scope.name;
@@ -823,9 +823,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     // On SSR the listings resource is `None` at render time (the wrapping
     // `<Suspense>` never suspends — `.get()` doesn't subscribe-and-suspend the
     // way `.read()` does), so the SSR HTML reflects the ilvl fallback with NO
-    // price filter applied. On the client, Leptos serialises the resolved
-    // resource into the payload so `listings_resource.get()` returns
-    // `Some(map)` immediately during hydration — which would make the first
+    // price filter applied. On the client the resource is a `LocalResource`
+    // that resolves after hydration, but a cached SPA navigation can already
+    // have it loaded, so `listings_resource.get()` may return `Some(map)`
+    // during the first CSR render — which would make the first
     // CSR render apply the price filter (dropping items without listings)
     // AND sort by price. The resulting row list then mismatches the SSR DOM
     // in both count and order, and tachys' walker panics at
@@ -1408,25 +1409,21 @@ pub fn ItemExplorer() -> impl IntoView {
             .map(|z| z.get_name().to_string())
             .unwrap_or_else(|| "North-America".to_string())
     });
-    let read_listings = Resource::new(
-        move || (scope_name.get(), cookie_zone_name.get()),
-        move |(world, cookie_world)| {
-            let global_prices = global_prices.clone();
-            async move {
-                if let Some(global) = global_prices.filter(|_| world == cookie_world) {
-                    return global.read_listings.await;
-                }
-                crate::api::get_cheapest_listings(&world)
-                    .await
-                    .map(|cheapest_prices| {
-                        ultros_api_types::cheapest_listings::CheapestListingsMap::from(
-                            cheapest_prices,
-                        )
-                    })
+    // Client-only like the root resource: the explorer gates every price read
+    // behind hydration, so the server has nothing to fetch or serialize.
+    let read_listings = LocalResource::new(move || {
+        let world = scope_name.get();
+        let cookie_world = cookie_zone_name.get();
+        async move {
+            if let Some(global) = global_prices.filter(|_| world == cookie_world) {
+                return global.demand().await;
             }
-        },
-    );
-    provide_context(CheapestPrices { read_listings });
+            crate::api::get_cheapest_listings(&world)
+                .await
+                .map(ultros_api_types::cheapest_listings::CheapestListingsMap::from)
+        }
+    });
+    provide_context(CheapestPrices::already_demanded(read_listings));
     provide_context(scope);
     view! {
         <div class="flex flex-col min-h-screen">

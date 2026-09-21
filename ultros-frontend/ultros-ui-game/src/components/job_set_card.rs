@@ -238,7 +238,7 @@ mod tests {
 pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
     let i18n = use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
-    let read_listings = cheapest_prices.map(|c| c.read_listings);
+    let read_listings = cheapest_prices.map(|c| c.demand());
 
     let group_for_view = group.clone();
     let group_for_total = group.clone();
