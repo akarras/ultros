@@ -44,6 +44,99 @@ pub struct BulkListingStats {
     pub stats: Vec<ItemListingStats>,
 }
 
+/// Struct-of-arrays wire form of [`BulkListingStats`] — what
+/// `/api/v1/listing_stats/{scope}?format=columnar` returns. Row `i` is
+/// the `i`th element of every column; the names match
+/// [`ItemListingStats`] field for field. The nested per-row
+/// [`ListingWindowStats`] is not exploded: on windowed requests it rides
+/// as one parallel column of objects, and on current-only requests the
+/// key is absent. Rows are emitted in `(item_id, hq)` order for
+/// compressibility; decoding does not depend on the order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct BulkListingStatsColumnar {
+    pub item_id: Vec<i32>,
+    pub hq: Vec<bool>,
+    pub alive_count: Vec<u32>,
+    pub alive_units: Vec<u64>,
+    pub distinct_retainers: Vec<u32>,
+    pub oldest_reviewed_unix: Vec<i64>,
+    pub median_age_secs: Vec<u32>,
+    pub floor_alive: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<Vec<ListingWindowStats>>,
+}
+
+impl From<BulkListingStats> for BulkListingStatsColumnar {
+    /// The `window` column is present iff any row carries a window; rows
+    /// without one contribute a `Default` placeholder so the column stays
+    /// parallel. (The server fills every row on a windowed request.)
+    fn from(value: BulkListingStats) -> Self {
+        let n = value.stats.len();
+        let windowed = value.stats.iter().any(|s| s.window.is_some());
+        let mut out = Self {
+            item_id: Vec::with_capacity(n),
+            hq: Vec::with_capacity(n),
+            alive_count: Vec::with_capacity(n),
+            alive_units: Vec::with_capacity(n),
+            distinct_retainers: Vec::with_capacity(n),
+            oldest_reviewed_unix: Vec::with_capacity(n),
+            median_age_secs: Vec::with_capacity(n),
+            floor_alive: Vec::with_capacity(n),
+            window: windowed.then(|| Vec::with_capacity(n)),
+        };
+        for row in value.stats {
+            out.item_id.push(row.item_id);
+            out.hq.push(row.hq);
+            out.alive_count.push(row.alive_count);
+            out.alive_units.push(row.alive_units);
+            out.distinct_retainers.push(row.distinct_retainers);
+            out.oldest_reviewed_unix.push(row.oldest_reviewed_unix);
+            out.median_age_secs.push(row.median_age_secs);
+            out.floor_alive.push(row.floor_alive);
+            if let Some(window) = out.window.as_mut() {
+                window.push(row.window.unwrap_or_default());
+            }
+        }
+        out
+    }
+}
+
+impl From<BulkListingStatsColumnar> for BulkListingStats {
+    /// Zips the flat columns; unequal lengths truncate to the shortest
+    /// rather than panicking. A `window` column shorter than the rows
+    /// leaves the tail rows' `window` as `None`.
+    fn from(value: BulkListingStatsColumnar) -> Self {
+        let n = [
+            value.item_id.len(),
+            value.hq.len(),
+            value.alive_count.len(),
+            value.alive_units.len(),
+            value.distinct_retainers.len(),
+            value.oldest_reviewed_unix.len(),
+            value.median_age_secs.len(),
+            value.floor_alive.len(),
+        ]
+        .into_iter()
+        .min()
+        .unwrap_or(0);
+        let mut windows = value.window.unwrap_or_default().into_iter();
+        let stats = (0..n)
+            .map(|i| ItemListingStats {
+                item_id: value.item_id[i],
+                hq: value.hq[i],
+                alive_count: value.alive_count[i],
+                alive_units: value.alive_units[i],
+                distinct_retainers: value.distinct_retainers[i],
+                oldest_reviewed_unix: value.oldest_reviewed_unix[i],
+                median_age_secs: value.median_age_secs[i],
+                floor_alive: value.floor_alive[i],
+                window: windows.next(),
+            })
+            .collect();
+        Self { stats }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +213,117 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ListingWindowStats>(&json).unwrap(),
             window
+        );
+    }
+
+    fn listing(item_id: i32, hq: bool, floor_alive: i32) -> ItemListingStats {
+        ItemListingStats {
+            item_id,
+            hq,
+            alive_count: 3,
+            alive_units: 12,
+            distinct_retainers: 2,
+            oldest_reviewed_unix: 1_700_000_000,
+            median_age_secs: 86_400,
+            floor_alive,
+            window: None,
+        }
+    }
+
+    fn window(days: u16) -> ListingWindowStats {
+        ListingWindowStats {
+            window_days: days,
+            from: 1_700_000_000 - i64::from(days) * 86_400,
+            to: 1_700_000_000,
+            additions: 4,
+            removals: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn columnar_round_trips_rows_in_order() {
+        let rows = BulkListingStats {
+            stats: vec![
+                listing(2, false, 100),
+                listing(2, true, 300),
+                listing(5, false, 7),
+            ],
+        };
+        let columnar = BulkListingStatsColumnar::from(rows.clone());
+        assert_eq!(columnar.item_id, vec![2, 2, 5]);
+        assert_eq!(columnar.hq, vec![false, true, false]);
+        assert_eq!(columnar.floor_alive, vec![100, 300, 7]);
+        assert!(columnar.window.is_none());
+        assert_eq!(BulkListingStats::from(columnar), rows);
+    }
+
+    #[test]
+    fn columnar_current_only_serializes_as_eight_arrays_without_window() {
+        let columnar = BulkListingStatsColumnar::from(BulkListingStats {
+            stats: vec![listing(5, true, 7)],
+        });
+        let json = serde_json::to_string(&columnar).unwrap();
+        assert_eq!(
+            json,
+            r#"{"item_id":[5],"hq":[true],"alive_count":[3],"alive_units":[12],"distinct_retainers":[2],"oldest_reviewed_unix":[1700000000],"median_age_secs":[86400],"floor_alive":[7]}"#
+        );
+        let back: BulkListingStatsColumnar = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, columnar);
+    }
+
+    #[test]
+    fn columnar_windowed_round_trips_window_column() {
+        let mut a = listing(2, false, 100);
+        a.window = Some(window(7));
+        let mut b = listing(5, false, 7);
+        b.window = Some(window(30));
+        let rows = BulkListingStats { stats: vec![a, b] };
+        let columnar = BulkListingStatsColumnar::from(rows.clone());
+        assert_eq!(columnar.window.as_ref().map(|w| w.len()), Some(2));
+        let json = serde_json::to_string(&columnar).unwrap();
+        assert!(json.contains(r#""window":[{"#));
+        let back: BulkListingStatsColumnar = serde_json::from_str(&json).unwrap();
+        assert_eq!(BulkListingStats::from(back), rows);
+    }
+
+    #[test]
+    fn columnar_short_window_column_leaves_tail_rows_without_window() {
+        let mut columnar = BulkListingStatsColumnar::from(BulkListingStats {
+            stats: vec![listing(1, false, 10), listing(2, false, 20)],
+        });
+        columnar.window = Some(vec![window(7)]);
+        let rows = BulkListingStats::from(columnar);
+        assert_eq!(rows.stats[0].window, Some(window(7)));
+        assert_eq!(rows.stats[1].window, None);
+    }
+
+    #[test]
+    fn columnar_empty_round_trips() {
+        assert_eq!(
+            BulkListingStats::from(BulkListingStatsColumnar::default()).stats,
+            vec![]
+        );
+        assert_eq!(
+            BulkListingStatsColumnar::from(BulkListingStats::default()),
+            BulkListingStatsColumnar::default()
+        );
+    }
+
+    #[test]
+    fn columnar_mismatched_lengths_truncate_to_shortest() {
+        let mut columnar = BulkListingStatsColumnar::from(BulkListingStats {
+            stats: vec![
+                listing(1, false, 10),
+                listing(2, true, 20),
+                listing(3, false, 30),
+            ],
+        });
+        columnar.median_age_secs.pop();
+        let rows = BulkListingStats::from(columnar);
+        assert_eq!(
+            rows.stats,
+            vec![listing(1, false, 10), listing(2, true, 20)]
         );
     }
 }
