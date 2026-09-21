@@ -28,6 +28,9 @@ use super::error::{ClickHouseQueryError, WebError};
 pub(crate) struct CacheKey {
     pub selector: AnySelector,
     pub window_days: u16,
+    /// Struct-of-arrays (`?format=columnar`) and row-of-objects bodies are
+    /// cached in separate slots; each is a distinct serialization.
+    pub columnar: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -416,6 +419,7 @@ mod tests {
         CacheKey {
             selector: AnySelector::World(id),
             window_days: 7,
+            columnar: false,
         }
     }
 
@@ -561,6 +565,7 @@ mod tests {
                 let key = CacheKey {
                     selector,
                     window_days: days,
+                    columnar: false,
                 };
                 let body = Bytes::from(format!("{selector:?}:{days}"));
                 let expected = body.clone();
@@ -580,5 +585,36 @@ mod tests {
                 assert_eq!(sale.body, Bytes::from_static(b"sale"));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn columnar_and_row_shapes_have_separate_slots() {
+        let cache = SaleStatsCache::with_config(
+            4,
+            1,
+            Duration::from_secs(60),
+            Duration::from_secs(120),
+            Duration::from_secs(1),
+            64 * 1024 * 1024,
+        );
+        let rows = CacheKey {
+            selector: AnySelector::World(1),
+            window_days: 7,
+            columnar: false,
+        };
+        let columnar = CacheKey {
+            columnar: true,
+            ..rows
+        };
+        cache
+            .get_or_load(rows, || async { Ok(Bytes::from_static(b"rows")) })
+            .await
+            .unwrap();
+        let value = cache
+            .get_or_load(columnar, || async { Ok(Bytes::from_static(b"columnar")) })
+            .await
+            .unwrap();
+        assert_eq!(value.disposition, CacheDisposition::Loaded);
+        assert_eq!(&value.body[..], b"columnar");
     }
 }

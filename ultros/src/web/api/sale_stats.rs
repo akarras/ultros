@@ -62,6 +62,7 @@ pub(crate) async fn get_sale_stats(
             CacheKey {
                 selector,
                 window_days,
+                columnar: false,
             },
             move || async move { load_sale_stats(&ch, world_ids, window_days).await },
         )

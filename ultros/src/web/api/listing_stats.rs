@@ -68,6 +68,7 @@ pub(crate) async fn get_listing_stats(
             CacheKey {
                 selector,
                 window_days: query.window.unwrap_or(NO_WINDOW),
+                columnar: false,
             },
             move || async move { load_listing_stats(&ch, world_ids, query.window).await },
         )
