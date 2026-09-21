@@ -268,6 +268,12 @@ mod tests {
         assert!(html.contains("stroke-dasharray=\"2.0 4.0\""));
         assert!(html.contains("<path"));
         assert!(html.contains("text-anchor=\"middle\""));
-        assert!(html.contains(">hi</text>"));
+        // Type-erased components (`--cfg=erase_components`, on for every
+        // build via .cargo/config.toml) end each `AnyView` child with a `<!>`
+        // hydration marker, so the text renders as `>hi<!></text>`. Assert on
+        // the text node and the closing tag separately rather than on the
+        // exact byte sequence between them.
+        assert!(html.contains(">hi<"), "text markup: {html}");
+        assert!(html.contains("</text>"), "text markup: {html}");
     }
 }

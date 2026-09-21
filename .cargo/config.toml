@@ -1,5 +1,28 @@
 [build]
-rustflags = ["--cfg=web_sys_unstable_apis"]
+rustflags = [
+    "--cfg=web_sys_unstable_apis",
+    # Type-erased components in EVERY build, release included. leptos keys its
+    # `__internal_erase_components` macro feature off this cfg (see
+    # `[target."cfg(erase_components)".dependencies.leptos_macro]` in leptos's
+    # Cargo.toml): each `#[component]` returns `AnyView` and each `{move || …}`
+    # child collapses to one shared closure type, so the view tree stops
+    # monomorphizing per call site. Measured on 7fe53c70 (wasm-bindgen +
+    # wasm-opt -Oz, brotli -q 11): 23.78 MB -> 17.17 MB raw, 4.95 MB -> 3.48 MB
+    # on the wire, and the frontend release build went from ~35 to ~9 minutes.
+    #
+    # It has to be set for the server AND the client: `AnyView` writes a `<!>`
+    # hydration marker after its content, so a typed SSR tree and an erased
+    # client tree would disagree about the DOM and panic in hydration. cargo-
+    # leptos already does exactly this for every dev build (`erase_components`
+    # is its debug default), so this is the mode the app has always run under
+    # locally; release just stops opting out of it.
+    #
+    # Set here rather than via cargo-leptos's `always-erase-components` so
+    # Docker's `cargo chef cook` layers see the same flags as the real build
+    # (cargo-chef replays `.cargo/config.toml`, but cargo-leptos's own RUSTFLAGS
+    # additions would invalidate every cooked dependency).
+    "--cfg=erase_components",
+]
 
 # Target-scoped rustflags REPLACE [build].rustflags rather than merging, so the
 # web_sys cfg is repeated here. Only applied to native x86_64 Linux builds —
@@ -16,6 +39,9 @@ rustflags = ["--cfg=web_sys_unstable_apis"]
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "--cfg=web_sys_unstable_apis",
+    # Repeated from `[build]` (this table replaces it): the prod server must
+    # render the same erased tree the wasm client hydrates. See the note above.
+    "--cfg=erase_components",
     # Makes "Tried to access a reactive value that has already been disposed."
     # name the signal instead of being anonymous. reactive_graph's
     # `unwrap_signal!` only prints the signal's `defined_at` and the access site
