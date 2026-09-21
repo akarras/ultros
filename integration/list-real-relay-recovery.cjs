@@ -58,7 +58,7 @@ async function runRealRelayRecovery({ browser, base, market, ownerId, createList
         open: () => open(page),
         prepareShop: async () => {
           await click(page, tid("guest-shop-mode"));
-          await click(page, (tid("shop-route-option") + '[data-route-cheapest="true"]'));
+          if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click(page, (tid("shop-route-option") + '[data-route-cheapest="true"]'));
           await page.waitForSelector(`${nqRow} ${tid("shop-stack-quantity")}`);
           await page.waitForSelector(`${hqRow} ${tid("shop-stack-quantity")}`);
           for (const row of [nqRow, hqRow])

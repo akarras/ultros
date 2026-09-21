@@ -77,6 +77,9 @@ pub fn ListWorkspaceShell(
     /// An explicit price refresh control, for a page without live prices.
     #[prop(optional, into)]
     refresh: Option<ViewFn>,
+    /// Document undo/redo controls, shown alongside the location controls in Build.
+    #[prop(into)]
+    history: ViewFn,
     price_row_testid: &'static str,
     travel: ListTravelState,
     children: Children,
@@ -103,8 +106,9 @@ pub fn ListWorkspaceShell(
             <a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a>
             <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div class="min-w-0 flex-1 basis-56">
+                    <h1 class="sr-only">{move || name.get()}</h1>
                     <input
-                        class="w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] read-only:hover:border-transparent read-only:focus:border-transparent px-1 py-0.5"
+                        class="list-title-input w-full min-w-0 bg-transparent text-2xl font-bold rounded-md border border-transparent hover:border-[color:var(--color-outline)] focus:border-[color:var(--color-outline)] read-only:hover:border-transparent read-only:focus:border-transparent px-1 py-0.5"
                         data-testid="list-name-input"
                         aria-label=move || t_string!(i18n, guest_workspace_name).to_string()
                         readonly=move || !can_rename.get()
@@ -152,21 +156,40 @@ pub fn ListWorkspaceShell(
             {notices.map(|notices| notices.run())}
             <Show when=move || show_controls.get()>
                 <ListWorkspaceModes shop set_shop />
-                <div class="flex flex-wrap items-center gap-2" data-testid=price_row_testid>
+                <div class="flex items-start gap-3" data-testid=price_row_testid>
+                    <div class="flex min-w-0 flex-1 flex-wrap items-end gap-3">
                     <Show when=move || can_set_scope.get()>
-                        <WorldPicker current_world=scope set_current_world=SignalSetter::map(move |value| set_scope.run(value)) />
+                        <div class="list-price-scope min-w-0 max-w-full space-y-1"><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_price_scope)}</p><WorldPicker current_world=scope set_current_world=SignalSetter::map(move |value| set_scope.run(value)) /></div>
                     </Show>
-                    {refresh.clone().map(|refresh| refresh.run())}
                     <ListTravelPanel state=travel />
+                    {refresh.clone().map(|refresh| refresh.run())}
+                    </div>
+                    <div class="shrink-0 pt-6" class:hidden=move || shop.get()>{history.clone().run()}</div>
                 </div>
             </Show>
             {children()}
             <Show when=move || menu_open.get()>
                 <Modal set_visible=menu_open.write_only() aria_label=Signal::derive(move || t_string!(i18n, online_more).to_string())>
-                    <h2 class="text-xl font-bold">{t!(i18n, online_more)}</h2>
+                    <h2 class="text-xl font-semibold">{t!(i18n, online_more)}</h2>
                     <div class="space-y-3 pt-3">{menu.get_value().run()}</div>
                 </Modal>
             </Show>
         </div>
+    }
+}
+
+/// Shared document history toolbar for both list storage modes.
+#[component]
+pub fn ListHistoryControls(
+    source: crate::routes::list_view_sync::ListWorkspaceSource,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    view! {
+        <Show when=move || source.can_write.get()>
+            <div class="flex items-center gap-2" data-testid="list-history-controls">
+                <button type="button" class="btn-ghost min-h-11 min-w-11 p-0 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() aria-label=t_string!(i18n, lists_workspace_undo) title=move || if source.can_undo.get() { t_string!(i18n, lists_workspace_undo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_undo).to_string() } on:click=move |_| source.undo.run(())><Icon icon=icondata::BiUndoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
+                <button type="button" class="btn-ghost min-h-11 min-w-11 p-0 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() aria-label=t_string!(i18n, lists_workspace_redo) title=move || if source.can_redo.get() { t_string!(i18n, lists_workspace_redo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_redo).to_string() } on:click=move |_| source.redo.run(())><Icon icon=icondata::BiRedoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
+            </div>
+        </Show>
     }
 }

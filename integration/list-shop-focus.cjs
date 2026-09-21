@@ -220,7 +220,7 @@ async function main() {
         assert((await response).ok(), "device price fixture must load");
         await page.waitForFunction(() => { const button = document.querySelector('[data-testid="device-prices-refresh"]'); return button?.textContent.trim() === "Refresh prices" && !button.disabled; });
       }
-      await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
+      if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
       await page.waitForSelector('[data-shop-key]');
       await runShopFocus(page, { label, onRemoteCompletion, remotePurchase: async (key, delta) => {
         console.log(`[remote] ${key} ${delta}: foreground`);

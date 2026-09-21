@@ -63,7 +63,7 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
   }
   async function shop() {
     await click(tid("guest-shop-mode"));
-    await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-totals"));
     assert.match(await page.$eval(tid("shop-totals"), node => node.textContent), /36 gil.*0 missing/);
     await page.$eval(tid("shop-estimate"), node => { node.open = true; });

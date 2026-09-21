@@ -83,7 +83,7 @@ async function main() {
       coverage: document.querySelector('[data-testid="list-estimate-status"]').textContent,
       refreshFailed: /refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent || ""),
     }));
-    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    await click(tid("guest-shop-mode")); if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     // With a trip already active, a quick pick is reviewed before adoption
     // (#1480); the reference must describe the adopted source.
     if (await page.$(tid("shop-review-apply"))) await click(tid("shop-review-apply"));
@@ -242,7 +242,7 @@ async function main() {
     await load(`/list/${id}`); await summary("121 gil", false);
     assert.equal((await checked("GET", `/api/v1/list/${id}/listings`))[0].permission, "Read");
     assert.equal(await page.$(tid("inline-list-add")), null, "reader cannot add items");
-    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    await click(tid("guest-shop-mode")); if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-stack-bought"));
     assert(await page.$$eval(tid("shop-stack-bought"), buttons => buttons.length > 0 && buttons.every(button => button.disabled)), "reader cannot record purchases");
     await record("shared-reader-mobile-priced-shop");
@@ -275,7 +275,7 @@ async function main() {
       await remote.goto(`${base}/list/${focusList}`, { waitUntil: "domcontentloaded" });
       await remote.waitForFunction(() => window.__pricedHydrated);
       await load(`/list/${focusList}`);
-      await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+      await click(tid("guest-shop-mode")); if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
       await page.waitForSelector('[data-shop-key]');
       await require("./list-shop-focus.cjs").runShopFocus(page, { label: "real-market-account", remotePurchase: async (key, delta) => {
         await remote.bringToFront();
@@ -372,7 +372,7 @@ async function main() {
     await summary("56 gil", false);
     await checkBuildReference();
     await record("device-mobile-build-real-market");
-    await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    await click(tid("guest-shop-mode")); if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-stack-quantity"));
     await replace(tid("shop-stack-quantity"), 1); await click(tid("shop-stack-bought"));
     await click(tid("guest-build-mode"));

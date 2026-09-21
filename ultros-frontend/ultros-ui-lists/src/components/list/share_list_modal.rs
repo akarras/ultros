@@ -67,6 +67,8 @@ pub fn AccessRow(
     trailing: String,
     #[prop(into)] on_delete: Callback<()>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
+    let remove_label = t_string!(i18n, lists_access_remove_named, name = label.clone()).to_string();
     view! {
         <div class="flex items-center gap-3 py-2">
             <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_srgb,var(--color-text)_10%,transparent)] text-[color:var(--color-text-muted)]">
@@ -83,7 +85,7 @@ pub fn AccessRow(
             <button
                 type="button"
                 class="btn-ghost p-2 text-[color:var(--color-text-muted)] hover:text-red-200"
-                aria-label="Remove access"
+                aria-label=remove_label
                 on:click=move |_| on_delete.run(())
             >
                 <Icon icon=i::BiTrashSolid />
@@ -242,23 +244,23 @@ pub fn ShareListSection(
                                         delete_invite
                                     />
                                 </section>
-    <div class="flex flex-wrap gap-2" role="group" aria-label=move || t_string!(i18n,online_invite_method).to_string()>
-                                    <button class=move || if method.get()=="link" { "btn-primary" } else { "btn-secondary" } aria-pressed=move || (method.get()=="link").to_string() on:click=move |_|method.set("link")>{t!(i18n,online_invite_link)}</button>
-                                    <button class=move || if method.get()=="group" { "btn-primary" } else { "btn-secondary" } aria-pressed=move || (method.get()=="group").to_string() on:click=move |_|method.set("group")>{t!(i18n,online_invite_group)}</button>
-                                    <button class=move || if method.get()=="user" { "btn-primary" } else { "btn-secondary" } aria-pressed=move || (method.get()=="user").to_string() on:click=move |_|method.set("user")>{t!(i18n,online_invite_user)}</button>
+    <div class="segmented-control flex-wrap" role="group" aria-label=move || t_string!(i18n,online_invite_method).to_string()>
+                                    <button class="segmented-option" aria-pressed=move || (method.get()=="link").to_string() on:click=move |_|method.set("link")>{t!(i18n,online_invite_link)}</button>
+                                    <button class="segmented-option" aria-pressed=move || (method.get()=="group").to_string() on:click=move |_|method.set("group")>{t!(i18n,online_invite_group)}</button>
+                                    <button class="segmented-option" aria-pressed=move || (method.get()=="user").to_string() on:click=move |_|method.set("user")>{t!(i18n,online_invite_user)}</button>
                                 </div>
     <section class="space-y-3" class:hidden=move || method.get() != "link">
                                     <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_via_link_heading)}</h3>
-                                    <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_9rem_14rem]">
-                                        <input
+                                    <div class="grid items-end gap-3 sm:grid-cols-2">
+                                        <label class="sm:col-span-2 space-y-1" class:hidden=latest_invite_url.is_empty()><span class="block text-sm">{t!(i18n, online_invite_link)}</span><input
                                             class="input w-full font-mono text-sm"
                                             readonly
                                             aria-label=move || t_string!(i18n, online_invite_link).to_string()
-                                            prop:value=latest_invite_url
+                                            prop:value=latest_invite_url.clone()
                                             placeholder=t_string!(i18n, lists_invite_create_placeholder)
                                             on:click=move |_| copy_latest_invite(invites_for_copy.clone())
-                                        />
-                                        <select
+                                        /></label>
+                                        <label class="space-y-1"><span class="block text-sm">{t!(i18n, online_permission)}</span><select
                                             class="input w-full"
                                             aria-label=move || t_string!(i18n, online_permission).to_string()
                                             prop:value=move || permission_label(invite_permission())
@@ -268,8 +270,8 @@ pub fn ShareListSection(
                                         >
                                             <option value="Read">{t!(i18n, permission_read)}</option>
                                             <option value="Write">{t!(i18n, permission_write)}</option>
-                                        </select>
-                                        <input
+                                        </select></label>
+                                        <label class="space-y-1"><span class="block text-sm">{t!(i18n, lists_invite_max_uses_placeholder)}</span><input
                                             class="input w-full"
                                             inputmode="numeric"
                                             data-testid="list-invite-max-uses"
@@ -277,17 +279,17 @@ pub fn ShareListSection(
                                             aria-invalid=move || invite_limit_invalid.get().to_string()
                                             aria-describedby=move || invite_error.get().is_some().then_some("list-invite-error")
                                             disabled=move || create_invite.pending().get()
-                                            placeholder=t_string!(i18n, lists_invite_max_uses_placeholder)
+                                            placeholder=t_string!(i18n, lists_invite_unlimited)
                                             prop:value=invite_max_uses
                                             on:input=move |ev| {
                                                 set_invite_max_uses(event_target_value(&ev));
                                                 invite_limit_invalid.set(false);
                                                 invite_error.set(None);
                                             }
-                                        />
+                                        /></label>
                                         <button
                                             type="button"
-                                            class="btn-primary"
+                                            class="btn-primary sm:col-span-2"
                                             data-testid="list-invite-create"
                                             prop:disabled=create_invite.pending()
                                             on:click=move |_| {
@@ -501,7 +503,7 @@ pub fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoVi
         <Modal set_visible=set_visible max_width="max-w-5xl w-[96%] sm:w-[820px]".to_string() aria_label=Signal::derive(move || t_string!(i18n,online_access).to_string())>
             <div class="space-y-6">
                 <div class="pr-10">
-                    <h2 class="text-3xl font-black text-[color:var(--color-text)]">
+                    <h2 class="text-xl font-semibold text-[color:var(--color-text)]">
                         {t!(i18n, online_access)}<span class="block mt-1 text-base font-normal">{list_name.clone()}</span>
                     </h2>
                 </div>

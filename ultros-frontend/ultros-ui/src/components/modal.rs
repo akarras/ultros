@@ -141,7 +141,7 @@ where
                 // would push the top above the viewport with no way to reach
                 // it (the list settings drawer's Delete button was unclickable
                 // at 900px-tall windows).
-                class="fixed inset-0 z-[90] bg-black/60 flex justify-center overflow-y-auto p-6
+                class="fixed inset-0 z-[90] bg-black/60 flex justify-center overflow-y-auto p-3 sm:p-6
                 transition-opacity duration-300 ease-in-out
                 animate-fade-in"
                 on:click=move |_| set_visible(false)
@@ -150,10 +150,10 @@ where
                     node_ref=panel
                     data-ultros-modal=""
                     tabindex="-1"
-                    class=format!("flex flex-col m-auto h-fit {max_width}
+                    class=format!("flex flex-col min-w-0 m-auto h-fit {max_width}
                     panel rounded-2xl shadow-xl
                     backdrop-blur-md
-                    p-6 z-50
+                    p-4 sm:p-6 z-50
                     animate-slide-in")
                     role="dialog"
                     aria-modal="true"

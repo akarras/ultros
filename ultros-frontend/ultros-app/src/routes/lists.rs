@@ -141,6 +141,19 @@ fn PermissionPill(permission: ListPermission) -> impl IntoView {
     }
 }
 
+pub(crate) const LIST_CARD_CLASS: &str =
+    "panel min-w-0 rounded-xl p-4 flex flex-col gap-3 h-full justify-between";
+pub(crate) const LIST_CARD_TITLE: &str =
+    "text-lg font-semibold hover:underline break-words min-w-0";
+
+fn list_card_href(id: i32, labs: bool) -> String {
+    if labs {
+        format!("/list/{id}?labs=lists-sync")
+    } else {
+        format!("/list/{id}")
+    }
+}
+
 #[component]
 pub(crate) fn ListCard(
     list: ListWithPermission,
@@ -149,6 +162,7 @@ pub(crate) fn ListCard(
     leave_list_action: Action<(i32, u64), Result<(), crate::error::AppError>>,
     user_id: Signal<Option<u64>>,
 ) -> impl IntoView {
+    let labs = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
     let permission = list.permission;
     let caps = ListCapabilities::from(permission);
     let list_owner = list.list.owner;
@@ -174,7 +188,7 @@ pub(crate) fn ListCard(
     let list_for_share = list.clone();
 
     view! {
-        <div class="panel min-w-0 p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
+        <div class=LIST_CARD_CLASS>
             {move || {
                 let list = list_for_render.clone();
                 if is_edit() && (caps.can_admin || caps.can_leave) {
@@ -262,13 +276,13 @@ pub(crate) fn ListCard(
                         <>
                             <div class="flex justify-between items-start gap-2">
                                 <div class="flex min-w-0 flex-col gap-1 overflow-hidden">
-                                    <a href=format!("/list/{}", list.id) class="text-xl font-bold hover:underline truncate text-[color:var(--link-color)]">
+                                    <a href=move || list_card_href(list.id, labs.get()) class=LIST_CARD_TITLE>
                                         {move || name()}
                                     </a>
-                                    <div class="text-sm text-gray-400 flex items-center gap-1 flex-wrap">
+                                    <div class="text-sm text-[color:var(--color-text-muted)] flex items-center gap-2 flex-wrap">
                                         <Icon icon=i::BiWorldRegular />
                                         <WorldName id=list.wdr_filter />
-                                        <span class="text-xs">{t!(i18n,online_connected)}</span>
+                                        <span aria-hidden="true">"·"</span><span>{t!(i18n,online_connected)}</span>
                                         <PermissionPill permission />
                                     </div>
                                     <Show when=move || !caps.can_admin>
@@ -284,7 +298,7 @@ pub(crate) fn ListCard(
                                     <Show when=move || { caps.can_admin }>
                                         <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, online_access).to_string())>
                                             <button
-                                                class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                                class="btn-ghost min-h-11 min-w-11 p-2"
                                                 on:click=move |_| set_share_open(true)
                                                 aria-label=move || t_string!(i18n, online_access).to_string()
                                             >
@@ -296,7 +310,7 @@ pub(crate) fn ListCard(
                                         <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
                                             <button
                                                 type="button"
-                                                class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                                class="btn-ghost min-h-11 min-w-11 p-2"
                                                 aria-label=move || t_string!(i18n, edit_list).to_string()
                                                 on:click=move |_| set_is_edit(true)
                                             >
@@ -306,8 +320,8 @@ pub(crate) fn ListCard(
                                     </Show>
                                 </div>
                             </div>
-                            <div class="mt-4 flex justify-end">
-                                <a href=format!("/list/{}", list.id) class="btn-secondary btn-sm">
+                            <div class="mt-2 flex justify-start">
+                                <a href=move || list_card_href(list.id, labs.get()) class="btn-secondary min-h-11">
                                     {t!(i18n, view_items)} <Icon icon=i::AiArrowRightOutlined attr:class="ml-1"/>
                                 </a>
                             </div>
@@ -676,4 +690,15 @@ pub fn Lists() -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod design_tests {
+    use super::list_card_href;
+
+    #[test]
+    fn online_card_navigation_preserves_the_active_lists_preview() {
+        assert_eq!(list_card_href(30, true), "/list/30?labs=lists-sync");
+        assert_eq!(list_card_href(30, false), "/list/30");
+    }
 }
