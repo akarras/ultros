@@ -60,7 +60,7 @@ reordering. `-g`, `-Oz` and the `--enable-*` flags are all position-independent,
 so the set is safe. wasm-bindgen has already demangled the names (its default),
 with `rustc_demangle`'s `{}` form, i.e. a trailing `::h<16 hex>` per symbol.
 
-**New workspace bin `wasm-symbols`** (`tools/wasm-symbols/`, native only,
+**New workspace bin `wasm-symbols`** (`wasm-symbols/`, native only,
 deps: `wasmparser`, `brotli`, `flate2` — all already in the lockfile):
 
 ```
@@ -216,8 +216,8 @@ panic!() ──hook──▶ Error().stack (sync)  ──set_timeout(0)──▶
 
 | Path | Change |
 |---|---|
-| `Cargo.toml` | `wasm-opt-features` with `-g`; add `tools/wasm-symbols` to members |
-| `tools/wasm-symbols/{Cargo.toml,src/main.rs}` | new bin |
+| `Cargo.toml` | `wasm-opt-features` with `-g`; add `wasm-symbols` to members |
+| `wasm-symbols/{Cargo.toml,src/lib.rs,src/main.rs,tests/roundtrip.rs}` | new bin |
 | `Dockerfile` | build + run `wasm-symbols` after `cargo leptos build` |
 | `ultros-frontend/ultros-client/src/lib.rs` | sync stack capture, third reporter arg, `stackTraceLimit` |
 | `ultros-frontend/ultros-app/src/lib.rs` | reporter accepts `stack`; inject and wire `wasm_symbolicate.js` |

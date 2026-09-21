@@ -144,6 +144,8 @@ BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:group-detail
 
 Set `GLITCHTIP_DSN` to a Glitchtip (or Sentry) DSN to ship panics + `error!` tracing events with backtraces. Unset → no-op, no network calls. The DSN itself contains the project key so no other env vars are needed. Set `RUST_BACKTRACE=1` in the container so spawned-task panics include a stack trace.
 
+**Browser (wasm) panics** arrive as `RustWasmPanic` events via the Sentry browser SDK (`error_reporting_script()` in `ultros-app/src/lib.rs`). Their wasm frames are symbolicated *in the browser*, not by GlitchTip: the Docker build runs wasm-opt with `-g`, then `wasm-symbols` (workspace crate) writes `/pkg/<hash>/ultros.symbols` (`function index:name` per line) and strips the `name` section from the shipped module. `ultros-app/src/wasm_symbolicate.js` runs in `beforeSend`, fetches that map when an event carries `wasm-function[N]` frames, and fills in the Rust function names; `ultros_*`/`xiv_gen*` frames are flagged `in_app`. If the map fetch fails (stale tab after a deploy, local build that skipped the tool) the event is sent unsymbolicated. The panic's own `file:line` is in `contexts.rust_panic.location`. Local `cargo leptos build --release` produces a wasm *with* names — browsers then show the names directly, no map needed.
+
 ### Optional: disable the Universalis websocket ingest
 
 Set `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=true` to start the server without subscribing to the Universalis market feed. Intended for QA/staging deploys that share one database and aren't exercising live market data: the websocket spawns a database write per inbound event, so turning it off drops the write churn several replicas otherwise pile onto that one Postgres.

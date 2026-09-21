@@ -151,7 +151,21 @@ async fn fetch_current_user_fallback() -> Option<UserData> {
     }
 }
 
+/// `js_sys::Error` exposes no `stack` getter; it is a plain (non-standard
+/// but universal) property, so read it reflectively.
+fn error_stack(error: &js_sys::Error) -> String {
+    js_sys::Reflect::get(error, &JsValue::from_str("stack"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
 fn set_panic_hook() {
+    // V8 keeps only 10 frames by default. A Rust panic spends that many on
+    // its own machinery (`begin_panic_handler`, `rust_panic_with_hook`, this
+    // hook, `console_error_panic_hook`, the `Error()` import...) before the
+    // panicking site appears, so the captured stack would never reach it.
+    js_sys::Error::set_stack_trace_limit(&JsValue::from_f64(50.0));
     std::panic::set_hook(Box::new(|panic_info| {
         console_error_panic_hook::hook(panic_info);
         report_rust_panic(panic_info);
@@ -159,6 +173,14 @@ fn set_panic_hook() {
 }
 
 fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
+    // Capture the stack NOW, on the panicking call stack. The reporter call
+    // below is deferred to a timer, and a stack taken there is the timer
+    // trampoline (`__wbg_call -> closure -> reporter`), not the panic site —
+    // which is what every GlitchTip RustWasmPanic event carried until this
+    // capture was added. The browser lists wasm frames as
+    // `ultros.wasm:wasm-function[N]:0x...`; the Sentry `beforeSend` hook
+    // resolves `N` to a Rust function name from `/pkg/<hash>/ultros.symbols`.
+    let stack = error_stack(&js_sys::Error::new(""));
     let message = panic_info
         .payload()
         .downcast_ref::<&str>()
@@ -195,10 +217,11 @@ fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
             let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
                 return;
             };
-            let _ = reporter.call2(
+            let _ = reporter.call3(
                 &JsValue::NULL,
                 &JsValue::from_str(&message),
                 &JsValue::from_str(&location),
+                &JsValue::from_str(&stack),
             );
         },
         std::time::Duration::from_millis(0),

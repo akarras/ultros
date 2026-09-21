@@ -1,0 +1,21 @@
+[package]
+name = "wasm-symbols"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Extracts the function name map from a release wasm and strips the name section"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+# Only the `name` custom-section readers are used; no validation, no
+# component model.
+wasmparser = { version = "0.259", default-features = false, features = ["std"] }
+# Same encoders the rest of the pipeline uses: cargo-leptos `--precompress`
+# writes brotli/gzip siblings, and this tool has to replace them for the files
+# it rewrites.
+brotli = "8"
+flate2 = "1"
+
+[dev-dependencies]
+wasm-encoder = "0.259"
