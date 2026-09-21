@@ -2906,6 +2906,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "game-data-audit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brotli",
+ "flate2",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "syn 2.0.119",
+ "xiv-gen",
+]
+
+[[package]]
 name = "game-data-pack"
 version = "0.1.0"
 dependencies = [
@@ -4325,21 +4340,6 @@ name = "icu_time_data"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e0ee79a0bb29772465234bfbad6ea04fbc5220bef9fa4f318cc53eb8897070e"
-
-[[package]]
-name = "idb"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6554f394e990a1af530a528a7fdcad6e01b29cb1b990f89df3ffd62cf15f7828"
-dependencies = [
- "indexmap 2.14.2",
- "js-sys",
- "num-traits",
- "thiserror 2.0.20",
- "tokio",
- "wasm-bindgen",
- "web-sys",
-]
 
 [[package]]
 name = "ident_case"
@@ -7755,17 +7755,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rexie"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "887466cfa8a12c08ee4b174998135cea8ff0fd84858627cd793e56535a045bc9"
-dependencies = [
- "idb",
- "thiserror 1.0.69",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10668,10 +10657,8 @@ dependencies = [
  "js-sys",
  "leptos",
  "log",
- "rexie",
  "serde",
  "serde-wasm-bindgen",
- "serde_bytes",
  "ultros-api-types",
  "ultros-app",
  "wasm-bindgen",

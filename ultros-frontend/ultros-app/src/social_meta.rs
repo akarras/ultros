@@ -119,31 +119,67 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
             .with(|query| query.get_str("lang").and_then(parse_locale))
             .unwrap_or(Locale::en)
     });
-    let card = Memo::new(move |_| {
-        let locale = locale.get();
-        let path = location.pathname.get();
-        let kind = SocialCardKind::from_route(&path);
-        let world = item_world(&path);
-        let (kind, content) = resolved_card(locale, kind, world.as_deref());
-        (
-            social_image_url(locale, &kind, world.as_deref()),
-            social_page_url(&path, locale, &kind),
-            content,
-        )
-    });
-    let title = move || card.with(|(_, _, content)| format!("{} · Ultros", content.title));
-    let description = move || card.with(|(_, _, content)| content.description.clone());
+    let data_revision = use_context::<crate::global_state::xiv_data::DataRevision>();
+    let card = Resource::new_blocking(
+        move || {
+            (
+                locale.get(),
+                location.pathname.get(),
+                data_revision.map(|rev| rev.0.get()).unwrap_or_default(),
+            )
+        },
+        |(locale, path, _)| async move {
+            let kind = SocialCardKind::from_route(&path);
+            let world = item_world(&path);
+            let npc = if let SocialCardKind::Npc(id) = &kind {
+                crate::global_state::xiv_data::npc_detail(locale, *id)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            let content = crate::social_card::social_card_content_with_npc(
+                locale,
+                &kind,
+                world.as_deref(),
+                npc.as_ref(),
+            );
+            let (kind, content) = match content {
+                Some(content) => (kind, content),
+                None => resolved_card(locale, SocialCardKind::Home, None),
+            };
+            (
+                social_image_url(locale, &kind, world.as_deref()),
+                social_page_url(&path, locale, &kind),
+                content,
+            )
+        },
+    );
+    let card = move || {
+        card.get().unwrap_or_else(|| {
+            let (kind, content) = resolved_card(locale.get(), SocialCardKind::Home, None);
+            (
+                social_image_url(locale.get(), &kind, None),
+                social_page_url("/", locale.get(), &kind),
+                content,
+            )
+        })
+    };
+    let title = move || format!("{} · Ultros", card().2.title);
+    let description = move || card().2.description;
 
     view! {
+        <Suspense>
         <Meta property="og:title" content=title />
         <Meta name="twitter:title" content=title />
         <Meta property="og:description" content=description />
         <Meta name="twitter:description" content=description />
-        <Meta property="og:url" content=move || card.with(|(_, url, _)| url.clone()) />
+        <Meta property="og:url" content=move || card().1 />
         <Meta property="og:locale" content=move || og_locale(locale.get()) />
         <MetaImage
-            url=move || card.with(|(url, _, _)| url.clone())
-            alt=move || card.with(|(_, _, content)| format!("Ultros. {}. {}", content.title, content.subtitle))
+            url=move || card().0
+            alt=move || { let content = card().2; format!("Ultros. {}. {}", content.title, content.subtitle) }
         />
         {move || {
             [Locale::en, Locale::ja, Locale::de, Locale::fr, Locale::ko, Locale::cn, Locale::tc]
@@ -152,6 +188,7 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
                 .map(|alternate| view! { <Meta property="og:locale:alternate" content=og_locale(alternate) /> })
                 .collect_view()
         }}
+        </Suspense>
     }
 }
 

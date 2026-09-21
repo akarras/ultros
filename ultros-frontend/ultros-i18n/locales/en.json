@@ -576,6 +576,7 @@
     "settings": "Settings",
     "logout": "Logout",
     "login_with_discord": "Login with Discord",
+    "game_detail_retry": "Could not load details. Try again",
     "loading": "Loading…",
     "menu": "Menu",
     "category_list_desc": "List of items for the item category %category%",

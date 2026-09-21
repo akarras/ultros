@@ -36,6 +36,7 @@ members = [
     "dumb-csv",
     "field-iterator",
     "game-data-pack",
+    "game-data-audit",
     "icon-extract",
 ]
 # Vendored, patched copy of `reactive_graph` (see `[patch.crates-io]` and

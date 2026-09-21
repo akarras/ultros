@@ -576,6 +576,7 @@
     "settings": "Paramètres",
     "logout": "Déconnexion",
     "login_with_discord": "Se connecter avec Discord",
+    "game_detail_retry": "Impossible de charger les détails. Réessayer",
     "loading": "Chargement…",
     "menu": "Menu",
     "category_list_desc": "Liste d’objets pour la catégorie %category%",

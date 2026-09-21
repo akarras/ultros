@@ -576,6 +576,7 @@
     "settings": "Einstellungen",
     "logout": "Abmelden",
     "login_with_discord": "Mit Discord anmelden",
+    "game_detail_retry": "Details konnten nicht geladen werden. Erneut versuchen",
     "loading": "Lädt…",
     "menu": "Menü",
     "category_list_desc": "Itemliste für die Kategorie %category%",

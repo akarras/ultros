@@ -1,3 +1,4 @@
 data/xiv-db/*.rkyv filter=lfs diff=lfs merge=lfs -text
+data/xiv-startup/*.rkyv filter=lfs diff=lfs merge=lfs -text
 data/icons/*.tar.zst filter=lfs diff=lfs merge=lfs -text
 data/maps/*.tar.zst filter=lfs diff=lfs merge=lfs -text

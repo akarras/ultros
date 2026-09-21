@@ -1,6 +1,6 @@
 //! Builds `data/xiv-db/<lang>.rkyv` from an ffxiv-datamining CSV tree.
 //!
-//! The container format (rkyv 0.7 + zlib `Compression::best()`) has to stay
+//! The container format (rkyv 0.7 + Brotli q11) has to stay
 //! exactly what `xiv-gen-db` decodes at runtime — do not "improve" it here.
 
 use std::path::Path;
@@ -113,7 +113,7 @@ pub fn build_packs(
 
         // brotli quality 11 with a 16 MiB window (lgwin 24, the largest a
         // standard decoder accepts). This file is the only compression the
-        // pack ever gets: it is served as opaque bytes, cached in IndexedDB
+        // pack ever gets: it is served as opaque bytes, cached over HTTP
         // and decoded in the browser by `brotli-decompressor` (xiv-gen-db), so
         // the edge cannot squeeze it further. Measured on the English pack:
         // 17.0 MB of rkyv -> 2.72 MB, against 4.47 MB for the zlib
@@ -138,6 +138,14 @@ pub fn build_packs(
 
         let dest = out_dir.join(format!("{}.rkyv", lang.to_path_part()));
         std::fs::write(&dest, &packed).with_context(|| format!("writing {}", dest.display()))?;
+        crate::browser::write_startup(
+            &data,
+            &out_dir
+                .parent()
+                .context("data directory")?
+                .join("xiv-startup")
+                .join(format!("{}.rkyv", lang.to_path_part())),
+        )?;
 
         packs.push(PackStats {
             lang,

@@ -173,6 +173,9 @@ else
     ( cd integration && BASE_URL="$BASE_URL" npm run test:search-responsiveness ) || test_exit=$?
 fi
 
+log "running projected game-data startup and deferred detail E2E"
+( cd integration && BASE_URL="$BASE_URL" npm run test:game-data-startup ) || test_exit=$?
+
 if [ "${RUN_ITEM_VIEW_LAYOUT:-1}" != "0" ]; then
     log "running item-view wide-layout E2E (issue #1234)"
     item_view_layout_exit=0
