@@ -1,6 +1,7 @@
 //! Sanity-decodes the committed `data/xiv-db/en.rkyv` pack the same way
-//! `xiv-gen-db::decompress_data` does at runtime: zlib `ZlibDecoder::read_to_end`,
-//! then a copy into `rkyv::AlignedVec` before `rkyv::from_bytes` (plain
+//! `xiv-gen-db::decompress_data` does at runtime: a brotli
+//! `Decompressor::read_to_end`, then a copy into `rkyv::AlignedVec` before
+//! `rkyv::from_bytes` (plain
 //! `Vec<u8>` is only byte-aligned, and rkyv needs `FixedIsize` alignment —
 //! this bites on Windows in particular).
 //!
@@ -246,9 +247,9 @@ fn decode_en_pack(test_name: &str) -> Option<xiv_gen::Data> {
     }
 
     let mut decoded = Vec::new();
-    flate2::read::ZlibDecoder::new(bytes.as_slice())
+    brotli_decompressor::Decompressor::new(bytes.as_slice(), 64 * 1024)
         .read_to_end(&mut decoded)
-        .expect("failed to zlib-decompress data/xiv-db/en.rkyv");
+        .expect("failed to brotli-decompress data/xiv-db/en.rkyv");
 
     // rkyv requires the byte buffer to be aligned to `FixedIsize`; a plain
     // `Vec<u8>` only guarantees byte alignment, so copy into an `AlignedVec`

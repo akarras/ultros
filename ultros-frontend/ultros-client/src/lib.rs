@@ -90,9 +90,8 @@ fn get_i18n_lang() -> String {
 }
 
 async fn init_data() -> anyhow::Result<Vec<u8>> {
-    let version = xiv_gen::data_version();
     let lang = get_i18n_lang();
-    let response = Request::get(&format!("/static/data/{}/{}.rkyv", version, lang))
+    let response = Request::get(&xiv_gen_db::pack_url(&lang))
         .send()
         .await?
         .binary()
@@ -103,7 +102,9 @@ async fn init_data() -> anyhow::Result<Vec<u8>> {
 
 async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()> {
     // load local storage data for the current game version, if we don't have it get it from the server, store it, and init db
-    let version = format!("{}-{}", xiv_gen::data_version(), get_i18n_lang());
+    // Keyed by the pack's content hash, so a deploy that did not change game
+    // data keeps using the cached pack instead of re-downloading it.
+    let version = xiv_gen_db::pack_cache_key(&get_i18n_lang());
     {
         let (transaction, game_data) = open_transaction(rexie).await?;
         #[allow(clippy::collapsible_if)]
@@ -598,9 +599,6 @@ pub fn hydrate() {
         }
         dispatch_boot_event("ultros:hydrated");
         let lang = get_i18n_lang();
-        prepare_guest_offline(
-            &format!("/static/data/{}/{}.rkyv", xiv_gen::data_version(), lang),
-            &lang,
-        );
+        prepare_guest_offline(&xiv_gen_db::pack_url(&lang), &lang);
     });
 }

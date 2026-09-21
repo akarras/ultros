@@ -42,9 +42,7 @@ pub fn tracked_data() -> &'static xiv_gen::Data {
 /// resolves so subscribers re-render with the new data.
 #[cfg(not(feature = "ssr"))]
 pub async fn reload_xiv_data(locale: &str) -> anyhow::Result<()> {
-    let version = xiv_gen::data_version();
-    let url = format!("/static/data/{}/{}.rkyv", version, locale);
-    let bytes = gloo_net::http::Request::get(&url)
+    let bytes = gloo_net::http::Request::get(&xiv_gen_db::pack_url(locale))
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?
