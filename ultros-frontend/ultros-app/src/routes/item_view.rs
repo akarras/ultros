@@ -473,7 +473,7 @@ fn DecisionHeader(
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
-    let cheapest_prices = use_context::<CheapestPrices>();
+    let cheapest_listings = use_context::<CheapestPrices>().map(|prices| prices.demand());
     let (compare_world, set_compare_world) = filter_query_signal::<String>(COMPARE_BUY_FROM_PARAM);
 
     // The zone-cheapest resource must read as unavailable during SSR and the
@@ -515,8 +515,8 @@ fn DecisionHeader(
                                         .min()
                                 };
                                 let summary = if hydrated.get() {
-                                    cheapest_prices.as_ref().and_then(|prices| {
-                                        prices.read_listings.with(|r| {
+                                    cheapest_listings.and_then(|listings| {
+                                        listings.with(|r| {
                                             let map = r.as_ref().and_then(|r| r.as_ref().ok());
                                             map.map(|map| map.find_matching_listings(item_id()))
                                         })

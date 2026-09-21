@@ -434,7 +434,7 @@ pub fn JobSetDetail() -> impl IntoView {
 
     // Default-zone listings already live in app context — reuse them.
     let cheapest_prices = use_context::<CheapestPrices>();
-    let default_zone_listings = cheapest_prices.map(|p| p.read_listings);
+    let default_zone_listings = cheapest_prices.map(|p| p.demand());
 
     let set_stem = Signal::derive(move || group.get().map(|g| g.stem).unwrap_or_default());
     // Show the visitor's localized abbreviation, not the canonical English
@@ -478,7 +478,7 @@ pub fn JobSetDetail() -> impl IntoView {
 
     // Defer the price-resource-driven materials totals until after the first
     // client render. The default-zone column reads the shared `CheapestPrices`
-    // `read_listings` resource and the home-world column reads
+    // resource (via `demand()`) and the home-world column reads
     // `home_world_listings`, both via `.with()`/`.get()` — which (same gotcha
     // as #740/#742) do NOT subscribe-and-suspend the wrapping `<Suspense>`. So
     // SSR renders the body with the resource pending (`total`/`shard_total`
