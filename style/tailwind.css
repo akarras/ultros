@@ -1705,9 +1705,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 
 /* No scrollbar declarations here: a slim, themed scrollbar is what every
-   scrollport inherits by default now (see `@layer base`). */
+   scrollport inherits by default now (see `@layer base`).
+
+   This panel is a frame, not a scrollport: the `VirtualScroller` inside it
+   owns the only scrollbar. Giving the frame `max-height` + `overflow-y: auto`
+   nested a 500px scrollport around the scroller's 528px one, so Chrome drew
+   two scrollbars side by side and wheel input hopped between them. */
 @utility scroll-panel {
-    @apply max-h-[500px] overflow-y-auto overflow-x-hidden rounded-lg border;
+    @apply overflow-hidden rounded-lg border;
 }
 
 [data-theme="dark"] .scroll-panel {
