@@ -36,6 +36,20 @@ fn main() {
         if embed_enabled {
             lfs_guard::assert_not_lfs_pointer(path);
         }
+        let startup = format!(
+            "{}/../data/xiv-startup/{lang}.rkyv",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        println!("cargo:rerun-if-changed={startup}");
+        let startup = std::path::Path::new(&startup);
+        if embed_enabled {
+            lfs_guard::assert_not_lfs_pointer(startup);
+        }
+        println!(
+            "cargo:rustc-env=XIV_STARTUP_VERSION_{}={}",
+            lang.to_ascii_uppercase(),
+            pack_version(startup)
+        );
         let version = pack_version(path);
         println!(
             "cargo:rustc-env=XIV_PACK_VERSION_{}={version}",

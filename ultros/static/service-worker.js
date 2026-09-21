@@ -60,7 +60,7 @@ function publicGuestAsset(value) {
   const url = new URL(value, self.location.origin);
   if (url.origin !== self.location.origin || url.search || url.hash) return false;
   return /^\/pkg\/.+\.(?:js|mjs|wasm|css)$/.test(url.pathname)
-    || /^\/static\/data\/[^/]+\/(?:en|ja|de|fr|cn|ko|tc)\.rkyv$/.test(url.pathname)
+    || /^\/static\/(?:data|startup)\/[^/]+\/(?:en|ja|de|fr|cn|ko|tc)\.rkyv$/.test(url.pathname)
     || url.pathname === '/api/v1/world_data';
 }
 

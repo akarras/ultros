@@ -4,7 +4,7 @@
 //! Everything on the page comes from the game-data pack: the NPC's shops via
 //! the `*_shop_npcs` reverse indexes, their placements via `npc_placements`,
 //! and the zone names via `PlaceName`. No market data, so the page is
-//! synchronous and renders the same on the server and after hydration.
+//! rendered from an SSR resource; missing startup residents load on navigation.
 
 use std::collections::BTreeMap;
 
@@ -379,19 +379,26 @@ pub fn NpcView() -> impl IntoView {
             .with(|p| p.get("id").and_then(|id| id.parse::<i32>().ok()))
             .unwrap_or(0)
     });
-    let data = tracked_data();
+    let resident = Resource::new(
+        move || (i18n.get_locale(), npc_id.get()),
+        |(locale, id)| async move { crate::global_state::xiv_data::npc_detail(locale, id).await },
+    );
 
     view! {
+        <Suspense fallback=move || view! { <div role="status">{t!(i18n, loading)}</div> }>
         {move || {
+            let data = tracked_data();
             let id = npc_id.get();
-            let Some(resident) = data.e_npc_residents.get(&ENpcResidentId(id)) else {
-                return view! {
+            let Some(result) = resident.get() else { return ().into_any(); };
+            let resident = match result {
+                Ok(Some(value)) => value,
+                Ok(None) => return view! {
                     <MetaTitle title=move || t_string!(i18n, npc_not_found).to_string() />
-                    <div class="panel p-6 text-[color:var(--color-text-muted)]">
-                        {t!(i18n, npc_not_found)}
-                    </div>
-                }
-                .into_any();
+                    <div class="panel p-6 text-[color:var(--color-text-muted)]">{t!(i18n, npc_not_found)}</div>
+                }.into_any(),
+                Err(_) => return view! {
+                    <button type="button" on:click=move |_| resident.refetch()>{t!(i18n, game_detail_retry)}</button>
+                }.into_any(),
             };
             let name = if resident.singular.is_empty() {
                 id.to_string()
@@ -534,6 +541,7 @@ pub fn NpcView() -> impl IntoView {
             }
             .into_any()
         }}
+        </Suspense>
     }
 }
 

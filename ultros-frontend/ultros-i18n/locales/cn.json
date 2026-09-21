@@ -576,6 +576,7 @@
     "settings": "设置",
     "logout": "登出",
     "login_with_discord": "使用 Discord 登录",
+    "game_detail_retry": "无法加载详情。重试",
     "loading": "加载中…",
     "menu": "菜单",
     "category_list_desc": "%category% 分类下的物品列表",

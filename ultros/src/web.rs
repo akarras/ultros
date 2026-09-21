@@ -3455,6 +3455,89 @@ async fn get_xiv_data_bytes(
     Ok(response)
 }
 
+async fn get_xiv_startup_bytes(
+    Path((version, lang)): Path<(String, String)>,
+) -> Result<axum::response::Response, WebError> {
+    let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
+    let lang = match lang_code {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => return Err(anyhow::anyhow!("Unsupported language").into()),
+    };
+    let cache_control = if version == xiv_gen_db::startup_version(lang_code) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    let mut response = xiv_gen_db::startup_bytes(lang).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    Ok(response)
+}
+
+/// Small public details, keyed by the full source pack so description-only
+/// updates also invalidate their URLs. Never cache a response under a stale key.
+async fn get_xiv_detail(
+    Path((version, lang, kind, id)): Path<(String, String, String, i32)>,
+) -> axum::response::Response {
+    let language = match lang.as_str() {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    if version != xiv_gen_db::pack_version(&lang) {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response();
+    }
+    let data = xiv_gen_db::data_for(language);
+    let mut response = match kind.as_str() {
+        "description" => Json(
+            data.items
+                .get(&xiv_gen::ItemId(id))
+                .map(|row| &row.description),
+        )
+        .into_response(),
+        "npc" => Json(data.e_npc_residents.get(&xiv_gen::ENpcResidentId(id))).into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    response
+}
+
 /// Returns a region- attempts to guess it from the CF Region header
 async fn detect_region(region: Option<Region>) -> impl IntoResponse {
     if region.is_none() {
@@ -3718,6 +3801,14 @@ pub(crate) async fn start_web(
         .route("/static/itemicon/{path}", get(get_item_icon))
         .route("/static/map/{file}", get(get_map))
         .route("/static/data/{version}/{lang}", get(get_xiv_data_bytes))
+        .route(
+            "/static/startup/{version}/{lang}",
+            get(get_xiv_startup_bytes),
+        )
+        .route(
+            "/static/game-detail/{version}/{lang}/{kind}/{id}",
+            get(get_xiv_detail),
+        )
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
@@ -3909,5 +4000,83 @@ mod app_commit_header_tests {
         let (status, header) = header_for("/missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+}
+
+#[cfg(test)]
+mod game_detail_tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn startup_and_details_are_versioned_and_locale_specific() {
+        for lang in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            let response = get_xiv_startup_bytes(Path((
+                xiv_gen_db::startup_version(lang).into(),
+                format!("{lang}.rkyv"),
+            )))
+            .await
+            .unwrap();
+            assert_eq!(
+                response.headers()["cache-control"],
+                "public, max-age=31536000, immutable"
+            );
+            let bytes = to_bytes(response.into_body(), 10_000_000).await.unwrap();
+            let startup = xiv_gen_db::decompress_data(&bytes).unwrap();
+            assert!(startup.items.values().all(|row| row.description.is_empty()));
+            let response = get_xiv_detail(Path((
+                xiv_gen_db::pack_version(lang).into(),
+                lang.into(),
+                "description".into(),
+                5333,
+            )))
+            .await;
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(
+                response.headers()["cache-control"],
+                "public, max-age=31536000, immutable"
+            );
+            let text: Option<String> =
+                serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                    .unwrap();
+            assert!(text.is_some_and(|text| !text.is_empty()));
+        }
+        let stale = get_xiv_detail(Path(("stale".into(), "en".into(), "npc".into(), 1))).await;
+        assert_eq!(stale.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(stale.headers()["cache-control"], "no-store");
+        let unknown = get_xiv_detail(Path((
+            xiv_gen_db::pack_version("en").into(),
+            "en".into(),
+            "npc".into(),
+            -1,
+        )))
+        .await;
+        assert_eq!(
+            to_bytes(unknown.into_body(), 1000).await.unwrap().as_ref(),
+            b"null"
+        );
+    }
+
+    #[tokio::test]
+    async fn omitted_npc_is_available_from_detail_endpoint() {
+        let full = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let startup =
+            xiv_gen_db::decompress_data(xiv_gen_db::startup_bytes(xiv_gen::Language::En)).unwrap();
+        let (id, npc) = full
+            .e_npc_residents
+            .iter()
+            .find(|(id, npc)| !startup.e_npc_residents.contains_key(id) && !npc.singular.is_empty())
+            .unwrap();
+        let response = get_xiv_detail(Path((
+            xiv_gen_db::pack_version("en").into(),
+            "en".into(),
+            "npc".into(),
+            id.0,
+        )))
+        .await;
+        let fetched: Option<xiv_gen::ENpcResident> =
+            serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                .unwrap();
+        assert_eq!(fetched.unwrap().singular, npc.singular);
     }
 }

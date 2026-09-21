@@ -42,10 +42,16 @@ pub fn tracked_data() -> &'static xiv_gen::Data {
 /// resolves so subscribers re-render with the new data.
 #[cfg(not(feature = "ssr"))]
 pub async fn reload_xiv_data(locale: &str) -> anyhow::Result<()> {
-    let bytes = gloo_net::http::Request::get(&xiv_gen_db::pack_url(locale))
+    let response = gloo_net::http::Request::get(&xiv_gen_db::startup_url(locale))
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?
+        .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?;
+    anyhow::ensure!(
+        response.ok(),
+        "game data request failed: {}",
+        response.status()
+    );
+    let bytes = response
         .binary()
         .await
         .map_err(|e| anyhow::anyhow!("read body failed: {e}"))?;
@@ -56,6 +62,66 @@ pub async fn reload_xiv_data(locale: &str) -> anyhow::Result<()> {
 /// Whether an item with this id exists in the currently loaded xiv_gen data.
 pub fn item_exists(id: i32) -> bool {
     tracked_data().items.contains_key(&xiv_gen::ItemId(id))
+}
+
+/// Detail resources serialize their SSR result into the response, so direct
+/// navigation hydrates without a second request or a missing-NPC flash.
+pub async fn npc_detail(
+    locale: crate::i18n::Locale,
+    id: i32,
+) -> Result<Option<xiv_gen::ENpcResident>, String> {
+    #[cfg(feature = "ssr")]
+    {
+        Ok(xiv_gen_db::data_for(game_language(locale))
+            .e_npc_residents
+            .get(&xiv_gen::ENpcResidentId(id))
+            .cloned())
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        fetch_detail(locale, "npc", id).await
+    }
+}
+
+pub async fn item_description(
+    locale: crate::i18n::Locale,
+    id: i32,
+) -> Result<Option<String>, String> {
+    #[cfg(feature = "ssr")]
+    {
+        Ok(xiv_gen_db::data_for(game_language(locale))
+            .items
+            .get(&xiv_gen::ItemId(id))
+            .map(|item| item.description.clone()))
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        fetch_detail(locale, "description", id).await
+    }
+}
+
+#[cfg(not(feature = "ssr"))]
+async fn fetch_detail<T: serde::de::DeserializeOwned>(
+    locale: crate::i18n::Locale,
+    kind: &str,
+    id: i32,
+) -> Result<T, String> {
+    send_wrapper::SendWrapper::new(async move {
+        let lang = game_language(locale).to_path_part();
+        let url = format!(
+            "/static/game-detail/{}/{lang}/{kind}/{id}",
+            xiv_gen_db::pack_version(lang)
+        );
+        let response = gloo_net::http::Request::get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !response.ok() {
+            return Err(format!("Detail request failed ({})", response.status()));
+        }
+        response.json().await.map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Parses a route path param as an item id, returning `None` if it doesn't

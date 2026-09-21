@@ -3,6 +3,7 @@
 #[cfg(feature = "csv_to_rkyv")]
 pub mod csv_to_rkyv;
 
+pub mod browser;
 mod deserialize_custom;
 pub mod subrow_key;
 

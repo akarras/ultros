@@ -576,6 +576,7 @@
     "settings": "設定",
     "logout": "ログアウト",
     "login_with_discord": "Discordでログイン",
+    "game_detail_retry": "詳細を読み込めませんでした。再試行",
     "loading": "読み込み中…",
     "menu": "メニュー",
     "category_list_desc": "カテゴリー %category% のアイテム一覧",

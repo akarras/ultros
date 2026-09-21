@@ -16,6 +16,73 @@ use std::path::PathBuf;
 const PROBE_ITEM: &str = "Grade 2 Gemdraught of Mind";
 
 #[test]
+fn all_startup_packs_match_projection_and_preserve_references() {
+    fn decode(bytes: &[u8]) -> xiv_gen::Data {
+        let mut raw = Vec::new();
+        brotli_decompressor::Decompressor::new(bytes, 65536)
+            .read_to_end(&mut raw)
+            .unwrap();
+        let mut aligned = rkyv::AlignedVec::new();
+        aligned.extend_from_slice(&raw);
+        rkyv::from_bytes(&aligned).unwrap()
+    }
+    for lang in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+        let full_bytes =
+            std::fs::read(repo_root().join(format!("data/xiv-db/{lang}.rkyv"))).unwrap();
+        let startup_bytes =
+            std::fs::read(repo_root().join(format!("data/xiv-startup/{lang}.rkyv"))).unwrap();
+        assert!(
+            !is_lfs_pointer_stub(&full_bytes) && !is_lfs_pointer_stub(&startup_bytes),
+            "git lfs pull is required"
+        );
+        let full = decode(&full_bytes);
+        let startup = decode(&startup_bytes);
+        assert!(
+            startup_bytes.len() * 100 < full_bytes.len() * 75,
+            "{lang}: startup byte budget"
+        );
+        assert_eq!(
+            serde_json::to_value(&startup).unwrap(),
+            serde_json::to_value(xiv_gen::browser::startup_data(&full)).unwrap(),
+            "{lang}: stale generated startup pack"
+        );
+        assert_eq!(startup.items.len(), full.items.len());
+        assert!(
+            startup
+                .items
+                .values()
+                .all(|item| item.description.is_empty())
+        );
+        assert!(full.items.values().any(|item| !item.description.is_empty()));
+        assert!(full.e_npc_residents.len() > startup.e_npc_residents.len());
+        if lang == "en" {
+            // Keep the browser regression's direct-URL fixture outside the
+            // startup pack, so it cannot pass by reading a retained vendor.
+            let fixture = xiv_gen::ENpcResidentId(1000063);
+            assert!(!full.e_npc_residents[&fixture].singular.is_empty());
+            assert!(!startup.e_npc_residents.contains_key(&fixture));
+        }
+        for npc in full
+            .gil_shop_npcs
+            .values()
+            .chain(full.special_shop_npcs.values())
+            .chain(full.collectables_shop_npcs.values())
+            .chain(full.leve_issuers.values())
+            .flatten()
+            .chain(full.npc_placements.keys())
+        {
+            if let Some(original) = full.e_npc_residents.get(npc) {
+                assert_eq!(
+                    startup.e_npc_residents.get(npc).map(|row| &row.singular),
+                    Some(&original.singular),
+                    "{lang}: missing referenced NPC {npc:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn en_pack_decodes_and_contains_the_probe_item() {
     let Some(data) = decode_en_pack("en_pack_decodes_and_contains_the_probe_item") else {
         return;

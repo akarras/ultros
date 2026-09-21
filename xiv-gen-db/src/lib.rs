@@ -45,6 +45,40 @@ pub fn embedded_bytes(lang: Language) -> &'static [u8] {
 }
 
 #[cfg(feature = "embed")]
+pub fn startup_bytes(lang: Language) -> &'static [u8] {
+    match lang {
+        Language::En => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/en.rkyv"
+        )),
+        Language::Ja => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/ja.rkyv"
+        )),
+        Language::De => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/de.rkyv"
+        )),
+        Language::Fr => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/fr.rkyv"
+        )),
+        Language::Cn => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/cn.rkyv"
+        )),
+        Language::Ko => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/ko.rkyv"
+        )),
+        Language::Tc => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/tc.rkyv"
+        )),
+    }
+}
+
+#[cfg(feature = "embed")]
 pub fn data() -> &'static xiv_gen::Data {
     if let Some(d) = *XIV_DATA.read().unwrap() {
         return d;
@@ -127,6 +161,22 @@ pub fn all_locales() -> impl Iterator<Item = (Language, &'static xiv_gen::Data)>
 /// a deploy that did not touch game data neither re-downloads the pack nor
 /// evicts it from the edge cache. Unknown languages resolve to English, which
 /// is also what the server falls back to.
+pub fn startup_version(lang: &str) -> &'static str {
+    match lang {
+        "ja" => env!("XIV_STARTUP_VERSION_JA"),
+        "de" => env!("XIV_STARTUP_VERSION_DE"),
+        "fr" => env!("XIV_STARTUP_VERSION_FR"),
+        "cn" => env!("XIV_STARTUP_VERSION_CN"),
+        "ko" => env!("XIV_STARTUP_VERSION_KO"),
+        "tc" => env!("XIV_STARTUP_VERSION_TC"),
+        _ => env!("XIV_STARTUP_VERSION_EN"),
+    }
+}
+
+pub fn startup_url(lang: &str) -> String {
+    format!("/static/startup/{}/{lang}.rkyv", startup_version(lang))
+}
+
 pub fn pack_version(lang: &str) -> &'static str {
     match lang {
         "ja" => env!("XIV_PACK_VERSION_JA"),
@@ -146,9 +196,8 @@ pub fn pack_url(lang: &str) -> String {
     format!("/static/data/{}/{lang}.rkyv", pack_version(lang))
 }
 
-/// The key the browser caches the `lang` pack under (IndexedDB, see
-/// ultros-client). A stale entry is never mistaken for the current pack: a new
-/// pack means a new key.
+/// Legacy full-pack cache identity. New clients use [`startup_url`] and the
+/// HTTP cache instead of IndexedDB.
 pub fn pack_cache_key(lang: &str) -> String {
     format!("{}-{lang}", pack_version(lang))
 }

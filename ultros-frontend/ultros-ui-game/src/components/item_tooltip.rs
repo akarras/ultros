@@ -15,8 +15,8 @@ use super::ui_text::UIText;
 const OPEN_DELAY_MS: u32 = 300;
 
 /// Wraps any item surface (row, icon, link) with a hover card showing the
-/// item's icon, name, category, item level, stats, and description. All data
-/// comes synchronously from `tracked_data()` — no fetches. Unknown ids render
+/// item's icon, name, category, item level, stats, and description. The catalog
+/// is local; descriptions load only while the card is open. Unknown ids render
 /// the children with hover disabled.
 #[component]
 pub fn ItemTooltip<T>(
@@ -70,14 +70,7 @@ where
                     </div>
                 </div>
                 <ItemStats item_id=item.key_id />
-                {(!item.description.is_empty())
-                    .then(|| {
-                        view! {
-                            <div class="text-sm text-[color:var(--color-text-muted)] line-clamp-3">
-                                <UIText text=item.description.as_str().to_string() />
-                            </div>
-                        }
-                    })}
+                <ItemDescription item_id=item.key_id.0 />
             </div>
         }
         .into_any()
@@ -90,5 +83,26 @@ where
             class=class.unwrap_or_default()
             children=children
         />
+    }
+}
+
+/// Instantiated by HoverCard only after hover/focus opens the portal.
+#[component]
+fn ItemDescription(item_id: i32) -> impl IntoView {
+    let i18n = use_i18n_or_default();
+    let description = LocalResource::new(move || {
+        let locale = i18n.get_locale();
+        async move { crate::global_state::xiv_data::item_description(locale, item_id).await }
+    });
+    view! {
+        <Suspense fallback=move || view! { <span role="status">{t!(i18n, loading)}</span> }>
+            {move || description.get().map(|result| match result {
+                Ok(Some(text)) if !text.is_empty() => view! {
+                    <div data-testid="item-description" class="text-sm text-[color:var(--color-text-muted)] line-clamp-3"><UIText text=text /></div>
+                }.into_any(),
+                Err(_) => view! { <button type="button" on:click=move |_| description.refetch()>{t!(i18n, game_detail_retry)}</button> }.into_any(),
+                _ => ().into_any(),
+            })}
+        </Suspense>
     }
 }

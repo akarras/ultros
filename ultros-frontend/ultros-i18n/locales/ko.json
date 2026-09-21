@@ -576,6 +576,7 @@
     "settings": "설정",
     "logout": "로그아웃",
     "login_with_discord": "Discord로 로그인",
+    "game_detail_retry": "상세 정보를 불러올 수 없습니다. 다시 시도",
     "loading": "불러오는 중…",
     "menu": "메뉴",
     "category_list_desc": "%category% 카테고리 아이템 목록",
