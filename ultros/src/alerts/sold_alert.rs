@@ -19,7 +19,7 @@ use ultros_db::{UltrosDb, entity::alert};
 
 use crate::{
     alerts::{
-        delivery::dispatch_alert,
+        delivery::{AlertKind, PushOptions, dispatch_alert},
         inbox::{AlertFire, record_fire},
         price_alert_tracker::resolve_item_name,
         sold_matcher::{
@@ -243,7 +243,8 @@ async fn fire_all(
         let item_name = resolve_item_name(event.key.item_id);
         let (title, body, click_url) = format_sold_alert_message(&event, &item_name);
         for rule in alerts {
-            let result = dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
+            let push = PushOptions::for_alert(AlertKind::Sold, rule.alert_id, &click_url);
+            let result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
             let delivered = result.is_ok();
             let delivery_error = result.err().map(|e| e.to_string());
             if let Some(error) = &delivery_error {

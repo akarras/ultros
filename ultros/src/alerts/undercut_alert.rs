@@ -14,7 +14,10 @@ use ultros_db::UltrosDb;
 
 use crate::{
     alerts::{
-        delivery::{DispatchOutcome, dispatch_alert_detailed, permanent_failure_reason},
+        delivery::{
+            AlertKind, DispatchOutcome, PushOptions, dispatch_alert_detailed,
+            permanent_failure_reason,
+        },
         inbox::{AlertFire, record_fire},
     },
     event::{EventBus, EventProducer, EventType, NotificationEvent},
@@ -567,20 +570,22 @@ impl UndercutDeliverer {
         // change (the channel is gone, the bot was removed). Those are
         // recorded on the event but not re-reported as a new error every fire.
         let mut permanent = false;
-        let endpoint_failure =
-            match dispatch_alert_detailed(alert_id, title, body, click_url, &self.db, &self.ctx)
-                .await
-            {
-                DispatchOutcome::Delivered => {
-                    delivered = true;
-                    None
-                }
-                DispatchOutcome::PermanentFailure(reason) => {
-                    permanent = true;
-                    Some(reason)
-                }
-                DispatchOutcome::TransientFailure(e) => Some(format!("{e}")),
-            };
+        let push = PushOptions::for_alert(AlertKind::Undercut, alert_id, click_url);
+        let endpoint_failure = match dispatch_alert_detailed(
+            alert_id, title, body, &push, &self.db, &self.ctx,
+        )
+        .await
+        {
+            DispatchOutcome::Delivered => {
+                delivered = true;
+                None
+            }
+            DispatchOutcome::PermanentFailure(reason) => {
+                permanent = true;
+                Some(reason)
+            }
+            DispatchOutcome::TransientFailure(e) => Some(format!("{e}")),
+        };
         // Always give the legacy destinations a turn — they're a separate set
         // of channels, and some pre-endpoint alerts still have nothing else.
         if let Some(endpoint_failure) = endpoint_failure {

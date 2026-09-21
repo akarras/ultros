@@ -20,7 +20,7 @@ use ultros_db::{
     world_data::world_cache::{AnySelector as DbAnySelector, WorldCache},
 };
 
-use crate::alerts::delivery::dispatch_alert;
+use crate::alerts::delivery::{AlertKind, PushOptions, dispatch_alert};
 use crate::alerts::inbox::{AlertFire, record_fire};
 use crate::event::{EventBus, EventProducer, EventType, NotificationEvent};
 
@@ -504,8 +504,8 @@ async fn handle_added(
             &click_url,
         );
 
-        let delivery_result =
-            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
+        let push = PushOptions::for_alert(AlertKind::Price, rule.alert_id, &click_url);
+        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
@@ -546,8 +546,8 @@ async fn handle_added(
         );
 
         let click_url = format!("/list/{}", rule.list_id);
-        let delivery_result =
-            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
+        let push = PushOptions::for_alert(AlertKind::Price, rule.alert_id, &click_url);
+        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
