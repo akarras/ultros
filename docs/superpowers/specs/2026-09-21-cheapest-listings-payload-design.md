@@ -48,8 +48,8 @@ human-readable, so that is the format.
 ## Goals
 
 - No page inlines the cheapest map into its HTML.
-- Pages that never render a price never fetch it. Pages that do (home via
-  `RecentlyViewed`, item view, item explorer, job-set pages, recipe/related-items) fetch
+- Pages that never render a price never fetch it. Pages that do (item view, item
+  explorer, job-set pages, recipe/related-items) fetch
   it once on hydration, then only refetch on zone change — same as today.
 - The API fetch shrinks to ~83 KB br without changing the shape of the existing public
   endpoint.
@@ -127,38 +127,23 @@ gets the smaller payload with no edits.
 ```rust
 #[derive(Clone, Copy)]
 pub struct CheapestPrices {
-    listings: LocalResource<Result<CheapestListingsMap, AppError>>,
-    wanted: RwSignal<bool>,
+    owner: StoredValue<Owner>,                              // app root owner
+    listings: StoredValue<Option<LocalResource<Result<CheapestListingsMap, AppError>>>>,
 }
 
 impl CheapestPrices {
-    pub fn new() -> Self {
-        let (zone, _) = get_price_zone();
-        let wanted = RwSignal::new(false);
-        let listings = LocalResource::new(move || {
-            let wanted = wanted.get();
-            let zone = zone.get();
-            async move {
-                if !wanted {
-                    // Not demanded by anything on this page: never resolve, never fetch.
-                    std::future::pending::<()>().await;
-                }
-                get_cheapest_listings(zone.as_ref().map(|w| w.get_name()).unwrap_or("North-America")).await.map(CheapestListingsMap::from)
-            }
-        });
-        Self { listings, wanted }
-    }
-
-    /// Marks the map as needed on this page and returns the resource. Call once at
-    /// component setup, not inside a render closure.
-    pub fn demand(&self) -> LocalResource<Result<CheapestListingsMap, AppError>> {
-        if !self.wanted.get_untracked() {
-            self.wanted.set(true);
-        }
-        self.listings
-    }
+    pub fn new() -> Self                                    // root: no resource yet
+    pub fn already_demanded(listings: LocalResource<…>) -> Self  // scoped shadowing
+    /// Returns the shared resource, creating (and so fetching) it on the first
+    /// call. Call at component setup, not inside a render closure.
+    pub fn demand(&self) -> LocalResource<Result<CheapestListingsMap, AppError>>
 }
 ```
+
+`demand()` creates the `LocalResource` on first use, under the owner captured at
+`new()` (the app root), so the resource outlives the component that demanded it and
+is shared by every later consumer. The fetcher tracks the price-zone signal, so a zone
+change refetches as before.
 
 Why this shape:
 
@@ -166,15 +151,18 @@ Why this shape:
   the contract the consumers' `hydrated` gates already assume, so their SSR output is
   byte-identical to today and no hydration mismatch is introduced. It also means the
   server does zero work for this resource.
-- `wanted` makes it lazy. The fetcher tracks `wanted`; flipping it re-runs the fetcher,
-  which drops the never-resolving future and issues the real request. Pages that never
-  call `demand()` never fetch. Once demanded it stays loaded for the SPA session and
-  refetches only when the zone signal changes — the current behaviour.
+- Lazy *creation* rather than a "wanted" signal gated inside the fetcher. The first
+  draft used a fetcher that returned a never-resolving future until a `wanted` signal
+  flipped. That deadlocks: `reactive_graph`'s `AsyncDerived` task awaits the current
+  future *inside* its notification loop, so once the pending future is being polled the
+  signal change is never received. It only appeared to work when `demand()` ran
+  synchronously during hydration (the task's `already_dirty` check discards the stale
+  future before first poll); `ItemExplorer` demands from inside another resource's
+  fetcher, after that window, and never got data.
 - `LocalResource<T>` is `Copy` and reads as `Option<T>`, the same shape consumers use
   today (`.with(|data| data.as_ref()?.as_ref().ok()?)`), so consumer edits are confined
   to *where they obtain the handle*.
-- `read_listings` is made private (renamed `listings`) so a consumer cannot grab the
-  resource without demanding it.
+- The fields are private so a consumer cannot grab the resource without `demand()`.
 
 `CheapestListingsMap` keeps its `Serialize`/`Deserialize` impls and the `"id_hq"` key
 codec: analyzer routes still round-trip `CheapestListings` through their own resources
@@ -193,7 +181,7 @@ Each obtains the resource with `demand()` at component setup instead of reading
 | `ultros-app/src/routes/item_view.rs` | `demand()` once outside the `Transition` closure; the closure reads the returned handle |
 | `ultros-ui-crafting/src/components/related_items.rs` (two sites, one of which currently calls `use_context` inside a render closure) | `demand()` once at setup, capture the handle, read it in the closures |
 | `ultros-app/src/routes/item_explorer.rs` `ItemList` | `demand()` |
-| `ultros-app/src/routes/item_explorer.rs` `ItemExplorer` | scoped resource becomes a `LocalResource`; when the scope equals the cookie zone it does `global.demand().await`, otherwise fetches the scoped zone. It is wrapped as `CheapestPrices::already_demanded(listings)` (a constructor that sets `wanted = true`) so descendants' `demand()` calls are no-ops |
+| `ultros-app/src/routes/item_explorer.rs` `ItemExplorer` | scoped resource becomes a `LocalResource`; when the scope equals the cookie zone it does `global.demand().await`, otherwise fetches the scoped zone. It is wrapped as `CheapestPrices::already_demanded(listings)` so descendants' `demand()` calls hand back that resource |
 
 `item_explorer.rs`'s shadowing constructor is the only place a second `CheapestPrices`
 is built; give it a dedicated `CheapestPrices::already_demanded(listings)` constructor
@@ -219,9 +207,8 @@ rather than exposing the fields.
     23942), and the same for `/list` and `/item/North-America/4`.
   - `curl 'localhost:8080/api/v1/cheapest/North-America'` still returns the legacy shape;
     `?format=columnar` returns four arrays of equal length.
-  - In the browser: `/` shows prices in Recently Viewed after hydration and the network
-    panel shows exactly one `?format=columnar` fetch; `/list`, `/alerts`, `/settings`
-    show none; `/item/North-America/4` shows the zone-savings pill and one fetch;
+  - In the browser: `/`, `/list`, `/alerts`, `/settings` issue no `cheapest` fetch (the
+    home page's Recently Viewed rail prices via the sparklines endpoint, not this map); `/item/North-America/4` shows the zone-savings pill and one fetch;
     `/items/...?world=Aether` (explorer with non-cookie scope) shows one fetch for the
     scoped zone only.
   - No hydration warnings/panics in the console on any of the above.

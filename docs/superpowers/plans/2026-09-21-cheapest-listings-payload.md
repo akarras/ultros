@@ -4,7 +4,7 @@
 
 **Goal:** Stop inlining the ~1.16 MB cheapest-listings map into every SSR page, fetch it lazily only on pages that render prices, and shrink the API payload with a columnar JSON shape.
 
-**Architecture:** A new `CheapestListingsColumnar` wire type (struct-of-arrays) is served by `/api/v1/cheapest/{world}?format=columnar` and converted back to the existing `CheapestListings` at the fetch boundary, so consumers keep their in-memory types. The root `CheapestPrices` context becomes a `LocalResource` (never serialized, always pending on SSR) gated by a `wanted` signal that consumers flip via `demand()`.
+**Architecture:** A new `CheapestListingsColumnar` wire type (struct-of-arrays) is served by `/api/v1/cheapest/{world}?format=columnar` and converted back to the existing `CheapestListings` at the fetch boundary, so consumers keep their in-memory types. The root `CheapestPrices` context becomes a `LocalResource` (never serialized, always pending on SSR) created lazily on the first `demand()` under the root owner, so only pages with a price cell fetch it.
 
 **Tech Stack:** Rust, Leptos 0.8 (`LocalResource`), axum, serde. Spec: `docs/superpowers/specs/2026-09-21-cheapest-listings-payload-design.md`.
 
@@ -15,6 +15,13 @@
 - Legacy `/api/v1/cheapest/{world}` response shape must remain byte-for-byte the same when `format` is absent or not `columnar`.
 - Windows build env for the `ultros` crate: prepend `/c/Strawberry/perl/bin:/c/Strawberry/c/bin:` to `PATH`, set `OPENSSL_RUST_USE_NASM=0`, and set `CARGO_PROFILE_DEV_DEBUG=0` (the `ultros` test binary otherwise overflows the 4 GiB rlib limit). Use the shared target dir if one is configured (`cargo metadata --format-version 1 | jq -r .target_directory`).
 - Consumers' `hydrated` gates stay exactly as they are; this change must not alter SSR HTML for the components (other than removing the serialized resource).
+
+> **Deviation recorded during execution:** Task 4's first draft gated the fetcher on a
+> `wanted` signal with a never-resolving future. That deadlocks `AsyncDerived` (it awaits
+> the current future inside its notification loop), which showed up as the item explorer
+> never fetching when its scope matched the cookie zone. The shipped version creates the
+> `LocalResource` lazily on first `demand()` under the root owner instead; the spec's §4
+> describes the final shape.
 
 ---
 
