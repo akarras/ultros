@@ -23,6 +23,7 @@ pub mod item_view;
 pub mod item_view_scope;
 pub mod item_view_sections;
 pub mod job_set_detail;
+pub mod lazy;
 pub mod leve_analyzer;
 pub mod list_view;
 pub mod list_view_sync;

@@ -6,7 +6,9 @@ use wasm_encoder::{
     CodeSection, CustomSection, Function, FunctionSection, Instruction, Module, NameMap,
     NameSection, TypeSection, ValType,
 };
-use wasm_symbols::{extract_symbols, format_symbols, strip_hash_suffix, strip_name_section};
+use wasm_symbols::{
+    extract_symbols, format_symbols, has_name_section, strip_hash_suffix, strip_name_section,
+};
 
 /// Two functions; the first is unnamed to exercise sparse indices. The
 /// `producers` custom section sits *after* `name` to prove stripping is
@@ -68,6 +70,14 @@ fn missing_name_section_is_an_error() {
         err.to_string().contains("name"),
         "error should say the name section is missing: {err}"
     );
+}
+
+/// Split chunks may lack a `name` section; the CLI skips those instead of
+/// failing the build, so the check has to be a clean boolean.
+#[test]
+fn has_name_section_reports_presence() {
+    assert!(has_name_section(&module(true)).unwrap());
+    assert!(!has_name_section(&module(false)).unwrap());
 }
 
 #[test]

@@ -48,36 +48,26 @@ use crate::{
     routes::{
         about::*,
         alerts::Alerts,
-        analyzer::*,
         bot::BotGuide,
         changelog::Changelog,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
-        fc_crafting_analyzer::*,
         group_detail::GroupDetail,
         groups::*,
-        guest_lists::GuestListRoute,
         help::*,
         history::*,
         home_page::*,
         item_explorer::*,
         item_view::*,
         job_set_detail::JobSetDetail,
+        lazy::*,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
-        leve_analyzer::*,
-        list_view_sync::ListRoute,
-        lists::*,
         not_found::NotFound,
         npc_view::NpcView,
-        recipe_analyzer::*,
         recipe_view::RecipeView,
         retainers::*,
-        scrip_sources::*,
         settings::*,
         trends::*,
-        vendor_resale::*,
-        vendor_sell::*,
-        venture_analyzer::*,
         welcome::*,
     },
 };
@@ -88,7 +78,7 @@ use leptos::prelude::*;
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_meta::*;
 use leptos_router::components::{ParentRoute, Route, Router, Routes};
-use leptos_router::{SsrMode, path};
+use leptos_router::{Lazy, SsrMode, path};
 use log::info;
 
 /// Id of the sentinel element `shell()` renders as the final child of `<body>`.
@@ -645,11 +635,11 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("groups") view=Groups />
                         <Route path=path!("groups/:id") view=GroupDetail />
                         <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
-                        <ParentRoute path=path!("list") view=Lists>
-                            <Route path=path!("invite/:invite_id") view=ListInviteAccept />
-                            <Route path=path!("device/:device_id") view=GuestListRoute />
-                            <Route path=path!(":id") view=ListRoute />
-                            <Route path=path!("") view=EditLists />
+                        <ParentRoute path=path!("list") view={Lazy::<ListsRoute>::new()}>
+                            <Route path=path!("invite/:invite_id") view={Lazy::<ListInviteRoute>::new()} />
+                            <Route path=path!("device/:device_id") view={Lazy::<GuestListLazyRoute>::new()} />
+                            <Route path=path!(":id") view={Lazy::<ListViewRoute>::new()} />
+                            <Route path=path!("") view={Lazy::<EditListsRoute>::new()} />
                         </ParentRoute>
                         <ParentRoute path=path!("items") view=ItemExplorer>
                             <Route path=path!("jobset/:jobset/set/:ilvl") view=JobSetDetail />
@@ -674,24 +664,24 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             ssr=SsrMode::InOrder
                         />
                         <Route path=path!("item/:id") view=ItemView ssr=SsrMode::InOrder />
-                        <Route path=path!("flip-finder") view=Analyzer />
+                        <Route path=path!("flip-finder") view={Lazy::<AnalyzerRoute>::new()} />
                         <Route path=path!("analyzer") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
                             Effect::new(move |_| { nav("/flip-finder", Default::default()); });
                             view! { <div /> }
                         } />
-                        <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
-                        <Route path=path!("vendor-resale") view=VendorResale />
-                        <Route path=path!("vendor-resale/:world") view=VendorWorldView />
-                        <Route path=path!("recipe-analyzer/:world?") view=RecipeAnalyzer />
+                        <Route path=path!("flip-finder/:world") view={Lazy::<AnalyzerWorldRoute>::new()} />
+                        <Route path=path!("vendor-resale") view={Lazy::<VendorResaleRoute>::new()} />
+                        <Route path=path!("vendor-resale/:world") view={Lazy::<VendorWorldRoute>::new()} />
+                        <Route path=path!("recipe-analyzer/:world?") view={Lazy::<RecipeAnalyzerRoute>::new()} />
                         <Route path=path!("recipe/:id") view=RecipeView />
                         <Route path=path!("npc/:id") view=NpcView />
-                        <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
-                        <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
-                        <Route path=path!("leve-analyzer/:world?") view=LeveAnalyzer />
-                        <Route path=path!("scrip-sources/:world?") view=ScripSources />
-                        <Route path=path!("venture-analyzer/:world?") view=VentureAnalyzer />
-                        <Route path=path!("vendor-sell/:world?") view=VendorSell />
+                        <Route path=path!("fc-crafting-analyzer") view={Lazy::<FcCraftingRoute>::new()} />
+                        <Route path=path!("fc-crafting-analyzer/:world") view={Lazy::<FcCraftingRoute>::new()} />
+                        <Route path=path!("leve-analyzer/:world?") view={Lazy::<LeveRoute>::new()} />
+                        <Route path=path!("scrip-sources/:world?") view={Lazy::<ScripRoute>::new()} />
+                        <Route path=path!("venture-analyzer/:world?") view={Lazy::<VentureRoute>::new()} />
+                        <Route path=path!("vendor-sell/:world?") view={Lazy::<VendorSellRoute>::new()} />
                         <Route path=path!("analyzer/:world") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
                             let params = leptos_router::hooks::use_params_map();
