@@ -13,7 +13,7 @@ use ultros_api_types::{
         ResendResult, UnreadAlertEventCount, UpdateAlertRequest, UpdateEndpointRequest,
         VapidPublicKey,
     },
-    cheapest_listings::{CheapestListings, CheapestListingsMap},
+    cheapest_listings::{CheapestListings, CheapestListingsColumnar, CheapestListingsMap},
     item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
@@ -172,9 +172,13 @@ pub async fn delete_user() -> AppResult<()> {
     delete_api("/api/v1/current_user").await
 }
 
-/// Get analyzer data
+/// Cheapest listing per `(item, hq)` for a world/DC/region. Fetches the
+/// columnar wire shape (roughly half the bytes of the row shape after
+/// compression) and converts at the boundary so callers keep the row type.
 pub async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
-    fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
+    fetch_api::<CheapestListingsColumnar>(&format!("/api/v1/cheapest/{world_name}?format=columnar"))
+        .await
+        .map(CheapestListings::from)
 }
 
 pub async fn get_cheapest_listings_live(
@@ -184,10 +188,11 @@ pub async fn get_cheapest_listings_live(
     if refresh_version == 0 {
         get_cheapest_listings(world_name).await
     } else {
-        fetch_api(&format!(
-            "/api/v1/cheapest/{world_name}?rt={refresh_version}"
+        fetch_api::<CheapestListingsColumnar>(&format!(
+            "/api/v1/cheapest/{world_name}?format=columnar&rt={refresh_version}"
         ))
         .await
+        .map(CheapestListings::from)
     }
 }
 
