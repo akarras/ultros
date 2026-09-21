@@ -21,11 +21,12 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
-use ultros_api_types::sale_stats::{BulkSaleStats, ItemSaleStats};
+use ultros_api_types::sale_stats::{BulkSaleStats, BulkSaleStatsColumnar, ItemSaleStats};
 use ultros_api_types::trends::ConfidenceBand;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
+use super::is_columnar;
 use crate::web::{
     error::{ClickHouseQueryError, WebError},
     stats_cache::{CacheKey, SaleStatsCache, cached_response},
@@ -38,6 +39,8 @@ const SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
 pub(crate) struct SaleStatsQuery {
     /// Trailing rollup window in days. Supported: 1, 7, 30, 90; defaults to 7.
     window: Option<u16>,
+    /// `columnar` selects [`BulkSaleStatsColumnar`]; see [`is_columnar`].
+    format: Option<String>,
 }
 
 pub(crate) async fn get_sale_stats(
@@ -56,15 +59,16 @@ pub(crate) async fn get_sale_stats(
     if !SUPPORTED_WINDOWS.contains(&window_days) {
         return Err(WebError::BadRequest);
     }
+    let columnar = is_columnar(query.format.as_deref());
 
     let cached = cache
         .get_or_load(
             CacheKey {
                 selector,
                 window_days,
-                columnar: false,
+                columnar,
             },
-            move || async move { load_sale_stats(&ch, world_ids, window_days).await },
+            move || async move { load_sale_stats(&ch, world_ids, window_days, columnar).await },
         )
         .await?;
     let disposition = cached.disposition.as_str();
@@ -80,6 +84,7 @@ async fn load_sale_stats(
     ch: &ClickHouseClient,
     world_ids: Vec<i32>,
     window_days: u16,
+    columnar: bool,
 ) -> Result<Bytes, WebError> {
     let rows = ultros_clickhouse::queries::bulk_sale_stats(ch, &world_ids, window_days)
         .await
@@ -104,7 +109,7 @@ async fn load_sale_stats(
         _ => HashMap::new(),
     };
 
-    let stats = rows
+    let stats: Vec<ItemSaleStats> = rows
         .into_iter()
         .map(|r| ItemSaleStats {
             item_id: r.item_id,
@@ -125,8 +130,48 @@ async fn load_sale_stats(
         })
         .collect();
 
-    serde_json::to_vec(&BulkSaleStats { stats })
-        .map(Bytes::from)
+    serialize_body(stats, columnar)
+}
+
+/// Either wire shape, pre-serialized for the cache.
+fn serialize_body(stats: Vec<ItemSaleStats>, columnar: bool) -> Result<Bytes, WebError> {
+    let body = BulkSaleStats { stats };
+    let json = if columnar {
+        serde_json::to_vec(&BulkSaleStatsColumnar::from(body))
+    } else {
+        serde_json::to_vec(&body)
+    };
+    json.map(Bytes::from)
         .map_err(anyhow::Error::from)
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stats() -> Vec<ItemSaleStats> {
+        vec![
+            ItemSaleStats {
+                item_id: 2,
+                hq: false,
+                median_price: 100,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 5,
+                hq: true,
+                median_price: 7,
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn serialize_body_rows_by_default_columnar_on_request() {
+        let rows = serialize_body(stats(), false).unwrap();
+        assert!(rows.starts_with(br#"{"stats":[{"item_id":2"#));
+        let columnar = serialize_body(stats(), true).unwrap();
+        assert!(columnar.starts_with(br#"{"item_id":[2,5],"hq":[false,true]"#));
+    }
 }
