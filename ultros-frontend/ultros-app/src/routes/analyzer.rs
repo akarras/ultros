@@ -3384,14 +3384,15 @@ mod tests {
             &[(100, 0), (110, 1), (120, 2), (130, 3), (140, 4), (150, 5)],
         );
         let summary = compute_summary(row, false);
-        // Six even-length sample: median = (third + fourth) / 2 = (120 + 130) / 2 = 125
-        assert_eq!(summary.median_price, 125);
+        // Six even-length sample: the conservative median is the lower middle
+        // (third of six), never the average of the two middles.
+        assert_eq!(summary.median_price, 120);
     }
 
     #[test]
     fn sniper_sale_below_10pct_of_median_is_dropped() {
-        // Raw median of [1, 100, 110, 120, 130, 140] sorted = (110+120)/2 = 115.
-        // The "1" is well below 10% of 115 (=11), so it's dropped.
+        // Raw (lower-middle) median of [1, 100, 110, 120, 130, 140] = 110.
+        // The "1" is well below 10% of 110 (=11), so it's dropped.
         let row = sales_row(
             2,
             false,
@@ -3414,7 +3415,7 @@ mod tests {
         );
         let summary = compute_summary(row, false);
         assert_eq!(summary.min_price, 500);
-        assert_eq!(summary.median_price, 525);
+        assert_eq!(summary.median_price, 520);
     }
 
     #[test]
@@ -3558,6 +3559,49 @@ mod tests {
         let row = &table.0[0];
         assert_eq!(row.sale_summary.median_price, 1000);
         assert_eq!(row.estimated_sale_price, 1000);
+    }
+
+    /// Regression: Fang Earrings NQ on Gilgamesh (item 4204) ranked #1 on the
+    /// Flip Finder with a 916,000,000 "conservative estimate" because three
+    /// laundering sales shared the six-sale buffer with three real ~20k sales
+    /// and no local listing existed to cap the median.
+    #[test]
+    fn conservative_estimate_ignores_laundering_half_of_the_buffer() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                4204,
+                false,
+                &[
+                    (23_005, 3),
+                    (20_005, 10),
+                    (918_000_000, 14),
+                    (916_000_000, 14),
+                    (916_000_000, 14),
+                    (13_005, 18),
+                ],
+            )],
+        };
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 4204,
+                hq: false,
+                cheapest_price: 5_000,
+                world_id: 42,
+            }],
+        };
+        // No listing on the sell world: nothing caps the median.
+        let world = CheapestListings {
+            cheapest_listings: vec![],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        assert_eq!(table.0.len(), 1);
+        let row = &table.0[0];
+        assert_eq!(row.sale_summary.median_price, 23_005);
+        assert_eq!(row.estimated_sale_price, 23_005);
     }
 
     fn calc(profit: i32, roi: i32, ppd: i32) -> CalculatedProfitData {

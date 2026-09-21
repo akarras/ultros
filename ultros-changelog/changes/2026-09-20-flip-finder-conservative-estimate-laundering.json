@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Flip Finder's conservative estimate no longer inherits gil-laundering sales",
+  "blurb": "When a few laundering sales at hundreds of millions of gil landed among an item's recent sales, the Flip Finder's conservative estimate could average them in and then throw away the real sales as outliers, ranking items like Fang Earrings at the top with a nine-figure profit. The estimate now takes the lower middle of recent sales, matching the Discord analyzer, so laundering only distorts it when it makes up more than half the recent sales.",
+  "link": "/flip-finder"
+}
