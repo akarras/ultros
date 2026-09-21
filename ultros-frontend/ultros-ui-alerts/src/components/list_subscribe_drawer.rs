@@ -111,10 +111,11 @@ pub fn ListSubscribeDrawer(
         });
     };
 
+    let dialog_name = list_name.clone();
     view! {
-        <Modal set_visible>
-            <div class="p-4 space-y-4 w-[28rem]">
-                <h2 class="text-xl font-bold">{t!(i18n, list_subscribe_title, name = list_name.clone())}</h2>
+        <Modal set_visible aria_label=Signal::derive(move || t_string!(i18n, list_subscribe_title, name = dialog_name.clone()).to_string())>
+            <div class="min-w-0 w-full space-y-4">
+                <h2 class="text-xl font-semibold break-words">{t!(i18n, list_subscribe_title, name = list_name.clone())}</h2>
                 <Show when=move || existing_alert.get().is_some()>
                     <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2 text-sm text-[color:var(--color-text-muted)]">
                         "Editing existing settings for this list."
@@ -128,19 +129,19 @@ pub fn ListSubscribeDrawer(
                     }}
                 </p>
 
-                <div class="grid grid-cols-2 gap-2">
+                <div class="segmented-control grid grid-cols-2" role="group" aria-label=move || t_string!(i18n, list_subscribe_updates_mode).to_string()>
                     <button
                         type="button"
-                        class="btn-ghost"
-                        class:bg-brand-500=move || mode.get() == "price_targets"
+                        class="segmented-option"
+                        aria-pressed=move || (mode.get() == "price_targets").to_string()
                         on:click=move |_| set_mode.set("price_targets")
                     >
                         {t!(i18n, list_subscribe_price_targets_mode)}
                     </button>
                     <button
                         type="button"
-                        class="btn-ghost"
-                        class:bg-brand-500=move || mode.get() == "list_updates"
+                        class="segmented-option"
+                        aria-pressed=move || (mode.get() == "list_updates").to_string()
                         on:click=move |_| set_mode.set("list_updates")
                     >
                         {t!(i18n, list_subscribe_updates_mode)}
@@ -150,14 +151,14 @@ pub fn ListSubscribeDrawer(
                 <EndpointPicker endpoints selected />
 
                 <Show when=move || error.get().is_some()>
-                    <div class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>
+                    <div role="alert" class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>
                 </Show>
 
-                <div class="flex justify-end gap-2 pt-2">
+                <div class="flex flex-wrap justify-end gap-2 border-t border-[color:var(--color-outline)] pt-4">
                     <button class="btn-ghost" on:click=move |_| set_visible.set(false)>
                         {t!(i18n, cancel)}
                     </button>
-                    <button class="btn" on:click=submit>
+                    <button class="btn-primary min-w-0 whitespace-normal" on:click=submit>
                         <Icon icon=i::BsBell width="1em" height="1em" />
                         <span class="ml-1">
                             {move || if mode.get() == "list_updates" {

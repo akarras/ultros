@@ -44,13 +44,13 @@ pub fn EndpointPicker(
                                 let is_sel = move || selected.get().contains(&id);
                                 view! {
                                     <li>
-                                        <label class="flex items-center gap-2">
+                                        <label class="flex min-w-0 items-start gap-2 py-1">
                                             <input
                                                 type="checkbox"
                                                 prop:checked=is_sel
                                                 on:change=move |_| toggle(id)
                                             />
-                                            <span>{e.name}</span>
+                                            <span class="min-w-0 break-words">{e.name}</span>
                                         </label>
                                     </li>
                                 }

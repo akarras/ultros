@@ -138,7 +138,7 @@ mod browser {
                         Some(Ok(user)) => {
                             if let Some(receipt) = legacy.get() {
                                 return view! {
-                                    <button class="btn-primary inline-flex items-center gap-2" data-testid="device-list-open-online" disabled=move || pending.get() on:click=move |_| {
+                                    <button class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-open-online" disabled=move || pending.get() on:click=move |_| {
                                         let h = handle.get_value(); pending.set(true);
                                         leptos::task::spawn_local(async move {
                                             match h.continue_legacy(user.id, receipt.list_id).await {
@@ -154,14 +154,14 @@ mod browser {
                             }
                             view! {
                                 <Show when=move || scope.get().is_none()><WorldPicker current_world=scope.into() set_current_world=set_scope.into() /></Show>
-                                <button class="btn-primary inline-flex items-center gap-2" data-testid="device-list-adopt" disabled=move || pending.get() || scope.get().is_none() on:click=move |_| connect.run(())>
+                                <button class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-adopt" disabled=move || pending.get() || scope.get().is_none() on:click=move |_| connect.run(())>
                                     <Icon icon=i::BsCloudArrowUp aria_hidden=true />
                                     {move || if pending.get() { t_string!(i18n, online_connecting).to_string() } else { t_string!(i18n, online_make).to_string() }}
                                 </button>
                             }.into_any()
                         },
                         _ => view! {
-                            <a class="btn-primary inline-flex items-center gap-2" data-testid="device-list-make-online-sign-in" rel="external" href=move || {
+                            <a class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-make-online-sign-in" rel="external" href=move || {
                                 let next = continuation.map(|next| next.get()).unwrap_or_else(|| handle.with_value(|h| format!("/list/device/{}?labs=lists-sync&make_online=1", h.id())));
                                 format!("/login?next={}", String::from(js_sys::encode_uri_component(&next)))
                             }><Icon icon=i::BsCloudArrowUp aria_hidden=true />{t!(i18n, online_make)}</a>

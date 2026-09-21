@@ -1,4 +1,5 @@
 //! Stable, whole-stack shopping trips shared by account and device lists.
+use crate::components::relative_time::RelativeToNow;
 use crate::components::world_picker::WorldOnlyPicker;
 use crate::global_state::home_world::use_home_world;
 use crate::i18n::{t_string, use_i18n};
@@ -29,7 +30,6 @@ pub struct ShopInput {
     pub home_world: i32,
     pub world_names: BTreeMap<i32, String>,
     pub datacenters: BTreeMap<i32, i32>,
-    pub observed_at: Option<String>,
     /// The same served-price state as Build; frozen with a selected trip.
     pub price_feed: PriceFeed,
     /// Actual Build result, including per-item lookup coverage. Shopping rows
@@ -46,7 +46,6 @@ impl Default for ShopInput {
             home_world: 0,
             world_names: BTreeMap::new(),
             datacenters: BTreeMap::new(),
-            observed_at: None,
             price_feed: PriceFeed::Missing(MissingReason::NotRequested),
             build_estimate: CartEstimate::default(),
             estimate_available: false,
@@ -271,7 +270,16 @@ fn refreshed_mode(
     if mode < 3 {
         return mode;
     }
-    let Some(old) = previous.and_then(|plans| plans.get(mode - 3)) else {
+    // On the first choice, the index already refers to the displayed current
+    // frontier. Only an existing trip needs its old route identity remapped.
+    let Some(previous) = previous else {
+        return if frontier.get(mode - 3).is_some() {
+            mode
+        } else {
+            2
+        };
+    };
+    let Some(old) = previous.get(mode - 3) else {
         return 2;
     };
     let worlds: Vec<_> = planner::itinerary(old).into_keys().collect();
@@ -569,6 +577,8 @@ pub fn ListShop(
     let review = RwSignal::new(None::<Review>);
     let stop = RwSignal::new(0_usize);
     let notice = RwSignal::new(String::new());
+    let routes_open = RwSignal::new(false);
+    let change_route = NodeRef::<leptos::html::Button>::new();
     let policy = Signal::derive(move || {
         travel_policy.map(|policy| policy.get()).unwrap_or_else(|| {
             input.with(|source| TravelPolicy {
@@ -594,6 +604,28 @@ pub fn ListShop(
             policy: adopted_policy,
         }));
         review.set(None);
+        routes_open.set(false);
+        // Choosing a route hides its card; keep keyboard focus on a visible
+        // control after the new trip has mounted.
+        #[cfg(feature = "hydrate")]
+        {
+            let document = web_sys::window().and_then(|window| window.document());
+            let before = document
+                .as_ref()
+                .and_then(|document| document.active_element());
+            leptos::leptos_dom::helpers::request_animation_frame(move || {
+                // A player may already have moved into a quantity field before
+                // this frame. Do not steal that newer focus or commit its draft.
+                let restore = document.as_ref().is_some_and(|document| {
+                    document.active_element().is_none_or(|current| {
+                        current.tag_name() == "BODY" || before.as_ref() == Some(&current)
+                    })
+                });
+                if restore && let Some(button) = change_route.get_untracked() {
+                    let _ = button.focus();
+                }
+            });
+        }
         stop.set(0);
         notice.set(String::new());
     };
@@ -1001,7 +1033,7 @@ pub fn ListShop(
     view! {
         <Show when=move || input.get().estimate_available>
         <section class="space-y-4" aria-label=move || t_string!(i18n, list_shop_trip).to_string()>
-            <div class="rounded-xl border border-white/10 p-4 space-y-2" data-testid="shop-handoff">
+            <div class="rounded-xl border border-[color:var(--color-outline)] p-4 space-y-2" data-testid="shop-handoff" class:hidden=move || trip.with(|trip| trip.is_some())>
                 <p>{move || t_string!(i18n, list_shop_handoff_intro)}</p>
                 <p class="font-medium" data-testid="shop-cart-summary">{move || {
                     let source = input.get();
@@ -1020,7 +1052,13 @@ pub fn ListShop(
                 }}</p>
                 <p role="status" class="text-sm" data-testid="shop-no-prices" class:hidden=move || input.with(|input| input.rows.iter().any(|row| !row.listings.is_empty()))>{move || t_string!(i18n, list_shop_no_prices)}</p>
             </div>
-            <div class="rounded-xl border border-white/10 p-4 space-y-3" data-testid="shop-route-picker">
+            <Show when=move || trip.with(|trip| trip.is_some())>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h2 class="text-xl font-semibold">{t_string!(i18n, lists_shop_current_route)}</h2>
+                    <button node_ref=change_route type="button" class="btn-secondary" data-testid="shop-change-route" aria-expanded=move || routes_open.get().to_string() aria-controls="shop-route-picker" on:click=move |_| routes_open.update(|open| *open = !*open)>{t_string!(i18n, lists_shop_change_route)}</button>
+                </div>
+            </Show>
+            <div id="shop-route-picker" class="rounded-xl border border-[color:var(--color-outline)] p-4 space-y-3" class:hidden=move || trip.with(|trip| trip.is_some()) && !routes_open.get() data-testid="shop-route-picker">
                 <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                     <div class="min-w-0">
                         <h2 class="text-xl font-semibold">{move || t_string!(i18n, recipe_planner_route_heading)}</h2>
@@ -1044,7 +1082,7 @@ pub fn ListShop(
                         let frontier = active.as_ref().map(|active| active.frontier.clone()).unwrap_or_else(|| {
                             replan(None, &source, &unavailable.get(), &consumed.get()).2
                         });
-                        // The lowest-cost card (ties go to the shorter trip),
+                        // Maximize item coverage, then minimize cost and stops,
                         // marked with `data-route-cheapest` so the e2e harness
                         // can always find a route to adopt. The "Cheapest"
                         // badge below is stricter: it only shows when the full
@@ -1052,7 +1090,7 @@ pub fn ListShop(
                         let cheapest_card = frontier
                             .iter()
                             .enumerate()
-                            .min_by_key(|(_, plan)| plan.cost)
+                            .min_by_key(|(_, plan)| (plan.missing, plan.cost, planner::itinerary(plan).len()))
                             .map(|(index, _)| index);
                         let (best_value, cheapest) = if frontier.len() > 1 {
                             (planner::RouteComparison { cards: frontier.clone() }.best_value(), cheapest_index(&frontier))
@@ -1062,7 +1100,7 @@ pub fn ListShop(
                         frontier.iter().enumerate().map(|(index, plan)| {
                             let selected = active.as_ref().is_some_and(|active| active.plan == *plan);
                             let saving = match planner::marginal_saving_line(&frontier, index) {
-                                Some(planner::SavingLine::Saved(amount)) => Some(t_string!(i18n, list_travel_saved_previous, amount = amount).to_string()),
+                                Some(planner::SavingLine::Saved(amount)) => Some(t_string!(i18n, list_travel_saved_previous, amount = amount.separate_with_commas()).to_string()),
                                 Some(planner::SavingLine::Same) => Some(t_string!(i18n, list_travel_saved_previous, amount = 0).to_string()),
                                 _ => None,
                             };
@@ -1097,18 +1135,24 @@ pub fn ListShop(
                                             view! { <span class=badge_class data-testid="shop-route-badge">{text}</span> }
                                         })}
                                     </span>
-                                    <strong class="block text-xl tabular-nums">{t_string!(i18n, lists_workspace_gil, price = cost.separate_with_commas())}</strong>
+                                    <strong class="block text-xl tabular-nums">{if source.home_world == 0 && index == 0 { t_string!(i18n, lists_shop_no_home_cost).to_string() } else { t_string!(i18n, lists_workspace_gil, price = cost.separate_with_commas()).to_string() }}</strong>
                                     <span class="block text-xs text-[color:var(--color-text-muted)]">{t_string!(i18n, list_shop_route_stops, count = stops.len())}</span>
                                     {incomplete.then(|| view! { <span class="block text-xs text-amber-300">{t_string!(i18n, list_shop_route_partial, count = missing)}</span> })}
                                     <span class="block text-xs" data-testid="shop-route-saving">{saving}</span>
-                                    <span class="sr-only">{stop_names}</span>
+                                    <span class="block text-xs text-[color:var(--color-text-muted)] break-words">{stop_names}</span>
                                 </button>
                             }
                         }).collect_view()
                     }}
                 </div>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_travel_comparison_note)}</p>
-                <p class="text-xs text-[color:var(--color-text-muted)]">{move || input.get().observed_at.map(|time| t_string!(i18n, list_shop_observed, time = time).to_string()).unwrap_or_else(|| t_string!(i18n, list_shop_age_unknown).to_string())}</p>
+                <p class="text-xs text-[color:var(--color-text-muted)]">{move || {
+                    let feed = trip.with(|active| active.as_ref().map(|active| active.source.price_feed)).unwrap_or_else(|| input.get().price_feed);
+                    match feed.fetched_at() {
+                        Some(time) => view! { <span>{t_string!(i18n, lists_estimate_fetched)}" "<RelativeToNow timestamp=time.naive_utc() /></span> }.into_any(),
+                        None => view! { <span>{t_string!(i18n, list_shop_age_unknown)}</span> }.into_any(),
+                    }
+                }}</p>
             </div>
             <p role="status" data-testid="shop-notice" class:hidden=move || notice.get().is_empty()>{move || notice.get()}</p>
             {move || trip.get().map(|active| {
@@ -1124,12 +1168,13 @@ pub fn ListShop(
                 let refresh_failed = matches!(feed, PriceFeed::Observed { refresh_failed: true, .. });
                 view! {
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <strong data-testid="shop-totals">{t_string!(i18n, list_shop_totals, cost = totals.cost, surplus = totals.surplus, missing = totals.missing)}</strong>
+                        <strong data-testid="shop-totals">{t_string!(i18n, list_shop_totals, cost = totals.cost.separate_with_commas(), surplus = totals.surplus.separate_with_commas(), missing = totals.missing.separate_with_commas())}</strong>
                         <div class="flex flex-wrap gap-2">
                             <button class="btn-secondary min-h-11" data-testid="shop-refresh" on:click=move |_| refresh.run(())>{move || t_string!(i18n, list_shop_replan)}</button>
-                            <button class="btn-primary min-h-11" data-testid="open-shopping-companion" on:click=pop_out>{move || t_string!(i18n, list_shop_popout)}</button>
+                            <button class="btn-secondary min-h-11" data-testid="open-shopping-companion" on:click=pop_out>{move || t_string!(i18n, list_shop_popout)}</button>
                         </div>
                     </div>
+                    {feed.fetched_at().map(|time| view! { <p class="text-xs text-[color:var(--color-text-muted)]" data-testid="shop-price-age">{t_string!(i18n, lists_estimate_fetched)}" "<RelativeToNow timestamp=time.naive_utc() /></p> })}
                     <details class="rounded-lg border border-white/10 p-3 text-sm" data-testid="shop-estimate">
                         <summary class="cursor-pointer font-medium">{t_string!(i18n, list_shop_estimate_summary)}</summary>
                         <ul class="space-y-1 pt-2">
@@ -1438,6 +1483,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![9, 20]
         );
+    }
+
+    #[test]
+    fn first_route_choice_uses_the_clicked_card_instead_of_the_cheapest() {
+        let frontier = candidate_frontier(&travel_ladder_input(), &BTreeSet::new());
+        let quick = quick_candidates(&frontier);
+        assert_ne!(
+            frontier[1].cost, quick[2].cost,
+            "fixture distinguishes the clicked route"
+        );
+        let mode = refreshed_mode(None, &frontier, 4);
+        assert_eq!(choice_plan(&quick, &frontier, mode), &frontier[1]);
+        assert_eq!(refreshed_mode(None, &frontier, usize::MAX), 2);
     }
 
     #[test]

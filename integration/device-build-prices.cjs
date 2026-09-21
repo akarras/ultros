@@ -165,6 +165,7 @@ async function main() {
     // From here on a trip is being followed, so the editor stops repricing on
     // its own and every later lookup below is the explicit Refresh prices.
     await page.click(tid("guest-shop-mode"));
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /10 gil/);
@@ -245,6 +246,7 @@ async function main() {
       for (const { socket, data } of window.__heldInitialPriceDocs.splice(0)) socket.dispatchEvent(new MessageEvent("message", { data }));
     });
     await page.waitForSelector((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-stack-bought"));
     assert.match(await text(tid("shop-build-reference")), /20 gil/, "readable snapshot mounts the shared-price Shop workspace");
@@ -256,6 +258,7 @@ async function main() {
     await setNumber(`${row(item)} input[aria-label="Needed for Bronze Ingot"]`, 4); await expectTotal("40 gil");
     await addItem("Iron Ingot"); await expectState(added, "not-requested");
     await page.click(tid("guest-shop-mode"));
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /40 gil/);

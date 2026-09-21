@@ -99,9 +99,39 @@ async function main() {
     await api('POST', '/api/v1/list/create', { name, wdr_filter: { World: world.id } });
     listId = (await api('GET', '/api/v1/list')).find(entry => entry.list.name === name).list.id;
     await load(`/list/${listId}?labs=lists-sync`);
+    await page.deleteCookie({ name: 'LABS', url: base });
+    await load('/list?labs=lists-sync');
+    const cardLink = 'a[href^="/list/' + listId + '?"]';
+    await page.waitForSelector(cardLink, { visible: true });
+    assert.equal(new URL(await page.$eval(cardLink, node => node.href)).searchParams.get('labs'), 'lists-sync', 'online card preserves URL-only Labs opt-in');
+    await page.click(cardLink);
+    await page.waitForSelector(tid('list-name-input'), { visible: true });
+    assert.equal(new URL(page.url()).searchParams.get('labs'), 'lists-sync', 'opening an online card keeps the new workspace');
     await cycle('list-access-btn', 'Manage access');
 
     await cycle('list-settings-btn', 'More options');
+    // The subscription form used to force a 28rem inner width into a mobile
+    // dialog, leaving its submit action outside the viewport.
+    await page.setViewport({ width: 390, height: 844 });
+    await open('list-settings-btn');
+    await page.click(tid('list-subscribe-btn'));
+    await page.waitForSelector('[role="dialog"] [aria-pressed]', { visible: true });
+    const geometry = await page.$eval(dialog, node => ({
+      name: node.getAttribute('aria-label'),
+      width: node.clientWidth,
+      content: node.scrollWidth,
+      right: node.getBoundingClientRect().right,
+      viewport: innerWidth,
+      selectedModes: node.querySelectorAll('[aria-pressed="true"]').length,
+    }));
+    assert(geometry.name, 'notification dialog has an accessible name');
+    assert(geometry.content <= geometry.width + 1, 'notification content fits dialog');
+    assert(geometry.right <= geometry.viewport, 'notification dialog fits viewport');
+    assert.equal(geometry.selectedModes, 1, 'one notification mode is selected');
+    await page.keyboard.press('Escape');
+    await page.setViewport({ width: 1280, height: 900 });
+    console.log('[ok] mobile notification dialog fits without clipping and exposes selected mode');
+
 
     // No Lists 2.0 dialog contains a world picker any more (the scope picker
     // sits in the page's price row), so the nested dropdown-then-modal Escape
