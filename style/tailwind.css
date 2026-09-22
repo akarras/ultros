@@ -3041,6 +3041,19 @@ dialog.panel { color: var(--color-text); margin: auto; }
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
+/* Views menus have their own button-relative wrapper on desktop. On phones,
+   right-aligning a wide menu to an icon in the middle of the toolbar can put
+   its left edge offscreen. Use the full ControlBar as the containing block,
+   like Columns and + Filter already do. This covers both grid and Flip menus. */
+@media (max-width: 767.98px) {
+    .sticky-bar > div > .relative:has(> .sticky-bar-popover) {
+        position: static;
+    }
+    .sticky-bar > div > .relative > .sticky-bar-popover {
+        max-width: 100%;
+    }
+}
+
 @utility item-explorer-chip {
     display: inline-flex;
     align-items: center;

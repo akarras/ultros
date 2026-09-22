@@ -8,7 +8,7 @@ use leptos::{
 };
 
 use super::cookies::{Cookies, get_now};
-use ultros_changelog::{latest_announced_changelog_date, latest_changelog_date};
+use ultros_changelog::{LATEST_ANNOUNCED_CHANGELOG_DATE, LATEST_CHANGELOG_DATE};
 
 const CHANGELOG_SEEN_COOKIE: &str = "CHANGELOG_SEEN";
 
@@ -71,14 +71,14 @@ pub fn use_whats_new_indicator() -> Signal<bool> {
         // First visit: record where they started so the dot marks what ships
         // *next* rather than the whole backlog.
         if seen.get_untracked().is_none() {
-            set_seen(Some(latest_changelog_date().to_string()));
+            set_seen(Some(LATEST_CHANGELOG_DATE.to_string()));
         }
         hydrated.set(true);
     });
     Signal::derive(move || {
         hydrated.get()
             && seen
-                .with(|seen| has_unseen_entries(seen.as_deref(), latest_announced_changelog_date()))
+                .with(|seen| has_unseen_entries(seen.as_deref(), LATEST_ANNOUNCED_CHANGELOG_DATE))
     })
 }
 
@@ -87,7 +87,7 @@ pub fn use_whats_new_indicator() -> Signal<bool> {
 pub fn use_mark_changelog_seen() {
     let (_seen, set_seen) = use_changelog_seen();
     Effect::new(move |_| {
-        set_seen(Some(latest_changelog_date().to_string()));
+        set_seen(Some(LATEST_CHANGELOG_DATE.to_string()));
     });
 }
 

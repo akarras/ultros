@@ -1,0 +1,135 @@
+{
+  "measured_on": "2026-09-22",
+  "commit": "9b93be11f03fd3a14afdc04552eeb8467612c57f",
+  "question": "How many bytes of the shipped client bundle are the seven embedded UI languages, and what would leptos_i18n's dynamic_load cost in exchange?",
+  "toolchain": {
+    "rust": "nightly-2026-08-20",
+    "wasm_bindgen": "0.2.126",
+    "wasm_opt": "binaryen-version_123, -Oz --enable-bulk-memory --enable-nontrapping-float-to-int",
+    "brotli": "1.2.0, -q 11",
+    "leptos_i18n": "0.6.2",
+    "profile": "wasm-release (release + lto=fat + codegen-units=1, opt-level=z), --cfg=erase_components"
+  },
+  "method": "scripts/measure_wasm_size.sh on two trees: the branch as-is, and the same tree with scripts/i18n_placeholder_locales.py applied. The placeholder tree keeps every key, every nesting level and every {{variable}} marker in place and replaces only the literal text, so the generated i18n module keeps the same accessors, per-locale match arms and interpolation builders. The size difference is the translated text itself.",
+  "builds": {
+    "baseline": {
+      "cargo_output": 73048087,
+      "wasm_bindgen": 111703382,
+      "wasm_opt": 16450786,
+      "brotli": 3337135
+    },
+    "placeholder_locale_text": {
+      "cargo_output": 72634994,
+      "wasm_bindgen": 111287547,
+      "wasm_opt": 16026832,
+      "brotli": 3168211
+    },
+    "delta": {
+      "wasm_opt": 423954,
+      "brotli": 168924,
+      "brotli_share_of_bundle": 0.0506
+    },
+    "six_locales_runtime_loaded_probe": {
+      "comment": "Throwaway build.rs: the six non-default const STRINGS tables replaced by &[\"\"; N] behind an #[inline(never)] OnceLock accessor, all 19460 const I18N_TRANSLATIONS and 21326 const S bindings turned into let, en left compiled in. Renders non-English blank — a size probe only, not a working build.",
+      "cargo_output": 72886091,
+      "wasm_bindgen": 111526296,
+      "wasm_opt": 16193062,
+      "brotli": 3195559,
+      "saving_vs_baseline": {
+        "wasm_opt": 257724,
+        "brotli": 141576
+      },
+      "brotli_share_of_bundle": 0.0424,
+      "brotli_share_of_first_load": 0.0181,
+      "ceiling_if_deconstification_were_free": 148265,
+      "deconstification_overhead_brotli": 6689
+    }
+  },
+  "stored_locale_text": {
+    "comment": "Bytes of UTF-8 held in the generated const STRINGS tables, i.e. the text as it is actually stored in the binary. Segment counts differ per locale because interpolation splits differ and identical segments are de-duplicated.",
+    "en": {
+      "segments": 2270,
+      "bytes": 71652
+    },
+    "fr": {
+      "segments": 2273,
+      "bytes": 91860
+    },
+    "de": {
+      "segments": 2270,
+      "bytes": 88235
+    },
+    "ja": {
+      "segments": 2221,
+      "bytes": 102919
+    },
+    "cn": {
+      "segments": 2243,
+      "bytes": 69761
+    },
+    "tc": {
+      "segments": 2251,
+      "bytes": 70027
+    },
+    "ko": {
+      "segments": 2225,
+      "bytes": 91274
+    },
+    "total_bytes": 585728,
+    "non_default_bytes": 514076,
+    "non_default_share": 0.8777
+  },
+  "ssr_embed_cost_per_page": {
+    "comment": "With no namespaces configured leptos_i18n emits one translation unit per locale, so dynamic_load's RegisterCtx inlines the whole active locale's table into every SSR response as window.__LEPTOS_I18N_TRANSLATIONS. Sizes are the serialised payload; brotli/gzip approximate what the response compresses to.",
+    "en": {
+      "json": 78507,
+      "brotli": 23061,
+      "gzip": 27317
+    },
+    "fr": {
+      "json": 98720,
+      "brotli": 27462,
+      "gzip": 31058
+    },
+    "de": {
+      "json": 95088,
+      "brotli": 27691,
+      "gzip": 31016
+    },
+    "ja": {
+      "json": 109625,
+      "brotli": 26408,
+      "gzip": 30743
+    },
+    "cn": {
+      "json": 76535,
+      "brotli": 23952,
+      "gzip": 28340
+    },
+    "tc": {
+      "json": 76821,
+      "brotli": 24447,
+      "gzip": 28488
+    },
+    "ko": {
+      "json": 97995,
+      "brotli": 25515,
+      "gzip": 29201
+    }
+  },
+  "call_sites_requiring_async": {
+    "comment": "dynamic_load makes LitWrapperFut::build_string an async fn, so t_string!/td_string! stop returning &'static str on both the client and the server. Counted as occurrences with a word boundary (a plain substring search for 't!(' also matches concat!( and assert!().",
+    "t_string": 1746,
+    "td_string": 55,
+    "total": 1801,
+    "t_string_immediately_to_string": 1346,
+    "files": 126,
+    "t_macro_sites_for_comparison": 1113
+  },
+  "context": {
+    "game_data_pack_en_rkyv_bytes": 4469320,
+    "first_load_total_bytes": 7806455,
+    "locale_text_share_of_first_load": 0.0216
+  },
+  "conclusion": "All seven languages' text costs 168,924 B brotli, 5.06% of the bundle and 2.16% of a first load. Upstream dynamic_load cannot be enabled without rewriting 1,801 synchronous call sites, and would add 23-28 kB brotli to every SSR response — a net loss after roughly seven page views. A custom scheme keeping en compiled in and runtime-loading the other six was built as a size probe and is worth 141,576 B brotli, 4.24% of the bundle. Not taken; see docs/i18n-locale-bundle-size.md."
+}

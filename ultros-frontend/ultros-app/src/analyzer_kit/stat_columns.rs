@@ -1,13 +1,11 @@
 //! The window × statistic matrix behind the shared `market-*` sale-history
 //! columns: the windows the server serves, the statistics each carries, the
 //! literal column ids (a bookmark and saved-view contract), the labels, and
-//! the Columns-picker options built from them. Every analyzer that renders
-//! `MarketGrid` gets all of these; the Flip Finder also lists them in its
-//! toolbar picker.
+//! the picker descriptions built from them. Every analyzer that renders
+//! `MarketGrid` exposes this metadata through the shared column registry.
 
 use std::collections::HashSet;
 
-use crate::components::control_bar::{ColumnOption, PickerHeading};
 use crate::i18n::*;
 
 use super::needed::is_supported_window;
@@ -229,33 +227,6 @@ pub fn listing_window_title(kind: ListingWindowKind) -> String {
     .to_string()
 }
 
-pub fn shared_cols_in(raw: Option<&str>) -> HashSet<&'static str> {
-    let selected: HashSet<_> = raw.unwrap_or("").split(',').collect();
-    FOLLOW_COLUMNS
-        .iter()
-        .map(|(_, id)| *id)
-        .chain(STAT_COLUMNS.iter().map(|c| c.id))
-        .chain(LISTING_COLUMNS.iter().map(|(_, id)| *id))
-        .chain(LISTING_WINDOW_COLUMNS.iter().map(|(_, id)| *id))
-        .filter(|id| selected.contains(id))
-        .collect()
-}
-
-/// Toggle one picker entry while preserving columns owned by other providers.
-pub fn toggle_shared_col(previous: Option<&str>, defaults: &str, id: &str) -> String {
-    let mut ids: Vec<_> = previous
-        .unwrap_or(defaults)
-        .split(',')
-        .filter(|t| !t.is_empty())
-        .collect();
-    if ids.contains(&id) {
-        ids.retain(|t| *t != id);
-    } else {
-        ids.push(id);
-    }
-    ids.join(",")
-}
-
 pub fn window_label(window: Window) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     t_string!(i18n, market_window_days, days = window.days().to_string()).to_string()
@@ -298,6 +269,28 @@ fn with_window(name: String, window: Window) -> String {
 
 pub fn stat_label(kind: StatKind, window: Window) -> String {
     with_window(stat_name(kind), window)
+}
+
+/// Distinguish selected-window and pinned columns even when both show 7d today.
+/// This is presentation only: saved-view and URL column ids stay unchanged.
+pub fn stat_picker_label(kind: StatKind, window: Window, follows_window: bool) -> String {
+    let label = stat_label(kind, window);
+    if follows_window {
+        let i18n = crate::i18n_fallback::use_i18n_or_default();
+        t_string!(i18n, analyzer_columns_follows_window, stat = label).to_string()
+    } else {
+        label
+    }
+}
+
+pub fn stat_picker_hint(window: Window, follows_window: bool) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let days = window.days().to_string();
+    if follows_window {
+        t_string!(i18n, analyzer_columns_follows_window_hint, days = days).to_string()
+    } else {
+        t_string!(i18n, analyzer_columns_fixed_window_hint, days = days).to_string()
+    }
 }
 
 /// Whether any column of `window` is in the grid's wanted set (`?cols=`,
@@ -344,59 +337,6 @@ pub fn market_picker_group_listings() -> String {
     t_string!(i18n, market_picker_group_listings).to_string()
 }
 
-/// Every stat column as a toolbar-picker option, grouped under one
-/// "Sale history (Nd)" heading per window, then the current-listing
-/// columns and the windowed listing history under "Listings".
-pub fn market_picker_options(window: Window) -> Vec<ColumnOption> {
-    FOLLOW_COLUMNS
-        .iter()
-        .map(|(kind, id)| ColumnOption {
-            id,
-            label: stat_label(*kind, window),
-            group: Some(PickerHeading {
-                label: market_picker_group(None),
-                title: None,
-            }),
-            disabled: false,
-            hint: None,
-        })
-        .chain(STAT_COLUMNS.iter().map(|c| ColumnOption {
-            id: c.id,
-            label: stat_label(c.kind, c.window),
-            group: Some(PickerHeading {
-                label: market_picker_group(Some(c.window)),
-                title: None,
-            }),
-            disabled: false,
-            hint: None,
-        }))
-        .chain(LISTING_COLUMNS.iter().map(|(kind, id)| ColumnOption {
-            id,
-            label: listing_label(*kind),
-            group: Some(PickerHeading {
-                label: market_picker_group_listings(),
-                title: None,
-            }),
-            disabled: false,
-            hint: listing_title(*kind),
-        }))
-        .chain(
-            LISTING_WINDOW_COLUMNS
-                .iter()
-                .map(|(kind, id)| ColumnOption {
-                    id,
-                    label: listing_window_label(*kind, window),
-                    group: Some(PickerHeading {
-                        label: market_picker_group_listings(),
-                        title: None,
-                    }),
-                    disabled: false,
-                    hint: Some(listing_window_title(*kind)),
-                }),
-        )
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,22 +367,6 @@ mod tests {
         assert_eq!(
             required_windows(&hidden, Window::D30, false),
             vec![Window::D90]
-        );
-    }
-
-    #[test]
-    fn shared_picker_keeps_follow_fixed_and_foreign_columns() {
-        let original = "profit,market-sale-median,market-sale-median-7,market-world";
-        let selected = shared_cols_in(Some(original));
-        assert_eq!(
-            selected,
-            HashSet::from(["market-sale-median", "market-sale-median-7"])
-        );
-        let toggled = toggle_shared_col(Some(original), "", "market-sale-median");
-        assert_eq!(toggled, "profit,market-sale-median-7,market-world");
-        assert_eq!(
-            toggle_shared_col(None, "sale_estimate", "market-sale-median"),
-            "sale_estimate,market-sale-median"
         );
     }
 
@@ -497,10 +421,6 @@ mod tests {
         assert!(required_windows(&needs, Window::D7, false).is_empty());
         let none: HashSet<String> = ["market-sale-median-7"].map(str::to_owned).into();
         assert!(!listings_wanted(&none));
-        assert_eq!(
-            shared_cols_in(Some("profit,market-alive,market-oldest-listing")),
-            HashSet::from(["market-alive", "market-oldest-listing"])
-        );
         assert!(ListingKind::MedianAge.is_age() && ListingKind::OldestAge.is_age());
         assert!(!ListingKind::Alive.is_age());
     }
@@ -524,10 +444,6 @@ mod tests {
             }
             assert_eq!(listing_window_id(*kind), *id);
         }
-        assert_eq!(
-            shared_cols_in(Some("profit,market-undercuts,market-alive")),
-            HashSet::from(["market-undercuts", "market-alive"])
-        );
         let needs: HashSet<String> = ["market-undercut-pct", "roi"].map(str::to_owned).into();
         assert!(listing_window_wanted(&needs));
         assert!(
@@ -548,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn labels_and_picker_match_the_legacy_seven_day_text() {
+    fn labels_preserve_legacy_text_and_explain_following_and_fixed_windows() {
         let _ = any_spawner::Executor::init_futures_executor();
         let owner = Owner::new();
         owner.with(|| {
@@ -558,40 +474,21 @@ mod tests {
                 stat_label(StatKind::GilVolume, Window::D90),
                 "Gil traded (90d)"
             );
-            let options = market_picker_options(Window::D7);
+            assert_eq!(listing_label(ListingKind::Alive), "Active listings");
+            assert_eq!(market_picker_group_listings(), "Listings");
+            assert_eq!(listing_title(ListingKind::Alive), None);
+            assert_eq!(listing_label(ListingKind::OldestAge), "Oldest listing age");
             assert_eq!(
-                options.len(),
-                STAT_COLUMNS.len()
-                    + FOLLOW_COLUMNS.len()
-                    + LISTING_COLUMNS.len()
-                    + LISTING_WINDOW_COLUMNS.len()
-            );
-            let alive = options.iter().find(|o| o.id == "market-alive").unwrap();
-            assert_eq!(alive.label, "Active listings");
-            assert_eq!(
-                alive.group.as_ref().map(|g| g.label.as_str()),
-                Some("Listings")
-            );
-            assert_eq!(alive.hint, None);
-            let oldest = options
-                .iter()
-                .find(|o| o.id == "market-oldest-listing")
-                .unwrap();
-            assert_eq!(oldest.label, "Oldest listing age");
-            assert_eq!(
-                oldest.hint.as_deref(),
+                listing_title(ListingKind::OldestAge).as_deref(),
                 Some("Time since the retainer last touched the listing, not how long it has been for sale. An old listing may be an unrelated expensive one; it says nothing about how fresh the price data is.")
             );
-            assert_eq!(options.last().unwrap().id, "market-undercut-pct");
-            let undercuts = options.iter().find(|o| o.id == "market-undercuts").unwrap();
-            assert_eq!(undercuts.label, "Undercuts/day (7d)");
             assert_eq!(
-                undercuts.group.as_ref().map(|g| g.label.as_str()),
-                Some("Listings")
+                listing_window_label(ListingWindowKind::UndercutsPerDay, Window::D7),
+                "Undercuts/day (7d)"
             );
             assert_eq!(
-                undercuts.hint.as_deref(),
-                Some("Same-listing price drops per day across the scope, both edit-in-place and remove-and-relist. Raises and new listings are not counted.")
+                listing_window_title(ListingWindowKind::UndercutsPerDay),
+                "Same-listing price drops per day across the scope, both edit-in-place and remove-and-relist. Raises and new listings are not counted."
             );
             assert_eq!(
                 listing_window_label(ListingWindowKind::UndercutMedian, Window::D30),
@@ -601,18 +498,28 @@ mod tests {
                 listing_window_title(ListingWindowKind::UndercutMedian),
                 "Median drop as a share of the previous price across those undercuts."
             );
-            let median = options
-                .iter()
-                .find(|o| o.id == "market-sale-median-7")
-                .unwrap();
-            assert_eq!(median.label, "Sale median (7d)");
             assert_eq!(
-                median.group.as_ref().map(|g| g.label.as_str()),
-                Some("Sale history (7d)")
+                market_picker_group(Some(Window::D7)),
+                "Sale history (7d)"
             );
-            assert_eq!(options[0].id, "market-sale-min");
             assert_eq!(
-                options[0].group.as_ref().unwrap().label,
+                stat_picker_label(StatKind::Min, Window::D7, true),
+                "Sale minimum (7d) · follows window"
+            );
+            assert_eq!(
+                stat_picker_label(StatKind::Min, Window::D7, false),
+                "Sale minimum (7d)"
+            );
+            assert_eq!(
+                stat_picker_hint(Window::D7, true),
+                "Sale history for this quality and price scope. Follows the selected history window (currently 7 days)."
+            );
+            assert_eq!(
+                stat_picker_hint(Window::D7, false),
+                "Sale history for this quality and price scope. Always uses the last 7 days, regardless of the selected history window."
+            );
+            assert_eq!(
+                market_picker_group(None),
                 "Sale history (selected window)"
             );
         });

@@ -3,6 +3,7 @@
 // bundled English catalog: Maple Lumber/Log, Copper Ore, shard ventures,
 // bronze-weapon leves, Mythrite/Titanium scrip turn-ins, and level 2/3
 // Aetherial Wheel Stands with their complete direct material sets.
+const { marketWireBody } = require('./market-wire-fixture.cjs');
 const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
   1602, 1603, 1604, 1605, 1609, 5059, 5060, 5061, 5064, 5065, 5066, 5067,
   5094, 5106, 5186, 5289, 5361, 5366, 5376, 5380, 5480, 5506, 5507, 7017,
@@ -28,7 +29,7 @@ function marketFixture(itemIds = ids) {
     world_id: world === 'Gilgamesh' ? 63 : 79,
   })) });
   const hits = new Map();
-  function reply(request) {
+  function reply(request, mutateBody) {
     const url = new URL(request.url());
     const [kind, world] = url.pathname.replace(/^\/api\/v1\//, '').split('/');
     const worldId = decodeURIComponent(world || '') === 'Gilgamesh' ? 63 : 79;
@@ -98,10 +99,11 @@ function marketFixture(itemIds = ids) {
       }) };
     }
     if (body === undefined) return null;
+    if (mutateBody) mutateBody(body, url);
     hits.set(kind, (hits.get(kind) || 0) + 1);
-    return { status: 200, contentType: 'application/json', body: JSON.stringify(body) };
+    return { status: 200, contentType: 'application/json', body: JSON.stringify(marketWireBody(url, body)) };
   }
   return { reply, hits };
 }
 
-module.exports = { marketFixture };
+module.exports = { marketFixture, itemIds: ids };

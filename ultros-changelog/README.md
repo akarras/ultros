@@ -26,11 +26,24 @@ hyphens. Each change adds its own file; never append to a shared daily file.
   what's-new dot, since most players cannot see the change yet. Use the
   badge instead of writing "(Labs)" in the title.
 
-`build.rs` validates these files and generates a static
-`CHANGELOG: &[ChangelogEntry]`, newest day first, then high/medium/low importance,
-then filename for stable ties. The crate has no runtime dependencies.
-The app groups this list into daily category sections while preserving priority
-within each section. Generated Rust stays in Cargo's `OUT_DIR`.
+`build.rs` validates these files and generates two things into Cargo's
+`OUT_DIR`:
+
+- `CHANGELOG: &[ChangelogEntry]`, newest day first, then high/medium/low
+  importance, then filename for stable ties. It is compiled in only with the
+  `history` feature, which is on by default — **the wasm client turns it off**
+  (`default-features = false`) and fetches `/api/v1/changelog` instead, so a
+  couple of hundred entries of prose stay out of the bundle for one of the
+  least-visited routes. The server crate owns that endpoint, and the page's
+  blocking SSR resource still renders the whole list into the initial HTML.
+- `LATEST_CHANGELOG_DATE` and `LATEST_ANNOUNCED_CHANGELOG_DATE`, the two `&str`
+  consts the sidebar's what's-new dot compares against. These are all the
+  client gets. Adding a Labs-only day moves the first and not the second.
+
+`ChangelogEntry` is the wire type as well as the compiled one — its text is
+`Cow<'static, str>`, borrowed from the binary on the server and owned on the
+client. The app groups the list into daily category sections while preserving
+priority within each section.
 
 Run `cargo test -p ultros-changelog` for this small crate's tests and
 `./check_ci.sh` for the repository's required checks.

@@ -709,7 +709,17 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("welcome") view=Welcome />
                         <Route path=path!("help") view=HelpIndex />
                         <Route path=path!("help/:topic") view=HelpArticle />
-                        <Route path=path!("changelog") view=Changelog />
+                        // The history is fetched from `/api/v1/changelog` rather
+                        // than compiled into the bundle, so the page's content
+                        // sits behind a `Suspense`. `InOrder` keeps that content
+                        // in the initial HTML, in document order, the way it was
+                        // when the entries were a static array — out-of-order
+                        // streaming would hand crawlers the skeleton instead.
+                        <Route
+                            path=path!("changelog")
+                            view=Changelog
+                            ssr=SsrMode::InOrder
+                        />
                         <Route path=path!("profile") view=Profile />
                         <Route path=path!("privacy") view=PrivacyPolicy />
                         <Route path=path!("cookie-policy") view=CookiePolicy />

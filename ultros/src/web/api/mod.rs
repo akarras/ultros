@@ -1,5 +1,6 @@
 pub(crate) mod alerts;
 mod best_deals;
+mod changelog;
 mod cheapest_per_world;
 pub(crate) mod discord_lookup;
 pub(crate) mod endpoint_validation;
@@ -18,6 +19,7 @@ mod sale_stats;
 mod trends;
 
 pub(crate) use best_deals::get_best_deals;
+pub(crate) use changelog::get_changelog;
 pub(crate) use cheapest_per_world::cheapest_per_world;
 pub(crate) use item_stats::get_item_stats;
 pub(crate) use listing_stats::get_listing_stats;
