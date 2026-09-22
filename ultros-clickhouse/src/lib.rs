@@ -23,6 +23,7 @@ pub mod queries;
 pub mod rollups;
 pub mod rows;
 pub mod schema;
+pub mod undercut_pressure;
 pub mod writer;
 
 pub use quality_filter::ResaleQualityFilter;
