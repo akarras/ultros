@@ -51,8 +51,8 @@ function wasmFrame(index, name) {
   return f;
 }
 
-// A frame from a `--split` chunk module (`chunk_N.wasm`, ~100 of them beside
-// the main module) rather than from `ultros.wasm`.
+// A frame from a second module in the pkg dir rather than from
+// `ultros.wasm` — what `cargo leptos build --split` emits per lazy route.
 function chunkFrame(chunk, index) {
   const path = `/pkg/9b93be1/chunk_${chunk}.wasm`;
   return {
@@ -494,11 +494,12 @@ test("trap: generic arguments are cut from the fingerprint and title", async () 
   );
 });
 
-// ── Split chunks: a lazy route's frames come from chunk_N.wasm ──
-// `cargo leptos build --split` emits the lazy routes (analyzers, Lists) as
-// separate modules, and `wasm-symbols` writes a `.symbols` map beside each
-// one. A panic inside a lazy route therefore has frames from a chunk, from
-// the main module, or both.
+// ── Several modules in one trace ──
+// Function indices are per-module, so a frame must be resolved against the
+// map of the module its own filename names. The current build emits one
+// module; `cargo leptos build --split` emits a chunk per lazy route (that
+// pilot was reverted in #1588, so these guard the property rather than
+// describe today's bundle).
 
 test("chunk frames resolve against that chunk's own map", async () => {
   const CHUNK = "3:ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}";

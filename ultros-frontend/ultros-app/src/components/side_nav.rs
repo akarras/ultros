@@ -10,7 +10,6 @@ use crate::global_state::platform::use_platform_hotkeys;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
-use crate::routes::lazy;
 use icondata as i;
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
@@ -55,19 +54,9 @@ fn SideNavItem(
     /// Accessible name for `badge`, read out after the row's label.
     #[prop(optional, into)]
     badge_label: Option<Signal<String>>,
-    /// Starts fetching the destination's lazily-loaded wasm chunk on hover /
-    /// focus, so it is usually resident by the time the user clicks. See
-    /// `routes::lazy::preload`. Repeated calls are free (memoised loader).
-    #[prop(optional)]
-    preload: Option<fn()>,
     children: Children,
 ) -> impl IntoView {
     let location = use_location();
-    let preload = move || {
-        if let Some(preload) = preload {
-            preload();
-        }
-    };
     let current = move || {
         location
             .pathname
@@ -91,24 +80,12 @@ fn SideNavItem(
     };
 
     view! {
-        <a
-            href=move || href.get()
-            class=class
-            aria-current=current
-            on:mouseenter=move |_| preload()
-            on:focus=move |_| preload()
-        >
+        <a href=move || href.get() class=class aria-current=current>
             <Icon icon=icon />
             <span class="side-nav-label">{children()}</span>
             {badge_view}
         </a>
     }
-}
-
-/// `/list` renders the Lists layout *and* its index child, so warm both chunks.
-fn preload_lists() {
-    lazy::preload::<lazy::ListsRoute>();
-    lazy::preload::<lazy::EditListsRoute>();
 }
 
 /// Persistent left sidebar. Brand at top, sections in the middle,
@@ -180,7 +157,7 @@ pub fn SideNav() -> impl IntoView {
                         }}
                     </span>
                 </button>
-                <SideNavItem href="/items".to_string() section="items" icon=i::MdiJellyfish hero=true>
+                <SideNavItem href="/items".to_string() section="items" icon=i::FaCompassSolid hero=true>
                     {t!(i18n, item_explorer)}
                 </SideNavItem>
 
@@ -195,7 +172,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/flip-finder/{world}", "/flip-finder")
                     section="flip-finder"
-                    preload={lazy::preload::<lazy::AnalyzerWorldRoute>}
                     icon=i::FaMoneyBillTrendUpSolid
                 >
                     {t!(i18n, flip_finder)}
@@ -203,7 +179,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/vendor-resale/{world}", "/vendor-resale")
                     section="vendor-resale"
-                    preload={lazy::preload::<lazy::VendorWorldRoute>}
                     icon=i::FaShopSolid
                 >
                     {t!(i18n, vendor_resale)}
@@ -211,7 +186,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/vendor-sell/{world}", "/vendor-sell")
                     section="vendor-sell"
-                    preload={lazy::preload::<lazy::VendorSellRoute>}
                     icon=i::FaCashRegisterSolid
                 >
                     {t!(i18n, vendor_sell)}
@@ -219,7 +193,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/recipe-analyzer/{world}", "/recipe-analyzer")
                     section="recipe-analyzer"
-                    preload={lazy::preload::<lazy::RecipeAnalyzerRoute>}
                     icon=i::FaHammerSolid
                 >
                     {t!(i18n, recipe_analyzer)}
@@ -227,7 +200,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/fc-crafting-analyzer/{world}", "/fc-crafting-analyzer")
                     section="fc-crafting-analyzer"
-                    preload={lazy::preload::<lazy::FcCraftingRoute>}
                     icon=i::MdiSubmarine
                 >
                     {t!(i18n, fc_crafting)}
@@ -235,7 +207,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/leve-analyzer/{world}", "/leve-analyzer")
                     section="leve-analyzer"
-                    preload={lazy::preload::<lazy::LeveRoute>}
                     icon=i::FaScrollSolid
                 >
                     {t!(i18n, leve_analyzer)}
@@ -250,7 +221,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/scrip-sources/{world}", "/scrip-sources")
                     section="scrip-sources"
-                    preload={lazy::preload::<lazy::ScripRoute>}
                     icon=i::FaCoinsSolid
                 >
                     {t!(i18n, scrip_sources)}
@@ -258,7 +228,6 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href=with_world("/venture-analyzer/{world}", "/venture-analyzer")
                     section="venture-analyzer"
-                    preload={lazy::preload::<lazy::VentureRoute>}
                     icon=i::FaBriefcaseSolid
                 >
                     {t!(i18n, venture_analyzer)}
@@ -273,12 +242,7 @@ pub fn SideNav() -> impl IntoView {
 
                 <div class="side-nav-section-header">{t!(i18n, side_nav_saved)}</div>
 
-                <SideNavItem
-                    href="/list".to_string()
-                    section="list"
-                    icon=i::AiOrderedListOutlined
-                    preload=preload_lists
-                >
+                <SideNavItem href="/list".to_string() section="list" icon=i::AiOrderedListOutlined>
                     {t!(i18n, lists)}
                 </SideNavItem>
                 <SideNavItem href="/groups".to_string() section="groups" icon=i::BiGroupSolid>

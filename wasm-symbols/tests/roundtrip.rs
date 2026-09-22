@@ -7,8 +7,7 @@ use wasm_encoder::{
     NameSection, TypeSection, ValType,
 };
 use wasm_symbols::{
-    MAX_NAME_LEN, extract_symbols, format_symbols, has_name_section, normalize_name,
-    strip_name_section,
+    MAX_NAME_LEN, extract_symbols, format_symbols, normalize_name, strip_name_section,
 };
 
 /// Two functions; the first is unnamed to exercise sparse indices. The
@@ -71,31 +70,6 @@ fn missing_name_section_is_an_error() {
         err.to_string().contains("name"),
         "error should say the name section is missing: {err}"
     );
-}
-
-/// Split chunks may lack a `name` section; the CLI skips those instead of
-/// failing the build, so the check has to be a clean boolean.
-#[test]
-fn has_name_section_reports_presence() {
-    assert!(has_name_section(&module(true)).unwrap());
-    assert!(!has_name_section(&module(false)).unwrap());
-}
-
-/// A data-only split chunk carries a `name` section with no function
-/// subsection. That is an empty map, not a malformed module, and the section
-/// still has to be stripped.
-#[test]
-fn empty_name_section_is_an_empty_map_and_still_stripped() {
-    let mut m = Module::new();
-    let mut names = NameSection::new();
-    names.module("chunk");
-    m.section(&names);
-    let wasm = m.finish();
-    assert!(has_name_section(&wasm).unwrap());
-    assert!(extract_symbols(&wasm).unwrap().is_empty());
-    let stripped = strip_name_section(&wasm).unwrap();
-    assert!(!has_name_section(&stripped).unwrap());
-    assert_eq!(stripped, Module::new().finish());
 }
 
 #[test]

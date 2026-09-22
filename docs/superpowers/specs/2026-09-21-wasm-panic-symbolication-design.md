@@ -278,10 +278,13 @@ dependency bumps and were most of the bytes) and caps names at 240 chars:
 36.2 MB → 12.8 MB raw, 737 KB → 556 KB brotli for 68,480 functions. `in_app`
 matches `^<*(ultros|xiv_gen)` so trait-impl names count.
 
-### Merge with #1579 (lazy routes + `--split`)
+### Merge with #1579 (lazy routes + `--split`), and its revert in #1588
 
-Two interactions the split pilot did not account for, fixed while resolving
-the merge:
+#1579 was reverted the same night (the chunk fan-out cost more than the bytes
+it saved), so the build emits one module again. Two interactions the split
+pilot did not account for were found and fixed while it was still on main;
+both are kept, inert, as guards for if splitting returns — each is a few
+lines and each was a silent, shipped-to-prod failure the first time:
 
 1. **`--split` disables demangling.** cargo-leptos passes `--no-demangle` to
    wasm-bindgen whenever `proj.split` is set, and that flag turns off the very
@@ -289,8 +292,8 @@ the merge:
    symbols and the maps would have shipped unreadable. `wasm-symbols` now
    demangles with `rustc_demangle` in `{:#}` form (which also drops the v0
    crate disambiguators). A name wasm-bindgen already demangled is not a valid
-   symbol, so `try_demangle` declines it and the existing explicit strips still
-   handle the unsplit case.
+   symbol, so `try_demangle` declines it and the existing explicit strips do
+   the work — which is every name in the current, unsplit build.
 2. **Chunk frames were not symbolicated at all.** The frame regex matched only
    `ultros.wasm`, but a panic in a lazy route (the analyzer family, Lists)
    reports frames from a `chunk_N.wasm`. Since function indices are
@@ -299,4 +302,6 @@ the merge:
    each frame against its own module's map. One module's missing map leaves
    only that module's frames unresolved. Under immediate-abort this matters
    more than it would have: an unsymbolicated trap also gets no fingerprint
-   and no title.
+   and no title. The multi-module CLI support `wasm-symbols` grew for this
+   was removed again by the revert; the browser-side grouping stays, since
+   with one module it resolves exactly as before.

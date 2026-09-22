@@ -1,6 +1,0 @@
-{
-  "category": "improvements",
-  "title": "Faster first load",
-  "blurb": "The code for the analyzers and Lists now downloads only when you open one of those pages instead of with every visit, so the app starts about a quarter smaller. Hovering a sidebar link fetches its page ahead of the click, so the first visit still feels instant.",
-  "importance": "medium"
-}

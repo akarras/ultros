@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "The back button works again",
+  "blurb": "Moving between pages inside Ultros was overwriting your browser history, so pressing back skipped past the page you just left. Each page you visit is a proper history entry again, and back and forward take you where you expect."
+}

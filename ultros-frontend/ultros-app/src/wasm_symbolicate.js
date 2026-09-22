@@ -4,10 +4,11 @@
 // with no function name, because the shipped modules have no `name` section.
 // `N` is that module's function index, and the Docker build writes a sibling
 // `<module>.symbols` (`index:name` per line, see the `wasm-symbols` crate)
-// from that very section before stripping it. `<module>` is `ultros` or, for
-// a lazy route built by `cargo leptos build --split`, one of the ~100
-// `chunk_N` modules — indices are per-module, so each frame is resolved
-// against the map of the module it names. GlitchTip cannot
+// from that very section before stripping it. Today the build emits one
+// module, `ultros.wasm`; `cargo leptos build --split` would add a chunk per
+// lazy route (that pilot was reverted in #1588). Function indices are
+// per-module either way, so each frame is resolved against the map of the
+// module its own filename names, never a shared one. GlitchTip cannot
 // symbolicate wasm itself, so this hook does the lookup in the browser:
 // fetch the map, fill `frame.function`, mark our own crates `in_app`, and
 // trim the panic machinery off the top so the first frame is the site.
@@ -29,8 +30,8 @@
 // window. Nothing here may throw or reject: a symbolication failure must
 // send the event exactly as it arrived, never lose it.
 (function () {
-  // `<module url>:wasm-function[<index>]...` for any module in our pkg dir
-  // (`ultros.wasm` or a `--split` `chunk_N.wasm`). Group 1 is the module URL
+  // `<module url>:wasm-function[<index>]...` for any module in our pkg dir.
+  // Group 1 is the module URL
   // the map is derived from — taken from the frame rather than the SDK
   // release so a tab that outlived a deploy can never fetch the wrong map,
   // and scoped to `/pkg/<hash>/` so a third-party wasm is never fetched for.
