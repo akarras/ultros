@@ -11501,6 +11501,7 @@ dependencies = [
  "anyhow",
  "brotli",
  "flate2",
+ "rustc-demangle",
  "wasm-encoder",
  "wasmparser 0.259.0",
 ]

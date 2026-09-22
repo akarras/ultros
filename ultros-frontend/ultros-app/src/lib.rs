@@ -259,14 +259,31 @@ fn error_reporting_script() -> Option<String> {
         if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
             return null;
         }}
-        // After the drop check on purpose: a dropped event must never cost
-        // a symbols download. Returns a promise; Sentry awaits it.
+        // Rule 3 for the bare `RuntimeError: unreachable` trap. Under
+        // panic=immediate-abort EVERY prod panic has that shape, so a trap
+        // from an injecting population (translation overlay, stale Chrome)
+        // is only dropped once its frames resolve to tachys hydration code.
+        // Read before symbolicating: that rewrites the value.
+        var trapCandidate = !!(window.__ultrosIsInjectedTrapCandidate &&
+            window.__ultrosIsInjectedTrapCandidate(event));
+        // After the drop check on purpose: a dropped event never costs a
+        // symbols download — except a trap candidate, which needs its frames
+        // to be classified (one memoized map fetch per session).
         if (window.__ultrosSymbolicateEvent) {{
-            var symbolicated = window.__ultrosSymbolicateEvent(event);
-            if (typeof existingBeforeSend === "function") {{
-                return symbolicated.then(function(ev) {{ return existingBeforeSend(ev, hint); }});
-            }}
-            return symbolicated;
+            return window.__ultrosSymbolicateEvent(event).then(function(ev) {{
+                if (trapCandidate && window.__ultrosShouldDropSymbolicatedTrap &&
+                    window.__ultrosShouldDropSymbolicatedTrap(ev)) {{
+                    return null;
+                }}
+                if (typeof existingBeforeSend === "function") {{
+                    return existingBeforeSend(ev, hint);
+                }}
+                return ev;
+            }});
+        }}
+        // No symbolicator, so no frames: keep the old suppression.
+        if (trapCandidate) {{
+            return null;
         }}
         if (typeof existingBeforeSend === "function") {{
             return existingBeforeSend(event, hint);
@@ -833,6 +850,14 @@ mod error_filter_wiring {
         // value. Deleting either silently re-opens the #6661/#4908/#6570 flood.
         assert!(FILTER_JS.contains("ULTROS_JSSYS_EXECUTOR_RE"));
         assert!(FILTER_JS.contains("\"unreachable\""));
+        // Under panic=immediate-abort every prod panic is that bare trap, so
+        // the trap is dropped only AFTER symbolication, and only when its top
+        // frames are tachys hydration code. beforeSend calls both hooks;
+        // losing the second would drop every candidate trap, losing the first
+        // would re-open the flood.
+        assert!(FILTER_JS.contains("window.__ultrosIsInjectedTrapCandidate ="));
+        assert!(FILTER_JS.contains("window.__ultrosShouldDropSymbolicatedTrap ="));
+        assert!(FILTER_JS.contains("tachys::hydration::"));
         // Category 3 (modern-Chrome translation population): the injected
         // <font> DOM fingerprint that catches the flood the stale-UA check
         // misses. Removing it silently re-opens the #3005/#4911/#6406 flood.
@@ -843,11 +868,12 @@ mod error_filter_wiring {
         // Category 5: leptos hydration-bootstrap ReferenceErrors stripped by a
         // proxy/crawler. Removing it re-opens the #6620/#6667/#6760/#6761 flood.
         assert!(FILTER_JS.contains("isStrippedHydrationBootstrap"));
-        // Category 6: the redundant onerror wasm `unreachable` trap dedup —
-        // drops the per-deploy duplicate of every Rust panic (the #6781–#6828
-        // rotation) via a pkg-bundle stack frame. Removing it re-opens it.
-        assert!(FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
-        assert!(FILTER_JS.contains("ULTROS_PKG_FRAME_RE"));
+        // Category 6 is retired on purpose: production wasm is built with
+        // `panic = "immediate-abort"`, so the onerror `RuntimeError:
+        // unreachable` IS the panic report (symbolicated by
+        // wasm_symbolicate.js) and must never be dropped on frame shape.
+        // Guard against the dedup being reintroduced.
+        assert!(!FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
         // Category 7: the redundant `RefCell already borrowed` executor cascade,
         // dropped unconditionally when its rust_panic.location is the js-sys
         // futures executor. Deleting it silently re-opens the #6758 flood (the
@@ -861,6 +887,22 @@ mod error_filter_wiring {
         // ultros.app / the pkg bundle, or a real Ultros bug could be swept up.
         assert!(FILTER_JS.contains("isThirdPartyScriptError"));
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
+    }
+
+    /// Same contract for the wasm symbolicator: beforeSend calls
+    /// `window.__ultrosSymbolicateEvent`, production traps rely on its
+    /// `rust-wasm-trap` fingerprint to group across deploys, and every map
+    /// URL is a module URL with `.wasm` swapped for `.symbols` — which is
+    /// what lets a `--split` chunk's frames resolve against that chunk's own
+    /// map. The JS logic is exercised by
+    /// `integration/wasm-symbolicate.test.cjs`.
+    const SYMBOLICATE_JS: &str = include_str!("wasm_symbolicate.js");
+
+    #[test]
+    fn symbolicator_defines_the_hook_called_by_before_send() {
+        assert!(SYMBOLICATE_JS.contains("window.__ultrosSymbolicateEvent ="));
+        assert!(SYMBOLICATE_JS.contains("\"rust-wasm-trap\""));
+        assert!(SYMBOLICATE_JS.contains("\".symbols\""));
     }
 }
 pub mod script_escape;
