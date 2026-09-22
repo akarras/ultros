@@ -1305,3 +1305,346 @@ git push -u origin claude/analyzer-page-size-d07937
 gh pr create --title "perf(analyzer): columnar wire shapes for recentSales, sale_stats, listing_stats" --body-file "$SCRATCH/pr.md"
 ```
 PR body: summary (three endpoints, opt-in, legacy default unchanged, cache slot per shape), the measurement table, test plan checklist, spec path, and note that it is independent of #1576 (different DTO files; adjacent but non-overlapping lines in `api.rs`). End with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+
+---
+
+## Phase 2 — columnar codec for SSR-embedded resources (spec §8)
+
+Tasks 1–9 are complete on the branch (rebased onto main after #1576 merged, so `CheapestListingsColumnar` is available). Phase 2 makes the SSR-embedded analyzer resources serialize in the columnar shape without changing SSR behaviour or any consumer.
+
+Additional global constraints for Phase 2:
+- Resources stay SSR `ArcResource`s (no `LocalResource` conversion). Only the codec changes.
+- Consumers of the resources (`.get()`, `.read()`, `.await`, pattern matches on `Some(Ok(_))`) are untouched.
+- `job_set_detail.rs` and `analyzer_kit/market.rs` are out of scope.
+
+### Task 10: By-reference columnar conversions in `ultros-api-types`
+
+**Files:**
+- Modify: `ultros-api-types/src/recent_sales.rs`, `sale_stats.rs`, `listing_stats.rs`, `cheapest_listings.rs`
+
+**Interfaces:**
+- Produces: `impl From<&RecentSales> for RecentSalesColumnar`, `impl From<&BulkSaleStats> for BulkSaleStatsColumnar`, `impl From<&BulkListingStats> for BulkListingStatsColumnar`, `impl From<&CheapestListings> for CheapestListingsColumnar`. The existing `impl From<T> for TColumnar` bodies become `Self::from(&value)`.
+
+- [ ] **Step 1: Write the failing tests** — one per file, inside the existing `mod tests`. Use the fixture that file's existing columnar round-trip test already builds (`rows()` in recent_sales.rs; `BulkSaleStats { stats: vec![stat(2, false, 100), stat(5, true, 7)] }`; `BulkListingStats { stats: vec![listing(2, false, 100)] }` plus one row with `window: Some(window(7))`; `CheapestListings { cheapest_listings: vec![item(2, true, 300, 74)] }`):
+
+```rust
+    #[test]
+    fn columnar_from_ref_matches_from_value() {
+        let rows = rows(); // or the file's fixture
+        assert_eq!(
+            RecentSalesColumnar::from(&rows), // the file's columnar type
+            RecentSalesColumnar::from(rows.clone())
+        );
+    }
+```
+
+- [ ] **Step 2: Run** `cargo test -p ultros-api-types columnar_from_ref` — expect compile errors (no `From<&T>`).
+
+- [ ] **Step 3: Implement.** In each file, move the existing consuming impl's body into a by-reference impl and make the consuming impl delegate. Pattern (recent_sales.rs shown; the other three are the same shape — iterate `&value.stats` / `&value.cheapest_listings`, copy the `Copy` fields):
+
+```rust
+impl From<&RecentSales> for RecentSalesColumnar {
+    fn from(value: &RecentSales) -> Self {
+        let n = value.sales.len();
+        let total: usize = value.sales.iter().map(|s| s.sales.len()).sum();
+        let mut out = Self {
+            item_id: Vec::with_capacity(n),
+            hq: Vec::with_capacity(n),
+            count: Vec::with_capacity(n),
+            price: Vec::with_capacity(total),
+            sold_unix: Vec::with_capacity(total),
+        };
+        for row in &value.sales {
+            out.item_id.push(row.item_id);
+            out.hq.push(row.hq);
+            out.count.push(row.sales.len() as u32);
+            for sale in &row.sales {
+                out.price.push(sale.price_per_unit);
+                out.sold_unix.push(sale.sale_date.and_utc().timestamp());
+            }
+        }
+        out
+    }
+}
+
+impl From<RecentSales> for RecentSalesColumnar {
+    fn from(value: RecentSales) -> Self {
+        Self::from(&value)
+    }
+}
+```
+
+For `BulkListingStatsColumnar` the by-reference impl pushes `row.window.clone().unwrap_or_default()`; `ItemSaleStats` is `Copy` (`confidence` included); `CheapestListingItem` fields are all `Copy`.
+
+- [ ] **Step 4: Run** `cargo test -p ultros-api-types` — all pass (4 new).
+- [ ] **Step 5: Commit** `feat(api-types): by-reference columnar conversions` (+ trailer).
+
+### Task 11: `ColumnarWire` trait, `ColumnarJson` codec, `columnar_resource` helper
+
+**Files:**
+- Create: `ultros-frontend/ultros-frontend-core/src/columnar_wire.rs`
+- Modify: `ultros-frontend/ultros-frontend-core/src/lib.rs` (add `pub mod columnar_wire;`)
+
+**Interfaces:**
+- Consumes: Task 10's `From<&T>` impls; `codee::{Encoder, Decoder}` (frontend-core already depends on `codee` with `json_serde`); `leptos::prelude::ArcResource`; `crate::error::AppError` (for tests).
+- Produces:
+  - `pub trait ColumnarWire: Sized { type Columnar; fn to_columnar(&self) -> Self::Columnar; fn from_columnar(c: Self::Columnar) -> Self; }`
+  - impls for `RecentSales`, `BulkSaleStats`, `BulkListingStats`, `CheapestListings`, `Option<T>`, `Vec<T>`, `Result<T, E: Clone>`
+  - `pub struct ColumnarJson;` implementing codee `Encoder<T>` (Encoded = `String`) and `Decoder<T>` (Encoded = `str`) for `T: ColumnarWire` with `T::Columnar: Serialize` / `DeserializeOwned`
+  - `pub mod serde_with { serialize, deserialize }` for `#[serde(with = "…")]`
+  - `pub fn columnar_resource<S, T, Fut>(source, fetcher) -> ArcResource<T, ColumnarJson>` = `ArcResource::<T, ColumnarJson>::new_with_options(source, fetcher, false)`
+
+- [ ] **Step 1: Write the failing tests** (`#[cfg(test)] mod tests` in the new file):
+
+```rust
+    use super::*;
+    use crate::error::AppError;
+    use chrono::DateTime;
+    use ultros_api_types::recent_sales::{RecentSales, SaleData, Sales};
+
+    fn sales() -> RecentSales {
+        RecentSales {
+            sales: vec![SaleData {
+                item_id: 5,
+                hq: false,
+                sales: vec![Sales {
+                    price_per_unit: 7,
+                    sale_date: DateTime::from_timestamp(1_699_999_000, 0).unwrap().naive_utc(),
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn ok_result_encodes_as_columnar_json() {
+        let v: Result<RecentSales, AppError> = Ok(sales());
+        let json = <ColumnarJson as Encoder<Result<RecentSales, AppError>>>::encode(&v).unwrap();
+        assert_eq!(
+            json,
+            r#"{"Ok":{"item_id":[5],"hq":[false],"count":[1],"price":[7],"sold_unix":[1699999000]}}"#
+        );
+        let back = <ColumnarJson as Decoder<Result<RecentSales, AppError>>>::decode(&json).unwrap();
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn err_result_passes_through() {
+        let v: Result<RecentSales, AppError> = Err(AppError::ParamMissing);
+        let json = <ColumnarJson as Encoder<Result<RecentSales, AppError>>>::encode(&v).unwrap();
+        assert_eq!(json, serde_json::to_string(&Err::<(), _>(AppError::ParamMissing)).unwrap());
+        assert_eq!(<ColumnarJson as Decoder<Result<RecentSales, AppError>>>::decode(&json).unwrap(), v);
+    }
+
+    #[test]
+    fn option_and_vec_nest() {
+        let v: Option<Vec<RecentSales>> = Some(vec![sales(), RecentSales { sales: vec![] }]);
+        let json = <ColumnarJson as Encoder<Option<Vec<RecentSales>>>>::encode(&v).unwrap();
+        assert!(json.starts_with(r#"[{"item_id":[5]"#), "{json}");
+        assert_eq!(<ColumnarJson as Decoder<Option<Vec<RecentSales>>>>::decode(&json).unwrap(), v);
+        let none: Option<Vec<RecentSales>> = None;
+        assert_eq!(<ColumnarJson as Encoder<Option<Vec<RecentSales>>>>::encode(&none).unwrap(), "null");
+    }
+
+    #[test]
+    fn serde_with_annotates_struct_fields() {
+        #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+        struct Composite {
+            #[serde(with = "super::serde_with")]
+            raw: Option<RecentSales>,
+            flag: bool,
+        }
+        let c = Composite { raw: Some(sales()), flag: true };
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(
+            json,
+            r#"{"raw":{"item_id":[5],"hq":[false],"count":[1],"price":[7],"sold_unix":[1699999000]},"flag":true}"#
+        );
+        assert_eq!(serde_json::from_str::<Composite>(&json).unwrap(), c);
+    }
+```
+
+(`AppError` lives in `ultros-frontend/ultros-api-client/src/error.rs`, re-exported as `crate::error`; if `ParamMissing` is not a unit variant there, use any unit variant.)
+
+- [ ] **Step 2: Run** `cargo test -p ultros-frontend-core --features ssr columnar_wire` — compile errors.
+
+- [ ] **Step 3: Implement** `columnar_wire.rs`:
+
+```rust
+//! Struct-of-arrays serialization for the analyzer's SSR-embedded resources.
+//!
+//! Leptos serializes every resolved `ArcResource` into the page with
+//! `JsonSerdeCodec`, which for the bulk market DTOs means megabytes of
+//! repeated field names (spec §8). [`ColumnarJson`] is a drop-in codec that
+//! encodes any [`ColumnarWire`] value through its columnar twin instead — the
+//! same shape the `?format=columnar` API endpoints serve — and decodes it
+//! back on the client. Consumers never see the twin.
+
+use codee::{Decoder, Encoder};
+use leptos::prelude::ArcResource;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
+use std::future::Future;
+use ultros_api_types::{
+    cheapest_listings::{CheapestListings, CheapestListingsColumnar},
+    listing_stats::{BulkListingStats, BulkListingStatsColumnar},
+    recent_sales::{RecentSales, RecentSalesColumnar},
+    sale_stats::{BulkSaleStats, BulkSaleStatsColumnar},
+};
+
+/// A value with a struct-of-arrays twin. Containers (`Option`, `Vec`,
+/// `Result`) forward to their contents so a whole resource value converts.
+pub trait ColumnarWire: Sized {
+    type Columnar;
+    fn to_columnar(&self) -> Self::Columnar;
+    fn from_columnar(columnar: Self::Columnar) -> Self;
+}
+
+macro_rules! columnar_wire {
+    ($rows:ty => $cols:ty) => {
+        impl ColumnarWire for $rows {
+            type Columnar = $cols;
+            fn to_columnar(&self) -> $cols {
+                <$cols>::from(self)
+            }
+            fn from_columnar(columnar: $cols) -> Self {
+                Self::from(columnar)
+            }
+        }
+    };
+}
+columnar_wire!(RecentSales => RecentSalesColumnar);
+columnar_wire!(BulkSaleStats => BulkSaleStatsColumnar);
+columnar_wire!(BulkListingStats => BulkListingStatsColumnar);
+columnar_wire!(CheapestListings => CheapestListingsColumnar);
+
+impl<T: ColumnarWire> ColumnarWire for Option<T> {
+    type Columnar = Option<T::Columnar>;
+    fn to_columnar(&self) -> Self::Columnar {
+        self.as_ref().map(T::to_columnar)
+    }
+    fn from_columnar(columnar: Self::Columnar) -> Self {
+        columnar.map(T::from_columnar)
+    }
+}
+
+impl<T: ColumnarWire> ColumnarWire for Vec<T> {
+    type Columnar = Vec<T::Columnar>;
+    fn to_columnar(&self) -> Self::Columnar {
+        self.iter().map(T::to_columnar).collect()
+    }
+    fn from_columnar(columnar: Self::Columnar) -> Self {
+        columnar.into_iter().map(T::from_columnar).collect()
+    }
+}
+
+/// The error side is passed through untouched (it is small).
+impl<T: ColumnarWire, E: Clone> ColumnarWire for Result<T, E> {
+    type Columnar = Result<T::Columnar, E>;
+    fn to_columnar(&self) -> Self::Columnar {
+        match self {
+            Ok(v) => Ok(v.to_columnar()),
+            Err(e) => Err(e.clone()),
+        }
+    }
+    fn from_columnar(columnar: Self::Columnar) -> Self {
+        columnar.map(T::from_columnar)
+    }
+}
+
+/// `JsonSerdeCodec` for [`ColumnarWire`] values: the wire is the columnar
+/// twin, the in-memory value is the row type.
+pub struct ColumnarJson;
+
+impl<T> Encoder<T> for ColumnarJson
+where
+    T: ColumnarWire,
+    T::Columnar: Serialize,
+{
+    type Error = serde_json::Error;
+    type Encoded = String;
+    fn encode(val: &T) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&val.to_columnar())
+    }
+}
+
+impl<T> Decoder<T> for ColumnarJson
+where
+    T: ColumnarWire,
+    T::Columnar: DeserializeOwned,
+{
+    type Error = serde_json::Error;
+    type Encoded = str;
+    fn decode(val: &str) -> Result<T, serde_json::Error> {
+        serde_json::from_str::<T::Columnar>(val).map(T::from_columnar)
+    }
+}
+
+/// `#[serde(with = "ultros_frontend_core::columnar_wire::serde_with")]` for a
+/// DTO field inside a composite resource value that otherwise keeps the
+/// default codec.
+pub mod serde_with {
+    use super::*;
+
+    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        T: ColumnarWire,
+        T::Columnar: Serialize,
+        S: Serializer,
+    {
+        value.to_columnar().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+    where
+        T: ColumnarWire,
+        T::Columnar: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        T::Columnar::deserialize(deserializer).map(T::from_columnar)
+    }
+}
+
+/// `ArcResource::new` with the columnar codec. Same source/fetcher contract,
+/// non-blocking, SSR-serialized like every other resource.
+pub fn columnar_resource<S, T, Fut>(
+    source: impl Fn() -> S + Send + Sync + 'static,
+    fetcher: impl Fn(S) -> Fut + Send + Sync + 'static,
+) -> ArcResource<T, ColumnarJson>
+where
+    S: PartialEq + Clone + Send + Sync + 'static,
+    T: ColumnarWire + Send + Sync + 'static,
+    T::Columnar: Serialize + DeserializeOwned,
+    Fut: Future<Output = T> + Send + 'static,
+{
+    ArcResource::<T, ColumnarJson>::new_with_options(source, fetcher, false)
+}
+```
+
+If `new_with_options` demands more bounds (leptos_server 0.8.7 `resource.rs:286` lists them: `<Ser as Encoder<T>>::Error: Debug`, `<Ser as Decoder<T>>::Error: Debug`, `Encoded: IntoEncodedString` / `FromEncodedStr`, plus the `DecodingError: Debug`), add exactly those to the `where` clause — `String`/`str` already satisfy the codee marker traits and `serde_json::Error: Debug`.
+
+- [ ] **Step 4: Run** `cargo test -p ultros-frontend-core --features ssr columnar_wire` — 4 pass. Also `cargo check -p ultros-frontend-core --features hydrate --target wasm32-unknown-unknown`.
+- [ ] **Step 5: Commit** `feat(frontend-core): ColumnarJson resource codec` (+ trailer).
+
+### Task 12: Switch the eight simple analyzer routes to `columnar_resource`
+
+**Files:** `ultros-frontend/ultros-app/src/routes/{analyzer,venture_analyzer,leve_analyzer,fc_crafting_analyzer,vendor_resale,currency_exchange,scrip_sources,vendor_sell}.rs`
+
+**Interfaces:** Consumes `ultros_frontend_core::columnar_wire::columnar_resource` (Task 11). Check how each file already imports from frontend-core (`grep -n "ultros_frontend_core\|use crate::" <file> | head`) and add the import the same way.
+
+- [ ] **Step 1:** In each file, for every `ArcResource::new(source, fetcher)` whose value type contains `RecentSales` or `CheapestListings` — `analyzer.rs`: `sales`, `world_cheapest_listings`, `global_cheapest_listings`, `cross_region`; `venture_analyzer` / `leve_analyzer` / `fc_crafting_analyzer`: `global_cheapest_listings`, `recent_sales`; `vendor_resale` / `currency_exchange`: `sales`, `world_cheapest_listings`; `scrip_sources`: `global_cheapest_listings`; `vendor_sell`: `listings` — replace the constructor with `columnar_resource(source, fetcher)`. Nothing else in the file changes. If a fetcher's value type is something the trait does not cover (e.g. it maps into a local struct), leave that resource alone and say so in the report.
+- [ ] **Step 2:** `cargo check -p ultros-app --features ssr` and `cargo check -p ultros-app --features hydrate --target wasm32-unknown-unknown` clean.
+- [ ] **Step 3:** `cargo fmt --all`; commit `perf(analyzer): serialize SSR market resources with the columnar codec` (+ trailer).
+
+### Task 13: Recipe analyzer
+
+**Files:** `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs`
+
+- [ ] **Step 1:** Replace `ArcResource::new` with `columnar_resource` for `global_cheapest_listings`, `sale_stats`, `sell_window_stats`, `raw_sales` and the sell-world listings resource (`ArcResource::new(sell_world_name, … get_cheapest_listings(&world).await.map(Some) …)`). For `SellHistory` (`stats: Option<BulkSaleStats>`, `raw: Option<RecentSales>`) and `SellScopeBodies` (`listings: Option<CheapestListings>`, `stats: Option<BulkSaleStats>`) add `#[serde(with = "ultros_frontend_core::columnar_wire::serde_with")]` to those four fields and extend the comment above each struct (it says the values round-trip through `JsonSerdeCodec`; add that the DTO fields go through the columnar shape). `sell_history` / `sell_scope_bodies` keep `ArcResource::new`.
+- [ ] **Step 2:** Same checks as Task 12 Step 2. If the file has `#[cfg(test)]` tests touching `SellHistory` / `SellScopeBodies`, run them with `cargo test -p ultros-app --features ssr <name>` (skip and note if the test build exceeds 10 minutes).
+- [ ] **Step 3:** `cargo fmt --all`; commit `perf(recipe-analyzer): columnar SSR serialization for market bodies` (+ trailer).
+
+### Task 14: Verify, measure, PR
+
+- [ ] **Step 1:** `./check_ci.sh > "$SCRATCH/ci.log" 2>&1; echo "REAL_EXIT=$?"` → 0.
+- [ ] **Step 2:** Local serve (Task 9 recipe: `cargo leptos build --bin-features test-auth`, `cp target/site/pkg/ultros.wasm target/site/pkg/ultros_bg.wasm`, run `target/debug/ultros.exe` with `PORT=8097 HOSTNAME=http://127.0.0.1:8097 LEPTOS_SITE_ADDR=127.0.0.1:8097 METRICS_PORT=9097 RUST_MIN_STACK=67108864`; wait for analyzer warm-up). `curl` `/flip-finder/Adamantoise`, `/recipe-analyzer/Adamantoise`, `/venture-analyzer/Adamantoise`, `/vendor-resale/Adamantoise` with `-H "Accept-Encoding: identity"` and with `br`; record raw / br sizes against the pre-Phase-2 local numbers (flip-finder 9.5 MB raw) and the prod table in spec §8.1. `grep -o '__RESOLVED_RESOURCES\[[0-9]*\] = .\{0,40\}'` must show `item_id\":[` shapes and no `price_per_unit` / `cheapest_listings` keys.
+- [ ] **Step 3:** Browser pane: each page hydrates and renders rows (`document.querySelectorAll('[role="row"]').length > 0`), no new console errors beyond the known local ClickHouse ones.
+- [ ] **Step 4:** Push and open the PR with both phases' measurements. Body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
