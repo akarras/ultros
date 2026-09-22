@@ -884,11 +884,11 @@ mod tests {
             );
             assert_eq!(
                 chip(FilterOp::Range, "1756684800,", Unit::Timestamp).as_deref(),
-                Some("after 2025-09-01 00:00")
+                Some("after 2025-09-01 00:00 UTC")
             );
             assert_eq!(
                 chip(FilterOp::Range, ",1756684800", Unit::Timestamp).as_deref(),
-                Some("before 2025-09-01 00:00")
+                Some("before 2025-09-01 00:00 UTC")
             );
             assert_eq!(chip(FilterOp::Eq, "HQ", Unit::Plain), None);
             assert_eq!(chip(FilterOp::Range, ",", Unit::Plain), None);

@@ -85,7 +85,9 @@ pub enum ChipBound {
     Text(String),
     /// A relative timestamp: "within the last {0}".
     Within(String),
-    /// An absolute time, `YYYY-MM-DD HH:MM` in UTC.
+    /// An absolute time, `YYYY-MM-DD HH:MM UTC`. Chips render on the
+    /// server too, so they cannot use the viewer's zone without a
+    /// hydration mismatch; they say which zone they are in instead.
     At(String),
 }
 
@@ -109,7 +111,7 @@ pub fn format_chip(unit: Unit, token: &str) -> ChipBound {
         Unit::Rate => round_to(value, 2),
         Unit::Seconds => short_duration(value),
         Unit::Hours => short_duration(value * HOUR),
-        Unit::Timestamp => return ChipBound::At(utc_minute(value)),
+        Unit::Timestamp => return ChipBound::At(format!("{} UTC", utc_minute(value))),
     })
 }
 
@@ -460,7 +462,7 @@ mod tests {
         );
         assert_eq!(
             format_chip(Unit::Timestamp, "1756684800"),
-            ChipBound::At("2025-09-01 00:00".into())
+            ChipBound::At("2025-09-01 00:00 UTC".into())
         );
     }
 
