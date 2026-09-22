@@ -31,7 +31,7 @@ pub const WAR_EROSION_CAP: f64 = 0.10;
 pub const WAR_BASELINE_MULTIPLE: f64 = 2.0;
 /// ...and at least this many undercuts...
 pub const WAR_MIN_UNDERCUTS: u32 = 3;
-/// ...from at least this many distinct retainers (ping-pong).
+/// ...from at least this many distinct undercutting retainers (ping-pong; trims count).
 pub const WAR_MIN_SELLERS: u16 = 2;
 /// A busy item's bucket below this share of its baseline reads as calm...
 pub const CALM_BASELINE_SHARE: f64 = 0.5;
@@ -104,14 +104,18 @@ pub(crate) fn median(mut values: Vec<f64>) -> Option<f64> {
 
 pub(crate) struct Classified {
     pub buckets: Vec<PressureBucket>,
-    /// Cutting retainers per bucket, parallel to `buckets` (war-span union).
+    /// Undercutting retainers per bucket, parallel to `buckets` (war-span union).
     pub sellers: Vec<HashSet<i32>>,
     pub baseline: Option<f64>,
     pub bucket_seconds: i64,
 }
 
 fn is_trim(e: &UndercutEvent) -> bool {
-    f64::from(e.prev_price - e.price) / f64::from(e.prev_price) < TRIM_FRACTION
+    debug_assert!(
+        e.prev_price > e.price,
+        "undercut events are strict price drops"
+    );
+    f64::from(e.prev_price.saturating_sub(e.price)) / f64::from(e.prev_price) < TRIM_FRACTION
 }
 
 /// Buckets `[floor(from), to)` at `bucket_seconds`, epoch-aligned like
@@ -480,6 +484,21 @@ mod tests {
             Churn,
             "flat floor is churn"
         );
+    }
+
+    #[test]
+    fn trim_only_ping_pong_counts_as_two_sellers() {
+        // Bucket 3's four events are 1-gil trims (1000 -> 999), not cuts, but
+        // still count toward `sellers`: trim-only ping-pong is still a war.
+        let trims: Vec<UndercutEvent> = [1, 2, 1, 2]
+            .iter()
+            .enumerate()
+            .map(|(i, r)| ev(3 * HOUR + 100 + i as i64, *r, 1000, 999))
+            .collect();
+        let drop = [fc(3 * HOUR + 200, 0, 950)];
+        let c = six_hours(&trims, &drop);
+        assert_eq!(c.buckets[3].state, War);
+        assert_eq!(c.buckets[3].sellers, 2);
     }
 
     #[test]

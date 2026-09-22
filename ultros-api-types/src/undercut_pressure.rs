@@ -22,7 +22,7 @@ pub struct PressureBucket {
     pub trims: u32,
     /// Same-listing drops of 1% or more.
     pub cuts: u32,
-    /// Distinct retainers that cut in this bucket.
+    /// Distinct retainers that undercut in this bucket (trims and cuts both count).
     pub sellers: u16,
     /// As-of floor at the bucket start / last second. `None` = empty or unknown.
     pub floor_open: Option<u32>,
