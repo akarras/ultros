@@ -37,6 +37,10 @@ async function main() {
     assert(response.ok(), `fixture requires a debug server: HTTP ${response.status()}`);
     await page.waitForFunction(() => window.__queryHydrated);
     await page.waitForSelector('#query-fixture-grid, .virtual-grid');
+    // Hydration precedes the grid's asynchronous first content-fit. Clicking a
+    // heading while its width changes can open its neighbour's menu on mobile.
+    await page.waitForFunction(() =>
+      Number(document.querySelector('.virtual-grid')?.getAttribute('data-auto-fitted')) > 0);
   }
   async function count(expected) {
     await page.waitForFunction(expected =>

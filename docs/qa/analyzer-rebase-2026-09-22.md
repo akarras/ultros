@@ -55,11 +55,44 @@ is four compiler jobs, with resource pressure monitored.
 - `node --test integration/*.test.cjs`: **127 passed**, no failures, including
   the five columnar market-wire fixture tests. Log:
   `target/analyzer-rebase-js.log`.
-- Fresh native preview and hydrated client builds: **pending**.
-- Rebased browser checks: **pending**. Planned scope includes the relevant
-  analyzer driver, populated columnar fixtures, Currency desktop/mobile,
-  recommended/unrestricted/default interactions, and the four-case history
-  matrix for fresh, remembered, and chosen-default `/items` entry.
+- After the browser readiness test change, the required final root gate
+  **passed again**: **2,640 passed / 56 suite invocations / 87 ignored /
+  6 live tests filtered**. The JavaScript suite **passed again, 127/127**, and
+  the changed browser file passed `node --check`. Final logs:
+  `target/analyzer-rebase-final-ci.log` and
+  `target/analyzer-rebase-final-js.log`.
+- Fresh native preview build **passed** with `test-auth` in 6m29s. Log:
+  `target/analyzer-rebase-server-build.log`.
+- Hydrated client build **passed**: Rust compilation took 9m02s, followed by
+  successful wasm-bindgen 0.2.126 generation and Tailwind compilation. Log:
+  `target/analyzer-rebase-client-build.log`.
+- Four-case history matrix **passed** unchanged on matching server/client
+  commit `6c953c08`: bare entry, explicit-locale Recommended, remembered view,
+  and chosen default overriding the remembered view. Every case preserves
+  the complete previous URL, exactly one added history entry, and client-side
+  Back/Forward. Log: `target/analyzer-rebase-matched-history.log`.
+- Matching scoped browser driver completed with **exit 1**. Desktop/mobile/
+  wide smoke, eager search, projected startup/deferred detail, item layout,
+  FC breakdown/world, analyzer world URLs/grids/restoration, market-window,
+  expanded analyzer-consistency, and all eight dashboard screenshots passed.
+  Only shared-analyzer-data failed: its mobile pointer click targeted a header
+  while asynchronous auto-fit moved it, opening Partial feed instead of
+  Amount. The complete standalone component subsequently **passed** after its
+  fixture opener waited for the existing `data-auto-fitted` completion
+  counter; no application code or substantive assertions changed. This is
+  a failed aggregate followed by a clean affected-component rerun, not a
+  claim that the aggregate returned zero. Driver log:
+  `target/analyzer-rebase-matched-e2e.log`.
+- Complete shared-analyzer-data standalone **passed** with
+  `CHECK_ANALYZER_ROUTES=1`: deterministic query/header/keyboard/touch tests,
+  Flip sale columns, populated Flip/Recipe/Leve/Venture/FC/Vendor Resale/
+  Vendor Sell/Scrip columns, and Trends aliases/window/suspicious control.
+  Log: `target/analyzer-rebase-shared-data.log`.
+- Focused Currency Exchange browser checks **passed**, including populated
+  columnar data, native estimate/raw listing distinctions, selected-window
+  statistics, legacy bounds, saved columns/quantity, shared Views placement,
+  desktop/mobile menu interaction, and mobile cell/header alignment. Log:
+  `target/analyzer-rebase-currency.log`.
 
 Commands use the verified Git Bash and Strawberry Perl paths:
 
@@ -78,3 +111,78 @@ The explicit native flags preserve the repository's two cfg values and avoid
 cargo-leptos adding a redundant erase-components flag that invalidates the
 native cache. The server's test-auth override also avoids optional jemalloc on
 MSVC. Neither adjustment changes the native gate's test selection.
+
+For local browser loading, `wasm-opt --strip-debug --all-features` removed only
+debug/name sections from the generated asset: 678,346,807 bytes became
+47,243,264 bytes. No optimization or application logic transformation was
+requested. The original asset remains in ignored
+`target/ultros-rebase-with-debug-names.wasm`; log:
+`target/analyzer-rebase-wasm-strip.log`. This preview does not exercise the
+release symbol-map packaging workflow.
+
+The preview runs on `http://127.0.0.1:61335` against disposable loopback
+Postgres and ClickHouse containers named `ultros-analyzer-eea6-pg` and
+`ultros-analyzer-eea6-ch`. Test market isolation and disabled websocket ingest
+prevent background market writes. One synthetic item-2 sale-statistics row
+per world/window makes the empty-database smoke API available; populated
+analyzer assertions use intercepted deterministic columnar fixtures. No
+production database is involved.
+
+The first browser attempt exposed a preview setup mismatch: the server was
+built before the implementation commit (`ef1dda33`), while the client was
+built afterward (`6c953c08`). Market API `x-ultros-commit` headers therefore
+correctly triggered `ReloadWhenStale`, and Back became a document navigation.
+A no-default `/items?v=1` control reproduced it; `/help` stayed client-side.
+The mismatched driver was interrupted and its results are not counted.
+Rebuilding the native stamp (41.42s), restoring cached frontend assets
+(1.50s Rust build plus 30s wasm-bindgen), and restarting the preview resolved
+all four unchanged history assertions. No source fix or assertion weakening
+was needed. Matching build logs use the `analyzer-rebase-matched-` prefix.
+
+## Browser commands and scope
+
+The matching preview is the explicitly identified binary and asset directory
+from this worktree, so reusing it does not test another worktree's server.
+Browser components run sequentially; the route screenshot runner uses two
+pages concurrently. Strict console and content/overflow assertions remain on.
+
+```bash
+BASE_URL=http://127.0.0.1:61335 node integration/back-nav-history.cjs
+export REUSE_SERVER=1 SKIP_BUILD=1 BASE_URL=http://127.0.0.1:61335
+export E2E_BLOCK_EXTERNAL=1 CONCURRENCY=2 CHECK_ANALYZER_ROUTES=1
+export RUN_LISTS_V2=0 RUN_RECIPE_PLANNER=0
+unset LEPTOS_FEATURES
+./scripts/run_e2e.sh
+BASE_URL=http://127.0.0.1:61335 CHECK_ANALYZER_ROUTES=1 npm --prefix integration run test:shared-analyzer-data
+BASE_URL=http://127.0.0.1:61335 npm --prefix integration run test:currency-exchange
+```
+
+The scoped driver retains desktop/mobile/wide smoke, search responsiveness,
+upstream projected game-data startup/deferred detail, item layout, FC
+breakdown/world, analyzer world URLs/grids/last views/shared data/window/view
+consistency, and dashboard checks. Unrelated Lists, authentication, and recipe
+planner flows are intentionally excluded from this rebase pass. Live
+Universalis and database-dependent ignored Rust tests, a dependency security
+audit, and release packaging are not claimed as locally executed.
+
+The item-layout component explicitly skipped populated listing/history
+horizontal probes and greater-than-ten-row expansion probes because those
+tables are empty in the disposable database. The remaining layout assertions
+passed at every guarded width.
+
+Fresh Currency screenshots were visually reviewed and copied to
+`docs/reviews/2026-09-20-analyzer-audit/24-currency-shared-toolbar-desktop.png`
+and `25-currency-shared-toolbar-mobile.png`. Their footer is `6c953c08` and
+their market values are deterministic test fixtures, not live market quotes.
+Views appears beside Columns in the shared toolbar, the duplicate results
+heading is absent, and mobile controls fit within 393 pixels; the grid retains
+its intentional internal horizontal scrolling.
+
+## Cleanup
+
+Validation is complete. The verified worktree preview process (PID 79984)
+was stopped, its port 61335 listener is absent, and the exact disposable
+`ultros-analyzer-eea6-pg` / `ultros-analyzer-eea6-ch` containers were removed.
+Logs, ignored generated assets, browser artifacts, and the two tracked review
+screenshots are preserved. No production services or other worktrees were
+modified by cleanup.
