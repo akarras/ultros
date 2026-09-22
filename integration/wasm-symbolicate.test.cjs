@@ -36,6 +36,9 @@ const SYMBOLS = [
   "43:leptos::callback::Callback::run",
   "44:xiv_gen_db::data",
   "45:reactive_graph::signal::read::ReadSignal<T>::try_get",
+  "46:<ultros_app::routes::item_view::ItemView as core::ops::function::FnOnce<()>>::call_once",
+  "47:<<ultros_ui_grid::components::virtual_grid::VirtualGrid<u32> as tachys::view::Render>::State as tachys::view::Mountable>::unmount",
+  "48:ultros_ui_grid::components::virtual_grid::query_grid::__component_query_grid<(usize, alloc::sync::Arc<ultros_app::routes::recipe_analyzer::RecipeProfitData>), xiv_gen::RecipeId>::{closure#3}",
 ].join("\n");
 
 const WASM = "https://ultros.app/pkg/9b93be1/ultros.wasm";
@@ -46,6 +49,17 @@ function wasmFrame(index, name) {
   if (name !== undefined) f.function = name;
   else f.function = "?";
   return f;
+}
+
+// A frame from a second module in the pkg dir rather than from
+// `ultros.wasm` — what `cargo leptos build --split` emits per lazy route.
+function chunkFrame(chunk, index) {
+  const path = `/pkg/9b93be1/chunk_${chunk}.wasm`;
+  return {
+    filename: `${path}:wasm-function[${index}]:0x40`,
+    abs_path: `https://ultros.app${path}:wasm-function[${index}]:0x40`,
+    function: "?",
+  };
 }
 
 function glueFrame(fn) {
@@ -173,6 +187,21 @@ test("flags ultros and xiv_gen frames as in_app", async () => {
     ["ultros_app::routes::item_view::ItemView::{{closure}}", true],
     ["core::option::unwrap_failed", false],
   ]);
+});
+
+test("trait-impl names starting with < are in_app too", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const ev = panicEvent();
+  ev.exception.values[0].stacktrace.frames = [
+    wasmFrame(46),
+    wasmFrame(47),
+    wasmFrame(45),
+  ];
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.in_app),
+    [true, true, false],
+  );
 });
 
 test("filename is left alone; only function and in_app change", async () => {
@@ -321,4 +350,233 @@ test("a throwing fetch implementation cannot break the event", async () => {
   });
   const out = await symbolicate(panicEvent());
   assert.deepStrictEqual(out, panicEvent());
+});
+
+// ── Trap events: production panics under panic=immediate-abort ──
+// No hook runs, so the panic surfaces as the browser's own
+// "RuntimeError: unreachable" from window.onerror. After symbolication the
+// event gets a fingerprint from its top frames (filenames carry
+// `wasm-function[N]:0x…`, which changes every deploy, so default grouping
+// would open a new issue per release) and a title naming the site.
+
+function trapEvent(value, frames) {
+  return {
+    exception: {
+      values: [
+        {
+          type: "RuntimeError",
+          value: value,
+          mechanism: { type: "onerror", handled: false },
+          stacktrace: {
+            frames: frames || [
+              glueFrame("__wbg_adapter_50"),
+              wasmFrame(43),
+              wasmFrame(42),
+              wasmFrame(20),
+              wasmFrame(9),
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+
+test("trap: fingerprint is the top three frames, top first", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const out = await symbolicate(trapEvent("unreachable"));
+  assert.deepStrictEqual(out.fingerprint, [
+    "rust-wasm-trap",
+    "core::option::unwrap_failed",
+    "ultros_app::routes::item_view::ItemView::{{closure}}",
+    "leptos::callback::Callback::run",
+  ]);
+});
+
+test("trap: value names the topmost in_app frame", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const out = await symbolicate(trapEvent("unreachable"));
+  assert.strictEqual(
+    out.exception.values[0].value,
+    "unreachable in ultros_app::routes::item_view::ItemView::{{closure}}",
+  );
+  assert.strictEqual(out.exception.values[0].type, "RuntimeError");
+});
+
+test("trap: falls back to the top frame when nothing is in_app", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const out = await symbolicate(
+    trapEvent("unreachable", [wasmFrame(45), wasmFrame(43)]),
+  );
+  assert.strictEqual(
+    out.exception.values[0].value,
+    "unreachable in leptos::callback::Callback::run",
+  );
+  assert.deepStrictEqual(out.fingerprint, [
+    "rust-wasm-trap",
+    "leptos::callback::Callback::run",
+    "reactive_graph::signal::read::ReadSignal::try_get",
+  ]);
+});
+
+test("trap: Firefox and JSC phrasings are recognised", async () => {
+  for (const value of [
+    "unreachable executed",
+    "Unreachable code should not be executed",
+  ]) {
+    const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+    const out = await symbolicate(trapEvent(value));
+    assert.strictEqual(out.fingerprint[0], "rust-wasm-trap", value);
+    assert.strictEqual(
+      out.exception.values[0].value,
+      value + " in ultros_app::routes::item_view::ItemView::{{closure}}",
+    );
+  }
+});
+
+test("trap: untouched when the map is unavailable", async () => {
+  const { symbolicate } = loadSymbolicator(() => 404);
+  const out = await symbolicate(trapEvent("unreachable"));
+  assert.strictEqual(out.fingerprint, undefined);
+  assert.strictEqual(out.exception.values[0].value, "unreachable");
+});
+
+test("trap: untouched when no frame resolved", async () => {
+  const { symbolicate } = loadSymbolicator(() => "1:nothing_useful\n");
+  const out = await symbolicate(trapEvent("unreachable"));
+  assert.strictEqual(out.fingerprint, undefined);
+  assert.strictEqual(out.exception.values[0].value, "unreachable");
+});
+
+test("trap: an existing fingerprint is respected", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const ev = trapEvent("unreachable");
+  ev.fingerprint = ["custom"];
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(out.fingerprint, ["custom"]);
+});
+
+test("trap: other RuntimeErrors and RustWasmPanic are not retitled", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const oob = await symbolicate(trapEvent("memory access out of bounds"));
+  assert.strictEqual(oob.fingerprint, undefined);
+  assert.strictEqual(
+    oob.exception.values[0].value,
+    "memory access out of bounds",
+  );
+  const hooked = await symbolicate(panicEvent());
+  assert.strictEqual(hooked.fingerprint, undefined);
+  assert.strictEqual(
+    hooked.exception.values[0].value,
+    "called `Option::unwrap()` on a `None` value",
+  );
+});
+
+test("trap: generic arguments are cut from the fingerprint and title", async () => {
+  const { symbolicate } = loadSymbolicator(() => SYMBOLS);
+  const out = await symbolicate(
+    trapEvent("unreachable", [wasmFrame(43), wasmFrame(47), wasmFrame(48)]),
+  );
+  assert.strictEqual(
+    out.exception.values[0].value,
+    "unreachable in ultros_ui_grid::components::virtual_grid::query_grid::__component_query_grid::{closure#3}",
+  );
+  assert.deepStrictEqual(out.fingerprint, [
+    "rust-wasm-trap",
+    "ultros_ui_grid::components::virtual_grid::query_grid::__component_query_grid::{closure#3}",
+    "<<ultros_ui_grid::components::virtual_grid::VirtualGrid<u32> as tachys::view::Render>::State as tachys::view::Mountable>::unmount",
+    "leptos::callback::Callback::run",
+  ]);
+  // Frames keep their full names; only the labels are shortened.
+  assert.strictEqual(
+    frames(out)[2].function,
+    "ultros_ui_grid::components::virtual_grid::query_grid::__component_query_grid<(usize, alloc::sync::Arc<ultros_app::routes::recipe_analyzer::RecipeProfitData>), xiv_gen::RecipeId>::{closure#3}",
+  );
+});
+
+// ── Several modules in one trace ──
+// Function indices are per-module, so a frame must be resolved against the
+// map of the module its own filename names. The current build emits one
+// module; `cargo leptos build --split` emits a chunk per lazy route (that
+// pilot was reverted in #1588, so these guard the property rather than
+// describe today's bundle).
+
+test("chunk frames resolve against that chunk's own map", async () => {
+  const CHUNK = "3:ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}";
+  const { symbolicate, calls } = loadSymbolicator((url) =>
+    url.indexOf("chunk_7") === -1 ? SYMBOLS : CHUNK,
+  );
+  const ev = trapEvent("unreachable", [wasmFrame(43), chunkFrame(7, 3)]);
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(calls.sort(), [
+    "https://ultros.app/pkg/9b93be1/chunk_7.symbols",
+    "https://ultros.app/pkg/9b93be1/ultros.symbols",
+  ]);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "leptos::callback::Callback::run",
+      "ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}",
+    ],
+  );
+  assert.strictEqual(
+    out.exception.values[0].value,
+    "unreachable in ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}",
+  );
+});
+
+test("each module's map is fetched once, and one 404 does not sink the rest", async () => {
+  const { symbolicate, calls } = loadSymbolicator((url) =>
+    url.indexOf("chunk_7") === -1 ? SYMBOLS : 404,
+  );
+  const ev = trapEvent("unreachable", [
+    wasmFrame(43),
+    chunkFrame(7, 3),
+    wasmFrame(42),
+  ]);
+  const out = await symbolicate(ev);
+  assert.strictEqual(calls.length, 2);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "leptos::callback::Callback::run",
+      "?",
+      "ultros_app::routes::item_view::ItemView::{{closure}}",
+    ],
+  );
+  await symbolicate(trapEvent("unreachable", [chunkFrame(7, 3)]));
+  assert.strictEqual(calls.length, 2);
+});
+
+test("indices are not mixed up between modules", async () => {
+  // Index 43 exists in both maps with different names; each frame must take
+  // the name from ITS OWN module.
+  const CHUNK = "43:ultros_app::routes::lists::ListView::render";
+  const { symbolicate } = loadSymbolicator((url) =>
+    url.indexOf("chunk_2") === -1 ? SYMBOLS : CHUNK,
+  );
+  const out = await symbolicate(
+    trapEvent("unreachable", [wasmFrame(43), chunkFrame(2, 43)]),
+  );
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "leptos::callback::Callback::run",
+      "ultros_app::routes::lists::ListView::render",
+    ],
+  );
+});
+
+test("a non-pkg wasm module is ignored", async () => {
+  const { symbolicate, calls } = loadSymbolicator(() => SYMBOLS);
+  const ev = trapEvent("unreachable", [
+    {
+      filename: "https://cdn.example.com/thirdparty.wasm:wasm-function[3]:0x40",
+      abs_path: "https://cdn.example.com/thirdparty.wasm:wasm-function[3]:0x40",
+      function: "?",
+    },
+  ]);
+  const out = await symbolicate(ev);
+  assert.strictEqual(calls.length, 0);
+  assert.strictEqual(out.fingerprint, undefined);
 });

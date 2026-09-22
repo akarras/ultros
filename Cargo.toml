@@ -175,8 +175,13 @@ strip = "debuginfo"
 # minutes of frontend build. The final LTO link is one rustc at ~3 GB RSS, well
 # inside the 16 GiB CI runner. `panic = "abort"` is deliberately NOT set: the
 # wasm32-unknown-unknown target already aborts on panic (its target spec says
-# so), the panic hook that feeds GlitchTip runs before that trap either way,
-# and the flag measured as a no-op (+15 KB).
+# so) and the flag measured as a no-op (+15 KB). The production build goes one
+# step further and sets `panic = "immediate-abort"` (plus `-Zbuild-std`) via
+# environment in the Dockerfile only: that removes the panic hook and message
+# formatting from the bundle, so a prod panic is a bare wasm `unreachable`
+# trap whose stack wasm_symbolicate.js resolves in the browser. It is not set
+# here because local builds — including `cargo leptos watch` — rely on the
+# panic message and hook (`file:line` in the console) for debugging.
 #
 # This supersedes the per-package `loro-internal` codegen-units = 1 override
 # from the Lists bundle experiment (docs/qa/lists-bundle-budget.md); the

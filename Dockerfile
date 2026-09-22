@@ -63,7 +63,25 @@ RUN cargo chef cook --locked --profile server-release -p ultros --bin ultros \
     --no-default-features --features jemalloc --recipe-path recipe.json
 # cargo-leptos isolates its frontend artifacts in target/front. Match that
 # directory, profile and feature selection, not Cargo's default target/.
-RUN cargo chef cook --locked --profile wasm-release --target wasm32-unknown-unknown \
+#
+# The wasm build compiles its own std (`-Zbuild-std`) with the
+# `immediate-abort` panic strategy: a panic runs no hook and formats no
+# message, it executes the wasm `unreachable` instruction where it stands,
+# which drops the whole panic/formatting runtime from the bundle. The
+# browser still gets a stack — the trap surfaces as "RuntimeError:
+# unreachable" at window.onerror with `wasm-function[N]` frames, which
+# wasm_symbolicate.js resolves to Rust names via the symbol map built below.
+# The three env vars must match on this cook and on the frontend build, or
+# the cooked dependencies (fingerprinted against the custom sysroot) are
+# thrown away and rebuilt. They are env, not `.cargo/config.toml`: the
+# `[unstable]` table is not target-scoped and `-Zbuild-std` errors on the
+# native server build, and `[profile]` in the manifest would also hit local
+# `cargo leptos watch`, where the panic message and hook are what you debug
+# with. rust-src is installed above.
+RUN CARGO_UNSTABLE_BUILD_STD=std,panic_abort,core,alloc \
+    CARGO_UNSTABLE_PANIC_IMMEDIATE_ABORT=true \
+    CARGO_PROFILE_WASM_RELEASE_PANIC=immediate-abort \
+    cargo chef cook --locked --profile wasm-release --target wasm32-unknown-unknown \
     --target-dir target/front -p ultros-client --no-default-features \
     --recipe-path recipe.json
 # Now the actual source.
@@ -90,7 +108,11 @@ RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
 # re-compressing the 16 MB wasm on the fly at tower-http's default quality —
 # that default was the difference between 7.2 MB and 4.9 MB on the wire for the
 # same file.
-RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
+# Same build-std / immediate-abort env as the wasm cook above (see there).
+RUN CARGO_UNSTABLE_BUILD_STD=std,panic_abort,core,alloc \
+    CARGO_UNSTABLE_PANIC_IMMEDIATE_ABORT=true \
+    CARGO_PROFILE_WASM_RELEASE_PANIC=immediate-abort \
+    cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
     --precompress --lib-cargo-args=--timings -vv
 # Wasm symbol map for GlitchTip. wasm-opt ran with `-g` (`wasm-opt-features`
 # in Cargo.toml), so the optimized module still carries its `name` section.
