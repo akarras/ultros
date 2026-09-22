@@ -185,3 +185,82 @@ columnar requests and the tables render identically. Run
 - #1576's encoder comparison shows generic binary barely beats columnar
   JSON after brotli; only a hand-rolled delta+varint encoding wins, and it
   is not worth a new dependency and decoder for ~30%.
+
+## 8. Addendum (2026-09-21, after §1–7 shipped on the branch): SSR-embedded resources
+
+### 8.1 Finding
+
+§1's HTML numbers measured the 404 page. At the real routes prod HTML is:
+
+| Page | raw | brotli | `__RESOLVED_RESOURCES` contents |
+|---|---|---|---|
+| `/flip-finder/Adamantoise` | 13.2 MB | 1.69 MB | recentSales (9 MB) + world & region cheapest + root map |
+| `/venture-analyzer/Adamantoise` | 12.0 MB | 1.57 MB | recentSales + cheapest + root map |
+| `/recipe-analyzer/Adamantoise` | 6.6 MB | 778 KB | sale_stats + cheapest + root map |
+
+Those route resources are `ArcResource`s fetched during SSR; Leptos serializes
+the resolved value — the in-memory **row** struct — with `JsonSerdeCodec` into
+the page, then escapes it as a JS string (`\"` per quote). §3–5 therefore do
+not change HTML size. The resources stay SSR (that is a product decision: the
+table renders before wasm boots); what changes is the codec they are embedded
+with.
+
+### 8.2 Design
+
+`ultros-frontend-core/src/columnar_wire.rs`:
+
+```rust
+/// A type with a struct-of-arrays twin used for the wire and for SSR
+/// resource serialization.
+pub trait ColumnarWire: Sized {
+    type Columnar;
+    fn to_columnar(&self) -> Self::Columnar;
+    fn from_columnar(c: Self::Columnar) -> Self;
+}
+```
+
+Implemented for `RecentSales`, `BulkSaleStats`, `BulkListingStats`,
+`CheapestListings` (via new by-reference `From<&T> for TColumnar` impls in
+`ultros-api-types`, which the existing consuming `From<T>` impls delegate to),
+and structurally for `Option<T>`, `Vec<T>` and `Result<T, E>` (`E: Clone`,
+passed through unchanged).
+
+`pub struct ColumnarJson;` implements codee's `Encoder<T>` (Encoded = `String`)
+and `Decoder<T>` (Encoded = `str`) for every `T: ColumnarWire` whose
+`Columnar: Serialize + DeserializeOwned`, by converting and delegating to
+`serde_json`. `pub mod serde_with` provides `serialize`/`deserialize` for
+`#[serde(with = "…")]` on struct fields, for composite resource values.
+
+`pub fn columnar_resource<S, T, Fut>(source, fetcher) -> ArcResource<T, ColumnarJson>`
+wraps `ArcResource::<T, ColumnarJson>::new_with_options(source, fetcher, false)`
+so call sites change one identifier.
+
+### 8.3 Call sites
+
+Every `ArcResource::new` whose value contains one of the four DTOs:
+
+- `routes/analyzer.rs`: `sales`, `world_cheapest_listings`, `global_cheapest_listings`, `cross_region`
+- `routes/{venture_analyzer,leve_analyzer,fc_crafting_analyzer}.rs`: `global_cheapest_listings`, `recent_sales`
+- `routes/{vendor_resale,currency_exchange}.rs`: `sales`, `world_cheapest_listings`
+- `routes/{scrip_sources,vendor_sell}.rs`: the cheapest resource
+- `routes/recipe_analyzer.rs`: `global_cheapest_listings`, `sale_stats`, `sell_window_stats`, `raw_sales`, the sell-world listings resource; and `SellHistory` / `SellScopeBodies` (values of `sell_history` / `sell_scope_bodies`) keep `JsonSerdeCodec` but annotate their DTO fields with `#[serde(with = "ultros_frontend_core::columnar_wire::serde_with")]`.
+
+Consumers (`.get()`, `.read()`, `.await`) are unchanged: the codec is a type
+parameter, and no site names `ArcResource<…>` explicitly. `job_set_detail`'s
+`CheapestListingsMap` resource and the client-only `analyzer_kit/market.rs`
+loads are out of scope.
+
+### 8.4 Testing
+
+Unit tests in `columnar_wire.rs`: encoding `Ok::<_, AppError>(RecentSales)`
+yields the columnar JSON (`{"Ok":{"item_id":[…`); `Err` passes through;
+decode round-trips; `Option`/`Vec` nest. Manual: local serve, `curl` the
+flip-finder / recipe-analyzer / venture-analyzer HTML before (branch head
+before §8) and after, record raw and brotli sizes in the PR; the pages must
+still hydrate and render rows.
+
+### 8.5 Expected landing
+
+Local flip-finder HTML 9.5 MB raw before. Estimate after: recentSales
+4.8 → 1.4 MB, cheapest ×2 ~1.0 → 0.4 MB each, plus the escaping saving; on
+prod roughly 13.2 → ~3.5 MB raw and 1.69 → ~1.0 MB brotli.
