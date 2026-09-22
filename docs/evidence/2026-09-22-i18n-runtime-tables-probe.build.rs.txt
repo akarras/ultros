@@ -1,0 +1,97 @@
+// SIZE PROBE, archived as evidence — NOT part of the build.
+//
+// Saved with a .txt suffix so nothing compiles it. To reproduce the
+// "six locales runtime-loaded" row in docs/i18n-locale-bundle-size.md,
+// copy it over ultros-frontend/ultros-i18n/build.rs, run
+// ./scripts/measure_wasm_size.sh runtime-tables-probe, then restore the
+// real build.rs with `git checkout -- ultros-frontend/ultros-i18n/build.rs`.
+//
+// The resulting binary renders every non-English locale as blank strings.
+// It measures a size, it is not a working build.
+//
+// Emits the generated i18n module with the six non-default locales' string
+// tables removed and their accessors pointed at a never-populated OnceLock,
+// and with every const binding that reads a table turned into a `let` so it
+// stops being const-folded. The result does not render non-English correctly;
+// it exists only to measure what that end state costs in the wasm bundle.
+use leptos_i18n_build::{Config, ParseOptions, TranslationsInfos};
+use std::{error::Error, fs, path::PathBuf};
+
+const RUNTIME_LOCALES: [&str; 6] = ["fr", "de", "ja", "cn", "tc", "ko"];
+
+fn main() -> Result<(), Box<dyn Error>> {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+
+    let i18n_mod_directory = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("i18n");
+    let cfg = Config::new("en")?
+        .add_locale("fr")?
+        .add_locale("de")?
+        .add_locale("ja")?
+        .add_locale("cn")?
+        .add_locale("tc")?
+        .add_locale("ko")?
+        .parse_options(ParseOptions::new().interpolate_display(true));
+
+    let translations_infos = TranslationsInfos::parse(cfg)?;
+    translations_infos.emit_diagnostics();
+    translations_infos.rerun_if_locales_changed();
+    translations_infos.generate_i18n_module(i18n_mod_directory.clone())?;
+
+    let module = i18n_mod_directory.join("mod.rs");
+    let src = fs::read_to_string(&module)?;
+    fs::write(&module, rewrite(&src))?;
+    Ok(())
+}
+
+/// Find the `const STRINGS: &[&str; N] = &[ ... ];` block belonging to
+/// `I18nKeys_<locale>` and report `(start, end, N)`.
+fn strings_block(src: &str, locale: &str) -> (usize, usize, String) {
+    let anchor = format!("impl l_i18n_crate::__private::fetch_translations::TranslationUnit for I18nKeys_{locale} {{");
+    let impl_start = src.find(&anchor).expect("translation unit impl");
+    let needle = "const STRINGS: &[&str; ";
+    let decl = impl_start + src[impl_start..].find(needle).expect("STRINGS decl");
+    let count_start = decl + needle.len();
+    let count_end = count_start + src[count_start..].find("usize]").expect("count");
+    let count = src[count_start..count_end].to_string();
+    let array_start = decl + src[decl..].find("= &[").expect("array start");
+    let array_end = array_start + src[array_start..].find("\n        ];").expect("array end");
+    (array_start, array_end + "\n        ];".len(), count)
+}
+
+fn rewrite(src: &str) -> String {
+    let mut out = src.to_string();
+
+    for locale in RUNTIME_LOCALES {
+        // Drop the literal table. Nothing references `STRINGS` after the
+        // accessor below is replaced, so it is never emitted.
+        let (start, end, count) = strings_block(&out, locale);
+        out.replace_range(start..end, &format!("= &[\"\"; {count}usize];"));
+
+        // Point the accessor at a runtime table, exactly as the real design
+        // would. `#[inline(never)]` keeps this one function rather than
+        // inlining a OnceLock read into every one of its ~2,300 call sites.
+        let old = format!(
+            "impl I18nKeys_{locale} {{\n        pub const fn get_translations() -> &'static [&'static str; {count}usize] {{\n            <Self as l_i18n_crate::__private::fetch_translations::TranslationUnit>::STRINGS\n        }}\n    }}"
+        );
+        let new = format!(
+            "impl I18nKeys_{locale} {{\n        #[inline(never)]\n        pub fn get_translations() -> &'static [&'static str; {count}usize] {{\n            static TABLE: std::sync::OnceLock<&'static [&'static str; {count}usize]> = std::sync::OnceLock::new();\n            static EMPTY: [&str; {count}usize] = [\"\"; {count}usize];\n            *TABLE.get().unwrap_or(&&EMPTY)\n        }}\n    }}"
+        );
+        assert!(out.contains(&old), "accessor shape changed for {locale}");
+        out = out.replace(&old, &new);
+    }
+
+    // A `const` binding reading a table would be const-folded back into an
+    // immediate, which is the thing being measured. Make them runtime reads.
+    out = out.replace(
+        "const I18N_TRANSLATIONS: &[&str;",
+        "let I18N_TRANSLATIONS: &[&str;",
+    );
+    out = out.replace("const S: &str = ", "let S: &str = ");
+    out = out.replace("pub const fn ", "pub fn ");
+    out = out.replace("        const fn ", "        fn ");
+    out.replace(
+        "    #![allow(unused_braces)]",
+        "    #![allow(unused_braces)]\n    #![allow(non_snake_case)]",
+    )
+}
