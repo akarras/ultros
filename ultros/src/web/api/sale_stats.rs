@@ -109,7 +109,7 @@ async fn load_sale_stats(
         _ => HashMap::new(),
     };
 
-    let stats: Vec<ItemSaleStats> = rows
+    let mut stats: Vec<ItemSaleStats> = rows
         .into_iter()
         .map(|r| ItemSaleStats {
             item_id: r.item_id,
@@ -129,8 +129,17 @@ async fn load_sale_stats(
                 .unwrap_or_default(),
         })
         .collect();
+    sort_rows(&mut stats);
 
     serialize_body(stats, columnar)
+}
+
+/// ClickHouse returns rows in arbitrary order. Sorting by `(item_id, hq)`
+/// makes the payload deterministic across loads and, for the columnar
+/// shape, noticeably more compressible (adjacent rows share more prefix
+/// bytes once grouped by item).
+fn sort_rows(stats: &mut Vec<ItemSaleStats>) {
+    stats.sort_unstable_by_key(|s| (s.item_id, s.hq));
 }
 
 /// Either wire shape, pre-serialized for the cache.
@@ -173,5 +182,29 @@ mod tests {
         assert!(rows.starts_with(br#"{"stats":[{"item_id":2"#));
         let columnar = serialize_body(stats(), true).unwrap();
         assert!(columnar.starts_with(br#"{"item_id":[2,5],"hq":[false,true]"#));
+    }
+
+    #[test]
+    fn sort_rows_orders_by_item_id_then_hq() {
+        let mut out_of_order = vec![
+            ItemSaleStats {
+                item_id: 5,
+                hq: false,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 2,
+                hq: true,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 2,
+                hq: false,
+                ..Default::default()
+            },
+        ];
+        sort_rows(&mut out_of_order);
+        let sorted = serialize_body(out_of_order, true).unwrap();
+        assert!(sorted.starts_with(br#"{"item_id":[2,2,5],"hq":[false,true,false]"#));
     }
 }
