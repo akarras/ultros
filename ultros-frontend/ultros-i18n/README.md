@@ -18,7 +18,7 @@ locale changes; the translation helper scripts use this location too.
 All seven locales are compiled into every target, the wasm client included.
 That is deliberate, not an oversight: measured on `9b93be11`, every translated
 string in all seven languages is 168,924 B brotli — 5.1% of the client bundle,
-2.2% of a first load — while turning `dynamic_load` on would make `t_string!`
+3.3% of a first load — while turning `dynamic_load` on would make `t_string!`
 async at 1,801 synchronous call sites and inline the active locale's whole
 table into every SSR response. A scheme that avoids both — `en` compiled in,
 the other six runtime-loaded — was built as a size probe and measured at

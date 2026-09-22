@@ -42,9 +42,11 @@ Two things shrink that further in practice:
   used, and `en` is 71,652 of those 585,728 bytes. The six others are 87.8% of
   the text, putting the ceiling near **148 kB brotli** — and a build of that
   end state, below, lands at **141,576 B, 4.24%**.
-- The client already downloads a 4.47 MB game-data pack before it hydrates
-  (`/static/data/{version}/{lang}`, served as the raw `.rkyv`). Against a
-  ~7.8 MB first load, all seven languages of UI text are **2.16%**.
+- The client also downloads a game-data startup pack before it hydrates
+  (`/static/startup/…`, 1,718,599 B brotli for `en` on `ef1dda33`, after #1570
+  and #1575 shrank it from the 4.47 MB zlib pack this was first measured
+  against). Against a ~5.06 MB first load, all seven languages of UI text are
+  **3.34%**.
 
 The placeholder tree carries a few hundred *extra* string slots — leptos_i18n
 de-duplicates identical segments within a locale, and real translations repeat
@@ -131,7 +133,7 @@ script is archived at
 
 So the concern that de-constifying 40,786 bindings would eat the win was
 wrong: the overhead is about 6.7 kB brotli against a 148 kB ceiling. The
-design simply has a low ceiling. **141,576 B — 4.24% of the bundle, 1.81% of a
+design simply has a low ceiling. **141,576 B — 4.24% of the bundle, 2.80% of a
 first load** — is what it is worth, and it buys that with:
 
 - a build script coupled to the exact text `leptos_i18n_codegen` 0.6.2 emits,
