@@ -2576,7 +2576,7 @@
     "vendor_sell_filter_profit_min_label": "이익 (최소)",
     "vendor_sell_filter_category_label": "분류",
     "vendor_sell_result_count": "매물 {{ n }}개",
-    "vendor_sell_no_filters_hint": "필터 없음 — 모든 수익 매물 표시",
+    "vendor_sell_no_filters_hint": "필터 없음 — 모든 대상 매물 표시",
     "vendor_sell_error_listings": "매물 불러오기 오류: ",
     "vendor_sell_preset_best_profit": "최고 이익",
     "vendor_sell_preset_best_margin": "최고 마진"

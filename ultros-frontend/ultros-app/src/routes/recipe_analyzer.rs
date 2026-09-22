@@ -27,10 +27,7 @@ use crate::analyzer_kit::needed::{
 use crate::analyzer_kit::signals::{
     LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_price, stats_index,
 };
-use crate::analyzer_kit::stat_columns::{
-    StatKind, Window, market_picker_options, shared_cols_in, stat_label, toggle_shared_col,
-    window_label,
-};
+use crate::analyzer_kit::stat_columns::{StatKind, Window, stat_label, window_label};
 use crate::analyzer_kit::strip::{FormulaStrip, StripSelect, StripTerm};
 use crate::analyzer_kit::window::{MarketWindow, MarketWindowControl};
 use crate::columnar_wire::columnar_resource;
@@ -53,7 +50,7 @@ use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::price_basis::{BuyScope, CostBasis, RevenueMetric};
-use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
+use crate::query_defaults::{filter_query_signal, seed_analyzer_default_view};
 use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{
@@ -63,7 +60,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats, post_sparklines},
     components::{
         add_recipe_to_list::AddRecipeToList,
-        control_bar::{ControlBar, parse_visible_cols, serialize_visible_cols},
+        control_bar::{ControlBar, parse_visible_cols},
         crafter_settings::CrafterSettings,
         gil::*,
         icon::Icon,
@@ -83,7 +80,6 @@ use crate::{
 };
 use icondata as i;
 use leptos::prelude::*;
-use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_i18n::I18nContext;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use leptos_use::{UseIntervalReturn, use_interval};
@@ -127,6 +123,70 @@ enum Revenue {
     Unpriced,
 }
 
+/// Evidence about the listing actually used for revenue. Missing or mismatched
+/// history cannot establish that a listing is suspicious (or trustworthy).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ListingAssessment {
+    NotListing,
+    Unverified,
+    Supported,
+    Suspicious,
+}
+
+fn assess_listing(
+    signal: PriceSignal,
+    price: i32,
+    matching_listing: Option<i32>,
+    median: Option<i32>,
+) -> ListingAssessment {
+    if signal != PriceSignal::ListingMin {
+        return ListingAssessment::NotListing;
+    }
+    match median.filter(|median| *median > 0) {
+        Some(median) if matching_listing == Some(price) => {
+            if is_troll_listing(price, median) {
+                ListingAssessment::Suspicious
+            } else {
+                ListingAssessment::Supported
+            }
+        }
+        _ => ListingAssessment::Unverified,
+    }
+}
+
+fn listing_visible(assessment: ListingAssessment, hide_suspicious: bool) -> bool {
+    !hide_suspicious || assessment != ListingAssessment::Suspicious
+}
+
+/// These canonical native sorts always have settled query values (Missing is
+/// settled), so QueryGrid will run the exact domain comparator. Keep the native
+/// fallback for provider-backed sorts that QueryGrid can suspend while loading.
+fn grid_owns_settled_recipe_sort(token: Option<&str>) -> bool {
+    matches!(
+        token,
+        Some("grid:profit" | "grid:roi" | "grid:cost" | "grid:price")
+    )
+}
+
+/// Shared market columns describe the home world's exact output quality,
+/// even when the recipe values revenue across a datacenter or region.
+fn recipe_market_subject(
+    row: &RecipeProfitData,
+    home_listings: Option<&CheapestListingsMap>,
+) -> MarketSubject {
+    let listing = home_listings.and_then(|listings| {
+        let matches = listings.find_matching_listings(row.recipe.item_result);
+        if row.stat_hq { matches.hq } else { matches.lq }
+    });
+    let mut subject = MarketSubject::new(
+        row.recipe.item_result,
+        row.stat_hq,
+        listing.map_or(0, |listing| listing.world_id),
+    );
+    subject.listing_price = listing.map(|listing| listing.price);
+    subject
+}
+
 impl RecipeProfitData {
     fn price(&self) -> Option<i32> {
         match self.revenue {
@@ -164,6 +224,7 @@ fn profit_query_value(r: &RecipeProfitData) -> GridValue {
 
 #[derive(Clone, Debug, PartialEq)]
 struct RecipeProfitData {
+    listing_assessment: ListingAssessment,
     stats_failed: StatFailures,
     recipe: &'static Recipe,
     /// The selected revenue signal at the sell place, or nothing.
@@ -462,6 +523,7 @@ const FILTER_LISTING_DC: &str = "listing-dc";
 const FILTER_SUBCRAFTS: &str = "subcrafts";
 const FILTER_REQUIRE_HQ: &str = "require-hq";
 const FILTER_OUTLIERS: &str = "filter-outliers";
+const FILTER_HIDE_SUSPICIOUS: &str = "hide-suspicious";
 const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
 const FILTER_USE_ON_HAND: &str = "on-hand";
 /// Row filters over the sell place's sale evidence at the page window.
@@ -586,6 +648,10 @@ fn recipe_filter_controls(
         toggle_control(
             FILTER_OUTLIERS,
             t_string!(i18n, filter_outliers).to_string(),
+        ),
+        toggle_control(
+            FILTER_HIDE_SUSPICIOUS,
+            t_string!(i18n, analyzer_listing_hide_suspicious).to_string(),
         ),
         toggle_control(
             FILTER_EXCLUDE_SHARDS,
@@ -729,23 +795,6 @@ static OPTIONAL_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         .map(|c| c.id)
         .collect()
 });
-/// `?cols=` with the native set re-serialized in table order and every
-/// foreign token (a shared `market-*` id) kept where it was, so a native
-/// toggle never drops a shared column the user inserted.
-fn serialize_cols_preserving(visible: &HashSet<&'static str>, previous: Option<&str>) -> String {
-    let mut ids: Vec<String> = serialize_visible_cols(visible, &OPTIONAL_COLUMN_ORDER)
-        .split(',')
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-        .collect();
-    for token in previous.unwrap_or("").split(',').filter(|t| !t.is_empty()) {
-        if !OPTIONAL_COLUMN_ORDER.contains(&token) && !ids.iter().any(|id| id == token) {
-            ids.push(token.to_owned());
-        }
-    }
-    ids.join(",")
-}
-
 /// Default-visible optional columns, derived from `default_on`. Sales/day
 /// is already an always-on column; the confidence chip joins it by default
 /// so stale or manipulated sell-world markets don't silently top the
@@ -783,9 +832,9 @@ fn recipe_query_columns(
 }
 
 impl AnalyzerRow for RecipeRow {
-    type Key = xiv_gen::RecipeId;
+    type Key = i32;
     fn key(&self) -> Self::Key {
-        self.recipe.key_id
+        self.recipe.key_id.0
     }
 }
 
@@ -909,10 +958,10 @@ fn label_price(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, price).to_string()
 }
 fn label_daily(i18n: I18nContext<Locale, I18nKeys>) -> String {
-    t_string!(i18n, daily_sales).to_string()
+    t_string!(i18n, recipe_analyzer_native_sales).to_string()
 }
 fn label_avg(i18n: I18nContext<Locale, I18nKeys>) -> String {
-    t_string!(i18n, avg_price).to_string()
+    t_string!(i18n, recipe_analyzer_native_average).to_string()
 }
 fn label_confidence(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, analyzer_col_confidence).to_string()
@@ -2418,6 +2467,8 @@ fn compare_recipes(
 /// Everything the pricing pass reads, snapshotted out of the reactive
 /// graph so the pass is a plain function (and unit-testable).
 struct PriceInputs<'a> {
+    /// False when listing and history bodies resolved to different markets.
+    listing_stats_match: bool,
     stats_failed: StatFailures,
     recipes: &'a [&'static Recipe],
     recipe_level_tables: &'static HashMap<RecipeLevelTableId, xiv_gen::RecipeLevelTable>,
@@ -2966,7 +3017,28 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             .then(|| sell_stat.map(|s| s.median_price).filter(|p| *p > 0))
             .flatten();
 
+        // Both operands belong to the same scope and exact output quality.
+        // A buy-scope fallback cannot be compared with sell-world history.
+        let matching_listing = inp.revenue_listings.and_then(|listings| {
+            let matches = listings.find_matching_listings(recipe.item_result);
+            if price_hq { matches.hq } else { matches.lq }.map(|listing| listing.price)
+        });
+        let matching_median = (inp.listing_stats_match && !inp.stats_failed.revenue)
+            .then(|| {
+                inp.revenue_stats?
+                    .get(&(recipe.item_result, price_hq))
+                    .map(|s| s.median_price)
+            })
+            .flatten();
+        let listing_assessment = assess_listing(
+            inp.formula.revenue_signal(),
+            market_price,
+            matching_listing,
+            matching_median,
+        );
+
         results.push(RecipeProfitData {
+            listing_assessment,
             stats_failed: inp.stats_failed,
             recipe,
             revenue,
@@ -3029,25 +3101,33 @@ fn sort_recipes(
     // "—" rather than shimmering; for sorting that is still "not landed",
     // because every key would compare `None` against `None`, leave the
     // key-id tiebreak in charge, and put the table in recipe-id order.
-    let stats_30 = stats_30.filter(|i| !i.is_empty());
-    let mode = effective_sort_mode(mode, stats_30.is_some());
     let mut kept: Vec<Arc<RecipeProfitData>> = rows.to_vec();
     // The table is virtualized, so retaining the full result set adds
     // browser-side rows without increasing DOM size or server work.
-    kept.sort_by(|a, b| {
-        // Unpriced rows (a sale-statistic revenue with no sale row) trail
-        // every priced row whatever the mode and direction: there is no
-        // figure to rank, and a fast-moving ingredient market is not one.
-        a.line
-            .is_none()
-            .cmp(&b.line.is_none())
-            .then_with(|| compare_recipes(mode, dir, a, b, stats_30))
-            // Deterministic tiebreak: the input comes from a std HashMap, so
-            // without it ties could order differently on the server and the
-            // client and mismatch the SSR-rendered rows.
-            .then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
-    });
+    kept.sort_by(|a, b| compare_recipe_rows(a, b, mode, dir, stats_30));
     kept.into_iter().enumerate().collect()
+}
+
+fn compare_recipe_rows(
+    a: &RecipeRow,
+    b: &RecipeRow,
+    mode: SortMode,
+    dir: SortDir,
+    stats_30: Option<&StatsIndex>,
+) -> Ordering {
+    let stats_30 = stats_30.filter(|i| !i.is_empty());
+    let mode = effective_sort_mode(mode, stats_30.is_some());
+    // Unpriced rows (a sale-statistic revenue with no sale row) trail
+    // every priced row whatever the mode and direction: there is no
+    // figure to rank, and a fast-moving ingredient market is not one.
+    a.line
+        .is_none()
+        .cmp(&b.line.is_none())
+        .then_with(|| compare_recipes(mode, dir, a, b, stats_30))
+        // Deterministic tiebreak: the input comes from a std HashMap, so
+        // without it ties could order differently on the server and the
+        // client and mismatch the SSR-rendered rows.
+        .then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
 }
 
 /// One sell-world history payload: the 7-day rollup plus, only when that
@@ -3293,17 +3373,12 @@ fn RecipeAnalyzerTable(
     /// The page's filter registry: the grid evaluates its filters, the
     /// toolbar counts its rows.
     filters: FilterRegistry,
-    /// The raw `?cols=`, so a toggle keeps the shared ids it does not own.
-    #[prop(into)]
-    cols_param: Signal<Option<String>>,
-
     world: Signal<String>,
     /// Visible optional columns (`?cols=`), owned by the parent because the
     /// table remounts whenever its resources change.
     visible_cols: Memo<HashSet<&'static str>>,
     /// Visible columns plus hidden filters/sorts that require data.
     query_cols: Memo<HashSet<&'static str>>,
-    set_cols_param: SignalSetter<Option<String>>,
     /// Current `?sort=`, owned by the parent for the same remount reason.
     sort_mode: Memo<Option<SortMode>>,
     /// Current `?dir=`, owned by the parent for the same remount reason.
@@ -3400,6 +3475,7 @@ fn RecipeAnalyzerTable(
     let (use_subcrafts, _) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
     let (require_hq, _) = filter_query_signal::<bool>(FILTER_REQUIRE_HQ);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+    let (hide_suspicious, _) = filter_query_signal::<bool>(FILTER_HIDE_SUSPICIOUS);
     let (exclude_shards_url, _) = filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
     let (use_on_hand_url, _) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
     let (sold_only, _) = filter_query_signal::<bool>(FILTER_SOLD);
@@ -3511,6 +3587,15 @@ fn RecipeAnalyzerTable(
         .as_ref()
         .and_then(|b| b.stats.as_ref())
         .map(|s| Arc::new(stats_index(s)));
+    let listing_stats_match = revenue_listings_source(
+        sell_scope_value,
+        sell_scope_is_buy_scope,
+        scope_prices.is_some(),
+    ) == revenue_stats_source(
+        sell_scope_value,
+        sell_scope_is_buy_scope,
+        scope_stats_index.is_some(),
+    );
     let revenue_prices: Option<Arc<CheapestListingsMap>> = match revenue_listings_source(
         sell_scope_value,
         sell_scope_is_buy_scope,
@@ -3619,6 +3704,27 @@ fn RecipeAnalyzerTable(
         let scoped_now = scope_is_wider.then(|| revenue_now.clone());
         for col in RECIPE_COLUMNS.iter() {
             let extra = match col.spec.kind {
+                ColumnKind::SalesPerDay7 | ColumnKind::AvgPrice => HeaderExtra {
+                    title: t_string!(
+                        i18n,
+                        recipe_analyzer_native_history,
+                        world = sell_now.clone()
+                    )
+                    .to_string(),
+                    line2: Some(HeaderLine2 {
+                        sub_label: if filter_outliers().unwrap_or(false) {
+                            format!(
+                                "{} · {}",
+                                t_string!(i18n, analyzer_recent_sample_suffix),
+                                sell_now
+                            )
+                        } else {
+                            window_and_place(Window::D7, &sell_now)
+                        },
+                        pill: None,
+                    }),
+                    header_class: Some(HEAD_MD_2),
+                },
                 ColumnKind::RevSignal(s) => HeaderExtra {
                     title: format!(
                         "{} {}",
@@ -3750,6 +3856,7 @@ fn RecipeAnalyzerTable(
             let needs = needs.get();
             let dc_of = |id: i32| world_names_for_pricing.get(&id).map(|(_, dc)| dc.as_str());
             let inp = PriceInputs {
+                listing_stats_match,
                 stats_failed,
                 recipes: &all_recipes,
                 recipe_level_tables,
@@ -3805,11 +3912,22 @@ fn RecipeAnalyzerTable(
 
     // Sorted, in header order; the grid applies the row filters. The
     // 30-day slot is read here so a body landing re-sorts a 30-day sort.
+    let table_query = use_query_map_or_default();
     let computed_data = Memo::new(move |_| {
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
         let stats_30 = sell_market.stats(Window::D30);
-        sort_recipes(&priced(), mode, dir, stats_30.as_deref())
+        let hide_suspicious = hide_suspicious().unwrap_or(false);
+        let rows = priced()
+            .iter()
+            .filter(|row| listing_visible(row.listing_assessment, hide_suspicious))
+            .cloned()
+            .collect::<Vec<_>>();
+        if table_query.with(|query| grid_owns_settled_recipe_sort(query.get("sort").as_deref())) {
+            rows.into_iter().enumerate().collect()
+        } else {
+            sort_recipes(&rows, mode, dir, stats_30.as_deref())
+        }
     });
 
     // Publish the sorted rows for the page's lazy fetch — the hook reads
@@ -3853,13 +3971,13 @@ fn RecipeAnalyzerTable(
     });
     let clear_job_filter = Callback::new(move |()| set_job_filter(None));
 
-    // Optional-column picker, flip-finder style. Long labels for the picker
-    // (recognition, not recall — same rationale as the filter menu), read
-    // straight off the column table; then every shared sale-history column
-    // under the kit's window groups, for comparisons across windows.
-    let column_options = Signal::derive(move || {
+    // Native presentation metadata feeds the grid definitions once. The
+    // toolbar reads the completed registry, including every shared market
+    // column, and uses the same visibility commands as the header menus.
+    // Do not read the registry here: that would cycle back into its definitions.
+    let native_picker = Signal::derive(move || {
         let f = formula.get();
-        let mut options = grouped_picker_options(
+        grouped_picker_options(
             &RECIPE_COLUMNS,
             i18n,
             &PickerContext {
@@ -3875,31 +3993,8 @@ fn RecipeAnalyzerTable(
                 sell_scope_is_world: sell_scope.map(SellScope::scope).unwrap_or(Scope::World)
                     == Scope::World,
             },
-        );
-        options.extend(market_picker_options(sell_market.window.selected.get()));
-        options
+        )
     });
-    // The picker's checked state: the native ids beside the shared ones,
-    // both read from `?cols=`.
-    let picker_visible = Signal::derive(move || {
-        let mut set = visible_cols.get();
-        set.extend(shared_cols_in(cols_param.get().as_deref()));
-        set
-    });
-    let toggle_column = Callback::new(move |col: &'static str| {
-        let previous = cols_param.get_untracked();
-        let next = if OPTIONAL_COLUMN_ORDER.contains(&col) {
-            let mut set = visible_cols.get_untracked();
-            if !set.remove(col) {
-                set.insert(col);
-            }
-            serialize_cols_preserving(&set, previous.as_deref())
-        } else {
-            toggle_shared_col(previous.as_deref(), &DEFAULT_COLS.join(","), col)
-        };
-        set_cols_param.set(Some(next));
-    });
-    let reset_columns = Callback::new(move |_| set_cols_param.set(None));
 
     // The cells the grid hands back to the page: they need context the row
     // does not carry (item names and icons, the world link, the on-hand
@@ -3919,6 +4014,7 @@ fn RecipeAnalyzerTable(
                     .unwrap_or("Unknown");
                 let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                 let job_abbrev = craft_type_acronym(data.recipe.craft_type);
+                let unverified = data.listing_assessment == ListingAssessment::Unverified;
                 view! {
                     <div  class=class>
                          <a
@@ -3934,6 +4030,12 @@ fn RecipeAnalyzerTable(
                                     {t_string!(i18n, recipe_analyzer_item_level_label, level = data.required_level, ilvl = item_level).to_string()}
                                     " " {job_abbrev}
                                 </span>
+                                {unverified.then(|| view! {
+                                    <span class="text-[10px] leading-3 text-amber-300" data-listing-evidence="unverified"
+                                        title=t_string!(i18n, analyzer_listing_unverified_help).to_string()>
+                                        {t!(i18n, analyzer_listing_unverified_label)}
+                                    </span>
+                                })}
                             </div>
                         </a>
                     </div>
@@ -4232,6 +4334,9 @@ fn RecipeAnalyzerTable(
     // in a render effect and `t_string!` is tracked, so resolving the
     // labels there would rebuild the whole slot on a language switch.
     let presets = Signal::derive(move || recipe_analyzer_presets(i18n));
+    // Resolve the reactive provider once, then borrow it during O(n log n)
+    // domain comparisons rather than cloning the scope and Arc each time.
+    let comparison_stats = Memo::new(move |_| sell_market.stats(Window::D30));
 
     // Built before the page's view so the grid registers its filtered row
     // count with the registry before the toolbar's summary and the empty
@@ -4245,8 +4350,7 @@ fn RecipeAnalyzerTable(
                     // The output item where it sells, at the quality the
                     // row priced: what every shared `market-*` column reads.
                     subject=Arc::new(move |data: &RecipeRow| {
-                        let mut subject = MarketSubject::new(data.recipe.item_result, data.stat_hq, data.revenue_world_id);
-                        subject.listing_price = data.rev_alt[PriceSignal::ListingMin.index()];
+                        let mut subject = recipe_market_subject(data, sell_world_prices.as_deref());
                         subject.label = items.get(&ItemId(data.recipe.item_result)).map(|i| i.name.to_string()).unwrap_or_default();
                         subject
                     })
@@ -4257,6 +4361,15 @@ fn RecipeAnalyzerTable(
                     ctx=cell_ctx
                     measure_version=measure_version
                     custom=custom
+                    custom_compare=Arc::new(move |a, b, mode, dir| {
+                        if matches!(mode, SortMode::Volume30 | SortMode::Vwap30) {
+                            // Provider-backed metric extraction and computed_data
+                            // already track this body once per query evaluation.
+                            comparison_stats.with_untracked(|stats| compare_recipe_rows(a, b, mode, dir, stats.as_deref()))
+                        } else {
+                            compare_recipe_rows(a, b, mode, dir, None)
+                        }
+                    })
                     custom_value=Arc::new(move |data: &RecipeRow, kind| {
                         match kind {
                             ColumnKind::Item => items.get(&ItemId(data.recipe.item_result))
@@ -4307,7 +4420,7 @@ fn RecipeAnalyzerTable(
                         let controls = recipe_filter_controls(i18n, window);
                         keys.iter().filter_map(|key| controls.iter().find(|c| c.key == *key).cloned()).collect()
                     })
-                    picker=column_options
+                    picker=native_picker
                     custom_measure=Arc::new(move |data: &RecipeRow, kind| {
                         match kind {
                             ColumnKind::Item => (items.get(&ItemId(data.recipe.item_result)).map(|i|i.name.as_str()).unwrap_or_default().to_string(),80.0),
@@ -4414,10 +4527,6 @@ fn RecipeAnalyzerTable(
                     }
                         .into_any()
                 }
-                columns=column_options
-                visible_columns=picker_visible
-                on_toggle_column=toggle_column
-                on_reset_columns=reset_columns
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, recipe_analyzer_no_filters_hint).to_string()
                 })
@@ -4482,7 +4591,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // Seeded here rather than in RecipeAnalyzerTable: that lives inside the
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
-    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
+    seed_analyzer_default_view("recipe-analyzer");
     let query = use_query_map_or_default();
     let (selected_world, set_selected_world) = use_analyzer_world("/recipe-analyzer");
     let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
@@ -4497,9 +4606,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The evidence row filters read the sell place's window body; either
     // being set is what makes the fetch gate request it.
     let (sold_page, _) = filter_query_signal::<bool>(FILTER_SOLD);
+    let (hide_suspicious_page, _) = filter_query_signal::<bool>(FILTER_HIDE_SUSPICIOUS);
     let (last_sold_page, _) = filter_query_signal::<String>(FILTER_LAST_SOLD);
     let evidence_wanted = Memo::new(move |_| {
         sold_page.get().unwrap_or(false)
+            || hide_suspicious_page.get().unwrap_or(false)
             || last_sold_within_secs(last_sold_page.get().as_deref()).is_some()
     });
 
@@ -4537,7 +4648,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     // `?cols=` lives here rather than in the table because the table
     // remounts whenever its resources change.
-    let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let (cols_param, _) = query_signal::<String>("cols");
     let (sort_mode, _) = query_signal::<SortMode>("sort");
     let (sort_dir, _) = query_signal::<SortDir>("dir");
     let visible_cols = Memo::new(move |_| {
@@ -5164,11 +5275,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         window=window.selected.get()
                                         sell_market=sell_market
                                         filters=filters
-                                        cols_param=cols_param
                                         world=Signal::derive(buy_scope_name)
                                         visible_cols=visible_cols
                                         query_cols=query_cols
-                                        set_cols_param=set_cols_param
                                         sort_mode=sort_mode
                                         sort_dir=sort_dir
                                         stats_loaded=stats_loaded
@@ -5338,6 +5447,7 @@ mod test {
                     "subcrafts",
                     "require-hq",
                     "filter-outliers",
+                    "hide-suspicious",
                     "shards-exclude",
                     "on-hand",
                     "sold",
@@ -5366,6 +5476,7 @@ mod test {
                 FILTER_SUBCRAFTS,
                 FILTER_REQUIRE_HQ,
                 FILTER_OUTLIERS,
+                FILTER_HIDE_SUSPICIOUS,
                 FILTER_EXCLUDE_SHARDS,
                 FILTER_USE_ON_HAND,
                 FILTER_SOLD,
@@ -6194,6 +6305,7 @@ mod test {
 
     struct RunOpts {
         outliers: bool,
+        suspicious_outputs: bool,
         needs: NeededSignals,
         sell_listings: bool,
         sell_stats: bool,
@@ -6212,6 +6324,7 @@ mod test {
         fn default() -> Self {
             Self {
                 outliers: false,
+                suspicious_outputs: false,
                 needs: NeededSignals::default(),
                 sell_listings: true,
                 sell_stats: true,
@@ -6340,9 +6453,38 @@ mod test {
     fn run_with(cost: PriceSignal, revenue: PriceSignal, o: &RunOpts) -> Vec<RecipeProfitData> {
         let data = xiv_gen_db::data();
         let recipes = fixture_recipes();
-        let (buy, sell, stats) = fixture(&recipes);
+        let (buy, mut sell, stats) = fixture(&recipes);
         let index = stats_index(&stats);
-        let sell_index = index.clone();
+        let mut sell_index = index.clone();
+        if o.suspicious_outputs {
+            sell = CheapestListingsMap::from(CheapestListings {
+                cheapest_listings: recipes
+                    .iter()
+                    .flat_map(|recipe| {
+                        [false, true].map(|hq| CheapestListingItem {
+                            item_id: recipe.item_result,
+                            hq,
+                            cheapest_price: 40_000_000,
+                            world_id: 3,
+                        })
+                    })
+                    .collect(),
+            });
+            for recipe in &recipes {
+                for hq in [false, true] {
+                    sell_index.insert(
+                        (recipe.item_result, hq),
+                        ItemSaleStats {
+                            item_id: recipe.item_result,
+                            hq,
+                            median_price: 10_000,
+                            num_sold: 700,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
         let empty_index = StatsIndex::new();
         let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let raw_sales = HashMap::new();
@@ -6375,6 +6517,7 @@ mod test {
             o.sell_scope.map(SellScope),
         );
         let inp = PriceInputs {
+            listing_stats_match: true,
             stats_failed: StatFailures::default(),
             recipes: &recipes,
             recipe_level_tables: &data.recipe_level_tables,
@@ -7360,6 +7503,7 @@ mod test {
             .find(|r| r.key_id.0 == key)
             .expect("fixture recipe");
         Arc::new(RecipeProfitData {
+            listing_assessment: ListingAssessment::Unverified,
             stats_failed: StatFailures::default(),
             recipe,
             revenue: Revenue::Priced {
@@ -7535,35 +7679,6 @@ mod test {
         );
         let filters = resolve_filters(&query, &recipe_filter_aliases());
         assert_eq!(filters.get("profit").unwrap().op, FilterOp::Lte);
-    }
-
-    /// A native toggle re-serializes the native set in table order and keeps
-    /// every shared id where it was; a shared toggle leaves the native ids
-    /// alone.
-    #[test]
-    fn column_toggles_keep_the_ids_they_do_not_own() {
-        let visible: HashSet<&'static str> = [COL_TAX, COL_CONFIDENCE].into_iter().collect();
-        assert_eq!(
-            serialize_cols_preserving(&visible, Some("confidence,market-sale-median-30,tax")),
-            "confidence,tax,market-sale-median-30"
-        );
-        assert_eq!(serialize_cols_preserving(&visible, None), "confidence,tax");
-        assert_eq!(
-            serialize_cols_preserving(&HashSet::new(), Some("market-gil")),
-            "market-gil"
-        );
-        assert_eq!(
-            toggle_shared_col(
-                Some("confidence,tax"),
-                &DEFAULT_COLS.join(","),
-                "market-gil"
-            ),
-            "confidence,tax,market-gil"
-        );
-        assert_eq!(
-            toggle_shared_col(None, &DEFAULT_COLS.join(","), "market-gil"),
-            "confidence,market-gil"
-        );
     }
 
     #[test]
@@ -8013,6 +8128,163 @@ mod test {
                 note: CellNote::Troll { listing: true }
             }
         );
+    }
+
+    #[test]
+    fn suspicious_listing_filter_hides_high_velocity_trolls_and_can_be_cleared() {
+        // Ruthenium-shaped: sales velocity can be perfectly healthy while the
+        // only current listing asks thousands of times the realized price.
+        let assessment = assess_listing(
+            PriceSignal::ListingMin,
+            40_000_000,
+            Some(40_000_000),
+            Some(10_000),
+        );
+        assert_eq!(assessment, ListingAssessment::Suspicious);
+        assert!(!listing_visible(assessment, true));
+        assert!(listing_visible(assessment, false));
+        let rows = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                suspicious_outputs: true,
+                ..RunOpts::default()
+            },
+        );
+        assert!(!rows.is_empty());
+        for row in &rows {
+            assert!(
+                row.daily_sales >= 1.0,
+                "ordinary velocity defaults cannot remove this row"
+            );
+            assert_eq!(row.listing_assessment, ListingAssessment::Suspicious);
+            assert!(!listing_visible(row.listing_assessment, true));
+            assert!(listing_visible(row.listing_assessment, false));
+        }
+        assert_eq!(
+            assess_listing(PriceSignal::ListingMin, 50_000, Some(50_000), Some(1_000)),
+            ListingAssessment::Supported
+        );
+        assert_eq!(
+            assess_listing(PriceSignal::ListingMin, 50_001, Some(50_001), Some(1_000)),
+            ListingAssessment::Suspicious
+        );
+    }
+
+    #[test]
+    fn suspicious_listing_filter_preserves_unknown_or_mismatched_evidence() {
+        for (listing, median) in [
+            (Some(40_000_000), None),
+            (Some(40_000_000), Some(0)),
+            (None, Some(10_000)),
+            (Some(20_000), Some(10_000)),
+        ] {
+            let assessment = assess_listing(PriceSignal::ListingMin, 40_000_000, listing, median);
+            assert_eq!(assessment, ListingAssessment::Unverified);
+            assert!(listing_visible(assessment, true));
+        }
+        let history = assess_listing(
+            PriceSignal::SaleMedian,
+            40_000_000,
+            Some(40_000_000),
+            Some(10_000),
+        );
+        assert_eq!(history, ListingAssessment::NotListing);
+        assert!(listing_visible(history, true));
+    }
+
+    #[test]
+    fn upstream_sort_is_skipped_only_when_grid_values_cannot_be_pending() {
+        for id in ["profit", "roi", "cost", "price"] {
+            assert!(grid_owns_settled_recipe_sort(Some(&format!("grid:{id}"))));
+        }
+        for token in [
+            None,
+            Some("profit"),
+            Some("grid:volume-30d"),
+            Some("grid:market-sale-median"),
+            Some("grid:daily-sales"),
+            Some("grid:unknown"),
+        ] {
+            assert!(!grid_owns_settled_recipe_sort(token));
+        }
+    }
+
+    #[test]
+    fn shared_market_subject_uses_exact_home_quality_not_scoped_revenue() {
+        let mut row = (*price_row(
+            fixture_recipes()[0].key_id.0,
+            40_000_000,
+            Some(10_000),
+            false,
+        ))
+        .clone();
+        row.stat_hq = true;
+        row.revenue_world_id = 999;
+        row.rev_alt[PriceSignal::ListingMin.index()] = Some(40_000_000);
+        let home = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: [false, true]
+                .map(|hq| CheapestListingItem {
+                    item_id: row.recipe.item_result,
+                    hq,
+                    cheapest_price: if hq { 500 } else { 100 },
+                    world_id: 3,
+                })
+                .to_vec(),
+        });
+        let subject = recipe_market_subject(&row, Some(&home));
+        assert!(subject.hq);
+        assert_eq!(subject.listing_price, Some(500));
+        assert_eq!(subject.world_id, 3);
+        let unknown = recipe_market_subject(&row, None);
+        assert_eq!(unknown.listing_price, None);
+        assert_eq!(unknown.world_id, 0);
+    }
+
+    #[test]
+    fn pricing_pass_assesses_only_history_for_the_priced_quality_and_market() {
+        let recipes = fixture_recipes();
+        let (buy, sell, stats) = fixture(&recipes);
+        let stats = stats_index(&stats);
+        for scope in [Scope::World, Scope::Region] {
+            let (scope_listings, scope_stats) = scope_fixture(&recipes, &buy, &sell, &stats);
+            let (expected_listings, expected_stats) = if scope == Scope::World {
+                (&sell, &stats)
+            } else {
+                (&scope_listings, &scope_stats)
+            };
+            let rows = run_with(
+                PriceSignal::ListingMin,
+                PriceSignal::ListingMin,
+                &RunOpts {
+                    sell_scope: Some(scope),
+                    scope_bodies: true,
+                    ..RunOpts::default()
+                },
+            );
+            assert!(!rows.is_empty());
+            for row in rows {
+                let listings = expected_listings.find_matching_listings(row.recipe.item_result);
+                let listing = if row.stat_hq {
+                    listings.hq
+                } else {
+                    listings.lq
+                }
+                .map(|l| l.price);
+                let median = expected_stats
+                    .get(&(row.recipe.item_result, row.stat_hq))
+                    .map(|s| s.median_price);
+                assert_eq!(
+                    row.listing_assessment,
+                    assess_listing(
+                        PriceSignal::ListingMin,
+                        row.price().unwrap(),
+                        listing,
+                        median
+                    )
+                );
+            }
+        }
     }
 
     fn test_ctx() -> CellCtx {
@@ -8595,6 +8867,7 @@ mod test {
         let formula = ProfitFormula::recipe_from_query(None, Some(revenue), None)
             .effective(false, revenue_body);
         let (rows, _) = price_rows(&PriceInputs {
+            listing_stats_match: true,
             stats_failed: StatFailures::default(),
             recipes: &[&RECIPE],
             recipe_level_tables: &xiv_gen_db::data().recipe_level_tables,
@@ -8687,6 +8960,7 @@ mod test {
         let formula = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None)
             .effective(false, true);
         let (rows, _) = price_rows(&PriceInputs {
+            listing_stats_match: true,
             stats_failed: StatFailures::default(),
             recipes: &[recipe],
             recipe_level_tables: &data.recipe_level_tables,
@@ -8974,6 +9248,7 @@ mod test {
         )
         .effective(false, revenue_stats.is_some());
         let (rows, _) = price_rows(&PriceInputs {
+            listing_stats_match: true,
             stats_failed: StatFailures::default(),
             recipes: &[&RECIPE],
             recipe_level_tables: &xiv_gen_db::data().recipe_level_tables,
@@ -11023,6 +11298,7 @@ mod test {
          -> RecipeProfitData {
             let formula = ProfitFormula::recipe_from_query(None, None, None);
             let (rows, _) = price_rows(&PriceInputs {
+                listing_stats_match: true,
                 stats_failed: StatFailures::default(),
                 recipes: &[&RECIPE],
                 recipe_level_tables: &xiv_gen_db::data().recipe_level_tables,

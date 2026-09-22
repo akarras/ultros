@@ -2,6 +2,7 @@ use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
+use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -17,14 +18,16 @@ use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap}
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::registry::FilterAlias;
-use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
+use crate::components::virtual_grid::saved_views::{
+    GridPresetView, GridSavedViews, provide_grid_saved_views,
+};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::use_world_helper;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::filter_query_signal;
 use crate::query_defaults::query_signal;
-use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -42,7 +45,7 @@ use crate::{
         },
         world_picker::WorldOnlyPicker,
     },
-    global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
+    global_state::home_world::use_home_world,
 };
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
@@ -71,6 +74,7 @@ struct MaterialInfo {
     item_id: ItemId,
     total_quantity: i32,
     unit_cost: i32,
+    unpriced: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,8 +93,33 @@ struct FCCraftProfitData {
     daily_sales: f32,
     avg_price: i32,
     total_sales: usize,
+    sales_available: bool,
     shard_cost: i32,
     on_hand_savings: i32,
+}
+
+impl FCCraftProfitData {
+    fn complete_prices(&self) -> bool {
+        complete_material_prices(&self.materials)
+    }
+
+    fn financial_value(&self, value: i32) -> GridValue {
+        if self.pricing_pending {
+            GridValue::Pending
+        } else if !self.complete_prices() {
+            GridValue::Unavailable
+        } else {
+            GridValue::Number(value as f64)
+        }
+    }
+}
+
+fn complete_material_prices(materials: &[MaterialInfo]) -> bool {
+    !materials.is_empty() && materials.iter().all(|material| !material.unpriced)
+}
+
+fn unpriced_material(market_quantity: i32, unit_price: i32, excluded: bool) -> bool {
+    market_quantity > 0 && unit_price == 0 && !excluded
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -153,6 +182,7 @@ const FILTER_ROI: &str = "roi";
 const FILTER_MIN_SALES: &str = "min-sales";
 const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
 const FILTER_USE_ON_HAND: &str = "on-hand";
+const FILTER_COMPLETE_PRICES: &str = "complete-prices";
 
 /// The page's built-in views, offered above the reader's own saved ones.
 ///
@@ -187,6 +217,7 @@ const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[
     FILTER_MIN_SALES,
     FILTER_EXCLUDE_SHARDS,
     FILTER_USE_ON_HAND,
+    FILTER_COMPLETE_PRICES,
 ];
 
 const FC_TABLE_CLASS: &str = "fc-craft-table";
@@ -279,6 +310,11 @@ fn calculate_fc_project_cost<P: PriceLookup + ?Sized>(
             item_id,
             total_quantity: quantity,
             unit_cost: line.unit_price,
+            unpriced: unpriced_material(
+                line.used_from_market,
+                line.unit_price,
+                is_shard && !matches!(opts.shards, ShardsMode::IncludeMarket),
+            ),
         });
     }
 
@@ -306,6 +342,7 @@ fn FCCraftingAnalyzerTable(
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
+    sales_world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
@@ -332,6 +369,7 @@ fn FCCraftingAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+    let (complete_prices, _) = filter_query_signal::<bool>(FILTER_COMPLETE_PRICES);
     let (exclude_shards_url, _set_exclude_shards) =
         filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
     let (use_on_hand_url, _set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
@@ -460,18 +498,13 @@ fn FCCraftingAnalyzerTable(
                     .is_some_and(|price| price.fallback)
                 });
 
-            if cost == 0 {
-                // Cost 0 means probably missing data or no materials required (unlikely for valid projects)
-                continue;
-            }
-
-            // Listing fallback values cannot establish profitability while
-            // the selected sale-price inputs are still loading.
-            if !pricing_pending && cost >= market_price {
-                continue;
-            }
-
             let profit = market_price - cost;
+            if complete_prices().unwrap_or(false)
+                && !pricing_pending
+                && !complete_material_prices(&materials)
+            {
+                continue;
+            }
             let roi = if cost > 0 {
                 (profit as f64 / cost as f64 * 100.0) as i32
             } else {
@@ -493,6 +526,7 @@ fn FCCraftingAnalyzerTable(
                 daily_sales: sales_stats.daily_sales,
                 avg_price: sales_stats.avg_price,
                 total_sales: sales_stats.total_sales,
+                sales_available: recent_sales.is_some(),
                 shard_cost,
                 on_hand_savings,
             });
@@ -502,6 +536,10 @@ fn FCCraftingAnalyzerTable(
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
         results.sort_unstable_by(|a, b| {
+            let coverage = b.complete_prices().cmp(&a.complete_prices());
+            if coverage != Ordering::Equal {
+                return coverage;
+            }
             let metric = compare_fc_crafts(mode, a, b);
             let metric = if dir == SortDir::Asc {
                 metric
@@ -550,6 +588,10 @@ fn FCCraftingAnalyzerTable(
         ],
         Signal::derive(move || {
             vec![
+                toggle_control(
+                    FILTER_COMPLETE_PRICES,
+                    t_string!(i18n, scrip_sources_complete_prices).to_string(),
+                ),
                 price_control(
                     "cost-basis",
                     t_string!(i18n, market_ingredient_price).to_string(),
@@ -595,186 +637,183 @@ fn FCCraftingAnalyzerTable(
     );
 
     view! {
-            <div class="flex flex-col gap-6">
-                <ActiveListBanner />
-                <div class="flex flex-wrap gap-3">
-                    <CalculationStrip calculation window=market.window />
+                <div class="flex flex-col gap-6">
+                    <ActiveListBanner />
+                    <div class="flex flex-wrap gap-3">
+                        <CalculationStrip calculation window=market.window />
 
-                </div>
+                    </div>
 
-                <ControlBar sticky=false
-                    summary=move || {
-                        view! {
-                            <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                                {move || t!(i18n, fc_crafting_result_count, n = move || filters.row_count())}
-                            </span>
-                        }
-                        .into_any()
-                    }
-                    actions=move || {
-                        view! {
-                            <RealtimeStatus status=realtime_status last_update=last_update />
-                            <GridSavedViews id="fc-crafting-analyzer-grid" presets=presets />
-                        }
+                    <ControlBar sticky=false
+                        summary=move || {
+                            view! {
+                                <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                                    {move || t!(i18n, fc_crafting_result_count, n = move || filters.row_count())}
+                                </span>
+                            }
                             .into_any()
-                    }
+                        }
+                        actions=move || {
+                            view! {
+                                <RealtimeStatus status=realtime_status last_update=last_update />
+                                <GridSavedViews id="fc-crafting-analyzer-grid" presets=presets />
+                            }
+                                .into_any()
+                        }
 
-                    empty_label=Signal::derive(move || {
-                        t_string!(i18n, fc_crafting_no_filters_hint).to_string()
-                    })
-                />
+                        empty_label=Signal::derive(move || {
+                            t_string!(i18n, fc_crafting_no_filters_hint).to_string()
+                        })
+                    />
 
-                <div class=FC_TABLE_CLASS>
-                     <MarketGrid show_saved_views=false id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
-     market=market
-     subject=Arc::new(move |(_, row): &(usize, Arc<FCCraftProfitData>)| {
-         let mut subject = MarketSubject::new(row.sequence.result_item, row.market_hq, row.cheapest_world_id);
-         subject.listing_price = row.listing_price;
-         subject
-     })
-     metrics=vec![
-         GridMetric::text("item", move |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Text(items.get(&ItemId(row.sequence.result_item)).map(|item| item.name.to_string()).unwrap_or_default())),
-         GridMetric::number("profit", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.profit as f64) }),
-         GridMetric::number("roi", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.return_on_investment as f64) }),
-         GridMetric::number("cost", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost as f64) }),
-         GridMetric::number("market-price", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.market_price as f64) }),
-         GridMetric::number("daily-sales", |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Number(row.daily_sales as f64)),
-     ]
-     row_height=60.0
-     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string(), 320.0, false, true),
-    { let mut col = GridColumn::new("profit",t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
-    { let mut col = GridColumn::new("roi",t_string!(i18n, fc_crafting_analyzer_col_roi).to_string(), 100.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
-    GridColumn::new("cost",t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::TotalCost, sort_dir.get().unwrap_or_else(||SortMode::TotalCost.default_dir()) == SortDir::Asc),
-    GridColumn::new("market-price",t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
-    { let mut col = GridColumn::new("daily-sales",t_string!(i18n, fc_crafting_analyzer_col_daily_sales).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Velocity, sort_dir.get().unwrap_or_else(||SortMode::Velocity.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("min-sales", filter_label("min-sales"), true)); col }])
-     header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>}.into_any(),
-    "profit" => view! {<SortableHeaderCell embedded=true
-                                    mode=SortMode::Profit
-                                    label=t_string!(i18n, fc_crafting_analyzer_col_profit).to_string()
-                                    class="w-full min-w-0"
-                                    sort_mode
-                                    sort_dir
-                                 />}.into_any(),
-    "roi" => view! {<SortableHeaderCell embedded=true
-                                    mode=SortMode::Roi
-                                    label=t_string!(i18n, fc_crafting_analyzer_col_roi).to_string()
-                                    class="w-full min-w-0"
-                                    sort_mode
-                                    sort_dir
-                                 />}.into_any(),
-    "cost" => view! {<SortableHeaderCell embedded=true
-                                    mode=SortMode::TotalCost
-                                    label=t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string()
-                                    class="w-full min-w-0"
-                                    sort_mode
-                                    sort_dir
-                                 />}.into_any(),
-    "market-price" => view! {<SortableHeaderCell embedded=true
-                                    mode=SortMode::MarketPrice
-                                    label=t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string()
-                                    class="w-full min-w-0"
-                                    sort_mode
-                                    sort_dir
-                                 />}.into_any(),
-    "daily-sales" => view! {<SortableHeaderCell embedded=true
-                                    mode=SortMode::Velocity
-                                    label=t_string!(i18n, fc_crafting_analyzer_col_daily_sales).to_string()
-                                    class="w-full min-w-0"
-                                    sort_mode
-                                    sort_dir
-                                 />}.into_any(), _ => ().into_any()}}
-     each=computed_data
-                        key=move |(_, data): &(usize, Arc<FCCraftProfitData>)| data.sequence.key_id
+                    <div class=FC_TABLE_CLASS>
+                         <MarketGrid show_saved_views=false id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
+         market=market
+         subject=Arc::new(move |(_, row): &(usize, Arc<FCCraftProfitData>)| {
+             let mut subject = MarketSubject::new(row.sequence.result_item, row.market_hq, row.cheapest_world_id);
+             subject.listing_price = row.listing_price;
+             subject
+         })
+         metrics=vec![
+             GridMetric::text("item", move |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Text(items.get(&ItemId(row.sequence.result_item)).map(|item| item.name.to_string()).unwrap_or_default())),
+             GridMetric::number("profit", |(_, row): &(usize, Arc<FCCraftProfitData>)| row.financial_value(row.profit)),
+             GridMetric::number("roi", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.cost == 0 && !row.pricing_pending && row.complete_prices() { GridValue::Missing } else { row.financial_value(row.return_on_investment) }),
+             GridMetric::number("cost", |(_, row): &(usize, Arc<FCCraftProfitData>)| row.financial_value(row.cost)),
+             GridMetric::number("market-price", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.market_price as f64) }),
+             GridMetric::number("daily-sales", |(_, row): &(usize, Arc<FCCraftProfitData>)| crate::analyzer_kit::market::recent_sample_value(row.daily_sales as f64, row.sales_available, row.total_sales)),
+         ]
+         row_height=60.0
+         columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string(), 320.0, false, true).fixed_width(),
+        { let mut col = GridColumn::new("profit",t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
+        { let mut col = GridColumn::new("roi",t_string!(i18n, fc_crafting_analyzer_col_roi).to_string(), 100.0, true, true).native_sort("roi", SortMode::Roi.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
+        GridColumn::new("cost",t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string(), 130.0, true, true).native_sort("cost", SortMode::TotalCost.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::TotalCost, sort_dir.get().unwrap_or_else(||SortMode::TotalCost.default_dir()) == SortDir::Asc),
+        GridColumn::new("market-price",t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string(), 130.0, true, true).native_sort("price", SortMode::MarketPrice.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
+        { let mut col = GridColumn::new("daily-sales",format!("{} ({})", t_string!(i18n, fc_crafting_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("velocity", SortMode::Velocity.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Velocity, sort_dir.get().unwrap_or_else(||SortMode::Velocity.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("min-sales", filter_label("min-sales"), true)); col }])
+         header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>}.into_any(),
+        "profit" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::Profit
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_profit).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "roi" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::Roi
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_roi).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "cost" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::TotalCost
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "market-price" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::MarketPrice
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "daily-sales" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::Velocity
+                                        label=format!("{} ({})", t_string!(i18n, fc_crafting_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix))
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(), _ => ().into_any()}}
+         each=computed_data
+                            key=move |(_, data): &(usize, Arc<FCCraftProfitData>)| data.sequence.key_id.0
 
-     measure=move |(_, data): &(usize, Arc<FCCraftProfitData>), id| {match id {"item" => (items.get(&ItemId(data.sequence.result_item)).map(|i|i.name.as_str()).unwrap_or_default().to_string(), 110.0),
-    "profit" => (data.profit.separate_with_commas(), 42.0),
-    "roi" => (format!("{}%",data.return_on_investment), 30.0),
-    "cost" => (data.cost.separate_with_commas(), 42.0),
-    "market-price" => (data.market_price.separate_with_commas(), 42.0),
-    "daily-sales" => (format!("{:.1}",data.daily_sales), 42.0), _ => (String::new(), 0.0)}}
-     view=move |(index, data): (usize, Arc<FCCraftProfitData>), id| {
-                            let item_id = ItemId(data.sequence.result_item);
-                            let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
+         measure=move |(_, data): &(usize, Arc<FCCraftProfitData>), id| {match id {"item" => (items.get(&ItemId(data.sequence.result_item)).map(|i|i.name.as_str()).unwrap_or_default().to_string(), 110.0),
+        "profit" => (data.profit.separate_with_commas(), 42.0),
+        "roi" => (format!("{}%",data.return_on_investment), 30.0),
+        "cost" => (data.cost.separate_with_commas(), 42.0),
+        "market-price" => (data.market_price.separate_with_commas(), 42.0),
+        "daily-sales" => (if data.sales_available && data.total_sales > 0 { format!("{:.1}", data.daily_sales) } else { "—".to_string() }, 42.0), _ => (String::new(), 0.0)}}
+         view=move |(index, data): (usize, Arc<FCCraftProfitData>), id| {
+                                let item_id = ItemId(data.sequence.result_item);
+                                let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
 
-                             let sales_tooltip = format!(
-                                "Based on {} sales over {:.1} days",
-                                data.total_sales,
-                                (data.total_sales as f32 / data.daily_sales.max(0.001))
-                            );
-                            let material_rows = data
-                                .materials
-                                .iter()
-                                .take(6)
-                                .map(|material| {
-                                    let material_name = items
-                                        .get(&material.item_id)
-                                        .map(|item| item.name.as_str().to_string())
-                                        .unwrap_or_else(|| "Unknown material".to_string());
-                                    (
-                                        material_name,
-                                        material.total_quantity,
-                                        material.unit_cost,
-                                    )
-                                })
-                                .collect::<Vec<_>>();
+                                 let sales_tooltip = if data.sales_available { t_string!(i18n, analyzer_recent_sample_context).replace("%{world}", &sales_world.get()).replace("%{count}", &data.total_sales.to_string()) } else { t_string!(i18n, analyzer_recent_sample_unavailable).to_string() };
+                                let material_rows = data
+                                    .materials
+                                    .iter()
+                                    .take(6)
+                                    .map(|material| {
+                                        let material_name = items
+                                            .get(&material.item_id)
+                                            .map(|item| item.name.as_str().to_string())
+                                            .unwrap_or_else(|| "Unknown material".to_string());
+                                        (
+                                            material_name,
+                                            material.total_quantity,
+                                            material.unit_cost,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
 
-     let _ = index;
-     match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
-                                        <div class="flex flex-row items-center gap-2 min-w-0 w-full">
-                                            <a
-                                                class="shrink-0 hover:text-brand-300 transition-colors"
-                                                href=format!("/item/{}/{}", world(), item_id.0)
-                                            >
-                                                <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                            </a>
-                                            <div class="flex flex-col min-w-0">
+         let _ = index;
+         match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
+                                            <div class="flex flex-row items-center gap-2 min-w-0 w-full">
                                                 <a
-                                                    class="truncate hover:text-brand-300 transition-colors"
+                                                    class="shrink-0 hover:text-brand-300 transition-colors"
                                                     href=format!("/item/{}/{}", world(), item_id.0)
                                                 >
-                                                    {item}
+                                                    <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
                                                 </a>
-                                                <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
-                                                    <div class="flex flex-col gap-1">
-                                                        {material_rows.clone().into_iter().map(|(name, qty, unit_cost)| view! {
-                                                            <div class="flex justify-between gap-3">
-                                                                <span class="truncate">{qty} "x " {name}</span>
-                                                                <Gil amount=unit_cost />
-                                                            </div>
-                                                        }).collect_view()}
-                                                    </div>
-                                                </ResultBreakdownDisclosure>
+                                                <div class="flex flex-col min-w-0">
+                                                    <a
+                                                        class="truncate hover:text-brand-300 transition-colors"
+                                                        href=format!("/item/{}/{}", world(), item_id.0)
+                                                    >
+                                                        {item}
+                                                    </a>
+                                                    <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
+                                                        <div class="flex flex-col gap-1">
+                                                            {material_rows.clone().into_iter().map(|(name, qty, unit_cost)| view! {
+                                                                <div class="flex justify-between gap-3">
+                                                                    <span class="truncate">{qty} "x " {name}</span>
+                                                                    <Gil amount=unit_cost />
+                                                                </div>
+                                                            }).collect_view()}
+                                                        </div>
+                                                    </ResultBreakdownDisclosure>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>}.into_any(),
-    "profit" => view! {<div  class="text-right w-full min-w-0">
-                                        <Gil amount=data.profit />
-                                    </div>}.into_any(),
-    "roi" => view! {<div  class="text-right w-full min-w-0">
-                                        <span class={roi_badge_class(data.return_on_investment)}>
-                                            {format!("{}%", data.return_on_investment)}
-                                        </span>
-                                    </div>}.into_any(),
-    "cost" => view! {<div  class="text-right w-full min-w-0">
-                                        <Gil amount=data.cost />
-                                        {data.pricing_pending.then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_loading_prices)}</span> })}
-                                        {(!data.pricing_pending && data.pricing_fallback).then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_listing_fallback)}</span> })}
-                                    </div>}.into_any(),
-    "market-price" => view! {<div  class="text-right w-full min-w-0">
-                                        <Gil amount=data.market_price />
-                                    </div>}.into_any(),
-    "daily-sales" => view! {<div  class="text-right w-full min-w-0">
-                                        <div class="flex flex-col items-end gap-1" title=sales_tooltip>
-                                            <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
+                                        </div>}.into_any(),
+        "profit" => view! {<div  class="text-right w-full min-w-0">
+                                            {if data.complete_prices() { view! { <Gil amount=data.profit /> }.into_any() } else { "—".into_any() }}
+                                        </div>}.into_any(),
+        "roi" => view! {<div  class="text-right w-full min-w-0">
+                                            <span class={roi_badge_class(data.return_on_investment)}>
+                                                {if data.complete_prices() && data.cost > 0 { format!("{}%", data.return_on_investment) } else { "—".to_string() }}
                                             </span>
-                                            <ConfidenceBadge total_sales=data.total_sales daily_sales=data.daily_sales />
-                                        </div>
-                                    </div>}.into_any(), _ => ().into_any()}}
-     />
+                                        </div>}.into_any(),
+        "cost" => view! {<div  class="text-right w-full min-w-0">
+                                            {if data.complete_prices() { view! { <Gil amount=data.cost /> }.into_any() } else { "—".into_any() }}
+                                            {data.pricing_pending.then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_loading_prices)}</span> })}
+                                            {(!data.pricing_pending && data.pricing_fallback).then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_listing_fallback)}</span> })}
+    {(!data.complete_prices()).then(|| view! { <span class="block text-xs text-amber-400" title=t_string!(i18n, fc_crafting_missing_prices).to_string()>{t!(i18n, scrip_sources_coverage_badge, priced = data.materials.iter().filter(|material| !material.unpriced).count(), total = data.materials.len())}</span> })}
+                                        </div>}.into_any(),
+        "market-price" => view! {<div  class="text-right w-full min-w-0">
+                                            <Gil amount=data.market_price />
+                                        </div>}.into_any(),
+        "daily-sales" => view! {<div title=sales_tooltip.clone() class="text-right w-full min-w-0">
+                                            <div class="flex flex-col items-end gap-1">
+                                                <span class="text-xs text-[color:var(--color-text-muted)]">
+                                                    {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = if data.sales_available && data.total_sales > 0 { format!("{:.1}", data.daily_sales) } else { "—".to_string() })}
+                                                </span>
+                                                {(data.sales_available && data.total_sales > 0).then(|| view! { <ConfidenceBadge total_sales=data.total_sales daily_sales=data.daily_sales /> })}
+                                            </div>
+                                        </div>}.into_any(), _ => ().into_any()}}
+         />
+                    </div>
                 </div>
-            </div>
-        }
+            }
 }
 
 // Resolve synchronously on both SSR and hydration. A valid route always wins
@@ -792,11 +831,12 @@ fn selected_fc_world(
 
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
+    provide_grid_saved_views("fc-crafting-analyzer-grid");
+    crate::query_defaults::seed_analyzer_default_view("fc-crafting-analyzer");
     let i18n = use_i18n();
     // Seeded here rather than in FCCraftingAnalyzerTable: that lives inside the
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
-    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
@@ -848,9 +888,12 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
         }
     });
 
-    // Ingredients and shared sale statistics deliberately remain regional.
+    // Ingredients and shared statistics follow the chosen pricing scope.
     // Only the native recent-sales estimate is scoped to the selected world.
-    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
+    let scope = use_market_scope(Signal::derive(move || {
+        selected_world.get().map(|world| world.name)
+    }));
+    let region = scope.name;
     let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
@@ -903,9 +946,7 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <span class="text-sm text-[color:var(--color-text-muted)]" data-testid="fc-market-scope">
-                        {t!(i18n, market_scope)} ": " {move || region.get()}
-                    </span>
+                    <MarketScopeControl scope/>
                 </ToolHeader>
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -917,7 +958,8 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                                     <FCCraftingAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
-                                        world=Signal::derive(region)
+                                        world=region.into()
+                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />
                                 }.into_any()
                             }
@@ -926,7 +968,8 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                                     <FCCraftingAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=None
-                                        world=Signal::derive(region)
+                                        world=region.into()
+                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />
                                 }.into_any()
                             }
@@ -951,6 +994,35 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn missing_purchase_prices_are_not_confused_with_on_hand_or_excluded_materials() {
+        assert!(unpriced_material(3, 0, false));
+        assert!(
+            !unpriced_material(0, 0, false),
+            "fully on-hand needs no market purchase"
+        );
+        assert!(
+            !unpriced_material(3, 0, true),
+            "excluded crystals do not invalidate cost"
+        );
+        assert!(!unpriced_material(3, 5, false));
+        assert!(
+            !complete_material_prices(&[]),
+            "missing recipe data is not a free project"
+        );
+        let material = |unpriced| MaterialInfo {
+            item_id: ItemId(1),
+            total_quantity: 3,
+            unit_cost: 0,
+            unpriced,
+        };
+        assert!(complete_material_prices(&[material(false)]));
+        assert!(!complete_material_prices(&[
+            material(false),
+            material(true)
+        ]));
+    }
 
     fn world_fixture() -> WorldHelper {
         use ultros_api_types::world::{Datacenter, Region, WorldData};

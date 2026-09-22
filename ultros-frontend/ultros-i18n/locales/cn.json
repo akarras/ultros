@@ -2576,7 +2576,7 @@
     "vendor_sell_filter_profit_min_label": "利润（最低）",
     "vendor_sell_filter_category_label": "分类",
     "vendor_sell_result_count": "{{ n }} 条出品",
-    "vendor_sell_no_filters_hint": "无筛选 — 显示所有可获利出品",
+    "vendor_sell_no_filters_hint": "无筛选 — 显示所有符合条件的出品",
     "vendor_sell_error_listings": "加载出品出错：",
     "vendor_sell_preset_best_profit": "最高利润",
     "vendor_sell_preset_best_margin": "最高利润率"

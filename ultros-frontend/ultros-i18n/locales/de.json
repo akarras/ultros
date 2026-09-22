@@ -2576,7 +2576,7 @@
     "vendor_sell_filter_profit_min_label": "Gewinn (min.)",
     "vendor_sell_filter_category_label": "Kategorie",
     "vendor_sell_result_count": "{{ n }} Angebote",
-    "vendor_sell_no_filters_hint": "Keine Filter — alle profitablen Angebote",
+    "vendor_sell_no_filters_hint": "Keine Filter — alle geeigneten Angebote",
     "vendor_sell_error_listings": "Fehler beim Laden der Angebote: ",
     "vendor_sell_preset_best_profit": "Bester Gewinn",
     "vendor_sell_preset_best_margin": "Beste Marge"

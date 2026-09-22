@@ -7,12 +7,9 @@ use std::sync::Arc;
 use crate::CheapestPrices;
 use crate::analyzer_kit::filters::{register_filters, toggle_control};
 use crate::analyzer_kit::market::{MarketGrid, use_market_data_on_demand};
-use crate::analyzer_kit::stat_columns::{market_picker_options, shared_cols_in, toggle_shared_col};
 use crate::analyzer_kit::window::MarketWindowControl;
 use crate::components::clipboard::Clipboard;
-use crate::components::control_bar::{
-    ColumnOption, ControlBar, parse_visible_cols, serialize_visible_cols,
-};
+use crate::components::control_bar::{ControlBar, picker_options_from};
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::item_tooltip::ItemTooltip;
@@ -32,8 +29,8 @@ use crate::i18n::*;
 use crate::query_defaults::{filter_query_signal, query_signal};
 use crate::routes::item_explorer_filters::{
     COL_ACTIONS, COL_EQUIP_LEVEL, COL_HQ, COL_ITEM, COL_ITEM_LEVEL, COL_KEY, COL_LISTING, COL_NQ,
-    COL_VENDOR, COL_WORLD, ExplorerFilters, ExplorerRow, FILTER_HQ, column_availability,
-    explorer_filter_aliases, has_equip_level,
+    COL_VENDOR, COL_WORLD, ColumnAvailability, ExplorerFilters, ExplorerRow, FILTER_HQ,
+    column_availability, explorer_filter_aliases, has_equip_level,
 };
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, use_explorer_price_scope};
 use crate::routes::item_explorer_toolbar::jobset_display_label;
@@ -600,6 +597,12 @@ impl FromStr for ItemSortOption {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Shared headers write column ids; normalize native columns back to
+        // the same option the dropdown uses, including Item -> Name and
+        // NQ -> Price. Availability is still resolved by active_sort.
+        if let Some(id) = s.strip_prefix("grid:") {
+            return Self::for_column(id).ok_or(());
+        }
         Ok(match s {
             "ilvl" => ItemSortOption::ItemLevel,
             "lv" => ItemSortOption::EquipLevel,
@@ -648,12 +651,49 @@ impl SortColumn for ItemSortOption {
     }
 }
 
+fn effective_native_sort(
+    requested: Option<ItemSortOption>,
+    availability: ColumnAvailability,
+    single_world: bool,
+) -> ItemSortOption {
+    let fallback = if availability.item_level {
+        ItemSortOption::fallback()
+    } else {
+        ItemSortOption::Name
+    };
+    requested
+        .filter(|requested| {
+            requested.column().is_none_or(|column| match column {
+                COL_ID_WORLD => !single_world,
+                column => availability.has(column),
+            })
+        })
+        .unwrap_or(fallback)
+}
+
+fn effective_default_direction(grid_sort: Option<&str>, active_sort: ItemSortOption) -> SortDir {
+    match grid_sort {
+        // Canonical links historically defaulted to descending. If their
+        // native column is unavailable, use the fallback column's direction
+        // instead, matching the grid without depending on its definitions.
+        Some(token)
+            if token
+                .parse::<ItemSortOption>()
+                .is_ok_and(|mode| mode != active_sort) =>
+        {
+            active_sort.default_dir()
+        }
+        Some(_) => SortDir::Desc,
+        None => active_sort.default_dir(),
+    }
+}
+
 /// Ids of the columns the visitor can switch off, as persisted in `?cols=`.
 ///
 /// Deliberately the same tokens `ItemSortOption` writes to `?sort=`: the two
 /// name the same column, and a second vocabulary for it would be one more
 /// mapping to keep in step. The shared `market-*` ids ride in the same param
-/// beside these; `shared_cols_in` reads them back out.
+/// beside these; the registered grid reads them back out.
 pub(crate) const COL_ID_ITEM_LEVEL: &str = COL_ITEM_LEVEL;
 pub(crate) const COL_ID_EQUIP_LEVEL: &str = COL_EQUIP_LEVEL;
 pub(crate) const COL_ID_HQ: &str = COL_HQ;
@@ -670,13 +710,6 @@ const OPTIONAL_COLUMNS: &[&str] = &[
     COL_ID_VENDOR,
     COL_ID_WORLD,
 ];
-
-/// Every optional native column is on by default; the ones the current item
-/// set cannot fill are then left out of the grid by [`ColumnAvailability`],
-/// so a category picks its own columns without the visitor touching the
-/// picker. No shared market column is on by default: a bare category page
-/// makes no `sale_stats` request at all.
-const DEFAULT_COLUMNS: &[&str] = OPTIONAL_COLUMNS;
 
 /// Apply a sort direction to an ordering.
 ///
@@ -730,44 +763,6 @@ fn sort_rows(
     });
 }
 
-/// `?cols=` after flipping one picker entry. Native ids are re-serialised in
-/// table order; shared `market-*` ids are kept exactly where they were, so a
-/// visitor who added a sale-history column and then hid the vendor column
-/// does not lose the first change to the second.
-///
-/// Toggling a *shared* column with no `?cols=` in the URL has to write the
-/// native defaults out too: once the param exists, the grid shows only the
-/// optional columns it names.
-fn toggled_cols(
-    previous: Option<&str>,
-    visible: &HashSet<&'static str>,
-    id: &'static str,
-) -> String {
-    let native_defaults = || serialize_visible_cols(visible, OPTIONAL_COLUMNS);
-    if OPTIONAL_COLUMNS.contains(&id) {
-        let mut set = visible.clone();
-        if !set.remove(id) {
-            set.insert(id);
-        }
-        let mut ids: Vec<String> = serialize_visible_cols(&set, OPTIONAL_COLUMNS)
-            .split(',')
-            .filter(|t| !t.is_empty())
-            .map(str::to_owned)
-            .collect();
-        ids.extend(
-            previous
-                .unwrap_or("")
-                .split(',')
-                .filter(|t| !t.is_empty() && !OPTIONAL_COLUMNS.contains(t))
-                .map(str::to_owned),
-        );
-        ids.join(",")
-    } else {
-        let base = previous.map(str::to_owned).unwrap_or_else(native_defaults);
-        toggle_shared_col(Some(&base), "", id)
-    }
-}
-
 /// A price cell: nothing before prices load, a dash for a loaded map with
 /// no listing, otherwise the gil amount.
 fn price_cell(price: Option<i32>, loaded: bool) -> AnyView {
@@ -789,6 +784,13 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         location
             .query
             .with(|q| q.get("sort").filter(|s| s.starts_with("grid:")))
+    });
+    // A native grid token selects its existing dropdown option. Only a
+    // genuinely additional shared column needs a temporary custom option.
+    let picker_grid_sort = Memo::new(move |_| {
+        grid_sort
+            .get()
+            .filter(|token| token.parse::<ItemSortOption>().is_err())
     });
     let (direction, _set_direction) = query_signal::<SortDir>("dir");
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
@@ -866,19 +868,6 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         })
     });
 
-    // `?cols=` — the visitor's own overrides. The grid applies the param to
-    // every optional column itself (shared ones included); the page reads it
-    // only for the toolbar picker's checkboxes.
-    let (cols_param, set_cols_param) = query_signal::<String>("cols");
-    let visible_cols = Memo::new(move |_| {
-        parse_visible_cols(cols_param().as_deref(), OPTIONAL_COLUMNS, DEFAULT_COLUMNS)
-    });
-    let picker_visible = Memo::new(move |_| {
-        let mut set = visible_cols.get();
-        set.extend(shared_cols_in(cols_param().as_deref()));
-        set
-    });
-
     // `?sort=` can name a column this set does not have — a bookmark carried
     // from a gear category to a minion one. Fall back rather than ordering by
     // a value every row shares, which reads as "sorting did nothing".
@@ -887,29 +876,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     // is about screen space, and a visitor who hides the vendor column has not
     // said they no longer want the cheapest vendor item first.
     let active_sort = Memo::new(move |_| {
-        let fallback = if availability.get().item_level {
-            ItemSortOption::fallback()
-        } else {
-            ItemSortOption::Name
-        };
-        match sort() {
-            Some(requested)
-                if requested.column().is_none_or(|column| match column {
-                    COL_ID_WORLD => !is_single_world.get(),
-                    column => availability.get().has(column),
-                }) =>
-            {
-                requested
-            }
-            _ => fallback,
-        }
+        effective_native_sort(sort(), availability.get(), is_single_world.get())
     });
     let default_dir = Signal::derive(move || {
-        if grid_sort.get().is_some() {
-            SortDir::Desc
-        } else {
-            active_sort.get().default_dir()
-        }
+        effective_default_direction(grid_sort.get().as_deref(), active_sort.get())
     });
     let active_dir = Signal::derive(move || direction().unwrap_or_else(|| default_dir.get()));
     // What the sortable headers read: the sort *in effect*, so a bookmark's
@@ -971,13 +941,29 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         let availability = availability.get();
         let single_world = is_single_world.get();
         let column = move |id: &'static str, width: f64, optional: bool| {
-            let col = GridColumn::new(id, column_label(id), width, optional, true);
+            let mut col = GridColumn::new(id, column_label(id), width, optional, true);
+            if id == COL_ID_HQ {
+                col.picker_label = Some(t_string!(i18n, item_explorer_col_hq_price).to_string());
+            }
             match ItemSortOption::for_column(id) {
-                Some(mode) => col.sorted(sort == mode, ascending),
+                Some(mode) => {
+                    let token = match mode {
+                        ItemSortOption::Name => "name",
+                        ItemSortOption::ItemLevel => "ilvl",
+                        ItemSortOption::EquipLevel => "lv",
+                        ItemSortOption::Price => "price",
+                        ItemSortOption::HqPrice => "hq",
+                        ItemSortOption::Vendor => "vendor",
+                        ItemSortOption::World => "world",
+                        ItemSortOption::Key => "key",
+                    };
+                    col.native_sort(token, mode.default_dir() == SortDir::Asc)
+                        .sorted(sort == mode, ascending)
+                }
                 None => col,
             }
         };
-        let mut columns = vec![column(COL_ITEM, 330.0, false)];
+        let mut columns = vec![column(COL_ITEM, 330.0, false).fixed_width()];
         if availability.has(COL_ID_ITEM_LEVEL) {
             columns.push(column(COL_ID_ITEM_LEVEL, 90.0, true));
         }
@@ -1107,54 +1093,29 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         );
     });
 
-    // A column the set cannot fill stays in the picker, greyed, with the
-    // reason: ticking it back on would produce a column of blanks, and
-    // dropping the entry entirely would leave the reader wondering where the
-    // column they know went. The shared sale-history columns follow, grouped
-    // by window, exactly as the Flip Finder lists them.
+    // Use the registered catalog for every real column, including provider
+    // columns. Append unavailable native columns only to explain why this
+    // item set cannot offer them; they never enter the renderable grid.
     let column_options = Memo::new(move |_| {
-        let mut options = OPTIONAL_COLUMNS
-            .iter()
-            .copied()
-            .map(|id| {
-                let (disabled, hint) = if id == COL_ID_WORLD && is_single_world.get() {
-                    (
-                        true,
-                        Some(t_string!(i18n, item_explorer_column_single_world).to_string()),
-                    )
-                } else if !availability.get().has(id) {
-                    (
-                        true,
-                        Some(t_string!(i18n, item_explorer_column_unavailable).to_string()),
-                    )
-                } else {
-                    (false, None)
-                };
-                ColumnOption {
-                    id,
-                    label: match id {
-                        COL_ID_HQ => t_string!(i18n, item_explorer_col_hq_price).to_string(),
-                        id => column_label(id),
-                    },
-                    group: None,
-                    disabled,
-                    hint,
-                }
-            })
-            .collect::<Vec<_>>();
-        options.extend(market_picker_options(market.window.selected.get()));
-        options
+        let mut columns = filters.optional_columns();
+        for &id in OPTIONAL_COLUMNS {
+            if columns.iter().any(|column| column.id == id) {
+                continue;
+            }
+            let mut column = GridColumn::new(id, column_label(id), 100.0, true, false);
+            column.picker_disabled = true;
+            column.picker_hint = Some(if id == COL_ID_WORLD && is_single_world.get() {
+                t_string!(i18n, item_explorer_column_single_world).to_string()
+            } else {
+                t_string!(i18n, item_explorer_column_unavailable).to_string()
+            });
+            if id == COL_ID_HQ {
+                column.picker_label = Some(t_string!(i18n, item_explorer_col_hq_price).to_string());
+            }
+            columns.push(column);
+        }
+        picker_options_from(&columns)
     });
-
-    let toggle_column = Callback::new(move |id: &'static str| {
-        let next = toggled_cols(
-            cols_param.get_untracked().as_deref(),
-            &visible_cols.get_untracked(),
-            id,
-        );
-        set_cols_param.set(Some(next));
-    });
-    let reset_columns = Callback::new(move |_| set_cols_param.set(None));
 
     let item_href = move |item_id: i32| format!("/item/{}/{item_id}", scope_name.get());
 
@@ -1184,7 +1145,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                             <select
                                 class="input input-sm min-w-0"
                                 aria-label=t_string!(i18n, item_explorer_sort_by).to_string()
-                                prop:value=move || grid_sort.get().unwrap_or_else(|| active_sort.get().to_string())
+                                prop:value=move || picker_grid_sort.get().unwrap_or_else(|| active_sort.get().to_string())
                                 on:change=move |ev| {
                                     // Drop `?dir=` with the column so the new
                                     // one arrives in its own default
@@ -1198,7 +1159,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                         ]);
                                 }
                             >
-                                {move || grid_sort.get().map(|token| {
+                                {move || picker_grid_sort.get().map(|token| {
                                     let id = token.strip_prefix("grid:").unwrap_or_default();
                                     let label = column_options.with(|options| options.iter().find(|option| option.id == id).map(|option| option.label.clone()))
                                         .unwrap_or_else(|| column_label(id));
@@ -1213,7 +1174,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                             view! {
                                                 <option
                                                     value=token.clone()
-                                                    selected=move || grid_sort.get().is_none() && active_sort.get() == option
+                                                    selected=move || picker_grid_sort.get().is_none() && active_sort.get() == option
                                                 >
                                                     {sort_label(option)}
                                                 </option>
@@ -1252,13 +1213,14 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                             }}
                         </button>
                         <MarketWindowControl window=market.window />
+                        <crate::components::virtual_grid::saved_views::GridSavedViews id="item-explorer-grid" />
                     }
                     .into_any()
                 }
                 columns=column_options
-                visible_columns=picker_visible
-                on_toggle_column=toggle_column
-                on_reset_columns=reset_columns
+                visible_columns=Signal::derive(move || filters.visible_columns())
+                on_toggle_column=Callback::new(move |id| filters.toggle_column(id))
+                on_reset_columns=Callback::new(move |_| filters.reset_columns())
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, no_active_filters).to_string()
                 })
@@ -1389,6 +1351,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
+    crate::query_defaults::seed_analyzer_default_view("items");
+    crate::components::virtual_grid::saved_views::provide_grid_saved_views("item-explorer-grid");
     // Rescope prices for the whole explorer subtree: shadow the global
     // `CheapestPrices` context (keyed on the PRICE_ZONE cookie) with a
     // resource keyed on the page's own `?world=`-driven scope. Every
@@ -1439,14 +1403,13 @@ pub fn ItemExplorer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::{
-        COL_ACTIONS, COL_ITEM, DEFAULT_COLUMNS, ItemSortOption, OPTIONAL_COLUMNS, SORT_OPTIONS,
-        canonical_job_acronym, collect_job_items_sorted, resolve_category_param,
-        resolve_jobset_param, sort_rows, toggled_cols,
+        COL_ACTIONS, COL_ITEM, ItemSortOption, OPTIONAL_COLUMNS, SORT_OPTIONS,
+        canonical_job_acronym, collect_job_items_sorted, effective_default_direction,
+        effective_native_sort, resolve_category_param, resolve_jobset_param, sort_rows,
     };
     use crate::components::sort_header::{SortColumn, SortDir};
-    use crate::routes::item_explorer_filters::{CheapestListing, ExplorerRow};
+    use crate::routes::item_explorer_filters::{CheapestListing, ColumnAvailability, ExplorerRow};
     use crate::routes::item_explorer_toolbar::{job_chip_slug, job_chips_sorted_in};
-    use std::collections::HashSet;
     use std::str::FromStr;
     use xiv_gen::Language;
 
@@ -1463,6 +1426,88 @@ mod tests {
                 "?sort={token} does not parse back to the option that wrote it",
             );
         }
+    }
+
+    #[test]
+    fn canonical_native_sorts_select_existing_dropdown_options() {
+        for (id, expected) in [
+            ("item", ItemSortOption::Name),
+            ("ilvl", ItemSortOption::ItemLevel),
+            ("lv", ItemSortOption::EquipLevel),
+            ("price", ItemSortOption::Price),
+            ("hq", ItemSortOption::HqPrice),
+            ("vendor", ItemSortOption::Vendor),
+            ("world", ItemSortOption::World),
+        ] {
+            assert_eq!(format!("grid:{id}").parse(), Ok(expected));
+            assert!(SORT_OPTIONS.contains(&expected));
+        }
+        // Added has no rendered column and remains a native dropdown sort.
+        assert_eq!("key".parse(), Ok(ItemSortOption::Key));
+        assert!("grid:key".parse::<ItemSortOption>().is_err());
+        // Shared columns still need their own selected dropdown entry.
+        assert!(
+            "grid:market-listing-assessment"
+                .parse::<ItemSortOption>()
+                .is_err()
+        );
+        assert!("grid:market-sale-median".parse::<ItemSortOption>().is_err());
+    }
+
+    #[test]
+    fn native_grid_sort_falls_back_when_the_destination_lacks_its_column() {
+        let no_optional_columns = ColumnAvailability::default();
+        for token in ["ilvl", "grid:ilvl", "hq", "grid:hq", "world", "grid:world"] {
+            assert_eq!(
+                effective_native_sort(token.parse().ok(), no_optional_columns, true),
+                ItemSortOption::Name,
+                "{token}",
+            );
+        }
+        assert_eq!(
+            effective_native_sort("key".parse().ok(), no_optional_columns, true),
+            ItemSortOption::Key,
+        );
+        assert_eq!(
+            effective_native_sort("grid:world".parse().ok(), no_optional_columns, false),
+            ItemSortOption::World,
+        );
+        assert_eq!(
+            effective_native_sort(
+                "grid:ilvl".parse().ok(),
+                ColumnAvailability {
+                    item_level: true,
+                    ..no_optional_columns
+                },
+                true,
+            ),
+            ItemSortOption::ItemLevel,
+        );
+    }
+
+    #[test]
+    fn unavailable_canonical_sort_uses_the_fallback_direction() {
+        let fallback = effective_native_sort(
+            "grid:ilvl".parse().ok(),
+            ColumnAvailability::default(),
+            true,
+        );
+        assert_eq!(fallback, ItemSortOption::Name);
+        assert_eq!(
+            effective_default_direction(Some("grid:ilvl"), fallback),
+            SortDir::Asc
+        );
+        assert_eq!(effective_default_direction(None, fallback), SortDir::Asc);
+        // Both old canonical native links and shared-column links retain
+        // their implicit descending direction when the target is valid.
+        assert_eq!(
+            effective_default_direction(Some("grid:item"), fallback),
+            SortDir::Desc
+        );
+        assert_eq!(
+            effective_default_direction(Some("grid:market-sale-median"), fallback),
+            SortDir::Desc,
+        );
     }
 
     /// The sort menu offers every column the table can order by. Adding a
@@ -1506,47 +1551,6 @@ mod tests {
         );
         assert_eq!(ItemSortOption::for_column(COL_ACTIONS), None);
         assert_eq!(ItemSortOption::for_column("market-sale-median"), None);
-    }
-
-    /// The columns picker starts from the full native set; availability, not
-    /// the default, is what takes a column away. No shared market column is
-    /// on by default, so a bare category page requests no statistics.
-    #[test]
-    fn every_optional_native_column_is_on_by_default_and_no_shared_one_is() {
-        assert_eq!(DEFAULT_COLUMNS, OPTIONAL_COLUMNS);
-        assert!(!DEFAULT_COLUMNS.iter().any(|c| c.starts_with("market-")));
-    }
-
-    /// `?cols=` carries native and shared ids side by side. Flipping one
-    /// kind must never drop the other, and the first shared toggle on a bare
-    /// URL has to spell out the native defaults or the grid hides them.
-    #[test]
-    fn toggling_columns_preserves_the_other_kind() {
-        let all: HashSet<&'static str> = OPTIONAL_COLUMNS.iter().copied().collect();
-        assert_eq!(
-            toggled_cols(None, &all, "market-sale-median"),
-            "ilvl,lv,hq,vendor,world,market-sale-median"
-        );
-        let with_shared = "ilvl,lv,hq,vendor,world,market-sale-median";
-        assert_eq!(
-            toggled_cols(Some(with_shared), &all, "vendor"),
-            "ilvl,lv,hq,world,market-sale-median"
-        );
-        let mut without_vendor = all.clone();
-        without_vendor.remove("vendor");
-        assert_eq!(
-            toggled_cols(
-                Some("ilvl,lv,hq,world,market-sale-median"),
-                &without_vendor,
-                "vendor"
-            ),
-            with_shared
-        );
-        assert_eq!(
-            toggled_cols(Some(with_shared), &all, "market-sale-median"),
-            "ilvl,lv,hq,vendor,world"
-        );
-        assert_eq!(toggled_cols(Some(""), &HashSet::new(), "hq"), "hq");
     }
 
     fn row(item: &'static xiv_gen::Item, nq: Option<i32>, world_id: i32) -> ExplorerRow {

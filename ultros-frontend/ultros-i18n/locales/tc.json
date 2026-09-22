@@ -2576,7 +2576,7 @@
     "vendor_sell_filter_profit_min_label": "利潤（最低）",
     "vendor_sell_filter_category_label": "分類",
     "vendor_sell_result_count": "{{ n }} 筆出品",
-    "vendor_sell_no_filters_hint": "無篩選 — 顯示所有可獲利出品",
+    "vendor_sell_no_filters_hint": "無篩選 — 顯示所有符合條件的出品",
     "vendor_sell_error_listings": "載入出品出錯：",
     "vendor_sell_preset_best_profit": "最高利潤",
     "vendor_sell_preset_best_margin": "最高利潤率"

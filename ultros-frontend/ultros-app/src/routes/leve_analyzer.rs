@@ -1,6 +1,7 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
+use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -32,7 +33,6 @@ use crate::{
         virtual_grid::{ColumnFilter, GridColumn},
         world_picker::WorldOnlyPicker,
     },
-    global_state::region_for_world::use_region_for_world,
     query_defaults::filter_query_signal,
 };
 use leptos::prelude::*;
@@ -68,6 +68,8 @@ struct LeveProfitData {
     job_category_name: String,
     avg_price: i32,
     daily_sales: f32,
+    sales_available: bool,
+    total_sales: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -227,10 +229,18 @@ fn leve_metrics() -> Vec<GridMetric<(usize, Arc<LeveProfitData>)>> {
             financial_value(row.cost, row.cost_pending)
         }),
         GridMetric::number("avg-price", |(_, row): &(usize, Arc<LeveProfitData>)| {
-            GridValue::Number(row.avg_price as f64)
+            crate::analyzer_kit::market::recent_sample_value(
+                row.avg_price as f64,
+                row.sales_available,
+                row.total_sales,
+            )
         }),
         GridMetric::number("daily-sales", |(_, row): &(usize, Arc<LeveProfitData>)| {
-            GridValue::Number(row.daily_sales as f64)
+            crate::analyzer_kit::market::recent_sample_value(
+                row.daily_sales as f64,
+                row.sales_available,
+                row.total_sales,
+            )
         }),
         GridMetric::number("level", |(_, row): &(usize, Arc<LeveProfitData>)| {
             GridValue::Number(row.class_job_level as f64)
@@ -243,6 +253,7 @@ fn LeveAnalyzerTable(
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
+    sales_world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
@@ -509,6 +520,8 @@ fn LeveAnalyzerTable(
                 job_category_name,
                 avg_price: sales_stats.avg_price,
                 daily_sales: sales_stats.daily_sales,
+                sales_available: recent_sales.is_some(),
+                total_sales: sales_stats.total_sales,
             });
         }
 
@@ -517,11 +530,12 @@ fn LeveAnalyzerTable(
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
         results.sort_by(|a, b| {
             let order = compare_leves(mode, a, b);
-            if dir == SortDir::Asc {
+            let order = if dir == SortDir::Asc {
                 order
             } else {
                 order.reverse()
-            }
+            };
+            order.then_with(|| a.leve.key_id.0.cmp(&b.leve.key_id.0))
         });
 
         results
@@ -649,13 +663,13 @@ fn LeveAnalyzerTable(
      metrics=leve_metrics()
      id="leve-analyzer-grid" label=t_string!(i18n, leve_analyzer_col_leve_item).to_string()
      row_height=60.0
-     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, leve_analyzer_col_leve_item).to_string(), 320.0, false, true),
-    { let mut col = GridColumn::new("profit",t_string!(i18n, leve_analyzer_col_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
-    GridColumn::new("revenue",t_string!(i18n, leve_analyzer_col_revenue).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Revenue, sort_dir.get().unwrap_or_else(||SortMode::Revenue.default_dir()) == SortDir::Asc),
-    GridColumn::new("cost",t_string!(i18n, leve_analyzer_col_cost).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
-    GridColumn::new("avg-price",t_string!(i18n, leve_analyzer_col_avg_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::AvgPrice, sort_dir.get().unwrap_or_else(||SortMode::AvgPrice.default_dir()) == SortDir::Asc),
-    GridColumn::new("daily-sales",t_string!(i18n, leve_analyzer_col_daily_sales).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::DailySales, sort_dir.get().unwrap_or_else(||SortMode::DailySales.default_dir()) == SortDir::Asc),
-    { let mut col = GridColumn::new("level",t_string!(i18n, leve_analyzer_col_level).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Level, sort_dir.get().unwrap_or_else(||SortMode::Level.default_dir()) == SortDir::Asc); let mut filter = ColumnFilter::new("job", filter_label("job"), false); filter.options = job_chip_options.get(); col.filters.push(filter); col }])
+     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, leve_analyzer_col_leve_item).to_string(), 320.0, false, true).fixed_width(),
+    { let mut col = GridColumn::new("profit",t_string!(i18n, leve_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
+    GridColumn::new("revenue",t_string!(i18n, leve_analyzer_col_revenue).to_string(), 130.0, true, true).native_sort("revenue", SortMode::Revenue.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Revenue, sort_dir.get().unwrap_or_else(||SortMode::Revenue.default_dir()) == SortDir::Asc),
+    GridColumn::new("cost",t_string!(i18n, leve_analyzer_col_cost).to_string(), 130.0, true, true).native_sort("cost", SortMode::Cost.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
+    GridColumn::new("avg-price",format!("{} ({})", t_string!(i18n, leve_analyzer_col_avg_price), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("avg-price", SortMode::AvgPrice.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::AvgPrice, sort_dir.get().unwrap_or_else(||SortMode::AvgPrice.default_dir()) == SortDir::Asc),
+    GridColumn::new("daily-sales",format!("{} ({})", t_string!(i18n, leve_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("daily-sales", SortMode::DailySales.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::DailySales, sort_dir.get().unwrap_or_else(||SortMode::DailySales.default_dir()) == SortDir::Asc),
+    { let mut col = GridColumn::new("level",t_string!(i18n, leve_analyzer_col_level).to_string(), 130.0, true, true).native_sort("level", SortMode::Level.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Level, sort_dir.get().unwrap_or_else(||SortMode::Level.default_dir()) == SortDir::Asc); let mut filter = ColumnFilter::new("job", filter_label("job"), false); filter.options = job_chip_options.get(); col.filters.push(filter); col }])
      header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, leve_analyzer_col_leve_item)}</div>}.into_any(),
     "profit" => view! {<SortableHeaderCell embedded=true
                                     mode=SortMode::Profit
@@ -680,14 +694,14 @@ fn LeveAnalyzerTable(
                                  />}.into_any(),
     "avg-price" => view! {<SortableHeaderCell embedded=true
                                     mode=SortMode::AvgPrice
-                                    label=t_string!(i18n, leve_analyzer_col_avg_price).to_string()
+                                    label=format!("{} ({})", t_string!(i18n, leve_analyzer_col_avg_price), t_string!(i18n, analyzer_recent_sample_suffix))
                                     class="w-full min-w-0"
                                     sort_mode
                                     sort_dir
                                  />}.into_any(),
     "daily-sales" => view! {<SortableHeaderCell embedded=true
                                     mode=SortMode::DailySales
-                                    label=t_string!(i18n, leve_analyzer_col_daily_sales).to_string()
+                                    label=format!("{} ({})", t_string!(i18n, leve_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix))
                                     class="w-full min-w-0"
                                     sort_mode
                                     sort_dir
@@ -700,16 +714,17 @@ fn LeveAnalyzerTable(
                                     sort_dir
                                  />}.into_any(), _ => ().into_any()}}
      each=computed_data
-                        key=move |(_, data): &(usize, Arc<LeveProfitData>)| data.leve.key_id
+                        key=move |(_, data): &(usize, Arc<LeveProfitData>)| data.leve.key_id.0
 
      measure=move |(_, data): &(usize, Arc<LeveProfitData>), id| {match id {"item" => (data.leve.name.as_str().to_string(), 110.0),
     "profit" => (data.profit.separate_with_commas(), 42.0),
     "revenue" => (data.revenue.separate_with_commas(), 42.0),
     "cost" => (data.cost.separate_with_commas(), 42.0),
-    "avg-price" => (data.avg_price.separate_with_commas(), 42.0),
-    "daily-sales" => (format!("{:.1}",data.daily_sales), 42.0),
+    "avg-price" => (if data.sales_available && data.total_sales > 0 { data.avg_price.separate_with_commas() } else { "—".to_string() }, 42.0),
+    "daily-sales" => (if data.sales_available && data.total_sales > 0 { format!("{:.1}", data.daily_sales) } else { "—".to_string() }, 42.0),
     "level" => (format!("{} {}",data.class_job_level,data.job_category_name), 42.0), _ => (String::new(), 0.0)}}
      view=move |(index, data): (usize, Arc<LeveProfitData>), id| {
+        let sales_tooltip = if data.sales_available { t_string!(i18n, analyzer_recent_sample_context).replace("%{world}", &sales_world.get()).replace("%{count}", &data.total_sales.to_string()) } else { t_string!(i18n, analyzer_recent_sample_unavailable).to_string() };
                             let item_id = data.item_id;
                             let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
                             let leve_name = data.leve.name.as_str();
@@ -742,12 +757,12 @@ fn LeveAnalyzerTable(
                                         <Gil amount=data.cost />
                                         {data.price_fallback.then(|| view! { <span class="block text-xs text-amber-300">{t!(i18n, market_listing_fallback)}</span> })}
                                     </div>}.into_any(),
-    "avg-price" => view! {<div  class="text-right w-full min-w-0">
-                                        <Gil amount=data.avg_price />
+    "avg-price" => view! {<div title=sales_tooltip.clone() class="text-right w-full min-w-0">
+                                        {if data.sales_available && data.total_sales > 0 { view! { <Gil amount=data.avg_price /> }.into_any() } else { "—".into_any() }}
                                     </div>}.into_any(),
-    "daily-sales" => view! {<div  class="text-right w-full min-w-0">
+    "daily-sales" => view! {<div title=sales_tooltip.clone() class="text-right w-full min-w-0">
                                         <span class="text-xs text-[color:var(--color-text-muted)]">
-                                            {t!(i18n, leve_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
+                                            {t!(i18n, leve_analyzer_sales_per_day, sales = if data.sales_available && data.total_sales > 0 { format!("{:.1}", data.daily_sales) } else { "—".to_string() })}
                                         </span>
                                     </div>}.into_any(),
     "level" => view! {<div  class="text-right w-full min-w-0">
@@ -763,10 +778,14 @@ fn LeveAnalyzerTable(
 
 #[component]
 pub fn LeveAnalyzer() -> impl IntoView {
+    crate::query_defaults::seed_analyzer_default_view("leve-analyzer");
     provide_grid_saved_views("leve-analyzer-grid");
     let i18n = use_i18n();
     let (selected_world, set_selected_world) = use_analyzer_world("/leve-analyzer");
-    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
+    let scope = use_market_scope(Signal::derive(move || {
+        selected_world.get().map(|world| world.name)
+    }));
+    let region = scope.name;
 
     let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
@@ -819,9 +838,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <span class="text-sm text-[color:var(--color-text-muted)]" data-testid="analyzer-market-scope">
-                        {t!(i18n, market_scope)} ": " {move || region.get()}
-                    </span>
+                    <MarketScopeControl scope/>
                 </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -834,6 +851,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
                                         world=region.into()
+                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />
                                 }.into_any()
                             }
@@ -843,6 +861,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
                                         global_cheapest_listings=listings
                                         recent_sales=None
                                         world=region.into()
+                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />
                                 }.into_any()
                             }

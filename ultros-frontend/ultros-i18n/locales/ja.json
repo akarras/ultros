@@ -2576,7 +2576,7 @@
     "vendor_sell_filter_profit_min_label": "利益（最小）",
     "vendor_sell_filter_category_label": "カテゴリ",
     "vendor_sell_result_count": "{{ n }} 件の出品",
-    "vendor_sell_no_filters_hint": "フィルターなし — 利益の出る全出品を表示",
+    "vendor_sell_no_filters_hint": "フィルターなし — 対象のすべての出品を表示",
     "vendor_sell_error_listings": "出品の読み込みエラー: ",
     "vendor_sell_preset_best_profit": "最高利益",
     "vendor_sell_preset_best_margin": "最高利益率"
