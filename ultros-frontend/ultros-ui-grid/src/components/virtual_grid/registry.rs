@@ -545,6 +545,9 @@ pub fn RegisteredFilterChips(registry: FilterRegistry) -> impl IntoView {
                 let filter = entry.filter;
                 let value = if filter.metric.is_some() {
                     registry.filters(&query).get(filter.key).map(|f| {
+                        if let Some(range) = super::filter::range_chip(f, filter.unit) {
+                            return range;
+                        }
                         let value = if matches!(f.op, FilterOp::Eq | FilterOp::Ne) {
                             choice_label(&filter, &f.value)
                         } else {
@@ -634,10 +637,15 @@ pub fn RegisteredFilterEditor(registry: FilterRegistry) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     move || {
         registry.editing.get().map(|filter| view! {
-            <div class="sticky-bar-popover p-3 w-[min(92vw,24rem)]" data-registered-editor>
-                <super::filter::ColumnFilterEditor filter/>
-                <button type="button" class="mt-2 text-sm" aria-label=t_string!(i18n, grid_close)
-                    on:click=move |_| registry.editing.set(None)>"×"</button>
+            <div class="sticky-bar-popover grid-menu-popover p-3 w-[min(92vw,20rem)]" data-registered-editor>
+                <div class="grid-menu-header">
+                    <strong>{filter.label.clone()}</strong>
+                    <button type="button" class="grid-icon-btn" title=t_string!(i18n, grid_close) aria-label=t_string!(i18n, grid_close)
+                        on:click=move |_| registry.editing.set(None)>
+                        <crate::components::icon::Icon icon=icondata::MdiClose aria_hidden=true/>
+                    </button>
+                </div>
+                <super::filter::ColumnFilterEditor filter=filter.clone()/>
             </div>
         })
     }

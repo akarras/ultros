@@ -1,4 +1,5 @@
 //! Typed column queries, independent of cell markup and market-data providers.
+use crate::units::{self, Unit};
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -38,6 +39,8 @@ pub type RowComparator<T> = Arc<dyn Fn(&T, &T, bool) -> Ordering + Send + Sync>;
 pub struct GridMetric<T> {
     pub id: &'static str,
     pub kind: ValueKind,
+    /// How the editor reads typed bounds and chips print them.
+    pub unit: Unit,
     /// Incomplete data may filter known values, but cannot rank all rows.
     pub partial: bool,
     pub value: ValueExtractor<T>,
@@ -52,6 +55,7 @@ impl<T> Clone for GridMetric<T> {
         Self {
             id: self.id,
             kind: self.kind,
+            unit: self.unit,
             partial: self.partial,
             value: self.value.clone(),
             tier: self.tier.clone(),
@@ -68,6 +72,7 @@ impl<T> GridMetric<T> {
         Self {
             id,
             kind: ValueKind::Number,
+            unit: Unit::Plain,
             partial: false,
             value: Arc::new(value),
             tier: None,
@@ -78,6 +83,7 @@ impl<T> GridMetric<T> {
         Self {
             id,
             kind: ValueKind::Text,
+            unit: Unit::Plain,
             partial: false,
             value: Arc::new(value),
             tier: None,
@@ -86,6 +92,10 @@ impl<T> GridMetric<T> {
     }
     pub fn partial(mut self) -> Self {
         self.partial = true;
+        self
+    }
+    pub fn unit(mut self, unit: Unit) -> Self {
+        self.unit = unit;
         self
     }
     pub fn mixed(
@@ -125,6 +135,11 @@ pub enum FilterOp {
     Between,
     Missing,
     Present,
+    /// Inclusive bounds where either side may be empty: `100,` is at least
+    /// 100, `,500` at most 500. A side is a number or, on a timestamp, a
+    /// relative token like `-7d`. Every edit writes this; `Gte`, `Lte`, `Lt`
+    /// and `Between` remain readable from old links and saved views.
+    Range,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,9 +172,68 @@ impl MetricFilter {
         (low.is_finite() && high.is_finite()).then_some((low, high))
     }
 
+    /// An open-ended range with its sides as URL tokens.
+    pub fn range(min: Option<String>, max: Option<String>) -> Self {
+        Self {
+            op: FilterOp::Range,
+            value: format!("{},{}", min.unwrap_or_default(), max.unwrap_or_default()),
+        }
+    }
+
+    /// Any threshold filter, old or new, as its `(min, max)` sides.
+    pub fn range_sides(&self) -> Option<(Option<&str>, Option<&str>)> {
+        fn side(s: &str) -> Option<&str> {
+            let s = s.trim();
+            (!s.is_empty()).then_some(s)
+        }
+        match self.op {
+            FilterOp::Gte => Some((side(&self.value), None)),
+            FilterOp::Lte | FilterOp::Lt => Some((None, side(&self.value))),
+            FilterOp::Between | FilterOp::Range => {
+                let (low, high) = self.value.split_once(',')?;
+                Some((side(low), side(high)))
+            }
+            _ => None,
+        }
+    }
+
+    /// This filter with relative timestamp sides replaced by absolute times.
+    pub fn resolved(&self, now: f64) -> Self {
+        if self.op != FilterOp::Range || !self.value.contains(|c: char| c.is_ascii_alphabetic()) {
+            return self.clone();
+        }
+        let side = |s: Option<&str>| {
+            s.map(|s| {
+                units::resolve_token(s, now)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| s.to_string())
+            })
+        };
+        let (low, high) = self.range_sides().unwrap_or_default();
+        Self::range(side(low), side(high))
+    }
+
+    pub fn has_relative(&self) -> bool {
+        self.op == FilterOp::Range
+            && self
+                .range_sides()
+                .is_some_and(|(a, b)| a.into_iter().chain(b).any(units::is_relative))
+    }
+
     pub fn valid(&self, kind: ValueKind) -> bool {
         if matches!(self.op, FilterOp::Missing | FilterOp::Present) {
             return true;
+        }
+        if self.op == FilterOp::Range {
+            let Some((low, high)) = self.range_sides() else {
+                return false;
+            };
+            let side =
+                |s: &str| s.parse::<f64>().is_ok_and(f64::is_finite) || units::is_relative(s);
+            return kind != ValueKind::Text
+                && (low.is_some() || high.is_some())
+                && low.is_none_or(side)
+                && high.is_none_or(side);
         }
         if self.op == FilterOp::Between {
             return kind != ValueKind::Text && self.bounds().is_some();
@@ -197,6 +271,16 @@ impl MetricFilter {
         }
         if value.is_unknown() {
             return if partial { None } else { Some(false) };
+        }
+        if self.op == FilterOp::Range {
+            let GridValue::Number(n) = value else {
+                return Some(false);
+            };
+            let (low, high) = self.range_sides().unwrap_or_default();
+            // Unresolved relative sides compare as NaN and exclude the row;
+            // callers resolve them with `resolved(now)` first.
+            let side = |s: &str| s.parse::<f64>().unwrap_or(f64::NAN);
+            return Some(low.is_none_or(|l| *n >= side(l)) && high.is_none_or(|h| *n <= side(h)));
         }
         if self.op == FilterOp::Between {
             return Some(match (value, self.bounds()) {
@@ -798,5 +882,96 @@ mod tests {
             }
             .valid(ValueKind::Number)
         );
+    }
+    #[test]
+    fn ranges_take_either_side_and_bound_inclusively() {
+        let rows: Vec<_> = [5.0, 10.0, 15.0, 20.0, 25.0]
+            .map(GridValue::Number)
+            .into_iter()
+            .chain([GridValue::Missing, GridValue::Text("n/a".into())])
+            .collect();
+        let metric = GridMetric::number("n", |v: &GridValue| v.clone());
+        for (min, max, expected) in [
+            (Some("10"), None, vec![10.0, 15.0, 20.0, 25.0]),
+            (None, Some("15"), vec![5.0, 10.0, 15.0]),
+            (Some("10"), Some("20"), vec![10.0, 15.0, 20.0]),
+            (Some("30"), Some("10"), vec![]),
+        ] {
+            let filter = MetricFilter::range(min.map(Into::into), max.map(Into::into));
+            assert!(filter.valid(ValueKind::Number), "{filter:?}");
+            let result = query_rows(
+                &rows,
+                std::slice::from_ref(&metric),
+                &BTreeMap::from([("n".into(), filter)]),
+                None,
+                true,
+            );
+            assert_eq!(
+                result.rows.unwrap(),
+                expected
+                    .into_iter()
+                    .map(GridValue::Number)
+                    .collect::<Vec<_>>()
+            );
+        }
+        for value in [",", "a,", ",inf", "10", "NaN,1"] {
+            let filter = MetricFilter {
+                op: FilterOp::Range,
+                value: value.into(),
+            };
+            assert!(!filter.valid(ValueKind::Number), "{value}");
+        }
+        assert!(!MetricFilter::range(Some("1".into()), None).valid(ValueKind::Text));
+        assert!(MetricFilter::range(Some("1".into()), None).valid(ValueKind::Mixed));
+    }
+
+    #[test]
+    fn legacy_thresholds_read_as_range_sides() {
+        let sides = |op, value: &str| {
+            MetricFilter {
+                op,
+                value: value.into(),
+            }
+            .range_sides()
+            .map(|(a, b)| (a.map(str::to_string), b.map(str::to_string)))
+        };
+        assert_eq!(sides(FilterOp::Gte, "5"), Some((Some("5".into()), None)));
+        assert_eq!(sides(FilterOp::Lte, "5"), Some((None, Some("5".into()))));
+        assert_eq!(sides(FilterOp::Lt, "5"), Some((None, Some("5".into()))));
+        assert_eq!(
+            sides(FilterOp::Between, "1,2"),
+            Some((Some("1".into()), Some("2".into())))
+        );
+        assert_eq!(sides(FilterOp::Range, ",2"), Some((None, Some("2".into()))));
+        assert_eq!(sides(FilterOp::Eq, "2"), None);
+        // Old links keep their exact meaning, including a strict `lt`.
+        let lt = MetricFilter {
+            op: FilterOp::Lt,
+            value: "10".into(),
+        };
+        assert_eq!(lt.matches(&GridValue::Number(10.0), false), Some(false));
+        let parsed = parse_filters(Some(r#"{"a":{"op":"range","value":"-7d,"}}"#));
+        assert_eq!(parsed["a"].op, FilterOp::Range);
+    }
+
+    #[test]
+    fn relative_sides_resolve_against_the_supplied_now() {
+        let now = 1_000_000.0;
+        let filter = MetricFilter::range(Some("-1d".into()), None);
+        assert!(filter.valid(ValueKind::Number) && filter.has_relative());
+        // Unresolved, a relative side cannot match anything.
+        assert_eq!(filter.matches(&GridValue::Number(now), false), Some(false));
+        let resolved = filter.resolved(now);
+        assert!(!resolved.has_relative());
+        assert_eq!(
+            resolved.matches(&GridValue::Number(now - 3_600.0), false),
+            Some(true)
+        );
+        assert_eq!(
+            resolved.matches(&GridValue::Number(now - 2.0 * 86_400.0), false),
+            Some(false)
+        );
+        let absolute = MetricFilter::range(Some("5".into()), None);
+        assert_eq!(absolute.resolved(now), absolute);
     }
 }

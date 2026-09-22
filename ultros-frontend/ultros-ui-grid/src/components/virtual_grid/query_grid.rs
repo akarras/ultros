@@ -63,15 +63,35 @@ where
             .map(|registry| registry.sort_ascending(q))
             .unwrap_or_else(|| q.get("dir").as_deref() == Some("asc"))
     };
+    let read_filters = move |q: &leptos_router::params::ParamsMap| {
+        registry
+            .map(|r| r.filters(q))
+            .unwrap_or_else(|| parse_filters(q.get("gf").as_deref()))
+    };
+    // "Within the last 7 days" must pick the same rows on the server and in
+    // the hydrating browser, so the render's clock travels with the page.
+    // Only a URL with a relative bound pays for it; both sides read the same
+    // URL, so both create (or skip) the shared value together.
+    let initial = query.with_untracked(read_filters);
+    let rendered_at = initial
+        .values()
+        .any(|f| f.has_relative())
+        .then(|| SharedValue::new(now_unix).into_inner());
     let filters = Memo::new(move |_| {
-        let mut filters = query.with(|q| {
-            registry
-                .map(|r| r.filters(q))
-                .unwrap_or_else(|| parse_filters(q.get("gf").as_deref()))
-        });
+        let raw = query.with(read_filters);
+        let unchanged = raw == initial;
+        let mut filters = raw;
         metrics.with_value(|metrics| {
             filters.retain(|id, f| metrics.iter().any(|m| m.id == id && f.valid(m.kind)))
         });
+        if filters.values().any(|f| f.has_relative()) {
+            // Keep the render's clock until the filters change, then use the
+            // moment of the edit.
+            let now = rendered_at.filter(|_| unchanged).unwrap_or_else(now_unix);
+            for filter in filters.values_mut() {
+                *filter = filter.resolved(now);
+            }
+        }
         filters
     });
     // Registered hosts read retired native tokens as metric sorts (issue
@@ -139,6 +159,7 @@ where
                     {
                         let mut filter =
                             super::ColumnFilter::metric(col.id, col.label.clone(), metric.kind);
+                        filter.unit = metric.unit;
                         filter.choices = alias_choices.clone();
                         col.filters.push(filter);
                     }
@@ -252,5 +273,20 @@ where
         {move || result.with(|r|r.sort_pending).then(||view! {<div class="px-3 py-2 text-xs" role="status">{t!(i18n,grid_query_pending)}</div>})}
         <VirtualGrid each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
             reveal_index key=move |row: &T| key.with_value(|key| key(row)) header view measure measure_version row_height id label/>
+    }
+}
+
+/// Unix seconds now, from the browser clock when hydrated.
+pub(crate) fn now_unix() -> f64 {
+    #[cfg(feature = "hydrate")]
+    {
+        js_sys::Date::now() / 1000.0
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or_default()
     }
 }
