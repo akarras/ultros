@@ -5,6 +5,7 @@ use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
+use crate::columnar_wire::columnar_resource;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::saved_views::{
@@ -985,7 +986,7 @@ pub fn ScripSources() -> impl IntoView {
     let (selected_world, set_selected_world) = use_analyzer_world("/scrip-sources");
     let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
 
-    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
+    let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 

@@ -9,6 +9,7 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
+use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
@@ -869,14 +870,14 @@ pub fn VendorWorldView() -> impl IntoView {
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
 
     // We fetch sales for better estimation, even though we are comparing to vendor prices
-    let sales = ArcResource::new(
+    let sales = columnar_resource(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
-    let world_cheapest_listings = ArcResource::new(
+    let world_cheapest_listings = columnar_resource(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;

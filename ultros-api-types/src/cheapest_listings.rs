@@ -30,8 +30,8 @@ pub struct CheapestListingsColumnar {
     pub world_id: Vec<i32>,
 }
 
-impl From<CheapestListings> for CheapestListingsColumnar {
-    fn from(value: CheapestListings) -> Self {
+impl From<&CheapestListings> for CheapestListingsColumnar {
+    fn from(value: &CheapestListings) -> Self {
         let n = value.cheapest_listings.len();
         let mut out = Self {
             item_id: Vec::with_capacity(n),
@@ -39,13 +39,19 @@ impl From<CheapestListings> for CheapestListingsColumnar {
             price: Vec::with_capacity(n),
             world_id: Vec::with_capacity(n),
         };
-        for row in value.cheapest_listings {
+        for row in &value.cheapest_listings {
             out.item_id.push(row.item_id);
             out.hq.push(row.hq);
             out.price.push(row.cheapest_price);
             out.world_id.push(row.world_id);
         }
         out
+    }
+}
+
+impl From<CheapestListings> for CheapestListingsColumnar {
+    fn from(value: CheapestListings) -> Self {
+        Self::from(&value)
     }
 }
 
@@ -527,6 +533,17 @@ mod tests {
         assert_eq!(
             rows.cheapest_listings,
             vec![item(1, false, 10, 7), item(2, true, 20, 8)]
+        );
+    }
+
+    #[test]
+    fn columnar_from_ref_matches_from_value() {
+        let rows = CheapestListings {
+            cheapest_listings: vec![item(2, true, 300, 74)],
+        };
+        assert_eq!(
+            CheapestListingsColumnar::from(&rows),
+            CheapestListingsColumnar::from(rows.clone())
         );
     }
 }

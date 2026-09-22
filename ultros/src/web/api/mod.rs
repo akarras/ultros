@@ -28,3 +28,25 @@ pub(crate) use recent_sales::recent_sales;
 pub(crate) use resale_quality::post_resale_quality;
 pub(crate) use sale_stats::get_sale_stats;
 pub(crate) use trends::get_trends;
+
+/// `?format=columnar` selects the struct-of-arrays wire shape the site
+/// fetches. Anything else — including no `format` at all — keeps the
+/// legacy row-of-objects shape for outside consumers of the public
+/// endpoints. Exact, case-sensitive match.
+pub(crate) fn is_columnar(format: Option<&str>) -> bool {
+    format == Some("columnar")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_columnar;
+
+    #[test]
+    fn format_query_only_matches_columnar_exactly() {
+        assert!(is_columnar(Some("columnar")));
+        assert!(!is_columnar(Some("Columnar")));
+        assert!(!is_columnar(Some("json")));
+        assert!(!is_columnar(Some("")));
+        assert!(!is_columnar(None));
+    }
+}
