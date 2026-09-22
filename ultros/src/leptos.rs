@@ -210,31 +210,25 @@ pub(crate) async fn create_leptos_app(
 ) -> Result<Router<WebState>, Box<dyn Error>> {
     let conf = get_configuration(None)?;
     let mut leptos_options = conf.leptos_options;
-    let site_root = leptos_options.site_root.clone();
+    let site_root = &leptos_options.site_root;
+    let pkg_dir = &leptos_options.site_pkg_dir;
+
+    // The URL path of the generated JS/WASM bundle from cargo-leptos
+    // let bundle_path = format!("/{site_root}/{pkg_dir}");
+    // The filesystem path of the generated JS/WASM bundle from cargo-leptos
+    let bundle_filepath = format!("./{site_root}/{pkg_dir}");
     let addr = leptos_options.site_addr;
     tracing::debug!("serving at {addr}");
 
-    // The bundle is served under a per-build URL (`/pkg/<git hash>/`) so the
-    // immutable, year-long cache headers `pkg_service` adds can never pin a
-    // stale wasm across deploys.
-    //
-    // On disk, the release image places cargo-leptos's output at the same
-    // hashed path (`scripts/post_split.sh`); a plain `cargo leptos build`
-    // leaves it at the unhashed `<site_root>/pkg`. Serve whichever exists.
-    // Matching the disk layout to `site_pkg_dir` matters for lazy routes:
-    // `HydrationScripts` looks up `__wasm_split_manifest.json` under
-    // `<site_root>/<site_pkg_dir>` to emit `<link rel=preload>` for the
-    // chunks the rendered route needs. When the manifest is missing (dev, or
-    // a build without `--split`) leptos simply skips those hints.
+    // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
+
+    // These are Tower Services that will serve files from the static and pkg repos.
+    // HandleError is needed as Axum requires services to implement Infallible Errors
+    // because all Errors are converted into Responses
+    // let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
+    //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let git_hash = env!("GIT_HASH");
-    let hashed_pkg_dir: Arc<str> = Arc::from(["pkg/", git_hash].concat());
-    let hashed_filepath = format!("./{site_root}/{hashed_pkg_dir}");
-    let bundle_filepath = if std::path::Path::new(&hashed_filepath).is_dir() {
-        hashed_filepath
-    } else {
-        format!("./{site_root}/{}", leptos_options.site_pkg_dir)
-    };
-    leptos_options.site_pkg_dir = hashed_pkg_dir;
+    leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
     let cargo_leptos_service = pkg_service(&bundle_filepath);
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     let worlds = Ok(worlds);

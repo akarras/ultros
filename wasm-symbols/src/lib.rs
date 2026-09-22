@@ -113,17 +113,6 @@ pub fn strip_hash_suffix(name: &str) -> String {
     }
 }
 
-/// Whether the module carries a `name` custom section at all. Split chunks
-/// may legitimately lack one; the main module must not.
-pub fn has_name_section(wasm: &[u8]) -> Result<bool> {
-    for section in sections(wasm)? {
-        if is_name_section(wasm, &section)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Function names from the module's `name` section, index-ascending, with
 /// hash suffixes stripped. Errors if the section is absent — that means the
 /// `-g` plumbing in the build regressed and must not ship silently.
