@@ -2095,6 +2095,7 @@
     "changelog_bug_fixes": "Corrections de bugs",
     "changelog_try_it": "Essayer",
     "changelog_labs_hint": "Fait partie d’une expérience du Labo. Activez-la dans les Paramètres pour l’essayer.",
+    "changelog_error_loading": "Erreur lors du chargement des nouveautés : {{error}}",
     "help_all_topics_link": "Tous les sujets d'aide",
     "help_section_inputs": "Entrées",
     "help_section_assumptions": "Hypothèses",

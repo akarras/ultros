@@ -99,9 +99,9 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_listing_stats, get_market_heat,
-    get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
-    recent_sales,
+    cheapest_per_world, get_best_deals, get_changelog, get_item_stats, get_listing_stats,
+    get_market_heat, get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality,
+    post_sparklines, recent_sales,
 };
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, npc_sitemap, sitemap_index};
 use crate::web::{
@@ -3471,6 +3471,7 @@ fn test_auth_routes() -> Router<WebState> {
 fn api_router() -> Router<WebState> {
     Router::new()
         .route("/api/v1/search", get(search))
+        .route("/api/v1/changelog", get(get_changelog))
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
         .route("/api/v1/trends/{world}", get(get_trends))

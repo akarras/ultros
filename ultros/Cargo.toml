@@ -64,6 +64,9 @@ smallvec = { version = "1.10.0", features = [
 itertools = "0.14.0"
 sitemap-rs = "0.4.0"
 ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
+# The `history` feature (on by default) is what makes the full changelog
+# available to `/api/v1/changelog`; the wasm client builds without it.
+ultros-changelog = { path = "../ultros-changelog" }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
 leptos = { workspace = true, features = ["ssr", "nightly"] }
 leptos_axum.workspace = true
