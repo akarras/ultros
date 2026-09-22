@@ -2,6 +2,7 @@
 pub use ultros_ui_market::analysis;
 pub(crate) mod analyzer_kit;
 pub use ultros_frontend_core::api;
+pub use ultros_frontend_core::columnar_wire;
 pub(crate) mod components;
 pub(crate) use ultros_api_client::error;
 pub use ultros_ui_market::freshness;

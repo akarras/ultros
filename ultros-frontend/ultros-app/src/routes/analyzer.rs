@@ -16,6 +16,7 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketSubject, use_market_data},
     signals::{StatsIndex, stat_only},
 };
+use crate::columnar_wire::columnar_resource;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
@@ -2633,14 +2634,14 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let (world_board_version, set_world_board_version) = signal(0_u64);
     let (region_board_version, set_region_board_version) = signal(0_u64);
     let (cross_board_version, set_cross_board_version) = signal(0_u64);
-    let sales = ArcResource::new(
+    let sales = columnar_resource(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
-    let world_cheapest_listings = ArcResource::new(
+    let world_cheapest_listings = columnar_resource(
         move || {
             (
                 params.with(|p| p.get("world").clone()),
@@ -2660,7 +2661,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         )
     });
 
-    let global_cheapest_listings = ArcResource::new(
+    let global_cheapest_listings = columnar_resource(
         move || (region(), region_board_version.get()),
         move |(region, refresh_version)| async move {
             get_cheapest_listings_live(region?.as_str(), refresh_version).await
@@ -2680,7 +2681,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             .collect::<Vec<_>>()
     };
 
-    let cross_region = ArcResource::new(
+    let cross_region = columnar_resource(
         move || {
             (
                 cross_region_enabled(),

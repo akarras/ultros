@@ -5,6 +5,7 @@ use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
+use crate::columnar_wire::columnar_resource;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
@@ -767,11 +768,11 @@ pub fn LeveAnalyzer() -> impl IntoView {
     let (selected_world, set_selected_world) = use_analyzer_world("/leve-analyzer");
     let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
 
-    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
+    let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
-    let recent_sales = ArcResource::new(selected_world, move |world| async move {
+    let recent_sales = columnar_resource(selected_world, move |world| async move {
         if let Some(world) = world {
             get_recent_sales_for_world(&world.name).await
         } else {
