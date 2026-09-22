@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const puppeteer = require('puppeteer');
 const fs = require('node:fs');
 const path = require('node:path');
+const { marketWireBody } = require('./market-wire-fixture.cjs');
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const fixture = '/__test/shared-analyzer-data';
 
@@ -16,9 +17,9 @@ async function main() {
   const isExpectedFailure = value => {
     const url = new URL(value, BASE);
     return url.origin === new URL(BASE).origin && (
-      url.pathname === '/api/v1/listing_stats/Cactuar' && (!url.search || url.search === '?window=30')
+      url.pathname === '/api/v1/listing_stats/Cactuar' && (!url.searchParams.has('window') || url.searchParams.get('window') === '30')
       || ['/api/v1/sale_stats/Cactuar', '/api/v1/sale_stats/Gilgamesh'].includes(url.pathname)
-        && url.search === '?window=1');
+        && url.searchParams.get('window') === '1');
   };
   page.on('response', response => {
     if (response.status() >= 500) {
@@ -80,7 +81,7 @@ async function main() {
       if (holdListings && !days) {
         heldListings.push({ scope, respond: count => {
           body.stats[0].alive_count = count;
-          return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+          return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(marketWireBody(url, body)) });
         } });
         return;
       }
@@ -88,7 +89,7 @@ async function main() {
       const unavailable = scope === 'Cactuar' && (!days || listingWindowHits.get(`${scope}/${days}`) === 1);
       return request.respond(unavailable
         ? { status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Listing statistics temporarily unavailable' }) }
-        : { status: 200, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
+        : { status: 200, contentType: 'application/json', body: JSON.stringify(marketWireBody(url, body)) }).catch(() => {});
     }
     if (url.pathname.startsWith('/api/v1/trends/')) {
       // One Trends row whose VWAP encodes the world and window it was fetched
@@ -119,7 +120,7 @@ async function main() {
       last_sold_unix: 1788900000, confidence: 'high',
     })) };
     const respond = () => request.respond({ status: days === 1 ? 503 : 200,
-      contentType: 'application/json', body: JSON.stringify(days === 1 ? { error: 'Sale statistics temporarily unavailable' } : body) }).catch(() => {});
+      contentType: 'application/json', body: JSON.stringify(days === 1 ? { error: 'Sale statistics temporarily unavailable' } : marketWireBody(url, body)) }).catch(() => {});
     if (hold.has(key)) held.set(key, respond); else return respond();
   });
   await page.evaluateOnNewDocument(() => {
@@ -293,8 +294,8 @@ async function main() {
     await page.select('[data-market-window]', '7');
     await heading('market-sale-median', '(7d)');
     await page.click('[data-grid-saved-views] > button');
-    await page.waitForSelector('[data-grid-saved-views] a', { visible: true });
-    await page.click('[data-grid-saved-views] a');
+    const namedView = await page.waitForSelector('[data-grid-saved-views] a ::-p-text(Thirty days)', { visible: true });
+    await namedView.click();
     await heading('market-sale-median', '(30d)');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__windowHydrated);
@@ -364,7 +365,7 @@ async function main() {
       // only the window-free one this race actually holds.
       const windowFree = request => {
         const url = new URL(request.url());
-        return url.pathname === `/api/v1/listing_stats/${scope}` && !url.search;
+        return url.pathname === `/api/v1/listing_stats/${scope}` && !url.searchParams.has('window');
       };
       await Promise.all([
         page.waitForRequest(windowFree),
@@ -382,6 +383,7 @@ async function main() {
     holdListings = false;
 
     // Trends shares the control while keeping its narrower choices and 30d default.
+    console.log('CHECK market-window Trends: direct SSR/hydration then 7d');
     await page.goto(`${BASE}/trends/Gilgamesh?v=1&lang=en`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__windowHydrated);
     assert.equal(await page.$eval('[data-market-window]', el => el.value), '30');
@@ -396,6 +398,7 @@ async function main() {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
     // #1511: the rows must be the 7d response, and every later window must fetch its own.
     await cell('vwap', '507');
+    console.log('CHECK market-window Trends: 7d response visible, switching 90d/30d');
     assert.equal(hits.get('trends:Gilgamesh/7'), 1);
     await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 90)), page.select('[data-market-window]', '90')]);
     await cell('vwap', '590');
@@ -404,6 +407,7 @@ async function main() {
     assert.equal(hits.get('trends:Gilgamesh/30'), 1, 'the hydrated 30d rows were not refetched until 30d was reselected');
     // A 90d response that lands after the user has moved back to 30d must not be what the grid ends on.
     hold.add('trends:Gilgamesh/90');
+    console.log('CHECK market-window Trends: late 90d response race');
     await Promise.all([page.waitForRequest(trendsRequest('Gilgamesh', 90)), page.select('[data-market-window]', '90')]);
     await page.select('[data-market-window]', '30');
     await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '30');
@@ -413,6 +417,7 @@ async function main() {
     await cell('vwap', '530');
     assert(!(await page.$$eval(selector('vwap'), cells => cells.map(cell => cell.textContent.trim()))).includes('590'));
     // Changing world through the router refetches for the new world and the selected window.
+    console.log('CHECK market-window Trends: world navigation');
     await Promise.all([page.waitForRequest(trendsRequest('Cactuar', 30)), follow('/trends/Cactuar?v=1&lang=en&window=30')]);
     await cell('vwap', '130');
     // Entering Trends through the client router builds the resource fresh: the default window fetches once and later windows still refetch.
@@ -425,7 +430,12 @@ async function main() {
     await cell('vwap', '507');
     await page.waitForFunction(() => new URL(location.href).searchParams.get('window') === '7');
     for (const endpoint of ['/api/v1/listing_stats/Cactuar', '/api/v1/listing_stats/Cactuar?window=30', '/api/v1/sale_stats/Cactuar?window=1', '/api/v1/sale_stats/Gilgamesh?window=1']) {
-      assert(expectedFailures.has(BASE + endpoint), `expected failing fixture was exercised: ${endpoint}`);
+      const expected = new URL(endpoint, BASE);
+      assert([...expectedFailures].some(value => {
+        const actual = new URL(value);
+        return actual.origin === expected.origin && actual.pathname === expected.pathname
+          && actual.searchParams.get('window') === expected.searchParams.get('window');
+      }), `expected failing fixture was exercised: ${endpoint}`);
     }
     assert.deepEqual(errors, []);
     console.log('PASS market windows: defaults, pinned comparisons, prices, pending filters/sorts, hidden requirements, deduplication, saved URLs, SSR, scope/window races, failures, missing rows, current-listing columns, windowed listing history and Trends refetch');

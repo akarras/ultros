@@ -24,15 +24,14 @@ async function main() {
     page.on('request', request => {
       const path = new URL(request.url()).pathname;
       if (/\/api\/v1\/(cheapest|recentSales|sale_stats)\//.test(path)) requests.push(decodeURIComponent(path));
-      const response = fixture.reply(request);
-      if (response && path.startsWith('/api/v1/cheapest/')) {
-        const scope = decodeURIComponent(path.split('/').pop());
-        const body = JSON.parse(response.body);
-        const worldId = {'North-America': 63, Europe: 80, '中国': 1167}[scope];
-        assert(worldId, `unexpected ingredient scope: ${scope}`);
-        for (const listing of body.cheapest_listings) listing.world_id = worldId;
-        response.body = JSON.stringify(body);
-      }
+      const response = fixture.reply(request, body => {
+        if (path.startsWith('/api/v1/cheapest/')) {
+          const scope = decodeURIComponent(path.split('/').pop());
+          const worldId = {'North-America': 63, Europe: 80, '中国': 1167}[scope];
+          assert(worldId, `unexpected ingredient scope: ${scope}`);
+          for (const listing of body.cheapest_listings) listing.world_id = worldId;
+        }
+      });
       return response ? request.respond(response) : request.continue();
     });
     await page.setCookie({name: 'HOME_WORLD', value: 'Cerberus', url: BASE}, {name: 'HIDE_ADS', value: 'true', url: BASE});
@@ -45,7 +44,7 @@ async function main() {
       await page.waitForFunction((selector, world, region) =>
         decodeURIComponent(location.pathname) === `/fc-crafting-analyzer/${world}` &&
         document.querySelector(selector)?.textContent.includes(world) &&
-        document.querySelector('[data-testid="fc-market-scope"]')?.textContent.includes(region),
+        document.querySelector('[data-testid="analyzer-price-scope"]')?.textContent.includes(region),
       {timeout: 90000}, PICKER, world, region);
       const url = new URL(page.url());
       assert.equal(decodeURIComponent(url.pathname), `/fc-crafting-analyzer/${world}`);
@@ -75,7 +74,7 @@ async function main() {
     await ssr.setJavaScriptEnabled(false);
     await ssr.goto(`${BASE}/fc-crafting-analyzer/Gilgamesh${QUERY}`, {waitUntil: 'domcontentloaded', timeout: 90000});
     assert((await ssr.$eval(PICKER, el => el.textContent)).includes('Gilgamesh'));
-    assert((await ssr.$eval('[data-testid="fc-market-scope"]', el => el.textContent)).includes('North-America'));
+    assert((await ssr.$eval('[data-testid="analyzer-price-scope"]', el => el.textContent)).includes('North-America'));
     await ssr.close();
     await page.goto(`${BASE}/fc-crafting-analyzer/Gilgamesh${QUERY}`, {waitUntil: 'domcontentloaded', timeout: 90000});
     await ready('Gilgamesh', 'North-America');

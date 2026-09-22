@@ -13,6 +13,8 @@ async function main() {
   const fixture = marketFixture(Array.from({ length: 55000 }, (_, i) => i + 1));
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
+  const artifacts = path.join(__dirname, 'artifacts', 'currency-exchange');
+  fs.mkdirSync(artifacts, { recursive: true });
   page.setDefaultTimeout(90000);
   const errors = [];
   const worlds = new Set();
@@ -47,9 +49,30 @@ async function main() {
     await page.waitForFunction((column, expected) => [...document.querySelectorAll(`.virtual-grid-cell[data-column="${column}"]`)]
       .some(e => e.textContent.trim().replaceAll(',', '') === String(expected)), {}, column, expected);
   }
+  async function sharedToolbar() {
+    assert.equal(await page.$$eval('[data-grid-saved-views]', menus => menus.length), 1,
+      'Currency Exchange has one shared Views menu');
+    assert.equal(await page.$eval('[data-grid-saved-views]', menu => !!menu.closest('.registered-filter-bar')), true,
+      'Views belongs to the shared toolbar alongside Columns and filters');
+    assert.equal(await page.$$eval('h1, h2, h3', headings => headings.some(h => h.textContent.trim() === 'Full Results')), false,
+      'the grid has no duplicate Full Results heading');
+    const clipped = await page.$$eval('.registered-filter-bar > div button', buttons => buttons
+      .filter(button => button.getClientRects().length)
+      .filter(button => { const r = button.getBoundingClientRect(); return r.left < -1 || r.right > innerWidth + 1; })
+      .map(button => button.textContent.trim()));
+    assert.deepEqual(clipped, [], 'shared toolbar actions stay inside the viewport');
+    await page.click('[data-grid-saved-views] > button');
+    await page.waitForSelector('[data-grid-saved-views] .sticky-bar-popover', { visible: true });
+    assert(await page.$eval('[data-grid-saved-views]', menu => menu.textContent.includes('Recommended') && menu.textContent.includes('Unrestricted')),
+      'shared view presets remain accessible');
+    await page.click('[data-grid-saved-views] > button');
+    await page.waitForSelector('[data-grid-saved-views] .sticky-bar-popover', { hidden: true });
+  }
   try {
     await page.setViewport({ width: 1800, height: 900 });
     await open('currency_amount=2000&cols=price_per_item,market-listing,market-quality,market-sale-median');
+    await sharedToolbar();
+    await page.screenshot({ path: path.join(artifacts, 'desktop.png'), fullPage: true });
     await cell('price_per_item', 399);
     await cell('market-listing', 400);
     await cell('market-quality', 'NQ');
@@ -73,6 +96,7 @@ async function main() {
     assert.equal(await page.$$eval('.virtual-grid-heading', cells => cells.length), 3, 'explicit empty cols preserves only required native columns');
     await page.setViewport({ width: 393, height: 844 });
     await page.waitForSelector('.virtual-grid-cell');
+    await sharedToolbar();
     const misaligned = await page.$$eval('.virtual-grid-cell', cells => cells.filter(cell => {
       const heading = document.querySelector(`.virtual-grid-heading[data-column="${cell.dataset.column}"]`);
       if (!heading) return false;
@@ -80,10 +104,9 @@ async function main() {
       return Math.abs(a.left - b.left) > 1 || Math.abs(a.width - b.width) > 1;
     }).map(cell => cell.dataset.column));
     assert.deepEqual(misaligned, [], 'mobile cells align with their headers');
-    const artifacts = path.join(__dirname, 'artifacts', 'currency-exchange'); fs.mkdirSync(artifacts, { recursive: true });
     await page.screenshot({ path: path.join(artifacts, 'mobile.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    console.log('PASS currency exchange: native estimates, raw listings, NQ stats, window, legacy filters, saved columns, quantity, mobile');
+    console.log('PASS currency exchange: shared toolbar without duplicate header, native estimates, raw listings, NQ stats, window, legacy filters, saved columns, quantity, mobile');
   } catch (error) {
     console.error('Currency Exchange browser state:', {
       url: page.url(), requests: Object.fromEntries(fixture.hits), errors,

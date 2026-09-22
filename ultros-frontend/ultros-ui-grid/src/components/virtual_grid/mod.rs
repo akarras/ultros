@@ -657,13 +657,18 @@ where
                     if generation.try_get_untracked() != Some(expected) {
                         return;
                     }
-                    for row in chunk {
-                        for (texts, def) in candidates.iter_mut().zip(&defs) {
-                            let (text, adornments) = measure.with_value(|m| m(row, def.id));
-                            let widest = texts.entry(text).or_insert(0.0);
-                            *widest = widest.max(adornments);
+                    // Provider dependencies are owned by measure_version and
+                    // the scheduling effect. This async snapshot must not try
+                    // to subscribe once per cell (or warn for each debug read).
+                    untrack(|| {
+                        for row in chunk {
+                            for (texts, def) in candidates.iter_mut().zip(&defs) {
+                                let (text, adornments) = measure.with_value(|m| m(row, def.id));
+                                let widest = texts.entry(text).or_insert(0.0);
+                                *widest = widest.max(adornments);
+                            }
                         }
-                    }
+                    });
                     gloo_timers::future::TimeoutFuture::new(0).await;
                 }
                 if generation.try_get_untracked() != Some(expected) {

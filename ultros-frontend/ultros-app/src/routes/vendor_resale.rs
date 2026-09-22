@@ -38,7 +38,7 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     i18n::*,
-    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    query_defaults::{filter_query_signal, seed_analyzer_default_view},
     routes::world_nav::world_nav_url,
     ws::realtime::use_realtime,
 };
@@ -240,9 +240,9 @@ const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[
 /// trailing separator — `sort=profit` is meaningful here because
 /// `SortMode::fallback()` is ROI, not profit.
 const PRESET_QUERIES: [&str; 3] = [
-    "?next-sale=7d&roi=100&profit=1000&sort=profit",
-    "?next-sale=1M&roi=500&profit=5000",
-    "?profit=50000",
+    "?next-sale=7d&roi=100&profit=1000&sort=profit&show-suspicious=false",
+    "?next-sale=1M&roi=500&profit=5000&show-suspicious=false",
+    "?profit=50000&show-suspicious=false",
 ];
 
 fn vendor_resale_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
@@ -275,6 +275,14 @@ fn is_suspicious_market_price(market_price: i32, sale_summary: Option<&SaleSumma
         return false;
     }
     market_price as i64 > summary.median_price as i64 * SUSPICIOUS_PRICE_MULTIPLE
+}
+
+fn passes_suspicious_filter(
+    show_suspicious: Option<bool>,
+    market_price: i32,
+    sale_summary: Option<&SaleSummary>,
+) -> bool {
+    show_suspicious.unwrap_or(true) || !is_suspicious_market_price(market_price, sale_summary)
 }
 
 // Add FromStr and ToString implementations for SortMode
@@ -347,6 +355,7 @@ fn sort_rows(rows: &mut [CalculatedVendorProfitData], mode: SortMode, dir: SortD
                 cmp_none_last(dur(a), dur(b), dir, Ord::cmp)
             }
         }
+        .then_with(|| a.inner.item_id.cmp(&b.inner.item_id))
     });
 }
 
@@ -490,11 +499,9 @@ fn VendorResaleTable(
     let (tax_enabled, _set_tax_enabled) = filter_query_signal::<bool>(FILTER_TAX);
     let (minimum_sales, _set_minimum_sales) = filter_query_signal::<usize>(FILTER_SALES);
     let (category_filter, _set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
-    // Hidden by default, like the Flip Finder and Trends toggles of the same
-    // name — an unachievable listing is worse than no row at all here, because
-    // it inflates ROI and therefore sorts to the top.
+    // Recommended and built-in views explicitly hide suspicious prices.
+    // Removing that visible filter restores the unrestricted candidate set.
     let (show_suspicious, _set_show_suspicious) = filter_query_signal::<bool>(FILTER_SUSPICIOUS);
-    let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
@@ -548,8 +555,8 @@ fn VendorResaleTable(
             })
             .filter(move |data| {
                 revenue_pending.get()
-                    || show_suspicious_active()
-                    || !is_suspicious_market_price(
+                    || passes_suspicious_filter(
+                        show_suspicious(),
                         data.inner.market_price,
                         data.inner.sale_summary.as_ref(),
                     )
@@ -739,11 +746,11 @@ fn VendorResaleTable(
  row_height=40.0
  columns=Signal::derive(move || vec![GridColumn::new("hq",t_string!(i18n, vendor_resale_hq).to_string(), 60.0, true, true),
 GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), ITEM_COLUMN_WIDTH, false, true).fixed_width(),
-{ let mut col = GridColumn::new("profit",t_string!(i18n, vendor_resale_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
-{ let mut col = GridColumn::new("roi",t_string!(i18n, vendor_resale_roi).to_string(), 100.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
-GridColumn::new("vendor-price",t_string!(i18n, vendor_resale_vendor_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::VendorPrice, sort_dir.get().unwrap_or_else(||SortMode::VendorPrice.default_dir()) == SortDir::Asc),
-GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
-{ let mut col = GridColumn::new("sale-time",t_string!(i18n, vendor_resale_avg_sale_time).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::SaleTime, sort_dir.get().unwrap_or_else(||SortMode::SaleTime.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("next-sale", filter_label("next-sale"), false)); col }])
+{ let mut col = GridColumn::new("profit",t_string!(i18n, vendor_resale_profit).to_string(), 130.0, true, true).native_sort("profit", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
+{ let mut col = GridColumn::new("roi",t_string!(i18n, vendor_resale_roi).to_string(), 100.0, true, true).native_sort("roi", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
+GridColumn::new("vendor-price",t_string!(i18n, vendor_resale_vendor_price).to_string(), 130.0, true, true).native_sort("vendor-price", true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::VendorPrice, sort_dir.get().unwrap_or_else(||SortMode::VendorPrice.default_dir()) == SortDir::Asc),
+GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_string(), 130.0, true, true).native_sort("market-price", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
+{ let mut col = GridColumn::new("sale-time",t_string!(i18n, vendor_resale_avg_sale_time).to_string(), 130.0, true, true).native_sort("sale-time", true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::SaleTime, sort_dir.get().unwrap_or_else(||SortMode::SaleTime.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("next-sale", filter_label("next-sale"), false)); col }])
  header=move |id| {match id {"hq" => view! {<div  class="text-center w-full min-w-0">
                                     {t!(i18n, vendor_resale_hq)}
                                 </div>}.into_any(),
@@ -861,11 +868,12 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
 
 #[component]
 pub fn VendorWorldView() -> impl IntoView {
+    crate::components::virtual_grid::saved_views::provide_grid_saved_views("vendor-resale-grid");
     let i18n = use_i18n();
     // Seeded here rather than in VendorResaleTable: that lives inside the
     // Suspense closure and remounts on every market refetch, which would keep
     // undoing a filter the user had cleared.
-    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    seed_analyzer_default_view("vendor-resale");
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
 
@@ -1417,6 +1425,34 @@ mod tests {
             median_price,
             min_price: median_price,
         }
+    }
+
+    #[test]
+    fn recommended_suspicious_filter_is_explicit_and_can_be_cleared() {
+        use ultros_ui_grid::view_policy::{explicit_query, parse_query, recommended_query};
+
+        let recommended = parse_query(&recommended_query("vendor-resale"));
+        let setting = recommended
+            .get(FILTER_SUSPICIOUS)
+            .and_then(|value| value.parse().ok());
+        assert_eq!(setting, Some(false));
+        let recent = summary(6, 1_000);
+        assert!(!passes_suspicious_filter(setting, 50_001, Some(&recent)));
+        assert!(passes_suspicious_filter(setting, 50_000, Some(&recent)));
+        assert!(passes_suspicious_filter(setting, 999_999_999, None));
+        assert!(passes_suspicious_filter(
+            setting,
+            999_999_999,
+            Some(&summary(0, 0))
+        ));
+
+        let unrestricted = parse_query(&explicit_query("vendor-resale", ""));
+        let cleared = unrestricted
+            .get(FILTER_SUSPICIOUS)
+            .and_then(|value| value.parse().ok());
+        assert_eq!(cleared, None);
+        assert!(passes_suspicious_filter(cleared, 50_001, Some(&recent)));
+        assert!(passes_suspicious_filter(Some(true), 50_001, Some(&recent)));
     }
 
     /// The eight rows that filled the top of `/vendor-resale/Gilgamesh` on a

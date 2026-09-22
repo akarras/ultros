@@ -33,6 +33,7 @@ pub enum ValueKind {
 
 pub type ValueExtractor<T> = Arc<dyn Fn(&T) -> GridValue + Send + Sync>;
 pub type TierExtractor<T> = Arc<dyn Fn(&T) -> u8 + Send + Sync>;
+pub type RowComparator<T> = Arc<dyn Fn(&T, &T, bool) -> Ordering + Send + Sync>;
 
 pub struct GridMetric<T> {
     pub id: &'static str,
@@ -41,6 +42,9 @@ pub struct GridMetric<T> {
     pub partial: bool,
     pub value: ValueExtractor<T>,
     pub tier: Option<TierExtractor<T>>,
+    /// Domain ordering (including missing values and deterministic ties).
+    /// Filters still use the metric value and partial feeds remain unsortable.
+    pub comparator: Option<RowComparator<T>>,
 }
 
 impl<T> Clone for GridMetric<T> {
@@ -51,6 +55,7 @@ impl<T> Clone for GridMetric<T> {
             partial: self.partial,
             value: self.value.clone(),
             tier: self.tier.clone(),
+            comparator: self.comparator.clone(),
         }
     }
 }
@@ -66,6 +71,7 @@ impl<T> GridMetric<T> {
             partial: false,
             value: Arc::new(value),
             tier: None,
+            comparator: None,
         }
     }
     pub fn text(id: &'static str, value: impl Fn(&T) -> GridValue + Send + Sync + 'static) -> Self {
@@ -75,6 +81,7 @@ impl<T> GridMetric<T> {
             partial: false,
             value: Arc::new(value),
             tier: None,
+            comparator: None,
         }
     }
     pub fn partial(mut self) -> Self {
@@ -92,6 +99,14 @@ impl<T> GridMetric<T> {
     /// Keep incompletely priced rows below fully priced rows under either direction.
     pub fn tier(mut self, value: impl Fn(&T) -> u8 + Send + Sync + 'static) -> Self {
         self.tier = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_comparator(
+        mut self,
+        compare: impl Fn(&T, &T, bool) -> Ordering + Send + Sync + 'static,
+    ) -> Self {
+        self.comparator = Some(Arc::new(compare));
         self
     }
 }
@@ -264,6 +279,21 @@ pub fn query_rows<T: Clone>(
     sort_id: Option<&str>,
     ascending: bool,
 ) -> QueryResult<T> {
+    query_rows_with_tiebreak(rows, metrics, filters, sort_id, ascending, |_, _| {
+        Ordering::Equal
+    })
+}
+
+/// Query with a stable identity tiebreak, independent of the upstream native
+/// sort. Identity is always ascending, including for descending value sorts.
+pub fn query_rows_with_tiebreak<T: Clone>(
+    rows: &[T],
+    metrics: &[GridMetric<T>],
+    filters: &MetricFilters,
+    sort_id: Option<&str>,
+    ascending: bool,
+    tiebreak: impl Fn(&T, &T) -> Ordering,
+) -> QueryResult<T> {
     let active: Vec<_> = metrics
         .iter()
         .filter_map(|m| {
@@ -318,7 +348,14 @@ pub fn query_rows<T: Clone>(
                     .as_ref()
                     .map(|tier| tier(row_a).cmp(&tier(row_b)))
                     .unwrap_or(Ordering::Equal)
-                    .then_with(|| compare_values(a, b, ascending))
+                    .then_with(|| {
+                        metric
+                            .comparator
+                            .as_ref()
+                            .map(|compare| compare(row_a, row_b, ascending))
+                            .unwrap_or_else(|| compare_values(a, b, ascending))
+                    })
+                    .then_with(|| tiebreak(row_a, row_b))
             });
         }
         kept = decorated.into_iter().map(|(row, _)| row).collect();
@@ -333,6 +370,89 @@ pub fn query_rows<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn identity_ties_ignore_upstream_sort_and_do_not_reverse_with_values() {
+        let rows = vec![
+            (3, Some(20)),
+            (2, Some(10)),
+            (1, Some(10)),
+            (5, None),
+            (4, None),
+        ];
+        let metrics = vec![GridMetric::number("price", |row: &(i32, Option<i32>)| {
+            row.1
+                .map(|value| GridValue::Number(value as f64))
+                .unwrap_or(GridValue::Missing)
+        })];
+        let mut other_order = rows.clone();
+        other_order.reverse();
+        for (ascending, expected) in [(true, vec![1, 2, 3, 4, 5]), (false, vec![3, 1, 2, 4, 5])] {
+            for upstream in [&rows, &other_order] {
+                let result = query_rows_with_tiebreak(
+                    upstream,
+                    &metrics,
+                    &MetricFilters::new(),
+                    Some("price"),
+                    ascending,
+                    |a, b| a.0.cmp(&b.0),
+                );
+                assert_eq!(
+                    result
+                        .rows
+                        .unwrap()
+                        .iter()
+                        .map(|row| row.0)
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn domain_comparators_preserve_tiers_and_ties_in_both_directions() {
+        let rows = vec![(2, 9, false), (1, 9, false), (3, 1, true)];
+        let metrics = vec![
+            GridMetric::number("price", |row: &(i32, i32, bool)| {
+                GridValue::Number(row.1 as f64)
+            })
+            .with_comparator(|a, b, ascending| {
+                a.2.cmp(&b.2)
+                    .then_with(|| {
+                        if ascending {
+                            a.1.cmp(&b.1)
+                        } else {
+                            b.1.cmp(&a.1)
+                        }
+                    })
+                    .then_with(|| a.0.cmp(&b.0))
+            }),
+        ];
+        for ascending in [true, false] {
+            let result = query_rows(
+                &rows,
+                &metrics,
+                &MetricFilters::new(),
+                Some("price"),
+                ascending,
+            );
+            assert_eq!(
+                result
+                    .rows
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.0)
+                    .collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+        }
+        let partial = vec![metrics[0].clone().partial()];
+        assert!(
+            query_rows(&rows, &partial, &MetricFilters::new(), Some("price"), true)
+                .rows
+                .is_none()
+        );
+    }
 
     #[test]
     fn ranges_validate_both_bounds_and_preserve_unknown_coverage() {

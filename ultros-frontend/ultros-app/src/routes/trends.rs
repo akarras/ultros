@@ -18,19 +18,18 @@
 //! page — it answers "what's hot right now" at a glance; the grid below
 //! is the deep-dive.
 
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use crate::analyzer_kit::{
+    confidence::compare_confidence,
     filters::{register_filters, toggle_control},
     market::{MarketGrid, MarketSubject, use_market_data_with_window},
-    stat_columns::{
-        Window, market_picker_options, shared_cols_in, toggle_shared_col, window_label,
-    },
+    stat_columns::{Window, window_label},
     window::{MarketWindow, MarketWindowControl},
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::query_defaults::{filter_query_signal, query_signal_or_default};
+use crate::query_defaults::{filter_query_signal, seed_analyzer_default_view};
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
@@ -55,7 +54,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::Clipboard,
         confidence_badge::ConfidenceBadge,
-        control_bar::{ColumnOption, ControlBar, PickerHeading, parse_visible_cols},
+        control_bar::ControlBar,
         gil::Gil,
         item_icon::ItemIcon,
         market_heat::MarketHeat,
@@ -79,6 +78,13 @@ type Row = Arc<TrendItem>;
 // changes what the server returns.
 const FILTER_CATEGORY: &str = "category";
 const FILTER_SUSPICIOUS: &str = "show_suspicious";
+
+/// Recommended views explicitly exclude suspicious sales. Clearing that
+/// control restores unrestricted results instead of retaining a hidden filter.
+fn include_suspicious_sales(query_value: Option<bool>) -> bool {
+    query_value.unwrap_or(true)
+}
+
 /// Retired chip parameters, now aliases onto metric filters.
 const LEGACY_MIN_SALES: &str = "min_sales";
 const LEGACY_MIN_PRICE: &str = "min_price";
@@ -101,36 +107,6 @@ const COL_CONFIDENCE: &str = "confidence";
 const COL_QUALITY: &str = "market-quality";
 const COL_LISTING: &str = "market-listing";
 
-/// Every optional column in table order; `?cols=` lists the visible subset.
-const OPTIONAL_COLS: &[&str] = &[
-    COL_QUALITY,
-    COL_TREND,
-    COL_LISTING,
-    COL_VWAP,
-    COL_PCT,
-    COL_SALES_PER_DAY,
-    COL_UNITS,
-    COL_SALES,
-    COL_CONFIDENCE,
-];
-
-/// The original table's columns. `sales` (the cleaned sale count behind
-/// sales/day and the old Min sales chip) is filterable but hidden by default.
-const DEFAULT_COLS: &[&str] = &[
-    COL_QUALITY,
-    COL_TREND,
-    COL_LISTING,
-    COL_VWAP,
-    COL_PCT,
-    COL_SALES_PER_DAY,
-    COL_UNITS,
-    COL_CONFIDENCE,
-];
-
-fn default_cols_query() -> String {
-    DEFAULT_COLS.join(",")
-}
-
 /// Old `?sort=` tokens and the metric column each now selects. `price` was
 /// the observed listing, which the shared listing column carries.
 const SORT_ALIASES: [SortAlias; 5] = [
@@ -146,16 +122,6 @@ fn filter_aliases() -> Vec<FilterAlias> {
         FilterAlias::integer(LEGACY_MIN_SALES, COL_SALES, FilterOp::Gte),
         FilterAlias::integer(LEGACY_MIN_PRICE, COL_LISTING, FilterOp::Gte),
     ]
-}
-
-/// Ids currently on in `?cols=`: native optional columns plus any shared
-/// sale-history column, so the picker checkboxes reflect both.
-fn visible_cols(raw: Option<&str>) -> HashSet<&'static str> {
-    let defaults = default_cols_query();
-    let raw = raw.unwrap_or(&defaults);
-    let mut set = parse_visible_cols(Some(raw), OPTIONAL_COLS, DEFAULT_COLS);
-    set.extend(shared_cols_in(Some(raw)));
-    set
 }
 
 fn format_volume(v: u64) -> String {
@@ -249,6 +215,13 @@ fn trend_metrics() -> Vec<GridMetric<Arc<TrendItem>>> {
         }),
         GridMetric::text(COL_CONFIDENCE, |row: &Arc<TrendItem>| {
             confidence_value(row.confidence_band)
+        })
+        .with_comparator(|left, right, ascending| {
+            compare_confidence(
+                Some(left.confidence_band),
+                Some(right.confidence_band),
+                ascending,
+            )
         }),
     ]
 }
@@ -364,6 +337,7 @@ fn TrendsWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Trends() -> impl IntoView {
     let i18n = use_i18n();
+    seed_analyzer_default_view("trends");
     let params = use_params_map();
     let world = move || params.with(|params| params.get("world").unwrap_or_default());
     let world_scope: Signal<String> = Signal::derive(world);
@@ -376,16 +350,9 @@ pub fn Trends() -> impl IntoView {
     let market = use_market_data_with_window(world_scope, window, None);
     let (suspicious, _set_suspicious) = filter_query_signal::<bool>(FILTER_SUSPICIOUS);
     let (category_filter, _set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
-    let (cols_param, set_cols_param) = query_signal_or_default::<String>(
-        "cols",
-        NavigateOptions {
-            scroll: false,
-            ..Default::default()
-        },
-    );
 
     let window_days = Memo::new(move |_| window.selected.get().days());
-    let show_suspicious = Signal::derive(move || suspicious().unwrap_or(false));
+    let show_suspicious = Signal::derive(move || include_suspicious_sales(suspicious()));
 
     let trends = ArcResource::new(
         move || (world(), window_days(), show_suspicious()),
@@ -483,38 +450,28 @@ pub fn Trends() -> impl IntoView {
             _ => String::new(),
         }
     };
-    let column_options = Memo::new(move |_| {
-        let mut options = OPTIONAL_COLS
-            .iter()
-            .map(|col| ColumnOption {
-                id: col,
-                label: native_label(col),
-                group: Some(PickerHeading {
-                    label: t_string!(i18n, trends_picker_group).to_string(),
-                    title: None,
-                }),
-                disabled: false,
-                hint: None,
-            })
-            .collect::<Vec<_>>();
-        options.extend(market_picker_options(window.selected.get()));
-        options
-    });
-    let picker_visible = Memo::new(move |_| visible_cols(cols_param.get().as_deref()));
-    let toggle_column = Callback::new(move |col: &'static str| {
-        let previous = cols_param.get_untracked();
-        set_cols_param.set(Some(toggle_shared_col(
-            previous.as_deref(),
-            &default_cols_query(),
-            col,
-        )));
-    });
 
     let trend_group = Signal::derive(move || t_string!(i18n, trends_picker_group).to_string());
     let columns = Signal::derive(move || {
         let native = |id: &'static str, width: f64, visible: bool| {
             let mut col = GridColumn::new(id, native_label(id), width, true, visible);
             col.picker_group = Some(trend_group.get());
+            if id != COL_TREND {
+                col = col.native_sort(if id == COL_SALES_PER_DAY { "spd" } else { id }, false);
+            }
+            if matches!(
+                id,
+                COL_VWAP | COL_PCT | COL_SALES_PER_DAY | COL_UNITS | COL_SALES
+            ) {
+                col.picker_hint = Some(
+                    t_string!(
+                        i18n,
+                        analyzer_columns_trends_hint,
+                        days = window.selected.get().days().to_string()
+                    )
+                    .to_string(),
+                );
+            }
             col
         };
         vec![
@@ -524,7 +481,8 @@ pub fn Trends() -> impl IntoView {
                 320.0,
                 false,
                 true,
-            ),
+            )
+            .fixed_width(),
             // Shared columns keep their own labels and groups; MarketGrid
             // fills them in. Placing them here fixes their position and
             // default visibility.
@@ -583,10 +541,6 @@ pub fn Trends() -> impl IntoView {
                     actions=move || {
                         view! { <GridSavedViews id="trends-grid" /> }.into_any()
                     }
-                    columns=column_options
-                    visible_columns=picker_visible
-                    on_toggle_column=toggle_column
-                    on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
                     empty_label=Signal::derive(move || {
                         t_string!(i18n, no_active_filters).to_string()
                     })
@@ -756,6 +710,13 @@ mod tests {
     use crate::components::virtual_grid::registry::{resolve_filters, resolve_sort};
     use leptos_router::params::ParamsMap;
 
+    #[test]
+    fn suspicious_sales_exclusion_is_explicit_and_clearing_restores_unrestricted_results() {
+        assert!(include_suspicious_sales(None));
+        assert!(!include_suspicious_sales(Some(false)));
+        assert!(include_suspicious_sales(Some(true)));
+    }
+
     fn item(units: u64, sales: u32, price: i32) -> Arc<TrendItem> {
         Arc::new(TrendItem {
             item_id: 5,
@@ -856,6 +817,38 @@ mod tests {
     }
 
     fn native_metrics_assertions() {
+        use crate::components::virtual_grid::metrics::{MetricFilters, query_rows};
+        use ConfidenceBand::{High, Low, Medium, Unknown, Unusable};
+
+        let confidence_rows: Vec<_> = [Unknown, Medium, High, Unusable, Low]
+            .into_iter()
+            .map(|band| {
+                let mut row = (*item(1, 1, 100)).clone();
+                row.confidence_band = band;
+                Arc::new(row)
+            })
+            .collect();
+        for (ascending, expected) in [
+            (true, [Unusable, Low, Medium, High, Unknown]),
+            (false, [High, Medium, Low, Unusable, Unknown]),
+        ] {
+            let sorted = query_rows(
+                &confidence_rows,
+                &trend_metrics(),
+                &MetricFilters::new(),
+                Some(COL_CONFIDENCE),
+                ascending,
+            );
+            assert_eq!(
+                sorted
+                    .rows
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.confidence_band)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
         let row = item(2_500, 90, 500);
         let value = |id: &str| {
             let metric = trend_metrics().into_iter().find(|m| m.id == id).unwrap();
@@ -878,33 +871,6 @@ mod tests {
             (metric.value)(&Arc::new(suspicious)),
             GridValue::Text(_)
         ));
-    }
-
-    #[test]
-    fn column_picker_state_round_trips_native_and_shared_ids() {
-        for col in DEFAULT_COLS {
-            assert!(OPTIONAL_COLS.contains(col), "{col}");
-        }
-        assert_eq!(
-            visible_cols(None),
-            DEFAULT_COLS.iter().copied().collect::<HashSet<_>>()
-        );
-        let raw = "trend,market-sale-median,unknown";
-        assert_eq!(
-            visible_cols(Some(raw)),
-            HashSet::from([COL_TREND, "market-sale-median"])
-        );
-        let toggled = toggle_shared_col(None, &default_cols_query(), COL_SALES);
-        assert!(toggled.split(',').any(|id| id == COL_SALES));
-        assert!(toggled.split(',').any(|id| id == COL_TREND));
-        assert!(
-            visible_cols(Some(&toggle_shared_col(
-                Some(&toggled),
-                &default_cols_query(),
-                COL_TREND
-            )))
-            .contains(COL_SALES)
-        );
     }
 
     #[test]

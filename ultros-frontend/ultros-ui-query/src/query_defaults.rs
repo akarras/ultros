@@ -1,9 +1,8 @@
 //! Opinionated defaults for URL-backed filters.
 //!
-//! The analyzer tools land first-time visitors on a sale-velocity-filtered view
-//! instead of a list topped by items that sell once a month. The default lives
-//! in the URL rather than in the filter logic, so chips, Clear All, and shared
-//! links all keep behaving exactly as they do for a hand-typed filter.
+//! Each analyzer offers useful, editable filters for its own activity. Defaults
+//! live in the URL, so chips, Clear All, saved views and shared links behave
+//! exactly as they do for hand-typed filters.
 
 use std::str::FromStr;
 
@@ -15,6 +14,32 @@ use leptos_router::location::Url;
 
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::saved_views::default_view_query;
+pub use ultros_ui_grid::view_policy::recommended_query;
+
+/// Seed a complete recommended view only on entry to a bare URL. A partial
+/// explicit URL is already a view; never layer defaults over shared links.
+/// Call at route setup, outside Suspense, so clearing filters stays cleared.
+pub fn seed_analyzer_default_view(tool: &'static str) {
+    let location = crate::components::app_link::use_location_or_default();
+    let query = use_query_map_or_default();
+    if !crate::last_view::is_bare(
+        &location.pathname.get_untracked(),
+        &query.get_untracked().to_query_string(),
+    ) || crate::last_view::has_restorable_view()
+    {
+        return;
+    }
+    Effect::new(move |_| {
+        let view = ultros_ui_grid::view_policy::saved_default_query(tool)
+            .unwrap_or_else(|| recommended_query(tool));
+        let view = ultros_ui_grid::view_policy::explicit_query(tool, &view);
+        for (key, value) in parse_query_pairs(&view) {
+            let (_, setter) = query_signal_or_default::<String>(key, filter_nav_options());
+            // The router's queued ParamsMap::replace decodes its input.
+            setter.set(Some(Url::escape(&value)));
+        }
+    });
+}
 
 /// Default ceiling on predicted time to next sale: items that sell at least
 /// once a day. Parsed with `humantime`, same as anything typed into the box.
@@ -127,10 +152,9 @@ where
 
 /// Split a stored query string (`?a=1&b=2`) into decoded key/value pairs.
 ///
-/// Decoded with the router's own [`Url::unescape`], the exact inverse of the
-/// escaping `ParamsMap::to_query_string` applies on the way out. Writing a
-/// still-encoded value back through a `query_signal` setter would encode it
-/// a second time, turning a saved `?name=Grade%208` into `Grade%25208`.
+/// Decode once with the router's own [`Url::unescape`]. Callers that write
+/// these decoded values through a query setter must escape them again: its
+/// queued `ParamsMap::replace` expects encoded input and unescapes it.
 fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
     query
         .trim_start_matches('?')
@@ -196,7 +220,7 @@ pub fn seed_flip_finder_default_view() -> bool {
                     continue;
                 }
                 let (_, set) = query_signal_or_default::<String>(key, filter_nav_options());
-                set.set(Some(value));
+                set.set(Some(Url::escape(&value)));
             }
         });
     }
@@ -331,15 +355,15 @@ mod test {
         assert!(parse_query_pairs("?&&").is_empty());
     }
 
-    /// Values are stored escaped and re-escaped on the way back out, so the
-    /// seed has to decode or a saved name filter gains a `%25` per visit.
+    /// Ordinary spaces and literal percent sequences are different values.
     #[test]
     fn values_are_decoded_once() {
         assert_eq!(
-            parse_query_pairs("?name=Grade%208&roi=30"),
+            parse_query_pairs("?name=Grade%208&roi=30&literal=%2520%20%2526"),
             vec![
                 ("name".to_string(), "Grade 8".to_string()),
                 ("roi".to_string(), "30".to_string()),
+                ("literal".to_string(), "%20 %26".to_string()),
             ]
         );
     }

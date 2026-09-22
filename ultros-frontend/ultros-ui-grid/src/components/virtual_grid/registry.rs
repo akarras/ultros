@@ -176,6 +176,16 @@ pub fn cols_query(columns: &[GridColumn]) -> String {
         .join(",")
 }
 
+/// Only column identity and ordering policy belong in query resolution.
+/// Labels, picker hints and widths can change with a market window without
+/// invalidating the row query that reads that window's resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SortColumn {
+    id: &'static str,
+    native_sort: Option<super::layout::NativeSort>,
+    active: bool,
+}
+
 #[derive(Clone, Copy)]
 pub struct FilterRegistry {
     aliases: StoredValue<Vec<FilterAlias>>,
@@ -183,6 +193,8 @@ pub struct FilterRegistry {
     default_sort: StoredValue<Option<&'static str>>,
     controls: Signal<Vec<ColumnFilter>>,
     columns: RwSignal<Option<Signal<Vec<GridColumn>>>>,
+    sort_columns: RwSignal<Option<Memo<Vec<SortColumn>>>>,
+    sortable_columns: StoredValue<HashSet<&'static str>>,
     visibility: RwSignal<Option<ColumnVisibility>>,
     pub editing: RwSignal<Option<ColumnFilter>>,
     count: RwSignal<Option<Signal<usize>>>,
@@ -196,6 +208,8 @@ impl FilterRegistry {
             default_sort: StoredValue::new(None),
             controls,
             columns: RwSignal::new(None),
+            sort_columns: RwSignal::new(None),
+            sortable_columns: StoredValue::new(HashSet::new()),
             visibility: RwSignal::new(None),
             editing: RwSignal::new(None),
             count: RwSignal::new(None),
@@ -223,6 +237,84 @@ impl FilterRegistry {
 
     pub fn register(self, columns: Signal<Vec<GridColumn>>) {
         self.columns.set(Some(columns));
+    }
+
+    /// Register query metadata before resolving query state. The projection
+    /// shields queries from presentation-only changes to complete definitions;
+    /// using the resolved columns here would create a dependency cycle.
+    pub fn register_sort_columns(
+        self,
+        columns: Signal<Vec<GridColumn>>,
+        sortable: HashSet<&'static str>,
+    ) {
+        self.sortable_columns.set_value(sortable);
+        let schema = Memo::new(move |_| {
+            columns.with(|columns| {
+                columns
+                    .iter()
+                    .map(|column| SortColumn {
+                        id: column.id,
+                        native_sort: column.native_sort,
+                        active: column.aria_sort != "none",
+                    })
+                    .collect()
+            })
+        });
+        self.sort_columns.set(Some(schema));
+    }
+
+    pub fn native_column(self, token: &str) -> Option<&'static str> {
+        self.sort_columns.get()?.with(|columns| {
+            columns
+                .iter()
+                .find(|column| {
+                    column.native_sort.is_some_and(|sort| sort.token == token)
+                        && self
+                            .sortable_columns
+                            .with_value(|ids| ids.contains(column.id))
+                })
+                .map(|column| column.id)
+        })
+    }
+
+    pub fn default_ascending(self, id: &str) -> bool {
+        self.sort_columns.get().is_some_and(|columns| {
+            columns.with(|columns| {
+                columns
+                    .iter()
+                    .find(|column| column.id == id)
+                    .and_then(|column| column.native_sort)
+                    .is_some_and(|sort| sort.default_ascending)
+            })
+        })
+    }
+
+    /// An omitted definition is unavailable in this data set; a hidden
+    /// definition is still a valid sort target. Before a grid registers,
+    /// keep resolving URLs so page-owned loaders can discover their needs.
+    fn column_defined(self, id: &str) -> bool {
+        self.sort_columns.get().is_none_or(|columns| {
+            columns.with(|columns| columns.iter().any(|column| column.id == id))
+        })
+    }
+
+    /// Old native links omit their column's default direction. Existing
+    /// `grid:` links instead default to descending; newly written links are explicit.
+    pub fn sort_ascending(self, query: &ParamsMap) -> bool {
+        match query.get("dir").as_deref() {
+            Some("asc") => true,
+            Some("desc") => false,
+            _ if query
+                .get("sort")
+                .and_then(|sort| sort.strip_prefix("grid:").map(str::to_owned))
+                .is_some_and(|column| self.column_defined(&column)) =>
+            {
+                false
+            }
+            _ => self
+                .sort_column(query.get("sort").as_deref())
+                .is_some_and(|column| self.default_ascending(&column)),
+        }
     }
 
     pub fn register_visibility(self, visibility: ColumnVisibility) {
@@ -305,7 +397,30 @@ impl FilterRegistry {
     pub fn sort_column(self, sort: Option<&str>) -> Option<String> {
         self.sort_aliases
             .with_value(|aliases| resolve_sort(sort, aliases))
+            .filter(|column| {
+                !sort.is_some_and(|sort| sort.starts_with("grid:")) || self.column_defined(column)
+            })
+            .or_else(|| {
+                sort.and_then(|token| self.native_column(token))
+                    .map(str::to_owned)
+            })
             .or_else(|| self.default_sort.get_value().map(str::to_owned))
+            .or_else(|| {
+                self.sort_columns.get().and_then(|columns| {
+                    columns.with(|columns| {
+                        columns
+                            .iter()
+                            .find(|column| {
+                                column.active
+                                    && column.native_sort.is_some()
+                                    && self
+                                        .sortable_columns
+                                        .with_value(|ids| ids.contains(column.id))
+                            })
+                            .map(|column| column.id.to_owned())
+                    })
+                })
+            })
     }
 
     pub fn is_alias(self, key: &str) -> bool {
@@ -531,6 +646,167 @@ pub fn RegisteredFilterEditor(registry: FilterRegistry) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presentation_updates_do_not_invalidate_sort_resolution() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            let columns = RwSignal::new(vec![
+                GridColumn::new("units", "Units (30d)".into(), 120.0, true, true)
+                    .native_sort("units", false)
+                    .sorted(true, false),
+                GridColumn::new("price", "Price".into(), 100.0, true, false)
+                    .native_sort("price", true),
+            ]);
+            registry.register_sort_columns(columns.into(), HashSet::from(["units", "price"]));
+            let reads = Arc::new(AtomicUsize::new(0));
+            let sort_reads = reads.clone();
+            let resolved = Memo::new(move |_| {
+                sort_reads.fetch_add(1, Ordering::Relaxed);
+                (
+                    registry.sort_column(None),
+                    registry.sort_ascending(&ParamsMap::new()),
+                )
+            });
+            assert_eq!(resolved.get(), (Some("units".into()), false));
+            assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+            // Switching windows updates copy and geometry, not sort policy.
+            columns.update(|columns| {
+                columns[0].label = "Units (7d)".into();
+                columns[0].picker_hint = Some("Seven-day activity".into());
+                columns[0].width = 160.0;
+                columns[0].visible = false;
+            });
+            assert_eq!(resolved.get(), (Some("units".into()), false));
+            assert_eq!(reads.load(Ordering::Relaxed), 1);
+            assert_eq!(registry.native_column("units"), Some("units"));
+
+            // Availability and fallback changes still invalidate the policy.
+            columns.update(|columns| {
+                columns.remove(0);
+                columns[0].aria_sort = "ascending";
+            });
+            assert_eq!(resolved.get(), (Some("price".into()), true));
+            assert_eq!(reads.load(Ordering::Relaxed), 2);
+            assert_eq!(registry.native_column("units"), None);
+            assert_eq!(
+                registry.sort_column(Some("grid:units")),
+                Some("price".into())
+            );
+        });
+    }
+
+    #[test]
+    fn hidden_native_columns_and_menu_links_share_query_order_and_direction() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            // The cheap-first column is hidden: no header can register it.
+            let columns = vec![
+                GridColumn::new("profit", "Profit".into(), 100.0, true, true)
+                    .native_sort("profit", false)
+                    .sorted(true, false),
+                GridColumn::new("buy-price", "Cost".into(), 100.0, true, false)
+                    .native_sort("cost", true),
+            ];
+            registry.register_sort_columns(
+                Signal::derive(move || columns.clone()),
+                HashSet::from(["profit", "buy-price"]),
+            );
+            assert_eq!(registry.native_column("cost"), Some("buy-price"));
+            assert_eq!(registry.sort_column(None).as_deref(), Some("profit"));
+            assert_eq!(
+                registry.sort_column(Some("invalid")).as_deref(),
+                Some("profit")
+            );
+            let legacy = params(&[("sort", "cost")]);
+            let menu = params(&[("sort", "grid:buy-price"), ("dir", "asc")]);
+            let rows = vec![30, 10, 20];
+            let metric = vec![GridMetric::number("buy-price", |value: &i32| {
+                GridValue::Number(*value as f64)
+            })];
+            for query in [&legacy, &menu] {
+                assert!(registry.sort_ascending(query));
+                let result = query_rows(
+                    &rows,
+                    &metric,
+                    &MetricFilters::new(),
+                    registry
+                        .sort_column(query.get("sort").as_deref())
+                        .as_deref(),
+                    registry.sort_ascending(query),
+                );
+                assert_eq!(result.rows.unwrap(), [10, 20, 30]);
+            }
+            // Existing metric URLs without a direction keep their old meaning.
+            assert!(!registry.sort_ascending(&params(&[("sort", "grid:buy-price")])));
+            assert!(!registry.sort_ascending(&params(&[("sort", "cost"), ("dir", "desc")])));
+        });
+    }
+
+    #[test]
+    fn partial_native_descriptors_cannot_enable_global_sorting() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            registry.register_sort_columns(
+                Signal::derive(|| {
+                    vec![
+                        GridColumn::new("trend", "Trend".into(), 100.0, true, false)
+                            .native_sort("trend", false),
+                    ]
+                }),
+                HashSet::new(),
+            );
+            assert_eq!(registry.native_column("trend"), None);
+            assert_eq!(registry.sort_column(Some("trend")), None);
+            // An explicit partial metric is still resolved here. QueryGrid
+            // excludes it from sorting rather than silently choosing another.
+            assert_eq!(
+                registry.sort_column(Some("grid:trend")).as_deref(),
+                Some("trend")
+            );
+        });
+    }
+
+    #[test]
+    fn unavailable_grid_columns_fall_back_but_hidden_columns_remain_valid() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            registry.register_sort_columns(
+                Signal::derive(|| {
+                    vec![
+                        GridColumn::new("item", "Name".into(), 300.0, false, true)
+                            .native_sort("name", true)
+                            .sorted(true, true),
+                        GridColumn::new("price", "Price".into(), 100.0, true, false)
+                            .native_sort("price", true),
+                    ]
+                }),
+                HashSet::from(["item", "price", "ilvl"]),
+            );
+            assert_eq!(
+                registry.sort_column(Some("grid:price")).as_deref(),
+                Some("price")
+            );
+            assert_eq!(
+                registry.sort_column(Some("grid:ilvl")).as_deref(),
+                Some("item")
+            );
+            assert!(registry.sort_ascending(&params(&[("sort", "grid:ilvl")])));
+            // Existing valid grid URLs still retain descending as their
+            // implicit direction, even if the native column prefers ascending.
+            assert!(!registry.sort_ascending(&params(&[("sort", "grid:price")])));
+            assert!(!registry.sort_ascending(&params(&[("sort", "grid:ilvl"), ("dir", "desc")])));
+        });
+    }
     #[test]
     fn calculation_inputs_never_become_row_filters_or_get_cleared_with_them() {
         let owner = Owner::new();
