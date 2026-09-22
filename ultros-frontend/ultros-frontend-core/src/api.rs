@@ -46,6 +46,7 @@ use ultros_api_types::{
 
 use crate::error::{AppError, AppResult};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use ultros_changelog::ChangelogEntry;
 
 pub async fn search(query: &str) -> AppResult<Vec<SearchResult>> {
     let encoded_query = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
@@ -72,6 +73,14 @@ pub async fn search_with_abort(
         )));
     }
     deserialize(&response.text().await?)
+}
+
+/// The changelog history, which lives in the server binary rather than the
+/// wasm bundle — see `ultros-changelog`. Static content, so the changelog
+/// page reads it through a blocking resource and the server answers from
+/// memory.
+pub async fn get_changelog() -> AppResult<Vec<ChangelogEntry>> {
+    fetch_api("/api/v1/changelog").await
 }
 
 pub async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {

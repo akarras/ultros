@@ -21,7 +21,7 @@ ultros-crafting = { path = "../ultros-crafting" }
 ultros-calc = { path = "../ultros-calc" }
 ultros-ui = { path = "../ultros-ui", default-features = false }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
-ultros-changelog = { path = "../../ultros-changelog" }
+ultros-changelog = { path = "../../ultros-changelog", default-features = false }
 ultros-api-client = { path = "../ultros-api-client", default-features = false }
 leptos = { workspace = true, features = ["nightly"] }
 leptos_meta = { workspace = true }

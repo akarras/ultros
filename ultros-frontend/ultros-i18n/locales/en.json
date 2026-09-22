@@ -2110,6 +2110,7 @@
     "changelog_bug_fixes": "Bug Fixes",
     "changelog_try_it": "Try it",
     "changelog_labs_hint": "Part of a Labs experiment. Turn it on under Settings to try it.",
+    "changelog_error_loading": "Error loading the changelog: {{error}}",
     "help_all_topics_link": "All help topics",
     "help_section_inputs": "Inputs",
     "help_section_assumptions": "Assumptions",

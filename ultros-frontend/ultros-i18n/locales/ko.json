@@ -2107,6 +2107,7 @@
     "changelog_bug_fixes": "버그 수정",
     "changelog_try_it": "사용해 보기",
     "changelog_labs_hint": "실험실 기능의 일부입니다. 설정에서 켜면 사용해 볼 수 있습니다.",
+    "changelog_error_loading": "업데이트 내역을 불러오지 못했습니다: {{error}}",
     "help_all_topics_link": "전체 도움말 주제",
     "help_section_inputs": "입력",
     "help_section_assumptions": "전제",
