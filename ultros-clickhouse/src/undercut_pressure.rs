@@ -4,17 +4,19 @@
 //! two bounded ClickHouse reads. Spec:
 //! docs/superpowers/specs/2026-09-22-undercut-pressure-design.md
 //!
-//! `floor_points`/`floor_at`/`median`/`Classified`/`classify`/`state_for`/
-//! `war_spans` are only reachable from tests until Task 4 adds `pressure()`
-//! (the crate's actual entry point) in the next commit, so `dead_code` fires
-//! on this module in isolation — allowed here and removed once `pressure()`
-//! calls them.
+//! `pressure()` (and everything it calls) is reachable only from this
+//! module's own tests until Task 5 adds `load()`, the crate's public entry
+//! point that does the two ClickHouse reads and calls `pressure()` — so
+//! `dead_code` fires on the whole module in isolation. Allowed here, to be
+//! removed once `load()` calls in.
 #![allow(dead_code)]
 use crate::floor_history::WindowChange;
 use clickhouse::Row;
 use serde::Deserialize;
 use std::collections::HashSet;
-use ultros_api_types::undercut_pressure::{PressureBucket, PressureState, WarSpan};
+use ultros_api_types::undercut_pressure::{
+    PressureBucket, PressureState, PressureSummary, UndercutPressure, WarSpan, WarStatus,
+};
 
 // Thresholds are first guesses, calibrated against prod before phase 1
 // merged (see the PR). Keep them together so tuning is a one-file change.
@@ -235,6 +237,119 @@ pub(crate) fn war_spans(c: &Classified) -> Vec<WarSpan> {
         i = j;
     }
     spans
+}
+
+pub struct PressureParams {
+    pub world_id: i32,
+    /// Chart window; buckets cover `[from, to)`.
+    pub from: i64,
+    pub to: i64,
+    pub bucket_seconds: i64,
+    pub now: i64,
+    /// The world's floor anchor (`floor_history::anchors`).
+    pub anchor: Option<i64>,
+}
+
+/// Closed floor episodes that start at a real transition inside
+/// `[from, to)`. `points[0]` is the carried state at the read start (its
+/// true start is unknown) and the last point is still open, so both are
+/// excluded. Returns the median duration and the (left, undercut) counts.
+pub(crate) fn episodes(
+    points: &[(i64, Option<u32>)],
+    from: i64,
+    to: i64,
+) -> (Option<i64>, u32, u32) {
+    let (mut durations, mut left, mut undercut) = (Vec::new(), 0u32, 0u32);
+    for (i, pair) in points.windows(2).enumerate() {
+        let ((t0, p0), (t1, p1)) = (pair[0], pair[1]);
+        let Some(p0) = p0 else { continue };
+        if i == 0 || t0 < from || t0 >= to {
+            continue;
+        }
+        durations.push((t1 - t0) as f64);
+        match p1 {
+            Some(p1) if p1 < p0 => undercut += 1,
+            _ => left += 1,
+        }
+    }
+    (median(durations).map(|m| m.round() as i64), left, undercut)
+}
+
+/// Everything the item page pane and cards need for one item on one world.
+/// `events` and `floor_rows` must cover `[min(from, now - DAY), max(to, now))`.
+///
+/// `pub(crate)`, not `pub`: `floor_rows` takes `WindowChange`, which is
+/// itself `pub(crate)` (Task 1) — a `pub fn` here would leak a type external
+/// callers couldn't name and fails `private_interfaces` under `-D warnings`.
+/// Task 5's `load()` is the crate's public entry point; it does the two
+/// ClickHouse reads and calls this reducer.
+pub(crate) fn pressure(
+    events: &[UndercutEvent],
+    floor_rows: &[WindowChange],
+    p: &PressureParams,
+) -> UndercutPressure {
+    let mut events = events.to_vec();
+    events.sort_by_key(|e| e.time);
+    let points = floor_points(
+        floor_rows,
+        p.anchor,
+        p.from.min(p.now - DAY),
+        p.to.max(p.now),
+    );
+    let chart = classify(&events, &points, p.anchor, p.from, p.to, p.bucket_seconds);
+    let wars = war_spans(&chart);
+
+    // The 24 h cards read the same at every zoom: their own hourly buckets.
+    let day = classify(&events, &points, p.anchor, p.now - DAY, p.now, HOUR);
+    let last_war = war_spans(&day).pop();
+    let current_hour = p.now.div_euclid(HOUR) * HOUR;
+    let war = match &last_war {
+        Some(w) if w.end >= current_hour => WarStatus::Active,
+        Some(w) => WarStatus::Ended { at: w.end },
+        None => WarStatus::None,
+    };
+    let floor_trend_24h = floor_at(&points, p.now)
+        .zip(floor_at(&points, p.now - DAY))
+        .filter(|(_, then)| *then > 0)
+        .map(|(now, then)| f64::from(now) / f64::from(then) - 1.0);
+
+    let known: Vec<&PressureBucket> = chart
+        .buckets
+        .iter()
+        .filter(|b| b.state != PressureState::Unknown)
+        .collect();
+    let contested_share = (!known.is_empty()).then(|| {
+        let busy = known
+            .iter()
+            .filter(|b| matches!(b.state, PressureState::Churn | PressureState::War))
+            .count();
+        busy as f64 / known.len() as f64
+    });
+    let (floor_holds_median_secs, episodes_left, episodes_undercut) =
+        episodes(&points, p.from, p.to);
+
+    UndercutPressure {
+        world_id: p.world_id,
+        from: p.from,
+        to: p.to,
+        bucket_seconds: p.bucket_seconds,
+        coverage_from: p.anchor,
+        baseline: chart.baseline,
+        summary: PressureSummary {
+            floor_trend_24h,
+            war,
+            last_war,
+            contested_share,
+            typical_undercuts_per_hour: chart
+                .baseline
+                .map(|b| b / (p.bucket_seconds as f64 / HOUR as f64)),
+            floor_holds_median_secs,
+            episodes_left,
+            episodes_undercut,
+        },
+        buckets: chart.buckets,
+        wars,
+    }
 }
 
 #[cfg(test)]
@@ -466,5 +581,105 @@ mod tests {
                 .all(|b| b.trims + b.cuts == 0 && b.floor_open.is_none())
         );
         assert!(war_spans(&c).is_empty());
+    }
+
+    #[test]
+    fn episodes_exclude_censored_and_classify_outcomes() {
+        // (0) is the carried state at the read start: left-censored.
+        let points = vec![
+            (0, Some(1000)),
+            (100, Some(900)),
+            (400, Some(880)), // 100..400 ended by undercut
+            (700, Some(950)), // 400..700 left (floor rose)
+            (800, None),      // 700..800 left (board emptied)
+            (900, Some(800)), // still open: right-censored
+        ];
+        assert_eq!(episodes(&points, 0, 1000), (Some(300), 2, 1));
+        assert_eq!(
+            episodes(&points, 500, 1000),
+            (Some(100), 1, 0),
+            "only episodes starting in the window"
+        );
+    }
+
+    fn params(from: i64, to: i64, bucket_seconds: i64, now: i64) -> PressureParams {
+        PressureParams {
+            world_id: 34,
+            from,
+            to,
+            bucket_seconds,
+            now,
+            anchor: Some(0),
+        }
+    }
+
+    #[test]
+    fn summary_24h_is_hourly_and_independent_of_chart_window() {
+        use ultros_api_types::undercut_pressure::WarStatus;
+        let now = 10 * DAY + 1800;
+        // A quiet day (one trim every 3 hours) then a war in the current hour.
+        let mut events: Vec<UndercutEvent> = (1..8)
+            .map(|k| ev(now - k * 3 * HOUR, 9, 1000, 999))
+            .collect();
+        events.extend((0..4).map(|i| ev(now - 1500 + i, 1 + (i as i32 % 2), 1000, 900)));
+        let rows = [
+            fc(0, 0, 1100),
+            fc(now - DAY + 10, 0, 1000),
+            fc(now - 1400, 0, 900),
+        ];
+        let out = pressure(&events, &rows, &params(0, 2 * DAY, DAY, now));
+        assert_eq!(
+            out.buckets.len(),
+            2,
+            "chart buckets follow the chart window only"
+        );
+        assert_eq!(out.summary.war, WarStatus::Active);
+        assert_eq!(out.summary.last_war.as_ref().map(|w| w.sellers), Some(2));
+        let trend = out.summary.floor_trend_24h.unwrap();
+        assert!((trend - (900.0 / 1100.0 - 1.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn war_status_ends_and_expires() {
+        use ultros_api_types::undercut_pressure::WarStatus;
+        let now = 10 * DAY;
+        let war_at = now - 5 * HOUR;
+        let events: Vec<UndercutEvent> = (0..4)
+            .map(|i| ev(war_at + 100 + i, 1 + (i as i32 % 2), 1000, 900))
+            .collect();
+        let rows = [fc(0, 0, 1000), fc(war_at + 200, 0, 900)];
+        let out = pressure(&events, &rows, &params(now - DAY, now, HOUR, now));
+        assert_eq!(out.summary.war, WarStatus::Ended { at: war_at + HOUR });
+        let later = pressure(&events, &rows, &params(now - DAY, now, HOUR, now + 2 * DAY));
+        assert_eq!(later.summary.war, WarStatus::None);
+    }
+
+    #[test]
+    fn summary_contested_share_rate_and_episodes() {
+        let events: Vec<UndercutEvent> = (0..4).map(|h| ev(h * HOUR + 10, 9, 1000, 999)).collect();
+        let rows = [fc(0, 0, 1000), fc(HOUR, 0, 990), fc(HOUR + 600, 0, 1200)];
+        let out = pressure(&events, &rows, &params(0, 6 * HOUR, HOUR, 6 * HOUR));
+        // Buckets 0-3 hold one undercut (churn), 4-5 none (calm); baseline = median([1,1,1,1,0,0]) = 1.
+        assert_eq!(out.summary.contested_share, Some(4.0 / 6.0));
+        assert_eq!(out.summary.typical_undercuts_per_hour, Some(1.0));
+        // The only closed episode starting in the window: HOUR..HOUR+600, 990 → 1200 (left).
+        assert_eq!(out.summary.floor_holds_median_secs, Some(600));
+        assert_eq!(
+            (out.summary.episodes_left, out.summary.episodes_undercut),
+            (1, 0)
+        );
+        assert_eq!(out.coverage_from, Some(0));
+    }
+
+    #[test]
+    fn no_anchor_means_no_coverage_anywhere() {
+        let p = PressureParams {
+            anchor: None,
+            ..params(0, 2 * HOUR, HOUR, 2 * HOUR)
+        };
+        let out = pressure(&[ev(10, 1, 100, 50)], &[fc(0, 0, 100)], &p);
+        assert!(out.buckets.iter().all(|b| b.state == Unknown));
+        assert_eq!(out.summary, Default::default());
+        assert_eq!((out.baseline, out.coverage_from), (None, None));
     }
 }
