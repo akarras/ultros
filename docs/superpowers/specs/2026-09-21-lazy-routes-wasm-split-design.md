@@ -79,6 +79,19 @@ instead — unlike `hydrate_lazy`, which spawns and returns, this keeps the
 offline-guest path (`mount_to_body`, CSR) already spawns lazy loaders
 asynchronously and is unchanged.
 
+Async hydration has a hazard of its own: while the router awaits the chunk,
+the executor runs effects queued by the already-hydrated shell (`Effect::new`
+is not gated on hydration), and any of them can move state the not-yet-
+hydrated route body reads — the URL normalisation / restored-view logic did
+exactly that in the analyzer E2E, producing an intermittent
+`tachys hydration.rs:163` panic. Every `hydrate_async` in the chain only
+forwards to inner futures, so the loader is the sole suspension point. The
+client therefore awaits `lazy::preload_for_path(location.pathname)` *before*
+hydrating; with the chunk resident the router's await resolves without
+yielding and the walk is as atomic as `hydrate_body` was. The path table is
+hand-maintained (unit test pins its shapes); an unmatched path just falls
+back to the router's own fetch.
+
 ### 2. Nav hover preload — `components/side_nav.rs`
 
 `SideNavItem` gains `#[prop(optional)] preload: Option<fn()>`. On

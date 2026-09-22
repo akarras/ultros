@@ -85,3 +85,81 @@ pub fn preload<T: LazyRoute>() {
         T::preload().await;
     });
 }
+
+/// Fetches the chunk(s) a direct load of `path` will render, and resolves
+/// once they are resident.
+///
+/// The client awaits this *before* hydrating. Async hydration otherwise
+/// pauses inside the router while the route's chunk downloads, and during
+/// that pause the executor runs the effects the already-hydrated shell
+/// queued — any of which can move state the not-yet-hydrated route body
+/// reads (URL normalisation, restored views, cookies), so the client render
+/// no longer matches the server's and tachys panics mid-walk. With the chunk
+/// already loaded the router's await resolves without yielding, and
+/// hydration is as atomic as the synchronous entry point used to be.
+///
+/// Mirrors the lazy entries of the route table in `lib.rs`; an unmatched path
+/// (an eager route, or a wrapper added without a line here) just falls back to
+/// the router's own fetch, which still works but re-opens the window above.
+pub async fn preload_for_path(path: &str) {
+    let mut segments = path.trim_matches('/').splitn(3, '/');
+    let (first, second) = (segments.next().unwrap_or(""), segments.next());
+    match (first, second) {
+        ("flip-finder", None) => AnalyzerRoute::preload().await,
+        ("flip-finder", Some(_)) => AnalyzerWorldRoute::preload().await,
+        ("vendor-resale", None) => VendorResaleRoute::preload().await,
+        ("vendor-resale", Some(_)) => VendorWorldRoute::preload().await,
+        ("vendor-sell", _) => VendorSellRoute::preload().await,
+        ("recipe-analyzer", _) => RecipeAnalyzerRoute::preload().await,
+        ("fc-crafting-analyzer", _) => FcCraftingRoute::preload().await,
+        ("leve-analyzer", _) => LeveRoute::preload().await,
+        ("scrip-sources", _) => ScripRoute::preload().await,
+        ("venture-analyzer", _) => VentureRoute::preload().await,
+        // The Lists layout renders alongside whichever child matched.
+        ("list", None) => {
+            futures::join!(ListsRoute::preload(), EditListsRoute::preload());
+        }
+        ("list", Some("invite")) => {
+            futures::join!(ListsRoute::preload(), ListInviteRoute::preload());
+        }
+        ("list", Some("device")) => {
+            futures::join!(ListsRoute::preload(), GuestListLazyRoute::preload());
+        }
+        ("list", Some(_)) => {
+            futures::join!(ListsRoute::preload(), ListViewRoute::preload());
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // The table above is matched by hand, so pin the shapes it must
+    // recognise. `preload` is a no-op off wasm, which keeps this a pure
+    // routing check.
+    use super::preload_for_path;
+    use futures::FutureExt;
+
+    #[test]
+    fn every_lazy_path_shape_resolves_synchronously_off_wasm() {
+        for path in [
+            "/flip-finder",
+            "/flip-finder/Cerberus",
+            "/vendor-resale/Cerberus/",
+            "/vendor-sell",
+            "/recipe-analyzer/Cerberus",
+            "/list",
+            "/list/",
+            "/list/123",
+            "/list/invite/abc",
+            "/list/device/xyz",
+            "/item/1",
+            "",
+        ] {
+            assert!(
+                preload_for_path(path).now_or_never().is_some(),
+                "{path} must not pend on the server"
+            );
+        }
+    }
+}

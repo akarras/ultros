@@ -408,6 +408,12 @@ pub fn hydrate() {
             // async one awaits the chunk. Awaiting it here (rather than
             // `hydrate_lazy`, which spawns and returns) keeps the boot event
             // below firing only once hydration has actually finished.
+            //
+            // Fetch this URL's chunk first so that await inside the router
+            // resolves without yielding — see `preload_for_path` for why the
+            // hydration walk must not pause halfway.
+            let path = window().location().pathname().unwrap_or_default();
+            ultros_app::lazy::preload_for_path(&path).await;
             let body = document().body().expect("document has a <body>");
             leptos::mount::hydrate_from_async(body, app).await.forget();
         }

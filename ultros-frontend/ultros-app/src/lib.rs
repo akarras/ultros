@@ -15,6 +15,8 @@ pub(crate) mod query_defaults;
 pub(crate) use ultros_calc::recipe_planner;
 pub mod game_sources;
 pub(crate) mod routes;
+/// Lazy-route chunk preloading, used by the client entry point before hydrating.
+pub use routes::lazy;
 pub use ultros_ui_market::sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;
