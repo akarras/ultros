@@ -180,7 +180,7 @@ pub fn SideNav() -> impl IntoView {
                         }}
                     </span>
                 </button>
-                <SideNavItem href="/items".to_string() section="items" icon=i::MdiJellyfish hero=true>
+                <SideNavItem href="/items".to_string() section="items" icon=i::FaCompassSolid hero=true>
                     {t!(i18n, item_explorer)}
                 </SideNavItem>
 
