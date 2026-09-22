@@ -224,3 +224,56 @@ panic!() ──hook──▶ Error().stack (sync)  ──set_timeout(0)──▶
 | `ultros-frontend/ultros-app/src/wasm_symbolicate.js` | new |
 | `integration/wasm-symbolicate.test.cjs` | new; add a `test:wasm-symbolicate` script. CI already runs `node --test integration/*.test.cjs` (`rust.yml`), so it is picked up automatically |
 | `AGENTS.md` / `docs` | note the symbol map artifact and how to read a symbolicated event |
+
+## Addendum (same day): the size pass — `panic = "immediate-abort"`
+
+Decided after the above merged: a stack is worth more than a panic message,
+so production drops the panic runtime entirely.
+
+**Mechanism.** On this nightly `panic_immediate_abort` is no longer a std
+feature; it is a real panic strategy (`panic = "immediate-abort"`, cargo
+feature `panic-immediate-abort`, still needs `-Zbuild-std` for core). Set as
+env on exactly the two wasm `RUN` lines in the Dockerfile — the `chef cook`
+and the `--frontend-only` build, which must match or the cooked deps are
+rebuilt:
+
+```
+CARGO_UNSTABLE_BUILD_STD=std,panic_abort,core,alloc
+CARGO_UNSTABLE_PANIC_IMMEDIATE_ABORT=true
+CARGO_PROFILE_WASM_RELEASE_PANIC=immediate-abort
+```
+
+Not in `.cargo/config.toml` (`[unstable]` is not target-scoped; `-Zbuild-std`
+fails the native server build without `--target`) and not in the manifest
+profile (would hit local `cargo leptos watch`, where the panic message and
+hook are the debugging tool). Local builds keep the hook and `RustWasmPanic`.
+
+**Measured** (same commit, name section stripped by byte copy):
+
+| | raw | brotli |
+|---|---|---|
+| main (`acd8e38`) | 16,653,049 | 3,454,684 |
+| immediate-abort + build-std | 15,902,739 | 3,314,542 |
+| Δ | −750 KB (−4.5%) | −140 KB (−4.1%) |
+
+`core::panicking::*`, `unwrap_failed`, `expect_failed` and the hook no longer
+exist in the module: the top frame of a trap *is* the panicking function.
+
+**Reporting.** In production a panic is the browser's own
+`RuntimeError: unreachable` from `window.onerror` / `unhandledrejection`.
+`error_filter.js` rule 6, which dropped that event as the twin of a
+`RustWasmPanic`, is retired (the twin no longer exists in prod); rule 3's
+injected-translation gating stays. `wasm_symbolicate.js` gains a trap
+post-pass: after ≥1 frame resolves, `fingerprint = ["rust-wasm-trap", top 3
+short names]` (frame filenames carry `wasm-function[N]:0x…`, which changes
+per deploy) and `value = "<value> in <top in_app short name>"`, where a short
+name has its generic arguments removed (`a::f<T>::{closure#3}` →
+`a::f::{closure#3}`; `<T as Trait>::f` kept whole).
+
+**Symbol map fixes found on the real build.** Names are v0-mangled and
+wasm-bindgen demangles them non-alternate, so every crate segment carries a
+`[16-hex]` disambiguator; the longest name was 36 KB (a `VirtualGrid`
+instantiation). `wasm-symbols` now strips the disambiguators (they shift on
+dependency bumps and were most of the bytes) and caps names at 240 chars:
+36.2 MB → 12.8 MB raw, 737 KB → 556 KB brotli for 68,480 functions. `in_app`
+matches `^<*(ultros|xiv_gen)` so trait-impl names count.

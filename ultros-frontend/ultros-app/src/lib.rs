@@ -832,11 +832,12 @@ mod error_filter_wiring {
         // Category 5: leptos hydration-bootstrap ReferenceErrors stripped by a
         // proxy/crawler. Removing it re-opens the #6620/#6667/#6760/#6761 flood.
         assert!(FILTER_JS.contains("isStrippedHydrationBootstrap"));
-        // Category 6: the redundant onerror wasm `unreachable` trap dedup —
-        // drops the per-deploy duplicate of every Rust panic (the #6781–#6828
-        // rotation) via a pkg-bundle stack frame. Removing it re-opens it.
-        assert!(FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
-        assert!(FILTER_JS.contains("ULTROS_PKG_FRAME_RE"));
+        // Category 6 is retired on purpose: production wasm is built with
+        // `panic = "immediate-abort"`, so the onerror `RuntimeError:
+        // unreachable` IS the panic report (symbolicated by
+        // wasm_symbolicate.js) and must never be dropped on frame shape.
+        // Guard against the dedup being reintroduced.
+        assert!(!FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
         // Category 7: the redundant `RefCell already borrowed` executor cascade,
         // dropped unconditionally when its rust_panic.location is the js-sys
         // futures executor. Deleting it silently re-opens the #6758 flood (the
@@ -850,6 +851,19 @@ mod error_filter_wiring {
         // ultros.app / the pkg bundle, or a real Ultros bug could be swept up.
         assert!(FILTER_JS.contains("isThirdPartyScriptError"));
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
+    }
+
+    /// Same contract for the wasm symbolicator: beforeSend calls
+    /// `window.__ultrosSymbolicateEvent`, and production traps rely on its
+    /// `rust-wasm-trap` fingerprint to group across deploys. The JS logic is
+    /// exercised by `integration/wasm-symbolicate.test.cjs`.
+    const SYMBOLICATE_JS: &str = include_str!("wasm_symbolicate.js");
+
+    #[test]
+    fn symbolicator_defines_the_hook_called_by_before_send() {
+        assert!(SYMBOLICATE_JS.contains("window.__ultrosSymbolicateEvent ="));
+        assert!(SYMBOLICATE_JS.contains("\"rust-wasm-trap\""));
+        assert!(SYMBOLICATE_JS.contains("ultros.symbols"));
     }
 }
 pub mod script_escape;

@@ -67,29 +67,16 @@
 //      truncated the streamed bootstrap before the wasm hydrated — the same
 //      translation-proxy population behind category 3. GlitchTip issues
 //      #6620, #6667, #6760, #6761.
-//   6. The redundant "RuntimeError: unreachable" that every Rust panic
-//      emits a SECOND time. The panic hook first reports an actionable
-//      RustWasmPanic (kept — it carries contexts.rust_panic.location and a
-//      stable per-location fingerprint, so it collapses to one issue per
-//      panic site). Then Rust's abort() runs the wasm `unreachable`
-//      instruction, whose trap the browser's global onerror re-captures as
-//      a "RuntimeError: unreachable" with NO rust_panic context. That copy
-//      never gets the stable fingerprint, and its
-//      /pkg/<hash>/ultros.wasm:wasm-function[N] frame filename fragments it
-//      into a NEW issue every deploy — the per-build #67xx/#68xx rotation
-//      (#6781–#6828) that prior triage had to ignore by hand each release.
-//      When the trap's stack carries one of our own pkg-bundle frames it is
-//      provably our wasm, hence a guaranteed duplicate of the kept
-//      RustWasmPanic, so it is dropped unconditionally — no injecting-
-//      population fingerprint needed: a real hydration bug on a current
-//      browser still reaches GlitchTip via the untouched RustWasmPanic. Some
-//      browsers and crawlers instead name every wasm frame with the engine-
-//      internal `wasm://wasm/<hash>:wasm-function[N]` scheme (the Mediapartners-
-//      Google crawler variant, #6848), so the pkg-frame test never fires; a
-//      RuntimeError "unreachable" whose stack is ENTIRELY such wasm-module
-//      frames is likewise our abort trap and is dropped too. A frameless or
-//      third-party-JS-framed RuntimeError (and a third-party wasm loaded from an
-//      https URL, which keeps its source-URL frame form) is left untouched.
+//   6. (Retired.) The onerror "RuntimeError: unreachable" used to be dropped
+//      as the redundant twin of a hook-reported RustWasmPanic. The production
+//      wasm is now built with `panic = "immediate-abort"` (Dockerfile): a
+//      panic runs NO hook and formats NO message, it executes the wasm
+//      `unreachable` instruction on the spot. That trap, caught by the
+//      browser's global onerror / unhandledrejection, is therefore THE panic
+//      report — wasm_symbolicate.js resolves its `wasm-function[N]` frames
+//      to Rust function names and fingerprints it by the top frames. It must
+//      never be dropped on frame shape alone. (Debug and local release
+//      builds keep the hook, so RustWasmPanic still exists there.)
 //   7. The "RefCell already borrowed" panic in the wasm-bindgen-futures
 //      single-threaded executor (js-sys .../futures/task/singlethread.rs).
 //      Every Rust panic that unwinds through a running future poll re-enters
@@ -123,18 +110,6 @@
 //      a real Ultros bug is never swept up.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
-  // Like ULTROS_PKG_BUNDLE_RE but tolerant of the trailing
-  // `:wasm-function[N]:0xADDR` the browser appends to a wasm trap's stack
-  // frame, so `/pkg/<hash>/ultros.wasm:wasm-function[5501]` still counts as
-  // originating in our bundle.
-  var ULTROS_PKG_FRAME_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)\b/;
-  // Engine-internal wasm-module stack-frame scheme. Some browsers — and the
-  // Mediapartners-Google crawler (GlitchTip #6848) — name wasm frames
-  // `wasm://wasm/<module-hash>:wasm-function[N]:0xADDR` rather than attributing
-  // them to the /pkg/<hash>/ultros.wasm source URL, so ULTROS_PKG_FRAME_RE never
-  // matches. On an Ultros page the only wasm is our own bundle, so a stack made
-  // ENTIRELY of these frames is still ours (see isRedundantWasmUnreachableTrap).
-  var ULTROS_WASM_MODULE_FRAME_RE = /^wasm:\/\/wasm\/[^:]+:wasm-function\[\d+\]/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
   // scripts from these (Cloudflare Web Analytics' beacon, Google Analytics /
   // gtag, AdSense, the funding-choices consent frame, ad-traffic-quality), but
@@ -565,61 +540,6 @@
     return false;
   }
 
-  // Category 6: the redundant onerror copy of a Rust panic. See the header.
-  // An onerror "RuntimeError: unreachable" whose stack carries one of OUR
-  // pkg-bundle frames is the abort()-propagation of a panic the hook already
-  // reported as an actionable RustWasmPanic — a guaranteed duplicate that
-  // fragments per deploy. Drop it. Unlike the category-3 onerror prong (which
-  // is fingerprint-gated to preserve a possible real bug), this is safe to drop
-  // UNCONDITIONALLY because the actionable copy is retained: the panic hook is
-  // browser-agnostic, so even a clean current browser still emits the kept
-  // RustWasmPanic. Scoped to our bundle (a frameless or third-party-framed
-  // RuntimeError is preserved) and to the `unreachable` value (other wasm traps
-  // from our bundle, e.g. "memory access out of bounds", still report). The
-  // value is matched loosely so SpiderMonkey's "unreachable executed" and JSC's
-  // "Unreachable code should not be executed" are covered too.
-  function isRedundantWasmUnreachableTrap(event) {
-    try {
-      var ex = firstException(event);
-      if (!ex) return false;
-      if (ex.type !== "RuntimeError" || typeof ex.value !== "string")
-        return false;
-      if (!/unreachable/i.test(ex.value)) return false;
-      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
-      if (frames.length === 0) return false;
-      // (i) Any frame attributable to our pkg bundle (the JS glue or the wasm)
-      //     proves the trap is ours — the #6781–#6828 per-deploy fleet.
-      // (ii) Otherwise fall back to the frame-scheme test: some browsers /
-      //     crawlers name wasm frames `wasm://wasm/<hash>:wasm-function[N]`
-      //     rather than /pkg/<hash>/ultros.wasm (GlitchTip #6848,
-      //     Mediapartners-Google hitting the #6831 hydration panic), so the pkg
-      //     check never fires. A RuntimeError "unreachable" whose stack is
-      //     ENTIRELY such wasm-module frames is a wasm abort trap, and the only
-      //     wasm on an Ultros page is our bundle, so it too is the guaranteed
-      //     duplicate of the kept RustWasmPanic. Requiring EVERY frame to be a
-      //     wasm-module frame preserves a stack that reaches any third-party JS
-      //     frame; and a third-party wasm loaded from an https URL keeps its
-      //     `…/foo.wasm:wasm-function[N]` source-URL form (not wasm://wasm/), so
-      //     it is not swept up either.
-      var allWasmModuleFrames = true;
-      for (var i = 0; i < frames.length; i++) {
-        var fname = frames[i] && frames[i].filename;
-        if (typeof fname === "string" && ULTROS_PKG_FRAME_RE.test(fname)) {
-          return true;
-        }
-        if (
-          !(typeof fname === "string" && ULTROS_WASM_MODULE_FRAME_RE.test(fname))
-        ) {
-          allWasmModuleFrames = false;
-        }
-      }
-      return allWasmModuleFrames;
-    } catch (_) {
-      /* never let the filter throw */
-    }
-    return false;
-  }
-
   // Category 7: the redundant "RefCell already borrowed" executor cascade. See
   // the header. A handled panic with value "RefCell already borrowed" whose
   // contexts.rust_panic.location is the wasm-bindgen-futures single-threaded
@@ -740,7 +660,6 @@
       isStrippedHydrationBootstrap(event) ||
       isInjectedDocumentTypeError(event) ||
       isInjectedTachysHydrationPanic(event) ||
-      isRedundantWasmUnreachableTrap(event) ||
       isExecutorReentryCascade(event) ||
       isThirdPartyScriptError(event) ||
       isEmptyPromiseRejection(event)

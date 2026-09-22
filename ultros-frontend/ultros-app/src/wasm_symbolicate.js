@@ -9,6 +9,15 @@
 // fetch the map, fill `frame.function`, mark our own crates `in_app`, and
 // trim the panic machinery off the top so the first frame is the site.
 //
+// Production wasm is built with `panic = "immediate-abort"` (Dockerfile):
+// a panic runs no hook and formats no message, it executes the wasm
+// `unreachable` instruction on the spot, and the browser's global onerror
+// reports it as "RuntimeError: unreachable". That event is the whole panic
+// report, so after symbolication it also gets a fingerprint built from its
+// top frames (its frame filenames carry `wasm-function[N]:0x…`, which
+// changes every deploy — default grouping would open a new issue per
+// release) and a value naming the site, so the issue list is readable.
+//
 // Like error_filter.js this is `include_str!`'d into lib.rs and injected
 // verbatim. It defines `window.__ultrosSymbolicateEvent(event)`, which
 // returns a Promise for the (possibly mutated) event — Sentry's `beforeSend`
@@ -21,7 +30,13 @@
   // map is derived from — taken from the frame rather than the SDK release
   // so a tab that outlived a deploy can never fetch the wrong map.
   var WASM_FRAME = /^(.*\/pkg\/[^/]+\/ultros\.wasm):wasm-function\[(\d+)\]/;
-  var IN_APP = /^(ultros|xiv_gen)/;
+  // Our crates, whether the name is a plain path (`ultros_app::x::f`) or a
+  // trait impl (`<ultros_app::x::T as Trait>::f`, sometimes `<<…`).
+  var IN_APP = /^<*(ultros|xiv_gen)/;
+  // V8 "unreachable", SpiderMonkey "unreachable executed", JSC "Unreachable
+  // code should not be executed".
+  var TRAP_VALUE = /unreachable/i;
+  var TRAP_FINGERPRINT_DEPTH = 3;
   var FETCH_TIMEOUT_MS = 10000;
   // Frames above the panicking site: Rust's panic runtime, our hook, the
   // Error() capture and the wasm-bindgen glue that performs it.
@@ -135,7 +150,9 @@
     }
   }
 
+  // Returns how many frames were resolved.
   function apply(frames, names) {
+    var resolved = 0;
     for (var i = 0; i < frames.length; i++) {
       var w = isWasmFrame(frames[i]);
       if (!w) continue;
@@ -143,8 +160,65 @@
       if (typeof name !== "string") continue;
       frames[i].function = name;
       frames[i].in_app = IN_APP.test(name);
+      resolved++;
     }
     trim(frames);
+    return resolved;
+  }
+
+  // A name without its generic arguments: `a::b<T, U>::f::{closure#3}` ->
+  // `a::b::f::{closure#3}`. Trait-impl names (`<T as Trait>::f`) are kept
+  // whole — their angle brackets are structure, not arguments. Used for the
+  // trap's fingerprint and title only (the frames keep their full names), so
+  // one bug in generic code is one issue, not one per instantiation.
+  function shortName(name) {
+    if (name.charAt(0) === "<") return name;
+    var out = "";
+    var depth = 0;
+    for (var i = 0; i < name.length; i++) {
+      var c = name.charAt(i);
+      if (c === "<") {
+        depth++;
+      } else if (c === ">" && depth > 0) {
+        depth--;
+      } else if (depth === 0) {
+        out += c;
+      }
+    }
+    return out;
+  }
+
+  function isTrap(event) {
+    var ex = event.exception.values[0];
+    return (
+      ex &&
+      ex.type === "RuntimeError" &&
+      typeof ex.value === "string" &&
+      TRAP_VALUE.test(ex.value)
+    );
+  }
+
+  // Fingerprint a symbolicated trap by its top frames (newest first) and
+  // name the site in the value. Only when something resolved: an unresolved
+  // trap keeps default grouping rather than collapsing every panic into one
+  // "rust-wasm-trap" issue. An explicit fingerprint set upstream wins.
+  function labelTrap(event) {
+    var ex = event.exception.values[0];
+    var frames = ex.stacktrace.frames;
+    var names = [];
+    var site = null;
+    for (var i = frames.length - 1; i >= 0; i--) {
+      var fn = frames[i] && frames[i].function;
+      if (typeof fn !== "string" || fn === "" || fn === "?") continue;
+      fn = shortName(fn);
+      if (names.length < TRAP_FINGERPRINT_DEPTH) names.push(fn);
+      if (!site && frames[i].in_app === true) site = fn;
+    }
+    if (!names.length) return;
+    if (!Array.isArray(event.fingerprint)) {
+      event.fingerprint = ["rust-wasm-trap"].concat(names);
+    }
+    ex.value = ex.value + " in " + (site || names[0]);
   }
 
   window.__ultrosSymbolicateEvent = function (event) {
@@ -166,7 +240,11 @@
           if (text === null) return event;
           try {
             var names = lookup(text, wanted);
-            for (var t = 0; t < traces.length; t++) apply(traces[t], names);
+            var resolved = 0;
+            for (var t = 0; t < traces.length; t++) {
+              resolved += apply(traces[t], names);
+            }
+            if (resolved && isTrap(event)) labelTrap(event);
           } catch (_) {}
           return event;
         },
