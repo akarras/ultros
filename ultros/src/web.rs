@@ -204,6 +204,48 @@ async fn restore_analyzer_view(
     next.run(req).await
 }
 
+/// The transaction name error events are reported under.
+///
+/// GlitchTip decides which issue an event joins by hashing its title together
+/// with its *culprit*, and an event with no `transaction` falls back to the raw
+/// request URL for that culprit. `sentry-tower`'s `enable_transaction()` only
+/// starts a performance transaction — it never sets the scope's transaction
+/// name — so every error event carried a culprit like
+/// `/api/v1/item_stats/Moogle/35424`, unique per item *and* per world. A
+/// five-second ClickHouse outage on 2026-09-22 minted 50+ single-event issues
+/// out of four distinct failures, which is exactly what stabilising the titles
+/// in `report_title` was meant to prevent.
+///
+/// The matched route is the stable stand-in: `/api/v1/item_stats/{world}/{itemid}`
+/// is the same string for every item, so the burst collapses back into one
+/// issue per `query × kind`. The offending URL is still on the event, in the
+/// request context.
+fn sentry_transaction_name(method: &axum::http::Method, matched: Option<&str>) -> String {
+    // Requests that never matched a route (the static-file/404 fallback) have
+    // no stable name to use. Deliberately *not* falling back to the raw path:
+    // that is the splintering this exists to avoid.
+    format!("{method} {}", matched.unwrap_or("<fallback>"))
+}
+
+/// Names the Sentry scope's transaction after the matched route.
+///
+/// Must sit inside `NewSentryLayer` (so a per-request hub exists to configure)
+/// and inside the router (so `MatchedPath` has been inserted). See
+/// [`sentry_transaction_name`] for why this matters.
+async fn name_sentry_transaction(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let name = sentry_transaction_name(
+        req.method(),
+        req.extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map(|m| m.as_str()),
+    );
+    sentry::configure_scope(|scope| scope.set_transaction(Some(&name)));
+    next.run(req).await
+}
+
 async fn redirect_legacy_book_host(
     req: axum::extract::Request,
     next: middleware::Next,
@@ -3875,6 +3917,11 @@ pub(crate) async fn start_web(
                 }
             },
         ))
+        // Declared before the sentry layers below, so it is *inner* to them:
+        // the per-request hub is already bound by the time it configures the
+        // scope. See `sentry_transaction_name` for why the transaction has to
+        // be named at all.
+        .layer(middleware::from_fn(name_sentry_transaction))
         // Sentry/Glitchtip: bind a fresh Hub per request and decorate captured
         // events with HTTP context (method, URL, status). NewSentryLayer must
         // come before SentryHttpLayer; ServiceBuilder applies in declared
@@ -3956,6 +4003,66 @@ pub(crate) async fn start_web(
         start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
+}
+
+#[cfg(test)]
+mod sentry_transaction_tests {
+    use super::name_sentry_transaction;
+    use axum::{Router, body::Body, http::Request, middleware, routing::get};
+    use tower::ServiceExt;
+
+    async fn failing_handler() -> &'static str {
+        sentry::capture_message(
+            "ClickHouse item_stats query failed (unavailable)",
+            sentry::Level::Error,
+        );
+        "ok"
+    }
+
+    fn router() -> Router {
+        Router::new()
+            .route("/api/v1/item_stats/{world}/{itemid}", get(failing_handler))
+            // Inner to the hub layer, mirroring how `start_web` wires them.
+            .layer(middleware::from_fn(name_sentry_transaction))
+            .layer(sentry_tower::NewSentryLayer::new_from_top())
+    }
+
+    /// Driven synchronously on purpose: `with_captured_events` binds its hub to
+    /// the *current thread*, so the request has to run on that same thread for
+    /// `NewSentryLayer` to inherit the test client. Nothing here touches IO.
+    fn transaction_for(uri: &str) -> Option<String> {
+        let events = sentry::test::with_captured_events(|| {
+            futures::executor::block_on(async {
+                router()
+                    .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+            });
+        });
+        events.into_iter().next().and_then(|e| e.transaction)
+    }
+
+    /// The regression: two requests to the same route must land on the same
+    /// issue. Before this middleware existed the event carried no transaction
+    /// at all, so GlitchTip fell back to the raw URL as the culprit and minted
+    /// a fresh issue per item id — 50+ of them from one ClickHouse blip.
+    #[test]
+    fn same_route_different_params_share_one_transaction() {
+        let moogle = transaction_for("/api/v1/item_stats/Moogle/35424");
+        let gilgamesh = transaction_for("/api/v1/item_stats/Gilgamesh/12");
+
+        assert_eq!(
+            moogle.as_deref(),
+            Some("GET /api/v1/item_stats/{world}/{itemid}")
+        );
+        assert_eq!(moogle, gilgamesh);
+    }
+
+    #[test]
+    fn unmatched_requests_do_not_splinter_on_the_raw_path() {
+        let name = super::sentry_transaction_name(&axum::http::Method::GET, None);
+        assert_eq!(name, "GET <fallback>");
+    }
 }
 
 #[cfg(test)]
