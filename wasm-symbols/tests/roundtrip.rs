@@ -80,6 +80,23 @@ fn has_name_section_reports_presence() {
     assert!(!has_name_section(&module(false)).unwrap());
 }
 
+/// A data-only split chunk carries a `name` section with no function
+/// subsection. That is an empty map, not a malformed module, and the section
+/// still has to be stripped.
+#[test]
+fn empty_name_section_is_an_empty_map_and_still_stripped() {
+    let mut m = Module::new();
+    let mut names = NameSection::new();
+    names.module("chunk");
+    m.section(&names);
+    let wasm = m.finish();
+    assert!(has_name_section(&wasm).unwrap());
+    assert!(extract_symbols(&wasm).unwrap().is_empty());
+    let stripped = strip_name_section(&wasm).unwrap();
+    assert!(!has_name_section(&stripped).unwrap());
+    assert_eq!(stripped, Module::new().finish());
+}
+
 #[test]
 fn strip_removes_only_the_name_section() {
     let stripped = strip_name_section(&module(true)).unwrap();

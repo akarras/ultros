@@ -12,7 +12,7 @@
 //! wasm with no map must not ship silently. The remaining paths are the
 //! `--split` chunks: cargo-leptos runs the same wasm-opt over them, so they
 //! carry names too and would otherwise ship them on every first visit to a
-//! lazy route. A chunk without a `name` section is skipped, not an error.
+//! lazy route. A chunk that names no functions gets no map; not an error.
 
 use anyhow::{Context, Result, bail};
 use std::fs;
@@ -64,7 +64,9 @@ fn write_compressed(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 /// Extract, strip and recompress one module. `Ok(false)` means the module
-/// has no `name` section and was left untouched.
+/// named no functions: no `name` section at all (left untouched), or one
+/// without a function subsection (stripped, no map written) — a data-only
+/// split chunk looks like that.
 fn process(wasm_path: &Path) -> Result<bool> {
     let wasm = fs::read(wasm_path).with_context(|| format!("reading {}", wasm_path.display()))?;
 
@@ -75,18 +77,15 @@ fn process(wasm_path: &Path) -> Result<bool> {
     }
     let symbols = wasm_symbols::extract_symbols(&wasm)
         .with_context(|| format!("{}: extracting function names", wasm_path.display()))?;
-    if symbols.is_empty() {
-        bail!(
-            "{}: name section has no function names",
-            wasm_path.display()
-        );
+    let named = !symbols.is_empty();
+    if named {
+        let symbols_path = wasm_path.with_extension("symbols");
+        let symbols_text = wasm_symbols::format_symbols(&symbols);
+        fs::write(&symbols_path, &symbols_text)
+            .with_context(|| format!("writing {}", symbols_path.display()))?;
+        println!("{}: {} functions named", wasm_path.display(), symbols.len());
+        write_compressed(&symbols_path, symbols_text.as_bytes())?;
     }
-    let symbols_path = wasm_path.with_extension("symbols");
-    let symbols_text = wasm_symbols::format_symbols(&symbols);
-    fs::write(&symbols_path, &symbols_text)
-        .with_context(|| format!("writing {}", symbols_path.display()))?;
-    println!("{}: {} functions named", wasm_path.display(), symbols.len());
-    write_compressed(&symbols_path, symbols_text.as_bytes())?;
 
     let stripped = wasm_symbols::strip_name_section(&wasm)?;
     fs::write(wasm_path, &stripped)
@@ -98,7 +97,7 @@ fn process(wasm_path: &Path) -> Result<bool> {
         stripped.len()
     );
     write_compressed(wasm_path, &stripped)?;
-    Ok(true)
+    Ok(named)
 }
 
 fn main() -> Result<()> {
@@ -110,7 +109,7 @@ fn main() -> Result<()> {
     let main_module = Path::new(main_module);
     if !process(main_module)? {
         bail!(
-            "{}: module has no `name` custom section (was wasm-opt run with `-g`?)",
+            "{}: module names no functions (was wasm-opt run with `-g`?)",
             main_module.display()
         );
     }
@@ -126,7 +125,7 @@ fn main() -> Result<()> {
         }
     }
     if skipped > 0 {
-        println!("{skipped} module(s) had no name section and were left as-is");
+        println!("{skipped} module(s) named no functions; no map written for them");
     }
     Ok(())
 }
