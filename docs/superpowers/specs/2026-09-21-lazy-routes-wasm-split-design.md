@@ -67,6 +67,18 @@ Routes converted (view fn → wrapper):
 `ChooseView`, so the Lists parent is lazy too; `<Outlet/>` inside it is
 unaffected.
 
+### 1b. Client entry point — `ultros-client/src/lib.rs`
+
+`hydrate_body` is synchronous and panics on a direct load of a lazy route
+(`lazy routes not supported with hydrate_body(); use hydrate_lazy() instead`,
+`nested_router.rs:494`): the router must fetch that route's chunk before it
+can walk the SSR DOM. The client already hydrates inside a `spawn_local`
+task, so it awaits `leptos::mount::hydrate_from_async(body, app)` there
+instead — unlike `hydrate_lazy`, which spawns and returns, this keeps the
+`ultros:hydrated` boot event firing only after hydration finished. The
+offline-guest path (`mount_to_body`, CSR) already spawns lazy loaders
+asynchronously and is unchanged.
+
 ### 2. Nav hover preload — `components/side_nav.rs`
 
 `SideNavItem` gains `#[prop(optional)] preload: Option<fn()>`. On
@@ -121,6 +133,21 @@ loads so repeated hovers are free; failed loads retry.
   renders nothing, next navigation retries. Accepted for the pilot.
 - Rollback: remove `--split` (and the post-split script) from the
   Dockerfile. The `Lazy<T>` routes remain valid unsplit.
+
+## Measured (2026-09-21, same source, only `--split` differs)
+
+| | raw | brotli |
+|---|---|---|
+| unsplit `ultros.wasm` | 16,687,640 | 3,457,098 |
+| split main `ultros.wasm` | 12,418,209 (−25.6%) | 2,945,413 (−14.8%) |
+
+Per-route loads (files / brotli bytes, from the manifest): analyzer world
+37 / 167 KB, recipe analyzer 45 / 209 KB, list view 30 / 616 KB, edit lists
+11 / 164 KB, leve 39 / 108 KB. The splitter emits ~100 shared `chunk_N.wasm`
+files, most under 2 KB, so a first visit to an analyzer costs 30–45 small
+requests. They are fetched in parallel (and preloaded from `<head>` on a
+direct load, or on nav hover), which is fine over HTTP/2 through Cloudflare,
+but a chunk-merging threshold upstream would be the next win.
 
 ## Out of scope
 
