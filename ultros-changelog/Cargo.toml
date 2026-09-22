@@ -4,6 +4,16 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+[features]
+# The full history, compiled into the binary. On by default so the server and
+# `cargo test -p ultros-changelog` get it; the wasm client turns it off and
+# fetches `/api/v1/changelog` instead.
+default = ["history"]
+history = []
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
 [build-dependencies]
 serde.workspace = true
 serde_json.workspace = true

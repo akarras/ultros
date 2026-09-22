@@ -36,7 +36,9 @@ members = [
     "dumb-csv",
     "field-iterator",
     "game-data-pack",
+    "game-data-audit",
     "icon-extract",
+    "wasm-symbols",
 ]
 # Vendored, patched copy of `reactive_graph` (see `[patch.crates-io]` and
 # vendor/reactive_graph/ULTROS_PATCH.md). Not a workspace member: it keeps
@@ -246,6 +248,19 @@ output-name = "ultros"
 # Separate profiles keep browser size tuning out of the server build.
 bin-profile-release = "server-release"
 lib-profile-release = "wasm-release"
+# Release wasm-opt flags. These replace cargo-leptos's defaults wholesale, so
+# the first three are its defaults repeated. `-g` keeps the `name` section in
+# the optimized module so the Docker build can extract a function-index ->
+# name map (`wasm-symbols`, run right after `cargo leptos build`) that the
+# browser fetches to symbolicate `wasm-function[N]` frames in GlitchTip
+# panic reports; the tool then strips the section before the wasm ships.
+# It has to be `-g` and not `--symbolmap=...`: cargo-leptos holds this list
+# in a HashSet, so order is not preserved, and `--symbolmap` is a positional
+# pass that dumps pre-optimization indices if it lands before `-Oz`.
+# `-g` only affects output (names are emitted); the input carries no DWARF
+# (`strip = "debuginfo"` above, wasm-bindgen without `--keep-debug`), so
+# optimization is unchanged.
+wasm-opt-features = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "-g"]
 # Enable the jemalloc global allocator in release builds — better throughput
 # and lower RSS fragmentation under sustained tokio/axum load.
 bin-features = ["jemalloc"]

@@ -113,6 +113,10 @@ impl<K: RowId, V> IdMap<K, V> {
         self.entries.retain_mut(|(k, v)| keep(k, v));
     }
 
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

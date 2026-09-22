@@ -2,7 +2,7 @@
 //! column order and widths, and selected price inputs. Each grid owns its list.
 use codee::string::JsonSerdeCodec;
 use leptos::{html::Div, prelude::*};
-use leptos_router::{location::Url, params::ParamsMap};
+use leptos_router::params::ParamsMap;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +10,7 @@ use crate::components::{
     app_link::use_location_or_default, dismissable::use_dismissable, icon::Icon,
 };
 use crate::i18n::*;
+use crate::view_policy::view_href;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct GridSavedView {
@@ -53,6 +54,58 @@ pub struct GridPresetView {
     pub query: String,
 }
 
+/// The same landing-view choices in the generic grid and Flip Finder menus.
+#[component]
+pub fn RecommendedViews(open: RwSignal<bool>) -> impl IntoView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let location = use_location_or_default();
+    let tool = Signal::derive(move || {
+        crate::view_policy::analyzer(&location.pathname.get()).unwrap_or_default()
+    });
+    view! {
+        <a class="btn-ghost justify-start"
+            href=move || crate::view_policy::view_href(&location.pathname.get(), &crate::view_policy::recommended_query(tool.get()), &location.query.get())
+            on:click=move |_| open.set(false)>
+            {t!(i18n, grid_view_recommended)}
+        </a>
+        <a class="btn-ghost justify-start"
+            href=move || crate::view_policy::view_href(&location.pathname.get(), "?v=1", &location.query.get())
+            on:click=move |_| open.set(false)>
+            {t!(i18n, grid_view_unrestricted)}
+        </a>
+    }
+}
+
+#[component]
+pub fn ViewDefaultActions(open: RwSignal<bool>) -> impl IntoView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let location = use_location_or_default();
+    let tool = Signal::derive(move || {
+        crate::view_policy::analyzer(&location.pathname.get()).unwrap_or_default()
+    });
+    let default_saved = RwSignal::new(false);
+    view! {
+        <div class="flex flex-col gap-1 border-t border-[color:var(--color-outline)] pt-2">
+            <button type="button" class="btn-ghost justify-start"
+                on:click=move |_| default_saved.set(crate::view_policy::save_default_query(tool.get_untracked(), &location.query.get_untracked().to_query_string()))>
+                {t!(i18n, grid_view_make_default)}
+            </button>
+            <a class="btn-ghost justify-start"
+                href=move || crate::view_policy::view_href(&location.pathname.get(), &crate::view_policy::recommended_query(tool.get()), &location.query.get())
+                on:click=move |_| {
+                    let tool = tool.get_untracked();
+                    crate::view_policy::save_default_query(tool, &crate::view_policy::recommended_query(tool));
+                    open.set(false);
+                }>
+                {t!(i18n, grid_view_reset_recommended)}
+            </a>
+            <Show when=move || default_saved.get()>
+                <p role="status" class="text-[color:var(--color-text-muted)]">{t!(i18n, grid_view_default_saved)}</p>
+            </Show>
+        </div>
+    }
+}
+
 /// Query keys that say *where you are*, not *what you filtered*. They are
 /// stripped when a view is saved and re-applied from the live URL when one is
 /// opened, so a view stays portable across worlds and languages.
@@ -62,65 +115,12 @@ pub struct GridPresetView {
 /// a stale query world alongside that path.
 const CONTEXT_KEYS: [&str; 2] = ["lang", "world"];
 
-/// Every pair whose key is not context, in order.
-///
-/// `ParamsMap` is a multimap whose `insert` *appends*, so a stored view that
-/// already carries a `world` cannot be corrected in place — the map has to be
-/// rebuilt around the keys being replaced.
-fn without_context(query: ParamsMap) -> ParamsMap {
-    let mut kept = ParamsMap::new();
-    for (key, value) in query {
-        if !CONTEXT_KEYS.iter().any(|context| key == *context) {
-            kept.insert(key, value);
-        }
-    }
-    kept
-}
-
-/// The live query, minus the context keys. Uses `remove` rather than
-/// [`without_context`] to keep the key order the stored views already have.
+/// The live query, minus context, retaining stored views' existing key order.
 fn saved_query(mut query: ParamsMap) -> String {
     for key in CONTEXT_KEYS {
         query.remove(key);
     }
     query.to_query_string()
-}
-
-fn parse_query(query: &str) -> ParamsMap {
-    let mut map = ParamsMap::new();
-    for pair in query
-        .trim_start_matches('?')
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-    {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        map.insert(Url::unescape(key), Url::unescape(value));
-    }
-    map
-}
-
-/// Apply a view to the current analyzer destination, carrying the live context
-/// params over.
-///
-/// The live value *overwrites* rather than appends: a view stored before
-/// [`CONTEXT_KEYS`] existed may still carry its own `world`/`lang`, and
-/// appending would emit the key twice.
-fn view_href(pathname: &str, query: &str, context: &ParamsMap) -> String {
-    let mut params = without_context(parse_query(query));
-    let mut segments = pathname.trim_start_matches('/').split('/');
-    let path_world = matches!(
-        segments.next(),
-        Some("recipe-analyzer" | "venture-analyzer" | "leve-analyzer" | "scrip-sources")
-    ) && segments.next().is_some();
-    for key in CONTEXT_KEYS {
-        if key == "world" && path_world {
-            continue;
-        }
-        if let Some(value) = context.get(key) {
-            params.insert(key, value);
-        }
-    }
-    format!("{pathname}{}", params.to_query_string())
 }
 
 /// The popover's list body: built-ins first, then the reader's own.
@@ -260,7 +260,9 @@ pub fn GridSavedViews(
             </button>
             <Show when=move || open.get()>
                 <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
+                    <RecommendedViews open=open />
                     <GridSavedViewsList presets=presets views=views set_views=set_views open=open />
+                    <ViewDefaultActions open=open />
                     <form
                         class="flex flex-col gap-2 border-t border-[color:var(--color-outline)] pt-2"
                         on:submit=move |event| {
@@ -432,15 +434,15 @@ mod tests {
                 "?price=median",
                 &context(&[("lang", "de")])
             ),
-            "/venture/Gilgamesh?price=median&lang=de",
+            "/venture/Gilgamesh?price=median&v=1&lang=de",
         );
         assert_eq!(
             view_href("/leve/Sargatanas", "", &ParamsMap::new()),
-            "/leve/Sargatanas",
+            "/leve/Sargatanas?v=1",
         );
         assert_eq!(
             view_href("/leve/Sargatanas", "", &context(&[("lang", "ja")])),
-            "/leve/Sargatanas?lang=ja",
+            "/leve/Sargatanas?v=1&lang=ja",
         );
         // Legacy links remain usable before canonicalization.
         assert_eq!(
@@ -449,7 +451,7 @@ mod tests {
                 "?profit=50000",
                 &context(&[("world", "Gilgamesh")]),
             ),
-            "/venture-analyzer?profit=50000&world=Gilgamesh",
+            "/venture-analyzer?profit=50000&v=1&world=Gilgamesh",
         );
     }
 
@@ -473,6 +475,10 @@ mod tests {
             "venture-analyzer",
             "leve-analyzer",
             "scrip-sources",
+            "vendor-resale",
+            "vendor-sell",
+            "fc-crafting-analyzer",
+            "trends",
         ] {
             let path = format!("/{tool}/Gilgamesh");
             assert_eq!(
@@ -481,7 +487,7 @@ mod tests {
                     "?world=Sargatanas&profit=50000",
                     &context(&[("world", "Cerberus"), ("lang", "ja")])
                 ),
-                format!("{path}?profit=50000&lang=ja"),
+                format!("{path}?profit=50000&v=1&lang=ja"),
             );
         }
     }
@@ -492,7 +498,7 @@ mod tests {
     fn a_trailing_separator_is_dropped() {
         assert_eq!(
             view_href("/vendor-resale/Gilgamesh", "?roi=100&", &ParamsMap::new()),
-            "/vendor-resale/Gilgamesh?roi=100",
+            "/vendor-resale/Gilgamesh?roi=100&v=1",
         );
     }
 }

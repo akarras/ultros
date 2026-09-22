@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Start the shopping route you choose",
+  "blurb": "Selecting a route for a new shopping trip now uses that route instead of falling back to the cheapest option.",
+  "link": "/list?labs=lists-sync",
+  "labs": true
+}

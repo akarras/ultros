@@ -44,7 +44,7 @@ use super::{
         STAT_COLUMNS, StatKind, Window, follow_id, listing_id, listing_label, listing_title,
         listing_window_id, listing_window_label, listing_window_title, listing_window_wanted,
         listings_wanted, market_picker_group, market_picker_group_listings, required_windows,
-        stat_column, stat_label,
+        stat_column, stat_label, stat_picker_hint, stat_picker_label,
     },
     window::MarketWindow,
 };
@@ -515,6 +515,7 @@ enum MarketMetric {
     World,
     Datacenter,
     Listing,
+    ListingAssessment,
     /// One statistic of one window; ids and labels come from `STAT_COLUMNS`.
     Stat(StatKind, Window),
     Follow(StatKind),
@@ -541,6 +542,7 @@ impl MarketMetric {
             Self::World => "market-world",
             Self::Datacenter => "market-datacenter",
             Self::Listing => "market-listing",
+            Self::ListingAssessment => "market-listing-assessment",
             Self::Stat(kind, window) => stat_column(kind, window).id,
             Self::Follow(kind) => follow_id(kind),
             Self::LastSold => "market-last-sold",
@@ -562,6 +564,7 @@ impl MarketMetric {
                 | Self::Confidence
                 | Self::LastSold
                 | Self::TrendWorld
+                | Self::ListingAssessment
         )
     }
 
@@ -574,7 +577,7 @@ impl MarketMetric {
     fn window(self, selected: Window) -> Option<Window> {
         match self {
             Self::Stat(_, window) => Some(window),
-            Self::Follow(_) => Some(selected),
+            Self::Follow(_) | Self::ListingAssessment => Some(selected),
             Self::LastSold | Self::Confidence => Some(Window::D7),
             Self::ListingWindow(_) => Some(selected),
             _ => None,
@@ -582,13 +585,14 @@ impl MarketMetric {
     }
 }
 
-const LEADING_METRICS: [MarketMetric; 6] = [
+const LEADING_METRICS: [MarketMetric; 7] = [
     MarketMetric::Subject,
     MarketMetric::Scope,
     MarketMetric::Quality,
     MarketMetric::World,
     MarketMetric::Datacenter,
     MarketMetric::Listing,
+    MarketMetric::ListingAssessment,
 ];
 
 const TRAILING_METRICS: [MarketMetric; 5] = [
@@ -634,6 +638,10 @@ fn metric_by_id(id: &str) -> Option<MarketMetric> {
 /// Header hover text; only the age columns carry one.
 fn metric_title(metric: MarketMetric) -> Option<String> {
     match metric {
+        MarketMetric::ListingAssessment => {
+            let i18n = crate::i18n_fallback::use_i18n_or_default();
+            Some(t_string!(i18n, market_listing_assessment_hint).to_string())
+        }
         MarketMetric::Listings(kind) => listing_title(kind),
         MarketMetric::ListingWindow(kind) => Some(listing_window_title(kind)),
         _ => None,
@@ -651,6 +659,7 @@ fn metric_label(metric: MarketMetric, selected: Window) -> String {
         MarketMetric::World => t_string!(i18n, market_world),
         MarketMetric::Datacenter => t_string!(i18n, market_datacenter),
         MarketMetric::Listing => t_string!(i18n, market_listing),
+        MarketMetric::ListingAssessment => t_string!(i18n, market_listing_assessment),
         MarketMetric::Stat(kind, window) => return stat_label(kind, window),
         MarketMetric::Follow(kind) => return stat_label(kind, selected),
         MarketMetric::LastSold => t_string!(i18n, market_last_sold),
@@ -666,6 +675,32 @@ fn number(value: Option<f64>) -> GridValue {
     value
         .filter(|v| v.is_finite())
         .map_or(GridValue::Missing, GridValue::Number)
+}
+
+/// A successful recent-history response with no matching sales is unknown,
+/// whereas a failed response cannot support a numerical demand estimate.
+pub fn recent_sample_value(value: f64, feed_available: bool, sample_size: usize) -> GridValue {
+    if !feed_available {
+        GridValue::Unavailable
+    } else if sample_size == 0 {
+        GridValue::Missing
+    } else {
+        number(Some(value))
+    }
+}
+
+fn listing_assessment(price: Option<i32>, median: Option<i32>) -> GridValue {
+    match (price.filter(|p| *p > 0), median.filter(|m| *m > 0)) {
+        (Some(price), Some(median)) => GridValue::Text(
+            if crate::analysis::is_troll_listing(price, median) {
+                "suspicious"
+            } else {
+                "plausible"
+            }
+            .into(),
+        ),
+        _ => GridValue::Text("unverified".into()),
+    }
 }
 
 fn stats_value(metric: MarketMetric, stats: Option<ItemSaleStats>) -> GridValue {
@@ -816,7 +851,14 @@ fn market_value(
             .map_or(GridValue::Missing, GridValue::Text)
     };
     match metric {
-        MarketMetric::Subject => text(Some(subject.label.clone())),
+        MarketMetric::Subject => text(if subject.label.is_empty() {
+            crate::global_state::xiv_data::tracked_data()
+                .items
+                .get(&xiv_gen::ItemId(subject.item_id))
+                .map(|item| item.name.clone())
+        } else {
+            Some(subject.label.clone())
+        }),
         MarketMetric::Scope => text(Some(market.scope.get())),
         MarketMetric::Quality => GridValue::Text(if subject.hq { "HQ" } else { "NQ" }.into()),
         MarketMetric::World => text(worlds.get(&subject.world_id).map(|v| v.0.clone())),
@@ -827,6 +869,21 @@ fn market_value(
                 .map(|v| v.0.clone()),
         ),
         MarketMetric::Listing => number(subject.listing_price.filter(|v| *v > 0).map(f64::from)),
+        MarketMetric::ListingAssessment => {
+            let window = market.window.selected.get();
+            if market.stats_failed(window) {
+                return GridValue::Unavailable;
+            }
+            match market.stats(window) {
+                None => GridValue::Pending,
+                Some(stats) => listing_assessment(
+                    subject.listing_price,
+                    stats
+                        .get(&(subject.item_id, subject.hq))
+                        .map(|s| s.median_price),
+                ),
+            }
+        }
         MarketMetric::Trend7 | MarketMetric::Drift7 => sparks.with(|store| {
             let key = spark_key(subject, scope_world.get());
             spark_metric_value(store, &key)
@@ -911,6 +968,15 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
                 _ => s,
             }
         }
+        GridValue::Text(s) if matches!(metric, MarketMetric::ListingAssessment) => {
+            let i18n = crate::i18n_fallback::use_i18n_or_default();
+            match s.as_str() {
+                "suspicious" => t_string!(i18n, market_listing_suspicious).to_string(),
+                "plausible" => t_string!(i18n, market_listing_plausible).to_string(),
+                "unverified" => t_string!(i18n, market_listing_unverified).to_string(),
+                _ => s,
+            }
+        }
         GridValue::Text(s) => s,
         GridValue::Set(s) => s.join(", "),
         GridValue::Pending => {
@@ -960,7 +1026,7 @@ pub fn MarketGrid<T, K, KF, H, F, M>(
 ) -> impl IntoView
 where
     T: Clone + PartialEq + Send + Sync + 'static,
-    K: Clone + Eq + Hash + Send + Sync + 'static,
+    K: Clone + Ord + Hash + Send + Sync + 'static,
     KF: Fn(&T) -> K + Send + Sync + 'static,
     H: Fn(&'static str) -> AnyView + Send + Sync + 'static,
     F: Fn(T, &'static str) -> AnyView + Send + Sync + 'static,
@@ -1030,9 +1096,31 @@ where
             column.picker_group = match metric {
                 MarketMetric::Follow(_) => Some(market_picker_group(None)),
                 MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
-                MarketMetric::Listings(_) => Some(market_picker_group_listings()),
+                MarketMetric::Listings(_) | MarketMetric::ListingWindow(_) => {
+                    Some(market_picker_group_listings())
+                }
                 _ => None,
             };
+            match metric {
+                MarketMetric::Follow(kind) => {
+                    column.picker_label =
+                        Some(stat_picker_label(kind, market.window.selected.get(), true));
+                    column.picker_hint = Some(format!(
+                        "{}: {}",
+                        market.scope.get(),
+                        stat_picker_hint(market.window.selected.get(), true)
+                    ));
+                }
+                MarketMetric::Stat(kind, window) => {
+                    column.picker_label = Some(stat_picker_label(kind, window, false));
+                    column.picker_hint = Some(format!(
+                        "{}: {}",
+                        market.scope.get(),
+                        stat_picker_hint(window, false)
+                    ));
+                }
+                _ => column.picker_hint = metric_title(metric),
+            }
         }
         for column in &mut result {
             if let Some((calculation, term)) =
@@ -1085,6 +1173,9 @@ where
         needs.with(|n| {
             for window in required_windows(n, market.window.selected.get(), false) {
                 market.want(window);
+            }
+            if n.contains("market-listing-assessment") {
+                market.want(market.window.selected.get());
             }
             if listings_wanted(n) {
                 market.want_listings();
@@ -1154,10 +1245,12 @@ where
         },
     );
     let mut all_metrics = metrics;
+    let confidence_stats = Memo::new(move |_| market.stats(Window::D7));
     for metric in market_metrics() {
         if all_metrics.iter().any(|m| m.id == metric.id()) {
             continue;
         }
+        let comparator_subject = subject.clone();
         let subject = subject.clone();
         let worlds = worlds.clone();
         let value = move |row: &T| {
@@ -1167,6 +1260,28 @@ where
             GridMetric::text(metric.id(), value)
         } else {
             GridMetric::number(metric.id(), value)
+        };
+        let def = if metric == MarketMetric::Confidence {
+            def.with_comparator(move |left, right, ascending| {
+                // Key extraction above already tracks this scope and D7
+                // provider once per row; comparisons only borrow the snapshot.
+                confidence_stats.with_untracked(|stats| {
+                    let confidence = |row: &T| {
+                        let subject = comparator_subject(row);
+                        stats
+                            .as_ref()?
+                            .get(&(subject.item_id, subject.hq))
+                            .map(|s| s.confidence)
+                    };
+                    super::confidence::compare_confidence(
+                        confidence(left),
+                        confidence(right),
+                        ascending,
+                    )
+                })
+            })
+        } else {
+            def
         };
         all_metrics.push(if metric.partial() { def.partial() } else { def });
     }
@@ -1926,5 +2041,41 @@ mod tests {
             GridValue::Missing,
             "an old server's zero is unknown, not free"
         );
+    }
+
+    #[test]
+    fn suspicious_listing_filter_requires_matching_positive_evidence() {
+        assert_eq!(
+            listing_assessment(Some(999_999_999), Some(10_000)),
+            GridValue::Text("suspicious".into())
+        );
+        assert_eq!(
+            listing_assessment(Some(500_000), Some(10_000)),
+            GridValue::Text("plausible".into())
+        );
+        assert_eq!(
+            listing_assessment(Some(500_001), Some(10_000)),
+            GridValue::Text("suspicious".into())
+        );
+        for (price, median) in [
+            (None, Some(100)),
+            (Some(999_999_999), None),
+            (Some(100), Some(0)),
+        ] {
+            let value = listing_assessment(price, median);
+            assert_eq!(value, GridValue::Text("unverified".into()));
+            let guard = crate::components::virtual_grid::metrics::MetricFilter {
+                op: crate::components::virtual_grid::metrics::FilterOp::Ne,
+                value: "suspicious".into(),
+            };
+            assert_eq!(guard.matches(&value, false), Some(true));
+        }
+    }
+
+    #[test]
+    fn empty_or_failed_sales_samples_are_not_zero_demand() {
+        assert_eq!(recent_sample_value(0.0, false, 0), GridValue::Unavailable);
+        assert_eq!(recent_sample_value(0.0, true, 0), GridValue::Missing);
+        assert_eq!(recent_sample_value(2.5, true, 3), GridValue::Number(2.5));
     }
 }

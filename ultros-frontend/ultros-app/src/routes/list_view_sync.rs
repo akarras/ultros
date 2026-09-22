@@ -142,13 +142,6 @@ pub fn InlineListAdd(
             toggle_recipe.run(());
         }
     };
-    let mode_class = move |active: bool| {
-        if active {
-            "btn-primary min-w-20 justify-center font-semibold shadow-sm"
-        } else {
-            "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]"
-        }
-    };
     let search = RwSignal::new(String::new());
     let committed_search = RwSignal::new(String::new());
     let quantity = RwSignal::new("1".to_string());
@@ -213,9 +206,9 @@ pub fn InlineListAdd(
                     <h2 class="font-semibold">{t!(i18n, lists_workspace_build_title)}</h2>
                     <p class="text-sm text-[color:var(--color-text-muted)]">{move || if recipe_mode.get() { t_string!(i18n, lists_workspace_recipe_hint).to_string() } else { t_string!(i18n, lists_workspace_build_hint).to_string() }}</p>
                 </div>
-                <div class="inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1" role="group" aria-label=t_string!(i18n, lists_workspace_composer_mode) data-testid="list-composer-mode">
-                    <button type="button" class=move || mode_class(!recipe_mode.get()) data-testid="list-composer-items" aria-pressed=move || (!recipe_mode.get()).to_string() on:click=move |_| set_recipe_mode(false)>{t!(i18n, lists_workspace_composer_items)}</button>
-                    <button type="button" class=move || mode_class(recipe_mode.get()) data-testid="list-composer-recipes" aria-pressed=move || recipe_mode.get().to_string() on:click=move |_| set_recipe_mode(true)>{t!(i18n, lists_workspace_composer_recipes)}</button>
+                <div class="segmented-control w-fit" role="group" aria-label=t_string!(i18n, lists_workspace_composer_mode) data-testid="list-composer-mode">
+                    <button type="button" class="segmented-option min-w-20" data-testid="list-composer-items" aria-pressed=move || (!recipe_mode.get()).to_string() on:click=move |_| set_recipe_mode(false)>{t!(i18n, lists_workspace_composer_items)}</button>
+                    <button type="button" class="segmented-option min-w-20" data-testid="list-composer-recipes" aria-pressed=move || recipe_mode.get().to_string() on:click=move |_| set_recipe_mode(true)>{t!(i18n, lists_workspace_composer_recipes)}</button>
                 </div>
             </div>
             <Show when=move || recipe_mode.get()><InlineRecipeAdd list_id=list_id on_add=on_add_many /></Show>
@@ -346,10 +339,10 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
                             // The row shows the recipe's finished item; the
                             // small button is the only control, so the icon
                             // and name read as a catalog row, not a button.
-                            <div class="flex items-center gap-3 py-2 px-1 rounded" class:bg-brand-900=active data-recipe-id=id>
+                            <div class="flex items-center gap-3 py-2 px-1 rounded" data-recipe-id=id>
                                 <ItemIcon item_id=recipe.item_result icon_size=IconSize::Small />
-                                <span class="flex-1 min-w-0 truncate">{name.clone()}</span>
-                                <button type="button" class="btn-secondary p-1.5 shrink-0" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) aria-pressed=move || active().to_string() on:click=move |_| selected.set(Some(recipe))><Icon icon=i::BiPlusRegular /></button>
+                                <div class="flex-1 min-w-0"><span class="block truncate">{name.clone()}</span><span class="text-xs text-[color:var(--color-text-muted)]">{["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"].get(recipe.craft_type as usize).copied().unwrap_or_default()}</span></div>
+                                <button type="button" class="segmented-option shrink-0" aria-label=t_string!(i18n, lists_recipe_preview_named, name = name.clone()) aria-pressed=move || active().to_string() on:click=move |_| selected.set(Some(recipe))>{t!(i18n, lists_recipe_preview_action)}</button>
                             </div>
                         }
                     } />
@@ -473,7 +466,7 @@ pub fn ListWorkspaceModes(
     let group_class = if compact {
         "inline-flex w-fit gap-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-0.5"
     } else {
-        "inline-flex w-fit gap-1 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background)] p-1"
+        "segmented-control w-fit"
     };
     let button_class = move |active: bool| match (compact, active) {
         (true, true) => {
@@ -482,8 +475,8 @@ pub fn ListWorkspaceModes(
         (true, false) => {
             "rounded px-2.5 py-0.5 text-[0.85rem] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
         }
-        (false, true) => "btn-primary min-w-20 justify-center font-semibold shadow-sm",
-        (false, false) => "btn-ghost min-w-20 justify-center text-[color:var(--color-text-muted)]",
+        (false, true) => "segmented-option min-w-20",
+        (false, false) => "segmented-option min-w-20",
     };
     view! {
         <div class=group_class role="group" aria-label=t_string!(i18n, lists_workspace_mode)>
@@ -502,6 +495,8 @@ pub struct ListWorkspaceSource {
     pub add_many: Callback<Vec<ListItem>>,
     pub undo: Callback<()>,
     pub redo: Callback<()>,
+    /// Changes whenever document undo/redo is requested, including shortcuts.
+    pub history_revision: Signal<u64>,
     /// Reactive availability (#1430): the toolbar disables and explains an
     /// action with nothing to do, and the callbacks report the same through
     /// `feedback` when a shortcut hits an empty stack.
@@ -611,10 +606,6 @@ pub fn ListBuildWorkspace(
         <section class="space-y-3" data-testid="list-build-workspace">
             <Show when=move || source.can_write.get()>
                 <InlineListAdd list_id=source.list_id on_add=source.add on_add_many=source.add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
-                <div class="flex gap-2 flex-wrap">
-                    <button class="btn-secondary h-10 w-10 shrink-0 items-center disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() aria-label=t_string!(i18n, lists_workspace_undo) title=move || if source.can_undo.get() { t_string!(i18n, lists_workspace_undo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_undo).to_string() } on:click=move |_| source.undo.run(())><Icon icon=i::BiUndoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
-                    <button class="btn-secondary h-10 w-10 shrink-0 items-center disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() aria-label=t_string!(i18n, lists_workspace_redo) title=move || if source.can_redo.get() { t_string!(i18n, lists_workspace_redo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_redo).to_string() } on:click=move |_| source.redo.run(())><Icon icon=i::BiRedoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
-                </div>
             </Show>
             <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
             <Show when=move || source.estimate_available.get()>
@@ -1393,7 +1384,9 @@ pub fn ListViewSync() -> impl IntoView {
     // shortcut that finds nothing to do says so in the workspace feedback
     // line instead of appearing broken. The add action's own feedback is
     // cleared so the explanation is actually visible.
+    let history_revision = RwSignal::new(0_u64);
     let undo_action = Callback::new(move |()| {
+        history_revision.update(|revision| *revision += 1);
         let done = handle.get_untracked().is_some_and(|handle| handle.undo());
         if !done {
             add_item.value().set(None);
@@ -1401,6 +1394,7 @@ pub fn ListViewSync() -> impl IntoView {
         }
     });
     let redo_action = Callback::new(move |()| {
+        history_revision.update(|revision| *revision += 1);
         let done = handle.get_untracked().is_some_and(|handle| handle.redo());
         if !done {
             add_item.value().set(None);
@@ -2009,6 +2003,7 @@ pub fn ListViewSync() -> impl IntoView {
         }),
         undo: undo_action,
         redo: redo_action,
+        history_revision: history_revision.into(),
         can_undo: Signal::derive(move || handle.get().is_some_and(|handle| handle.can_undo())),
         can_redo: Signal::derive(move || handle.get().is_some_and(|handle| handle.can_redo())),
         pending: add_item.pending().into(),
@@ -2168,8 +2163,8 @@ pub fn ListViewSync() -> impl IntoView {
             return String::new();
         }
         match doc.save_state.try_get().unwrap_or(SaveState::Pending) {
-            SaveState::Saved => t_string!(i18n, device_runtime_saved).to_string(),
-            SaveState::Pending => t_string!(i18n, device_runtime_saving).to_string(),
+            SaveState::Saved => t_string!(i18n, lists_online_local_saved).to_string(),
+            SaveState::Pending => t_string!(i18n, lists_online_local_saving).to_string(),
             SaveState::Failed => t_string!(i18n, account_list_save_failed).to_string(),
         }
     });
@@ -2232,7 +2227,6 @@ pub fn ListViewSync() -> impl IntoView {
             build_estimate: build_source.estimate.get(),
             estimate_available: build_source.estimate_available.get(),
             home_world: home_world.get().map(|world| world.id).unwrap_or_default(),
-            observed_at: None,
             ..Default::default()
         };
         if let Some(helper) = shop_worlds.as_ref() {
@@ -2301,7 +2295,7 @@ pub fn ListViewSync() -> impl IntoView {
                 }
                 primary=move || view! {
                     <Show when=move || can_admin.get()>
-                        <button type="button" class="btn-primary inline-flex items-center gap-2" data-testid="list-access-btn" aria-haspopup="dialog" on:click=move |_| set_access_open(true)>
+                        <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="list-access-btn" aria-haspopup="dialog" on:click=move |_| set_access_open(true)>
                             <Icon icon=i::BiShareAltRegular aria_hidden=true />
                             {t!(i18n, online_access)}
                         </button>
@@ -2310,7 +2304,7 @@ pub fn ListViewSync() -> impl IntoView {
                 menu_testid="list-settings-btn"
                 menu_open
                 menu=move || view! {
-                    <div class="flex flex-wrap gap-2">
+                    <div class="list-action-menu gap-2">
                         <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="list-subscribe-btn" on:click=move |_| { menu_open.set(false); set_subscribe_open(true); }>
                             <Icon icon=i::BsBell aria_hidden=true />
                             {t!(i18n, list_view_subscribe_button)}
@@ -2385,6 +2379,7 @@ pub fn ListViewSync() -> impl IntoView {
                 scope=list_scope
                 set_scope=Callback::new(set_list_scope)
                 can_set_scope=Signal::derive(move || can_admin.get() && open_doc().is_some())
+                history=move || view! { <crate::components::list_workspace_shell::ListHistoryControls source=build_source /> }
                 price_row_testid="list-price-controls"
                 travel
             >

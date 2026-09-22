@@ -6,12 +6,14 @@
 pub mod calculation;
 pub mod cells;
 pub mod columns;
+pub mod confidence;
 pub mod enrichment;
 pub mod filters;
 pub use ultros_calc::formula;
 pub mod grid;
 pub use ultros_crafting::hop;
 pub mod market;
+pub mod scope;
 pub use ultros_calc::needed;
 pub mod signals;
 pub mod stat_columns;

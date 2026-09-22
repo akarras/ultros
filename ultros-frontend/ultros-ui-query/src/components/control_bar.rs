@@ -112,17 +112,49 @@ pub fn picker_options_from(columns: &[GridColumn]) -> Vec<ColumnOption> {
                 .and_then(|group| groups.iter().position(|g| *g == group))
                 .map_or(0, |i| i + 1);
             let option = ColumnOption {
-                group: col
-                    .picker_group
-                    .clone()
-                    .map(|label| PickerHeading { label, title: None }),
-                ..ColumnOption::new(col.id, col.label.clone())
+                group: col.picker_group.clone().map(|label| PickerHeading {
+                    label,
+                    title: col.picker_group_title.clone(),
+                }),
+                disabled: col.picker_disabled,
+                hint: col.picker_hint.clone(),
+                ..ColumnOption::new(
+                    col.id,
+                    col.picker_label
+                        .clone()
+                        .unwrap_or_else(|| col.label.clone()),
+                )
             };
             (rank, option)
         })
         .collect();
     entries.sort_by_key(|(rank, _)| *rank);
     entries.into_iter().map(|(_, option)| option).collect()
+}
+
+/// Search labels and their explanations without changing order, identity or
+/// availability. Every word must match, so "median fixed" finds the pinned
+/// history columns even when the words live in different metadata fields.
+pub fn search_column_options(columns: &[ColumnOption], query: &str) -> Vec<ColumnOption> {
+    let query = query.to_lowercase();
+    let terms: Vec<_> = query.split_whitespace().collect();
+    columns
+        .iter()
+        .filter(|column| {
+            let mut text = column.label.to_lowercase();
+            if let Some(group) = &column.group {
+                text.push_str(&format!(" {}", group.label.to_lowercase()));
+                if let Some(title) = &group.title {
+                    text.push_str(&format!(" {}", title.to_lowercase()));
+                }
+            }
+            if let Some(hint) = &column.hint {
+                text.push_str(&format!(" {}", hint.to_lowercase()));
+            }
+            terms.iter().all(|term| text.contains(term))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Handle on the bar's two popovers.
@@ -440,6 +472,9 @@ pub fn ControlBar(
         None => on_reset_columns,
     });
     let has_columns = Signal::derive(move || !picker_columns.get().is_empty());
+    let column_search = RwSignal::new(String::new());
+    let matching_columns =
+        Signal::derive(move || search_column_options(&picker_columns.get(), &column_search.get()));
 
     view! {
         <div class="sticky-bar px-2 py-1 flex flex-col gap-1" class:registered-filter-bar=registry.is_some() style=format!("{} position: {};", if registry.is_some() { format!("min-height: {STICKY_BAR_HEIGHT}px;") } else { format!("height: {STICKY_BAR_HEIGHT}px;") }, if sticky { "sticky" } else { "relative" }) node_ref=bar_ref>
@@ -465,6 +500,7 @@ pub fn ControlBar(
                                         show_filter_menu.set(false);
                                         let opening = !show_columns_picker.get_untracked();
                                         if opening {
+                                            column_search.set(String::new());
                                             popover_token.opening();
                                         }
                                         show_columns_picker.set(opening);
@@ -577,12 +613,25 @@ pub fn ControlBar(
                 (show_columns_picker.get() && has_columns())
                     .then(|| {
                         view! {
-                            <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                            <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] max-h-[60vh] overflow-y-auto flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
                                 <span class="font-semibold text-[color:var(--brand-fg)]">
                                     {t!(i18n, analyzer_columns_picker_label)}
                                 </span>
+                                <input
+                                    type="search"
+                                    class="input basis-full min-w-0 px-2 py-1"
+                                    aria-label=t_string!(i18n, analyzer_columns_search)
+                                    placeholder=t_string!(i18n, analyzer_columns_search)
+                                    prop:value=move || column_search.get()
+                                    on:input=move |event| column_search.set(event_target_value(&event))
+                                />
+                                <Show when=move || matching_columns.get().is_empty()>
+                                    <span class="basis-full text-[color:var(--color-text-muted)]" role="status">
+                                        {t!(i18n, analyzer_columns_empty)}
+                                    </span>
+                                </Show>
                                 <ColumnsPickerList
-                                    columns=picker_columns
+                                    columns=matching_columns
                                     visible_columns=picker_visible
                                     on_toggle_column=Some(toggle_column)
                                 />
@@ -673,6 +722,59 @@ mod tests {
         );
         assert_eq!(options[2].label, "MARKET-SALE-MEDIAN");
         assert!(options.iter().all(|o| !o.disabled && o.hint.is_none()));
+    }
+
+    #[test]
+    fn registered_picker_preserves_availability_and_explanations() {
+        let mut column = GridColumn::new("median", "Median".into(), 100.0, true, false);
+        column.picker_label = Some("Sale median (7d) · follows window".into());
+        column.picker_group = Some("Sale history".into());
+        column.picker_group_title = Some("Gilgamesh sale history".into());
+        column.picker_hint = Some("Unavailable for this market".into());
+        column.picker_disabled = true;
+        let options = picker_options_from(&[column]);
+        assert_eq!(options[0].id, "median");
+        assert_eq!(options[0].label, "Sale median (7d) · follows window");
+        assert!(options[0].disabled);
+        assert_eq!(
+            options[0].hint.as_deref(),
+            Some("Unavailable for this market")
+        );
+        assert_eq!(
+            options[0].group.as_ref().unwrap().title.as_deref(),
+            Some("Gilgamesh sale history")
+        );
+    }
+
+    #[test]
+    fn search_matches_all_words_across_metadata_and_keeps_identity_and_order() {
+        let columns = vec![
+            ColumnOption::new("profit", "Profit".into()),
+            ColumnOption {
+                group: Some(PickerHeading {
+                    label: "Sale history (7d)".into(),
+                    title: Some("Gilgamesh".into()),
+                }),
+                hint: Some("Always uses a fixed window".into()),
+                disabled: true,
+                ..ColumnOption::new("market-sale-median-7", "Sale median (7d)".into())
+            },
+            ColumnOption {
+                hint: Some("Follows the selected window".into()),
+                ..ColumnOption::new("market-sale-median", "Sale median (7d)".into())
+            },
+        ];
+        assert_eq!(search_column_options(&columns, " \t "), columns);
+        assert_eq!(
+            search_column_options(&columns, "MEDIAN fixed"),
+            vec![columns[1].clone()]
+        );
+        assert_eq!(
+            search_column_options(&columns, "gilgamesh history"),
+            vec![columns[1].clone()]
+        );
+        assert_eq!(search_column_options(&columns, "median"), columns[1..]);
+        assert!(search_column_options(&columns, "profit median").is_empty());
     }
 
     /// Ungrouped options render the flat list every page renders today:

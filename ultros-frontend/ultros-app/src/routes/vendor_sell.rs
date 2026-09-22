@@ -7,6 +7,7 @@ use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{category_id_token, register_filters};
 use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
+use crate::columnar_wire::columnar_resource;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
@@ -34,7 +35,7 @@ use crate::{
         virtual_grid::{ColumnFilter, GridColumn},
         world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, region_for_world::use_region_for_world},
+    global_state::LocalWorldData,
 };
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
@@ -68,8 +69,9 @@ fn vendor_prices_from_data() -> HashMap<i32, i32> {
         .collect()
 }
 
-/// Join listings against vendor prices, drop anything that does not profit,
-/// and return a deterministic (item id, then NQ before HQ) order.
+/// Join eligible listings against vendor prices in deterministic item/quality
+/// order. Profitability belongs to the editable recommended-view filter, so
+/// clearing it can reveal break-even and losing listings.
 fn build_rows(
     listings: &CheapestListings,
     vendor_prices: &HashMap<i32, i32>,
@@ -80,19 +82,17 @@ fn build_rows(
         .filter_map(|listing| {
             let vendor_price = *vendor_prices.get(&listing.item_id)?;
             let line = vendor_sell_line(listing.cheapest_price, vendor_price);
-            (line.profit > 0).then(|| {
-                Arc::new(VendorSellRow {
-                    item_id: listing.item_id,
-                    hq: listing.hq,
-                    world_id: listing.world_id,
-                    listing: line.listing,
-                    tax: line.tax,
-                    cost: line.cost,
-                    vendor_price: line.vendor_price,
-                    profit: line.profit,
-                    margin: line.margin,
-                })
-            })
+            Some(Arc::new(VendorSellRow {
+                item_id: listing.item_id,
+                hq: listing.hq,
+                world_id: listing.world_id,
+                listing: line.listing,
+                tax: line.tax,
+                cost: line.cost,
+                vendor_price: line.vendor_price,
+                profit: line.profit,
+                margin: line.margin,
+            }))
         })
         .collect();
     rows.sort_by_key(|row| (row.item_id, row.hq));
@@ -153,22 +153,32 @@ impl SortColumn for SortMode {
     }
 }
 
-fn compare_rows(mode: SortMode, a: &VendorSellRow, b: &VendorSellRow) -> Ordering {
+fn compare_rows(
+    mode: SortMode,
+    a: &VendorSellRow,
+    b: &VendorSellRow,
+    worlds: &HashMap<i32, String>,
+) -> Ordering {
     match mode {
         SortMode::Profit => a.profit.cmp(&b.profit),
         SortMode::Margin => a.margin.cmp(&b.margin),
         SortMode::Listing => a.listing.cmp(&b.listing),
         SortMode::Tax => a.tax.cmp(&b.tax),
         SortMode::VendorPrice => a.vendor_price.cmp(&b.vendor_price),
-        SortMode::World => a.world_id.cmp(&b.world_id),
+        SortMode::World => worlds.get(&a.world_id).cmp(&worlds.get(&b.world_id)),
     }
     .then_with(|| a.item_id.cmp(&b.item_id))
     .then_with(|| a.hq.cmp(&b.hq))
 }
 
-fn sort_rows(rows: &mut [Arc<VendorSellRow>], mode: SortMode, dir: SortDir) {
+fn sort_rows(
+    rows: &mut [Arc<VendorSellRow>],
+    mode: SortMode,
+    dir: SortDir,
+    worlds: &HashMap<i32, String>,
+) {
     rows.sort_by(|a, b| {
-        let order = compare_rows(mode, a, b);
+        let order = compare_rows(mode, a, b, worlds);
         if dir == SortDir::Asc {
             order
         } else {
@@ -283,6 +293,7 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (category_filter, _set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
 
+    let worlds_sort = worlds.clone();
     let sorted_rows = Memo::new(move |_| {
         let mut rows: Vec<Arc<VendorSellRow>> = all_rows
             .iter()
@@ -300,7 +311,7 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
             .collect();
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        sort_rows(&mut rows, mode, dir);
+        sort_rows(&mut rows, mode, dir, &worlds_sort);
         rows.into_iter().enumerate().collect::<Vec<Row>>()
     });
 
@@ -428,16 +439,16 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                             // Same fixed width as Flip Finder: item names run long, so
                             // auto-fitting this column shoved the numbers off screen.
                             GridColumn::new("item", t_string!(i18n, vendor_sell_col_item).to_string(), ITEM_COLUMN_WIDTH, false, true).fixed_width(),
-                            GridColumn::new("world", t_string!(i18n, vendor_sell_col_world).to_string(), 130.0, false, true).sorted(world_on, world_asc),
-                            GridColumn::new("listing", t_string!(i18n, vendor_sell_col_listing).to_string(), 120.0, true, true).sorted(listing_on, listing_asc),
-                            GridColumn::new("tax", t_string!(i18n, vendor_sell_col_tax).to_string(), 90.0, true, true).sorted(tax_on, tax_asc),
-                            GridColumn::new("vendor-price", t_string!(i18n, vendor_sell_col_vendor_price).to_string(), 130.0, true, true).sorted(vendor_on, vendor_asc),
+                            GridColumn::new("world", t_string!(i18n, vendor_sell_col_world).to_string(), 130.0, false, true).native_sort("world", true).sorted(world_on, world_asc),
+                            GridColumn::new("listing", t_string!(i18n, vendor_sell_col_listing).to_string(), 120.0, true, true).native_sort("listing", true).sorted(listing_on, listing_asc),
+                            GridColumn::new("tax", t_string!(i18n, vendor_sell_col_tax).to_string(), 90.0, true, true).native_sort("tax", true).sorted(tax_on, tax_asc),
+                            GridColumn::new("vendor-price", t_string!(i18n, vendor_sell_col_vendor_price).to_string(), 130.0, true, true).native_sort("vendor-price", false).sorted(vendor_on, vendor_asc),
                             {
-                                let mut col = GridColumn::new("profit", t_string!(i18n, vendor_sell_col_profit).to_string(), 130.0, true, true).sorted(profit_on, profit_asc);
+                                let mut col = GridColumn::new("profit", t_string!(i18n, vendor_sell_col_profit).to_string(), 130.0, true, true).native_sort("profit", false).sorted(profit_on, profit_asc);
                                 col.filters.push(ColumnFilter::new(FILTER_PROFIT, filter_label(FILTER_PROFIT), true));
                                 col
                             },
-                            GridColumn::new("margin", t_string!(i18n, vendor_sell_col_margin).to_string(), 100.0, true, true).sorted(margin_on, margin_asc),
+                            GridColumn::new("margin", t_string!(i18n, vendor_sell_col_margin).to_string(), 100.0, true, true).native_sort("margin", false).sorted(margin_on, margin_asc),
                         ]
                     })
                     header=move |id| {
@@ -516,12 +527,16 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
 
 #[component]
 pub fn VendorSell() -> impl IntoView {
+    crate::query_defaults::seed_analyzer_default_view("vendor-sell");
     provide_grid_saved_views("vendor-sell-grid");
     let i18n = use_i18n();
     let (selected_world, set_selected_world) = use_analyzer_world("/vendor-sell");
-    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
+    let scope = crate::analyzer_kit::scope::use_market_scope(Signal::derive(move || {
+        selected_world.get().map(|world| world.name)
+    }));
+    let region = scope.name;
 
-    let listings = ArcResource::new(region, move |region: String| async move {
+    let listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
@@ -555,9 +570,7 @@ pub fn VendorSell() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <span class="text-sm text-[color:var(--color-text-muted)]" data-testid="analyzer-market-scope">
-                        {t!(i18n, market_scope)} ": " {move || region.get()}
-                    </span>
+                    <crate::analyzer_kit::scope::MarketScopeControl scope />
                 </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -612,15 +625,41 @@ mod tests {
     }
 
     #[test]
-    fn unprofitable_rows_are_dropped() {
-        // 100 + 5 tax = 105 cost. Vendor 105 → profit 0 → dropped.
+    fn recommended_profit_filter_is_editable_and_unrestricted_keeps_losing_rows() {
+        use crate::components::virtual_grid::metrics::query_rows;
+        use crate::components::virtual_grid::registry::resolve_filters;
+        use ultros_ui_grid::view_policy::{explicit_query, parse_query, recommended_query};
+
+        // 100 plus 5 tax costs 105. Keep zero, positive, and negative profit.
         let rows = build_rows(
-            &listings(vec![listing(1, false, 100, 7), listing(2, false, 100, 7)]),
-            &[(1, 105), (2, 106)].into_iter().collect(),
+            &listings(vec![
+                listing(1, false, 100, 7),
+                listing(2, false, 100, 7),
+                listing(3, false, 100, 7),
+            ]),
+            &HashMap::from([(1, 105), (2, 106), (3, 104)]),
         );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].item_id, 2);
-        assert_eq!(rows[0].profit, 1);
+        assert_eq!(
+            rows.iter().map(|row| row.profit).collect::<Vec<_>>(),
+            [0, 1, -1]
+        );
+        let rows = rows.into_iter().enumerate().collect::<Vec<Row>>();
+        let metrics = vendor_sell_metrics(Arc::new(HashMap::new()));
+        let aliases = [FilterAlias::integer(FILTER_PROFIT, "profit", FilterOp::Gte)];
+        let recommended = parse_query(&recommended_query("vendor-sell"));
+        let recommended = resolve_filters(&recommended, &aliases);
+        let filtered = query_rows(&rows, &metrics, &recommended, None, false)
+            .rows
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].1.item_id, 2);
+
+        let unrestricted = parse_query(&explicit_query("vendor-sell", ""));
+        let unrestricted = resolve_filters(&unrestricted, &aliases);
+        let visible = query_rows(&rows, &metrics, &unrestricted, None, false)
+            .rows
+            .unwrap_or_else(|| rows.clone());
+        assert_eq!(visible.len(), 3);
     }
 
     #[test]
@@ -629,9 +668,10 @@ mod tests {
             &listings(vec![listing(1, true, 101, 42), listing(1, false, 200, 43)]),
             &[(1, 120)].into_iter().collect(),
         );
-        // NQ row at 200 costs 210 > 120 → dropped; HQ row survives.
-        assert_eq!(rows.len(), 1);
-        let row = &rows[0];
+        // Both qualities remain available; the default filter hides the loss.
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].profit, -90);
+        let row = rows.iter().find(|row| row.hq).unwrap();
         assert!(row.hq);
         assert_eq!(row.world_id, 42);
         assert_eq!(row.listing, 101);
@@ -669,10 +709,10 @@ mod tests {
         let mode = SortMode::fallback();
         assert_eq!(mode, SortMode::Profit);
         assert_eq!(mode.default_dir(), SortDir::Desc);
-        sort_rows(&mut rows, mode, mode.default_dir());
+        sort_rows(&mut rows, mode, mode.default_dir(), &HashMap::new());
         let ids: Vec<_> = rows.iter().map(|r| r.item_id).collect();
         assert_eq!(ids, vec![2, 1, 3]);
-        sort_rows(&mut rows, mode, SortDir::Asc);
+        sort_rows(&mut rows, mode, SortDir::Asc, &HashMap::new());
         let ids: Vec<_> = rows.iter().map(|r| r.item_id).collect();
         assert_eq!(ids, vec![3, 1, 2]);
     }
@@ -690,6 +730,25 @@ mod tests {
             assert_eq!(SortMode::from_str(token).unwrap().to_string(), token);
         }
         assert!(SortMode::from_str("roi").is_err());
+    }
+
+    #[test]
+    fn world_sort_uses_the_displayed_name_instead_of_the_numeric_id() {
+        let worlds = HashMap::from([(1, "Zalera".into()), (99, "Adamantoise".into())]);
+        let mut rows = build_rows(
+            &listings(vec![listing(1, false, 10, 1), listing(2, false, 10, 99)]),
+            &HashMap::from([(1, 100), (2, 100)]),
+        );
+        sort_rows(&mut rows, SortMode::World, SortDir::Asc, &worlds);
+        assert_eq!(
+            rows.iter().map(|row| row.world_id).collect::<Vec<_>>(),
+            [99, 1]
+        );
+        sort_rows(&mut rows, SortMode::World, SortDir::Desc, &worlds);
+        assert_eq!(
+            rows.iter().map(|row| row.world_id).collect::<Vec<_>>(),
+            [1, 99]
+        );
     }
 
     #[test]

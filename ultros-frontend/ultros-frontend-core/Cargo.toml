@@ -41,7 +41,7 @@ tracing = "0.1"
 ultros-api-client = { path = "../ultros-api-client", default-features = false }
 ultros-api-types = { path = "../../ultros-api-types" }
 ultros-calc = { path = "../ultros-calc" }
-ultros-changelog = { path = "../../ultros-changelog" }
+ultros-changelog = { path = "../../ultros-changelog", default-features = false }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-ui = { path = "../ultros-ui", default-features = false }
 uuid = { version = "1", features = [

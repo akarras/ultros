@@ -54,7 +54,7 @@ pub fn CheapestPrice(
     // never saw it. Unwrapping cost the whole page; showing the same
     // placeholder the component already renders while the resource is pending
     // costs one price cell.
-    let Some(cheapest) = use_context::<CheapestPrices>().map(|prices| prices.read_listings) else {
+    let Some(cheapest) = use_context::<CheapestPrices>().map(|prices| prices.demand()) else {
         return view! { <SingleLineSkeleton /> }.into_any();
     };
     let hydrated = RwSignal::new(false);

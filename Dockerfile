@@ -92,6 +92,18 @@ RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
 # same file.
 RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
     --precompress --lib-cargo-args=--timings -vv
+# Wasm symbol map for GlitchTip. wasm-opt ran with `-g` (`wasm-opt-features`
+# in Cargo.toml), so the optimized module still carries its `name` section.
+# `wasm-symbols` writes `ultros.symbols` (function index -> Rust name) next
+# to the wasm, strips the section from the module so it does not ship on
+# every page load, and regenerates the `.br`/`.gz` siblings cargo-leptos
+# wrote from the still-named file. The browser's Sentry `beforeSend` fetches
+# `/pkg/<hash>/ultros.symbols` when a panic happens and resolves the
+# `wasm-function[N]` frames itself (see wasm_symbolicate.js). Fails the
+# build if the name section is missing — a wasm with no map must not ship
+# silently.
+RUN cargo build --release -p wasm-symbols \
+    && ./target/release/wasm-symbols target/site/pkg/ultros.wasm
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the

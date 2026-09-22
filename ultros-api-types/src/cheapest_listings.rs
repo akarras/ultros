@@ -16,6 +16,68 @@ pub struct CheapestListings {
     pub cheapest_listings: Vec<CheapestListingItem>,
 }
 
+/// Struct-of-arrays wire form of [`CheapestListings`] — what
+/// `/api/v1/cheapest/{world}?format=columnar` returns. Row `i` is
+/// `(item_id[i], hq[i], price[i], world_id[i])`. The server emits rows in
+/// `(item_id, hq)` order, which is what makes the columns compress well
+/// (~83 KB brotli vs ~150 KB for the row-of-objects shape on a 24k-row
+/// region), but decoding does not depend on the order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CheapestListingsColumnar {
+    pub item_id: Vec<i32>,
+    pub hq: Vec<bool>,
+    pub price: Vec<i32>,
+    pub world_id: Vec<i32>,
+}
+
+impl From<&CheapestListings> for CheapestListingsColumnar {
+    fn from(value: &CheapestListings) -> Self {
+        let n = value.cheapest_listings.len();
+        let mut out = Self {
+            item_id: Vec::with_capacity(n),
+            hq: Vec::with_capacity(n),
+            price: Vec::with_capacity(n),
+            world_id: Vec::with_capacity(n),
+        };
+        for row in &value.cheapest_listings {
+            out.item_id.push(row.item_id);
+            out.hq.push(row.hq);
+            out.price.push(row.cheapest_price);
+            out.world_id.push(row.world_id);
+        }
+        out
+    }
+}
+
+impl From<CheapestListings> for CheapestListingsColumnar {
+    fn from(value: CheapestListings) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<CheapestListingsColumnar> for CheapestListings {
+    /// Zips the four columns. A malformed payload with unequal column
+    /// lengths degrades to the rows every column has rather than panicking.
+    fn from(value: CheapestListingsColumnar) -> Self {
+        let cheapest_listings = value
+            .item_id
+            .into_iter()
+            .zip(value.hq)
+            .zip(value.price)
+            .zip(value.world_id)
+            .map(
+                |(((item_id, hq), cheapest_price), world_id)| CheapestListingItem {
+                    item_id,
+                    hq,
+                    cheapest_price,
+                    world_id,
+                },
+            )
+            .collect();
+        Self { cheapest_listings }
+    }
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct CheapestListingMapKey {
     pub item_id: i32,
@@ -407,5 +469,81 @@ mod tests {
         let s = PriceSummary { lq: None, hq: None };
         assert!(s.chosen(false).is_none());
         assert!(s.chosen(true).is_none());
+    }
+
+    fn item(item_id: i32, hq: bool, cheapest_price: i32, world_id: i32) -> CheapestListingItem {
+        CheapestListingItem {
+            item_id,
+            hq,
+            cheapest_price,
+            world_id,
+        }
+    }
+
+    #[test]
+    fn columnar_round_trips_rows_in_order() {
+        let rows = CheapestListings {
+            cheapest_listings: vec![
+                item(2, false, 12, 73),
+                item(2, true, 300, 74),
+                item(5, false, 7, 34),
+            ],
+        };
+        let columnar = CheapestListingsColumnar::from(rows.clone());
+        assert_eq!(columnar.item_id, vec![2, 2, 5]);
+        assert_eq!(columnar.hq, vec![false, true, false]);
+        assert_eq!(columnar.price, vec![12, 300, 7]);
+        assert_eq!(columnar.world_id, vec![73, 74, 34]);
+        assert_eq!(CheapestListings::from(columnar), rows);
+    }
+
+    #[test]
+    fn columnar_serializes_as_four_arrays() {
+        let columnar = CheapestListingsColumnar::from(CheapestListings {
+            cheapest_listings: vec![item(2, true, 300, 74)],
+        });
+        let json = serde_json::to_string(&columnar).unwrap();
+        assert_eq!(
+            json,
+            r#"{"item_id":[2],"hq":[true],"price":[300],"world_id":[74]}"#
+        );
+        let back: CheapestListingsColumnar = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, columnar);
+    }
+
+    #[test]
+    fn columnar_empty_round_trips() {
+        let empty = CheapestListingsColumnar::default();
+        assert_eq!(CheapestListings::from(empty).cheapest_listings, vec![]);
+        assert_eq!(
+            CheapestListingsColumnar::from(CheapestListings::default()),
+            CheapestListingsColumnar::default()
+        );
+    }
+
+    #[test]
+    fn columnar_mismatched_lengths_truncate_to_shortest() {
+        let columnar = CheapestListingsColumnar {
+            item_id: vec![1, 2, 3],
+            hq: vec![false, true],
+            price: vec![10, 20, 30],
+            world_id: vec![7, 8, 9],
+        };
+        let rows = CheapestListings::from(columnar);
+        assert_eq!(
+            rows.cheapest_listings,
+            vec![item(1, false, 10, 7), item(2, true, 20, 8)]
+        );
+    }
+
+    #[test]
+    fn columnar_from_ref_matches_from_value() {
+        let rows = CheapestListings {
+            cheapest_listings: vec![item(2, true, 300, 74)],
+        };
+        assert_eq!(
+            CheapestListingsColumnar::from(&rows),
+            CheapestListingsColumnar::from(rows.clone())
+        );
     }
 }

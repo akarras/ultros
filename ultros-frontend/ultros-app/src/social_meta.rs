@@ -119,31 +119,67 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
             .with(|query| query.get_str("lang").and_then(parse_locale))
             .unwrap_or(Locale::en)
     });
-    let card = Memo::new(move |_| {
-        let locale = locale.get();
-        let path = location.pathname.get();
-        let kind = SocialCardKind::from_route(&path);
-        let world = item_world(&path);
-        let (kind, content) = resolved_card(locale, kind, world.as_deref());
-        (
-            social_image_url(locale, &kind, world.as_deref()),
-            social_page_url(&path, locale, &kind),
-            content,
-        )
-    });
-    let title = move || card.with(|(_, _, content)| format!("{} · Ultros", content.title));
-    let description = move || card.with(|(_, _, content)| content.description.clone());
+    let data_revision = use_context::<crate::global_state::xiv_data::DataRevision>();
+    let card = Resource::new_blocking(
+        move || {
+            (
+                locale.get(),
+                location.pathname.get(),
+                data_revision.map(|rev| rev.0.get()).unwrap_or_default(),
+            )
+        },
+        |(locale, path, _)| async move {
+            let kind = SocialCardKind::from_route(&path);
+            let world = item_world(&path);
+            let npc = if let SocialCardKind::Npc(id) = &kind {
+                crate::global_state::xiv_data::npc_detail(locale, *id)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            let content = crate::social_card::social_card_content_with_npc(
+                locale,
+                &kind,
+                world.as_deref(),
+                npc.as_ref(),
+            );
+            let (kind, content) = match content {
+                Some(content) => (kind, content),
+                None => resolved_card(locale, SocialCardKind::Home, None),
+            };
+            (
+                social_image_url(locale, &kind, world.as_deref()),
+                social_page_url(&path, locale, &kind),
+                content,
+            )
+        },
+    );
+    let card = move || {
+        card.get().unwrap_or_else(|| {
+            let (kind, content) = resolved_card(locale.get(), SocialCardKind::Home, None);
+            (
+                social_image_url(locale.get(), &kind, None),
+                social_page_url("/", locale.get(), &kind),
+                content,
+            )
+        })
+    };
+    let title = move || format!("{} · Ultros", card().2.title);
+    let description = move || card().2.description;
 
     view! {
+        <Suspense>
         <Meta property="og:title" content=title />
         <Meta name="twitter:title" content=title />
         <Meta property="og:description" content=description />
         <Meta name="twitter:description" content=description />
-        <Meta property="og:url" content=move || card.with(|(_, url, _)| url.clone()) />
+        <Meta property="og:url" content=move || card().1 />
         <Meta property="og:locale" content=move || og_locale(locale.get()) />
         <MetaImage
-            url=move || card.with(|(url, _, _)| url.clone())
-            alt=move || card.with(|(_, _, content)| format!("Ultros. {}. {}", content.title, content.subtitle))
+            url=move || card().0
+            alt=move || { let content = card().2; format!("Ultros. {}. {}", content.title, content.subtitle) }
         />
         {move || {
             [Locale::en, Locale::ja, Locale::de, Locale::fr, Locale::ko, Locale::cn, Locale::tc]
@@ -152,6 +188,37 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
                 .map(|alternate| view! { <Meta property="og:locale:alternate" content=og_locale(alternate) /> })
                 .collect_view()
         }}
+        </Suspense>
+    }
+}
+
+/// How `ShareLocale` rewrites the URL to carry `?lang=`.
+#[cfg(any(not(feature = "ssr"), test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShareLocaleHistory {
+    /// The address bar already shows this path (landing without `?lang=`,
+    /// locale picked in place, back/forward): rewrite the current entry.
+    Replace,
+    /// The router has moved on but the address bar has not: its pushState is
+    /// still pending, so this navigation takes it over as a push.
+    Push,
+}
+
+/// For anchor clicks the router publishes the new URL signal first and only
+/// calls pushState once the route's loaders finish. `ShareLocale`'s effect runs
+/// inside that window, and a `replace` there would overwrite the history entry
+/// the user is *leaving* (the router then skips its own push because the URL
+/// signal moved on) — the back button would jump past the previous page. Push
+/// while the address bar still shows the old path, and keep the link's
+/// scroll-to-top; otherwise rewrite in place without scrolling.
+#[cfg(any(not(feature = "ssr"), test))]
+fn share_locale_history_mode(
+    address_bar_path: Option<&str>,
+    router_path: &str,
+) -> ShareLocaleHistory {
+    match address_bar_path {
+        Some(current) if current != router_path => ShareLocaleHistory::Push,
+        _ => ShareLocaleHistory::Replace,
     }
 }
 
@@ -191,11 +258,13 @@ pub(crate) fn ShareLocale() -> impl IntoView {
                     query.to_query_string(),
                     location.hash.get_untracked()
                 );
+                let address_bar_path = window().location().pathname().ok();
+                let history = share_locale_history_mode(address_bar_path.as_deref(), &path);
                 navigate(
                     &target,
                     NavigateOptions {
-                        replace: true,
-                        scroll: false,
+                        replace: history == ShareLocaleHistory::Replace,
+                        scroll: history == ShareLocaleHistory::Push,
                         ..Default::default()
                     },
                 );
@@ -208,6 +277,25 @@ pub(crate) fn ShareLocale() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn share_locale_pushes_only_while_the_router_push_is_pending() {
+        // Anchor click: router already on /items, address bar still on /.
+        assert_eq!(
+            share_locale_history_mode(Some("/"), "/items"),
+            ShareLocaleHistory::Push
+        );
+        // Landing without `?lang=`, locale picker, back/forward: same path.
+        assert_eq!(
+            share_locale_history_mode(Some("/items"), "/items"),
+            ShareLocaleHistory::Replace
+        );
+        // Unknown address bar: never destroy history on a guess.
+        assert_eq!(
+            share_locale_history_mode(None, "/items"),
+            ShareLocaleHistory::Replace
+        );
+    }
 
     #[test]
     fn explicit_query_locales_are_strict_and_decode_like_the_router() {

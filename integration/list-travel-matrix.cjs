@@ -68,6 +68,7 @@ async function runTravelMatrix({ page, base, market, createList, load, click, re
   async function start(cart, { params = {}, total, incomplete = false, plans, tripCost = total, missing = 0 }) {
     const displayed = total === null ? "—" : `${total} gil`;
     await open(cart, params); await summary(displayed, incomplete);
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await click(tid("guest-shop-mode")); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(tid("shop-totals"));
     assert.match(await page.$eval(tid("shop-totals"), node => node.textContent), new RegExp(`${tripCost} gil.*${missing} missing`));
@@ -105,6 +106,7 @@ async function runTravelMatrix({ page, base, market, createList, load, click, re
       await record(`${surface}-travel-mobile-four-step-frontier`);
       await page.setViewport({ width: 1280, height: 900 });
       // Every frontier identity is actionable, not only the three shortcuts.
+      if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
       await click(`${tid("shop-route-option")}[data-route-cost="120"]`);
       await page.waitForSelector(tid("shop-review"));
       assert.match(await page.$eval(tid("shop-review-next"), node => node.textContent), /120 gil/);

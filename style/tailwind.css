@@ -1171,29 +1171,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     color: var(--color-text);
 }
 
-.btn-secondary {
-    @apply p-2 m-1 flex flex-row text-center rounded-2xl transition-all duration-300 ease-in-out justify-center gap-3;
-    color: var(--color-text);
-    cursor: pointer;
-    background-color: color-mix(
-        in srgb,
-        var(--brand-bg) 10%,
-        var(--color-background-elevated)
-    );
-    border: 1px solid var(--color-outline);
-    /* No backdrop-filter here: the surface is opaque so a blur is invisible,
-       and this class is rendered per row (370+ times on a big recipe
-       itinerary). Each blurred element is its own compositing layer, and
-       with hardware acceleration off the blur cost ~5x the compositor draw
-       time per scrolled frame (#1334). Reserve backdrop-filter for single
-       translucent overlays like .app-nav and the mobile bar. */
-}
-
-.btn-secondary > * {
-    @apply text-xl font-extrabold rounded-xl;
-    color: var(--color-text);
-}
-
 [aria-current="page"].btn-secondary {
     background-color: color-mix(
         in srgb,
@@ -1315,13 +1292,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     box-shadow:
         0 10px 16px -12px rgba(0, 0, 0, 0.12),
         0 4px 6px -6px rgba(0, 0, 0, 0.08);
-}
-
-@utility input {
-    @apply rounded-lg px-3 py-2 border transition-colors duration-150;
-    background-color: var(--color-background-elevated);
-    color: var(--color-text);
-    border-color: var(--color-outline);
 }
 
 /* Firefox paints a number input's spin buttons permanently (Chromium only
@@ -1649,7 +1619,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 
 /* Inputs */
 @utility input-base {
-    @apply w-full px-3 py-2 rounded-lg transition-all duration-200;
+    @apply w-full px-3 py-2 rounded-lg border transition-all duration-200;
     background-color: var(--color-background-panel);
     border: 1px solid var(--color-outline);
     color: var(--color-text);
@@ -1705,9 +1675,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 
 /* No scrollbar declarations here: a slim, themed scrollbar is what every
-   scrollport inherits by default now (see `@layer base`). */
+   scrollport inherits by default now (see `@layer base`).
+
+   This panel is a frame, not a scrollport: the `VirtualScroller` inside it
+   owns the only scrollbar. Giving the frame `max-height` + `overflow-y: auto`
+   nested a 500px scrollport around the scroller's 528px one, so Chrome drew
+   two scrollbars side by side and wheel input hopped between them. */
 @utility scroll-panel {
-    @apply max-h-[500px] overflow-y-auto overflow-x-hidden rounded-lg border;
+    @apply overflow-hidden rounded-lg border;
 }
 
 [data-theme="dark"] .scroll-panel {
@@ -3066,6 +3041,19 @@ dialog.panel { color: var(--color-text); margin: auto; }
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
+/* Views menus have their own button-relative wrapper on desktop. On phones,
+   right-aligning a wide menu to an icon in the middle of the toolbar can put
+   its left edge offscreen. Use the full ControlBar as the containing block,
+   like Columns and + Filter already do. This covers both grid and Flip menus. */
+@media (max-width: 767.98px) {
+    .sticky-bar > div > .relative:has(> .sticky-bar-popover) {
+        position: static;
+    }
+    .sticky-bar > div > .relative > .sticky-bar-popover {
+        max-width: 100%;
+    }
+}
+
 @utility item-explorer-chip {
     display: inline-flex;
     align-items: center;
@@ -3325,3 +3313,40 @@ dialog.panel { color: var(--color-text); margin: auto; }
 .registered-filter-bar .filter-chip-x {
     flex-shrink: 0;
 }
+
+/* Consistent choices across list modes, composition, access and alerts. */
+.segmented-control {
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.75rem;
+    background: var(--color-background);
+}
+.segmented-control.grid { display: grid; }
+.segmented-option {
+    min-height: 2.75rem;
+    min-width: 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+.segmented-option:hover { color: var(--color-text); }
+.segmented-option[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--brand-ring) 18%, var(--color-background-elevated));
+    border-color: color-mix(in srgb, var(--brand-ring) 40%, var(--color-outline));
+    color: var(--color-text);
+}
+.segmented-option:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
+[data-theme] input.list-title-input:not([type="checkbox"]):not([type="radio"]) { background: transparent; border-color: transparent; }
+[data-theme] input.list-title-input:not([type="checkbox"]):not([type="radio"]):hover:not(:read-only),
+[data-theme] input.list-title-input:not([type="checkbox"]):not([type="radio"]):focus-visible { border-color: var(--color-outline); }
+.list-action-menu { display: flex; flex-direction: column; align-items: stretch; }
+.list-action-menu > button { justify-content: flex-start; text-align: left; min-height: 2.75rem; }
+
+/* Match the list toolbar controls independently of inherited font metrics. */
+.list-price-scope input[role="combobox"] { height: 2.625rem; }

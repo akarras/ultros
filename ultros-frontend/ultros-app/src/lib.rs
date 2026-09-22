@@ -2,6 +2,7 @@
 pub use ultros_ui_market::analysis;
 pub(crate) mod analyzer_kit;
 pub use ultros_frontend_core::api;
+pub use ultros_frontend_core::columnar_wire;
 pub(crate) mod components;
 pub(crate) use ultros_api_client::error;
 pub use ultros_ui_market::freshness;
@@ -181,13 +182,15 @@ fn error_reporting_script() -> Option<String> {
     // The beforeSend noise filter, injected verbatim via the {filter_js}
     // placeholder below. Lives in its own file so Node can unit-test it.
     let filter_js = include_str!("error_filter.js");
+    // The wasm frame symbolicator, likewise its own Node-tested file.
+    let symbolicate_js = include_str!("wasm_symbolicate.js");
 
     Some(format!(
         r#"(function(){{
     var config = {config};
     var sdkUrl = {sdk_url};
 
-    window.__ultrosReportRustPanic = function(message, location) {{
+    window.__ultrosReportRustPanic = function(message, location, stack) {{
         var Sentry = window.Sentry;
         if (!Sentry || !Sentry.captureException) {{
             return;
@@ -195,6 +198,19 @@ fn error_reporting_script() -> Option<String> {
 
         var error = new Error(message || "Rust WASM panic");
         error.name = "RustWasmPanic";
+        // The panic hook captured `stack` on the panicking call stack; this
+        // reporter runs from a timer, so the Error created here would only
+        // show the timer trampoline. Sentry parses `error.stack`, so swap
+        // in the real one (minus its own "Error" header line).
+        if (typeof stack === "string" && stack) {{
+            try {{
+                var lines = stack.split("\n");
+                if (lines.length && /^(Error|RustWasmPanic)\b/.test(lines[0])) {{
+                    lines.shift();
+                }}
+                error.stack = "RustWasmPanic: " + error.message + "\n" + lines.join("\n");
+            }} catch (_) {{}}
+        }}
         Sentry.withScope(function(scope) {{
             scope.setTag("runtime", "wasm");
             if (location) {{
@@ -224,6 +240,13 @@ fn error_reporting_script() -> Option<String> {
     // format! argument value, not part of the format string literal.
 {filter_js}
 
+    // Wasm frame symbolicator. Defines window.__ultrosSymbolicateEvent,
+    // which resolves `wasm-function[N]` frames to Rust function names from
+    // the release's /pkg/<hash>/ultros.symbols map (see wasm_symbolicate.js
+    // and the wasm-symbols crate). Also injected verbatim; tested by
+    // integration/wasm-symbolicate.test.cjs.
+{symbolicate_js}
+
     var existingBeforeSend = config && config.beforeSend;
     config = config || {{}};
     config.beforeSend = function(event, hint) {{
@@ -235,6 +258,15 @@ fn error_reporting_script() -> Option<String> {
         }}
         if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
             return null;
+        }}
+        // After the drop check on purpose: a dropped event must never cost
+        // a symbols download. Returns a promise; Sentry awaits it.
+        if (window.__ultrosSymbolicateEvent) {{
+            var symbolicated = window.__ultrosSymbolicateEvent(event);
+            if (typeof existingBeforeSend === "function") {{
+                return symbolicated.then(function(ev) {{ return existingBeforeSend(ev, hint); }});
+            }}
+            return symbolicated;
         }}
         if (typeof existingBeforeSend === "function") {{
             return existingBeforeSend(event, hint);
@@ -677,7 +709,17 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("welcome") view=Welcome />
                         <Route path=path!("help") view=HelpIndex />
                         <Route path=path!("help/:topic") view=HelpArticle />
-                        <Route path=path!("changelog") view=Changelog />
+                        // The history is fetched from `/api/v1/changelog` rather
+                        // than compiled into the bundle, so the page's content
+                        // sits behind a `Suspense`. `InOrder` keeps that content
+                        // in the initial HTML, in document order, the way it was
+                        // when the entries were a static array — out-of-order
+                        // streaming would hand crawlers the skeleton instead.
+                        <Route
+                            path=path!("changelog")
+                            view=Changelog
+                            ssr=SsrMode::InOrder
+                        />
                         <Route path=path!("profile") view=Profile />
                         <Route path=path!("privacy") view=PrivacyPolicy />
                         <Route path=path!("cookie-policy") view=CookiePolicy />

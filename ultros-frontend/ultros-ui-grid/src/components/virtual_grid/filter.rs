@@ -159,7 +159,12 @@ pub fn MetricSortControls(column: &'static str) -> impl IntoView {
     }
 }
 
-fn metric_sort_href(path: &str, mut query: ParamsMap, column: &str, dir: &str) -> String {
+pub(crate) fn metric_sort_href(
+    path: &str,
+    mut query: ParamsMap,
+    column: &str,
+    dir: &str,
+) -> String {
     query.replace("sort", format!("grid:{column}"));
     query.replace("dir", dir.to_string());
     format!("{path}{}", query.to_query_string())
@@ -173,18 +178,25 @@ pub fn MetricSortHeader(
     #[prop(into)] label: Signal<String>,
 ) -> impl IntoView {
     let location = use_location_or_default();
+    let registry = use_context::<super::registry::FilterRegistry>();
     // Alias-aware, so a retired native token lights the header it now means.
     let active = move || {
         location
             .query
             .with(|q| super::registry::effective_sort(q).as_deref() == Some(column))
     };
-    let ascending = move || location.query.with(|q| q.get("dir")).as_deref() == Some("asc");
+    let ascending = move || {
+        location.query.with(|q| {
+            registry
+                .map(|registry| registry.sort_ascending(q))
+                .unwrap_or_else(|| q.get("dir").as_deref() == Some("asc"))
+        })
+    };
     view! {
         <a
             href=move || metric_sort_href(
                 &location.pathname.get(), location.query.get(), column,
-                if active() && !ascending() { "asc" } else { "desc" },
+                if if active() { !ascending() } else { registry.is_some_and(|r| r.default_ascending(column)) } { "asc" } else { "desc" },
             )
             data-noscroll=true
             data-metric-sort=column

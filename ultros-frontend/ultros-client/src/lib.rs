@@ -6,8 +6,6 @@ use gloo_net::http::Request;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::{prelude::*, task::spawn_local};
 use log::{Level, error, info};
-use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ultros_api_types::{
     bootstrap::Bootstrap, user::UserData, world::WorldData, world_helper::WorldHelper,
@@ -15,13 +13,6 @@ use ultros_api_types::{
 use ultros_app::*;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-
-#[derive(Serialize, Deserialize)]
-struct Data {
-    version: String,
-    #[serde(with = "serde_bytes")]
-    data: Vec<u8>,
-}
 
 async fn retry<F, Fut, O, E>(fut: F, max_retries: i32) -> Result<O, E>
 where
@@ -37,16 +28,6 @@ where
         };
     }
     Err(last_error.unwrap())
-}
-
-async fn open_transaction(rexie: &Rexie) -> Result<(Transaction, Store)> {
-    let transaction = rexie
-        .transaction(&[GAME_DATA_STORE], TransactionMode::ReadWrite)
-        .map_err(|e| anyhow!("failed to open db {e}"))?;
-    let game_data = transaction
-        .store(GAME_DATA_STORE)
-        .map_err(|e| anyhow!("failed to open store {e}"))?;
-    Ok((transaction, game_data))
 }
 
 fn get_i18n_lang() -> String {
@@ -89,218 +70,20 @@ fn get_i18n_lang() -> String {
     }
 }
 
-async fn init_data() -> anyhow::Result<Vec<u8>> {
-    let version = xiv_gen::data_version();
-    let lang = get_i18n_lang();
-    let response = Request::get(&format!("/static/data/{}/{}.rkyv", version, lang))
-        .send()
-        .await?
-        .binary()
-        .await?;
-    xiv_gen_db::try_init(&response)?;
-    Ok(response)
-}
-
-async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()> {
-    // load local storage data for the current game version, if we don't have it get it from the server, store it, and init db
-    let version = format!("{}-{}", xiv_gen::data_version(), get_i18n_lang());
-    {
-        let (transaction, game_data) = open_transaction(rexie).await?;
-        #[allow(clippy::collapsible_if)]
-        if let Ok(Some(value)) = game_data.get(version.clone().into()).await {
-            if !value.is_null() && !value.is_undefined() {
-                match serde_wasm_bindgen::from_value::<Data>(value) {
-                    Ok(value) => match xiv_gen_db::try_init(&value.data) {
-                        Ok(()) => return Ok(()),
-                        Err(e) => error!("Error initializing using data {e}"),
-                    },
-                    Err(e) => error!("Error converting indexdb to data {e}"),
-                };
-
-                error!("failed to deserialize data. removing {version}");
-                game_data
-                    .delete(version.clone().into())
-                    .await
-                    .map_err(|_| anyhow!("error deleting?"))?;
-                transaction
-                    .done()
-                    .await
-                    .map_err(|e| anyhow!("error closing first transaction {e}"))?;
-            }
-        }
-    }
-    let response = init_data().await?;
-    let data = serde_wasm_bindgen::to_value(&Data {
-        version: version.to_string(),
-        data: response.clone(),
-    })
-    .map_err(|e| anyhow!("error serializing data {e}"))?;
-    let (transaction, game_data) = open_transaction(rexie).await?;
-    // allow the app to run if we can init
-    // soft fail if we can't store
-    game_data
-        .clear()
-        .await
-        .map_err(|e| anyhow!("error clearing store {e}"))?;
-    if let Err(e) = game_data
-        .add(&data, None)
-        .await
-        .map_err(|e| anyhow!("Error adding game data {e}"))
-    {
-        error!("Failed to store data {e}");
-    }
-    if let Err(e) = transaction
-        .done()
-        .await
-        .map_err(|_| anyhow!("error waiting for tranasction to finish"))
-    {
-        error!("failed to finish transaction {e}");
-    }
-    Ok(())
-}
-
-/// Game-data cache schema. `ensure_game_data_schema` and `try_build_db` must
-/// describe the same database, so that by the time rexie opens it there is
-/// nothing left to upgrade (see `ensure_game_data_schema`).
-const GAME_DATA_DB: &str = "ultros";
-const GAME_DATA_DB_VERSION: u32 = 1;
-const GAME_DATA_STORE: &str = "game_data";
-const GAME_DATA_KEY_PATH: &str = "version";
-
-/// Opens — and, on first visit, creates — the game-data database with plain
-/// `web-sys` calls before rexie touches it, then closes the connection.
-///
-/// rexie delegates to the `idb` crate, whose `upgradeneeded` handler is a
-/// chain of `.expect()`s, starting with casting `event.target` to
-/// `IDBOpenDBRequest`. That handler runs inside a JS event callback, so no
-/// `Result` on our side can catch it: a partial IndexedDB implementation
-/// (the Lightpanda crawler dispatches the event with a bare `IDBRequest` as
-/// its target) panics the whole wasm module before hydration starts
-/// (GlitchTip #7391, 100+ events/day). Doing the schema creation here keeps
-/// every step on a `Result` path — the upgrade handler never reads
-/// `event.target`, it uses the request it captured — and leaves the database
-/// at `GAME_DATA_DB_VERSION` with the store in place, so rexie's own open
-/// finds nothing to upgrade and its handler never fires. Any failure means
-/// "no usable IndexedDB here" and the caller fetches the data uncached.
-async fn ensure_game_data_schema() -> Result<()> {
-    use futures::channel::oneshot;
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use wasm_bindgen::closure::Closure;
-    use web_sys::{IdbDatabase, IdbObjectStoreParameters, IdbOpenDbRequest};
-
-    let factory = web_sys::window()
-        .ok_or_else(|| anyhow!("no window"))?
-        .indexed_db()
-        .map_err(|e| anyhow!("indexedDB unavailable: {e:?}"))?
-        .ok_or_else(|| anyhow!("indexedDB unavailable"))?;
-    let request = factory
-        .open_with_u32(GAME_DATA_DB, GAME_DATA_DB_VERSION)
-        .map_err(|e| anyhow!("failed to open db: {e:?}"))?;
-
-    // Whichever of the handlers fires first settles the outcome; the rest
-    // find the sender gone and do nothing.
-    let (tx, rx) = oneshot::channel::<Result<()>>();
-    let tx = Rc::new(RefCell::new(Some(tx)));
-    let settle = {
-        let tx = tx.clone();
-        move |outcome: Result<()>| {
-            if let Some(tx) = tx.borrow_mut().take() {
-                let _ = tx.send(outcome);
-            }
-        }
-    };
-
-    fn database_of(request: &IdbOpenDbRequest) -> Result<IdbDatabase> {
-        request
-            .result()
-            .map_err(|e| anyhow!("open request has no result: {e:?}"))?
-            .dyn_into::<IdbDatabase>()
-            .map_err(|value| anyhow!("open request result is not an IDBDatabase: {value:?}"))
-    }
-
-    let on_upgrade = {
-        let request = request.clone();
-        let settle = settle.clone();
-        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-            let created = database_of(&request).and_then(|db| {
-                if db.object_store_names().contains(GAME_DATA_STORE) {
-                    return Ok(());
-                }
-                let params = IdbObjectStoreParameters::new();
-                params.set_key_path(&JsValue::from_str(GAME_DATA_KEY_PATH));
-                db.create_object_store_with_optional_parameters(GAME_DATA_STORE, &params)
-                    .map(|_| ())
-                    .map_err(|e| anyhow!("failed to create object store: {e:?}"))
-            });
-            // Only a failure settles here: success is reported by `onsuccess`
-            // once the versionchange transaction has committed.
-            if let Err(e) = created {
-                settle(Err(e));
-            }
-        })
-    };
-    let on_success = {
-        let request = request.clone();
-        let settle = settle.clone();
-        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-            settle(database_of(&request).map(|db| db.close()));
-        })
-    };
-    let on_error = {
-        let settle = settle.clone();
-        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-            settle(Err(anyhow!("open request failed")));
-        })
-    };
-    let on_blocked = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-        settle(Err(anyhow!("open request blocked by another connection")));
-    });
-    request.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
-    request.set_onsuccess(Some(on_success.as_ref().unchecked_ref()));
-    request.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-    request.set_onblocked(Some(on_blocked.as_ref().unchecked_ref()));
-
-    let outcome = rx
-        .await
-        .map_err(|_| anyhow!("open request dropped without settling"))?;
-
-    // Detach before the closures drop so a late event can't call into freed
-    // handlers.
-    request.set_onupgradeneeded(None);
-    request.set_onsuccess(None);
-    request.set_onerror(None);
-    request.set_onblocked(None);
-    outcome
-}
-
-async fn try_build_db() -> Result<Rexie> {
-    ensure_game_data_schema().await?;
-    Rexie::builder(GAME_DATA_DB)
-        .version(GAME_DATA_DB_VERSION)
-        .add_object_store(ObjectStore::new(GAME_DATA_STORE).key_path(GAME_DATA_KEY_PATH))
-        .build()
-        .await
-        .map_err(|e| anyhow!("failed to build db {e}"))
-}
-
 pub async fn try_populate_xiv_gen_data() -> anyhow::Result<()> {
-    match try_build_db().await {
-        Ok(rexie) => {
-            if let Err(e) = retry(|| try_populate_xiv_gen_data_internal(&rexie), 3).await {
-                error!("game data cache unusable, fetching uncached: {e}");
-                let _ = init_data().await?;
+    retry(
+        || async {
+            let response = Request::get(&xiv_gen_db::startup_url(&get_i18n_lang()))
+                .send()
+                .await?;
+            if !response.ok() {
+                return Err(anyhow!("game data request failed: {}", response.status()));
             }
-        }
-        Err(e) => {
-            info!("IndexedDB unavailable, fetching game data uncached: {e}");
-            let _ = init_data().await?;
-        }
-    }
-    // Need to trigger a reactive update here if data() changed
-    // In practice try_init already updates the atomic XIV_DATA state
-    // We should trigger a UI update.
-    Ok(())
+            xiv_gen_db::try_init(&response.binary().await?)
+        },
+        3,
+    )
+    .await
 }
 
 async fn populate_xiv_gen_data() -> anyhow::Result<()> {
@@ -368,7 +151,21 @@ async fn fetch_current_user_fallback() -> Option<UserData> {
     }
 }
 
+/// `js_sys::Error` exposes no `stack` getter; it is a plain (non-standard
+/// but universal) property, so read it reflectively.
+fn error_stack(error: &js_sys::Error) -> String {
+    js_sys::Reflect::get(error, &JsValue::from_str("stack"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
 fn set_panic_hook() {
+    // V8 keeps only 10 frames by default. A Rust panic spends that many on
+    // its own machinery (`begin_panic_handler`, `rust_panic_with_hook`, this
+    // hook, `console_error_panic_hook`, the `Error()` import...) before the
+    // panicking site appears, so the captured stack would never reach it.
+    js_sys::Error::set_stack_trace_limit(&JsValue::from_f64(50.0));
     std::panic::set_hook(Box::new(|panic_info| {
         console_error_panic_hook::hook(panic_info);
         report_rust_panic(panic_info);
@@ -376,6 +173,14 @@ fn set_panic_hook() {
 }
 
 fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
+    // Capture the stack NOW, on the panicking call stack. The reporter call
+    // below is deferred to a timer, and a stack taken there is the timer
+    // trampoline (`__wbg_call -> closure -> reporter`), not the panic site —
+    // which is what every GlitchTip RustWasmPanic event carried until this
+    // capture was added. The browser lists wasm frames as
+    // `ultros.wasm:wasm-function[N]:0x...`; the Sentry `beforeSend` hook
+    // resolves `N` to a Rust function name from `/pkg/<hash>/ultros.symbols`.
+    let stack = error_stack(&js_sys::Error::new(""));
     let message = panic_info
         .payload()
         .downcast_ref::<&str>()
@@ -412,10 +217,11 @@ fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
             let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
                 return;
             };
-            let _ = reporter.call2(
+            let _ = reporter.call3(
                 &JsValue::NULL,
                 &JsValue::from_str(&message),
                 &JsValue::from_str(&location),
+                &JsValue::from_str(&stack),
             );
         },
         std::time::Duration::from_millis(0),
@@ -598,9 +404,6 @@ pub fn hydrate() {
         }
         dispatch_boot_event("ultros:hydrated");
         let lang = get_i18n_lang();
-        prepare_guest_offline(
-            &format!("/static/data/{}/{}.rkyv", xiv_gen::data_version(), lang),
-            &lang,
-        );
+        prepare_guest_offline(&xiv_gen_db::startup_url(&lang), &lang);
     });
 }

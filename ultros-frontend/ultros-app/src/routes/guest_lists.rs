@@ -363,19 +363,21 @@ mod browser {
                             });
                         };
                         view! {
-                            <article class="panel rounded-xl p-4 flex flex-col gap-3" data-testid="list-card">
+                            <article class=crate::routes::lists::LIST_CARD_CLASS data-testid="list-card">
                                 <Show when=move || local && editing.get() fallback=move || view! {
                                     <div class="flex justify-between items-start gap-2">
-                                        <a class="text-lg font-semibold hover:underline break-words min-w-0" href=link.get_value()>{original.get_value()}</a>
+                                        <div class="flex min-w-0 flex-col gap-1">
+                                            <a class=crate::routes::lists::LIST_CARD_TITLE href=link.get_value()>{original.get_value()}</a>
+                                            <p class="text-sm text-[color:var(--color-text-muted)]">{status.clone()}</p>
+                                        </div>
                                         <Show when=move || local>
-                                            <button type="button" class="btn-ghost btn-sm shrink-0 text-gray-400 hover:text-white" data-testid="list-card-edit" aria-label=move || t_string!(i18n,edit_list).to_string() title=move || t_string!(i18n,edit_list).to_string() on:click=move |_| { draft.set(original.get_value()); editing.set(true); }>
+                                            <button type="button" class="btn-ghost min-h-11 min-w-11 shrink-0 p-2" data-testid="list-card-edit" aria-label=move || t_string!(i18n,edit_list).to_string() title=move || t_string!(i18n,edit_list).to_string() on:click=move |_| { draft.set(original.get_value()); editing.set(true); }>
                                                 <Icon icon=i::BsPencilFill />
                                             </button>
                                         </Show>
                                     </div>
-                                    <p class="text-sm text-[color:var(--color-text-muted)]">{status.clone()}</p>
-                                    <Show when=move || local><a class="btn-secondary self-start" data-testid="list-card-make-online" href=format!("/list/device/{}?labs=lists-sync&make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
-                                    {destination.map(|dest|view! { <a class="btn-secondary self-start" href=format!("/list/{dest}?labs=lists-sync")>{t!(i18n,online_open)}</a> })}
+                                    <div class="mt-2 flex flex-wrap items-center justify-between gap-2"><a class="btn-secondary min-h-11" href=link.get_value()>{t!(i18n, view_items)}<Icon icon=i::AiArrowRightOutlined attr:class="ml-1" aria_hidden=true /></a><Show when=move || local><a class="btn-ghost min-h-11" data-testid="list-card-make-online" href=format!("/list/device/{}?labs=lists-sync&make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
+                                    </div>
                                 }>
                                     <div class="flex flex-col gap-3 w-full">
                                         <div>
@@ -799,7 +801,9 @@ mod browser {
                 error.set(e);
             }
         });
+        let history_revision = RwSignal::new(0_u64);
         let undo = Callback::new(move |()| {
+            history_revision.update(|revision| *revision += 1);
             if recovery.get_untracked() {
                 return;
             }
@@ -810,6 +814,7 @@ mod browser {
             }
         });
         let redo = Callback::new(move |()| {
+            history_revision.update(|revision| *revision += 1);
             if recovery.get_untracked() {
                 return;
             }
@@ -863,6 +868,7 @@ mod browser {
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
             undo,
             redo,
+            history_revision: history_revision.into(),
             can_undo: Signal::derive(move || handle.with_value(|h| h.can_undo())),
             can_redo: Signal::derive(move || handle.with_value(|h| h.can_redo())),
             pending: Signal::derive(|| false),
@@ -945,7 +951,7 @@ mod browser {
                             <button class="btn-secondary" data-testid="device-list-export" on:click=move |_| {
                                 let h = handle.get_value(); leptos::task::spawn_local(async move { match h.backup().await { Ok(text) => { let _ = backup.try_set(text); }, Err(e) => { let _ = error.try_set(e); } } });
                             }>{t!(i18n, guest_workspace_export)}</button>
-                            <button class="btn-secondary" data-testid="device-list-delete" on:click=move |_| confirm_delete.set(true)>{t!(i18n, guest_workspace_delete)}</button>
+                            <button class="btn-danger" data-testid="device-list-delete" on:click=move |_| confirm_delete.set(true)>{t!(i18n, guest_workspace_delete)}</button>
                         </div>
                         <Show when=move || !backup.get().is_empty()>
                             <label class="block text-sm">{t!(i18n, guest_workspace_backup_help)}
@@ -957,7 +963,7 @@ mod browser {
                                 <p>{t!(i18n, guest_workspace_delete_confirm)}</p>
                                 <div class="flex flex-wrap gap-2">
                                     <button class="btn-secondary" disabled=move || deleting.get() on:click=move |_| confirm_delete.set(false)>{t!(i18n, guest_workspace_keep)}</button>
-                                    <button class="btn-primary" data-testid="device-list-confirm-delete" disabled=move || deleting.get() on:click=move |_| {
+                                    <button class="btn-danger" data-testid="device-list-confirm-delete" disabled=move || deleting.get() on:click=move |_| {
                                         if deleting.get_untracked() { return; }
                                         deleting.set(true);
                                         let h = handle.get_value();
@@ -988,10 +994,11 @@ mod browser {
                     set_scope=Callback::new(set_scope)
                     can_set_scope=Signal::derive(|| true)
                     refresh=move || view! {
-                        <button type="button" class="btn-secondary" data-testid="device-prices-refresh" aria-busy=move || busy.get().to_string() disabled=move || scope.get().is_none() || refreshing.get() on:click=refresh_prices>
+                        <button type="button" class="btn-secondary h-[2.625rem]" data-testid="device-prices-refresh" aria-busy=move || busy.get().to_string() disabled=move || scope.get().is_none() || refreshing.get() on:click=refresh_prices>
                             {move || if refreshing.get() { t_string!(i18n, guest_workspace_refreshing).to_string() } else if feed.get().has_prices() { t_string!(i18n, guest_workspace_refresh_prices).to_string() } else { t_string!(i18n, guest_workspace_prices).to_string() }}
                         </button>
                     }
+                    history=move || view! { <crate::components::list_workspace_shell::ListHistoryControls source=source /> }
                     price_row_testid="device-price-controls"
                     travel
                 >
@@ -1065,7 +1072,6 @@ mod browser {
                         listings,
                     })
                     .collect(),
-                observed_at: None,
                 home_world: home.get().map(|w| w.id).unwrap_or(0),
                 world_names: worlds
                     .with_value(|worlds| worlds.iter().map(|w| (w.id, w.name.clone())).collect()),
@@ -1075,7 +1081,7 @@ mod browser {
         });
         view! {
             <div class="space-y-3">
-                <p>{t!(i18n, guest_workspace_shop_intro)}</p>
+                <Show when=move || !source.market.get().has_prices()><p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_shop_intro)}</p></Show>
                 <p role="alert">{move || error.get()}</p>
                 <ListShop input on_purchase=Callback::new(move |(key, delta): (String, i32)| {
                     if let Ok(id) = key.parse::<i32>()

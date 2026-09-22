@@ -64,6 +64,9 @@ smallvec = { version = "1.10.0", features = [
 itertools = "0.14.0"
 sitemap-rs = "0.4.0"
 ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
+# The `history` feature (on by default) is what makes the full changelog
+# available to `/api/v1/changelog`; the wasm client builds without it.
+ultros-changelog = { path = "../ultros-changelog" }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
 leptos = { workspace = true, features = ["ssr", "nightly"] }
 leptos_axum.workspace = true
@@ -121,6 +124,10 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.6.0"
+# `sentry::test::with_captured_events` is the only way to assert what actually
+# lands on an event (the transaction name that GlitchTip groups by). Dev-only,
+# so the test transport never ships.
+sentry = { version = "0.49", default-features = false, features = ["test"] }
 # `#[tokio::test(start_paused = true)]` (retry-backoff tests in
 # item_update_service.rs) needs tokio's virtual clock, which only exists
 # behind "test-util". Scoped to dev-dependencies so it never ships.

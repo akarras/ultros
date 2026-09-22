@@ -99,9 +99,9 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_listing_stats, get_market_heat,
-    get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
-    recent_sales,
+    cheapest_per_world, get_best_deals, get_changelog, get_item_stats, get_listing_stats,
+    get_market_heat, get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality,
+    post_sparklines, recent_sales,
 };
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, npc_sitemap, sitemap_index};
 use crate::web::{
@@ -201,6 +201,48 @@ async fn restore_analyzer_view(
             .insert(header::VARY, axum::http::HeaderValue::from_static("Cookie"));
         return response;
     }
+    next.run(req).await
+}
+
+/// The transaction name error events are reported under.
+///
+/// GlitchTip decides which issue an event joins by hashing its title together
+/// with its *culprit*, and an event with no `transaction` falls back to the raw
+/// request URL for that culprit. `sentry-tower`'s `enable_transaction()` only
+/// starts a performance transaction — it never sets the scope's transaction
+/// name — so every error event carried a culprit like
+/// `/api/v1/item_stats/Moogle/35424`, unique per item *and* per world. A
+/// five-second ClickHouse outage on 2026-09-22 minted 50+ single-event issues
+/// out of four distinct failures, which is exactly what stabilising the titles
+/// in `report_title` was meant to prevent.
+///
+/// The matched route is the stable stand-in: `/api/v1/item_stats/{world}/{itemid}`
+/// is the same string for every item, so the burst collapses back into one
+/// issue per `query × kind`. The offending URL is still on the event, in the
+/// request context.
+fn sentry_transaction_name(method: &axum::http::Method, matched: Option<&str>) -> String {
+    // Requests that never matched a route (the static-file/404 fallback) have
+    // no stable name to use. Deliberately *not* falling back to the raw path:
+    // that is the splintering this exists to avoid.
+    format!("{method} {}", matched.unwrap_or("<fallback>"))
+}
+
+/// Names the Sentry scope's transaction after the matched route.
+///
+/// Must sit inside `NewSentryLayer` (so a per-request hub exists to configure)
+/// and inside the router (so `MatchedPath` has been inserted). See
+/// [`sentry_transaction_name`] for why this matters.
+async fn name_sentry_transaction(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let name = sentry_transaction_name(
+        req.method(),
+        req.extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map(|m| m.as_str()),
+    );
+    sentry::configure_scope(|scope| scope.set_transaction(Some(&name)));
     next.run(req).await
 }
 
@@ -3416,10 +3458,19 @@ async fn delete_user(
     Ok((cookie_jar, Redirect::to("/")))
 }
 
+/// Serves the game-data pack the client decodes with `xiv_gen_db::try_init`.
+///
+/// `version` is the pack's content hash (`xiv_gen_db::pack_version`), so a
+/// URL that names the current pack is immutable and cached for a year, at the
+/// edge and in the browser. A URL naming any other version (a tab still
+/// running an older build after a game-data bump) gets the current bytes too,
+/// since that is all this binary has, but marked `no-store` so neither cache
+/// files the wrong pack under that key.
 async fn get_xiv_data_bytes(
-    Path((_version, lang)): Path<(String, String)>,
-) -> Result<&'static [u8], WebError> {
-    let lang = match lang.strip_suffix(".rkyv").unwrap_or(&lang) {
+    Path((version, lang)): Path<(String, String)>,
+) -> Result<axum::response::Response, WebError> {
+    let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
+    let lang = match lang_code {
         "en" => xiv_gen::Language::En,
         "ja" => xiv_gen::Language::Ja,
         "de" => xiv_gen::Language::De,
@@ -3429,7 +3480,104 @@ async fn get_xiv_data_bytes(
         "tc" => xiv_gen::Language::Tc,
         _ => return Err(anyhow::anyhow!("Unsupported language").into()),
     };
-    Ok(xiv_gen_db::embedded_bytes(lang))
+    let cache_control = if version == xiv_gen_db::pack_version(lang_code) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    let mut response = xiv_gen_db::embedded_bytes(lang).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    Ok(response)
+}
+
+async fn get_xiv_startup_bytes(
+    Path((version, lang)): Path<(String, String)>,
+) -> Result<axum::response::Response, WebError> {
+    let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
+    let lang = match lang_code {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => return Err(anyhow::anyhow!("Unsupported language").into()),
+    };
+    let cache_control = if version == xiv_gen_db::startup_version(lang_code) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    let mut response = xiv_gen_db::startup_bytes(lang).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    Ok(response)
+}
+
+/// Small public details, keyed by the full source pack so description-only
+/// updates also invalidate their URLs. Never cache a response under a stale key.
+async fn get_xiv_detail(
+    Path((version, lang, kind, id)): Path<(String, String, String, i32)>,
+) -> axum::response::Response {
+    let language = match lang.as_str() {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    if version != xiv_gen_db::pack_version(&lang) {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response();
+    }
+    let data = xiv_gen_db::data_for(language);
+    let mut response = match kind.as_str() {
+        "description" => Json(
+            data.items
+                .get(&xiv_gen::ItemId(id))
+                .map(|row| &row.description),
+        )
+        .into_response(),
+        "npc" => Json(data.e_npc_residents.get(&xiv_gen::ENpcResidentId(id))).into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    response
 }
 
 /// Returns a region- attempts to guess it from the CF Region header
@@ -3471,6 +3619,7 @@ fn test_auth_routes() -> Router<WebState> {
 fn api_router() -> Router<WebState> {
     Router::new()
         .route("/api/v1/search", get(search))
+        .route("/api/v1/changelog", get(get_changelog))
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
         .route("/api/v1/trends/{world}", get(get_trends))
@@ -3695,6 +3844,14 @@ pub(crate) async fn start_web(
         .route("/static/itemicon/{path}", get(get_item_icon))
         .route("/static/map/{file}", get(get_map))
         .route("/static/data/{version}/{lang}", get(get_xiv_data_bytes))
+        .route(
+            "/static/startup/{version}/{lang}",
+            get(get_xiv_startup_bytes),
+        )
+        .route(
+            "/static/game-detail/{version}/{lang}/{kind}/{id}",
+            get(get_xiv_detail),
+        )
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
@@ -3761,6 +3918,11 @@ pub(crate) async fn start_web(
                 }
             },
         ))
+        // Declared before the sentry layers below, so it is *inner* to them:
+        // the per-request hub is already bound by the time it configures the
+        // scope. See `sentry_transaction_name` for why the transaction has to
+        // be named at all.
+        .layer(middleware::from_fn(name_sentry_transaction))
         // Sentry/Glitchtip: bind a fresh Hub per request and decorate captured
         // events with HTTP context (method, URL, status). NewSentryLayer must
         // come before SentryHttpLayer; ServiceBuilder applies in declared
@@ -3774,7 +3936,12 @@ pub(crate) async fn start_web(
             CompressionLayer::new().compress_when(
                 SizeAbove::new(256)
                     // don't compress images
-                    .and(NotForContentType::IMAGES),
+                    .and(NotForContentType::IMAGES)
+                    // The game-data pack (`get_xiv_data_bytes`) is the only
+                    // octet-stream and is already a brotli container: on prod
+                    // this layer spent CPU re-compressing 4.5 MB of it per
+                    // origin request for a 0.03% gain. Serve it as-is.
+                    .and(NotForContentType::const_new("application/octet-stream")),
             ),
         )
         .layer(SetResponseHeaderLayer::overriding(
@@ -3840,6 +4007,66 @@ pub(crate) async fn start_web(
 }
 
 #[cfg(test)]
+mod sentry_transaction_tests {
+    use super::name_sentry_transaction;
+    use axum::{Router, body::Body, http::Request, middleware, routing::get};
+    use tower::ServiceExt;
+
+    async fn failing_handler() -> &'static str {
+        sentry::capture_message(
+            "ClickHouse item_stats query failed (unavailable)",
+            sentry::Level::Error,
+        );
+        "ok"
+    }
+
+    fn router() -> Router {
+        Router::new()
+            .route("/api/v1/item_stats/{world}/{itemid}", get(failing_handler))
+            // Inner to the hub layer, mirroring how `start_web` wires them.
+            .layer(middleware::from_fn(name_sentry_transaction))
+            .layer(sentry_tower::NewSentryLayer::new_from_top())
+    }
+
+    /// Driven synchronously on purpose: `with_captured_events` binds its hub to
+    /// the *current thread*, so the request has to run on that same thread for
+    /// `NewSentryLayer` to inherit the test client. Nothing here touches IO.
+    fn transaction_for(uri: &str) -> Option<String> {
+        let events = sentry::test::with_captured_events(|| {
+            futures::executor::block_on(async {
+                router()
+                    .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+            });
+        });
+        events.into_iter().next().and_then(|e| e.transaction)
+    }
+
+    /// The regression: two requests to the same route must land on the same
+    /// issue. Before this middleware existed the event carried no transaction
+    /// at all, so GlitchTip fell back to the raw URL as the culprit and minted
+    /// a fresh issue per item id — 50+ of them from one ClickHouse blip.
+    #[test]
+    fn same_route_different_params_share_one_transaction() {
+        let moogle = transaction_for("/api/v1/item_stats/Moogle/35424");
+        let gilgamesh = transaction_for("/api/v1/item_stats/Gilgamesh/12");
+
+        assert_eq!(
+            moogle.as_deref(),
+            Some("GET /api/v1/item_stats/{world}/{itemid}")
+        );
+        assert_eq!(moogle, gilgamesh);
+    }
+
+    #[test]
+    fn unmatched_requests_do_not_splinter_on_the_raw_path() {
+        let name = super::sentry_transaction_name(&axum::http::Method::GET, None);
+        assert_eq!(name, "GET <fallback>");
+    }
+}
+
+#[cfg(test)]
 mod app_commit_header_tests {
     use super::app_commit_header_layer;
     use axum::{
@@ -3881,5 +4108,83 @@ mod app_commit_header_tests {
         let (status, header) = header_for("/missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+}
+
+#[cfg(test)]
+mod game_detail_tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn startup_and_details_are_versioned_and_locale_specific() {
+        for lang in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            let response = get_xiv_startup_bytes(Path((
+                xiv_gen_db::startup_version(lang).into(),
+                format!("{lang}.rkyv"),
+            )))
+            .await
+            .unwrap();
+            assert_eq!(
+                response.headers()["cache-control"],
+                "public, max-age=31536000, immutable"
+            );
+            let bytes = to_bytes(response.into_body(), 10_000_000).await.unwrap();
+            let startup = xiv_gen_db::decompress_data(&bytes).unwrap();
+            assert!(startup.items.values().all(|row| row.description.is_empty()));
+            let response = get_xiv_detail(Path((
+                xiv_gen_db::pack_version(lang).into(),
+                lang.into(),
+                "description".into(),
+                5333,
+            )))
+            .await;
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(
+                response.headers()["cache-control"],
+                "public, max-age=31536000, immutable"
+            );
+            let text: Option<String> =
+                serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                    .unwrap();
+            assert!(text.is_some_and(|text| !text.is_empty()));
+        }
+        let stale = get_xiv_detail(Path(("stale".into(), "en".into(), "npc".into(), 1))).await;
+        assert_eq!(stale.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(stale.headers()["cache-control"], "no-store");
+        let unknown = get_xiv_detail(Path((
+            xiv_gen_db::pack_version("en").into(),
+            "en".into(),
+            "npc".into(),
+            -1,
+        )))
+        .await;
+        assert_eq!(
+            to_bytes(unknown.into_body(), 1000).await.unwrap().as_ref(),
+            b"null"
+        );
+    }
+
+    #[tokio::test]
+    async fn omitted_npc_is_available_from_detail_endpoint() {
+        let full = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let startup =
+            xiv_gen_db::decompress_data(xiv_gen_db::startup_bytes(xiv_gen::Language::En)).unwrap();
+        let (id, npc) = full
+            .e_npc_residents
+            .iter()
+            .find(|(id, npc)| !startup.e_npc_residents.contains_key(id) && !npc.singular.is_empty())
+            .unwrap();
+        let response = get_xiv_detail(Path((
+            xiv_gen_db::pack_version("en").into(),
+            "en".into(),
+            "npc".into(),
+            id.0,
+        )))
+        .await;
+        let fetched: Option<xiv_gen::ENpcResident> =
+            serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                .unwrap();
+        assert_eq!(fetched.unwrap().singular, npc.singular);
     }
 }

@@ -34,6 +34,20 @@ pub(crate) struct AlertManagerServices {
     pub(crate) notifications: EventProducer<NotificationEvent>,
 }
 
+/// The alerts whose undercut rules get a listener when the manager starts.
+///
+/// Only enabled ones. The live path already honours the flag — an
+/// `EventType::Update` with `enabled: false` stops the rule's listener — but
+/// the startup sweep used to spawn one for every alert in the table, so a
+/// disabled undercut rule came back to life on each restart and fired
+/// alongside the user's enabled one: two identical inbox rows (and Discord /
+/// Web Push messages) for every undercut, while the alerts page showed the
+/// rule as off. The price and sale trackers skip disabled alerts at load;
+/// this brings the undercut startup in line.
+fn alerts_to_start(alerts: Vec<alert::Model>) -> impl Iterator<Item = alert::Model> {
+    alerts.into_iter().filter(|alert| alert.enabled)
+}
+
 pub(crate) struct AlertManager {
     /// Hashmap of the current retainer alerts where the id of the alert is the key
     current_retainer_alerts: HashMap<i32, RetainerAlertListener>,
@@ -71,7 +85,7 @@ impl AlertManager {
         };
         match ultros_db.get_all_alerts().await {
             Ok(all_alerts) => {
-                for alert in all_alerts {
+                for alert in alerts_to_start(all_alerts) {
                     if let Ok(alert) = ultros_db
                         .get_retainer_alerts_for_related_alert_id(alert.id)
                         .await
@@ -252,5 +266,33 @@ impl AlertManager {
                 .send(RetainerAlertTx::UpdateMargin(margin))
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn alert(id: i32, enabled: bool) -> alert::Model {
+        alert::Model {
+            id,
+            owner: 1,
+            enabled,
+            last_fired_at: None,
+            cooldown_seconds: 3600,
+        }
+    }
+
+    /// A disabled alert must not get an undercut listener at startup. The
+    /// live `Update` path already stops a listener when its alert is
+    /// disabled, but a restart used to bring every alert back: the user's
+    /// disabled rule fired alongside their enabled one, so each undercut
+    /// arrived twice.
+    #[test]
+    fn startup_skips_disabled_alerts() {
+        let ids: Vec<i32> = alerts_to_start(vec![alert(1, false), alert(27, true)])
+            .map(|a| a.id)
+            .collect();
+        assert_eq!(ids, vec![27]);
     }
 }

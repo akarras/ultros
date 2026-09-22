@@ -5,33 +5,10 @@ const MAX_QUERY_BYTES: usize = 16_384;
 #[cfg(any(feature = "hydrate", test))]
 const MAX_COOKIE_BYTES: usize = 3_500;
 
-pub fn analyzer(path: &str) -> Option<&'static str> {
-    let first = path.strip_prefix('/')?.split('/').next()?;
-    [
-        "flip-finder",
-        "recipe-analyzer",
-        "leve-analyzer",
-        "venture-analyzer",
-        "vendor-resale",
-        "vendor-sell",
-        "scrip-sources",
-        "fc-crafting-analyzer",
-    ]
-    .into_iter()
-    .find(|tool| *tool == first)
-}
+pub use ultros_ui_grid::view_policy::analyzer;
 
 fn parse(query: &str) -> ParamsMap {
-    let mut map = ParamsMap::new();
-    for pair in query
-        .trim_start_matches('?')
-        .split('&')
-        .filter(|p| !p.is_empty())
-    {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        map.insert(Url::unescape(key), Url::unescape(value));
-    }
-    map
+    ultros_ui_grid::view_policy::parse_query(query)
 }
 
 fn world_is_context(path: &str) -> bool {
@@ -42,6 +19,13 @@ pub fn is_bare(path: &str, query: &str) -> bool {
     parse(query)
         .into_iter()
         .all(|(key, _)| key == "lang" || (key == "world" && world_is_context(path)))
+}
+
+/// A new bare entry has not chosen a view yet. Recording it before the route
+/// mounts would create an empty preference that suppresses its landing seed.
+/// In-place Clear is different: remember that deliberately empty view.
+fn should_remember_view(path: &str, query: &str, entering: bool) -> bool {
+    !entering || !is_bare(path, query)
 }
 
 fn saved_query(path: &str, query: &str) -> Option<String> {
@@ -66,7 +50,7 @@ fn restore(path: &str, current: &str, saved: &str) -> Option<String> {
     }
     let mut map = parse(&saved_query(path, saved)?);
     for (key, value) in parse(current) {
-        map.insert(key, value);
+        map.insert(key, Url::escape(&value));
     }
     Some(format!("{path}{}", map.to_query_string()))
 }
@@ -75,10 +59,21 @@ fn restore(path: &str, current: &str, saved: &str) -> Option<String> {
 /// hydration both see the same filters, columns and resource keys.
 pub fn cookie_redirect(path: &str, query: &str, header: &str) -> Option<String> {
     let tool = analyzer(path)?;
-    let name = format!("ultros_last_{tool}");
+    // An explicitly chosen default wins over the most recently inspected
+    // view. Match client-side restore order before SSR resources are fetched.
+    let default_name = format!("ultros_default_{tool}");
+    if let Some(default) = cookie::Cookie::split_parse_encoded(header)
+        .filter_map(Result::ok)
+        .find(|c| c.name() == default_name)
+    {
+        return (default.value() != ultros_ui_grid::view_policy::LOCAL_DEFAULT_COOKIE_VALUE)
+            .then(|| restore(path, query, default.value()))
+            .flatten();
+    }
+    let last_name = format!("ultros_last_{tool}");
     cookie::Cookie::split_parse_encoded(header)
         .filter_map(Result::ok)
-        .find(|c| c.name() == name)
+        .find(|c| c.name() == last_name)
         .and_then(|c| restore(path, query, c.value()))
 }
 
@@ -99,6 +94,9 @@ fn preference_cookie(tool: &str, query: &str) -> cookie::Cookie<'static> {
 
 #[cfg(feature = "hydrate")]
 fn local_saved(tool: &str) -> Option<String> {
+    if let Some(default) = ultros_ui_grid::view_policy::saved_default_query(tool) {
+        return Some(default);
+    }
     leptos::prelude::window()
         .local_storage()
         .ok()
@@ -158,11 +156,15 @@ pub fn track_last_view() {
                             ..Default::default()
                         },
                     );
-                    setter.set(Some(value));
+                    // The router's query mutation applies ParamsMap::replace,
+                    // which decodes its input just like ParamsMap::insert.
+                    setter.set(Some(Url::escape(&value)));
                 }
                 return;
             }
-            if let Some(saved) = saved_query(&path, &query) {
+            if should_remember_view(&path, &query, entering)
+                && let Some(saved) = saved_query(&path, &query)
+            {
                 if let Ok(Some(storage)) = window().local_storage() {
                     let _ = storage.set_item(&format!("ultros.last-view.{tool}"), &saved);
                 }
@@ -178,6 +180,89 @@ pub fn track_last_view() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_percent_literals_survive_cookie_restore_and_context_copying() {
+        let query = "?name=%2520%20%2526";
+        let saved = saved_query("/items", query).unwrap();
+        let cookie = preference_cookie("items", &saved).encoded().to_string();
+        let target =
+            cookie_redirect("/items/category/1", "world=Zone%2520&lang=ja", &cookie).unwrap();
+        let restored = parse(target.split_once('?').unwrap().1);
+        assert_eq!(restored.get("name").as_deref(), Some("%20 %26"));
+        assert_eq!(restored.get("world").as_deref(), Some("Zone%20"));
+        assert_eq!(
+            saved_query("/items", &saved).as_deref(),
+            Some(saved.as_str())
+        );
+    }
+    #[test]
+    fn a_cold_bare_entry_cannot_become_an_empty_preference_before_seeding() {
+        for path in [
+            "/recipe-analyzer/Gilgamesh",
+            "/currency-exchange",
+            "/currency-exchange/28",
+            "/items/category/1",
+        ] {
+            assert!(!should_remember_view(path, "", true), "{path}");
+            assert!(
+                !should_remember_view(path, "?world=Gilgamesh&lang=ja", true),
+                "{path}"
+            );
+            assert!(
+                should_remember_view(path, "?v=1", true),
+                "explicit empty {path}"
+            );
+            assert!(
+                should_remember_view(path, "?profit=1", true),
+                "shared {path}"
+            );
+            assert!(should_remember_view(path, "", false), "Clear {path}");
+        }
+    }
+    #[test]
+    fn chosen_default_precedes_last_view_and_explicit_links_precede_both() {
+        let default = cookie::Cookie::new("ultros_default_recipe-analyzer", "?profit=123&v=1")
+            .encoded()
+            .to_string();
+        let last = preference_cookie("recipe-analyzer", "?profit=999")
+            .encoded()
+            .to_string();
+        for header in [format!("{last}; {default}"), format!("{default}; {last}")] {
+            let restored =
+                cookie_redirect("/recipe-analyzer/Gilgamesh", "lang=ja", &header).unwrap();
+            assert_eq!(
+                parse(restored.split_once('?').unwrap().1)
+                    .get("profit")
+                    .as_deref(),
+                Some("123")
+            );
+            assert!(cookie_redirect("/recipe-analyzer/Gilgamesh", "profit=1", &header).is_none());
+            assert!(cookie_redirect("/recipe-analyzer/Gilgamesh", "v=1", &header).is_none());
+        }
+        let large = format!(
+            "ultros_default_recipe-analyzer={}; {last}",
+            ultros_ui_grid::view_policy::LOCAL_DEFAULT_COOKIE_VALUE
+        );
+        assert!(
+            cookie_redirect("/recipe-analyzer/Gilgamesh", "", &large).is_none(),
+            "a large local default must not be replaced by the last-view cookie"
+        );
+    }
+
+    #[test]
+    fn new_tool_preferences_restore_without_overwriting_current_market() {
+        for tool in ["trends", "items", "currency-exchange"] {
+            let cookie = preference_cookie(tool, "?world=Goblin&gf=filters")
+                .encoded()
+                .to_string();
+            let path = format!("/{tool}");
+            let restored = cookie_redirect(&path, "world=Gilgamesh&lang=ja", &cookie).unwrap();
+            let params = parse(restored.split_once('?').unwrap().1);
+            assert_eq!(params.get("world").as_deref(), Some("Gilgamesh"));
+            assert_eq!(params.get("gf").as_deref(), Some("filters"));
+            assert_eq!(params.get("lang").as_deref(), Some("ja"));
+        }
+    }
     #[test]
     fn shared_links_win_and_world_and_language_stay_current() {
         let cookie = preference_cookie("recipe-analyzer", "?profit=10&l=2~~profit.2s")

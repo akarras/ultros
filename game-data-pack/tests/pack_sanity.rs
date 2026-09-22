@@ -1,6 +1,7 @@
 //! Sanity-decodes the committed `data/xiv-db/en.rkyv` pack the same way
-//! `xiv-gen-db::decompress_data` does at runtime: zlib `ZlibDecoder::read_to_end`,
-//! then a copy into `rkyv::AlignedVec` before `rkyv::from_bytes` (plain
+//! `xiv-gen-db::decompress_data` does at runtime: a brotli
+//! `Decompressor::read_to_end`, then a copy into `rkyv::AlignedVec` before
+//! `rkyv::from_bytes` (plain
 //! `Vec<u8>` is only byte-aligned, and rkyv needs `FixedIsize` alignment —
 //! this bites on Windows in particular).
 //!
@@ -13,6 +14,73 @@ use std::path::PathBuf;
 
 /// The same probe `xiv-gen-db`'s `test_embed` uses.
 const PROBE_ITEM: &str = "Grade 2 Gemdraught of Mind";
+
+#[test]
+fn all_startup_packs_match_projection_and_preserve_references() {
+    fn decode(bytes: &[u8]) -> xiv_gen::Data {
+        let mut raw = Vec::new();
+        brotli_decompressor::Decompressor::new(bytes, 65536)
+            .read_to_end(&mut raw)
+            .unwrap();
+        let mut aligned = rkyv::AlignedVec::new();
+        aligned.extend_from_slice(&raw);
+        rkyv::from_bytes(&aligned).unwrap()
+    }
+    for lang in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+        let full_bytes =
+            std::fs::read(repo_root().join(format!("data/xiv-db/{lang}.rkyv"))).unwrap();
+        let startup_bytes =
+            std::fs::read(repo_root().join(format!("data/xiv-startup/{lang}.rkyv"))).unwrap();
+        assert!(
+            !is_lfs_pointer_stub(&full_bytes) && !is_lfs_pointer_stub(&startup_bytes),
+            "git lfs pull is required"
+        );
+        let full = decode(&full_bytes);
+        let startup = decode(&startup_bytes);
+        assert!(
+            startup_bytes.len() * 100 < full_bytes.len() * 75,
+            "{lang}: startup byte budget"
+        );
+        assert_eq!(
+            serde_json::to_value(&startup).unwrap(),
+            serde_json::to_value(xiv_gen::browser::startup_data(&full)).unwrap(),
+            "{lang}: stale generated startup pack"
+        );
+        assert_eq!(startup.items.len(), full.items.len());
+        assert!(
+            startup
+                .items
+                .values()
+                .all(|item| item.description.is_empty())
+        );
+        assert!(full.items.values().any(|item| !item.description.is_empty()));
+        assert!(full.e_npc_residents.len() > startup.e_npc_residents.len());
+        if lang == "en" {
+            // Keep the browser regression's direct-URL fixture outside the
+            // startup pack, so it cannot pass by reading a retained vendor.
+            let fixture = xiv_gen::ENpcResidentId(1000063);
+            assert!(!full.e_npc_residents[&fixture].singular.is_empty());
+            assert!(!startup.e_npc_residents.contains_key(&fixture));
+        }
+        for npc in full
+            .gil_shop_npcs
+            .values()
+            .chain(full.special_shop_npcs.values())
+            .chain(full.collectables_shop_npcs.values())
+            .chain(full.leve_issuers.values())
+            .flatten()
+            .chain(full.npc_placements.keys())
+        {
+            if let Some(original) = full.e_npc_residents.get(npc) {
+                assert_eq!(
+                    startup.e_npc_residents.get(npc).map(|row| &row.singular),
+                    Some(&original.singular),
+                    "{lang}: missing referenced NPC {npc:?}"
+                );
+            }
+        }
+    }
+}
 
 #[test]
 fn en_pack_decodes_and_contains_the_probe_item() {
@@ -218,47 +286,6 @@ fn en_pack_carries_npc_placements_and_map_sheets() {
     );
 }
 
-/// `ENpcResident` is packed only for the NPCs the app can reach — the three
-/// shop indexes and the leve issuers. The full sheet is ~60k rows and was the
-/// second largest table in the pack; every row beyond these answers a lookup
-/// the app never forms, because `/npc/:id` exists for exactly this set
-/// (`game_sources::shop_npcs`) and 404s for anything else.
-#[test]
-fn en_pack_keeps_only_the_npcs_the_app_can_reach() {
-    let Some(data) = decode_en_pack("en_pack_keeps_only_the_npcs_the_app_can_reach") else {
-        return;
-    };
-    let reachable: std::collections::HashSet<_> = data
-        .gil_shop_npcs
-        .values()
-        .chain(data.special_shop_npcs.values())
-        .chain(data.collectables_shop_npcs.values())
-        .chain(data.leve_issuers.values())
-        .flatten()
-        .copied()
-        .collect();
-    assert!(!reachable.is_empty(), "the shop indexes are empty");
-    for id in data.e_npc_residents.keys() {
-        assert!(
-            reachable.contains(id),
-            "packed NPC {id:?} is reachable from no shop or leve"
-        );
-    }
-    for id in &reachable {
-        assert!(
-            data.e_npc_residents.contains_key(id),
-            "shop index names NPC {id:?}, which the pack does not carry"
-        );
-    }
-    // A sanity floor and ceiling: ~900 today. Dropping to a handful means the
-    // route walk broke; climbing back into the thousands means the prune did.
-    assert!(
-        (100..5_000).contains(&data.e_npc_residents.len()),
-        "{} residents packed",
-        data.e_npc_residents.len()
-    );
-}
-
 /// Every table is stored in ascending row-id order.
 ///
 /// This is what makes the pack compress: the sheets are runs of near-identical
@@ -326,9 +353,9 @@ fn decode_en_pack(test_name: &str) -> Option<xiv_gen::Data> {
     }
 
     let mut decoded = Vec::new();
-    flate2::read::ZlibDecoder::new(bytes.as_slice())
+    brotli_decompressor::Decompressor::new(bytes.as_slice(), 64 * 1024)
         .read_to_end(&mut decoded)
-        .expect("failed to zlib-decompress data/xiv-db/en.rkyv");
+        .expect("failed to brotli-decompress data/xiv-db/en.rkyv");
 
     // rkyv requires the byte buffer to be aligned to `FixedIsize`; a plain
     // `Vec<u8>` only guarantees byte alignment, so copy into an `AlignedVec`

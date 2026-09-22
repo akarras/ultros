@@ -86,6 +86,59 @@ where
     signal.try_get().unwrap_or_default()
 }
 
+/// Pill classes for a [`WorldButton`].
+///
+/// Every signal read goes through a `try_*` accessor: `WorldMenu` re-renders
+/// its whole pill row when the `:world` segment changes, disposing the old
+/// buttons *before* their queued attribute effects run (the effects are
+/// notified by the same `current_world` memo that triggered the re-render).
+/// A bare `.get()` on the button-owned `is_selected` / `is_home_world`
+/// signals panics there — GlitchTip #7389, reproduced by clicking a region
+/// pill on `/item/<world>/<id>`. Degrading to "not selected" is invisible:
+/// the element is being unmounted anyway.
+fn world_button_class(
+    is_selected: Signal<bool>,
+    is_home_world: Signal<bool>,
+    size_styles: &str,
+    color_styles: &str,
+) -> String {
+    let selected = get_or_default(&is_selected);
+    let home = get_or_default(&is_home_world);
+    [
+        "rounded-md flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap border border-transparent",
+        size_styles,
+        if selected {
+            // `!` important is required: the global anchor rule in
+            // style/tailwind.css
+            //   a:not(.nav-link):not(.btn):not(.btn-primary)...
+            // has specificity (0,5,1) and hard-sets
+            // `background-color: transparent` + `rounded-md`, which
+            // beats a plain (0,1,0) utility class. Same idiom as the
+            // analyzer tabs' `active_classes`.
+            "font-bold !rounded-full !bg-[color:var(--brand-bg)] !text-[color:var(--brand-fg)]"
+        } else {
+            color_styles
+        },
+        if selected {
+            ""
+        } else {
+            "hover:border-[color:var(--color-outline)] hover:text-brand-100"
+        },
+        if home && !selected {
+            "border border-brand-300/70"
+        } else {
+            ""
+        },
+    ]
+    .join(" ")
+}
+
+/// `aria-current` for a [`WorldButton`]; see [`world_button_class`] for why
+/// the read is a `try_*`.
+fn world_button_aria_current(is_selected: Signal<bool>) -> Option<&'static str> {
+    get_or_default(&is_selected).then_some("page")
+}
+
 #[component]
 fn WorldButton(
     current_world: Memo<String>,
@@ -99,7 +152,7 @@ fn WorldButton(
     // Only the params this route actually owns are carried forward, so a
     // stale or hostile query key can't be reflected back into a link.
     let search = Signal::derive(move || {
-        query.with(|query| {
+        with_or(&query, String::new(), |query| {
             carried_world_switch_query(
                 query.get("exclude-worlds").as_deref(),
                 query.get(COMPARE_BUY_FROM_PARAM).as_deref(),
@@ -108,10 +161,12 @@ fn WorldButton(
     });
     let world_2 = world_name.clone();
     let world_3 = world_name.clone();
+    // `home_world` is a memo `use_home_world()` created under *this* button's
+    // owner, so it is disposed together with the button — see
+    // `world_button_class`.
     let is_home_world = Signal::derive({
         move || {
-            home_world
-                .with(|w| w.as_ref().map(|w| w.name == world_2))
+            with_or(&home_world, None, |w| w.as_ref().map(|w| w.name == world_2))
                 .unwrap_or_default()
         }
     });
@@ -122,58 +177,30 @@ fn WorldButton(
         OwnedResult::Datacenter(_) => ("text-sm font-semibold px-2.5 py-1", "text-brand-300"),
         OwnedResult::World(_) => ("text-xs px-2 py-1", "text-[color:var(--color-text)]"),
     };
-    let is_selected = Signal::derive(move || current_world.with(|w| w == world_3.as_str()));
-    let home_world_emphasis = move || {
-        is_home_world.with(|w| {
-            if *w && !is_selected.get() {
-                "border border-brand-300/70"
-            } else {
-                ""
-            }
-        })
-    };
+    let is_selected =
+        Signal::derive(move || with_or(&current_world, false, |w| w == world_3.as_str()));
+    let href_world = world_name.clone();
     view! {
         <AppLink
-            attr:class=move || {
-                [
-                    "rounded-md flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap border border-transparent",
-                    size_styles,
-                    if is_selected.get() {
-                        // `!` important is required: the global anchor rule in
-                        // style/tailwind.css
-                        //   a:not(.nav-link):not(.btn):not(.btn-primary)...
-                        // has specificity (0,5,1) and hard-sets
-                        // `background-color: transparent` + `rounded-md`, which
-                        // beats a plain (0,1,0) utility class. Same idiom as the
-                        // analyzer tabs' `active_classes`.
-                        "font-bold !rounded-full !bg-[color:var(--brand-bg)] !text-[color:var(--brand-fg)]"
-                    } else {
-                        color_styles
-                    },
-                    if is_selected.get() {
-                        ""
-                    } else {
-                        "hover:border-[color:var(--color-outline)] hover:text-brand-100"
-                    },
-                    home_world_emphasis(),
-                ]
-                    .join(" ")
+            attr:class=move || world_button_class(is_selected, is_home_world, size_styles, color_styles)
+            attr:aria-current=move || world_button_aria_current(is_selected)
+            href=move || {
+                with_or(&search, item_href(&href_world, item_id, ""), |search| {
+                    item_href(&href_world, item_id, search)
+                })
             }
-                attr:aria-current=move || is_selected.get().then_some("page")
-                href=move || search.with(|search| item_href(&world_name, item_id, search))
-            >
-                {move || {
-                    is_home_world
-                        .get()
-                        .then(|| {
-                            view! {
-                                <Icon icon=icondata::AiHomeFilled attr:class="text-brand-200" />
-                                <div class="w-1"></div>
-                            }
-                        })
-                }}
-                {label}
-            </AppLink>
+        >
+            {move || {
+                get_or_default(&is_home_world)
+                    .then(|| {
+                        view! {
+                            <Icon icon=icondata::AiHomeFilled attr:class="text-brand-200" />
+                            <div class="w-1"></div>
+                        }
+                    })
+            }}
+            {label}
+        </AppLink>
     }.into_any()
 }
 
@@ -446,7 +473,7 @@ fn DecisionHeader(
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
-    let cheapest_prices = use_context::<CheapestPrices>();
+    let cheapest_listings = use_context::<CheapestPrices>().map(|prices| prices.demand());
     let (compare_world, set_compare_world) = filter_query_signal::<String>(COMPARE_BUY_FROM_PARAM);
 
     // The zone-cheapest resource must read as unavailable during SSR and the
@@ -488,8 +515,8 @@ fn DecisionHeader(
                                         .min()
                                 };
                                 let summary = if hydrated.get() {
-                                    cheapest_prices.as_ref().and_then(|prices| {
-                                        prices.read_listings.with(|r| {
+                                    cheapest_listings.and_then(|listings| {
+                                        listings.with(|r| {
                                             let map = r.as_ref().and_then(|r| r.as_ref().ok());
                                             map.map(|map| map.find_matching_listings(item_id()))
                                         })
@@ -1990,6 +2017,44 @@ mod tests {
         // Once it is disposed they must fall back rather than panic.
         assert!(with_or(&filtered_listings, true, |listings| listings.is_empty()));
         assert!(get_or_default(&filtered_listings).is_empty());
+    }
+
+    /// Reproduces GlitchTip #7389: a world switch re-renders `WorldMenu`,
+    /// disposing every `WorldButton` while the buttons' own attribute effects
+    /// are still queued on the same `current_world` change. The pill's
+    /// button-owned signals must read as "not selected" then, not panic.
+    #[test]
+    fn world_button_attributes_survive_a_disposed_owner() {
+        let root = Owner::new();
+        let (is_selected, is_home_world, button) = root.with(|| {
+            let current_world = RwSignal::new("Gilgamesh".to_string());
+            let button = Owner::new();
+            let signals = button.with(|| {
+                let home_world = Memo::new(|_| Some("Gilgamesh".to_string()));
+                let is_home_world = Signal::derive(move || {
+                    with_or(&home_world, None, |w| w.as_ref().map(|w| w == "Gilgamesh"))
+                        .unwrap_or_default()
+                });
+                let is_selected =
+                    Signal::derive(move || with_or(&current_world, false, |w| w == "Gilgamesh"));
+                (is_selected, is_home_world)
+            });
+            (signals.0, signals.1, button)
+        });
+
+        // Live: the selected pill is filled and announces itself.
+        let live = world_button_class(is_selected, is_home_world, "size", "color");
+        assert!(live.contains("!rounded-full"));
+        assert!(!live.contains("border-brand-300/70"));
+        assert_eq!(world_button_aria_current(is_selected), Some("page"));
+
+        button.cleanup();
+
+        // Disposed: degrade to an unselected pill instead of panicking.
+        let dead = world_button_class(is_selected, is_home_world, "size", "color");
+        assert!(dead.contains("color"));
+        assert!(!dead.contains("!rounded-full"));
+        assert_eq!(world_button_aria_current(is_selected), None);
     }
 
     #[test]

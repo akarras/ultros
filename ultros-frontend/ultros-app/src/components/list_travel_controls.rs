@@ -41,10 +41,10 @@ pub fn ListTravelControls(
         }
     };
     view! {
-        <div class="min-w-0 space-y-1" data-testid="list-travel-controls">
-            <label class="flex flex-wrap items-center gap-2 text-sm">
-                <span>{move || t_string!(i18n, list_travel_label)}</span>
-                <select class="input min-h-11 min-w-0 max-w-full" data-testid="list-travel-limit"
+        <div class="flex min-w-0 flex-col gap-1" data-testid="list-travel-controls">
+            <label class="flex flex-col gap-1 text-sm">
+                <span class="block text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_travel_label)}</span>
+                <select class="input h-[2.625rem] min-w-0 max-w-full" data-testid="list-travel-limit"
                     prop:value=move || limit.get().to_string()
                     on:change=move |event| {
                         if let Ok(value) = event_target_value(&event).parse::<TravelLimit>() {

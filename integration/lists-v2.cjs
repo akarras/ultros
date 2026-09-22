@@ -172,6 +172,7 @@ async function main() {
     const openDetails = async (target = page) => {
       await target.waitForSelector(details, { visible: true });
       if (await target.$eval(details, button => button.getAttribute("aria-expanded")) !== "true") {
+        await target.$eval(details, button => button.scrollIntoView({ block: "center", behavior: "instant" }));
         await target.click(details);
       }
       await target.waitForSelector(owned, { visible: true });
@@ -335,6 +336,15 @@ async function main() {
     // so the width assertion and the capture see rows, not the loading screen.
     await waitValue(needed, 8);
     await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    assert.equal(await page.$eval(testId("cart-composer-toggle"), node => node.getAttribute("aria-expanded")), "false", "a populated mobile list starts with the composer collapsed");
+    await page.click(testId("cart-composer-toggle"));
+    await page.waitForSelector(search, { visible: true });
+    await replace(search, "Iron Ore");
+    await page.click(testId("cart-composer-toggle"));
+    await page.waitForSelector(search, { hidden: true });
+    await page.click(testId("cart-composer-toggle"));
+    assert.equal(await page.$eval(search, node => node.value), "Iron Ore", "closing the composer retains the search draft");
+    await page.click(testId("cart-composer-toggle"));
     await capture(page, { path: path.join(shots, "cart-mobile.png"), fullPage: true }).catch(() => {});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       "the compact cart fits a 390px viewport without horizontal scroll");
@@ -430,6 +440,7 @@ async function main() {
     assert.match(await page.$eval(testId("shop-cart-summary"), element => element.textContent),
       /1 items · 5 units left to buy · 0 priced/, "handoff counts remaining units of a partially acquired row");
     assert.equal(await visible(testId("shop-no-prices")), true, "unknown prices are called out before a trip exists");
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(testId("shop-totals"));
     assert.equal(await page.$eval(testId("shop-undo-purchase"), button => button.disabled), true,
@@ -469,6 +480,7 @@ async function main() {
     await page.waitForFunction(selector => !!document.querySelector(selector)?.closest(".hidden"), {}, testId("shop-drift"));
     console.log("[ok] Build edits keep the chosen trip; a refresh is reviewed before it replaces it");
 
+    if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
     await page.waitForSelector(testId("open-shopping-companion"));
     const popupPromise = new Promise((resolve, reject) => {

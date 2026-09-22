@@ -13,23 +13,23 @@ use ultros_api_types::{
         ResendResult, UnreadAlertEventCount, UpdateAlertRequest, UpdateEndpointRequest,
         VapidPublicKey,
     },
-    cheapest_listings::{CheapestListings, CheapestListingsMap},
+    cheapest_listings::{CheapestListings, CheapestListingsColumnar, CheapestListingsMap},
     item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
         ListSharedRole, ListSharedUser, ListWithPermission, ShareListGroup, ShareListRole,
         ShareListUser,
     },
-    listing_stats::BulkListingStats,
+    listing_stats::{BulkListingStats, BulkListingStatsColumnar},
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
     price_density::PriceDensity,
     price_series::{HqFilter, PriceSeries, SeriesGroup},
-    recent_sales::RecentSales,
+    recent_sales::{RecentSales, RecentSalesColumnar},
     resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
-    sale_stats::BulkSaleStats,
+    sale_stats::{BulkSaleStats, BulkSaleStatsColumnar},
     search::SearchResult,
     sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
@@ -46,6 +46,7 @@ use ultros_api_types::{
 
 use crate::error::{AppError, AppResult};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use ultros_changelog::ChangelogEntry;
 
 pub async fn search(query: &str) -> AppResult<Vec<SearchResult>> {
     let encoded_query = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
@@ -72,6 +73,14 @@ pub async fn search_with_abort(
         )));
     }
     deserialize(&response.text().await?)
+}
+
+/// The changelog history, which lives in the server binary rather than the
+/// wasm bundle — see `ultros-changelog`. Static content, so the changelog
+/// page reads it through a blocking resource and the server answers from
+/// memory.
+pub async fn get_changelog() -> AppResult<Vec<ChangelogEntry>> {
+    fetch_api("/api/v1/changelog").await
 }
 
 pub async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {
@@ -172,9 +181,13 @@ pub async fn delete_user() -> AppResult<()> {
     delete_api("/api/v1/current_user").await
 }
 
-/// Get analyzer data
+/// Cheapest listing per `(item, hq)` for a world/DC/region. Fetches the
+/// columnar wire shape (roughly half the bytes of the row shape after
+/// compression) and converts at the boundary so callers keep the row type.
 pub async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
-    fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
+    fetch_api::<CheapestListingsColumnar>(&format!("/api/v1/cheapest/{world_name}?format=columnar"))
+        .await
+        .map(CheapestListings::from)
 }
 
 pub async fn get_cheapest_listings_live(
@@ -184,10 +197,11 @@ pub async fn get_cheapest_listings_live(
     if refresh_version == 0 {
         get_cheapest_listings(world_name).await
     } else {
-        fetch_api(&format!(
-            "/api/v1/cheapest/{world_name}?rt={refresh_version}"
+        fetch_api::<CheapestListingsColumnar>(&format!(
+            "/api/v1/cheapest/{world_name}?format=columnar&rt={refresh_version}"
         ))
         .await
+        .map(CheapestListings::from)
     }
 }
 
@@ -295,30 +309,49 @@ pub async fn get_bulk_listings(
 
 /// Bulk sale-history statistics (min/median/avg per item) for a world,
 /// datacenter, or region — the recipe analyzer's selectable cost basis.
+/// Fetches the columnar wire shape (roughly 40% fewer bytes after
+/// compression, 3× less to parse) and converts at the boundary so callers
+/// keep the row type.
 pub async fn get_sale_stats(scope_name: &str, window_days: u16) -> AppResult<BulkSaleStats> {
-    fetch_api(&format!(
-        "/api/v1/sale_stats/{scope_name}?window={window_days}"
+    fetch_api::<BulkSaleStatsColumnar>(&format!(
+        "/api/v1/sale_stats/{scope_name}?window={window_days}&format=columnar"
     ))
     .await
+    .map(BulkSaleStats::from)
 }
 
 /// Current-listing statistics (alive count, units, sellers, ages) for every
 /// item/quality pair in a world, datacenter, or region. An empty board is a
 /// successful empty body, not an error; only transport failures are `Err`.
+/// Columnar on the wire, rows at the boundary.
 pub async fn get_listing_stats(scope_name: &str) -> AppResult<BulkListingStats> {
-    fetch_api(&format!("/api/v1/listing_stats/{scope_name}")).await
+    fetch_api::<BulkListingStatsColumnar>(&format!(
+        "/api/v1/listing_stats/{scope_name}?format=columnar"
+    ))
+    .await
+    .map(BulkListingStats::from)
 }
 
 /// The alive set plus `window` history for `days` (1/7/30/90) from the
 /// committed exact-scope snapshot. A cold scope/window pair is 503 until the
 /// server's background worker publishes a generation; callers retry.
+/// Columnar on the wire, rows at the boundary.
 pub async fn get_listing_stats_window(scope_name: &str, days: u16) -> AppResult<BulkListingStats> {
-    fetch_api(&format!("/api/v1/listing_stats/{scope_name}?window={days}")).await
+    fetch_api::<BulkListingStatsColumnar>(&format!(
+        "/api/v1/listing_stats/{scope_name}?window={days}&format=columnar"
+    ))
+    .await
+    .map(BulkListingStats::from)
 }
 
-/// Get most expensive
+/// Recent sales (up to six per item/quality) for a world. Columnar on the
+/// wire — this is the analyzer's largest fetch by far — rows at the boundary.
 pub async fn get_recent_sales_for_world(region_name: &str) -> AppResult<RecentSales> {
-    fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
+    fetch_api::<RecentSalesColumnar>(&format!(
+        "/api/v1/recentSales/{region_name}?format=columnar"
+    ))
+    .await
+    .map(RecentSales::from)
 }
 
 /// Legacy v1 trends fetch — pre-bucketed `high_velocity / rising_price /

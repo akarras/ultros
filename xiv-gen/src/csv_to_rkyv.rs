@@ -75,9 +75,9 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
             .into_iter()
             .map(|i| ((i.key_id.0, i.item), i))
             .collect();
-    // The full sheet, needed to decide which NPCs can be indexed at all. It is
-    // pruned to the ones the app can actually show before it goes in the pack.
-    let mut e_npc_residents: IdMap<ENpcResidentId, ENpcResident> =
+    // The full sheet stays in the full pack: `/static/game-detail/…/npc/{id}`
+    // serves residents the startup projection (`browser::startup_data`) drops.
+    let e_npc_residents: IdMap<ENpcResidentId, ENpcResident> =
         read_csv_to_map(&format!("{}ENpcResident.csv", base_path));
     // Names come from `lang`; the festival id is stamped on from the English
     // gates, for the header-layout reason above.
@@ -132,12 +132,7 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
         })
         .filter(|(_, npcs)| !npcs.is_empty())
         .collect();
-    // Drop every NPC the app has no way to reach. `/npc/:id` exists only for a
-    // gil shop, exchange or collectables counter (`game_sources::shop_npcs`),
-    // and the leve analyzer names issuers; nothing else looks a resident up. Of
-    // the sheet's ~60k rows about 900 survive, which is worth ~650 KB of the
-    // ~4.5 MB English pack — the second largest table in it existed to answer
-    // lookups for ids the app never forms.
+    // NPCs the app can show: shop and exchange counters, and leve issuers.
     let shown_npcs: std::collections::HashSet<ENpcResidentId> = npc_shops
         .gil
         .values()
@@ -147,8 +142,6 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
         .flatten()
         .copied()
         .collect();
-    e_npc_residents.retain(|id, _| shown_npcs.contains(id));
-
     let npc_placements = shown_npc_placements(&supplements.npc_placements, shown_npcs.iter());
     Data {
         items: read_csv_to_map(&format!("{}Item.csv", base_path)),

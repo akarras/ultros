@@ -16,6 +16,7 @@ use crate::components::app_link::use_query_map_or_default;
 use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::i18n::*;
+use ultros_ui_grid::components::virtual_grid::saved_views::{RecommendedViews, ViewDefaultActions};
 
 pub const SAVED_VIEWS_KEY: &str = "ultros.flipfinder.views";
 
@@ -53,7 +54,12 @@ pub struct SavedView {
 /// stay put.
 pub fn view_href(view: &SavedView, current_world: &str) -> String {
     let world = view.world.as_deref().unwrap_or(current_world);
-    format!("/flip-finder/{world}{}", view.query)
+    let query = if view.query.is_empty() {
+        "?v=1"
+    } else {
+        &view.query
+    };
+    format!("/flip-finder/{world}{query}")
 }
 
 /// The former preset buttons, now the built-in entries of the same menu.
@@ -75,7 +81,7 @@ pub fn built_in_views() -> Vec<SavedView> {
     [
         (
             "analyzer_preset_realistic",
-            "?min-buy=5000&last-sold=1d&roi=30&sort=profit-per-day",
+            ultros_ui_grid::view_policy::FLIP_RECOMMENDED_QUERY,
         ),
         (
             "analyzer_preset_big_ticket",
@@ -276,6 +282,7 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
 
             <Show when=move || list_open.get()>
                 <div class="sticky-bar-popover p-2 w-[min(92vw,16rem)] flex flex-col gap-1 text-sm">
+                    <RecommendedViews open=list_open />
                     {move || {
                         built_in_views()
                             .into_iter()
@@ -341,6 +348,7 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                             })
                             .collect_view()
                     }}
+                    <ViewDefaultActions open=list_open />
                 </div>
             </Show>
 
@@ -425,7 +433,7 @@ mod tests {
             query: String::new(),
             world: None,
         };
-        assert_eq!(view_href(&v, "Gilgamesh"), "/flip-finder/Gilgamesh");
+        assert_eq!(view_href(&v, "Gilgamesh"), "/flip-finder/Gilgamesh?v=1");
     }
 
     #[test]

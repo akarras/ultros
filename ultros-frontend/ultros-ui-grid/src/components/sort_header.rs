@@ -12,9 +12,10 @@
 //! * clicking an inactive column sorts by it in that column's
 //!   [`SortColumn::default_dir`]; clicking the active column flips it,
 //! * the arrow always reflects the direction actually applied,
-//! * `dir` is omitted from the href when it matches the column's default, so
-//!   the common case stays a clean `?sort=…` and bookmarks don't accumulate a
-//!   redundant param,
+//! * registered grids write `grid:<id>` and an explicit direction, matching
+//!   the column menu; legacy native URLs remain readable with their original
+//!   defaults. Headers outside a registered grid keep native tokens and omit
+//!   a direction that matches the column default,
 //! * every other query param survives — that's the part each copy got subtly
 //!   different.
 
@@ -273,11 +274,28 @@ where
     .into_any()
 }
 
-/// One sortable column header link.
-///
-/// Renders the `<a>` only; callers keep their own `role="columnheader"` cell
-/// so column widths and responsive visibility stay with the table that owns
-/// them.
+/// Resolve a native header through the same column metadata used by its menu.
+fn grid_header_state(
+    registry: Option<super::virtual_grid::registry::FilterRegistry>,
+    query: &ParamsMap,
+    token: &str,
+) -> Option<(&'static str, bool, SortDir)> {
+    let registry = registry?;
+    let column = registry.native_column(token)?;
+    let active = registry
+        .sort_column(query.get("sort").as_deref())
+        .as_deref()
+        == Some(column);
+    let dir = if registry.sort_ascending(query) {
+        SortDir::Asc
+    } else {
+        SortDir::Desc
+    };
+    Some((column, active, dir))
+}
+
+/// One sortable column header link. The containing table owns cell geometry
+/// and `columnheader` semantics.
 #[component]
 pub fn SortHeader<M>(
     /// Column this header sorts by.
@@ -306,13 +324,23 @@ where
     let Location {
         pathname, query, ..
     } = use_location_or_default();
+    let registry = use_context::<super::virtual_grid::registry::FilterRegistry>();
+    let grid_column =
+        move || registry.and_then(|registry| registry.native_column(&mode.to_string()));
+    let grid_state = move || query.with(|q| grid_header_state(registry, q, &mode.to_string()));
     let is_active = Signal::derive(move || {
+        if let Some((_, active, _)) = grid_state() {
+            return active;
+        }
         // A shared metric replaces native sorting. Route enums cannot parse
         // grid:<id>; their fallback must not paint a second active arrow.
         !query.with(|q| q.get("sort").is_some_and(|sort| sort.starts_with("grid:")))
             && sort_mode.get().unwrap_or_else(M::fallback) == mode
     });
     let dir = Signal::derive(move || {
+        if let Some((_, _, dir)) = grid_state() {
+            return dir;
+        }
         sort_dir
             .get()
             .unwrap_or_else(|| sort_mode.get().unwrap_or_else(M::fallback).default_dir())
@@ -328,8 +356,16 @@ where
             }
             aria-current=move || if is_active() { "true" } else { "false" }
             href=move || {
+                if let Some(column) = grid_column() {
+                    let mut q = query();
+                    for key in reset_keys { q.remove(key); }
+                    return super::virtual_grid::filter::metric_sort_href(
+                        &pathname(), q, column, &next_dir(mode, is_active(), dir()).to_string()
+                    );
+                }
                 sort_href(&pathname(), query(), mode, is_active(), dir(), reset_keys)
             }
+            data-noscroll=grid_column().is_some().then_some("true")
         >
             <div class=if compact { "flex items-center gap-2 min-w-0 [&>svg]:shrink-0" } else { "flex items-center gap-2" }>
                 {if compact {
@@ -390,6 +426,50 @@ mod test {
             q.insert(k.to_string(), v.to_string());
         }
         q
+    }
+
+    #[test]
+    fn native_header_keeps_its_arrow_and_toggles_the_menu_selected_sort() {
+        use super::super::virtual_grid::{GridColumn, registry::FilterRegistry};
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            registry.register_sort_columns(
+                Signal::derive(|| {
+                    vec![
+                        GridColumn::new("buy-price", "Cost".into(), 100.0, true, true)
+                            .native_sort("cost", true),
+                    ]
+                }),
+                std::collections::HashSet::from(["buy-price"]),
+            );
+            for (query, expected) in [
+                (params(&[("sort", "cost")]), SortDir::Asc),
+                (
+                    params(&[("sort", "grid:buy-price"), ("dir", "desc")]),
+                    SortDir::Desc,
+                ),
+                (
+                    params(&[("sort", "grid:buy-price"), ("dir", "asc")]),
+                    SortDir::Asc,
+                ),
+            ] {
+                let (column, active, dir) =
+                    grid_header_state(Some(registry), &query, "cost").unwrap();
+                assert_eq!(column, "buy-price");
+                assert!(
+                    active,
+                    "a menu-selected native column must retain its arrow"
+                );
+                assert_eq!(dir, expected);
+                assert_eq!(next_dir(Col::Cost, active, dir), expected.flipped());
+            }
+            let state =
+                grid_header_state(Some(registry), &params(&[("sort", "grid:profit")]), "cost")
+                    .unwrap();
+            assert!(!state.1);
+            assert_eq!(next_dir(Col::Cost, state.1, state.2), SortDir::Asc);
+        });
     }
 
     #[test]

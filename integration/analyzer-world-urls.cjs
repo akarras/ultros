@@ -74,12 +74,14 @@ async function main() {
         if (previousRegion !== region) assert(requests.includes(stats), `${tool}: expected ${stats}, got ${requests}`);
         if (tool === 'recipe-analyzer') {
           assert(requests.includes(`/api/v1/sale_stats/${world}`), `${tool}: sell-world statistics ${requests}`);
-        } else if (tool !== 'scrip-sources') {
+        } else if (!['scrip-sources', 'vendor-sell'].includes(tool)) {
           assert(requests.includes(`/api/v1/recentSales/${world}`), `${tool}: recent sales ${requests}`);
           assert(requests.filter(p => p.includes('/recentSales/')).every(p => p.endsWith(`/${world}`)), `${tool}: stale sales ${requests}`);
         }
+        // Scrip costs and fixed NPC payouts use the regional bulk statistics
+        // asserted above; neither needs a world-sale revenue request.
         if (tool !== 'recipe-analyzer') {
-          assert((await page.$eval('[data-testid="analyzer-market-scope"]', e => e.textContent)).includes(region));
+          assert((await page.$eval('[data-testid="analyzer-price-scope"]', e => e.textContent)).includes(region));
           assert(requests.filter(p => p.includes('/cheapest/')).every(p => p.endsWith(`/${region}`)), `${tool}: ingredients remain regional`);
         }
         return [...requests];

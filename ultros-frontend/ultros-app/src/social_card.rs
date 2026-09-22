@@ -25,7 +25,7 @@ pub enum SocialCardKind {
     Help(Option<String>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SocialCardHero {
     Item(i32),
     /// A glyph in the bundled FFXIVAppIcons font, not a Unicode text symbol.
@@ -38,7 +38,7 @@ pub enum SocialCardHero {
     Help,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SocialCardContent {
     pub title: String,
     pub subtitle: String,
@@ -237,6 +237,15 @@ pub fn social_card_content(
     kind: &SocialCardKind,
     world: Option<&str>,
 ) -> Option<SocialCardContent> {
+    social_card_content_with_npc(locale, kind, world, None)
+}
+
+pub(crate) fn social_card_content_with_npc(
+    locale: Locale,
+    kind: &SocialCardKind,
+    world: Option<&str>,
+    npc: Option<&xiv_gen::ENpcResident>,
+) -> Option<SocialCardContent> {
     #[cfg(feature = "ssr")]
     let data = || xiv_gen_db::data_for(game_language(locale));
     #[cfg(not(feature = "ssr"))]
@@ -302,9 +311,8 @@ pub fn social_card_content(
             };
         }
         SocialCardKind::Npc(id) => {
-            let resident = data()
-                .e_npc_residents
-                .get(&ENpcResidentId(*id))
+            let resident = npc
+                .or_else(|| data().e_npc_residents.get(&ENpcResidentId(*id)))
                 .filter(|resident| !resident.singular.trim().is_empty())?;
             let shops = shops_for_npc(data(), ENpcResidentId(*id));
             let item_count: usize = shops.iter().map(|(_, rows)| rows.len()).sum();

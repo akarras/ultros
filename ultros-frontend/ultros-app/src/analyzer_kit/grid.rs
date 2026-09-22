@@ -24,7 +24,7 @@ use super::market::{MarketData, MarketGrid, MarketSubject};
 /// A row a grid can render: whatever [`QueryGrid`] needs of it,
 /// plus the identity its keyed `<For>` diffs on.
 pub trait AnalyzerRow: Clone + Send + Sync + PartialEq + 'static {
-    type Key: Clone + Send + Sync + Eq + Hash + 'static;
+    type Key: Clone + Send + Sync + Ord + Hash + 'static;
     fn key(&self) -> Self::Key;
 }
 
@@ -34,6 +34,7 @@ pub trait AnalyzerRow: Clone + Send + Sync + PartialEq + 'static {
 pub type CustomCell<T> = Arc<dyn Fn(&T, ColumnKind, &'static str) -> AnyView + Send + Sync>;
 pub type CustomMeasure<T> = Arc<dyn Fn(&T, ColumnKind) -> (String, f64) + Send + Sync>;
 pub type CustomValue<T> = Arc<dyn Fn(&T, ColumnKind) -> GridValue + Send + Sync>;
+pub type CustomCompare<T, M> = Arc<dyn Fn(&T, &T, M, SortDir) -> std::cmp::Ordering + Send + Sync>;
 
 /// The sub-label a page hangs off each marked formula column's header
 /// (`"listing · Aether"`, `"per unit · after 5% tax"`). A column with
@@ -298,6 +299,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     custom: CustomCell<T>,
     #[prop(optional)] custom_measure: Option<CustomMeasure<T>>,
     #[prop(optional)] custom_value: Option<CustomValue<T>>,
+    /// Domain sort semantics shared by legacy URLs, headers and column menus.
+    #[prop(optional)]
+    custom_compare: Option<CustomCompare<T, M>>,
     #[prop(optional)] on_rows: Option<Callback<Vec<(usize, T)>>>,
     #[prop(default = "recipe-analyzer-grid".to_string(), into)] id: String,
     #[prop(optional, into)] label: String,
@@ -324,9 +328,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// Rendered row range for lazy market-data enrichment.
     #[prop(optional)]
     visible_range: Option<RwSignal<(usize, usize)>>,
-    /// The Columns picker's options. Their group headings become the
-    /// column definitions' `picker_group`, so the `+ Filter` menu groups
-    /// the same columns under the same headings.
+    /// Native picker metadata, including selected-input labels and unavailable
+    /// calculation hints. The grid registry combines it with shared columns
+    /// for the toolbar picker and uses the same groups in the filter menu.
     #[prop(optional, into)]
     picker: Option<Signal<Vec<ColumnOption>>>,
 ) -> impl IntoView {
@@ -364,6 +368,24 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
             } else {
                 GridMetric::number(grid_id(col), value)
             };
+            let metric = if let (Some(compare), Sortability::By(mode)) = (&custom_compare, col.sort)
+            {
+                let compare = compare.clone();
+                metric.with_comparator(move |(_, a), (_, b), ascending| {
+                    compare(
+                        a,
+                        b,
+                        mode,
+                        if ascending {
+                            SortDir::Asc
+                        } else {
+                            SortDir::Desc
+                        },
+                    )
+                })
+            } else {
+                metric
+            };
             if matches!(col.sort, Sortability::LazyNever) {
                 metric.partial()
             } else {
@@ -389,12 +411,23 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                     optional,
                     !optional || visible_cols.with(|v| v.contains(col.id)),
                 );
+                if col.spec.kind == ColumnKind::Item {
+                    def = def.fixed_width();
+                }
+                if matches!(col.sort, Sortability::By(_)) {
+                    def = def.native_sort(col.sort_id, col.default_dir == SortDir::Asc);
+                }
                 if optional && let Some(picker) = picker {
-                    def.picker_group = picker.with(|options| {
-                        options
-                            .iter()
-                            .find(|option| option.id == col.id)
-                            .and_then(|option| option.group.as_ref().map(|g| g.label.clone()))
+                    picker.with(|options| {
+                        if let Some(option) = options.iter().find(|option| option.id == col.id) {
+                            def.picker_label = Some(option.label.clone());
+                            def.picker_group =
+                                option.group.as_ref().map(|group| group.label.clone());
+                            def.picker_group_title =
+                                option.group.as_ref().and_then(|group| group.title.clone());
+                            def.picker_hint = option.hint.clone();
+                            def.picker_disabled = option.disabled;
+                        }
                     });
                 }
                 if let Some(role) = marked_role(col, marks) {
@@ -811,6 +844,9 @@ mod tests {
         owner.with(|| {
             provide_context(init_i18n_context::<crate::i18n::Locale>());
             let visible = RwSignal::new(HashSet::<&'static str>::new());
+            let registry = crate::components::virtual_grid::registry::FilterRegistry::provide(
+                Vec::new(), Signal::derive(Vec::new),
+            );
             let html = view! {
                 <AnalyzerGrid
                     columns=&COLS
@@ -818,6 +854,15 @@ mod tests {
                     subject=Arc::new(|r: &Row| MarketSubject::new(r.0, false, 0))
                     rows=Signal::derive(|| vec![(0usize, Row(7))])
                     visible_cols=visible
+                    picker=Signal::derive(|| vec![ColumnOption {
+                        id: "extra",
+                        label: "Extra (selected input)".into(),
+                        group: Some(crate::components::control_bar::PickerHeading {
+                            label: "Cost".into(), title: Some("Ingredient prices".into()),
+                        }),
+                        hint: Some("Unavailable for this calculation".into()),
+                        disabled: true,
+                    }])
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
                     ctx=Signal::derive(|| CellCtx { now_unix: 0, capped_cost: [false; 4], sparklines: None, stats_30: None, stats_30_unavailable: None })
@@ -838,6 +883,13 @@ mod tests {
             // which emits a live `aria-sort`; the plain unsortable Item
             // header does not.
             assert_eq!(html.matches("aria-sort=\"descending\"").count(), 1, "{html}");
+            let columns = registry.optional_columns();
+            let extra = columns.iter().find(|column| column.id == "extra").unwrap();
+            assert_eq!(extra.picker_label.as_deref(), Some("Extra (selected input)"));
+            assert_eq!(extra.picker_group.as_deref(), Some("Cost"));
+            assert_eq!(extra.picker_group_title.as_deref(), Some("Ingredient prices"));
+            assert_eq!(extra.picker_hint.as_deref(), Some("Unavailable for this calculation"));
+            assert!(extra.picker_disabled && !extra.visible);
         });
     }
 

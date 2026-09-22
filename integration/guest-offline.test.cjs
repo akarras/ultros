@@ -110,6 +110,15 @@ test('unprepared offline visit does not fabricate a working app', async () => {
   assert.equal((await f.request('/list')).type, 'error');
 });
 
+test('projected startup catalog works offline without downloading the full pack', async () => {
+  const f = fixture();
+  f.manifest.assets[0] = '/static/startup/123/en.rkyv';
+  assert.equal((await f.prepare()).ready, true);
+  assert.ok(f.fetched.every(request => !request.url.includes('/static/data/')));
+  f.offline();
+  assert.equal((await f.request('/static/startup/123/en.rkyv', 'cors')).status, 200);
+});
+
 test('reject account endpoints, arbitrary scripts, and external assets before fetching', async () => {
   for (const asset of ['/api/v1/current_user', '/list/123', 'https://evil.test/pkg/a.js', '/pkg/a.js?private=1']) {
     const f = fixture();

@@ -1,10 +1,12 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
-use crate::analyzer_kit::filters::{price_control, register_filters};
+use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
+use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
+use crate::columnar_wire::columnar_resource;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::saved_views::{
@@ -30,7 +32,6 @@ use crate::{
         },
         world_picker::WorldOnlyPicker,
     },
-    global_state::region_for_world::use_region_for_world,
 };
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
@@ -67,6 +68,9 @@ struct ScripSourceData {
 }
 
 impl ScripSourceData {
+    fn passes_complete_prices(&self, required: bool) -> bool {
+        !required || self.pricing_pending || self.coverage_tier() == 0
+    }
     /// `0` when every ingredient had a market price, `1` when some were
     /// missing. Used as the *primary* ranking key so rows with an understated
     /// cost can never float above fully-priced rows — an unlisted ingredient
@@ -317,9 +321,9 @@ impl std::str::FromStr for SortMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "efficiency" => Ok(SortMode::CostPerScrip),
-            "amount" => Ok(SortMode::ScripAmount),
-            "cost" => Ok(SortMode::Cost),
+            "efficiency" | "grid:cost-per-scrip" => Ok(SortMode::CostPerScrip),
+            "amount" | "grid:scrip-amount" => Ok(SortMode::ScripAmount),
+            "cost" | "grid:cost" => Ok(SortMode::Cost),
             _ => Err(()),
         }
     }
@@ -351,27 +355,43 @@ impl SortColumn for SortMode {
     }
 }
 
+/// Choose the same direction as the grid before selecting one turn-in per
+/// item. Canonical grid URLs historically default to descending; native cost
+/// URLs default to ascending. Losing that distinction changes which offer
+/// survives deduplication before the grid ever sees it.
+fn candidate_sort_direction(
+    raw_sort: Option<&str>,
+    explicit: Option<SortDir>,
+    mode: SortMode,
+) -> SortDir {
+    explicit.unwrap_or_else(|| {
+        if raw_sort
+            .is_some_and(|sort| sort.starts_with("grid:") && sort.parse::<SortMode>().is_ok())
+        {
+            SortDir::Desc
+        } else {
+            mode.default_dir()
+        }
+    })
+}
+
 // --- Filter registry -------------------------------------------------------
 // Each id is the `filter_query_signal` key it drives, so the list doubles as
 // the URL contract (mirrors the analyzer/currency-exchange convention).
 const FILTER_SCRIP: &str = "scrip";
 const FILTER_JOB: &str = "job";
+const FILTER_COMPLETE_PRICES: &str = "complete-prices";
 
 /// The page's built-in views, offered above the reader's own saved ones.
 ///
 /// Queries only: the labels live in [`scrip_sources_presets`] because `t_string!`
 /// needs a literal key. Every key used here is pinned by a test below.
-const PRESET_QUERIES: [&str; 3] = [
-    "?sort=efficiency",
-    "?scrip=OrangeCrafters&sort=efficiency",
-    "?scrip=OrangeGatherers&sort=efficiency",
-];
+const PRESET_QUERIES: [&str; 2] = ["?sort=efficiency", "?scrip=OrangeCrafters&sort=efficiency"];
 
 fn scrip_sources_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
     [
         t_string!(i18n, scrip_sources_preset_best_value).to_string(),
         t_string!(i18n, scrip_sources_preset_orange_crafters).to_string(),
-        t_string!(i18n, scrip_sources_preset_orange_gatherers).to_string(),
     ]
     .into_iter()
     .zip(PRESET_QUERIES)
@@ -385,7 +405,7 @@ fn scrip_sources_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetV
 /// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
 /// order.
 #[cfg(test)]
-const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
+const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[FILTER_SCRIP, FILTER_JOB, FILTER_COMPLETE_PRICES];
 
 /// Rank the collected rows and collapse repeated items without a result cap.
 ///
@@ -507,6 +527,7 @@ fn ScripSourceTable(
             .map(|f| f.value.clone())
     });
     let (job_filter, _set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
+    let (complete_prices, _) = filter_query_signal::<bool>(FILTER_COMPLETE_PRICES);
 
     // Global websocket health, same wiring as the other sales-driven tools —
     // the prices here come from the realtime-fed cheapest-listings store.
@@ -615,7 +636,6 @@ fn ScripSourceTable(
             if priced_ingredients == 0 || cost == 0 {
                 continue;
             } // Nothing priceable, or free items: no cost to compare
-
             let cost_per_scrip = cost as f32 / scrip_amount as f32;
             let (_, market_item_id, market_price) =
                 market_ingredient.expect("priced ingredients establish market context");
@@ -652,8 +672,13 @@ fn ScripSourceTable(
         }
 
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
-        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        let dir = candidate_sort_direction(
+            query.with(|query| query.get("sort")).as_deref(),
+            sort_dir(),
+            mode,
+        );
         // Keep every eligible row; only the rendered cells are virtualized.
+        results.retain(|row| row.passes_complete_prices(complete_prices().unwrap_or(false)));
         rank_scrip_sources(results, mode, dir)
     });
 
@@ -742,6 +767,10 @@ fn ScripSourceTable(
         vec![scrip_alias()],
         Signal::derive(move || {
             vec![
+                toggle_control(
+                    FILTER_COMPLETE_PRICES,
+                    t_string!(i18n, scrip_sources_complete_prices).to_string(),
+                ),
                 price_control(
                     "cost-basis",
                     t_string!(i18n, market_ingredient_price).to_string(),
@@ -846,11 +875,11 @@ fn ScripSourceTable(
          GridMetric::text("scrip-type", move |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Set(vec![scrip_label(row.scrip_type), format!("{:?}", row.scrip_type)])).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
      ]
      row_height=60.0
-     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true),
+     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true).fixed_width(),
     GridColumn::new("market-ingredient", t_string!(i18n, market_ingredient).to_string(), 240.0, false, true),
-    GridColumn::new("cost-per-scrip",t_string!(i18n, scrip_sources_cost_per_scrip).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::CostPerScrip, sort_dir.get().unwrap_or_else(||SortMode::CostPerScrip.default_dir()) == SortDir::Asc),
-    GridColumn::new("scrip-amount",t_string!(i18n, scrip_sources_scrips).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::ScripAmount, sort_dir.get().unwrap_or_else(||SortMode::ScripAmount.default_dir()) == SortDir::Asc),
-    GridColumn::new("cost",t_string!(i18n, scrip_sources_cost).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
+    GridColumn::new("cost-per-scrip",t_string!(i18n, scrip_sources_cost_per_scrip).to_string(), 130.0, true, true).native_sort("efficiency", SortMode::CostPerScrip.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::CostPerScrip, sort_dir.get().unwrap_or_else(||SortMode::CostPerScrip.default_dir()) == SortDir::Asc),
+    GridColumn::new("scrip-amount",t_string!(i18n, scrip_sources_scrips).to_string(), 130.0, true, true).native_sort("amount", SortMode::ScripAmount.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::ScripAmount, sort_dir.get().unwrap_or_else(||SortMode::ScripAmount.default_dir()) == SortDir::Asc),
+    GridColumn::new("cost",t_string!(i18n, scrip_sources_cost).to_string(), 130.0, true, true).native_sort("cost", SortMode::Cost.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
     { let mut col = GridColumn::new("scrip-type",t_string!(i18n, scrip_sources_scrip_type_header).to_string(), 130.0, true, true); let mut filter = ColumnFilter::new("scrip", filter_label("scrip"), false); filter.options = scrip_options(); col.filters.push(filter); col }])
      header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_item)}</div>}.into_any(),
     "market-ingredient" => view! { <span title=t_string!(i18n, market_ingredient_stats_title).to_string()>{t!(i18n, market_ingredient)}</span> }.into_any(),
@@ -880,7 +909,7 @@ fn ScripSourceTable(
                                  </div>}.into_any(),
     "scrip-type" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_scrip_type_header)}</div>}.into_any(), _ => ().into_any()}}
      each=computed_data
-                        key=move |(_, data): &(usize, Arc<ScripSourceData>)| data.item_id
+                        key=move |(_, data): &(usize, Arc<ScripSourceData>)| data.item_id.0
 
      measure=move |(_, data): &(usize, Arc<ScripSourceData>), id| {match id {"item" => (data.item_name.clone(), 110.0),
     "market-ingredient" => (data.market_item_name.clone(), 30.0),
@@ -980,12 +1009,16 @@ fn ScripSourceTable(
 
 #[component]
 pub fn ScripSources() -> impl IntoView {
+    crate::query_defaults::seed_analyzer_default_view("scrip-sources");
     provide_grid_saved_views("scrip-sources-grid");
     let i18n = use_i18n();
     let (selected_world, set_selected_world) = use_analyzer_world("/scrip-sources");
-    let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
+    let scope = use_market_scope(Signal::derive(move || {
+        selected_world.get().map(|world| world.name)
+    }));
+    let region = scope.name;
 
-    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
+    let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
@@ -1021,9 +1054,7 @@ pub fn ScripSources() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <span class="text-sm text-[color:var(--color-text-muted)]" data-testid="analyzer-market-scope">
-                        {t!(i18n, market_scope)} ": " {move || region.get()}
-                    </span>
+                    <MarketScopeControl scope/>
                 </ToolHeader>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
@@ -1131,6 +1162,69 @@ mod tests {
             priced_ingredients: priced,
             total_ingredients: total,
             ..row(item_id, scrip_amount, cost)
+        }
+    }
+
+    #[test]
+    fn complete_price_filter_can_be_cleared_and_waits_for_selected_history() {
+        let mut partial = partial_row(1, 100, 10, 1, 3);
+        assert!(!partial.passes_complete_prices(true));
+        assert!(
+            partial.passes_complete_prices(false),
+            "unrestricted view can inspect partial prices"
+        );
+        partial.pricing_pending = true;
+        assert!(
+            partial.passes_complete_prices(true),
+            "a loading price basis cannot exclude a candidate"
+        );
+        assert!(row(2, 100, 10).passes_complete_prices(true));
+    }
+
+    #[test]
+    fn builtin_presets_only_offer_supported_crafting_scrips() {
+        assert!(
+            PRESET_QUERIES
+                .iter()
+                .all(|query| !query.contains("Gatherers"))
+        );
+    }
+    #[test]
+    fn canonical_sort_keeps_the_same_turn_in_representative_as_legacy_sort() {
+        let candidates = vec![row(1, 100, 1000), row(1, 200, 3000)];
+        for (legacy, canonical) in [
+            ("efficiency", "grid:cost-per-scrip"),
+            ("amount", "grid:scrip-amount"),
+            ("cost", "grid:cost"),
+        ] {
+            for dir in [SortDir::Asc, SortDir::Desc] {
+                assert_eq!(
+                    rank_scrip_sources(candidates.clone(), legacy.parse().unwrap(), dir),
+                    rank_scrip_sources(candidates.clone(), canonical.parse().unwrap(), dir),
+                    "{legacy}/{canonical}/{dir:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_canonical_direction_selects_the_descending_turn_in() {
+        let candidates = vec![row(1, 100, 1000), row(1, 200, 3000)];
+        for (legacy, canonical) in [("efficiency", "grid:cost-per-scrip"), ("cost", "grid:cost")] {
+            let mode = canonical.parse().unwrap();
+            let retained = |raw, explicit| {
+                rank_scrip_sources(
+                    candidates.clone(),
+                    mode,
+                    candidate_sort_direction(Some(raw), explicit, mode),
+                )[0]
+                .cost
+            };
+            assert_eq!(retained(legacy, None), 1000);
+            assert_eq!(retained(canonical, None), 3000);
+            assert_eq!(retained(canonical, "invalid".parse().ok()), 3000);
+            assert_eq!(retained(canonical, Some(SortDir::Asc)), 1000);
+            assert_eq!(retained(legacy, Some(SortDir::Desc)), 3000);
         }
     }
 

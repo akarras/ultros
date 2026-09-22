@@ -1,7 +1,7 @@
 //! URL persistence shared by all analyzer tables. Existing `cols` and JSON
 //! `layout` links remain readable; new layouts use a small `l` delta.
 pub use super::filter::MetricSortHeader;
-use super::metrics::{GridMetric, parse_filters, query_rows};
+use super::metrics::{GridMetric, parse_filters, query_rows_with_tiebreak};
 use super::row_source::RowSource;
 use super::{GridChange, GridColumn, VirtualGrid};
 use crate::components::app_link::use_location_or_default;
@@ -34,7 +34,7 @@ pub fn QueryGrid<T, K, KF, H, F, M>(
 ) -> impl IntoView
 where
     T: Clone + PartialEq + Send + Sync + 'static,
-    K: Clone + Eq + Hash + Send + Sync + 'static,
+    K: Clone + Ord + Hash + Send + Sync + 'static,
     KF: Fn(&T) -> K + Send + Sync + 'static,
     H: Fn(&'static str) -> AnyView + Send + Sync + 'static,
     F: Fn(T, &'static str) -> AnyView + Send + Sync + 'static,
@@ -44,7 +44,25 @@ where
     let query = location.query;
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let metrics = StoredValue::new(metrics);
+    let key = StoredValue::new(key);
     let registry = use_context::<super::registry::FilterRegistry>();
+    if let Some(registry) = registry {
+        registry.register_sort_columns(
+            columns,
+            metrics.with_value(|metrics| {
+                metrics
+                    .iter()
+                    .filter(|metric| !metric.partial)
+                    .map(|metric| metric.id)
+                    .collect()
+            }),
+        );
+    }
+    let sort_ascending = move |q: &leptos_router::params::ParamsMap| {
+        registry
+            .map(|registry| registry.sort_ascending(q))
+            .unwrap_or_else(|| q.get("dir").as_deref() == Some("asc"))
+    };
     let filters = Memo::new(move |_| {
         let mut filters = query.with(|q| {
             registry
@@ -67,10 +85,17 @@ where
     };
     let result = Memo::new(move |_| {
         let sort = query.with(sort_column);
-        let ascending = query.with(|q| q.get("dir")).as_deref() == Some("asc");
+        let ascending = query.with(sort_ascending);
         each.with(|rows| {
             metrics.with_value(|metrics| {
-                query_rows(rows, metrics, &filters.get(), sort.as_deref(), ascending)
+                query_rows_with_tiebreak(
+                    rows,
+                    metrics,
+                    &filters.get(),
+                    sort.as_deref(),
+                    ascending,
+                    |a, b| key.with_value(|key| key(a).cmp(&key(b))),
+                )
             })
         })
     });
@@ -119,7 +144,7 @@ where
                     }
                     col.query_sort = !metric.partial;
                     if sort == Some(col.id) && !metric.partial {
-                        col.aria_sort = if query.with(|q| q.get("dir")).as_deref() == Some("asc") {
+                        col.aria_sort = if query.with(sort_ascending) {
                             "ascending"
                         } else {
                             "descending"
@@ -226,6 +251,6 @@ where
         })}
         {move || result.with(|r|r.sort_pending).then(||view! {<div class="px-3 py-2 text-xs" role="status">{t!(i18n,grid_query_pending)}</div>})}
         <VirtualGrid each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
-            reveal_index key header view measure measure_version row_height id label/>
+            reveal_index key=move |row: &T| key.with_value(|key| key(row)) header view measure measure_version row_height id label/>
     }
 }

@@ -45,6 +45,40 @@ pub fn embedded_bytes(lang: Language) -> &'static [u8] {
 }
 
 #[cfg(feature = "embed")]
+pub fn startup_bytes(lang: Language) -> &'static [u8] {
+    match lang {
+        Language::En => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/en.rkyv"
+        )),
+        Language::Ja => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/ja.rkyv"
+        )),
+        Language::De => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/de.rkyv"
+        )),
+        Language::Fr => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/fr.rkyv"
+        )),
+        Language::Cn => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/cn.rkyv"
+        )),
+        Language::Ko => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/ko.rkyv"
+        )),
+        Language::Tc => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-startup/tc.rkyv"
+        )),
+    }
+}
+
+#[cfg(feature = "embed")]
 pub fn data() -> &'static xiv_gen::Data {
     if let Some(d) = *XIV_DATA.read().unwrap() {
         return d;
@@ -121,6 +155,53 @@ pub fn all_locales() -> impl Iterator<Item = (Language, &'static xiv_gen::Data)>
     ALL_LANGUAGES.iter().map(|&lang| (lang, data_for(lang)))
 }
 
+/// Content hash of the `lang` pack this binary was built against: the
+/// `<version>` segment of the pack URL and the browser's cache key. Computed
+/// by build.rs from the pack bytes, so it changes exactly when the pack does —
+/// a deploy that did not touch game data neither re-downloads the pack nor
+/// evicts it from the edge cache. Unknown languages resolve to English, which
+/// is also what the server falls back to.
+pub fn startup_version(lang: &str) -> &'static str {
+    match lang {
+        "ja" => env!("XIV_STARTUP_VERSION_JA"),
+        "de" => env!("XIV_STARTUP_VERSION_DE"),
+        "fr" => env!("XIV_STARTUP_VERSION_FR"),
+        "cn" => env!("XIV_STARTUP_VERSION_CN"),
+        "ko" => env!("XIV_STARTUP_VERSION_KO"),
+        "tc" => env!("XIV_STARTUP_VERSION_TC"),
+        _ => env!("XIV_STARTUP_VERSION_EN"),
+    }
+}
+
+pub fn startup_url(lang: &str) -> String {
+    format!("/static/startup/{}/{lang}.rkyv", startup_version(lang))
+}
+
+pub fn pack_version(lang: &str) -> &'static str {
+    match lang {
+        "ja" => env!("XIV_PACK_VERSION_JA"),
+        "de" => env!("XIV_PACK_VERSION_DE"),
+        "fr" => env!("XIV_PACK_VERSION_FR"),
+        "cn" => env!("XIV_PACK_VERSION_CN"),
+        "ko" => env!("XIV_PACK_VERSION_KO"),
+        "tc" => env!("XIV_PACK_VERSION_TC"),
+        _ => env!("XIV_PACK_VERSION_EN"),
+    }
+}
+
+/// The URL the server serves the `lang` pack at (`get_xiv_data_bytes` in the
+/// ultros crate). Content-addressed via [`pack_version`], so it is safe to
+/// cache immutably.
+pub fn pack_url(lang: &str) -> String {
+    format!("/static/data/{}/{lang}.rkyv", pack_version(lang))
+}
+
+/// Legacy full-pack cache identity. New clients use [`startup_url`] and the
+/// HTTP cache instead of IndexedDB.
+pub fn pack_cache_key(lang: &str) -> String {
+    format!("{}-{lang}", pack_version(lang))
+}
+
 pub fn try_init(bytes: &[u8]) -> anyhow::Result<()> {
     let data = decompress_data(bytes)?;
     let leaked: &'static xiv_gen::Data = Box::leak(Box::new(data));
@@ -132,15 +213,13 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     if bytes.is_empty() {
         return Ok(xiv_gen::Data::default());
     }
-    // Decompress via `ZlibDecoder::read_to_end` rather than the lower-level
-    // `Decompress::decompress_vec`, because the latter does not grow the output
-    // Vec and silently returns `BufError` once capacity is exhausted — leaving
-    // a truncated buffer that rkyv then misinterprets as a misaligned/corrupt
-    // archive. The English archive decompresses to ~50 MB which exceeds any
-    // reasonable hand-picked `bytes.len() * N` heuristic.
+    // The pack is a brotli stream (quality 11, 16 MiB window) written by
+    // game-data-pack; the English archive inflates to ~17 MB. Decode through
+    // the `Read` adapter so the output grows as needed — a fixed output buffer
+    // would truncate silently and rkyv would then report a corrupt archive.
     use std::io::Read;
     let mut decoded: Vec<u8> = Vec::new();
-    flate2::read::ZlibDecoder::new(bytes)
+    brotli_decompressor::Decompressor::new(bytes, 64 * 1024)
         .read_to_end(&mut decoded)
         .map_err(|e| anyhow!("failed to decompress xiv-gen data: {e}"))?;
     // rkyv requires the byte buffer to be aligned to `FixedIsize` (4 bytes
@@ -156,6 +235,37 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     let data = rkyv::from_bytes::<xiv_gen::Data>(&aligned)
         .map_err(|e| anyhow!("failed to deserialize xiv-gen data: {e}"))?;
     Ok(data)
+}
+
+#[cfg(test)]
+mod version_test {
+    use super::{pack_cache_key, pack_url, pack_version};
+
+    /// Every language resolves to a 64-bit content hash, distinct packs get
+    /// distinct versions, and an unknown language falls back to English's.
+    #[test]
+    fn pack_versions_are_content_hashes() {
+        let langs = ["en", "ja", "de", "fr", "cn", "ko", "tc"];
+        for lang in langs {
+            let version = pack_version(lang);
+            assert_eq!(version.len(), 16, "{lang}: {version}");
+            assert!(
+                version.chars().all(|c| c.is_ascii_hexdigit()),
+                "{lang}: {version}"
+            );
+        }
+        assert_ne!(pack_version("en"), pack_version("ja"));
+        assert_eq!(pack_version("klingon"), pack_version("en"));
+    }
+
+    /// The URL and the browser cache key both carry the version, so a new pack
+    /// is a new URL (edge cache) and a new key (IndexedDB) at the same time.
+    #[test]
+    fn pack_url_and_cache_key_carry_the_version() {
+        let version = pack_version("fr");
+        assert_eq!(pack_url("fr"), format!("/static/data/{version}/fr.rkyv"));
+        assert_eq!(pack_cache_key("fr"), format!("{version}-fr"));
+    }
 }
 
 #[cfg(all(test, feature = "embed"))]

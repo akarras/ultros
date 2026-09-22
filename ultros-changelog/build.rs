@@ -79,7 +79,8 @@ fn parse<'a>(name: &'a str, source: &str) -> Result<Parsed<'a>, String> {
     })
 }
 
-fn compile(sources: &[(String, String)]) -> Result<String, String> {
+/// Every change, newest day first, then high/medium/low, then filename.
+fn sorted<'a>(sources: &'a [(String, String)]) -> Result<Vec<Parsed<'a>>, String> {
     let mut entries = sources
         .iter()
         .map(|(name, source)| {
@@ -94,29 +95,53 @@ fn compile(sources: &[(String, String)]) -> Result<String, String> {
             .then(a.rank.cmp(&b.rank))
             .then(a_name.cmp(b_name))
     });
+    Ok(entries.into_iter().map(|(_, parsed)| parsed).collect())
+}
+
+/// The server-only `CHANGELOG` table, behind the crate's `history` feature.
+fn entries_source(entries: &[Parsed<'_>]) -> String {
     let mut output = String::from("pub static CHANGELOG: &[ChangelogEntry] = &[\n");
-    for (
-        _,
-        Parsed {
-            date,
-            entry,
-            category,
-            importance,
-            ..
-        },
-    ) in entries
+    for Parsed {
+        date,
+        entry,
+        category,
+        importance,
+        ..
+    } in entries
     {
         // Debug escaping emits Rust string literals, including quotes and Unicode.
         writeln!(output,
-            "ChangelogEntry {{ date: {date:?}, category: ChangelogCategory::{category}, importance: ChangelogImportance::{importance}, title: {:?}, blurb: {:?}, link: {:?}, labs: {} }},",
-            entry.title, entry.blurb, entry.link, entry.labs
+            "ChangelogEntry {{ date: Cow::Borrowed({date:?}), category: ChangelogCategory::{category}, importance: ChangelogImportance::{importance}, title: Cow::Borrowed({:?}), blurb: Cow::Borrowed({:?}), link: {}, labs: {} }},",
+            entry.title,
+            entry.blurb,
+            match &entry.link {
+                Some(link) => format!("Some(Cow::Borrowed({link:?}))"),
+                None => "None".to_string(),
+            },
+            entry.labs
         ).unwrap();
     }
     output.push_str("];\n");
-    Ok(output)
+    output
 }
 
-fn generate(directory: &Path) -> Result<String, Box<dyn std::error::Error>> {
+/// The two dates the client needs. These are all the wasm bundle gets: a
+/// `&str` each, rather than the whole table the server serves.
+fn dates_source(entries: &[Parsed<'_>]) -> String {
+    let latest = entries.first().map(|parsed| parsed.date).unwrap_or("");
+    // Skip Labs-only days so a Labs release does not light up the
+    // what's-new dot for players who have not opted in.
+    let announced = entries
+        .iter()
+        .find(|parsed| !parsed.entry.labs)
+        .map(|parsed| parsed.date)
+        .unwrap_or("");
+    format!(
+        "pub const LATEST: &str = {latest:?};\npub const LATEST_ANNOUNCED: &str = {announced:?};\n"
+    )
+}
+
+fn generate(directory: &Path) -> Result<(String, String), Box<dyn std::error::Error>> {
     // Watching the directory catches additions and removals as well as edits.
     println!("cargo:rerun-if-changed={}", directory.display());
     let mut sources = Vec::new();
@@ -136,15 +161,17 @@ fn generate(directory: &Path) -> Result<String, Box<dyn std::error::Error>> {
             ));
         }
     }
-    Ok(compile(&sources)?)
+    let entries = sorted(&sources)?;
+    Ok((entries_source(&entries), dates_source(&entries)))
 }
 
 #[cfg(not(test))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("changes");
-    let output =
-        std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("changelog.rs");
-    fs::write(output, generate(&directory)?)?;
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let (entries, dates) = generate(&directory)?;
+    fs::write(out.join("changelog.rs"), entries)?;
+    fs::write(out.join("dates.rs"), dates)?;
     Ok(())
 }
 
@@ -152,12 +179,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
+    fn compile(sources: &[(String, String)]) -> Result<String, String> {
+        sorted(sources).map(|entries| entries_source(&entries))
+    }
+
+    fn dates(sources: &[(String, String)]) -> String {
+        dates_source(&sorted(sources).unwrap())
+    }
+
     fn entry(title: &str, importance: &str) -> String {
         serde_json::json!({
             "category": "features", "importance": importance,
             "title": title, "blurb": "A player-facing change."
         })
         .to_string()
+    }
+
+    fn labs_entry(title: &str) -> String {
+        let mut source: serde_json::Value = serde_json::from_str(&entry(title, "high")).unwrap();
+        source["labs"] = true.into();
+        source.to_string()
     }
 
     #[test]
@@ -175,10 +216,13 @@ mod tests {
         let output = compile(&sources).unwrap();
         assert_eq!(
             output,
-            compile(&sources.into_iter().rev().collect::<Vec<_>>()).unwrap()
+            compile(&sources.iter().cloned().rev().collect::<Vec<_>>()).unwrap()
         );
-        let positions = ["High first", "High second", "Medium", "Low", "Old high"]
-            .map(|title| output.find(&format!("title: {title:?}")).unwrap());
+        let positions = ["High first", "High second", "Medium", "Low", "Old high"].map(|title| {
+            output
+                .find(&format!("title: Cow::Borrowed({title:?})"))
+                .unwrap()
+        });
         assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(output.matches("ChangelogEntry {").count(), 5);
     }
@@ -225,8 +269,8 @@ mod tests {
         }
         source["link"] = "/items?search=test#results".into();
         let output = compile(&[("2026-09-04-change.json".into(), source.to_string())]).unwrap();
-        assert!(output.contains(r#"title: "Quotes \" \\ 日本語\n<script>""#));
-        assert!(output.contains(r#"Some("/items?search=test#results")"#));
+        assert!(output.contains(r#"title: Cow::Borrowed("Quotes \" \\ 日本語\n<script>")"#));
+        assert!(output.contains(r#"Some(Cow::Borrowed("/items?search=test#results"))"#));
     }
 
     #[test]
@@ -248,13 +292,44 @@ mod tests {
         assert!(parse("2026-09-04-change.json", &source.to_string()).is_err());
     }
 
+    /// The client-side dates are the newest day overall and the newest day
+    /// carrying a change everyone can see. A Labs-only day moves the first
+    /// and not the second.
+    #[test]
+    fn dates_report_the_newest_day_and_the_newest_announced_day() {
+        let sources = vec![
+            ("2026-09-03-shipped.json".into(), entry("Shipped", "high")),
+            ("2026-09-05-secret.json".into(), labs_entry("Behind a flag")),
+        ];
+        assert_eq!(
+            dates(&sources),
+            "pub const LATEST: &str = \"2026-09-05\";\n\
+             pub const LATEST_ANNOUNCED: &str = \"2026-09-03\";\n"
+        );
+    }
+
+    /// With nothing to announce both dates are empty strings, which sort
+    /// before every real date, so the what's-new dot stays off.
+    #[test]
+    fn dates_are_empty_without_entries_or_without_an_announced_one() {
+        assert_eq!(
+            dates(&[]),
+            "pub const LATEST: &str = \"\";\npub const LATEST_ANNOUNCED: &str = \"\";\n"
+        );
+        let labs_only = vec![("2026-09-05-secret.json".into(), labs_entry("Only Labs"))];
+        assert_eq!(
+            dates(&labs_only),
+            "pub const LATEST: &str = \"2026-09-05\";\n\
+             pub const LATEST_ANNOUNCED: &str = \"\";\n"
+        );
+    }
+
     #[test]
     fn compiles_checked_in_changes_and_handles_an_empty_list() {
-        assert!(
-            generate(&Path::new(env!("CARGO_MANIFEST_DIR")).join("changes"))
-                .unwrap()
-                .contains("ChangelogEntry {")
-        );
+        let (entries, dates) =
+            generate(&Path::new(env!("CARGO_MANIFEST_DIR")).join("changes")).unwrap();
+        assert!(entries.contains("ChangelogEntry {"));
+        assert!(dates.contains("pub const LATEST: &str = \"20"));
         assert!(!compile(&[]).unwrap().contains("ChangelogEntry {"));
     }
 }

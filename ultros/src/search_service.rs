@@ -896,9 +896,15 @@ mod tests {
                 summary(&results)
             );
         }
+        // A received item must never surface as a currency. Only that title
+        // is checked: the fuzzy match on "Horn" legitimately pulls in real
+        // currencies such as "Ixion Horn", and whether one makes the top
+        // results depends on tie order (this failed intermittently on main).
         let results = service.search("Fenrir Horn");
         assert!(
-            titles_of(&results, "currency").is_empty(),
+            !titles_of(&results, "currency")
+                .iter()
+                .any(|t| t == "Fenrir Horn"),
             "{:?}",
             summary(&results)
         );

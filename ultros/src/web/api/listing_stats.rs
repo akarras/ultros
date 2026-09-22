@@ -27,10 +27,13 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use ultros_api_types::listing_stats::{BulkListingStats, ItemListingStats};
+use ultros_api_types::listing_stats::{
+    BulkListingStats, BulkListingStatsColumnar, ItemListingStats,
+};
 use ultros_clickhouse::{ClickHouseClient, queries::BulkListingAliveRow};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
+use super::is_columnar;
 use crate::web::{
     error::{ClickHouseQueryError, WebError},
     stats_cache::{CacheKey, ListingStatsCache, cached_response},
@@ -39,6 +42,8 @@ use crate::web::{
 #[derive(serde::Deserialize)]
 pub(crate) struct ListingStatsQuery {
     window: Option<u16>,
+    /// `columnar` selects [`BulkListingStatsColumnar`]; see [`is_columnar`].
+    format: Option<String>,
 }
 
 /// Current-only requests retain their separate cache slot.
@@ -63,13 +68,16 @@ pub(crate) async fn get_listing_stats(
         .get_all_worlds_in(&value)
         .ok_or(WebError::NotFound)?;
 
+    let columnar = is_columnar(query.format.as_deref());
+
     let cached = cache
         .get_or_load(
             CacheKey {
                 selector,
                 window_days: query.window.unwrap_or(NO_WINDOW),
+                columnar,
             },
-            move || async move { load_listing_stats(&ch, world_ids, query.window).await },
+            move || async move { load_listing_stats(&ch, world_ids, query.window, columnar).await },
         )
         .await?;
     let disposition = cached.disposition.as_str();
@@ -85,6 +93,7 @@ async fn load_listing_stats(
     ch: &ClickHouseClient,
     world_ids: Vec<i32>,
     window: Option<u16>,
+    columnar: bool,
 ) -> Result<Bytes, WebError> {
     let rows = ultros_clickhouse::queries::bulk_listing_alive(ch, &world_ids)
         .await
@@ -140,9 +149,19 @@ async fn load_listing_stats(
             row.window = Some(history);
         }
     }
-    let stats = stats.into_values().collect();
-    serde_json::to_vec(&BulkListingStats { stats })
-        .map(Bytes::from)
+    let stats: Vec<ItemListingStats> = stats.into_values().collect();
+    serialize_body(stats, columnar)
+}
+
+/// Either wire shape, pre-serialized for the cache.
+fn serialize_body(stats: Vec<ItemListingStats>, columnar: bool) -> Result<Bytes, WebError> {
+    let body = BulkListingStats { stats };
+    let json = if columnar {
+        serde_json::to_vec(&BulkListingStatsColumnar::from(body))
+    } else {
+        serde_json::to_vec(&body)
+    };
+    json.map(Bytes::from)
         .map_err(anyhow::Error::from)
         .map_err(Into::into)
 }
@@ -210,5 +229,15 @@ mod tests {
     fn floor_saturates_at_i32_max() {
         assert_eq!(to_wire(row(0, i32::MAX as u32)).floor_alive, i32::MAX);
         assert_eq!(to_wire(row(0, u32::MAX)).floor_alive, i32::MAX);
+    }
+
+    #[test]
+    fn serialize_body_rows_by_default_columnar_on_request() {
+        let stats = vec![to_wire(row(0, 40)), to_wire(row(1, 950))];
+        let rows = serialize_body(stats.clone(), false).unwrap();
+        assert!(rows.starts_with(br#"{"stats":[{"item_id":7,"hq":false"#));
+        let columnar = serialize_body(stats, true).unwrap();
+        assert!(columnar.starts_with(br#"{"item_id":[7,7],"hq":[false,true]"#));
+        assert!(!columnar.ends_with(br#""window":null}"#));
     }
 }

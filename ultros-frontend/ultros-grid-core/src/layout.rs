@@ -42,12 +42,27 @@ impl ColumnFilter {
     }
 }
 
+/// Legacy URL spelling and initial direction of a sortable native column.
+/// Kept on the definition so hidden/virtualized headers need not mount first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeSort {
+    pub token: &'static str,
+    pub default_ascending: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridColumn {
     pub id: &'static str,
     pub label: String,
     /// Optional heading in the insert-column picker; does not change column identity or geometry.
     pub picker_group: Option<String>,
+    /// Picker copy can explain a metric without widening its table heading.
+    pub picker_label: Option<String>,
+    pub picker_group_title: Option<String>,
+    /// An explanation of the column or why it is currently unavailable.
+    pub picker_hint: Option<String>,
+    /// Prevent adding unavailable columns; selected columns remain removable.
+    pub picker_disabled: bool,
     pub width: f64,
     /// Space beside the title for badges, in addition to the grid controls.
     pub heading_adornments: f64,
@@ -65,6 +80,7 @@ pub struct GridColumn {
     pub aria_sort: &'static str,
     pub filters: Vec<ColumnFilter>,
     pub query_sort: bool,
+    pub native_sort: Option<NativeSort>,
 }
 
 impl GridColumn {
@@ -73,6 +89,10 @@ impl GridColumn {
             id,
             label,
             picker_group: None,
+            picker_label: None,
+            picker_group_title: None,
+            picker_hint: None,
+            picker_disabled: false,
             width,
             heading_adornments: 0.0,
             heading_lines: Vec::new(),
@@ -84,6 +104,7 @@ impl GridColumn {
             aria_sort: "none",
             filters: Vec::new(),
             query_sort: false,
+            native_sort: None,
         }
     }
 
@@ -91,6 +112,14 @@ impl GridColumn {
     /// declared width as its default.
     pub fn fixed_width(mut self) -> Self {
         self.auto_fit = false;
+        self
+    }
+
+    pub fn native_sort(mut self, token: &'static str, default_ascending: bool) -> Self {
+        self.native_sort = Some(NativeSort {
+            token,
+            default_ascending,
+        });
         self
     }
 

@@ -6,6 +6,7 @@
 //! recorded in `data/npc-placements.json` so a CSV-only rebuild keeps them),
 //! and the map images those placements sit on.
 
+mod browser;
 mod db;
 mod fetch;
 mod icons;

@@ -7,6 +7,6 @@ description = "The local-first list document: one Loro CRDT per list, shared by 
 
 [dependencies]
 # Pinned exactly: the convergence tests are the gate for any bump.
-loro = "=1.16.0"
+loro = "=1.16.2"
 thiserror = { workspace = true }
 ultros-api-types = { path = "../ultros-api-types" }

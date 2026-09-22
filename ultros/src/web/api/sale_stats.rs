@@ -21,11 +21,12 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
-use ultros_api_types::sale_stats::{BulkSaleStats, ItemSaleStats};
+use ultros_api_types::sale_stats::{BulkSaleStats, BulkSaleStatsColumnar, ItemSaleStats};
 use ultros_api_types::trends::ConfidenceBand;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
+use super::is_columnar;
 use crate::web::{
     error::{ClickHouseQueryError, WebError},
     stats_cache::{CacheKey, SaleStatsCache, cached_response},
@@ -38,6 +39,8 @@ const SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
 pub(crate) struct SaleStatsQuery {
     /// Trailing rollup window in days. Supported: 1, 7, 30, 90; defaults to 7.
     window: Option<u16>,
+    /// `columnar` selects [`BulkSaleStatsColumnar`]; see [`is_columnar`].
+    format: Option<String>,
 }
 
 pub(crate) async fn get_sale_stats(
@@ -56,14 +59,16 @@ pub(crate) async fn get_sale_stats(
     if !SUPPORTED_WINDOWS.contains(&window_days) {
         return Err(WebError::BadRequest);
     }
+    let columnar = is_columnar(query.format.as_deref());
 
     let cached = cache
         .get_or_load(
             CacheKey {
                 selector,
                 window_days,
+                columnar,
             },
-            move || async move { load_sale_stats(&ch, world_ids, window_days).await },
+            move || async move { load_sale_stats(&ch, world_ids, window_days, columnar).await },
         )
         .await?;
     let disposition = cached.disposition.as_str();
@@ -79,6 +84,7 @@ async fn load_sale_stats(
     ch: &ClickHouseClient,
     world_ids: Vec<i32>,
     window_days: u16,
+    columnar: bool,
 ) -> Result<Bytes, WebError> {
     let rows = ultros_clickhouse::queries::bulk_sale_stats(ch, &world_ids, window_days)
         .await
@@ -103,7 +109,7 @@ async fn load_sale_stats(
         _ => HashMap::new(),
     };
 
-    let stats = rows
+    let mut stats: Vec<ItemSaleStats> = rows
         .into_iter()
         .map(|r| ItemSaleStats {
             item_id: r.item_id,
@@ -123,9 +129,82 @@ async fn load_sale_stats(
                 .unwrap_or_default(),
         })
         .collect();
+    sort_rows(&mut stats);
 
-    serde_json::to_vec(&BulkSaleStats { stats })
-        .map(Bytes::from)
+    serialize_body(stats, columnar)
+}
+
+/// ClickHouse returns rows in arbitrary order. Sorting by `(item_id, hq)`
+/// makes the payload deterministic across loads and, for the columnar
+/// shape, noticeably more compressible (adjacent rows share more prefix
+/// bytes once grouped by item).
+fn sort_rows(stats: &mut [ItemSaleStats]) {
+    stats.sort_unstable_by_key(|s| (s.item_id, s.hq));
+}
+
+/// Either wire shape, pre-serialized for the cache.
+fn serialize_body(stats: Vec<ItemSaleStats>, columnar: bool) -> Result<Bytes, WebError> {
+    let body = BulkSaleStats { stats };
+    let json = if columnar {
+        serde_json::to_vec(&BulkSaleStatsColumnar::from(body))
+    } else {
+        serde_json::to_vec(&body)
+    };
+    json.map(Bytes::from)
         .map_err(anyhow::Error::from)
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stats() -> Vec<ItemSaleStats> {
+        vec![
+            ItemSaleStats {
+                item_id: 2,
+                hq: false,
+                median_price: 100,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 5,
+                hq: true,
+                median_price: 7,
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn serialize_body_rows_by_default_columnar_on_request() {
+        let rows = serialize_body(stats(), false).unwrap();
+        assert!(rows.starts_with(br#"{"stats":[{"item_id":2"#));
+        let columnar = serialize_body(stats(), true).unwrap();
+        assert!(columnar.starts_with(br#"{"item_id":[2,5],"hq":[false,true]"#));
+    }
+
+    #[test]
+    fn sort_rows_orders_by_item_id_then_hq() {
+        let mut out_of_order = vec![
+            ItemSaleStats {
+                item_id: 5,
+                hq: false,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 2,
+                hq: true,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 2,
+                hq: false,
+                ..Default::default()
+            },
+        ];
+        sort_rows(&mut out_of_order);
+        let sorted = serialize_body(out_of_order, true).unwrap();
+        assert!(sorted.starts_with(br#"{"item_id":[2,2,5],"hq":[false,true,false]"#));
+    }
 }

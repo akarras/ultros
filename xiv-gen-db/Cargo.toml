@@ -12,7 +12,14 @@ license = "MIT OR Apache-2.0"
 embed = []
 
 [dependencies]
-flate2 = "1.1.9"
+# Pure-Rust brotli decoder (no C, no unsafe by default): the packs are brotli
+# q11 streams written by game-data-pack. Decoder only; the encoder lives in
+# game-data-pack.
+brotli-decompressor = { version = "5", default-features = false, features = ["std"] }
 rkyv = { version = "0.7.42", features = ["validation", "size_32", "std", "hashbrown"], default-features = false }
 xiv-gen.workspace = true
 anyhow.workspace = true
+
+[build-dependencies]
+# build.rs content-hashes the packs into XIV_PACK_VERSION_<LANG>.
+sha2 = "0.11"

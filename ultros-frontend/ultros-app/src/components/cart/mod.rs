@@ -17,13 +17,11 @@ pub mod selection;
 
 use std::collections::{HashMap, HashSet};
 
-use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
-use crate::components::icon::Icon;
 use crate::components::list::filter_row::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -277,6 +275,7 @@ pub fn ListCart(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let filter = RwSignal::new(String::new());
+    let composer_open = RwSignal::new(false);
     // Row ids with an open details panel. Keyed by id, not position.
     let expanded: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
     // While an editor inside the list has focus, an acquired row stays
@@ -492,6 +491,7 @@ pub fn ListCart(
     // below the fold, so the composer alone gives no visible feedback.
     let toasts = crate::global_state::toasts::use_toast();
     let on_add = Callback::new(move |item: ListItem| {
+        composer_open.set(true);
         bump();
         if let Some(toasts) = toasts {
             toasts.success(added_message(i18n, std::slice::from_ref(&item)));
@@ -499,6 +499,7 @@ pub fn ListCart(
         source.add.run(item);
     });
     let on_add_many = Callback::new(move |items: Vec<ListItem>| {
+        composer_open.set(true);
         bump();
         if let Some(toasts) = toasts {
             toasts.success(added_message(i18n, &items));
@@ -523,15 +524,10 @@ pub fn ListCart(
         expanded.update(|s| s.extend(renamed.iter().copied()));
         source.set_quality_many.run((ids, hq));
     });
-    let on_undo = Callback::new(move |()| {
+    Effect::new(move |_| {
+        source.history_revision.track();
         bump();
         toast.set(None);
-        source.undo.run(());
-    });
-    let on_redo = Callback::new(move |()| {
-        bump();
-        toast.set(None);
-        source.redo.run(());
     });
     let on_remove = Callback::new(move |id| request_removal(vec![id]));
     let on_remove_many = Callback::new(request_removal);
@@ -593,22 +589,28 @@ pub fn ListCart(
         // them, so search results and the recipe panel never push the list
         // below the fold; the composer column sticks while the rows scroll.
         <section class="space-y-3 xl:grid xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)] xl:items-start xl:gap-4 xl:space-y-0" data-testid="list-cart">
+            <Show when=move || source.can_write.get() && !is_empty.get()>
+                <button type="button" class="btn-secondary w-full xl:hidden" data-testid="cart-composer-toggle" aria-controls="cart-composer-body" aria-expanded=move || (composer_open.get() || source.recipe_open.get()).to_string() on:click=move |_| {
+                    let expanded = composer_open.get_untracked() || source.recipe_open.get_untracked();
+                    if source.recipe_open.get_untracked() { source.toggle_recipe.run(()); }
+                    composer_open.set(!expanded);
+                }>{move || if composer_open.get() || source.recipe_open.get() { t_string!(i18n, lists_composer_close).to_string() } else { t_string!(i18n, lists_workspace_add_items_label).to_string() }}</button>
+            </Show>
             <div class="space-y-3 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto" class:hidden=move || !source.can_write.get() data-testid="list-cart-composer">
+            <div id="cart-composer-body" class=move || if is_empty.get() || composer_open.get() || source.recipe_open.get() { "space-y-3" } else { "hidden xl:block space-y-3" }>
             <Show when=move || source.can_write.get()>
                 <InlineListAdd list_id=source.list_id on_add=on_add on_add_many=on_add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
-                <div class="flex flex-wrap items-center gap-2 text-sm">
-                    <button type="button" class="btn-ghost h-10 w-10 shrink-0 p-0 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-undo" disabled=move || !source.can_undo.get() aria-label=t_string!(i18n, lists_workspace_undo) title=move || if source.can_undo.get() { t_string!(i18n, lists_workspace_undo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_undo).to_string() } on:click=move |_| on_undo.run(())><Icon icon=i::BiUndoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
-                    <button type="button" class="btn-ghost h-10 w-10 shrink-0 p-0 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="list-redo" disabled=move || !source.can_redo.get() aria-label=t_string!(i18n, lists_workspace_redo) title=move || if source.can_redo.get() { t_string!(i18n, lists_workspace_redo).to_string() } else { t_string!(i18n, lists_workspace_nothing_to_redo).to_string() } on:click=move |_| on_redo.run(())><Icon icon=i::BiRedoRegular width="1.25rem" height="1.25rem" aria_hidden=true /></button>
-                </div>
             </Show>
             </div>
+            </div>
             <div class="space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
-            <Show when=move || source.estimate_available.get()>
+            <Show when=move || source.estimate_available.get() && !is_empty.get()>
                 <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name progress=Signal::from(progress) />
             </Show>
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
+            <Show when=move || !is_empty.get()>
             <div class="flex flex-wrap items-center gap-2">
-                <input class="input min-w-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+                <input class="input min-w-0 basis-full sm:basis-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
                 <button type="button" class="btn-secondary px-3 py-1 text-xs" class:bg-brand-950=move || source.hide_acquired.get() data-testid="cart-hide-acquired" aria-pressed=move || source.hide_acquired.get().to_string() on:click=move |_| source.set_hide_acquired.run(!source.hide_acquired.get_untracked())>{t!(i18n, list_view_hide_acquired)}</button>
                 <label class="flex items-center gap-2 text-sm sm:hidden">
                     <span class="text-[color:var(--color-text-muted)]">{t!(i18n, cart_sort_by)}</span>
@@ -623,6 +625,7 @@ pub fn ListCart(
                     </select>
                 </label>
             </div>
+            </Show>
             <CartSelectionBar selected_items visible_ids=visible_ids.into() can_write=source.can_write pending=source.bulk_pending on_remove_many=on_remove_many on_set_quality=on_set_quality_many />
             // The order pin follows a *drafting* editor only (see
             // `editor_drafting`): it engages as the player types and releases
@@ -657,7 +660,7 @@ pub fn ListCart(
                 #[cfg(not(feature = "hydrate"))]
                 { let _ = ev; }
             }>
-                <div role="group" aria-label=t_string!(i18n, cart_sort_by) class=format!("{ROW_GRID} hidden sm:grid border-b border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)]")>
+                <Show when=move || !is_empty.get()><div role="group" aria-label=t_string!(i18n, cart_sort_by) class=format!("{ROW_GRID} hidden sm:grid border-b border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)]")>
                     <div class="justify-self-center">
                         <Show when=move || source.can_write.get()>
                             <input type="checkbox" class="h-5 w-5" aria-label=t_string!(i18n, cart_select_all_visible) prop:checked=move || all_visible_selected.get() disabled=move || visible_ids.with(|ids| ids.is_empty()) on:change=move |_| {
@@ -677,6 +680,7 @@ pub fn ListCart(
                     <div></div>
                     <div></div>
                 </div>
+                </Show>
                 <ul id="cart-row-list" class="text-sm" data-testid="cart-rows">
                     <For each=move || { visible.get().into_iter().map(|(item, _)| item).collect::<Vec<_>>() } key=|item| item.id children=move |initial| {
                         let id = initial.id;

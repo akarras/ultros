@@ -1,4 +1,5 @@
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
+use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::AppLink;
 use crate::components::term_badge::TermRole;
 use std::cmp::Ordering;
@@ -9,13 +10,12 @@ use std::sync::Arc;
 
 use crate::analyzer_kit::filters::register_filters;
 use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
-use crate::analyzer_kit::stat_columns::{market_picker_options, shared_cols_in, toggle_shared_col};
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
-use crate::components::control_bar::{ColumnOption, ControlBar};
+use crate::components::control_bar::ControlBar;
 use crate::components::icon::Icon;
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::MetaDescription;
@@ -26,18 +26,20 @@ use crate::components::tool_help::ToolHeader;
 use crate::components::virtual_grid::GridColumn;
 use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
-use crate::components::virtual_grid::saved_views::provide_grid_saved_views;
+use crate::components::virtual_grid::saved_views::{GridSavedViews, provide_grid_saved_views};
+use crate::components::world_picker::WorldOnlyPicker;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::*;
-use crate::query_defaults::filter_query_signal;
+use crate::query_defaults::{filter_query_signal, seed_analyzer_default_view};
 use crate::routes::not_found::NotFound;
 use chrono::TimeDelta;
 use chrono::Utc;
 use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
+use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
 
@@ -47,6 +49,8 @@ use leptos_router::params::ParamsMap;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::recent_sales::SaleData;
+use ultros_api_types::world::World;
+use ultros_api_types::world_helper::WorldHelper;
 use xiv_gen::Item;
 use xiv_gen::{ItemId, ItemUiCategoryId, SpecialShop};
 
@@ -267,31 +271,6 @@ const COL_SHOPS: &str = "shops";
 const COL_COST: &str = "cost";
 const COL_HOURS: &str = "hours_between_sales";
 
-/// Native optional columns, in picker order. All four are on by default.
-const ALL_OPTIONAL_COLS: &[&str] = &[COL_PRICE_PER_ITEM, COL_SHOPS, COL_COST, COL_HOURS];
-
-/// The `?cols=` value an absent param stands for: every native optional
-/// column and no shared sale-history column — the grid's own defaults.
-fn default_cols_query() -> String {
-    ALL_OPTIONAL_COLS.join(",")
-}
-
-/// Picker checkboxes for a `?cols=` value. The grid owns the param (absent =
-/// defaults, explicit — even empty — = exact), so the toolbar reads the same
-/// token list the grid does rather than keeping a second visible set.
-fn picker_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    let Some(raw) = raw else {
-        return ALL_OPTIONAL_COLS.iter().copied().collect();
-    };
-    let mut visible: std::collections::HashSet<&'static str> = ALL_OPTIONAL_COLS
-        .iter()
-        .copied()
-        .filter(|col| raw.split(',').any(|tok| tok == *col))
-        .collect();
-    visible.extend(shared_cols_in(Some(raw)));
-    visible
-}
-
 fn exchange_filter_aliases() -> Vec<FilterAlias> {
     [
         ("price_per_item_min", COL_PRICE_PER_ITEM, FilterOp::Gte),
@@ -334,12 +313,18 @@ enum SortMode {
 
 impl std::fmt::Display for SortMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+        f.write_str(self.token())
+    }
+}
+
+impl SortMode {
+    fn token(self) -> &'static str {
+        match self {
             SortMode::Profit => "profit",
             SortMode::PricePerItem => "price",
             SortMode::QtyReceived => "qty",
             SortMode::HoursBetweenSales => "hours",
-        })
+        }
     }
 }
 
@@ -407,6 +392,18 @@ fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
     }
 }
 
+/// A local URL choice wins over the home-world preference. Broader scopes must
+/// not reach the recent-sales API, which only keeps samples for single worlds.
+fn exchange_world(
+    worlds: Option<&WorldHelper>,
+    requested: Option<&str>,
+    home: Option<World>,
+) -> Option<World> {
+    requested
+        .and_then(|name| worlds?.lookup_world_by_name(name)?.as_world().cloned())
+        .or(home)
+}
+
 /// Gates the exchange-item page on the `:id` route param naming a real item —
 /// same "fake item 0 page at 200" bug as `ItemView`, see
 /// `crate::routes::item_view::ItemView`.
@@ -426,22 +423,44 @@ pub fn ExchangeItem() -> impl IntoView {
 #[component]
 fn ExchangeItemContent() -> impl IntoView {
     let i18n = use_i18n();
+    seed_analyzer_default_view("currency-exchange");
     let params = use_params_map();
     let (home_world, _) = use_home_world();
+    // Recent-sale cadence is backed by the world's bounded recent-sale sample;
+    // that API cannot aggregate DCs/regions. Pick locally without changing home.
+    let (world_query, set_world_query) = query_signal::<String>("world");
+    let worlds = crate::global_state::use_world_helper().ok();
+    let selected_world = Memo::new(move |_| {
+        exchange_world(
+            worlds.as_deref(),
+            world_query.get().as_deref(),
+            home_world.get(),
+        )
+    });
+    let set_selected_world = (move |world: Option<World>| {
+        set_world_query.set(world.map(|world| world.name));
+    })
+    .into_signal_setter();
     // `filter_query_signal`, not a plain `query_signal`: this box is typed into
     // a digit at a time, and the router default (replace: false, scroll: true)
     // would push a history entry and yank the window to the top per keystroke —
     // the same bug this rebuild fixed for the filter chips.
     let (currency_quantity, set_currency_quantity) = filter_query_signal::<i32>("currency_amount");
-    let sales = ArcResource::new(home_world, move |world| async move {
-        let world = world.ok_or(AppError::NoHomeWorld)?;
-        get_recent_sales_for_world(&world.name).await
-    });
+    let sales = columnar_resource(
+        move || selected_world.get(),
+        move |world| async move {
+            let world = world.ok_or(AppError::ParamMissing)?;
+            get_recent_sales_for_world(&world.name).await
+        },
+    );
 
-    let world_cheapest_listings = ArcResource::new(home_world, move |world| async move {
-        let world = world.ok_or(AppError::NoHomeWorld)?;
-        get_cheapest_listings(&world.name).await
-    });
+    let world_cheapest_listings = columnar_resource(
+        move || selected_world.get(),
+        move |world| async move {
+            let world = world.ok_or(AppError::ParamMissing)?;
+            get_cheapest_listings(&world.name).await
+        },
+    );
     let data = tracked_data();
     let item_id = move || {
         ItemId(
@@ -486,7 +505,7 @@ fn ExchangeItemContent() -> impl IntoView {
     let sort_mode = Memo::new(move |_| sort_param().and_then(|s| s.parse::<SortMode>().ok()));
     let sort_dir = Memo::new(move |_| dir_param().and_then(|s| s.parse::<SortDir>().ok()));
     let market = use_market_data(Signal::derive(move || {
-        home_world.get().map(|w| w.name).unwrap_or_default()
+        selected_world.get().map(|w| w.name).unwrap_or_default()
     }));
     let filters = register_filters(exchange_filter_aliases(), Signal::derive(Vec::new));
     provide_grid_saved_views("currency-exchange-grid");
@@ -526,30 +545,6 @@ fn ExchangeItemContent() -> impl IntoView {
             _ => String::new(),
         }
     };
-    // Toolbar column picker: the four native optional columns, then every
-    // shared sale-history column grouped by window — the same picker the
-    // flip finder and recipe analyzer offer. Checked state and toggles go
-    // through `?cols=`, which the grid already reads for all optional
-    // columns, so saved links keep their exact meaning.
-    let (cols_param, set_cols_param) = query_signal::<String>("cols");
-    let picker_visible = Memo::new(move |_| picker_visible_cols(cols_param.get().as_deref()));
-    let column_options = Memo::new(move |_| {
-        ALL_OPTIONAL_COLS
-            .iter()
-            .copied()
-            .map(|col| ColumnOption::new(col, column_label(col)))
-            .chain(market_picker_options(market.window.selected.get()))
-            .collect::<Vec<_>>()
-    });
-    let toggle_column = Callback::new(move |col: &'static str| {
-        let previous = cols_param.get_untracked();
-        set_cols_param.set(Some(toggle_shared_col(
-            previous.as_deref(),
-            &default_cols_query(),
-            col,
-        )));
-    });
-    let reset_columns = Callback::new(move |_| set_cols_param.set(None));
     let column_sort = |id| match id {
         "number_received" => Some(SortMode::QtyReceived),
         "total_profit" => Some(SortMode::Profit),
@@ -570,11 +565,18 @@ fn ExchangeItemContent() -> impl IntoView {
         .into_iter()
         .map(|(id, width, optional)| {
             let column = GridColumn::new(id, column_label(id), width, optional, true);
+            let column = if matches!(id, "item" | COL_COST) {
+                column.fixed_width()
+            } else {
+                column
+            };
             if let Some(mode) = column_sort(id) {
-                column.sorted(
-                    sort_mode.get().unwrap_or_else(SortMode::fallback) == mode,
-                    sort_dir.get().unwrap_or_else(|| mode.default_dir()) == SortDir::Asc,
-                )
+                column
+                    .native_sort(mode.token(), mode.default_dir() == SortDir::Asc)
+                    .sorted(
+                        sort_mode.get().unwrap_or_else(SortMode::fallback) == mode,
+                        sort_dir.get().unwrap_or_else(|| mode.default_dir()) == SortDir::Asc,
+                    )
             } else {
                 column
             }
@@ -610,7 +612,7 @@ fn ExchangeItemContent() -> impl IntoView {
         rows
     });
     view! {
-        <div>
+        <div class="flex flex-col gap-4">
             <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", item_name()) />
             <MetaDescription text=move || {
                 t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
@@ -622,6 +624,8 @@ fn ExchangeItemContent() -> impl IntoView {
                 help_href="/help"
                 help_body=t_string!(i18n, currency_exchange_tool_help).to_string()
             >
+                <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, world)}</label>
+                <WorldOnlyPicker current_world=selected_world.into() set_current_world=set_selected_world />
                 <label for="currency-quantity" class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, currency_exchange_how_many)}
                 </label>
@@ -640,6 +644,7 @@ fn ExchangeItemContent() -> impl IntoView {
             <CalculationStrip calculation window=market.window />
             <ControlBar
                 sticky=false
+                actions=move || view! { <GridSavedViews id="currency-exchange-grid" /> }.into_any()
                 summary=move || {
                     view! {
                         <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
@@ -648,37 +653,20 @@ fn ExchangeItemContent() -> impl IntoView {
                     }
                     .into_any()
                 }
-                columns=column_options
-                visible_columns=picker_visible
-                on_toggle_column=toggle_column
-                on_reset_columns=reset_columns
                 empty_label=Signal::derive(move || {
                     t_string!(i18n, currency_exchange_no_filters_hint).to_string()
                 })
             />
             <div>
-                <Show when=move || home_world().is_none()>
-                            <div class="bg-red-900/50 p-4 rounded-lg text-white">
-                                {t!(i18n, currency_exchange_home_world_not_set_prefix)}
-                                <AppLink
-                                    href="/settings"
-                                    attr:class="underline"
-                                >
-                                    {t!(i18n, currency_exchange_settings)}
-                                </AppLink> {t!(i18n, currency_exchange_home_world_not_set_suffix)}
-                            </div>
+                <Show when=move || selected_world.get().is_none()>
+                    <p role="status" class="p-4 text-[color:var(--color-text-muted)]">
+                        {t!(i18n, analyzer_columns_exchange_choose_world)}
+                    </p>
                 </Show>
                 // The toolbar registry keeps signals owned by this grid. Keep
                 // the grid mounted as the home world changes; disposing it
                 // would leave the toolbar reading a previous owner's signals.
-                <div class:hidden=move || home_world().is_none()>
-                            <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
-                                {move || home_world().map(|w| t!(i18n, currency_exchange_assuming_sales_on, world = w.name))}
-                            </div>
-                            <div class="panel rounded-xl border border-white/5 overflow-hidden mb-4">
-                                <h3 class="px-3 py-2 border-b border-white/5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                                    {t!(i18n, currency_exchange_full_results)}
-                                </h3>
+                <div class:hidden=move || selected_world.get().is_none()>
                                 <Suspense fallback=move || {
                                     view! {
                                         <TableSkeleton
@@ -688,13 +676,17 @@ fn ExchangeItemContent() -> impl IntoView {
                                     }
                                 }>
                                     <MarketGrid
+                                        show_saved_views=false
                                         id="currency-exchange-grid"
                                         label=t_string!(i18n, currency_exchange_full_results).to_string()
                                         each=rows columns market
                                         row_height=72.0
-                                        key=|t: &CurrencyTrade| (t.cost_item, t.receive_item)
+                                        key=|t: &CurrencyTrade| (
+                                            t.cost_item.map(|item| (item.item.key_id.0, item.amount)),
+                                            t.receive_item.map(|item| (item.item.key_id.0, item.amount)),
+                                        )
                                         metrics=exchange_metrics()
-                                        subject=Arc::new(move |t: &CurrencyTrade| t.market_subject(home_world.get().map(|w| w.id).unwrap_or_default()))
+                                        subject=Arc::new(move |t: &CurrencyTrade| t.market_subject(selected_world.get().map(|w| w.id).unwrap_or_default()))
                                         header=move |id| {
                                             let label = column_label(id);
                                             if let Some(mode) = column_sort(id) {
@@ -735,7 +727,6 @@ fn ExchangeItemContent() -> impl IntoView {
                                         })
                                 }}
                                 </Suspense>
-                            </div>
                 </div>
             </div>
         </div>
@@ -1116,53 +1107,6 @@ mod tests {
         }
     }
 
-    /// The toolbar picker and the grid read the same `?cols=`: absent means
-    /// the four native columns, an explicit value (even empty) is exact,
-    /// unknown tokens are dropped, and toggling flips one token while
-    /// leaving every other native or shared column in place.
-    #[test]
-    fn toolbar_picker_mirrors_the_grid_cols_contract() {
-        type Cols = std::collections::HashSet<&'static str>;
-        let all: Cols = ALL_OPTIONAL_COLS.iter().copied().collect();
-        assert_eq!(picker_visible_cols(None), all);
-        assert_eq!(picker_visible_cols(Some("")), Cols::new());
-        let mixed = picker_visible_cols(Some("shops,bogus,market-sale-median"));
-        assert_eq!(
-            mixed,
-            [COL_SHOPS, "market-sale-median"]
-                .into_iter()
-                .collect::<Cols>()
-        );
-
-        let defaults = default_cols_query();
-        assert_eq!(defaults, "price_per_item,shops,cost,hours_between_sales");
-        let with_shared = toggle_shared_col(None, &defaults, "market-sale-median");
-        assert_eq!(
-            picker_visible_cols(Some(&with_shared)),
-            all.iter()
-                .copied()
-                .chain(["market-sale-median"])
-                .collect::<Cols>()
-        );
-        let without_shops = toggle_shared_col(Some(&with_shared), &defaults, COL_SHOPS);
-        assert_eq!(
-            picker_visible_cols(Some(&without_shops)),
-            [
-                COL_PRICE_PER_ITEM,
-                COL_COST,
-                COL_HOURS,
-                "market-sale-median"
-            ]
-            .into_iter()
-            .collect::<Cols>()
-        );
-        assert_eq!(
-            toggle_shared_col(Some(""), &defaults, COL_SHOPS),
-            COL_SHOPS,
-            "an explicit empty set starts from nothing, not the defaults"
-        );
-    }
-
     #[test]
     fn market_subject_uses_received_nq_item_and_raw_listing_on_home_world() {
         let data = xiv_gen_db::data();
@@ -1204,6 +1148,53 @@ mod tests {
         assert_eq!(SortMode::fallback(), SortMode::Profit);
         assert_eq!(SortMode::HoursBetweenSales.default_dir(), SortDir::Asc);
         assert_eq!(SortMode::Profit.default_dir(), SortDir::Desc);
+    }
+
+    #[test]
+    fn local_world_choice_needs_no_home_and_rejects_broader_scopes() {
+        use ultros_api_types::world::{Datacenter, Region, WorldData};
+        let home = World {
+            id: 1,
+            name: "Home".into(),
+            datacenter_id: 10,
+        };
+        let chosen = World {
+            id: 2,
+            name: "Chosen".into(),
+            datacenter_id: 10,
+        };
+        let worlds = WorldHelper::from(WorldData {
+            regions: vec![Region {
+                id: 100,
+                name: "Region".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Datacenter".into(),
+                    region_id: 100,
+                    worlds: vec![home.clone(), chosen.clone()],
+                }],
+            }],
+        });
+        assert_eq!(
+            exchange_world(Some(&worlds), Some("Chosen"), None),
+            Some(chosen.clone())
+        );
+        assert_eq!(
+            exchange_world(Some(&worlds), Some("Chosen"), Some(home.clone())),
+            Some(chosen)
+        );
+        assert_eq!(
+            exchange_world(Some(&worlds), None, Some(home.clone())),
+            Some(home.clone())
+        );
+        for invalid in ["Region", "Datacenter", "Typo"] {
+            assert_eq!(exchange_world(Some(&worlds), Some(invalid), None), None);
+            assert_eq!(
+                exchange_world(Some(&worlds), Some(invalid), Some(home.clone())),
+                Some(home.clone())
+            );
+        }
+        assert_eq!(exchange_world(None, None, None), None);
     }
 
     /// The chips read "Profit ≥ 5000" / "Profit ≤ 5000", so the row sitting

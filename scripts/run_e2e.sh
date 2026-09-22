@@ -173,6 +173,9 @@ else
     ( cd integration && BASE_URL="$BASE_URL" npm run test:search-responsiveness ) || test_exit=$?
 fi
 
+log "running projected game-data startup and deferred detail E2E"
+( cd integration && BASE_URL="$BASE_URL" npm run test:game-data-startup ) || test_exit=$?
+
 if [ "${RUN_ITEM_VIEW_LAYOUT:-1}" != "0" ]; then
     log "running item-view wide-layout E2E (issue #1234)"
     item_view_layout_exit=0
@@ -226,6 +229,7 @@ if [ "${E2E_RELEASE:-0}" != "1" ] && [ "${RUN_SHARED_ANALYZER_DATA:-1}" != "0" ]
     shared_analyzer_data_exit=0
     ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-analyzer-data ) || shared_analyzer_data_exit=$?
     ( cd integration && BASE_URL="$BASE_URL" npm run test:market-window ) || shared_analyzer_data_exit=$?
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-consistency ) || shared_analyzer_data_exit=$?
     if [ "$shared_analyzer_data_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$shared_analyzer_data_exit"
     fi
