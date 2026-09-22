@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Crash reports that point at the cause",
+  "blurb": "When the app crashes, the anonymous report now names the part of Ultros that failed instead of a bare number, so those crashes get fixed faster. Nothing extra is downloaded unless a crash happens."
+}

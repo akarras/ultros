@@ -72,6 +72,7 @@
     "test:group-detail": "node ./group-detail.cjs",
     "test:group-shared-list-fixture": "node --test ./group-shared-list.test.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs",
+    "test:wasm-symbolicate": "node --test ./wasm-symbolicate.test.cjs",
     "test:capture": "node --test ./capture.test.cjs",
     "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs",
     "diag:locale-hydration": "node ./locale-hydration.cjs",

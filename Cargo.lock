@@ -11494,6 +11494,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-symbols"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brotli",
+ "flate2",
+ "wasm-encoder",
+ "wasmparser 0.259.0",
+]
+
+[[package]]
 name = "wasm_split_helpers"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
