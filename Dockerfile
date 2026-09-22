@@ -90,20 +90,28 @@ RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
 # re-compressing the 16 MB wasm on the fly at tower-http's default quality —
 # that default was the difference between 7.2 MB and 4.9 MB on the wire for the
 # same file.
+#
+# `--split` emits the `#[lazy_route]` routes (see `ultros-app/src/routes/lazy.rs`)
+# as separate wasm chunks fetched on first navigation. `post_split.sh` then
+# fixes the loader's absolute `/pkg/` import and nests the bundle under
+# `pkg/<git hash>/`, the URL the server serves it from (after `wasm-symbols`
+# below, which needs the files at their build-time paths).
 RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
-    --precompress --lib-cargo-args=--timings -vv
-# Wasm symbol map for GlitchTip. wasm-opt ran with `-g` (`wasm-opt-features`
-# in Cargo.toml), so the optimized module still carries its `name` section.
-# `wasm-symbols` writes `ultros.symbols` (function index -> Rust name) next
-# to the wasm, strips the section from the module so it does not ship on
+    --split --precompress --lib-cargo-args=--timings -vv
+# Wasm symbol maps for GlitchTip. wasm-opt ran with `-g` (`wasm-opt-features`
+# in Cargo.toml), so the optimized modules still carry their `name` section.
+# `wasm-symbols` writes `<module>.symbols` (function index -> Rust name) next
+# to each wasm, strips the section from the module so it does not ship on
 # every page load, and regenerates the `.br`/`.gz` siblings cargo-leptos
-# wrote from the still-named file. The browser's Sentry `beforeSend` fetches
+# wrote from the still-named files. The browser's Sentry `beforeSend` fetches
 # `/pkg/<hash>/ultros.symbols` when a panic happens and resolves the
 # `wasm-function[N]` frames itself (see wasm_symbolicate.js). Fails the
-# build if the name section is missing — a wasm with no map must not ship
-# silently.
+# build if the main module's name section is missing — a wasm with no map
+# must not ship silently. Runs before `post_split.sh` because that relocates
+# the bundle to `pkg/<git hash>/`.
 RUN cargo build --release -p wasm-symbols \
-    && ./target/release/wasm-symbols target/site/pkg/ultros.wasm
+    && ./target/release/wasm-symbols target/site/pkg/ultros.wasm target/site/pkg/*.wasm \
+    && bash ./scripts/post_split.sh target/site
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the
