@@ -405,7 +405,10 @@ impl<K: CacheKind> StatsCache<K> {
 
 impl<K: CacheKind> Default for StatsCache<K> {
     fn default() -> Self {
-        Self::new(512, 2)
+        // 1024, not 512: `CacheKey` now carries a `columnar: bool`, so the
+        // legacy and columnar wire shapes of the same entry each get their
+        // own slot in the key space.
+        Self::new(1024, 2)
     }
 }
 

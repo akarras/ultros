@@ -39,7 +39,7 @@ pub(crate) struct CheapestFormat {
 
 impl CheapestFormat {
     fn is_columnar(&self) -> bool {
-        self.format.as_deref() == Some("columnar")
+        super::is_columnar(self.format.as_deref())
     }
 }
 

@@ -3056,14 +3056,14 @@ fn sort_recipes(
 /// on-demand raw body is [`raw_sales_key`]'s separate resource.
 // `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
 // required (both field types already derive it). `stats` and `raw` carry
-// `#[serde(with = "crate::columnar_wire::serde_with")]` so those two DTO
+// `#[serde(default, with = "crate::columnar_wire::serde_with")]` so those two DTO
 // fields still go through the columnar (struct-of-arrays) wire shape even
 // though the struct itself keeps the default codec.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SellHistory {
-    #[serde(with = "crate::columnar_wire::serde_with")]
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     stats: Option<BulkSaleStats>,
-    #[serde(with = "crate::columnar_wire::serde_with")]
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     raw: Option<RecentSales>,
     stats_failed: bool,
     raw_failed: bool,
@@ -3164,14 +3164,14 @@ fn revenue_stats_source(scope: Scope, is_buy_scope: bool, have_body: bool) -> Re
 /// failover.
 // `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
 // required (both field types already derive it). `listings` and `stats`
-// carry `#[serde(with = "crate::columnar_wire::serde_with")]` so those two
+// carry `#[serde(default, with = "crate::columnar_wire::serde_with")]` so those two
 // DTO fields still go through the columnar (struct-of-arrays) wire shape
 // even though the struct itself keeps the default codec.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SellScopeBodies {
-    #[serde(with = "crate::columnar_wire::serde_with")]
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     listings: Option<CheapestListings>,
-    #[serde(with = "crate::columnar_wire::serde_with")]
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     stats: Option<BulkSaleStats>,
     /// The cheapest map was asked for and did not arrive: revenue falls
     /// through `SignalView`'s base layer to the buy scope, which is a
