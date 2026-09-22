@@ -259,14 +259,31 @@ fn error_reporting_script() -> Option<String> {
         if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
             return null;
         }}
-        // After the drop check on purpose: a dropped event must never cost
-        // a symbols download. Returns a promise; Sentry awaits it.
+        // Rule 3 for the bare `RuntimeError: unreachable` trap. Under
+        // panic=immediate-abort EVERY prod panic has that shape, so a trap
+        // from an injecting population (translation overlay, stale Chrome)
+        // is only dropped once its frames resolve to tachys hydration code.
+        // Read before symbolicating: that rewrites the value.
+        var trapCandidate = !!(window.__ultrosIsInjectedTrapCandidate &&
+            window.__ultrosIsInjectedTrapCandidate(event));
+        // After the drop check on purpose: a dropped event never costs a
+        // symbols download — except a trap candidate, which needs its frames
+        // to be classified (one memoized map fetch per session).
         if (window.__ultrosSymbolicateEvent) {{
-            var symbolicated = window.__ultrosSymbolicateEvent(event);
-            if (typeof existingBeforeSend === "function") {{
-                return symbolicated.then(function(ev) {{ return existingBeforeSend(ev, hint); }});
-            }}
-            return symbolicated;
+            return window.__ultrosSymbolicateEvent(event).then(function(ev) {{
+                if (trapCandidate && window.__ultrosShouldDropSymbolicatedTrap &&
+                    window.__ultrosShouldDropSymbolicatedTrap(ev)) {{
+                    return null;
+                }}
+                if (typeof existingBeforeSend === "function") {{
+                    return existingBeforeSend(ev, hint);
+                }}
+                return ev;
+            }});
+        }}
+        // No symbolicator, so no frames: keep the old suppression.
+        if (trapCandidate) {{
+            return null;
         }}
         if (typeof existingBeforeSend === "function") {{
             return existingBeforeSend(event, hint);
@@ -833,6 +850,14 @@ mod error_filter_wiring {
         // value. Deleting either silently re-opens the #6661/#4908/#6570 flood.
         assert!(FILTER_JS.contains("ULTROS_JSSYS_EXECUTOR_RE"));
         assert!(FILTER_JS.contains("\"unreachable\""));
+        // Under panic=immediate-abort every prod panic is that bare trap, so
+        // the trap is dropped only AFTER symbolication, and only when its top
+        // frames are tachys hydration code. beforeSend calls both hooks;
+        // losing the second would drop every candidate trap, losing the first
+        // would re-open the flood.
+        assert!(FILTER_JS.contains("window.__ultrosIsInjectedTrapCandidate ="));
+        assert!(FILTER_JS.contains("window.__ultrosShouldDropSymbolicatedTrap ="));
+        assert!(FILTER_JS.contains("tachys::hydration::"));
         // Category 3 (modern-Chrome translation population): the injected
         // <font> DOM fingerprint that catches the flood the stale-UA check
         // misses. Removing it silently re-opens the #3005/#4911/#6406 flood.

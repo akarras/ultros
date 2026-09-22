@@ -41,7 +41,12 @@
 //      the wasm-bindgen-futures executor (a js-sys path — matched via a
 //      tachys hydration breadcrumb instead), and the unhandled
 //      `RuntimeError: unreachable` that reaches window.onerror with no
-//      rust_panic context at all. Suppressed only when an injecting /
+//      rust_panic context at all. That last shape is ambiguous in production:
+//      the wasm is built with `panic = "immediate-abort"`, so EVERY panic
+//      arrives as it. beforeSend therefore symbolicates such a trap first and
+//      drops it only when its top frames are tachys hydration code
+//      (__ultrosIsInjectedTrapCandidate / __ultrosShouldDropSymbolicatedTrap).
+//      Suppressed only when an injecting /
 //      stale-population fingerprint is present: a <font> element in the
 //      live DOM (which Ultros never emits, so it is necessarily
 //      translation-injected), the full-page-translation class on <html>
@@ -363,16 +368,11 @@
     ) {
       return true;
     }
-    // (c) The unhandled wasm trap at window.onerror has no rust_panic context;
-    //     its only event-level signal is the exact RuntimeError "unreachable"
-    //     value. (A genuine wasm `unreachable` on a clean current browser still
-    //     reports — this is gated behind the injecting-population fingerprint in
-    //     isInjectedTachysHydrationPanic.) Matched exactly so other RuntimeError
-    //     values, e.g. "table index is out of bounds", are untouched.
-    var ex = firstException(event);
-    if (ex && ex.type === "RuntimeError" && ex.value === "unreachable") {
-      return true;
-    }
+    // (c) The bare `RuntimeError: unreachable` trap is NOT recognized here.
+    //     Production wasm is built with `panic = "immediate-abort"`, so EVERY
+    //     panic — not just the tachys hydration one — reaches window.onerror in
+    //     exactly that shape. It is classified by its symbolicated frames
+    //     instead: see isBareWasmTrap / __ultrosIsTachysHydrationTrap below.
     // (b) Best-effort fallback: the original tachys hydration panic console
     //     breadcrumb, when the SDK path does attach it.
     var crumbs = breadcrumbList(event);
@@ -499,11 +499,20 @@
 
   function isInjectedTachysHydrationPanic(event) {
     try {
-      if (!isTachysHydrationPanicEvent(event)) return false;
-
       // Only suppress when an injecting-population fingerprint is present, so
       // a genuine hydration mismatch on a clean page still reaches GlitchTip.
+      return isTachysHydrationPanicEvent(event) && hasInjectingFingerprint(event);
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
 
+  // The populations whose hydration panics are injected, not ours: a
+  // translation overlay (breadcrumb, <font>, translated-* class on <html>) or
+  // a stale, version-pinned Chrome.
+  function hasInjectingFingerprint(event) {
+    try {
       // Page-stability detector breadcrumb (the injected overlay's own log).
       var crumbs = breadcrumbList(event);
       if (Array.isArray(crumbs)) {
@@ -536,6 +545,64 @@
       if (isStaleChromeMajor(chromeMajor(userAgent()))) return true;
     } catch (_) {
       /* never let the filter throw */
+    }
+    return false;
+  }
+
+  // The unhandled wasm trap at window.onerror: no rust_panic context, value
+  // exactly "unreachable" (V8's wording — the population rule 3 targets is
+  // Chrome). Matched exactly so other RuntimeError values, e.g. "table index
+  // is out of bounds", are untouched. Must be read BEFORE symbolication, which
+  // rewrites the value to "unreachable in <site>".
+  function isBareWasmTrap(event) {
+    var ex = firstException(event);
+    var ctx = event && event.contexts && event.contexts.rust_panic;
+    return !!(
+      ex &&
+      ex.type === "RuntimeError" &&
+      ex.value === "unreachable" &&
+      !ctx
+    );
+  }
+
+  var TACHYS_FRAME_RE = /^<*tachys::/;
+  var TACHYS_HYDRATION_FRAME_RE = /tachys::hydration::|^<*tachys::.*::hydrate\b/;
+  var WASM_FRAME_FILE_RE = /\.wasm:wasm-function\[\d+\]/;
+  var TRAP_CLASSIFY_DEPTH = 3;
+
+  // Classify a SYMBOLICATED trap: is it the tachys hydration panic?
+  //   true  — the top wasm frame is tachys code and one of the top three is in
+  //           tachys::hydration (`failed_to_cast_*`, `Cursor::*`) or a tachys
+  //           `hydrate` impl. Under immediate-abort the trap fires in the
+  //           panicking function itself, so there is no panic machinery above.
+  //   false — resolved, and something else: an app panic during hydration has
+  //           an `ultros_*` frame on top and is reported.
+  //   null  — the top frame did not resolve (map missing or failed to load),
+  //           so the trap cannot be told apart.
+  function tachysHydrationTrap(event) {
+    var ex = firstException(event);
+    var frames = ex && ex.stacktrace && ex.stacktrace.frames;
+    if (!Array.isArray(frames)) return null;
+    var wasm = [];
+    for (var i = frames.length - 1; i >= 0 && wasm.length < TRAP_CLASSIFY_DEPTH; i--) {
+      var f = frames[i];
+      var file = f && (f.filename || f.abs_path);
+      if (typeof file === "string" && WASM_FRAME_FILE_RE.test(file)) wasm.push(f);
+    }
+    if (!wasm.length) return null;
+    // Resolved names are Rust paths; an unresolved frame has none (or
+    // `wasm-function[N]` / `?`), never a `::`.
+    var names = wasm.map(function (f) {
+      return typeof f.function === "string" && f.function.indexOf("::") !== -1
+        ? f.function
+        : null;
+    });
+    if (names[0] === null) return null;
+    if (!TACHYS_FRAME_RE.test(names[0])) return false;
+    for (var j = 0; j < names.length; j++) {
+      if (names[j] !== null && TACHYS_HYDRATION_FRAME_RE.test(names[j])) {
+        return true;
+      }
     }
     return false;
   }
@@ -641,7 +708,7 @@
   // panics are never touched. Mutates the event in place and returns it.
   window.__ultrosAnnotateEvent = function (event) {
     try {
-      if (event && isTachysHydrationPanicEvent(event)) {
+      if (event && (isTachysHydrationPanicEvent(event) || isBareWasmTrap(event))) {
         event.contexts = event.contexts || {};
         if (!event.contexts.dom_injection) {
           event.contexts.dom_injection = domInjectionSnapshot();
@@ -651,6 +718,29 @@
       /* never let the filter throw */
     }
     return event;
+  };
+
+  // Rule 3 for the bare trap, part 1 — read BEFORE symbolication: is this a
+  // trap from an injecting population? Only these are symbolicated-then-
+  // classified; every other trap is simply reported.
+  window.__ultrosIsInjectedTrapCandidate = function (event) {
+    try {
+      return !!event && isBareWasmTrap(event) && hasInjectingFingerprint(event);
+    } catch (_) {
+      return false;
+    }
+  };
+
+  // Rule 3 for the bare trap, part 2 — read AFTER symbolication: drop a
+  // candidate only when its frames say tachys hydration. An unresolved trap
+  // (no map) keeps the pre-immediate-abort behaviour and is dropped, so a
+  // missing map cannot re-open the flood.
+  window.__ultrosShouldDropSymbolicatedTrap = function (event) {
+    try {
+      return tachysHydrationTrap(event) !== false;
+    } catch (_) {
+      return true;
+    }
   };
 
   window.__ultrosShouldDropEvent = function (event) {

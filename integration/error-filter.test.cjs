@@ -393,15 +393,20 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Under panic=immediate-abort every prod panic is this bare trap, so the
+  // synchronous check can no longer tell the hydration panic from an app
+  // panic. It passes the trap on; beforeSend symbolicates it and drops it only
+  // if its top frames are tachys hydration code — see
+  // integration/immediate-abort-trap-filter.test.cjs.
   {
-    name: "stale Chrome onerror RuntimeError unreachable (NO tachys breadcrumb) is dropped",
+    name: "stale Chrome onerror RuntimeError unreachable (NO tachys breadcrumb) is left to the post-symbolication check",
     ua: staleChromeUA(106),
     document: fakeDocumentEx({ fontCount: 0 }),
     event: {
       exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
-    expectDrop: true,
+    expectDrop: false,
   },
   {
     name: "RefCell cascade (js-sys loc) with injected <font>, NO tachys breadcrumb, is dropped",
