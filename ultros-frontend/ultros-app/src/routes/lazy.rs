@@ -7,10 +7,13 @@
 //! navigation instead of as part of the main bundle. Without `--split` the
 //! wrappers are inert — `view` is just an async fn that resolves at once.
 //!
-//! Only the two clusters that dominate the bundle are wrapped for now: the
-//! analyzer family and Lists (which drags in `loro`). `data()` is left empty
-//! on purpose; the components keep owning their resources, so the wrappers
-//! never change what a route renders, only *when its code arrives*.
+//! Wrapped: the analyzer family, Lists (which drags in `loro`), the
+//! logged-in features (groups, retainers, alerts), currency exchange, the
+//! item explorer and the text pages. Home, the item page and settings stay
+//! eager — they are the entry routes, and a chunk on that path would only add
+//! a request. `data()` is left empty on purpose; the components keep owning
+//! their resources, so the wrappers never change what a route renders, only
+//! *when its code arrives*.
 //!
 //! The wrapped argument must be a named pattern (`this`), not `_`: the
 //! `#[lazy_route]` macro re-emits it as a call argument.
@@ -19,17 +22,34 @@ use leptos::prelude::*;
 use leptos_router::{LazyRoute, lazy_route};
 
 use super::{
+    about::About,
+    alerts::Alerts,
     analyzer::{Analyzer, AnalyzerWorldView},
+    bot::BotGuide,
+    changelog::Changelog,
+    currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
+    edit_retainers::EditRetainers,
     fc_crafting_analyzer::FCCraftingAnalyzer,
+    group_detail::GroupDetail,
+    groups::{GroupInviteAccept, Groups},
     guest_lists::GuestListRoute,
+    help::{HelpArticle, HelpIndex},
+    history::History,
+    item_explorer::{CategoryItems, DefaultItems, ItemExplorer, JobItems},
+    job_set_detail::JobSetDetail,
+    legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
     leve_analyzer::LeveAnalyzer,
     list_view_sync::ListRoute,
     lists::{EditLists, ListInviteAccept, Lists},
     recipe_analyzer::RecipeAnalyzer,
+    retainers::{
+        RetainerListings, RetainerUndercuts, Retainers, RetainersBasePath, SingleRetainerListings,
+    },
     scrip_sources::ScripSources,
     vendor_resale::{VendorResale, VendorWorldView},
     vendor_sell::VendorSell,
     venture_analyzer::VentureAnalyzer,
+    welcome::Welcome,
 };
 
 /// Declares a unit-struct `LazyRoute` that renders one existing component.
@@ -72,6 +92,41 @@ lazy_component_route!(ListViewRoute => ListRoute);
 lazy_component_route!(EditListsRoute => EditLists);
 lazy_component_route!(GuestListLazyRoute => GuestListRoute);
 lazy_component_route!(ListInviteRoute => ListInviteAccept);
+
+// Logged-in features: most visitors never open these.
+lazy_component_route!(GroupsRoute => Groups);
+lazy_component_route!(GroupDetailRoute => GroupDetail);
+lazy_component_route!(GroupInviteRoute => GroupInviteAccept);
+lazy_component_route!(RetainersRoute => Retainers);
+lazy_component_route!(RetainersIndexRoute => RetainersBasePath);
+lazy_component_route!(EditRetainersRoute => EditRetainers);
+lazy_component_route!(RetainerUndercutsRoute => RetainerUndercuts);
+lazy_component_route!(RetainerListingsRoute => RetainerListings);
+lazy_component_route!(SingleRetainerListingsRoute => SingleRetainerListings);
+lazy_component_route!(AlertsRoute => Alerts);
+
+// Currency exchange: a self-contained tool with its own data model.
+lazy_component_route!(CurrencyExchangeRoute => CurrencyExchange);
+lazy_component_route!(CurrencySelectionRoute => CurrencySelection);
+lazy_component_route!(ExchangeItemRoute => ExchangeItem);
+
+// Text pages: no resources, no interactivity, surprisingly large as code.
+lazy_component_route!(PrivacyPolicyRoute => PrivacyPolicy);
+lazy_component_route!(CookiePolicyRoute => CookiePolicy);
+lazy_component_route!(WelcomeRoute => Welcome);
+lazy_component_route!(HelpIndexRoute => HelpIndex);
+lazy_component_route!(HelpArticleRoute => HelpArticle);
+lazy_component_route!(ChangelogRoute => Changelog);
+lazy_component_route!(AboutRoute => About);
+lazy_component_route!(BotGuideRoute => BotGuide);
+lazy_component_route!(HistoryRoute => History);
+
+// Item explorer: the browse-by-category/job layout and its children.
+lazy_component_route!(ItemExplorerRoute => ItemExplorer);
+lazy_component_route!(DefaultItemsRoute => DefaultItems);
+lazy_component_route!(CategoryItemsRoute => CategoryItems);
+lazy_component_route!(JobItemsRoute => JobItems);
+lazy_component_route!(JobSetDetailRoute => JobSetDetail);
 
 /// Starts fetching a lazy route's wasm chunk without navigating to it.
 ///
@@ -128,6 +183,66 @@ pub async fn preload_for_path(path: &str) {
         ("list", Some(_)) => {
             futures::join!(ListsRoute::preload(), ListViewRoute::preload());
         }
+        ("groups", None) => GroupsRoute::preload().await,
+        ("groups", Some(_)) => GroupDetailRoute::preload().await,
+        ("group", Some("invite")) => GroupInviteRoute::preload().await,
+        // The Retainers layout renders alongside whichever child matched.
+        ("retainers", None) => {
+            futures::join!(RetainersRoute::preload(), RetainersIndexRoute::preload());
+        }
+        ("retainers", Some("edit")) => {
+            futures::join!(RetainersRoute::preload(), EditRetainersRoute::preload());
+        }
+        ("retainers", Some("undercuts")) => {
+            futures::join!(RetainersRoute::preload(), RetainerUndercutsRoute::preload());
+        }
+        ("retainers", Some("listings")) => {
+            // `listings` and `listings/:id` are different routes; fetching both
+            // costs one small extra module and keeps the arm simple.
+            futures::join!(
+                RetainersRoute::preload(),
+                RetainerListingsRoute::preload(),
+                SingleRetainerListingsRoute::preload()
+            );
+        }
+        ("alerts", _) => AlertsRoute::preload().await,
+        ("currency-exchange", None) => {
+            futures::join!(
+                CurrencyExchangeRoute::preload(),
+                CurrencySelectionRoute::preload()
+            );
+        }
+        ("currency-exchange", Some(_)) => {
+            futures::join!(
+                CurrencyExchangeRoute::preload(),
+                ExchangeItemRoute::preload()
+            );
+        }
+        ("privacy", _) => PrivacyPolicyRoute::preload().await,
+        ("cookie-policy", _) => CookiePolicyRoute::preload().await,
+        ("welcome", _) => WelcomeRoute::preload().await,
+        ("help", None) => HelpIndexRoute::preload().await,
+        ("help", Some(_)) => HelpArticleRoute::preload().await,
+        ("changelog", _) => ChangelogRoute::preload().await,
+        ("about", _) => AboutRoute::preload().await,
+        ("bot", _) => BotGuideRoute::preload().await,
+        ("history", _) => HistoryRoute::preload().await,
+        // The Item Explorer layout renders alongside whichever child matched.
+        ("items", None) => {
+            futures::join!(ItemExplorerRoute::preload(), DefaultItemsRoute::preload());
+        }
+        ("items", Some("category")) => {
+            futures::join!(ItemExplorerRoute::preload(), CategoryItemsRoute::preload());
+        }
+        ("items", Some("jobset")) => {
+            // `jobset/:jobset` and `jobset/:jobset/set/:ilvl` are different
+            // routes; fetch both rather than parse the third segment.
+            futures::join!(
+                ItemExplorerRoute::preload(),
+                JobItemsRoute::preload(),
+                JobSetDetailRoute::preload()
+            );
+        }
         _ => {}
     }
 }
@@ -153,6 +268,23 @@ mod tests {
             "/list/123",
             "/list/invite/abc",
             "/list/device/xyz",
+            "/groups",
+            "/groups/7",
+            "/group/invite/abc",
+            "/retainers",
+            "/retainers/edit",
+            "/retainers/listings",
+            "/retainers/listings/42",
+            "/alerts",
+            "/currency-exchange",
+            "/currency-exchange/3",
+            "/privacy",
+            "/help",
+            "/help/getting-started",
+            "/items",
+            "/items/category/5",
+            "/items/jobset/BLM",
+            "/items/jobset/BLM/set/700",
             "/item/1",
             "",
         ] {

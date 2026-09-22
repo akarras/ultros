@@ -111,6 +111,24 @@ fn preload_lists() {
     lazy::preload::<lazy::EditListsRoute>();
 }
 
+/// `/currency-exchange` renders its layout *and* the selection index.
+fn preload_currency_exchange() {
+    lazy::preload::<lazy::CurrencyExchangeRoute>();
+    lazy::preload::<lazy::CurrencySelectionRoute>();
+}
+
+/// `/retainers/listings` renders the Retainers layout *and* the listings tab.
+fn preload_retainer_listings() {
+    lazy::preload::<lazy::RetainersRoute>();
+    lazy::preload::<lazy::RetainerListingsRoute>();
+}
+
+/// `/items` renders the Item Explorer layout *and* its default listing.
+fn preload_item_explorer() {
+    lazy::preload::<lazy::ItemExplorerRoute>();
+    lazy::preload::<lazy::DefaultItemsRoute>();
+}
+
 /// Persistent left sidebar. Brand at top, sections in the middle,
 /// utility links + version hash at the bottom.
 ///
@@ -180,7 +198,13 @@ pub fn SideNav() -> impl IntoView {
                         }}
                     </span>
                 </button>
-                <SideNavItem href="/items".to_string() section="items" icon=i::MdiJellyfish hero=true>
+                <SideNavItem
+                    href="/items".to_string()
+                    section="items"
+                    icon=i::MdiJellyfish
+                    hero=true
+                    preload=preload_item_explorer
+                >
                     {t!(i18n, item_explorer)}
                 </SideNavItem>
 
@@ -266,6 +290,7 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href="/currency-exchange".to_string()
                     section="currency-exchange"
+                    preload=preload_currency_exchange
                     icon=i::BsArrowLeftRight
                 >
                     {t!(i18n, currency_exchange)}
@@ -281,11 +306,17 @@ pub fn SideNav() -> impl IntoView {
                 >
                     {t!(i18n, lists)}
                 </SideNavItem>
-                <SideNavItem href="/groups".to_string() section="groups" icon=i::BiGroupSolid>
+                <SideNavItem
+                    href="/groups".to_string()
+                    section="groups"
+                    icon=i::BiGroupSolid
+                    preload={lazy::preload::<lazy::GroupsRoute>}
+                >
                     {t!(i18n, groups)}
                 </SideNavItem>
                 <SideNavItem
                     href="/retainers/listings".to_string()
+                    preload=preload_retainer_listings
                     section="retainers"
                     icon=i::FaUserTieSolid
                 >
@@ -299,14 +330,25 @@ pub fn SideNav() -> impl IntoView {
             // along with the footer (see `.app-shell-collapsed .side-nav-info`);
             // expand the sidebar to reach them.
             <nav class="side-nav-info" aria-label=t_string!(i18n, help_label)>
-                <SideNavItem href="/bot".to_string() section="bot" icon=i::BsDiscord>
+                <SideNavItem
+                    href="/bot".to_string()
+                    section="bot"
+                    icon=i::BsDiscord
+                    preload={lazy::preload::<lazy::BotGuideRoute>}
+                >
                     {t!(i18n, discord_bot)}
                 </SideNavItem>
-                <SideNavItem href="/help".to_string() section="help" icon=i::BsBook>
+                <SideNavItem
+                    href="/help".to_string()
+                    section="help"
+                    icon=i::BsBook
+                    preload={lazy::preload::<lazy::HelpIndexRoute>}
+                >
                     {t!(i18n, help_label)}
                 </SideNavItem>
                 <SideNavItem
                     href="/changelog".to_string()
+                    preload={lazy::preload::<lazy::ChangelogRoute>}
                     section="changelog"
                     icon=i::BsMegaphone
                     badge=whats_new

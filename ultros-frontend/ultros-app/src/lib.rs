@@ -49,29 +49,8 @@ use crate::{
         on_hand_input::provide_on_hand_context, patreon::*, toast::*, update_banner::UpdateBanner,
     },
     routes::{
-        about::*,
-        alerts::Alerts,
-        bot::BotGuide,
-        changelog::Changelog,
-        currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
-        edit_retainers::*,
-        group_detail::GroupDetail,
-        groups::*,
-        help::*,
-        history::*,
-        home_page::*,
-        item_explorer::*,
-        item_view::*,
-        job_set_detail::JobSetDetail,
-        lazy::*,
-        legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
-        not_found::NotFound,
-        npc_view::NpcView,
-        recipe_view::RecipeView,
-        retainers::*,
-        settings::*,
-        trends::*,
-        welcome::*,
+        home_page::*, item_view::*, lazy::*, not_found::NotFound, npc_view::NpcView,
+        recipe_view::RecipeView, settings::*, trends::*,
     },
 };
 use icondata as i;
@@ -627,28 +606,28 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                     <Routes fallback=NotFound>
                         <components::virtual_grid::fixture::GridFixtureRoutes/>
                         <Route path=path!("") view=HomePage />
-                        <ParentRoute path=path!("retainers") view=Retainers>
-                            <Route path=path!("edit") view=EditRetainers />
-                            <Route path=path!("undercuts") view=RetainerUndercuts />
-                            <Route path=path!("listings") view=RetainerListings />
-                            <Route path=path!("listings/:id") view=SingleRetainerListings />
-                            <Route path=path!("") view=RetainersBasePath />
+                        <ParentRoute path=path!("retainers") view={Lazy::<RetainersRoute>::new()}>
+                            <Route path=path!("edit") view={Lazy::<EditRetainersRoute>::new()} />
+                            <Route path=path!("undercuts") view={Lazy::<RetainerUndercutsRoute>::new()} />
+                            <Route path=path!("listings") view={Lazy::<RetainerListingsRoute>::new()} />
+                            <Route path=path!("listings/:id") view={Lazy::<SingleRetainerListingsRoute>::new()} />
+                            <Route path=path!("") view={Lazy::<RetainersIndexRoute>::new()} />
                         </ParentRoute>
-                        <Route path=path!("alerts") view=Alerts />
-                        <Route path=path!("groups") view=Groups />
-                        <Route path=path!("groups/:id") view=GroupDetail />
-                        <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
+                        <Route path=path!("alerts") view={Lazy::<AlertsRoute>::new()} />
+                        <Route path=path!("groups") view={Lazy::<GroupsRoute>::new()} />
+                        <Route path=path!("groups/:id") view={Lazy::<GroupDetailRoute>::new()} />
+                        <Route path=path!("group/invite/:invite_id") view={Lazy::<GroupInviteRoute>::new()} />
                         <ParentRoute path=path!("list") view={Lazy::<ListsRoute>::new()}>
                             <Route path=path!("invite/:invite_id") view={Lazy::<ListInviteRoute>::new()} />
                             <Route path=path!("device/:device_id") view={Lazy::<GuestListLazyRoute>::new()} />
                             <Route path=path!(":id") view={Lazy::<ListViewRoute>::new()} />
                             <Route path=path!("") view={Lazy::<EditListsRoute>::new()} />
                         </ParentRoute>
-                        <ParentRoute path=path!("items") view=ItemExplorer>
-                            <Route path=path!("jobset/:jobset/set/:ilvl") view=JobSetDetail />
-                            <Route path=path!("jobset/:jobset") view=JobItems />
-                            <Route path=path!("category/:category") view=CategoryItems />
-                            <Route path=path!("") view=DefaultItems />
+                        <ParentRoute path=path!("items") view={Lazy::<ItemExplorerRoute>::new()}>
+                            <Route path=path!("jobset/:jobset/set/:ilvl") view={Lazy::<JobSetDetailRoute>::new()} />
+                            <Route path=path!("jobset/:jobset") view={Lazy::<JobItemsRoute>::new()} />
+                            <Route path=path!("category/:category") view={Lazy::<CategoryItemsRoute>::new()} />
+                            <Route path=path!("") view={Lazy::<DefaultItemsRoute>::new()} />
                         </ParentRoute>
                         // #6831: the item page's data (`listing_resource`) is
                         // slow in production, so its several `<Suspense>`/`<Transition>`
@@ -698,19 +677,19 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("trends/:world") view=Trends />
                         <Route path=path!("trends") view=Trends />
                         <Route path=path!("settings") view=Settings />
-                        <Route path=path!("welcome") view=Welcome />
-                        <Route path=path!("help") view=HelpIndex />
-                        <Route path=path!("help/:topic") view=HelpArticle />
-                        <Route path=path!("changelog") view=Changelog />
+                        <Route path=path!("welcome") view={Lazy::<WelcomeRoute>::new()} />
+                        <Route path=path!("help") view={Lazy::<HelpIndexRoute>::new()} />
+                        <Route path=path!("help/:topic") view={Lazy::<HelpArticleRoute>::new()} />
+                        <Route path=path!("changelog") view={Lazy::<ChangelogRoute>::new()} />
                         <Route path=path!("profile") view=Profile />
-                        <Route path=path!("privacy") view=PrivacyPolicy />
-                        <Route path=path!("cookie-policy") view=CookiePolicy />
-                        <Route path=path!("about") view=About />
-                        <Route path=path!("bot") view=BotGuide />
-                        <Route path=path!("history") view=History />
-                        <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
-                            <Route path=path!(":id") view=ExchangeItem />
-                            <Route path=path!("") view=CurrencySelection />
+                        <Route path=path!("privacy") view={Lazy::<PrivacyPolicyRoute>::new()} />
+                        <Route path=path!("cookie-policy") view={Lazy::<CookiePolicyRoute>::new()} />
+                        <Route path=path!("about") view={Lazy::<AboutRoute>::new()} />
+                        <Route path=path!("bot") view={Lazy::<BotGuideRoute>::new()} />
+                        <Route path=path!("history") view={Lazy::<HistoryRoute>::new()} />
+                        <ParentRoute path=path!("currency-exchange") view={Lazy::<CurrencyExchangeRoute>::new()}>
+                            <Route path=path!(":id") view={Lazy::<ExchangeItemRoute>::new()} />
+                            <Route path=path!("") view={Lazy::<CurrencySelectionRoute>::new()} />
                         </ParentRoute>
                     </Routes>
                 </AppShell>
