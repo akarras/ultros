@@ -178,8 +178,9 @@ fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
     // trampoline (`__wbg_call -> closure -> reporter`), not the panic site —
     // which is what every GlitchTip RustWasmPanic event carried until this
     // capture was added. The browser lists wasm frames as
-    // `ultros.wasm:wasm-function[N]:0x...`; the Sentry `beforeSend` hook
-    // resolves `N` to a Rust function name from `/pkg/<hash>/ultros.symbols`.
+    // `<module>.wasm:wasm-function[N]:0x...`; the Sentry `beforeSend` hook
+    // resolves `N` to a Rust function name from that module's
+    // `/pkg/<hash>/<module>.symbols` map.
     let stack = error_stack(&js_sys::Error::new(""));
     let message = panic_info
         .payload()

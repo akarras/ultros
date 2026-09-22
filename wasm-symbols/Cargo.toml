@@ -16,6 +16,9 @@ wasmparser = { version = "0.259", default-features = false, features = ["std"] }
 # it rewrites.
 brotli = "8"
 flate2 = "1"
+# `cargo leptos build --split` passes `--no-demangle` to wasm-bindgen, so
+# the name sections carry raw v0 symbols; the map demangles them itself.
+rustc-demangle = "0.1"
 
 [dev-dependencies]
 wasm-encoder = "0.259"

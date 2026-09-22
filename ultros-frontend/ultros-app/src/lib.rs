@@ -234,7 +234,7 @@ fn error_reporting_script() -> Option<String> {
 
     // Wasm frame symbolicator. Defines window.__ultrosSymbolicateEvent,
     // which resolves `wasm-function[N]` frames to Rust function names from
-    // the release's /pkg/<hash>/ultros.symbols map (see wasm_symbolicate.js
+    // the release's per-module /pkg/<hash>/<module>.symbols maps (see wasm_symbolicate.js
     // and the wasm-symbols crate). Also injected verbatim; tested by
     // integration/wasm-symbolicate.test.cjs.
 {symbolicate_js}

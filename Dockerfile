@@ -99,18 +99,21 @@ RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
 RUN cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
     --split --precompress --lib-cargo-args=--timings -vv
 # Wasm symbol maps for GlitchTip. wasm-opt ran with `-g` (`wasm-opt-features`
-# in Cargo.toml), so the optimized modules still carry their `name` section.
-# `wasm-symbols` writes `<module>.symbols` (function index -> Rust name) next
-# to each wasm, strips the section from the module so it does not ship on
-# every page load, and regenerates the `.br`/`.gz` siblings cargo-leptos
-# wrote from the still-named files. The browser's Sentry `beforeSend` fetches
-# `/pkg/<hash>/ultros.symbols` when a panic happens and resolves the
-# `wasm-function[N]` frames itself (see wasm_symbolicate.js). Fails the
-# build if the main module's name section is missing — a wasm with no map
-# must not ship silently. Runs before `post_split.sh` because that relocates
-# the bundle to `pkg/<git hash>/`.
+# in Cargo.toml), so every optimized module — `ultros.wasm` plus the
+# `split___*.wasm` route modules and `chunk_N.wasm` shared modules from
+# `--split` — still carries its `name` section. `wasm-symbols` walks the pkg
+# dir and, per module, writes `<module>.symbols` (function index -> Rust
+# name, demangled: `--split` makes wasm-bindgen leave names mangled) next to
+# the wasm, strips the section so it does not ship on every page load, and
+# regenerates the `.br`/`.gz` siblings cargo-leptos wrote from the
+# still-named file. The browser's Sentry `beforeSend` fetches
+# `/pkg/<hash>/<module>.symbols` for each module a panic stack touches and
+# resolves the `wasm-function[N]` frames itself (see wasm_symbolicate.js).
+# Fails the build if any module lacks a name section, or if no module names
+# a function — a wasm with no map must not ship silently. Runs before
+# `post_split.sh` because that relocates the bundle to `pkg/<git hash>/`.
 RUN cargo build --release -p wasm-symbols \
-    && ./target/release/wasm-symbols target/site/pkg/ultros.wasm target/site/pkg/*.wasm \
+    && ./target/release/wasm-symbols target/site/pkg \
     && bash ./scripts/post_split.sh target/site
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via

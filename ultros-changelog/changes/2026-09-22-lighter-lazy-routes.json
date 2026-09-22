@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Lighter downloads for the analyzers and Lists",
+  "blurb": "The code that loads on demand for the analyzers and Lists no longer carries debugging names, so those first visits download less. Crash reports from those pages still name the part of Ultros that failed."
+}

@@ -40,12 +40,46 @@ const SYMBOLS = [
 
 const WASM = "https://ultros.app/pkg/9b93be1/ultros.wasm";
 
-function wasmFrame(index, name) {
-  const filename = `/pkg/9b93be1/ultros.wasm:wasm-function[${index}]:0xca0ed2`;
-  const f = { filename, abs_path: `${WASM}:wasm-function[${index}]:0xca0ed2` };
+// A `--split` build ships route modules and shared chunks next to the main
+// module; each gets its own `.symbols` sibling from `wasm-symbols`.
+const SPLIT_SYMBOLS = [
+  "3:ultros_app::routes::analyzer::AnalyzerWorld::{{closure}}",
+  "5:ultros_app::components::virtual_grid::VirtualGrid::render",
+].join("\n");
+const CHUNK_SYMBOLS = [
+  "0:alloc::raw_vec::RawVec<T>::grow_one",
+  // v0 demangling (what a `--split` build yields) writes trait impls as
+  // `<Type as Trait>::method`; our crates still count as in_app there.
+  "1:<ultros_api_types::listings::ActiveListing as core::clone::Clone>::clone",
+  "2:<alloc::vec::Vec<ultros_app::global_state::LocalWorldData> as core::clone::Clone>::clone",
+].join("\n");
+
+function wasmFrame(index, name, module = "ultros.wasm") {
+  const filename = `/pkg/9b93be1/${module}:wasm-function[${index}]:0xca0ed2`;
+  const f = {
+    filename,
+    abs_path: `https://ultros.app/pkg/9b93be1/${module}:wasm-function[${index}]:0xca0ed2`,
+  };
   if (name !== undefined) f.function = name;
   else f.function = "?";
   return f;
+}
+
+function splitFrame(index) {
+  return wasmFrame(index, undefined, "split___analyzer_world.wasm");
+}
+
+function chunkFrame(index) {
+  return wasmFrame(index, undefined, "chunk_17.wasm");
+}
+
+// Scripted fetch for a split bundle: every module URL answers with its own
+// map so a test can prove frames were resolved against the right one.
+function splitBundle(url) {
+  if (url.endsWith("/ultros.symbols")) return SYMBOLS;
+  if (url.endsWith("/split___analyzer_world.symbols")) return SPLIT_SYMBOLS;
+  if (url.endsWith("/chunk_17.symbols")) return CHUNK_SYMBOLS;
+  return 404;
 }
 
 function glueFrame(fn) {
@@ -313,6 +347,164 @@ test("symbolicates every exception in a chain", async () => {
     out.exception.values[1].stacktrace.frames[0].function,
     "xiv_gen_db::data",
   );
+});
+
+test("resolves split route and chunk frames from their own maps", async () => {
+  const { symbolicate, calls } = loadSymbolicator(splitBundle);
+  const ev = panicEvent();
+  // A panic inside a lazily loaded analyzer route: the shared chunk called
+  // from the route module, called from the main module.
+  frames(ev).splice(2, 0, splitFrame(3), splitFrame(5), chunkFrame(0));
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(calls.slice().sort(), [
+    "https://ultros.app/pkg/9b93be1/chunk_17.symbols",
+    "https://ultros.app/pkg/9b93be1/split___analyzer_world.symbols",
+    "https://ultros.app/pkg/9b93be1/ultros.symbols",
+  ]);
+  const fns = frames(out).map((f) => [f.function, f.in_app]);
+  assert.deepStrictEqual(fns, [
+    ["__wbg_adapter_50", undefined],
+    ["leptos::callback::Callback::run", false],
+    ["ultros_app::routes::analyzer::AnalyzerWorld::{{closure}}", true],
+    ["ultros_app::components::virtual_grid::VirtualGrid::render", true],
+    ["alloc::raw_vec::RawVec<T>::grow_one", false],
+    ["ultros_app::routes::item_view::ItemView::{{closure}}", true],
+    ["core::option::unwrap_failed", false],
+  ]);
+});
+
+test("v0 trait-impl forms of the panic machinery are trimmed too", async () => {
+  // Real entries from a `--split` build's ultros.symbols: the runtime's
+  // payload impls and our hook's FnOnce impl render as `<X as Trait>::m`.
+  const v0 = [
+    "7:<std::panicking::begin_panic::Payload<&str> as alloc::panicking::PanicPayload>::get",
+    "9:core::panicking::panic_fmt",
+    "12:<ultros_client::set_panic_hook::{closure#0} as core::ops::function::FnOnce<(&std::panic::PanicHookInfo,)>>::call_once",
+    "13:console_error_panic_hook::hook",
+    "20:core::option::unwrap_failed",
+    "42:ultros_app::routes::item_view::__component_item_view_content::{closure#10}",
+    "43:leptos::callback::Callback::run",
+  ].join("\n");
+  const { symbolicate } = loadSymbolicator(() => v0);
+  const out = await symbolicate(panicEvent());
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "__wbg_adapter_50",
+      "leptos::callback::Callback::run",
+      "ultros_app::routes::item_view::__component_item_view_content::{closure#10}",
+      "core::option::unwrap_failed",
+    ],
+  );
+});
+
+test("v0 trait-impl paths of our crates are in_app", async () => {
+  const { symbolicate } = loadSymbolicator(splitBundle);
+  const ev = {
+    exception: {
+      values: [
+        {
+          type: "RustWasmPanic",
+          value: "x",
+          stacktrace: { frames: [chunkFrame(0), chunkFrame(1), chunkFrame(2)] },
+        },
+      ],
+    },
+  };
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.in_app),
+    // Vec<LocalWorldData>::clone is alloc's code, not ours.
+    [false, true, false],
+  );
+});
+
+test("the same index in two modules resolves to two different names", async () => {
+  const { symbolicate } = loadSymbolicator(splitBundle);
+  const ev = {
+    exception: {
+      values: [
+        {
+          type: "RustWasmPanic",
+          value: "x",
+          stacktrace: { frames: [wasmFrame(9), splitFrame(3)] },
+        },
+      ],
+    },
+  };
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "core::panicking::panic_fmt",
+      "ultros_app::routes::analyzer::AnalyzerWorld::{{closure}}",
+    ],
+  );
+});
+
+test("maps are cached per module URL", async () => {
+  const { symbolicate, calls } = loadSymbolicator(splitBundle);
+  const ev = () => {
+    const e = panicEvent();
+    frames(e).splice(2, 0, splitFrame(3), chunkFrame(0));
+    return e;
+  };
+  await symbolicate(ev());
+  await symbolicate(ev());
+  // A third event touching only the chunk still fetches nothing new.
+  await symbolicate({
+    exception: {
+      values: [{ type: "RustWasmPanic", value: "y", stacktrace: { frames: [chunkFrame(0)] } }],
+    },
+  });
+  assert.strictEqual(calls.length, 3);
+  assert.strictEqual(new Set(calls).size, 3);
+});
+
+test("a missing chunk map leaves only that module's frames unresolved", async () => {
+  const { symbolicate } = loadSymbolicator((url) =>
+    url.endsWith("/chunk_17.symbols") ? 404 : splitBundle(url),
+  );
+  const ev = panicEvent();
+  frames(ev).splice(2, 0, splitFrame(3), chunkFrame(0));
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "__wbg_adapter_50",
+      "leptos::callback::Callback::run",
+      "ultros_app::routes::analyzer::AnalyzerWorld::{{closure}}",
+      "?",
+      "ultros_app::routes::item_view::ItemView::{{closure}}",
+      "core::option::unwrap_failed",
+    ],
+  );
+});
+
+test("a wasm URL outside /pkg/<hash>/ is not a frame we own", async () => {
+  const { symbolicate, calls } = loadSymbolicator(splitBundle);
+  const ev = {
+    exception: {
+      values: [
+        {
+          type: "RuntimeError",
+          value: "x",
+          stacktrace: {
+            frames: [
+              {
+                filename: "https://cdn.example/other/thing.wasm:wasm-function[3]:0x1",
+                abs_path: "https://cdn.example/other/thing.wasm:wasm-function[3]:0x1",
+                function: "?",
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const out = await symbolicate(ev);
+  assert.strictEqual(calls.length, 0);
+  assert.strictEqual(frames(out)[0].function, "?");
 });
 
 test("a throwing fetch implementation cannot break the event", async () => {
