@@ -16,6 +16,7 @@ use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::query_signal;
@@ -515,11 +516,11 @@ fn VentureAnalyzerTable(
         subject.label = t_string!(i18n, market_returned_item).to_string();
         subject
      })
-     metrics=venture_metrics()
+     metrics=with_units(venture_metrics(), &[("profit", Unit::Gil), ("unit-price", Unit::Gil), ("avg-price", Unit::Gil), ("daily-sales", Unit::Rate)])
      id="venture-analyzer-grid" label=t_string!(i18n, venture_analyzer_col_venture_item).to_string()
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, venture_analyzer_col_venture_item).to_string(), 320.0, false, true).fixed_width(),
-    { let mut col = GridColumn::new("profit",t_string!(i18n, venture_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
+    { let mut col = GridColumn::new("profit",t_string!(i18n, venture_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col },
     GridColumn::new("unit-price",t_string!(i18n, venture_analyzer_col_unit_price).to_string(), 130.0, true, true).native_sort("unit-price", SortMode::UnitPrice.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::UnitPrice, sort_dir.get().unwrap_or_else(||SortMode::UnitPrice.default_dir()) == SortDir::Asc),
     GridColumn::new("avg-price",format!("{} ({})", t_string!(i18n, venture_analyzer_col_avg_price), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("avg-price", SortMode::AvgPrice.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::AvgPrice, sort_dir.get().unwrap_or_else(||SortMode::AvgPrice.default_dir()) == SortDir::Asc),
     GridColumn::new("daily-sales",format!("{} ({})", t_string!(i18n, venture_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("daily-sales", SortMode::DailySales.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::DailySales, sort_dir.get().unwrap_or_else(||SortMode::DailySales.default_dir()) == SortDir::Asc),

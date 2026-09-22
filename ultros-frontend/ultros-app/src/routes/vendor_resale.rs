@@ -16,6 +16,7 @@ use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{GridPresetView, GridSavedViews};
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::query_signal;
 use crate::{
@@ -746,11 +747,11 @@ fn VendorResaleTable(
  row_height=40.0
  columns=Signal::derive(move || vec![GridColumn::new("hq",t_string!(i18n, vendor_resale_hq).to_string(), 60.0, true, true),
 GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), ITEM_COLUMN_WIDTH, false, true).fixed_width(),
-{ let mut col = GridColumn::new("profit",t_string!(i18n, vendor_resale_profit).to_string(), 130.0, true, true).native_sort("profit", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
-{ let mut col = GridColumn::new("roi",t_string!(i18n, vendor_resale_roi).to_string(), 100.0, true, true).native_sort("roi", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
+{ let mut col = GridColumn::new("profit",t_string!(i18n, vendor_resale_profit).to_string(), 130.0, true, true).native_sort("profit", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col },
+{ let mut col = GridColumn::new("roi",t_string!(i18n, vendor_resale_roi).to_string(), 100.0, true, true).native_sort("roi", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col },
 GridColumn::new("vendor-price",t_string!(i18n, vendor_resale_vendor_price).to_string(), 130.0, true, true).native_sort("vendor-price", true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::VendorPrice, sort_dir.get().unwrap_or_else(||SortMode::VendorPrice.default_dir()) == SortDir::Asc),
 GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_string(), 130.0, true, true).native_sort("market-price", false).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
-{ let mut col = GridColumn::new("sale-time",t_string!(i18n, vendor_resale_avg_sale_time).to_string(), 130.0, true, true).native_sort("sale-time", true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::SaleTime, sort_dir.get().unwrap_or_else(||SortMode::SaleTime.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("next-sale", filter_label("next-sale"), false)); col }])
+{ let mut col = GridColumn::new("sale-time",t_string!(i18n, vendor_resale_avg_sale_time).to_string(), 130.0, true, true).native_sort("sale-time", true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::SaleTime, sort_dir.get().unwrap_or_else(||SortMode::SaleTime.default_dir()) == SortDir::Asc); col }])
  header=move |id| {match id {"hq" => view! {<div  class="text-center w-full min-w-0">
                                     {t!(i18n, vendor_resale_hq)}
                                 </div>}.into_any(),
@@ -799,7 +800,7 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
                                 </div>}.into_any(), _ => ().into_any()}}
  market
  on_rows=Callback::new(move |rows: Vec<(usize, CalculatedVendorProfitData)>| queried_count.set(rows.len()))
- metrics=native_metrics
+ metrics=with_units(native_metrics, &[("profit", Unit::Gil), ("roi", Unit::Percent), ("vendor-price", Unit::Gil), ("market-price", Unit::Gil), ("sale-time", Unit::Seconds)])
  subject=Arc::new(move |(_, data): &(usize, CalculatedVendorProfitData)| { let mut subject = MarketSubject::new(data.inner.item_id, false, data.inner.market_world_id); subject.listing_price = data.inner.listing_price; subject })
  each=sorted_data
                         key=move |(_, data): &(usize, CalculatedVendorProfitData)| data.inner.item_id

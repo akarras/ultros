@@ -2,6 +2,7 @@ use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, Calculatio
 use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::AppLink;
 use crate::components::term_badge::TermRole;
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -685,7 +686,7 @@ fn ExchangeItemContent() -> impl IntoView {
                                             t.cost_item.map(|item| (item.item.key_id.0, item.amount)),
                                             t.receive_item.map(|item| (item.item.key_id.0, item.amount)),
                                         )
-                                        metrics=exchange_metrics()
+                                        metrics=with_units(exchange_metrics(), &[("total_profit", Unit::Gil), (COL_HOURS, Unit::Hours)])
                                         subject=Arc::new(move |t: &CurrencyTrade| t.market_subject(selected_world.get().map(|w| w.id).unwrap_or_default()))
                                         header=move |id| {
                                             let label = column_label(id);

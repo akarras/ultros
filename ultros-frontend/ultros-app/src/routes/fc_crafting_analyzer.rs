@@ -21,6 +21,7 @@ use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::use_world_helper;
@@ -40,7 +41,7 @@ use crate::{
         sort_header::{SortColumn, SortDir, SortableHeaderCell},
         tool_help::*,
         virtual_grid::{
-            ColumnFilter, GridColumn,
+            GridColumn,
             metrics::{GridMetric, GridValue},
         },
         world_picker::WorldOnlyPicker,
@@ -674,21 +675,21 @@ fn FCCraftingAnalyzerTable(
              subject.listing_price = row.listing_price;
              subject
          })
-         metrics=vec![
+         metrics=with_units(vec![
              GridMetric::text("item", move |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Text(items.get(&ItemId(row.sequence.result_item)).map(|item| item.name.to_string()).unwrap_or_default())),
              GridMetric::number("profit", |(_, row): &(usize, Arc<FCCraftProfitData>)| row.financial_value(row.profit)),
              GridMetric::number("roi", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.cost == 0 && !row.pricing_pending && row.complete_prices() { GridValue::Missing } else { row.financial_value(row.return_on_investment) }),
              GridMetric::number("cost", |(_, row): &(usize, Arc<FCCraftProfitData>)| row.financial_value(row.cost)),
              GridMetric::number("market-price", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.market_price as f64) }),
              GridMetric::number("daily-sales", |(_, row): &(usize, Arc<FCCraftProfitData>)| crate::analyzer_kit::market::recent_sample_value(row.daily_sales as f64, row.sales_available, row.total_sales)),
-         ]
+         ], &[("profit", Unit::Gil), ("roi", Unit::Percent), ("cost", Unit::Gil), ("market-price", Unit::Gil), ("daily-sales", Unit::Rate)])
          row_height=60.0
          columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string(), 320.0, false, true).fixed_width(),
-        { let mut col = GridColumn::new("profit",t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
-        { let mut col = GridColumn::new("roi",t_string!(i18n, fc_crafting_analyzer_col_roi).to_string(), 100.0, true, true).native_sort("roi", SortMode::Roi.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
+        { let mut col = GridColumn::new("profit",t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col },
+        { let mut col = GridColumn::new("roi",t_string!(i18n, fc_crafting_analyzer_col_roi).to_string(), 100.0, true, true).native_sort("roi", SortMode::Roi.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col },
         GridColumn::new("cost",t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string(), 130.0, true, true).native_sort("cost", SortMode::TotalCost.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::TotalCost, sort_dir.get().unwrap_or_else(||SortMode::TotalCost.default_dir()) == SortDir::Asc),
         GridColumn::new("market-price",t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string(), 130.0, true, true).native_sort("price", SortMode::MarketPrice.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
-        { let mut col = GridColumn::new("daily-sales",format!("{} ({})", t_string!(i18n, fc_crafting_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("velocity", SortMode::Velocity.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Velocity, sort_dir.get().unwrap_or_else(||SortMode::Velocity.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("min-sales", filter_label("min-sales"), true)); col }])
+        { let mut col = GridColumn::new("daily-sales",format!("{} ({})", t_string!(i18n, fc_crafting_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("velocity", SortMode::Velocity.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Velocity, sort_dir.get().unwrap_or_else(||SortMode::Velocity.default_dir()) == SortDir::Asc); col }])
          header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>}.into_any(),
         "profit" => view! {<SortableHeaderCell embedded=true
                                         mode=SortMode::Profit

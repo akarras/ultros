@@ -27,6 +27,7 @@ use crate::analyzer_kit::{
     stat_columns::{Window, window_label},
     window::{MarketWindow, MarketWindowControl},
 };
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::{filter_query_signal, seed_analyzer_default_view};
@@ -690,7 +691,7 @@ fn TrendsGrid(
             show_saved_views=false
             market
             subject
-            metrics=trend_metrics()
+            metrics=with_units(trend_metrics(), &[(COL_VWAP, Unit::Gil), (COL_PCT, Unit::Percent), (COL_SALES_PER_DAY, Unit::Rate)])
             id="trends-grid"
             label=t_string!(i18n, market_trends).to_string()
             row_height=48.0

@@ -1,4 +1,5 @@
 use crate::components::app_link::{AppLink, use_location_or_default};
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::str::FromStr;
@@ -1238,7 +1239,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 market
                 each=rows
                 columns=grid_columns
-                metrics=native_metrics
+                metrics=with_units(native_metrics, &[(COL_NQ, Unit::Gil), (COL_HQ, Unit::Gil), (COL_VENDOR, Unit::Gil), (COL_LISTING, Unit::Gil)])
                 key=|row: &ExplorerRow| row.item_id
                 subject=Arc::new(|row: &ExplorerRow| row.market_subject())
                 header=move |id| {
