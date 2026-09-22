@@ -162,6 +162,25 @@ requests. They are fetched in parallel (and preloaded from `<head>` on a
 direct load, or on nav hover), which is fine over HTTP/2 through Cloudflare,
 but a chunk-merging threshold upstream would be the next win.
 
+## Batch 2 (2026-09-21, stacked on the pilot)
+
+Also lazy: groups, retainers (+ alerts), currency exchange, the item explorer
+layout and children, and the text pages. Main module 12.42 → 10.17 MB raw,
+2.95 → 2.56 MB brotli. Per-route first-visit cost stays in the 100–240 KB br
+band for the analyzers (list view 697 KB), but the file fan-out roughly
+doubles (analyzer world 37 → 92 files, list view 30 → 158; 395 shared
+chunks) — the splitter emits one chunk per distinct set of routes sharing
+code, so chunk count grows combinatorially with split points.
+
+**Measured and rejected: the item page and Trends.** Splitting both (they
+share `ultros_charts`) took only ~80 KB br more out of main (2.56 → 2.48 MB)
+while the item route — the most navigated-to and most direct-loaded URL —
+grew a 1.05 MB br / 262-file chunk set, and the shared-chunk count doubled
+again (761). Nearly everything the item page uses is also used by the
+shell, so there is little route-only code to move. Keep it eager.
+
+Next lever is chunk merging (fewer, larger shared chunks), not more routes.
+
 ## Out of scope
 
 Moving resources into `data()`; preload on non-nav links; making every route
