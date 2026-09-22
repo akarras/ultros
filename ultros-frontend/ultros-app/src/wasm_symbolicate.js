@@ -1,10 +1,13 @@
 // Sentry `beforeSend` wasm symbolicator for the Ultros browser client.
 //
-// Browsers list wasm frames as `.../pkg/<hash>/ultros.wasm:wasm-function[N]:0x...`
-// with no function name, because the shipped module has no `name` section.
-// `N` is the module's function index, and the Docker build writes a sibling
-// `/pkg/<hash>/ultros.symbols` (`index:name` per line, see the `wasm-symbols`
-// crate) from that very section before stripping it. GlitchTip cannot
+// Browsers list wasm frames as `.../pkg/<hash>/<module>.wasm:wasm-function[N]:0x...`
+// with no function name, because the shipped modules have no `name` section.
+// `N` is that module's function index, and the Docker build writes a sibling
+// `<module>.symbols` (`index:name` per line, see the `wasm-symbols` crate)
+// from that very section before stripping it. `<module>` is `ultros` or, for
+// a lazy route built by `cargo leptos build --split`, one of the ~100
+// `chunk_N` modules — indices are per-module, so each frame is resolved
+// against the map of the module it names. GlitchTip cannot
 // symbolicate wasm itself, so this hook does the lookup in the browser:
 // fetch the map, fill `frame.function`, mark our own crates `in_app`, and
 // trim the panic machinery off the top so the first frame is the site.
@@ -26,10 +29,12 @@
 // window. Nothing here may throw or reject: a symbolication failure must
 // send the event exactly as it arrived, never lose it.
 (function () {
-  // `<module url>:wasm-function[<index>]...`. Group 1 is the module URL the
-  // map is derived from — taken from the frame rather than the SDK release
-  // so a tab that outlived a deploy can never fetch the wrong map.
-  var WASM_FRAME = /^(.*\/pkg\/[^/]+\/ultros\.wasm):wasm-function\[(\d+)\]/;
+  // `<module url>:wasm-function[<index>]...` for any module in our pkg dir
+  // (`ultros.wasm` or a `--split` `chunk_N.wasm`). Group 1 is the module URL
+  // the map is derived from — taken from the frame rather than the SDK
+  // release so a tab that outlived a deploy can never fetch the wrong map,
+  // and scoped to `/pkg/<hash>/` so a third-party wasm is never fetched for.
+  var WASM_FRAME = /^(.*\/pkg\/[^/]+\/[^/:]+\.wasm):wasm-function\[(\d+)\]/;
   // Our crates, whether the name is a plain path (`ultros_app::x::f`) or a
   // trait impl (`<ultros_app::x::T as Trait>::f`, sometimes `<<…`).
   var IN_APP = /^<*(ultros|xiv_gen)/;
@@ -86,6 +91,12 @@
     }
     maps[url] = p;
     return p;
+  }
+
+  // `.../<module>.wasm` -> `.../<module>.symbols`, the sibling map
+  // `wasm-symbols` wrote for that module.
+  function mapUrl(moduleUrl) {
+    return moduleUrl.replace(/\.wasm$/, ".symbols");
   }
 
   function isWasmFrame(frame) {
@@ -150,19 +161,25 @@
     }
   }
 
+  // `names` is {module url: {index: name}} — a frame is only ever resolved
+  // against the map of the module it names, because indices are per-module.
   // Returns how many frames were resolved.
   function apply(frames, names) {
     var resolved = 0;
     for (var i = 0; i < frames.length; i++) {
       var w = isWasmFrame(frames[i]);
       if (!w) continue;
-      var name = names[w.index];
+      var module = names[w.url];
+      if (!module) continue;
+      var name = module[w.index];
       if (typeof name !== "string") continue;
       frames[i].function = name;
       frames[i].in_app = IN_APP.test(name);
       resolved++;
     }
-    trim(frames);
+    // Only touch the stack when this trace actually gained names. A map that
+    // failed to load must leave its event byte-for-byte as it arrived.
+    if (resolved) trim(frames);
     return resolved;
   }
 
@@ -224,22 +241,44 @@
   window.__ultrosSymbolicateEvent = function (event) {
     try {
       var traces = stacktraces(event);
+      // module URL -> set of function indices wanted from THAT module.
       var wanted = {};
-      var url = null;
+      var urls = [];
       for (var t = 0; t < traces.length; t++) {
         for (var i = 0; i < traces[t].length; i++) {
           var w = isWasmFrame(traces[t][i]);
           if (!w) continue;
-          wanted[w.index] = true;
-          if (!url) url = w.url.replace(/ultros\.wasm$/, "ultros.symbols");
+          if (!wanted[w.url]) {
+            wanted[w.url] = {};
+            urls.push(w.url);
+          }
+          wanted[w.url][w.index] = true;
         }
       }
-      if (!url) return Promise.resolve(event);
-      return fetchMap(url).then(
-        function (text) {
-          if (text === null) return event;
+      if (!urls.length) return Promise.resolve(event);
+      // One fetch per module (memoized across events). A module whose map is
+      // missing resolves to null and simply leaves its own frames alone.
+      var fetches = [];
+      for (var u = 0; u < urls.length; u++) {
+        fetches.push(
+          fetchMap(mapUrl(urls[u])).then(
+            function (text) {
+              return text;
+            },
+            function () {
+              return null;
+            },
+          ),
+        );
+      }
+      return Promise.all(fetches).then(
+        function (texts) {
           try {
-            var names = lookup(text, wanted);
+            var names = {};
+            for (var u = 0; u < urls.length; u++) {
+              if (typeof texts[u] !== "string") continue;
+              names[urls[u]] = lookup(texts[u], wanted[urls[u]]);
+            }
             var resolved = 0;
             for (var t = 0; t < traces.length; t++) {
               resolved += apply(traces[t], names);

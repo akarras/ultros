@@ -7,6 +7,7 @@ use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{category_id_token, register_filters};
 use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
+use crate::columnar_wire::columnar_resource;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
@@ -521,7 +522,7 @@ pub fn VendorSell() -> impl IntoView {
     let (selected_world, set_selected_world) = use_analyzer_world("/vendor-sell");
     let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
 
-    let listings = ArcResource::new(region, move |region: String| async move {
+    let listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 

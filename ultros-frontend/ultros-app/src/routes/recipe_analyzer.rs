@@ -33,6 +33,7 @@ use crate::analyzer_kit::stat_columns::{
 };
 use crate::analyzer_kit::strip::{FormulaStrip, StripSelect, StripTerm};
 use crate::analyzer_kit::window::{MarketWindow, MarketWindowControl};
+use crate::columnar_wire::columnar_resource;
 use crate::components::crafting_cost::{
     CostBreakdown, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode, compute_cost,
     vendor_price_map,
@@ -3054,10 +3055,15 @@ fn sort_recipes(
 /// alone, so the opt-in outlier filter never re-requests the rollup — the
 /// on-demand raw body is [`raw_sales_key`]'s separate resource.
 // `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
-// required (both field types already derive it).
+// required (both field types already derive it). `stats` and `raw` carry
+// `#[serde(default, with = "crate::columnar_wire::serde_with")]` so those two DTO
+// fields still go through the columnar (struct-of-arrays) wire shape even
+// though the struct itself keeps the default codec.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SellHistory {
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     stats: Option<BulkSaleStats>,
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     raw: Option<RecentSales>,
     stats_failed: bool,
     raw_failed: bool,
@@ -3157,10 +3163,15 @@ fn revenue_stats_source(scope: Scope, is_buy_scope: bool, have_body: bool) -> Re
 /// one place, the way [`SellHistory`] already folds the rollup and its
 /// failover.
 // `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
-// required (both field types already derive it).
+// required (both field types already derive it). `listings` and `stats`
+// carry `#[serde(default, with = "crate::columnar_wire::serde_with")]` so those two
+// DTO fields still go through the columnar (struct-of-arrays) wire shape
+// even though the struct itself keeps the default codec.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SellScopeBodies {
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     listings: Option<CheapestListings>,
+    #[serde(default, with = "crate::columnar_wire::serde_with")]
     stats: Option<BulkSaleStats>,
     /// The cheapest map was asked for and did not arrive: revenue falls
     /// through `SignalView`'s base layer to the buy scope, which is a
@@ -4724,7 +4735,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     };
 
     let global_cheapest_listings =
-        ArcResource::new(buy_scope_name, move |scope_name: String| async move {
+        columnar_resource(buy_scope_name, move |scope_name: String| async move {
             get_cheapest_listings(&scope_name).await
         });
 
@@ -4746,7 +4757,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         };
         buy_stats_scope_key(&formula, &needs, buy_scope_name.get())
     });
-    let sale_stats = ArcResource::new(
+    let sale_stats = columnar_resource(
         buy_sale_stats_scope,
         move |key: Option<(String, u16)>| async move {
             match key {
@@ -4799,7 +4810,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         };
         sell_window_key(&formula, &needs, sell_world_name.get().as_deref())
     });
-    let sell_window_stats = ArcResource::new(
+    let sell_window_stats = columnar_resource(
         sell_window_source,
         move |key: Option<(String, u16)>| async move {
             match key {
@@ -4885,7 +4896,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         sell_scope_key(&formula, &needs, &place)
     });
     let sell_world_listings =
-        ArcResource::new(sell_world_name, move |world: Option<String>| async move {
+        columnar_resource(sell_world_name, move |world: Option<String>| async move {
             match world {
                 Some(world) => get_cheapest_listings(&world).await.map(Some),
                 None => Ok(None),
@@ -4914,7 +4925,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             filter_outliers().unwrap_or(false),
         )
     });
-    let raw_sales = ArcResource::new(
+    let raw_sales = columnar_resource(
         raw_sales_source,
         move |key: Option<(String, bool)>| async move {
             match key {

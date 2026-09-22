@@ -7,6 +7,7 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
     signals::{PriceLookup, SignalView},
 };
+use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
@@ -850,11 +851,11 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
     // Ingredients and shared sale statistics deliberately remain regional.
     // Only the native recent-sales estimate is scoped to the selected world.
     let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
-    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
+    let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
-    let recent_sales = ArcResource::new(selected_world, move |world| async move {
+    let recent_sales = columnar_resource(selected_world, move |world| async move {
         if let Some(world) = world {
             get_recent_sales_for_world(&world.name).await
         } else {

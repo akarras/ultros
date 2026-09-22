@@ -51,6 +51,17 @@ function wasmFrame(index, name) {
   return f;
 }
 
+// A frame from a `--split` chunk module (`chunk_N.wasm`, ~100 of them beside
+// the main module) rather than from `ultros.wasm`.
+function chunkFrame(chunk, index) {
+  const path = `/pkg/9b93be1/chunk_${chunk}.wasm`;
+  return {
+    filename: `${path}:wasm-function[${index}]:0x40`,
+    abs_path: `https://ultros.app${path}:wasm-function[${index}]:0x40`,
+    function: "?",
+  };
+}
+
 function glueFrame(fn) {
   return {
     filename: "/pkg/9b93be1/ultros.js",
@@ -481,4 +492,90 @@ test("trap: generic arguments are cut from the fingerprint and title", async () 
     frames(out)[2].function,
     "ultros_ui_grid::components::virtual_grid::query_grid::__component_query_grid<(usize, alloc::sync::Arc<ultros_app::routes::recipe_analyzer::RecipeProfitData>), xiv_gen::RecipeId>::{closure#3}",
   );
+});
+
+// ── Split chunks: a lazy route's frames come from chunk_N.wasm ──
+// `cargo leptos build --split` emits the lazy routes (analyzers, Lists) as
+// separate modules, and `wasm-symbols` writes a `.symbols` map beside each
+// one. A panic inside a lazy route therefore has frames from a chunk, from
+// the main module, or both.
+
+test("chunk frames resolve against that chunk's own map", async () => {
+  const CHUNK = "3:ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}";
+  const { symbolicate, calls } = loadSymbolicator((url) =>
+    url.indexOf("chunk_7") === -1 ? SYMBOLS : CHUNK,
+  );
+  const ev = trapEvent("unreachable", [wasmFrame(43), chunkFrame(7, 3)]);
+  const out = await symbolicate(ev);
+  assert.deepStrictEqual(calls.sort(), [
+    "https://ultros.app/pkg/9b93be1/chunk_7.symbols",
+    "https://ultros.app/pkg/9b93be1/ultros.symbols",
+  ]);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "leptos::callback::Callback::run",
+      "ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}",
+    ],
+  );
+  assert.strictEqual(
+    out.exception.values[0].value,
+    "unreachable in ultros_app::routes::analyzer::AnalyzerWorld::{closure#1}",
+  );
+});
+
+test("each module's map is fetched once, and one 404 does not sink the rest", async () => {
+  const { symbolicate, calls } = loadSymbolicator((url) =>
+    url.indexOf("chunk_7") === -1 ? SYMBOLS : 404,
+  );
+  const ev = trapEvent("unreachable", [
+    wasmFrame(43),
+    chunkFrame(7, 3),
+    wasmFrame(42),
+  ]);
+  const out = await symbolicate(ev);
+  assert.strictEqual(calls.length, 2);
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "leptos::callback::Callback::run",
+      "?",
+      "ultros_app::routes::item_view::ItemView::{{closure}}",
+    ],
+  );
+  await symbolicate(trapEvent("unreachable", [chunkFrame(7, 3)]));
+  assert.strictEqual(calls.length, 2);
+});
+
+test("indices are not mixed up between modules", async () => {
+  // Index 43 exists in both maps with different names; each frame must take
+  // the name from ITS OWN module.
+  const CHUNK = "43:ultros_app::routes::lists::ListView::render";
+  const { symbolicate } = loadSymbolicator((url) =>
+    url.indexOf("chunk_2") === -1 ? SYMBOLS : CHUNK,
+  );
+  const out = await symbolicate(
+    trapEvent("unreachable", [wasmFrame(43), chunkFrame(2, 43)]),
+  );
+  assert.deepStrictEqual(
+    frames(out).map((f) => f.function),
+    [
+      "leptos::callback::Callback::run",
+      "ultros_app::routes::lists::ListView::render",
+    ],
+  );
+});
+
+test("a non-pkg wasm module is ignored", async () => {
+  const { symbolicate, calls } = loadSymbolicator(() => SYMBOLS);
+  const ev = trapEvent("unreachable", [
+    {
+      filename: "https://cdn.example.com/thirdparty.wasm:wasm-function[3]:0x40",
+      abs_path: "https://cdn.example.com/thirdparty.wasm:wasm-function[3]:0x40",
+      function: "?",
+    },
+  ]);
+  const out = await symbolicate(ev);
+  assert.strictEqual(calls.length, 0);
+  assert.strictEqual(out.fingerprint, undefined);
 });

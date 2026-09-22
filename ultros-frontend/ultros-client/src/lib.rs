@@ -348,7 +348,7 @@ pub fn hydrate() {
         // reports `readyState === "complete"` for whatever it managed to
         // parse. The bootstrap `HydrationScripts` emits is a deferred module
         // script in `<head>`, so it fires on that truncated document just the
-        // same, and `hydrate_body` then walks a DOM missing nearly everything
+        // same, and hydration then walks a DOM missing nearly everything
         // it expects: tachys hits `failed_to_cast_element` and panics at
         // `hydration.rs:163`, which cascades into `RefCell already borrowed`
         // from the wasm-bindgen-futures executor. That is GlitchTip #6831 —
@@ -400,7 +400,22 @@ pub fn hydrate() {
             }
             leptos::mount::mount_to_body(app);
         } else {
-            hydrate_body(app);
+            // Not `hydrate_body`: the route table has `Lazy<_>` routes
+            // (`ultros_app::routes::lazy`), and on a direct load of one of
+            // them the router has to fetch that route's wasm chunk before it
+            // can walk the server-rendered DOM. The sync entry point panics on
+            // that ("lazy routes not supported with hydrate_body()"); the
+            // async one awaits the chunk. Awaiting it here (rather than
+            // `hydrate_lazy`, which spawns and returns) keeps the boot event
+            // below firing only once hydration has actually finished.
+            //
+            // Fetch this URL's chunk first so that await inside the router
+            // resolves without yielding — see `preload_for_path` for why the
+            // hydration walk must not pause halfway.
+            let path = window().location().pathname().unwrap_or_default();
+            ultros_app::lazy::preload_for_path(&path).await;
+            let body = document().body().expect("document has a <body>");
+            leptos::mount::hydrate_from_async(body, app).await.forget();
         }
         dispatch_boot_event("ultros:hydrated");
         let lang = get_i18n_lang();

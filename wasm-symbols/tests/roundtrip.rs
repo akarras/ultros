@@ -7,7 +7,8 @@ use wasm_encoder::{
     NameSection, TypeSection, ValType,
 };
 use wasm_symbols::{
-    MAX_NAME_LEN, extract_symbols, format_symbols, normalize_name, strip_name_section,
+    MAX_NAME_LEN, extract_symbols, format_symbols, has_name_section, normalize_name,
+    strip_name_section,
 };
 
 /// Two functions; the first is unnamed to exercise sparse indices. The
@@ -72,6 +73,31 @@ fn missing_name_section_is_an_error() {
     );
 }
 
+/// Split chunks may lack a `name` section; the CLI skips those instead of
+/// failing the build, so the check has to be a clean boolean.
+#[test]
+fn has_name_section_reports_presence() {
+    assert!(has_name_section(&module(true)).unwrap());
+    assert!(!has_name_section(&module(false)).unwrap());
+}
+
+/// A data-only split chunk carries a `name` section with no function
+/// subsection. That is an empty map, not a malformed module, and the section
+/// still has to be stripped.
+#[test]
+fn empty_name_section_is_an_empty_map_and_still_stripped() {
+    let mut m = Module::new();
+    let mut names = NameSection::new();
+    names.module("chunk");
+    m.section(&names);
+    let wasm = m.finish();
+    assert!(has_name_section(&wasm).unwrap());
+    assert!(extract_symbols(&wasm).unwrap().is_empty());
+    let stripped = strip_name_section(&wasm).unwrap();
+    assert!(!has_name_section(&stripped).unwrap());
+    assert_eq!(stripped, Module::new().finish());
+}
+
 #[test]
 fn strip_removes_only_the_name_section() {
     let stripped = strip_name_section(&module(true)).unwrap();
@@ -123,4 +149,39 @@ fn over_long_names_are_truncated_at_a_char_boundary() {
     assert!(out.starts_with("ultros_app::grid::é"));
     let exact = "x".repeat(MAX_NAME_LEN);
     assert_eq!(normalize_name(&exact), exact);
+}
+
+/// `cargo leptos build --split` passes `--no-demangle` to wasm-bindgen
+/// (cargo-leptos gates it on `proj.split`), which skips the pass that
+/// rewrites `func.name`. The name section then holds RAW v0 symbols, so the
+/// map has to demangle them itself or GlitchTip shows `_RNvNtCs…`. The
+/// alternate form also omits crate disambiguators, so no further stripping
+/// is needed for this input.
+#[test]
+fn raw_v0_symbols_are_demangled() {
+    // _RNvNtCs1234_10ultros_app6routes4func
+    let mangled = "_RNvNtCsbKu1QBP2Rbi_10ultros_app6routes4func";
+    assert_eq!(normalize_name(mangled), "ultros_app::routes::func");
+}
+
+/// Legacy-mangled input demangles too, and its trailing hash is dropped by
+/// rustc-demangle's alternate form rather than by our suffix rule.
+#[test]
+fn raw_legacy_symbols_are_demangled() {
+    assert_eq!(
+        normalize_name("_ZN10ultros_app6routes4func17h0123456789abcdefE"),
+        "ultros_app::routes::func"
+    );
+}
+
+/// Anything that is not a Rust symbol — wasm-bindgen's own shims, and names
+/// wasm-bindgen ALREADY demangled (the unsplit build) — must pass through
+/// the demangler untouched and be handled by the existing normalization.
+#[test]
+fn non_symbols_and_pre_demangled_names_are_untouched_by_demangling() {
+    assert_eq!(normalize_name("__wbindgen_malloc"), "__wbindgen_malloc");
+    assert_eq!(
+        normalize_name("ultros_app[1729e4642c0fad2d]::routes::func"),
+        "ultros_app::routes::func"
+    );
 }

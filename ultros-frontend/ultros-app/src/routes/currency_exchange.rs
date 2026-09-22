@@ -1,4 +1,5 @@
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
+use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::AppLink;
 use crate::components::term_badge::TermRole;
 use std::cmp::Ordering;
@@ -433,12 +434,12 @@ fn ExchangeItemContent() -> impl IntoView {
     // would push a history entry and yank the window to the top per keystroke —
     // the same bug this rebuild fixed for the filter chips.
     let (currency_quantity, set_currency_quantity) = filter_query_signal::<i32>("currency_amount");
-    let sales = ArcResource::new(home_world, move |world| async move {
+    let sales = columnar_resource(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_recent_sales_for_world(&world.name).await
     });
 
-    let world_cheapest_listings = ArcResource::new(home_world, move |world| async move {
+    let world_cheapest_listings = columnar_resource(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_cheapest_listings(&world.name).await
     });

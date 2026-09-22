@@ -277,3 +277,26 @@ instantiation). `wasm-symbols` now strips the disambiguators (they shift on
 dependency bumps and were most of the bytes) and caps names at 240 chars:
 36.2 MB → 12.8 MB raw, 737 KB → 556 KB brotli for 68,480 functions. `in_app`
 matches `^<*(ultros|xiv_gen)` so trait-impl names count.
+
+### Merge with #1579 (lazy routes + `--split`)
+
+Two interactions the split pilot did not account for, fixed while resolving
+the merge:
+
+1. **`--split` disables demangling.** cargo-leptos passes `--no-demangle` to
+   wasm-bindgen whenever `proj.split` is set, and that flag turns off the very
+   pass that rewrites `func.name` — so the `name` section holds raw `_RNv…`
+   symbols and the maps would have shipped unreadable. `wasm-symbols` now
+   demangles with `rustc_demangle` in `{:#}` form (which also drops the v0
+   crate disambiguators). A name wasm-bindgen already demangled is not a valid
+   symbol, so `try_demangle` declines it and the existing explicit strips still
+   handle the unsplit case.
+2. **Chunk frames were not symbolicated at all.** The frame regex matched only
+   `ultros.wasm`, but a panic in a lazy route (the analyzer family, Lists)
+   reports frames from a `chunk_N.wasm`. Since function indices are
+   per-module, the symbolicator now groups the wanted indices by module URL,
+   fetches one map per module in the trace (memoized as before), and resolves
+   each frame against its own module's map. One module's missing map leaves
+   only that module's frames unresolved. Under immediate-abort this matters
+   more than it would have: an unsymbolicated trap also gets no fingerprint
+   and no title.

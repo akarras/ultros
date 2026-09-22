@@ -8,6 +8,9 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+# `cargo leptos build --split` passes `--no-demangle` to wasm-bindgen, so the
+# name section can hold raw `_RNv…` / `_ZN…` symbols; demangle them here.
+rustc-demangle = "0.1"
 # Only the `name` custom-section readers are used; no validation, no
 # component model.
 wasmparser = { version = "0.259", default-features = false, features = ["std"] }

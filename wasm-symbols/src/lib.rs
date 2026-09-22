@@ -153,11 +153,34 @@ fn truncate(name: String) -> String {
     }
 }
 
-/// The name as it goes into the map: build-specific hashes removed (so names
-/// are stable across builds and the map is a fraction of the size) and
-/// capped at [`MAX_NAME_LEN`].
+/// The name as it goes into the map.
+///
+/// Demangles first: under `cargo leptos build --split` cargo-leptos passes
+/// `--no-demangle` to wasm-bindgen, which skips the pass that rewrites
+/// `func.name`, so the section holds raw `_RNv…` / `_ZN…` symbols.
+/// `rustc_demangle`'s alternate form drops the v0 crate disambiguators and
+/// the legacy `::h<hash>` on its own. A name wasm-bindgen already demangled
+/// (the unsplit build) is not a valid symbol, so `try_demangle` declines it
+/// and the explicit strips below handle it — they stay for exactly that
+/// case. Then build-specific hashes are gone (names stable across builds,
+/// map a fraction of the size) and the result is capped at
+/// [`MAX_NAME_LEN`].
 pub fn normalize_name(name: &str) -> String {
-    truncate(strip_legacy_hash(&strip_v0_disambiguators(name)))
+    match rustc_demangle::try_demangle(name) {
+        Ok(symbol) => truncate(format!("{symbol:#}")),
+        Err(_) => truncate(strip_legacy_hash(&strip_v0_disambiguators(name))),
+    }
+}
+
+/// Whether the module carries a `name` custom section at all. Split chunks
+/// may legitimately lack one; the main module must not.
+pub fn has_name_section(wasm: &[u8]) -> Result<bool> {
+    for section in sections(wasm)? {
+        if is_name_section(wasm, &section)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Function names from the module's `name` section, index-ascending, with
