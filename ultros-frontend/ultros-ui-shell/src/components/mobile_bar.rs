@@ -50,7 +50,7 @@ pub fn MobileBar() -> impl IntoView {
             </button>
 
             <AppLink href="/items" attr:class="mobile-bar-slot">
-                <Icon icon=i::MdiJellyfish width="1.4em" height="1.4em" />
+                <Icon icon=i::FaCompassSolid width="1.4em" height="1.4em" />
                 <span class="mobile-bar-label">{t!(i18n, items)}</span>
             </AppLink>
         </nav>
