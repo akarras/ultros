@@ -138,7 +138,7 @@ async fn load_sale_stats(
 /// makes the payload deterministic across loads and, for the columnar
 /// shape, noticeably more compressible (adjacent rows share more prefix
 /// bytes once grouped by item).
-fn sort_rows(stats: &mut Vec<ItemSaleStats>) {
+fn sort_rows(stats: &mut [ItemSaleStats]) {
     stats.sort_unstable_by_key(|s| (s.item_id, s.hq));
 }
 
