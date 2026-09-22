@@ -154,7 +154,7 @@ pub enum Edit {
 }
 
 /// Applies one full-row edit the same way the server's own PUT handler does
-/// (`ultros/src/lists/edits.rs::apply_list_item_edit`): move quality first if
+/// (`ultros-lists/src/edits.rs::apply_list_item_edit`): move quality first if
 /// it changed (which merges into any existing row at the destination), then
 /// write only the fields that actually differ from the row's value *before*
 /// this edit. Writing every field unconditionally would clobber a quality

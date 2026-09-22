@@ -1,0 +1,29 @@
+[package]
+name = "ultros-ingest"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Market-data ingest from Universalis into Postgres and ClickHouse."
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+metrics = "0.24.5"
+sea-orm = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7.18" }
+tracing = { workspace = true }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-clickhouse = { path = "../ultros-clickhouse" }
+ultros-db = { path = "../ultros-db" }
+ultros-server-core = { path = "../ultros-server-core" }
+universalis = { path = "../universalis" }
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
+
+[dev-dependencies]
+# `#[tokio::test(start_paused = true)]` retry-backoff tests need the virtual clock.
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+test-auth = ["ultros-server-core/test-auth"]

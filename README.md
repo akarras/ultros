@@ -174,7 +174,17 @@ The two halves of the data come from different places:
 
 This repository contains several crates that make up the Ultros ecosystem:
 
-*   **`ultros`**: The main backend crate. Initializes Axum, the Discord bot, and background services.
+*   **`ultros`**: The server binary. The web layer (Axum + Leptos SSR) and the Discord bot, wiring together the service crates below.
+    *   **`ultros-server-core`**: The in-process event buses and process-wide switches every service shares.
+    *   **`ultros-analyzer`**: The in-memory market analyzer (resale opportunities, trends, sale history).
+    *   **`ultros-ingest`**: Universalis market-data ingest into Postgres and ClickHouse.
+    *   **`ultros-alerts`**: Alert evaluation and Discord/web-push delivery.
+    *   **`ultros-lists`**: Server side of the local-first list documents.
+    *   **`ultros-group-sync`**: Discord role membership sync for groups.
+    *   **`ultros-character`**: Lodestone character lookup and claiming.
+    *   **`ultros-search`**: The full-text search index over the game data.
+    *   **`ultros-clickhouse`**: The ClickHouse client, rollups, and the `clickhouse_*` maintenance binaries.
+*   **`ultros-game-sources`**: Game-data record sets (currencies, ventures, scrip turn-ins) shared by the pages and the search index.
 *   **`ultros-frontend`**: The frontend workspace.
     *   **`ultros-app`**: The main Leptos application code (shared between server and client).
     *   **`ultros-client`**: The WASM client entry point.

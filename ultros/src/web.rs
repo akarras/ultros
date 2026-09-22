@@ -81,7 +81,7 @@ use ultros_list_doc::{Quality, RowKey};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use crate::character_claim::CharacterClaimService;
-use crate::lists::{Actor, ListSync, Origin, apply_list_item_edit};
+use crate::lists::{ListSync, Origin, apply_list_item_edit};
 
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
@@ -1859,7 +1859,7 @@ pub(crate) async fn make_list_online(
     list_sync
         .apply_update(
             outcome.response.list_id,
-            &Actor::from_user(&user, Origin::Rest),
+            &user.actor(Origin::Rest),
             &request.snapshot,
         )
         .await?;
@@ -1871,7 +1871,7 @@ pub(crate) async fn edit_list(
     user: AuthDiscordUser,
     Json(list): Json<List>,
 ) -> Result<Json<()>, ApiError> {
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     let name = list.name.clone();
     let scope = list.wdr_filter;
     list_sync
@@ -1891,7 +1891,7 @@ pub(crate) async fn post_item_to_list(
     >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     let key = RowKey::new(item.item_id, item.hq);
     let need = item.quantity.unwrap_or(1) as i64;
     let acquired = item.acquired.unwrap_or(0) as i64;
@@ -1914,7 +1914,7 @@ pub(crate) async fn post_items_to_list(
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
 ) -> Result<Json<()>, ApiError> {
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     list_sync
         .edit_as_server(id, &actor, move |doc| {
             for item in items {
@@ -1938,7 +1938,7 @@ pub(crate) async fn edit_list_item(
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
     let before = db.get_list_item(item.id, user.id as i64).await?;
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     let list_id = before.list_id;
     list_sync
         .edit_as_server(list_id, &actor, move |doc| {
@@ -1955,7 +1955,7 @@ pub(crate) async fn delete_list_item(
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
     let item = db.get_list_item(id, user.id as i64).await?;
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     let key = RowKey::new(item.item_id, item.hq);
     list_sync
         .edit_as_server(item.list_id, &actor, move |doc| doc.remove_row(&key))
@@ -2039,7 +2039,7 @@ pub(crate) async fn bulk_edit_list_items_hq(
     user: AuthDiscordUser,
     Json(data): Json<BulkHqUpdate>,
 ) -> Result<Json<()>, ApiError> {
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     let quality = Quality::from(data.hq);
     let by_list = resolve_bulk_row_keys(&db, user.id as i64, &data.ids, true).await?;
     require_write_permission_on_all(&db, user.id as i64, by_list.keys().copied()).await?;
@@ -2064,7 +2064,7 @@ pub(crate) async fn delete_multiple_list_items(
     user: AuthDiscordUser,
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<()>, ApiError> {
-    let actor = Actor::from_user(&user, Origin::Rest);
+    let actor = user.actor(Origin::Rest);
     let by_list = resolve_bulk_row_keys(&db, user.id as i64, &ids, false).await?;
     require_write_permission_on_all(&db, user.id as i64, by_list.keys().copied()).await?;
     for (list_id, keys) in by_list {

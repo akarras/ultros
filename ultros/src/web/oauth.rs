@@ -28,6 +28,7 @@ use tokio::{sync::RwLock, time::Instant};
 use ultros_db::UltrosDb;
 
 use super::error::{ApiError, WebError};
+use crate::lists::{Actor, Origin};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialOrd, PartialEq, Hash)]
 pub enum OAuthScope {
@@ -483,6 +484,17 @@ pub struct AuthDiscordUser {
     pub(crate) id: u64,
     pub(crate) name: String,
     pub(crate) avatar_url: String,
+}
+
+impl AuthDiscordUser {
+    /// This user as the author of a list edit.
+    pub(crate) fn actor(&self, origin: Origin) -> Actor {
+        Actor {
+            user_id: self.id as i64,
+            username: self.name.clone(),
+            origin,
+        }
+    }
 }
 
 impl<S> FromRequestParts<S> for AuthDiscordUser

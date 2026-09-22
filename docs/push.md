@@ -86,7 +86,7 @@ keys.
   service as `EndpointNotFound`/`EndpointNotValid`. The delivery path
   soft-deletes those `push_subscription` rows automatically.
 * Every push carries a `TTL` and (for tracker-fired alerts) a `Topic` header
-  (RFC 8030), set from `PushOptions` in `ultros/src/alerts/delivery.rs`. The
+  (RFC 8030), set from `PushOptions` in `ultros-alerts/src/delivery.rs`. The
   TTL is 1h for undercut rollups and 4h for sold/price/list alerts, so a
   browser that was closed overnight wakes to nothing rather than a backlog.
   The topic is one per alert rule (`undercut-<alert_id>` etc.), so within the

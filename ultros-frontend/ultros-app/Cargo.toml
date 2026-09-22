@@ -30,6 +30,7 @@ leptos_axum = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
+ultros-game-sources = { path = "../../ultros-game-sources" }
 xiv-gen.workspace = true
 web-sys = { version = "0.3", optional = true, features = [
     "AbortController",

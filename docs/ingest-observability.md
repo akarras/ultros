@@ -57,7 +57,7 @@ explains *why* it went up.
 - **Silent data loss** — `increase(ultros_analyzer_bus_lagged_total[1h]) > 0` or
   `increase(ultros_analyzer_skipped_events_total[1h]) > 0`. Neither should ever
   be nonzero in steady state. Sustained `bus_lagged` means the ring sizes in
-  `ultros/src/event.rs` need revisiting; sustained `skipped_events` with
+  `ultros-server-core/src/event.rs` need revisiting; sustained `skipped_events` with
   `reason="unknown_world"` means `WorldCache` is missing a world (see below).
 - **Booted on stale data** — `increase(ultros_analyzer_snapshot_rejected_total{reason="too_old"}[1h]) > 0`
   is informational: the guard did its job, but the process was down long enough
@@ -84,6 +84,6 @@ serving.
 | `UNIVERSALIS_WEBSOCKET_COOLDOWN_SECS` | `2` | Wait between reconnect attempts. |
 
 Compile-time constants worth knowing about, all documented at their definitions:
-`LISTINGS_BUS_SIZE` / `HISTORY_BUS_SIZE` (`ultros/src/event.rs`),
-`MAX_SNAPSHOT_AGE` (`ultros/src/analyzer_service.rs`), and `REFRESH_INTERVAL`
-(`ultros/src/ingest_health.rs`).
+`LISTINGS_BUS_SIZE` / `HISTORY_BUS_SIZE` (`ultros-server-core/src/event.rs`),
+`MAX_SNAPSHOT_AGE` (`ultros-analyzer/src/analyzer_service.rs`), and `REFRESH_INTERVAL`
+(`ultros-ingest/src/ingest_health.rs`).
