@@ -66,11 +66,11 @@ pub struct BulkListingStatsColumnar {
     pub window: Option<Vec<ListingWindowStats>>,
 }
 
-impl From<BulkListingStats> for BulkListingStatsColumnar {
+impl From<&BulkListingStats> for BulkListingStatsColumnar {
     /// The `window` column is present iff any row carries a window; rows
     /// without one contribute a `Default` placeholder so the column stays
     /// parallel. (The server fills every row on a windowed request.)
-    fn from(value: BulkListingStats) -> Self {
+    fn from(value: &BulkListingStats) -> Self {
         let n = value.stats.len();
         let windowed = value.stats.iter().any(|s| s.window.is_some());
         let mut out = Self {
@@ -84,7 +84,7 @@ impl From<BulkListingStats> for BulkListingStatsColumnar {
             floor_alive: Vec::with_capacity(n),
             window: windowed.then(|| Vec::with_capacity(n)),
         };
-        for row in value.stats {
+        for row in &value.stats {
             out.item_id.push(row.item_id);
             out.hq.push(row.hq);
             out.alive_count.push(row.alive_count);
@@ -98,6 +98,12 @@ impl From<BulkListingStats> for BulkListingStatsColumnar {
             }
         }
         out
+    }
+}
+
+impl From<BulkListingStats> for BulkListingStatsColumnar {
+    fn from(value: BulkListingStats) -> Self {
+        Self::from(&value)
     }
 }
 
@@ -324,6 +330,19 @@ mod tests {
         assert_eq!(
             rows.stats,
             vec![listing(1, false, 10), listing(2, true, 20)]
+        );
+    }
+
+    #[test]
+    fn columnar_from_ref_matches_from_value() {
+        let mut a = listing(2, false, 100);
+        a.window = Some(window(7));
+        let rows = BulkListingStats {
+            stats: vec![a, listing(5, false, 7)],
+        };
+        assert_eq!(
+            BulkListingStatsColumnar::from(&rows),
+            BulkListingStatsColumnar::from(rows.clone())
         );
     }
 }

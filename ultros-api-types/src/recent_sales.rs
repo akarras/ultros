@@ -36,8 +36,8 @@ pub struct RecentSalesColumnar {
     pub sold_unix: Vec<i64>,
 }
 
-impl From<RecentSales> for RecentSalesColumnar {
-    fn from(value: RecentSales) -> Self {
+impl From<&RecentSales> for RecentSalesColumnar {
+    fn from(value: &RecentSales) -> Self {
         let n = value.sales.len();
         let total: usize = value.sales.iter().map(|s| s.sales.len()).sum();
         let mut out = Self {
@@ -47,16 +47,22 @@ impl From<RecentSales> for RecentSalesColumnar {
             price: Vec::with_capacity(total),
             sold_unix: Vec::with_capacity(total),
         };
-        for row in value.sales {
+        for row in &value.sales {
             out.item_id.push(row.item_id);
             out.hq.push(row.hq);
             out.count.push(row.sales.len() as u32);
-            for sale in row.sales {
+            for sale in &row.sales {
                 out.price.push(sale.price_per_unit);
                 out.sold_unix.push(sale.sale_date.and_utc().timestamp());
             }
         }
         out
+    }
+}
+
+impl From<RecentSales> for RecentSalesColumnar {
+    fn from(value: RecentSales) -> Self {
+        Self::from(&value)
     }
 }
 
@@ -215,6 +221,15 @@ mod tests {
             vec![sale(10, 100), sale(11, 101), sale(12, 102)]
         );
         assert_eq!(rows.sales[1].sales, vec![]);
+    }
+
+    #[test]
+    fn columnar_from_ref_matches_from_value() {
+        let rows = rows();
+        assert_eq!(
+            RecentSalesColumnar::from(&rows),
+            RecentSalesColumnar::from(rows.clone())
+        );
     }
 
     #[test]

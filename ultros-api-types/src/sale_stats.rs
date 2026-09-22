@@ -75,8 +75,8 @@ pub struct BulkSaleStatsColumnar {
     pub confidence: Vec<ConfidenceBand>,
 }
 
-impl From<BulkSaleStats> for BulkSaleStatsColumnar {
-    fn from(value: BulkSaleStats) -> Self {
+impl From<&BulkSaleStats> for BulkSaleStatsColumnar {
+    fn from(value: &BulkSaleStats) -> Self {
         let n = value.stats.len();
         let mut out = Self {
             item_id: Vec::with_capacity(n),
@@ -92,7 +92,7 @@ impl From<BulkSaleStats> for BulkSaleStatsColumnar {
             sales_per_day: Vec::with_capacity(n),
             confidence: Vec::with_capacity(n),
         };
-        for row in value.stats {
+        for row in &value.stats {
             out.item_id.push(row.item_id);
             out.hq.push(row.hq);
             out.min_price.push(row.min_price);
@@ -107,6 +107,12 @@ impl From<BulkSaleStats> for BulkSaleStatsColumnar {
             out.confidence.push(row.confidence);
         }
         out
+    }
+}
+
+impl From<BulkSaleStats> for BulkSaleStatsColumnar {
+    fn from(value: BulkSaleStats) -> Self {
+        Self::from(&value)
     }
 }
 
@@ -219,6 +225,17 @@ mod tests {
         columnar.vwap.pop();
         let rows = BulkSaleStats::from(columnar);
         assert_eq!(rows.stats, vec![stat(1, false, 10), stat(2, true, 20)]);
+    }
+
+    #[test]
+    fn columnar_from_ref_matches_from_value() {
+        let rows = BulkSaleStats {
+            stats: vec![stat(2, false, 100), stat(5, true, 7)],
+        };
+        assert_eq!(
+            BulkSaleStatsColumnar::from(&rows),
+            BulkSaleStatsColumnar::from(rows.clone())
+        );
     }
 
     #[test]
