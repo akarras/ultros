@@ -4,16 +4,13 @@
 //! two bounded ClickHouse reads. Spec:
 //! docs/superpowers/specs/2026-09-22-undercut-pressure-design.md
 //!
-//! `pressure()` (and everything it calls) is reachable only from this
-//! module's own tests until Task 5 adds `load()`, the crate's public entry
-//! point that does the two ClickHouse reads and calls `pressure()` — so
-//! `dead_code` fires on the whole module in isolation. Allowed here, to be
-//! removed once `load()` calls in.
-#![allow(dead_code)]
 use crate::floor_history::WindowChange;
+use crate::listing_history::{LIMITS, reprice_events_sql};
+use crate::{ClickHouseClient, ClickHouseError};
 use clickhouse::Row;
 use serde::Deserialize;
 use std::collections::HashSet;
+use ultros_api_types::price_series::HqFilter;
 use ultros_api_types::undercut_pressure::{
     PressureBucket, PressureState, PressureSummary, UndercutPressure, WarSpan, WarStatus,
 };
@@ -354,6 +351,43 @@ pub(crate) fn pressure(
         buckets: chart.buckets,
         wars,
     }
+}
+
+/// One row per undercut event on one item-world, oldest first. Column names
+/// match `UndercutEvent`'s fields (the clickhouse crate checks them).
+fn events_sql(item_id: i32, world_id: i32, hq: HqFilter, from: i64, to: i64) -> String {
+    let quality = match hq {
+        HqFilter::Any => "",
+        HqFilter::Hq => " WHERE hq = 1",
+        HqFilter::Nq => " WHERE hq = 0",
+    };
+    format!(
+        "SELECT toInt64(event_time) AS time, retainer_id, prev_price, price_per_unit AS price
+        FROM ({}){quality} ORDER BY time{LIMITS}",
+        reprice_events_sql(&item_id.to_string(), &world_id.to_string(), from, to)
+    )
+}
+
+/// Two bounded reads (undercut events, exact floor transitions) over
+/// `[min(from, now - DAY), max(to, now))`, then the pure reducer.
+pub async fn load(
+    ch: &ClickHouseClient,
+    item_id: i32,
+    world_id: i32,
+    hq: HqFilter,
+    p: PressureParams,
+) -> Result<UndercutPressure, ClickHouseError> {
+    let read_from = p.from.min(p.now - DAY);
+    let read_to = p.to.max(p.now);
+    let events = ch
+        .client()
+        .query(&events_sql(item_id, world_id, hq, read_from, read_to))
+        .fetch_all::<UndercutEvent>()
+        .await?;
+    let rows =
+        crate::floor_history::exact_changes(ch, &[item_id], &[world_id], hq, read_from, read_to)
+            .await?;
+    Ok(pressure(&events, &rows, &p))
 }
 
 #[cfg(test)]
@@ -700,5 +734,17 @@ mod tests {
         assert!(out.buckets.iter().all(|b| b.state == Unknown));
         assert_eq!(out.summary, Default::default());
         assert_eq!((out.baseline, out.coverage_from), (None, None));
+    }
+
+    #[test]
+    fn hq_filter_restricts_events_sql() {
+        use ultros_api_types::price_series::HqFilter;
+        let any = events_sql(7, 34, HqFilter::Any, 100, 200);
+        assert!(!any.contains("WHERE hq = "));
+        assert!(events_sql(7, 34, HqFilter::Hq, 100, 200).contains("WHERE hq = 1"));
+        assert!(events_sql(7, 34, HqFilter::Nq, 100, 200).contains("WHERE hq = 0"));
+        assert!(any.starts_with(
+            "SELECT toInt64(event_time) AS time, retainer_id, prev_price, price_per_unit AS price"
+        ));
     }
 }

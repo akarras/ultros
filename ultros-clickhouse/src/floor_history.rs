@@ -256,6 +256,29 @@ pub(crate) async fn window_changes(
     .await
 }
 
+/// Exact transitions for one quality filter (the item page's pressure pane).
+pub(crate) async fn exact_changes(
+    ch: &ClickHouseClient,
+    items: &[i32],
+    worlds: &[i32],
+    hq: HqFilter,
+    from: i64,
+    to: i64,
+) -> Result<Vec<WindowChange>, ClickHouseError> {
+    load_changes(
+        ch,
+        items,
+        worlds,
+        ChangeWindow {
+            from,
+            to,
+            hq,
+            step: None,
+        },
+    )
+    .await
+}
+
 struct ChangeWindow {
     from: i64,
     to: i64,
