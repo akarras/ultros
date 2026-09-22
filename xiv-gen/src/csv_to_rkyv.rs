@@ -75,11 +75,13 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
             .into_iter()
             .map(|i| ((i.key_id.0, i.item), i))
             .collect();
-    let e_npc_residents: HashMap<ENpcResidentId, ENpcResident> =
+    // The full sheet, needed to decide which NPCs can be indexed at all. It is
+    // pruned to the ones the app can actually show before it goes in the pack.
+    let mut e_npc_residents: IdMap<ENpcResidentId, ENpcResident> =
         read_csv_to_map(&format!("{}ENpcResident.csv", base_path));
     // Names come from `lang`; the festival id is stamped on from the English
     // gates, for the header-layout reason above.
-    let mut gil_shops: HashMap<GilShopId, GilShop> =
+    let mut gil_shops: IdMap<GilShopId, GilShop> =
         read_csv_to_map(&format!("{}GilShop.csv", base_path));
     for (id, shop) in gil_shops.iter_mut() {
         shop.festival_id = shop_gates.get(id).map_or(0, |g| g.festival_id);
@@ -87,7 +89,7 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
     // Costs are per-locale rows, but which of them are tomestone/scrip indexes
     // rather than item ids is read from the English sheet: the CN/TC forks'
     // header layout leaves the `CostType` columns unnamed.
-    let mut special_shops: HashMap<SpecialShopId, SpecialShop> =
+    let mut special_shops: IdMap<SpecialShopId, SpecialShop> =
         read_csv_to_map(&format!("{}SpecialShop.csv", base_path));
     resolve_currency_costs(
         &mut special_shops,
@@ -99,7 +101,7 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
             "{en_path}TomestonesItem.csv"
         ))),
     );
-    let collectables_shops: HashMap<CollectablesShopId, CollectablesShop> =
+    let collectables_shops: IdMap<CollectablesShopId, CollectablesShop> =
         read_csv_to_map(&format!("{}CollectablesShop.csv", base_path));
     // Read once to build the shop -> NPC indexes, then drop: these sheets
     // exist only to answer "which NPCs offer this shop?", and `ENpcBase` is by
@@ -113,8 +115,8 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
         &special_shops,
         &collectables_shops,
     );
-    let leves: HashMap<LeveId, Leve> = read_csv_to_map(&format!("{}Leve.csv", base_path));
-    let leve_issuers: HashMap<LeveId, Vec<ENpcResidentId>> = supplements
+    let leves: IdMap<LeveId, Leve> = read_csv_to_map(&format!("{}Leve.csv", base_path));
+    let leve_issuers: IdMap<LeveId, Vec<ENpcResidentId>> = supplements
         .leve_issuers
         .iter()
         .filter(|(leve, _)| leves.contains_key(leve))
@@ -130,16 +132,24 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
         })
         .filter(|(_, npcs)| !npcs.is_empty())
         .collect();
-    let npc_placements = shown_npc_placements(
-        &supplements.npc_placements,
-        npc_shops
-            .gil
-            .values()
-            .chain(npc_shops.special.values())
-            .chain(npc_shops.collectables.values())
-            .flatten()
-            .chain(leve_issuers.values().flatten()),
-    );
+    // Drop every NPC the app has no way to reach. `/npc/:id` exists only for a
+    // gil shop, exchange or collectables counter (`game_sources::shop_npcs`),
+    // and the leve analyzer names issuers; nothing else looks a resident up. Of
+    // the sheet's ~60k rows about 900 survive, which is worth ~650 KB of the
+    // ~4.5 MB English pack — the second largest table in it existed to answer
+    // lookups for ids the app never forms.
+    let shown_npcs: std::collections::HashSet<ENpcResidentId> = npc_shops
+        .gil
+        .values()
+        .chain(npc_shops.special.values())
+        .chain(npc_shops.collectables.values())
+        .chain(leve_issuers.values())
+        .flatten()
+        .copied()
+        .collect();
+    e_npc_residents.retain(|id, _| shown_npcs.contains(id));
+
+    let npc_placements = shown_npc_placements(&supplements.npc_placements, shown_npcs.iter());
     Data {
         items: read_csv_to_map(&format!("{}Item.csv", base_path)),
         recipes: read_csv_to_map(&format!("{}Recipe.csv", base_path)),
@@ -154,14 +164,19 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
         gil_shops,
         gil_shop_items: read_csv_vec::<GilShopItem>(&format!("{}GilShopItem.csv", base_path))
             .into_iter()
-            .fold(HashMap::new(), |mut map, mut m| {
-                if let Some(item) = item_gates.get(&(m.key_id.0, m.item)) {
-                    m.availability =
-                        classify_availability(shop_gates.get(&m.key_id.0), item, &gates);
-                }
-                map.entry(m.key_id.0).or_default().push(m);
-                map
-            }),
+            .fold(
+                HashMap::<GilShopId, Vec<GilShopItem>>::new(),
+                |mut map, mut m| {
+                    if let Some(item) = item_gates.get(&(m.key_id.0, m.item)) {
+                        m.availability =
+                            classify_availability(shop_gates.get(&m.key_id.0), item, &gates);
+                    }
+                    map.entry(m.key_id.0).or_default().push(m);
+                    map
+                },
+            )
+            .into_iter()
+            .collect(),
         gil_shop_npcs: npc_shops.gil,
         special_shop_npcs: npc_shops.special,
         collectables_shop_npcs: npc_shops.collectables,
@@ -190,12 +205,17 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
             base_path
         ))
         .into_iter()
-        .fold(HashMap::new(), |mut map, m| {
-            map.entry(CollectablesShopItemId(m.key_id.0))
-                .or_default()
-                .push(m);
-            map
-        }),
+        .fold(
+            HashMap::<CollectablesShopItemId, Vec<CollectablesShopItem>>::new(),
+            |mut map, m| {
+                map.entry(CollectablesShopItemId(m.key_id.0))
+                    .or_default()
+                    .push(m);
+                map
+            },
+        )
+        .into_iter()
+        .collect(),
         collectables_shop_reward_scrips: read_csv_to_map(&format!(
             "{}CollectablesShopRewardScrip.csv",
             base_path
@@ -216,8 +236,8 @@ pub fn read_data_with(root: &Path, lang: Language, supplements: &Supplements) ->
 fn shown_npc_placements<'a>(
     all: &HashMap<ENpcResidentId, Vec<NpcPlacement>>,
     shown: impl Iterator<Item = &'a ENpcResidentId>,
-) -> HashMap<ENpcResidentId, Vec<NpcPlacement>> {
-    let mut out: HashMap<ENpcResidentId, Vec<NpcPlacement>> = HashMap::new();
+) -> IdMap<ENpcResidentId, Vec<NpcPlacement>> {
+    let mut out: IdMap<ENpcResidentId, Vec<NpcPlacement>> = IdMap::new();
     for npc in shown {
         if out.contains_key(npc) {
             continue;
@@ -317,8 +337,8 @@ impl ShopRoutes {
             }
         }
         Self {
-            topic_selects: read_csv_to_map(&format!("{en_path}TopicSelect.csv")),
-            pre_handlers: read_csv_to_map(&format!("{en_path}PreHandler.csv")),
+            topic_selects: read_csv_to_hash_map(&format!("{en_path}TopicSelect.csv")),
+            pre_handlers: read_csv_to_hash_map(&format!("{en_path}PreHandler.csv")),
             inclusion_shops,
             custom_talks,
         }
@@ -369,9 +389,9 @@ const COLLECTABLES_REWARD_SCRIP: i32 = 1;
 
 /// The shop -> NPC indexes, one per shop kind.
 pub(crate) struct NpcShopIndexes {
-    pub gil: HashMap<GilShopId, Vec<ENpcResidentId>>,
-    pub special: HashMap<SpecialShopId, Vec<ENpcResidentId>>,
-    pub collectables: HashMap<CollectablesShopId, Vec<ENpcResidentId>>,
+    pub gil: IdMap<GilShopId, Vec<ENpcResidentId>>,
+    pub special: IdMap<SpecialShopId, Vec<ENpcResidentId>>,
+    pub collectables: IdMap<CollectablesShopId, Vec<ENpcResidentId>>,
 }
 
 /// Invert `ENpcBase.ENpcData` into `shop -> npcs` for every shop kind.
@@ -387,10 +407,10 @@ pub(crate) struct NpcShopIndexes {
 pub(crate) fn build_npc_shop_indexes(
     npc_bases: &[ENpcBase],
     routes: &ShopRoutes,
-    residents: &HashMap<ENpcResidentId, ENpcResident>,
-    gil_shops: &HashMap<GilShopId, GilShop>,
-    special_shops: &HashMap<SpecialShopId, SpecialShop>,
-    collectables_shops: &HashMap<CollectablesShopId, CollectablesShop>,
+    residents: &IdMap<ENpcResidentId, ENpcResident>,
+    gil_shops: &IdMap<GilShopId, GilShop>,
+    special_shops: &IdMap<SpecialShopId, SpecialShop>,
+    collectables_shops: &IdMap<CollectablesShopId, CollectablesShop>,
 ) -> NpcShopIndexes {
     let mut gil: HashMap<GilShopId, Vec<ENpcResidentId>> = HashMap::new();
     let mut special: HashMap<SpecialShopId, Vec<ENpcResidentId>> = HashMap::new();
@@ -442,10 +462,12 @@ pub(crate) fn build_npc_shop_indexes(
     sort_npcs(&mut gil);
     sort_npcs(&mut special);
     sort_npcs(&mut collectables);
+    // The per-shop `Vec`s are built by `entry`, so the working index is a
+    // `HashMap`; the pack wants it in shop order.
     NpcShopIndexes {
-        gil,
-        special,
-        collectables,
+        gil: gil.into_iter().collect(),
+        special: special.into_iter().collect(),
+        collectables: collectables.into_iter().collect(),
     }
 }
 
@@ -475,7 +497,7 @@ pub(crate) fn tomestone_items(rows: &[TomestonesItemRow]) -> HashMap<u16, u16> {
 /// wants to carry that distinction. A slot whose cost type is unknown, or
 /// whose index has no item, is left as it was.
 pub(crate) fn resolve_currency_costs(
-    shops: &mut HashMap<SpecialShopId, SpecialShop>,
+    shops: &mut IdMap<SpecialShopId, SpecialShop>,
     cost_types: &HashMap<SpecialShopId, SpecialShopCostTypes>,
     tomestones: &HashMap<u16, u16>,
 ) {
@@ -762,10 +784,23 @@ fn split_multi_indexed_column<'a>(column: &'a str, prefix: &str) -> Option<(&'a 
     indexes.split_once("][")
 }
 
-fn read_csv_to_map<K, T>(path: &str) -> HashMap<K, T>
+/// Same as [`read_csv_to_map`] for the handler sheets, which are read to walk
+/// the NPC -> shop routes and then dropped rather than packed.
+fn read_csv_to_hash_map<K, T>(path: &str) -> HashMap<K, T>
 where
     T: FromCsv + HasId<Id = K>,
     K: std::hash::Hash + Eq,
+{
+    read_csv_vec::<T>(path)
+        .into_iter()
+        .map(|item| (item.get_id(), item))
+        .collect()
+}
+
+fn read_csv_to_map<K, T>(path: &str) -> IdMap<K, T>
+where
+    T: FromCsv + HasId<Id = K>,
+    K: RowId,
 {
     read_csv_vec::<T>(path)
         .into_iter()
@@ -818,7 +853,7 @@ mod tests {
     /// they happen to be small ids.
     #[test]
     fn currency_costs_resolve_to_items_by_cost_type() {
-        let mut shops = HashMap::from([
+        let mut shops = IdMap::from_iter([
             // Poetics + purple scrip
             (SpecialShopId(1), special_shop(1, [(1, 345), (2, 250)])),
             // 566 sheet rows really do cost gil; a gil cost is CostType 0
@@ -926,7 +961,7 @@ mod tests {
         }
     }
 
-    fn special_shops(ids: &[i32]) -> HashMap<SpecialShopId, SpecialShop> {
+    fn special_shops(ids: &[i32]) -> IdMap<SpecialShopId, SpecialShop> {
         ids.iter()
             .map(|id| (SpecialShopId(*id), special_shop(*id, [(0, 0), (0, 0)])))
             .collect()
@@ -934,7 +969,7 @@ mod tests {
 
     #[test]
     fn npc_shop_indexes_follow_every_handler_route() {
-        let gil_shops: HashMap<GilShopId, GilShop> = [262145, 262146]
+        let gil_shops: IdMap<GilShopId, GilShop> = [262145, 262146]
             .into_iter()
             .map(|id| {
                 (
@@ -948,7 +983,7 @@ mod tests {
             })
             .collect();
         let special = special_shops(&[1769579, 1769813, 1770477, 1770478]);
-        let collectables: HashMap<CollectablesShopId, CollectablesShop> =
+        let collectables: IdMap<CollectablesShopId, CollectablesShop> =
             [(3866626, 1), (3866627, 1), (3866625, 2)]
                 .into_iter()
                 .map(|(id, reward_type)| {
@@ -963,7 +998,7 @@ mod tests {
                     )
                 })
                 .collect();
-        let residents: HashMap<_, _> = [1, 2, 3, 4, 5, 6].into_iter().map(resident).collect();
+        let residents: IdMap<_, _> = [1, 2, 3, 4, 5, 6].into_iter().map(resident).collect();
         let npcs = [
             npc(1, &[3539066]),                   // scrip exchange, via inclusion shop
             npc(2, &[3276802, 262145]),           // menu + the same shop directly: once

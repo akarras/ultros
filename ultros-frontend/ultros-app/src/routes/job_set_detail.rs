@@ -299,8 +299,8 @@ pub(crate) struct MaterialEntry {
 /// material rises to the top.
 pub(crate) fn aggregate_materials(
     set: &JobSetGroup,
-    recipes: &std::collections::HashMap<xiv_gen::RecipeId, xiv_gen::Recipe>,
-    items: &std::collections::HashMap<ItemId, xiv_gen::Item>,
+    recipes: &xiv_gen::IdMap<xiv_gen::RecipeId, xiv_gen::Recipe>,
+    items: &xiv_gen::IdMap<ItemId, xiv_gen::Item>,
 ) -> Vec<MaterialEntry> {
     let set_ids: HashSet<i32> = set.items.iter().map(|i| i.id.0).collect();
     let mut totals: BTreeMap<i32, i32> = BTreeMap::new();
@@ -1012,10 +1012,10 @@ mod tests {
 
     #[test]
     fn find_set_returns_stable_item_order_for_hydration() {
-        // The real route feeds `find_set_for_job` from a HashMap. SSR
-        // and WASM can observe different HashMap iteration orders; if
-        // the detail grid order changes during hydration, Leptos can
-        // pair an item's icon/link href with a neighboring item's name.
+        // If the detail grid order changes between the SSR render and
+        // hydration, Leptos can pair an item's icon/link href with a
+        // neighboring item's name — so the order must not depend on how the
+        // caller happened to enumerate the items.
         const SAM_CAT: i32 = 65;
         let items = [
             make_item(5, "Courtly Lover's Boots of Striking", 770, SAM_CAT, 9824),
@@ -1166,14 +1166,14 @@ mod tests {
         };
         // Item 1 needs 2 fiber + 3 shards; item 2 needs 1 fiber + 5 shards.
         // Item 99 is a different set's recipe — must NOT contribute.
-        let recipes: HashMap<RecipeId, Recipe> = [
+        let recipes: xiv_gen::IdMap<RecipeId, Recipe> = [
             (RecipeId(10), make_recipe(10, 1, &[(100, 2), (59, 3)])),
             (RecipeId(11), make_recipe(11, 2, &[(100, 1), (59, 5)])),
             (RecipeId(12), make_recipe(12, 99, &[(100, 1000)])),
         ]
         .into_iter()
         .collect();
-        let items: HashMap<ItemId, Item> = [
+        let items: xiv_gen::IdMap<ItemId, Item> = [
             (ItemId(100), make_item(100, "Garlean Fiber", 0, 0, 51)),
             (
                 ItemId(59),
@@ -1202,8 +1202,8 @@ mod tests {
             level_equip: Some(100),
             items: vec![item(500, "Vendor Sword")],
         };
-        let recipes: HashMap<RecipeId, Recipe> = HashMap::new();
-        let items: HashMap<ItemId, Item> = HashMap::new();
+        let recipes: xiv_gen::IdMap<RecipeId, Recipe> = xiv_gen::IdMap::new();
+        let items: xiv_gen::IdMap<ItemId, Item> = xiv_gen::IdMap::new();
         assert!(aggregate_materials(&set, &recipes, &items).is_empty());
     }
 

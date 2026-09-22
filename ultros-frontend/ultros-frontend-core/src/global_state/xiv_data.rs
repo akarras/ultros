@@ -99,7 +99,15 @@ mod tests {
 
     #[test]
     fn resolve_item_id_accepts_a_real_item() {
-        let real_id = tracked_data().items.keys().next().expect("data loaded").0;
+        // Skip row 0: it is the unnamed "nothing here" placeholder, which
+        // `resolve_item_id` rejects on purpose (see the test below). The table
+        // iterates in row-id order, so row 0 is what `keys().next()` yields.
+        let real_id = tracked_data()
+            .items
+            .keys()
+            .map(|id| id.0)
+            .find(|id| *id > 0)
+            .expect("data loaded");
         assert_eq!(resolve_item_id(Some(&real_id.to_string())), Some(real_id));
     }
 
