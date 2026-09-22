@@ -192,6 +192,36 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
     }
 }
 
+/// How `ShareLocale` rewrites the URL to carry `?lang=`.
+#[cfg(any(not(feature = "ssr"), test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShareLocaleHistory {
+    /// The address bar already shows this path (landing without `?lang=`,
+    /// locale picked in place, back/forward): rewrite the current entry.
+    Replace,
+    /// The router has moved on but the address bar has not: its pushState is
+    /// still pending, so this navigation takes it over as a push.
+    Push,
+}
+
+/// For anchor clicks the router publishes the new URL signal first and only
+/// calls pushState once the route's loaders finish. `ShareLocale`'s effect runs
+/// inside that window, and a `replace` there would overwrite the history entry
+/// the user is *leaving* (the router then skips its own push because the URL
+/// signal moved on) — the back button would jump past the previous page. Push
+/// while the address bar still shows the old path, and keep the link's
+/// scroll-to-top; otherwise rewrite in place without scrolling.
+#[cfg(any(not(feature = "ssr"), test))]
+fn share_locale_history_mode(
+    address_bar_path: Option<&str>,
+    router_path: &str,
+) -> ShareLocaleHistory {
+    match address_bar_path {
+        Some(current) if current != router_path => ShareLocaleHistory::Push,
+        _ => ShareLocaleHistory::Replace,
+    }
+}
+
 /// Keep browser URLs shareable after picking a language or navigating to a new
 /// page. Explicit URLs also work without JavaScript through request_locale().
 #[component]
@@ -228,11 +258,13 @@ pub(crate) fn ShareLocale() -> impl IntoView {
                     query.to_query_string(),
                     location.hash.get_untracked()
                 );
+                let address_bar_path = window().location().pathname().ok();
+                let history = share_locale_history_mode(address_bar_path.as_deref(), &path);
                 navigate(
                     &target,
                     NavigateOptions {
-                        replace: true,
-                        scroll: false,
+                        replace: history == ShareLocaleHistory::Replace,
+                        scroll: history == ShareLocaleHistory::Push,
                         ..Default::default()
                     },
                 );
@@ -245,6 +277,25 @@ pub(crate) fn ShareLocale() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn share_locale_pushes_only_while_the_router_push_is_pending() {
+        // Anchor click: router already on /items, address bar still on /.
+        assert_eq!(
+            share_locale_history_mode(Some("/"), "/items"),
+            ShareLocaleHistory::Push
+        );
+        // Landing without `?lang=`, locale picker, back/forward: same path.
+        assert_eq!(
+            share_locale_history_mode(Some("/items"), "/items"),
+            ShareLocaleHistory::Replace
+        );
+        // Unknown address bar: never destroy history on a guess.
+        assert_eq!(
+            share_locale_history_mode(None, "/items"),
+            ShareLocaleHistory::Replace
+        );
+    }
 
     #[test]
     fn explicit_query_locales_are_strict_and_decode_like_the_router() {
