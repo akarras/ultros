@@ -2,7 +2,10 @@ use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
+use crate::analyzer_kit::{
+    connected_regions::widened_listings,
+    scope::{MarketScope, use_buy_market_scope},
+};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -342,6 +345,9 @@ fn calculate_fc_project_cost<P: PriceLookup + ?Sized>(
 fn FCCraftingAnalyzerTable(
     scope: MarketScope,
     global_cheapest_listings: CheapestListings,
+    /// Where materials are bought, when that reaches past
+    /// `global_cheapest_listings` into the connected regions.
+    buy_listings: Option<CheapestListings>,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
     sales_world: Signal<String>,
@@ -358,6 +364,7 @@ fn FCCraftingAnalyzerTable(
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let buy_prices = buy_listings.map(CheapestListingsMap::from);
     let market = use_market_data(world);
     let (cost_basis, _set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
     market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
@@ -392,9 +399,10 @@ fn FCCraftingAnalyzerTable(
         let revenue_signal = revenue_basis.get().unwrap_or_default();
         let pricing_pending = stats.is_none()
             && (cost_signal.sale_stat().is_some() || revenue_signal.sale_stat().is_some());
+        let material_prices = buy_prices.as_ref().unwrap_or(&prices);
         let cost_prices = SignalView {
             over: None,
-            base: &prices,
+            base: material_prices,
             stats: stats.as_deref().zip(cost_signal.sale_stat()),
         };
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
@@ -491,7 +499,7 @@ fn FCCraftingAnalyzerTable(
             let pricing_fallback = revenue.fallback
                 || materials.iter().any(|material| {
                     resolve_price(
-                        &prices,
+                        material_prices,
                         stats.as_deref(),
                         material.item_id.0,
                         None,
@@ -894,13 +902,16 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 
     // Ingredients and shared statistics follow the chosen pricing scope.
     // Only the native recent-sales estimate is scoped to the selected world.
-    let scope = use_market_scope(Signal::derive(move || {
+    // The connected tier widens the ingredients alone: the finished project
+    // still sells at home, so its price stays on `scope.name`.
+    let scope = use_buy_market_scope(Signal::derive(move || {
         selected_world.get().map(|world| world.name)
     }));
     let region = scope.name;
     let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
+    let connected_listings = scope.connected_listings();
 
     let recent_sales = columnar_resource(selected_world, move |world| async move {
         if let Some(world) = world {
@@ -955,24 +966,19 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                     {move || {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
-                        match (listings, sales) {
-                            (Some(Ok(listings)), Some(Ok(sales))) => {
+                        // Held back until the connected regions answer too, so
+                        // a widened chip never renders home-only costs.
+                        let partners = connected_listings.get();
+                        match (listings, partners) {
+                            (Some(Ok(listings)), Some(partners)) => {
+                                let buy_listings =
+                                    widened_listings(&listings, &partners.unwrap_or_default());
                                 view! {
                                     <FCCraftingAnalyzerTable
                                         scope
                                         global_cheapest_listings=listings
-                                        recent_sales=Some(sales)
-                                        world=region.into()
-                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
-                                    />
-                                }.into_any()
-                            }
-                             (Some(Ok(listings)), _) => {
-                                view! {
-                                    <FCCraftingAnalyzerTable
-                                        scope
-                                        global_cheapest_listings=listings
-                                        recent_sales=None
+                                        buy_listings
+                                        recent_sales=sales.and_then(Result::ok)
                                         world=region.into()
                                         sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />

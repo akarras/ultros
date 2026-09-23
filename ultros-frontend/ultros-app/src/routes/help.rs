@@ -70,7 +70,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Selected sell world",
             "Recent sales",
             "Cheapest listings",
-            "Cross-region setting",
+            "Connected regions setting",
             "Tax setting",
         ],
         assumptions: &[

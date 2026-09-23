@@ -7,6 +7,7 @@ pub mod calculation;
 pub mod cells;
 pub mod columns;
 pub mod confidence;
+pub mod connected_regions;
 pub mod enrichment;
 pub mod filters;
 pub use ultros_calc::formula;

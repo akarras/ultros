@@ -5,7 +5,10 @@ use crate::analysis::{
     roi_badge_class, sale_tax, signed_delta_class, velocity_per_day,
 };
 use crate::analyzer_kit::calculation::{
-    Calculation, CalculationPlace, CalculationStrip, CalculationTerm,
+    CONNECTED_PLACE, Calculation, CalculationPlace, CalculationStrip, CalculationTerm,
+};
+use crate::analyzer_kit::connected_regions::{
+    ConnectedRegions, get_partner_listings, use_connected_regions,
 };
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
@@ -1145,13 +1148,6 @@ fn AnalyzerTableSkeleton() -> impl IntoView {
     }
 }
 
-/// Regions whose cross-region listings can be pulled in alongside the
-/// current world's own region. Shared between the cross-region toggle's
-/// resource (in `AnalyzerWorldView`) and the per-region opt-out checkboxes
-/// registered by `AnalyzerTable` — both need the same
-/// list, and only one of them may query it.
-const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
-
 /// Which of the analyzer's three market boards a realtime event invalidates.
 ///
 /// A listing event names exactly one world, and each board is a different
@@ -1261,8 +1257,10 @@ fn AnalyzerTable(
     profits: Memo<Option<ProfitTableHandle>>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
-    /// Excludes the current region from the registered buy-region controls.
+    /// The sell world's region: the buy side's home market.
     region: Signal<Option<String>>,
+    /// The other regions the buy side can widen to (`?cross=true`).
+    connected: ConnectedRegions,
     /// Fired when a realtime event invalidates one or more market boards,
     /// carrying which ones so the caller can refetch just those.
     on_market_update: Callback<MarketScope>,
@@ -1794,7 +1792,6 @@ fn AnalyzerTable(
         previous.copied().unwrap_or_default().wrapping_add(1)
     });
 
-    let filter_query = crate::components::app_link::use_query_map_or_default();
     let registry = register_filters(
         vec![
             FilterAlias::integer("profit", "profit", FilterOp::Gte),
@@ -1823,7 +1820,7 @@ fn AnalyzerTable(
             },
         ],
         Signal::derive(move || {
-            let mut controls = vec![
+            vec![
                 price_control(
                     "revenue",
                     t_string!(i18n, market_sale_estimate).to_string(),
@@ -1850,23 +1847,7 @@ fn AnalyzerTable(
                     control.clear_with_filters = false;
                     control
                 },
-            ];
-            if filter_query.with(|q| q.get("cross")).as_deref() == Some("true") {
-                let current = region.get();
-                controls.extend(
-                    CONNECTED_REGIONS
-                        .iter()
-                        .copied()
-                        .filter(|name| current.as_deref() != Some(*name))
-                        .map(|name| {
-                            let mut control = toggle_control(name, name.to_string());
-                            control.default_value = Some("true".into());
-                            control.clear_with_filters = false;
-                            control
-                        }),
-                );
-            }
-            controls
+            ]
         }),
     );
 
@@ -2014,26 +1995,37 @@ fn AnalyzerTable(
     ];
     let worlds_for_measure = worlds.clone();
     // The buy side's market: the home region, or it plus every connected
-    // region (`?cross=`). Only a connected region can widen.
+    // region (`?cross=`). Only a connected region can widen, and the chip
+    // carries the per-region opt-outs itself.
     let (cross_region, set_cross_region) = filter_query_signal::<bool>("cross");
     let buy_place = CalculationPlace {
-        value: Signal::derive(move || cross_region.get().unwrap_or_default().to_string()),
+        value: Signal::derive(move || {
+            if cross_region.get().unwrap_or_default() && connected.available() {
+                CONNECTED_PLACE
+            } else {
+                "region"
+            }
+            .to_string()
+        }),
         options: Signal::derive(move || {
             let current = region
                 .get()
                 .unwrap_or_else(|| t_string!(i18n, analyzer_scope_region).to_string());
-            let connected = CONNECTED_REGIONS.contains(&current.as_str());
             let widened = t_string!(
                 i18n,
                 analyzer_scope_connected_regions,
                 region = current.clone()
             )
             .to_string();
-            vec![("false", current, true), ("true", widened, connected)]
+            vec![
+                ("region", current, true),
+                (CONNECTED_PLACE, widened, connected.available()),
+            ]
         }),
         on_change: Callback::new(move |value: String| {
-            set_cross_region.set((value == "true").then_some(true));
+            set_cross_region.set((value == CONNECTED_PLACE).then_some(true));
         }),
+        connected: Some(connected),
     };
     let calculation = Calculation::provide(
         registry,
@@ -2638,44 +2630,21 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     let (cross_region_enabled, _set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, _set_filter_outliers) = query_signal::<bool>("filter-outliers");
-    let connected_regions = CONNECTED_REGIONS;
-    let query = use_query_map_or_default();
+    let connected = use_connected_regions(Signal::derive(move || region.get().ok()));
 
-    let enabled_regions = move || {
-        let map = query();
-        connected_regions
-            .iter()
-            .filter(|region| map.get(region).map(|value| value == "true").unwrap_or(true))
-            .collect::<Vec<_>>()
-    };
-
+    // The other connected regions' boards: every one the home region can
+    // reach, minus the ones opted out on the Buy price chip. None unless
+    // `?cross=true` and the home region is connected at all.
     let cross_region = columnar_resource(
         move || {
-            (
-                cross_region_enabled(),
-                region(),
-                enabled_regions(),
-                cross_board_version.get(),
-            )
-        },
-        move |(enabled, region, enabled_regions, refresh_version)| async move {
-            let region = region?;
-            if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
-                Ok(futures::future::join_all(
-                    connected_regions
-                        .iter()
-                        .filter(|r| **r != region.as_str())
-                        .filter(|r| enabled_regions.contains(r))
-                        .map(|region| get_cheapest_listings_live(region, refresh_version)),
-                )
-                .await
-                .into_iter()
-                .filter_map(|l| l.ok())
-                .collect())
+            let regions = if cross_region_enabled().unwrap_or_default() {
+                connected.included()
             } else {
-                Ok(vec![])
-            }
+                Vec::new()
+            };
+            (regions, cross_board_version.get())
         },
+        move |(regions, refresh_version)| get_partner_listings(regions, refresh_version),
     );
 
     // Coalesce realtime ticks. A busy world delivers many relevant listing
@@ -2858,6 +2827,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     worlds=worlds.clone()
                                     world=world
                                     region=Signal::derive(move || region().ok())
+                                    connected
                                     on_market_update=refetch_market_data
                                 />
                             </Show>
