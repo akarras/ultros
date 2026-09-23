@@ -1728,6 +1728,7 @@
     "undercut_pressure_state_war": "가격 전쟁",
     "undercut_pressure_state_churn": "변동",
     "undercut_pressure_state_calm": "평온",
+    "undercut_pressure_state_unknown": "데이터 없음",
     "undercut_pressure_tooltip_undercuts": "언더컷 {{total}}건 (컷 {{cuts}}, 트림 {{trims}})",
     "undercut_pressure_tooltip_sellers": "{{sellers}}명의 판매자가 컷 중",
     "undercut_pressure_card_trend": "최저가 추세 (24시간)",

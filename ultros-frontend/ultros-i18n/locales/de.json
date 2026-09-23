@@ -1728,6 +1728,7 @@
     "undercut_pressure_state_war": "Preiskrieg",
     "undercut_pressure_state_churn": "Unruhe",
     "undercut_pressure_state_calm": "Ruhig",
+    "undercut_pressure_state_unknown": "Keine Daten",
     "undercut_pressure_tooltip_undercuts": "{{total}} Preisunterbietungen ({{cuts}} Schnitte, {{trims}} Anpassungen)",
     "undercut_pressure_tooltip_sellers": "{{sellers}} Verkäufer unterbieten",
     "undercut_pressure_card_trend": "Tiefstpreis-Trend (24 Std.)",

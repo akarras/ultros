@@ -1728,6 +1728,7 @@
     "undercut_pressure_state_war": "価格戦争",
     "undercut_pressure_state_churn": "変動",
     "undercut_pressure_state_calm": "静穏",
+    "undercut_pressure_state_unknown": "データなし",
     "undercut_pressure_tooltip_undercuts": "アンダーカット {{total}} 件（カット {{cuts}}、トリム {{trims}}）",
     "undercut_pressure_tooltip_sellers": "{{sellers}} 人の出品者がカット中",
     "undercut_pressure_card_trend": "底値の傾向（24時間）",

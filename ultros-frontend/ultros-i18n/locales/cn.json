@@ -1728,6 +1728,7 @@
     "undercut_pressure_state_war": "价格战",
     "undercut_pressure_state_churn": "波动",
     "undercut_pressure_state_calm": "平静",
+    "undercut_pressure_state_unknown": "无数据",
     "undercut_pressure_tooltip_undercuts": "{{total}} 次压价（深度压价 {{cuts}} 次，轻微压价 {{trims}} 次）",
     "undercut_pressure_tooltip_sellers": "{{sellers}} 名卖家正在压价",
     "undercut_pressure_card_trend": "底价趋势（24小时）",

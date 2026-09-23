@@ -1728,6 +1728,7 @@
     "undercut_pressure_state_war": "Guerre",
     "undercut_pressure_state_churn": "Agitation",
     "undercut_pressure_state_calm": "Calme",
+    "undercut_pressure_state_unknown": "Pas de données",
     "undercut_pressure_tooltip_undercuts": "{{total}} sous-cotations ({{cuts}} coupes, {{trims}} ajustements)",
     "undercut_pressure_tooltip_sellers": "{{sellers}} vendeurs en train de sous-coter",
     "undercut_pressure_card_trend": "Tendance du prix plancher (24 h)",

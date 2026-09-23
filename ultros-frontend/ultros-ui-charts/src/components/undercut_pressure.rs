@@ -73,6 +73,9 @@ pub fn pressure_bucket_at(p: &UndercutPressure, ts: i64) -> Option<&PressureBuck
         .find(|b| ts >= b.start && ts < b.start + p.bucket_seconds)
 }
 
+/// Below this the typical-rate suffix would round to "~0.0/hr"; omit it.
+const MIN_SHOWN_RATE: f64 = 0.05;
+
 fn percent(fraction: f64) -> String {
     format!("{:+.1}%", fraction * 100.0)
 }
@@ -83,7 +86,8 @@ pub fn UndercutPressureCards(
     #[prop(into)] error: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let summary = Memo::new(move |_| pressure.get().map(|p| p.summary));
+    // Clone only the summary, not the (up to 2000) buckets.
+    let summary = Memo::new(move |_| pressure.with(|p| p.as_ref().map(|p| p.summary.clone())));
     let duration = move |secs: i64| match duration_parts(secs) {
         (DurationUnit::Minutes, n) => t_string!(i18n, undercut_pressure_minutes, n = n).to_string(),
         (DurationUnit::Hours, n) => t_string!(i18n, undercut_pressure_hours, n = n).to_string(),
@@ -121,7 +125,8 @@ pub fn UndercutPressureCards(
             ContestedLevel::Quiet => t_string!(i18n, undercut_pressure_contested_quiet).to_string(),
         };
         Some(match s.typical_undercuts_per_hour {
-            Some(rate) => {
+            // "~0.0 undercuts/hr" says nothing; the contested label stands alone.
+            Some(rate) if rate >= MIN_SHOWN_RATE => {
                 let rate = t_string!(
                     i18n,
                     undercut_pressure_typical_rate,
@@ -130,7 +135,7 @@ pub fn UndercutPressureCards(
                 .to_string();
                 format!("{level} · {rate}")
             }
-            None => level,
+            _ => level,
         })
     };
     let trend_detail = move || {
@@ -268,6 +273,10 @@ pub fn UndercutPressurePane(
                     <span>
                         <i class="mh-swatch mh-swatch-calm"></i>
                         {t!(i18n, undercut_pressure_state_calm)}
+                    </span>
+                    <span>
+                        <i class="mh-swatch mh-swatch-unknown"></i>
+                        {t!(i18n, undercut_pressure_state_unknown)}
                     </span>
                 </div>
                 <svg

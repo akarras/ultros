@@ -15,4 +15,5 @@
 .mh-swatch-baseline { height: 0; width: 14px; border-top: 2px dashed var(--mh-baseline); }
 .mh-swatch-churn { background: var(--mh-churn); }
 .mh-swatch-calm { background: var(--mh-calm); }
+.mh-swatch-unknown { background: var(--mh-unknown); }
 .mh-pressure-crosshair { stroke: var(--color-text-muted); stroke-width: 1; stroke-dasharray: 3 3; }

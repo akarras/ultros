@@ -1728,6 +1728,7 @@
     "undercut_pressure_state_war": "價格戰",
     "undercut_pressure_state_churn": "波動",
     "undercut_pressure_state_calm": "平靜",
+    "undercut_pressure_state_unknown": "無資料",
     "undercut_pressure_tooltip_undercuts": "{{total}} 次殺價（深度殺價 {{cuts}} 次，輕微殺價 {{trims}} 次）",
     "undercut_pressure_tooltip_sellers": "{{sellers}} 名賣家正在殺價",
     "undercut_pressure_card_trend": "底價趨勢（24小時）",

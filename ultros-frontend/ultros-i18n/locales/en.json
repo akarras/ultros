@@ -1724,6 +1724,7 @@
     "undercut_pressure_state_war": "War",
     "undercut_pressure_state_churn": "Churn",
     "undercut_pressure_state_calm": "Calm",
+    "undercut_pressure_state_unknown": "No data",
     "undercut_pressure_tooltip_undercuts": "{{total}} undercuts ({{cuts}} cuts, {{trims}} trims)",
     "undercut_pressure_tooltip_sellers": "{{sellers}} sellers cutting",
     "undercut_pressure_card_trend": "Floor trend (24h)",

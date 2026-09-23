@@ -115,7 +115,29 @@ pub fn build_undercut_pressure_chart(
     let y = LinearScale::new((0.0, max), (bars_bottom, bars_top));
     let edge = |ts: i64| time.scale(naive(ts)).clamp(left, right);
 
-    let mut nodes = vec![Node::Line {
+    // Untracked time before the world's coverage starts (the endpoint clamps
+    // `from` to the anchor, so no buckets exist there): a flat dim band, no
+    // bars, so blank never reads as calm. A never-anchored world with no
+    // buckets is untracked across the whole domain.
+    let unknown_until = match p.coverage_from {
+        Some(c) if c > o.time_domain.0 => Some(p.buckets.first().map_or(c, |b| c.min(b.start))),
+        None if p.buckets.is_empty() => Some(o.time_domain.1),
+        _ => None,
+    };
+    let unknown_band = unknown_until
+        .map(|end| (left, edge(end)))
+        .filter(|(x0, x1)| x1 > x0);
+    let mut nodes = Vec::new();
+    if let Some((x0, x1)) = unknown_band
+        && let Some(d) = rects_path_d(&[(x0, bars_top, x1 - x0, bars_bottom - bars_top)])
+    {
+        nodes.push(Node::Path {
+            d,
+            fill: Some(o.palette.unknown.with_alpha(0.35)),
+            stroke: None,
+        });
+    }
+    nodes.push(Node::Line {
         x1: left,
         y1: bars_bottom,
         x2: right,
@@ -125,8 +147,11 @@ pub fn build_undercut_pressure_chart(
             width: 1.0,
             dash: None,
         },
-    }];
+    });
     let mut ribbon: [Vec<(f32, f32, f32, f32)>; 4] = Default::default();
+    if let Some((x0, x1)) = unknown_band {
+        ribbon[3].push((x0, RIBBON_TOP, (x1 - x0 - 1.0).max(0.5), RIBBON_HEIGHT));
+    }
     let (mut cut_rects, mut trim_rects, mut sales_points) = (Vec::new(), Vec::new(), Vec::new());
     for b in &p.buckets {
         let (x0, x1) = (edge(b.start), edge(b.start + p.bucket_seconds));
@@ -326,6 +351,76 @@ mod tests {
             (line[1].1 - m.bars_bottom).abs() < 0.01,
             "bucket 2 has no sales → zero"
         );
+    }
+
+    /// The fixture with coverage starting two hours into a six-hour domain
+    /// and the pre-coverage buckets dropped, as the endpoint returns it.
+    fn unknown_prefix_fixture() -> UndercutPressure {
+        let mut p = tests_fixture();
+        p.coverage_from = Some(2 * 3600);
+        p.from = 2 * 3600;
+        p.buckets.retain(|b| b.start >= 2 * 3600);
+        p
+    }
+
+    fn unknown_paths(m: &PressurePaneModel) -> Vec<(&String, Color)> {
+        let unknown = PressurePalette::default().unknown;
+        m.scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Path {
+                    d, fill: Some(f), ..
+                } if (f.r, f.g, f.b) == (unknown.r, unknown.g, unknown.b) => Some((d, *f)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn untracked_prefix_draws_a_dim_unknown_band() {
+        let m = build_undercut_pressure_chart(&unknown_prefix_fixture(), &[], &options());
+        let paths = unknown_paths(&m);
+        let ribbon = paths
+            .iter()
+            .find(|(_, f)| f.a >= 1.0)
+            .expect("unknown ribbon cell");
+        let lane = paths
+            .iter()
+            .find(|(_, f)| f.a < 1.0)
+            .expect("dim unknown lane band");
+        for (d, _) in [ribbon, lane] {
+            assert!(
+                d.starts_with(&format!("M{PANE_MARGIN_LEFT:.1} ")),
+                "band starts at the plot's left edge: {d}"
+            );
+        }
+        // The band ends where coverage starts (2 h of a 6 h domain).
+        let plot = 960.0 - PANE_MARGIN_LEFT - PANE_MARGIN_RIGHT;
+        let cover_x = PANE_MARGIN_LEFT + plot * 2.0 / 6.0;
+        assert!(
+            lane.0
+                .contains(&format!("{:.1}", cover_x - PANE_MARGIN_LEFT)),
+            "lane band spans left edge → coverage: {}",
+            lane.0
+        );
+    }
+
+    #[test]
+    fn never_anchored_empty_payload_is_unknown_everywhere() {
+        let mut p = tests_fixture();
+        p.coverage_from = None;
+        p.buckets.clear();
+        p.baseline = None;
+        let m = build_undercut_pressure_chart(&p, &[], &options());
+        assert_eq!(unknown_paths(&m).len(), 2, "ribbon cell + lane band");
+    }
+
+    #[test]
+    fn covered_domain_draws_no_band() {
+        // The fixture's coverage starts inside its own first (unknown) bucket.
+        let m = build_undercut_pressure_chart(&tests_fixture(), &[], &options());
+        assert!(unknown_paths(&m).iter().all(|(_, f)| f.a >= 1.0));
     }
 
     #[test]
