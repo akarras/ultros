@@ -276,6 +276,26 @@ extern "C" {
     fn prepare_guest_offline(catalog_url: &str, lang: &str);
 }
 
+/// Name of the IndexedDB database game data used to be cached in (via rexie).
+/// Since the browser startup packs (#1575) game data comes from the HTTP cache
+/// and nothing opens it, but browsers that visited before still hold the old
+/// multi-megabyte packs there. Not to be confused with the device-list store,
+/// which is its own database (`ultros-device-lists-v1`).
+const LEGACY_GAME_DATA_DB: &str = "ultros";
+
+/// Drop the orphaned [`LEGACY_GAME_DATA_DB`]. Deleting a database that does
+/// not exist is a no-op, so this is cheap to run on every load; fire and
+/// forget, since nothing waits on the space being reclaimed.
+fn delete_legacy_game_data_db() {
+    let Some(factory) = web_sys::window().and_then(|window| window.indexed_db().ok().flatten())
+    else {
+        return;
+    };
+    if let Err(e) = factory.delete_database(LEGACY_GAME_DATA_DB) {
+        log::warn!("failed to delete legacy game-data IndexedDB: {e:?}");
+    }
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     set_panic_hook();
@@ -403,6 +423,7 @@ pub fn hydrate() {
             hydrate_body(app);
         }
         dispatch_boot_event("ultros:hydrated");
+        delete_legacy_game_data_db();
         let lang = get_i18n_lang();
         prepare_guest_offline(&xiv_gen_db::startup_url(&lang), &lang);
     });
