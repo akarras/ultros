@@ -25,6 +25,7 @@
     "analyzer_scope_world": "World",
     "analyzer_scope_datacenter": "Datacenter",
     "analyzer_scope_region": "Region",
+    "analyzer_scope_connected_regions": "{{region}} + connected regions",
     "analyzer_listing_hide_suspicious": "Hide suspicious listing valuations",
     "analyzer_listing_unverified_label": "Unverified listing estimate",
     "analyzer_listing_unverified_help": "No matching sale-history comparison is available for this listing's quality and market. Missing history does not establish that the asking price is realistic.",

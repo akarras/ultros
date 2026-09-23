@@ -2,6 +2,7 @@
 //! from the market used for prices and optional market-statistics columns.
 use leptos::prelude::*;
 
+use super::calculation::CalculationPlace;
 use crate::{
     global_state::region_for_world::{use_datacenter_for_world, use_region_for_world},
     i18n::*,
@@ -13,8 +14,9 @@ pub struct MarketScope {
     pub name: Memo<String>,
     selected: Memo<String>,
     set: SignalSetter<Option<String>>,
-    world_available: Memo<bool>,
-    datacenter_available: Memo<bool>,
+    world: Signal<Option<String>>,
+    datacenter: Signal<Option<String>>,
+    region: Signal<String>,
 }
 
 pub fn use_market_scope(world: Signal<Option<String>>) -> MarketScope {
@@ -45,25 +47,42 @@ pub fn use_market_scope(world: Signal<Option<String>>) -> MarketScope {
         name,
         selected,
         set,
-        world_available: Memo::new(move |_| world.get().is_some()),
-        datacenter_available: Memo::new(move |_| datacenter.get().is_some()),
+        world,
+        datacenter: Signal::derive(move || datacenter.get()),
+        region: Signal::derive(move || region.get()),
     }
 }
 
-#[component]
-pub fn MarketScopeControl(scope: MarketScope) -> impl IntoView {
-    let i18n = crate::i18n_fallback::use_i18n_or_default();
-    view! {
-        <label class="filter-chip" data-testid="analyzer-price-scope">
-            <span>{t!(i18n, analyzer_price_scope)}</span>
-            <select class="filter-chip-value"
-                prop:value=move || scope.selected.get()
-                on:change=move |ev| scope.set.set(Some(event_target_value(&ev)))>
-                <option value="world" disabled=move || !scope.world_available.get() selected=move || scope.selected.get() == "world">{t!(i18n, analyzer_scope_world)}</option>
-                <option value="datacenter" disabled=move || !scope.datacenter_available.get() selected=move || scope.selected.get() == "datacenter">{t!(i18n, analyzer_scope_datacenter)}</option>
-                <option value="region" selected=move || scope.selected.get() == "region">{t!(i18n, analyzer_scope_region)}</option>
-            </select>
-            <span class="text-[color:var(--color-text-muted)]">{move || scope.name.get()}</span>
-        </label>
+impl MarketScope {
+    /// The scope as a term chip's place picker: `Cost · [Aether ▾]`. Each
+    /// option is labelled with the place it resolves to; a tier the selected
+    /// world cannot resolve keeps its generic name and is disabled.
+    pub fn place(self) -> CalculationPlace {
+        let i18n = crate::i18n_fallback::use_i18n_or_default();
+        CalculationPlace {
+            value: self.selected.into(),
+            options: Signal::derive(move || {
+                let world = self.world.get();
+                let datacenter = self.datacenter.get();
+                vec![
+                    (
+                        "world",
+                        world
+                            .clone()
+                            .unwrap_or_else(|| t_string!(i18n, analyzer_scope_world).to_string()),
+                        world.is_some(),
+                    ),
+                    (
+                        "datacenter",
+                        datacenter.clone().unwrap_or_else(|| {
+                            t_string!(i18n, analyzer_scope_datacenter).to_string()
+                        }),
+                        datacenter.is_some(),
+                    ),
+                    ("region", self.region.get(), true),
+                ]
+            }),
+            on_change: Callback::new(move |value: String| self.set.set(Some(value))),
+        }
     }
 }

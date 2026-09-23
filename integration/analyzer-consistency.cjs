@@ -92,7 +92,8 @@ async function main() {
       const before = requests.length;
       await page.select('[data-testid="analyzer-price-scope"] select', scope);
       await queryValue('market-scope', scope);
-      await page.waitForFunction(market => document.querySelector('[data-testid="analyzer-price-scope"]')?.textContent.includes(market), {}, market);
+      // Every option names its place, so read the selected one.
+      await page.waitForFunction(market => document.querySelector('[data-testid="analyzer-price-scope"] select')?.selectedOptions[0]?.textContent.trim() === market, {}, market);
       await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.getAttribute('aria-rowcount')) > 1);
       for (let attempts = 0; attempts < 100 && !requests.slice(before).some(url => decodeURIComponent(url).endsWith(`/${market}`)); attempts++) await wait(100);
       assert(requests.slice(before).some(url => decodeURIComponent(url).endsWith(`/${market}`)), `${tool}: ${scope} refetches its market`);
