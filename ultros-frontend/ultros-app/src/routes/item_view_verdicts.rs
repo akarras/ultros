@@ -4,27 +4,38 @@
 //! page's listings payload and contexts into it and renders two compact
 //! cards inside `#overview`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use leptos::prelude::*;
 use leptos_router::location::Url;
+use ultros_api_types::cheapest_listings::CheapestListingMapKey;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
 use ultros_calc::verdict::{
-    BoardVerdict, FloorWarning, ListingSample, SaleRate, SaleSample, SellVerdict, sell_verdict,
+    BoardVerdict, BuySource, CraftVerdict, FloorWarning, ListingSample, SaleRate, SaleSample,
+    SellVerdict, buy_price, craft_unit_cost, craft_verdict, headline_hq, sell_verdict,
 };
-use xiv_gen::ItemId;
+use xiv_gen::{ItemId, Recipe};
 
+use crate::components::crafting_cost::{
+    CraftingCostOptions, EmptyOnHand, IngredientsIter, OnHand, ShardsMode, compute_cost,
+    vendor_price_map,
+};
 use crate::components::gil::Gil;
+use crate::components::on_hand_input::{LocalOnHand, OnHandMap};
+use crate::components::related_items::{get_vendor_price, is_shard_item};
 use crate::components::skeleton::SingleLineSkeleton;
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
+use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::cookies::Cookies;
-use crate::global_state::home_world::use_home_world;
+use crate::global_state::craft_options::{self, CraftOptions};
+use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
 use crate::routes::item_view::{get_or_default, with_or};
+use crate::routes::item_view_sections::Section;
 
 type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
 
@@ -42,6 +53,58 @@ pub(crate) fn sell_world(
     page_world
         .or_else(|| home_world.filter(|home| scope_worlds.contains(home)))
         .filter(|world| !excluded.contains(world))
+}
+
+/// Every recipe whose result is `item_id`, in id order.
+pub(crate) fn output_recipes(item_id: i32) -> Vec<&'static Recipe> {
+    let mut recipes: Vec<&'static Recipe> = tracked_data()
+        .recipes
+        .values()
+        .filter(|recipe| recipe.item_result == item_id)
+        .collect();
+    recipes.sort_by_key(|recipe| recipe.key_id.0);
+    recipes
+}
+
+/// How many levels of intermediate crafts the craft verdict considers.
+const SUBCRAFT_DEPTH: u8 = 2;
+
+/// Recipes for the items up to `depth` levels below `roots`, keyed by the
+/// item they make — the `recipes_by_output` map `compute_cost` walks for
+/// sub-crafts, limited to what these recipes can reach.
+pub(crate) fn subcraft_recipes(
+    roots: &[&'static Recipe],
+    depth: u8,
+) -> HashMap<ItemId, Vec<&'static Recipe>> {
+    let all = &tracked_data().recipes;
+    let mut index: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+    let mut frontier: HashSet<ItemId> = roots
+        .iter()
+        .flat_map(|recipe| IngredientsIter::new(recipe).map(|(item, _)| item))
+        .collect();
+    for _ in 0..depth {
+        if frontier.is_empty() {
+            break;
+        }
+        let found: Vec<&'static Recipe> = all
+            .values()
+            .filter(|recipe| {
+                let output = ItemId(recipe.item_result);
+                frontier.contains(&output) && !index.contains_key(&output)
+            })
+            .collect();
+        frontier = found
+            .iter()
+            .flat_map(|recipe| IngredientsIter::new(recipe).map(|(item, _)| item))
+            .collect();
+        for recipe in found {
+            index
+                .entry(ItemId(recipe.item_result))
+                .or_default()
+                .push(recipe);
+        }
+    }
+    index
 }
 
 /// The vendor anchor `real_price` uses against laundered sales — the same
@@ -94,6 +157,7 @@ pub(crate) fn ItemVerdicts(
     item_id: Memo<i32>,
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let craftable = Memo::new(move |_| !output_recipes(get_or_default(&item_id)).is_empty());
     view! {
         <section
             class="@container mt-4"
@@ -101,6 +165,9 @@ pub(crate) fn ItemVerdicts(
         >
             <div class="grid grid-cols-1 gap-3 @min-[40rem]:grid-cols-2">
                 <SellVerdictCard listing_resource filtered_listings excluded_worlds world item_id />
+                <Show when=move || get_or_default(&craftable)>
+                    <CraftVerdictCard listing_resource item_id />
+                </Show>
             </div>
         </section>
     }
@@ -319,6 +386,190 @@ fn board_lines(board: BoardVerdict, rate: SaleRate, show_rate: bool) -> AnyView 
     .into_any()
 }
 
+#[component]
+fn CraftVerdictCard(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    item_id: Memo<i32>,
+) -> impl IntoView {
+    let cheapest = use_context::<CheapestPrices>().map(|prices| prices.demand());
+    let cookies = use_context::<Cookies>();
+    let options = cookies.as_ref().map(|cookies| {
+        cookies
+            .use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME)
+            .0
+    });
+    let price_zone = cookies.map(|_| get_price_zone().0);
+    let on_hand_map = use_context::<OnHandMap>();
+    // `CheapestPrices` is a client-only resource: render the skeleton on the
+    // server and during hydration, then the verdict (the #740 idiom).
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| hydrated.set(true));
+
+    view! {
+        <Transition fallback=move || view! { <div class=CARD_CLASS><SingleLineSkeleton /></div> }>
+            {move || {
+                let item = get_or_default(&item_id);
+                let hq = listing_resource.with(|data_ref| {
+                    data_ref
+                        .as_ref()
+                        .and_then(|result| result.as_ref().ok())
+                        .map(|data| headline_hq(&sale_samples(&data.sales), laundering_vendor_price(item)))
+                });
+                let Some(hq) = hq else {
+                    return ().into_any();
+                };
+                if !hydrated.get() {
+                    return view! { <div class=CARD_CLASS><SingleLineSkeleton /></div> }.into_any();
+                }
+                let Some(cheapest) = cheapest else {
+                    return ().into_any();
+                };
+                cheapest
+                    .with(|prices| {
+                        let prices = prices.as_ref()?.as_ref().ok()?;
+                        let opts = options.and_then(|cookie| cookie.get()).unwrap_or_default();
+                        let shards = if opts.exclude_shards {
+                            ShardsMode::ExcludeShards
+                        } else {
+                            ShardsMode::IncludeMarket
+                        };
+                        let recipes = output_recipes(item);
+                        let index = subcraft_recipes(&recipes, SUBCRAFT_DEPTH);
+                        let (craft_unit, unpriced) = recipes
+                            .iter()
+                            .map(|recipe| {
+                                // A fresh on-hand snapshot per run: compute_cost consumes it.
+                                let local = LocalOnHand::from_map(
+                                    on_hand_map.map(|map| map.0.get()).unwrap_or_default(),
+                                );
+                                let empty = EmptyOnHand;
+                                let on_hand: &dyn OnHand =
+                                    if opts.use_on_hand { &local } else { &empty };
+                                let cost_options = CraftingCostOptions {
+                                    require_hq: hq,
+                                    max_subcraft_depth: SUBCRAFT_DEPTH,
+                                    shards,
+                                    on_hand,
+                                    vendor_prices: Some(vendor_price_map()),
+                                };
+                                let breakdown =
+                                    compute_cost(recipe, prices, &index, &cost_options, &is_shard_item);
+                                (
+                                    craft_unit_cost(breakdown.cost, recipe.amount_result),
+                                    breakdown.unpriced_market_lines,
+                                )
+                            })
+                            // Fully priced runs first, then the cheapest.
+                            .min_by_key(|&(unit, unpriced)| (unpriced > 0, unit))?;
+                        let market = |hq| {
+                            prices
+                                .map
+                                .get(&CheapestListingMapKey { item_id: item, hq })
+                                .map(|listing| listing.price)
+                        };
+                        let buy = buy_price(
+                            hq,
+                            market(true),
+                            market(false),
+                            get_vendor_price(item).map(|price| price as i32),
+                        );
+                        let zone = price_zone
+                            .and_then(|zone| zone.get())
+                            .map(|zone| zone.get_name().to_string())
+                            .unwrap_or_else(|| "North-America".to_string());
+                        let verdict = craft_verdict(craft_unit, buy.map(|buy| buy.price), unpriced);
+                        Some(craft_card_body(hq, craft_unit, buy, verdict, zone, opts.exclude_shards))
+                    })
+                    .unwrap_or_else(|| ().into_any())
+            }}
+        </Transition>
+    }
+}
+
+fn craft_card_body(
+    hq: bool,
+    craft_unit: i32,
+    buy: Option<ultros_calc::verdict::BuyPrice>,
+    verdict: CraftVerdict,
+    zone: String,
+    crystals_excluded: bool,
+) -> AnyView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let buy_label = match buy.map(|buy| buy.source) {
+        Some(BuySource::Vendor) => t_string!(i18n, item_verdict_buy_vendor).to_string(),
+        _ => t_string!(i18n, item_verdict_buy_zone, zone = zone.as_str()).to_string(),
+    };
+    let nq_fallback = matches!(
+        buy.map(|buy| buy.source),
+        Some(BuySource::Market { nq_fallback: true })
+    );
+    let chip = |class: &'static str, label: AnyView, gil: Option<(i32, f64)>| {
+        view! {
+            <span class=format!("inline-flex items-center gap-1 self-start rounded-full border px-2 py-0.5 text-xs font-semibold {class}")>
+                {label}
+                {gil.map(|(gil, percent)| view! {
+                    <Gil amount=gil />
+                    <span>"("{whole_percent(percent)}"%)"</span>
+                })}
+            </span>
+        }
+        .into_any()
+    };
+    let verdict_view = match verdict {
+        CraftVerdict::CraftSaves { gil, percent } => chip(
+            "border-emerald-400/40 bg-emerald-500/10 text-emerald-200",
+            t!(i18n, item_verdict_craft_saves).into_any(),
+            Some((gil, percent)),
+        ),
+        CraftVerdict::BuyCheaper { gil, percent } => chip(
+            "border-red-400/40 bg-red-500/10 text-red-200",
+            t!(i18n, item_verdict_buy_cheaper).into_any(),
+            Some((gil, percent)),
+        ),
+        CraftVerdict::AboutEven => chip(
+            "border-[color:var(--color-outline)] text-[color:var(--color-text-muted)]",
+            t!(i18n, item_verdict_about_even).into_any(),
+            None,
+        ),
+        CraftVerdict::Incomplete => {
+            view! { <p class=MUTED>{t!(i18n, item_verdict_incomplete)}</p> }.into_any()
+        }
+    };
+    view! {
+        <div class=CARD_CLASS data-testid="craft-verdict">
+            <div class="flex items-center justify-between gap-2">
+                <h2 class="text-base font-bold text-brand-200">{t!(i18n, item_verdict_craft_heading)}</h2>
+                {quality_chip(hq)}
+            </div>
+            <div class="flex items-baseline justify-between gap-2">
+                <span class=MUTED>{t!(i18n, item_verdict_craft_unit)}</span>
+                <span class="font-bold"><Gil amount=craft_unit /></span>
+            </div>
+            <div class="flex items-baseline justify-between gap-2">
+                <span class=format!("flex items-center gap-1 {MUTED}")>
+                    {buy_label}
+                    {nq_fallback.then(|| quality_chip(false))}
+                </span>
+                <span class="font-bold">
+                    {match buy {
+                        Some(buy) => view! { <Gil amount=buy.price /> }.into_any(),
+                        None => t!(i18n, no_data).into_any(),
+                    }}
+                </span>
+            </div>
+            {verdict_view}
+            <p class=format!("text-xs {MUTED}")>
+                {t!(i18n, item_verdict_incl_subcrafts)}
+                {crystals_excluded.then(|| view! { " · "{t!(i18n, item_verdict_crystals_excluded)} })}
+            </p>
+            <a class="self-start text-xs underline text-brand-300 hover:text-brand-200" href=Section::Sources.href()>
+                {t!(i18n, item_verdict_recipe_link)}" ↓"
+            </a>
+        </div>
+    }
+    .into_any()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +622,50 @@ mod tests {
                 <ItemVerdicts listing_resource filtered_listings excluded_worlds world item_id />
             };
         });
+    }
+
+    #[test]
+    fn output_recipes_finds_the_recipes_that_make_an_item() {
+        let recipe = tracked_data()
+            .recipes
+            .values()
+            .find(|recipe| recipe.item_result > 0)
+            .expect("game data has recipes");
+        let found = output_recipes(recipe.item_result);
+        assert!(found.iter().any(|r| r.key_id == recipe.key_id));
+        assert!(found.iter().all(|r| r.item_result == recipe.item_result));
+    }
+
+    /// A recipe with an ingredient that is itself craftable.
+    fn recipe_with_craftable_ingredient() -> (&'static Recipe, ItemId) {
+        let data = tracked_data();
+        data.recipes
+            .values()
+            .find_map(|recipe| {
+                IngredientsIter::new(recipe)
+                    .map(|(ingredient, _)| ingredient)
+                    .find(|ingredient| {
+                        data.recipes
+                            .values()
+                            .any(|sub| ItemId(sub.item_result) == *ingredient)
+                    })
+                    .map(|ingredient| (recipe, ingredient))
+            })
+            .expect("game data has a recipe with a craftable ingredient")
+    }
+
+    #[test]
+    fn subcraft_recipes_indexes_craftable_ingredients() {
+        let (recipe, ingredient) = recipe_with_craftable_ingredient();
+        let index = subcraft_recipes(&[recipe], 1);
+        let subs = index.get(&ingredient).expect("ingredient is indexed");
+        assert!(subs.iter().all(|sub| ItemId(sub.item_result) == ingredient));
+        assert!(index.len() < tracked_data().recipes.len());
+    }
+
+    #[test]
+    fn subcraft_recipes_at_depth_zero_is_empty() {
+        let (recipe, _) = recipe_with_craftable_ingredient();
+        assert!(subcraft_recipes(&[recipe], 0).is_empty());
     }
 }
