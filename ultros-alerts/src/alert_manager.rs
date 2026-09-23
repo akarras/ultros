@@ -165,7 +165,11 @@ impl AlertManager {
                                     Ok(retainer_alerts) => {
                                         for retainer_alert in retainer_alerts {
                                             if alert.enabled {
-                                                if !manager.current_retainer_alerts.contains_key(&retainer_alert.id) {
+                                                if manager.current_retainer_alerts.contains_key(&retainer_alert.id) {
+                                                    manager
+                                                        .update_cooldown(&retainer_alert, alert.cooldown_seconds)
+                                                        .await;
+                                                } else {
                                                     manager
                                                         .create_retainer_alert_listener(
                                                             &retainer_alert,
@@ -255,6 +259,17 @@ impl AlertManager {
             let _ = listener
                 .cancellation_sender
                 .send(RetainerAlertTx::Stop)
+                .await;
+        }
+    }
+
+    /// A running listener keeps its own copy of the alert's cooldown; this is
+    /// how an edit reaches it.
+    async fn update_cooldown(&self, alert: &alert_retainer_undercut::Model, cooldown_seconds: i32) {
+        if let Some(listener) = self.current_retainer_alerts.get(&alert.id) {
+            let _ = listener
+                .cancellation_sender
+                .send(RetainerAlertTx::UpdateCooldown(cooldown_seconds))
                 .await;
         }
     }

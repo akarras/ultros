@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Undercut and sale alerts respect their cooldown",
+  "blurb": "Undercut and retainer-sale alerts ignored the cooldown on the alert, so a busy market could send you a new notification every minute or two. They now wait out the cooldown like price alerts do. Anything that happens in the meantime is held rather than dropped and arrives as one message when the cooldown ends, and undercuts you have already fixed by then are left out.",
+  "importance": "medium"
+}

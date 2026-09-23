@@ -1,10 +1,11 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry},
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tokio::time::Instant;
@@ -174,6 +175,7 @@ async fn send_discord_alerts(
 pub enum RetainerAlertTx {
     Stop,
     UpdateMargin(i32),
+    UpdateCooldown(i32),
 }
 
 /// Shared handles `RetainerAlertListener::create_listener` needs beyond its
@@ -185,8 +187,10 @@ pub struct RetainerAlertServices {
     pub notifications: EventProducer<NotificationEvent>,
 }
 
+/// One of our listings as undercut detection sees it: an item on a world,
+/// NQ or HQ.
 #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord, Copy, Clone)]
-struct ListingKey {
+pub struct ListingKey {
     item_id: i32,
     world_id: i32,
     hq: bool,
@@ -209,6 +213,15 @@ pub struct UndercutRetainer {
 pub struct Undercut {
     pub item_id: i32,
     pub undercut_retainers: Vec<UndercutRetainer>,
+}
+
+/// An undercut as the tracker detected it: which of our listings (item,
+/// world, HQ) the competitor went under, so the roll-up can check at send
+/// time that it still stands.
+#[derive(Debug)]
+pub struct DetectedUndercut {
+    listing: ListingKey,
+    pub undercut: Undercut,
 }
 
 #[derive(Debug)]
@@ -238,10 +251,20 @@ impl UndercutTracker {
         })
     }
 
+    /// Whether an undercut detected on `listing` still stands: the listing is
+    /// still ours and its lowest price hasn't moved since. Our lowest price
+    /// changing (we repriced, or the cheap copy sold) clears `has_alerted`,
+    /// and a competitor listing under the new price is detected afresh.
+    fn is_still_alerted(&self, listing: &ListingKey) -> bool {
+        self.user_lowest_listings
+            .get(listing)
+            .is_some_and(|value| value.has_alerted)
+    }
+
     pub async fn handle_listing_event(
         &mut self,
         listings: Result<EventType<Arc<ListingEventData>>, anyhow::Error>,
-    ) -> Result<Option<Undercut>, anyhow::Error> {
+    ) -> Result<Option<DetectedUndercut>, anyhow::Error> {
         let listing = listings?;
         match listing {
             EventType::Remove(removed) => {
@@ -347,9 +370,16 @@ impl UndercutTracker {
                                     .collect::<Vec<_>>()
                             })
                             .unwrap_or_default();
-                        return Ok(Some(Undercut {
-                            item_id: added.item_id,
-                            undercut_retainers: retainers,
+                        return Ok(Some(DetectedUndercut {
+                            listing: ListingKey {
+                                item_id: added.item_id,
+                                world_id: added.world_id,
+                                hq: added.hq,
+                            },
+                            undercut: Undercut {
+                                item_id: added.item_id,
+                                undercut_retainers: retainers,
+                            },
                         }));
                     }
                 }
@@ -369,6 +399,7 @@ pub const ROLLUP_QUIET_WINDOW: Duration = Duration::from_secs(30);
 /// Upper bound on how long the first undercut in a batch is held, however
 /// steadily more keep trickling in. Undercut alerts are time-sensitive — the
 /// user wants to reprice — so a busy market must not defer them indefinitely.
+/// The alert's own cooldown can still hold a batch longer: see [`send_at`].
 pub const ROLLUP_MAX_WINDOW: Duration = Duration::from_secs(120);
 
 /// Undercuts one alert's tracker has detected but not yet sent.
@@ -381,18 +412,27 @@ pub const ROLLUP_MAX_WINDOW: Duration = Duration::from_secs(120);
 /// unioned — rather than queueing a duplicate.
 #[derive(Debug, Default)]
 pub struct UndercutRollup {
-    /// `item_id -> (retainer_id -> retainer)`, both sorted so the summary
-    /// lists items and retainers in a stable order.
-    pending: BTreeMap<i32, BTreeMap<i32, UndercutRetainer>>,
+    /// Keyed by item id, sorted so the summary lists items in a stable order.
+    pending: BTreeMap<i32, PendingItem>,
     first_at: Option<Instant>,
     last_at: Option<Instant>,
 }
 
+#[derive(Debug, Default)]
+struct PendingItem {
+    /// `retainer_id -> retainer`, sorted for a stable retainer order.
+    retainers: BTreeMap<i32, UndercutRetainer>,
+    /// Our listings of the item that were undercut, re-checked at send time.
+    listings: BTreeSet<ListingKey>,
+}
+
 impl UndercutRollup {
-    pub fn push(&mut self, undercut: Undercut, now: Instant) {
-        let retainers = self.pending.entry(undercut.item_id).or_default();
+    pub fn push(&mut self, detected: DetectedUndercut, now: Instant) {
+        let DetectedUndercut { listing, undercut } = detected;
+        let item = self.pending.entry(undercut.item_id).or_default();
+        item.listings.insert(listing);
         for retainer in undercut.undercut_retainers {
-            match retainers.entry(retainer.id) {
+            match item.retainers.entry(retainer.id) {
                 Entry::Vacant(slot) => {
                     slot.insert(retainer);
                 }
@@ -417,17 +457,52 @@ impl UndercutRollup {
     }
 
     /// Take everything pending, in item-id order, and reset the timer.
-    pub fn drain(&mut self) -> Vec<Undercut> {
+    ///
+    /// Items none of whose undercut listings pass `still_undercut` are
+    /// dropped. A batch can wait out a long cooldown, and by the time it goes
+    /// out the user may already have repriced or sold the item — telling
+    /// them about it then is noise.
+    pub fn drain(&mut self, still_undercut: impl Fn(&ListingKey) -> bool) -> Vec<Undercut> {
         self.first_at = None;
         self.last_at = None;
         std::mem::take(&mut self.pending)
             .into_iter()
-            .map(|(item_id, retainers)| Undercut {
+            .filter(|(_, item)| item.listings.iter().any(&still_undercut))
+            .map(|(item_id, item)| Undercut {
                 item_id,
-                undercut_retainers: retainers.into_values().collect(),
+                undercut_retainers: item.retainers.into_values().collect(),
             })
             .collect()
     }
+}
+
+/// An alert's cooldown: the minimum time between two deliveries.
+#[derive(Debug, Clone, Copy)]
+struct AlertCooldown {
+    seconds: i32,
+    last_fired_at: Option<DateTime<Utc>>,
+}
+
+impl AlertCooldown {
+    /// When the alert may deliver again, or `None` if it never has.
+    fn ends_at(&self) -> Option<DateTime<Utc>> {
+        self.last_fired_at
+            .map(|at| at + chrono::Duration::seconds(i64::from(self.seconds)))
+    }
+}
+
+/// When a batch that's ready at `deadline` actually goes out: no earlier than
+/// the end of the alert's cooldown. Undercuts detected meanwhile keep merging
+/// into the held batch, so a cooldown turns a busy hour into one message
+/// rather than dropping what it held back.
+fn send_at(deadline: Option<Instant>, cooldown_ends: Option<Instant>) -> Option<Instant> {
+    let deadline = deadline?;
+    Some(cooldown_ends.map_or(deadline, |end| deadline.max(end)))
+}
+
+/// The tokio instant matching wall-clock time `at` (now, if `at` has passed).
+fn instant_at(at: DateTime<Utc>) -> Instant {
+    Instant::now() + (at - Utc::now()).to_std().unwrap_or_default()
 }
 
 /// Resolves once `deadline` passes, or never when there is no batch waiting —
@@ -544,19 +619,21 @@ struct UndercutDeliverer {
 }
 
 impl UndercutDeliverer {
-    async fn deliver_batch(&self, undercuts: Vec<Undercut>) {
+    /// Send a batch as one message; true when it reached at least one
+    /// destination.
+    async fn deliver_batch(&self, undercuts: Vec<Undercut>) -> bool {
         let items = &xiv_gen_db::data().items;
         let Some(message) = format_undercut_message(&undercuts, |item_id| {
             items
                 .get(&xiv_gen::ItemId(item_id))
                 .map(|item| item.name.clone())
         }) else {
-            return;
+            return false;
         };
-        self.deliver(&message).await;
+        self.deliver(&message).await
     }
 
-    async fn deliver(&self, message: &UndercutMessage) {
+    async fn deliver(&self, message: &UndercutMessage) -> bool {
         let UndercutMessage {
             item_id,
             body,
@@ -646,6 +723,7 @@ impl UndercutDeliverer {
                 error!("Error sending undercut alerts {error}");
             }
         }
+        delivered
     }
 }
 
@@ -666,6 +744,10 @@ impl RetainerAlertListener {
             .await?
             .ok_or_else(|| anyhow::Error::msg("Unable to find retainer"))?;
         let discord_user = alert.owner as u64;
+        let mut cooldown = AlertCooldown {
+            seconds: alert.cooldown_seconds,
+            last_fired_at: alert.last_fired_at.map(|at| at.with_timezone(&Utc)),
+        };
 
         let (cancellation_sender, mut receiver) = tokio::sync::mpsc::channel::<RetainerAlertTx>(10);
         let mut undercut_tracker = UndercutTracker::new(discord_user, &ultros_db, margin).await?;
@@ -689,6 +771,9 @@ impl RetainerAlertListener {
                         Some(RetainerAlertTx::UpdateMargin(m)) => {
                             undercut_tracker.margin = m;
                         }
+                        Some(RetainerAlertTx::UpdateCooldown(seconds)) => {
+                            cooldown.seconds = seconds;
+                        }
                     },
                     listing = listings.recv() => {
                         match undercut_tracker
@@ -697,11 +782,18 @@ impl RetainerAlertListener {
                         {
                             Err(e) => error!("{e:?}"),
                             Ok(None) => {}
-                            Ok(Some(undercut)) => rollup.push(undercut, Instant::now()),
+                            Ok(Some(detected)) => rollup.push(detected, Instant::now()),
                         }
                     }
-                    _ = sleep_until_or_never(rollup.deadline()) => {
-                        deliverer.deliver_batch(rollup.drain()).await;
+                    _ = sleep_until_or_never(send_at(
+                        rollup.deadline(),
+                        cooldown.ends_at().map(instant_at),
+                    )) => {
+                        let batch =
+                            rollup.drain(|listing| undercut_tracker.is_still_alerted(listing));
+                        if deliverer.deliver_batch(batch).await {
+                            cooldown.last_fired_at = Some(Utc::now());
+                        }
                     }
                 }
             }
@@ -939,11 +1031,18 @@ mod tests {
         }
     }
 
+    fn detected(item_id: i32, retainers: Vec<UndercutRetainer>) -> DetectedUndercut {
+        DetectedUndercut {
+            listing: key(item_id),
+            undercut: undercut(item_id, retainers),
+        }
+    }
+
     #[test]
     fn rollup_is_idle_until_something_is_pushed() {
         let mut rollup = UndercutRollup::default();
         assert_eq!(rollup.deadline(), None);
-        assert!(rollup.drain().is_empty());
+        assert!(rollup.drain(|_| true).is_empty());
         assert_eq!(rollup.deadline(), None);
     }
 
@@ -953,10 +1052,10 @@ mod tests {
         // must come out as one entry with the retainers unioned.
         let now = Instant::now();
         let mut rollup = UndercutRollup::default();
-        rollup.push(undercut(7, vec![retainer(1, "Seeba", 254_668)]), now);
-        rollup.push(undercut(7, vec![retainer(1, "Seeba", 254_668)]), now);
+        rollup.push(detected(7, vec![retainer(1, "Seeba", 254_668)]), now);
+        rollup.push(detected(7, vec![retainer(1, "Seeba", 254_668)]), now);
         rollup.push(
-            undercut(
+            detected(
                 7,
                 vec![
                     retainer(1, "Seeba", 250_000),
@@ -965,7 +1064,7 @@ mod tests {
             ),
             now,
         );
-        let drained = rollup.drain();
+        let drained = rollup.drain(|_| true);
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].item_id, 7);
         assert_eq!(
@@ -981,12 +1080,12 @@ mod tests {
     fn rollup_drains_distinct_items_in_item_id_order_and_resets() {
         let now = Instant::now();
         let mut rollup = UndercutRollup::default();
-        rollup.push(undercut(30, vec![retainer(1, "Seeba", 1)]), now);
-        rollup.push(undercut(10, vec![retainer(1, "Seeba", 1)]), now);
-        rollup.push(undercut(20, vec![retainer(1, "Seeba", 1)]), now);
-        let ids: Vec<i32> = rollup.drain().iter().map(|u| u.item_id).collect();
+        rollup.push(detected(30, vec![retainer(1, "Seeba", 1)]), now);
+        rollup.push(detected(10, vec![retainer(1, "Seeba", 1)]), now);
+        rollup.push(detected(20, vec![retainer(1, "Seeba", 1)]), now);
+        let ids: Vec<i32> = rollup.drain(|_| true).iter().map(|u| u.item_id).collect();
         assert_eq!(ids, vec![10, 20, 30]);
-        assert!(rollup.drain().is_empty());
+        assert!(rollup.drain(|_| true).is_empty());
         assert_eq!(rollup.deadline(), None);
     }
 
@@ -994,11 +1093,11 @@ mod tests {
     fn rollup_deadline_extends_with_each_undercut_within_the_quiet_window() {
         let start = Instant::now();
         let mut rollup = UndercutRollup::default();
-        rollup.push(undercut(1, vec![]), start);
+        rollup.push(detected(1, vec![]), start);
         assert_eq!(rollup.deadline(), Some(start + ROLLUP_QUIET_WINDOW));
 
         let later = start + Duration::from_secs(20);
-        rollup.push(undercut(2, vec![]), later);
+        rollup.push(detected(2, vec![]), later);
         assert_eq!(rollup.deadline(), Some(later + ROLLUP_QUIET_WINDOW));
     }
 
@@ -1006,12 +1105,89 @@ mod tests {
     fn rollup_deadline_never_exceeds_the_max_window_after_the_first_undercut() {
         let start = Instant::now();
         let mut rollup = UndercutRollup::default();
-        rollup.push(undercut(1, vec![]), start);
+        rollup.push(detected(1, vec![]), start);
         // Keep trickling in right up to the cap: the batch still goes out at
         // first + max, not last + quiet.
         let late = start + ROLLUP_MAX_WINDOW - Duration::from_secs(1);
-        rollup.push(undercut(2, vec![]), late);
+        rollup.push(detected(2, vec![]), late);
         assert_eq!(rollup.deadline(), Some(start + ROLLUP_MAX_WINDOW));
+    }
+
+    #[test]
+    fn rollup_drops_items_whose_undercut_no_longer_stands() {
+        // Held through a cooldown: item 1 was repriced in the meantime, item
+        // 2 is still undercut.
+        let now = Instant::now();
+        let mut rollup = UndercutRollup::default();
+        rollup.push(detected(1, vec![retainer(1, "Seeba", 1)]), now);
+        rollup.push(detected(2, vec![retainer(1, "Seeba", 1)]), now);
+        let ids: Vec<i32> = rollup
+            .drain(|listing| *listing == key(2))
+            .iter()
+            .map(|u| u.item_id)
+            .collect();
+        assert_eq!(ids, vec![2]);
+        assert_eq!(rollup.deadline(), None);
+    }
+
+    #[test]
+    fn rollup_keeps_an_item_while_any_of_its_listings_is_still_undercut() {
+        let now = Instant::now();
+        let mut rollup = UndercutRollup::default();
+        rollup.push(detected(1, vec![retainer(1, "Seeba", 1)]), now);
+        let other_world = ListingKey {
+            world_id: 2,
+            ..key(1)
+        };
+        rollup.push(
+            DetectedUndercut {
+                listing: other_world,
+                undercut: undercut(1, vec![retainer(2, "Giltastrophe", 1)]),
+            },
+            now,
+        );
+        let drained = rollup.drain(|listing| *listing == other_world);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].undercut_retainers.len(), 2);
+    }
+
+    // ---------- cooldown ----------
+
+    #[test]
+    fn cooldown_ends_cooldown_seconds_after_the_last_fire() {
+        let fired = DateTime::parse_from_rfc3339("2026-09-22T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let cooldown = AlertCooldown {
+            seconds: 3600,
+            last_fired_at: Some(fired),
+        };
+        assert_eq!(cooldown.ends_at(), Some(fired + chrono::Duration::hours(1)));
+        let never = AlertCooldown {
+            seconds: 3600,
+            last_fired_at: None,
+        };
+        assert_eq!(never.ends_at(), None);
+    }
+
+    #[test]
+    fn send_at_holds_a_ready_batch_until_the_cooldown_ends() {
+        let now = Instant::now();
+        let ready = now + ROLLUP_QUIET_WINDOW;
+        let cooldown_end = now + Duration::from_secs(3600);
+        assert_eq!(send_at(Some(ready), Some(cooldown_end)), Some(cooldown_end));
+        // Off cooldown (or never fired): the roll-up window alone decides.
+        assert_eq!(send_at(Some(ready), Some(now)), Some(ready));
+        assert_eq!(send_at(Some(ready), None), Some(ready));
+        // Nothing waiting: nothing to send, cooldown or not.
+        assert_eq!(send_at(None, Some(cooldown_end)), None);
+    }
+
+    #[test]
+    fn instant_at_a_past_time_is_now() {
+        let before = Instant::now();
+        let at = instant_at(Utc::now() - chrono::Duration::hours(1));
+        assert!(at >= before && at <= Instant::now());
     }
 
     // ---------- format_undercut_message ----------
