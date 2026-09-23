@@ -17,9 +17,7 @@ Delivery methods:
 - "This site" — every user has one auto-created, undeletable `InApp` endpoint that delivers to
   the notification inbox itself; see `docs/notification-inbox.md`.
 
-See `docs/superpowers/plans/2026-05-11-price-alerts-phase-2-3.md` for the Phase 2+3 implementation plan.
-
-(Phase 4 — AI-suggested alert thresholds — is tracked separately.)
+(Phase 4 of the original design — AI-suggested alert thresholds — was never built.)
 
 ## Retainer sale alerts
 
