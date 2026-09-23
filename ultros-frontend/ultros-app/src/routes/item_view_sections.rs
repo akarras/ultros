@@ -1,8 +1,6 @@
 //! Jump-nav destinations for the item view.
 //!
-//! The order here is the page's DOM order. Later lens work reorders the
-//! rendered sections with CSS `order` while leaving this DOM order — and
-//! therefore this list — untouched.
+//! The order here is the page's DOM order.
 
 /// One navigable section of `/item/:world/:id`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

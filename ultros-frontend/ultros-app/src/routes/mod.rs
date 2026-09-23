@@ -22,6 +22,7 @@ pub mod item_explorer_toolbar;
 pub mod item_view;
 pub mod item_view_scope;
 pub mod item_view_sections;
+pub mod item_view_verdicts;
 pub mod job_set_detail;
 pub mod leve_analyzer;
 pub mod list_view;

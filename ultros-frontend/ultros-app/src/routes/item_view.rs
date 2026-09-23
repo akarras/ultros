@@ -1472,6 +1472,13 @@ fn ListingsContent(
             <div id="overview" class="scroll-mt-16">
                 <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
                 <DecisionHeader listing_resource filtered_listings world item_id />
+                <crate::routes::item_view_verdicts::ItemVerdicts
+                    listing_resource
+                    filtered_listings
+                    excluded_worlds
+                    world
+                    item_id
+                />
             </div>
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
