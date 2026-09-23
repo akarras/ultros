@@ -34,6 +34,13 @@ pub const WAR_MIN_SELLERS: u16 = 2;
 pub const CALM_BASELINE_SHARE: f64 = 0.5;
 /// ...once the baseline is at least this high.
 pub const CALM_MIN_BASELINE: f64 = 2.0;
+/// Floor transitions closer together than this are one market move — a
+/// buyer sweeping the board or a remove→add reprice — not separate floor
+/// lifetimes.
+pub const FLOOR_BURST_SECS: i64 = 60;
+/// The zoom-independent summary (contested share, typical rate) classifies
+/// at most this much of the chart window, hourly, counting back from `to`.
+pub const SUMMARY_MAX_SECS: i64 = 120 * DAY;
 pub(crate) const HOUR: i64 = 3600;
 pub(crate) const DAY: i64 = 86_400;
 
@@ -127,6 +134,10 @@ pub(crate) fn classify(
     bucket_seconds: i64,
 ) -> Classified {
     let is_known = |start: i64| anchor.is_some_and(|a| start >= a);
+    // A known bucket starting before the first floor point gets
+    // `floor_open = None`, so it has no erosion and can't be a war. The
+    // current partial bucket (ending past `now`) is classified and counts
+    // toward the baseline like any other.
     let mut buckets = Vec::new();
     let mut sellers = Vec::new();
     let mut start = from.div_euclid(bucket_seconds) * bucket_seconds;
@@ -251,20 +262,44 @@ pub struct PressureParams {
     pub anchor: Option<i64>,
 }
 
+/// Floor points with transient ones removed, for episode stats only
+/// (`floor_open`/`floor_close`/trend read the raw points). A point that
+/// lasts under `FLOOR_BURST_SECS` is dropped, and a point that lands back on
+/// the previous kept price merges into it, so the stable price's episode
+/// ends at the next stable point and is judged by the net move. `points[0]`
+/// (the carried state) always stays.
+pub(crate) fn settled(points: &[(i64, Option<u32>)]) -> Vec<(i64, Option<u32>)> {
+    let mut out: Vec<(i64, Option<u32>)> = Vec::with_capacity(points.len());
+    for (i, &(t, price)) in points.iter().enumerate() {
+        let transient = i > 0
+            && points
+                .get(i + 1)
+                .is_some_and(|(next, _)| next - t < FLOOR_BURST_SECS);
+        if transient || out.last().is_some_and(|(_, kept)| *kept == price) {
+            continue;
+        }
+        out.push((t, price));
+    }
+    out
+}
+
 /// Closed floor episodes that start at a real transition inside
-/// `[from, to)`. `points[0]` is the carried state at the read start (its
-/// true start is unknown) and the last point is still open, so both are
-/// excluded. Returns the median duration and the (left, undercut) counts.
+/// `[from, to)` and end by `to`. `points[0]` is the carried state at the
+/// read start (its true start is unknown) and the last point is still open,
+/// so both are excluded, as is any episode still open at `to`. Returns the median duration and the (left, undercut) counts.
 pub(crate) fn episodes(
     points: &[(i64, Option<u32>)],
     from: i64,
     to: i64,
 ) -> (Option<i64>, u32, u32) {
     let (mut durations, mut left, mut undercut) = (Vec::new(), 0u32, 0u32);
+    let points = settled(points);
     for (i, pair) in points.windows(2).enumerate() {
         let ((t0, p0), (t1, p1)) = (pair[0], pair[1]);
         let Some(p0) = p0 else { continue };
-        if i == 0 || t0 < from || t0 >= to {
+        // Floor points run to max(to, now): an episode whose end lands after
+        // `to` was still open at `to` (right-censored for this window).
+        if i == 0 || t0 < from || t0 >= to || t1 > to {
             continue;
         }
         durations.push((t1 - t0) as f64);
@@ -314,7 +349,17 @@ pub(crate) fn pressure(
         .filter(|(_, then)| *then > 0)
         .map(|(now, then)| f64::from(now) / f64::from(then) - 1.0);
 
-    let known: Vec<&PressureBucket> = chart
+    // Contested share and typical rate read the same at every zoom: their
+    // own hourly buckets over the chart window (its last 120 days at most).
+    let hourly = classify(
+        &events,
+        &points,
+        p.anchor,
+        p.from.max(p.to - SUMMARY_MAX_SECS),
+        p.to,
+        HOUR,
+    );
+    let known: Vec<&PressureBucket> = hourly
         .buckets
         .iter()
         .filter(|b| b.state != PressureState::Unknown)
@@ -341,9 +386,7 @@ pub(crate) fn pressure(
             war,
             last_war,
             contested_share,
-            typical_undercuts_per_hour: chart
-                .baseline
-                .map(|b| b / (p.bucket_seconds as f64 / HOUR as f64)),
+            typical_undercuts_per_hour: hourly.baseline,
             floor_holds_median_secs,
             episodes_left,
             episodes_undercut,
@@ -653,6 +696,93 @@ mod tests {
             (Some(100), 1, 0),
             "only episodes starting in the window"
         );
+    }
+
+    #[test]
+    fn episodes_still_open_at_to_are_excluded() {
+        // Floor points run past `to` (to max(to, now)); an episode starting
+        // inside the window whose next transition lands after `to` was still
+        // open at `to` and must not count with its post-window end.
+        let points = vec![
+            (0, Some(1000)),
+            (100, Some(900)), // 100..300 closed in window: undercut
+            (300, Some(850)), // 300..1500 still open at to = 1000
+            (1500, Some(800)),
+        ];
+        assert_eq!(episodes(&points, 0, 1000), (Some(200), 0, 1));
+    }
+
+    #[test]
+    fn a_buyer_sweep_is_one_market_move_not_many_episodes() {
+        // (0) carried; 100 holds from 100 until a buyer sweeps the board at
+        // 1000: 110, 120, ... 200 two seconds apart, then 200 holds.
+        let mut points = vec![(0, Some(50)), (100, Some(100))];
+        points.extend((1..=10).map(|k| (1000 + (k - 1) * 2, Some(100 + k as u32 * 10))));
+        let (median, left, undercut) = episodes(&points, 0, 10_000);
+        assert_eq!((left, undercut), (1, 0), "one episode, ended by the sweep");
+        assert_eq!(median, Some(1018 - 100), "no zero-length episodes");
+    }
+
+    #[test]
+    fn a_reprice_blip_is_judged_by_its_net_move() {
+        // 100 holds; a remove→add reprice flashes 130 for two seconds then
+        // lands at 90: the 100 episode ended by undercut, nothing "left".
+        let points = vec![
+            (0, Some(120)),
+            (100, Some(100)),
+            (500, Some(130)),
+            (502, Some(90)),
+        ];
+        assert_eq!(episodes(&points, 0, 10_000), (Some(402), 0, 1));
+    }
+
+    #[test]
+    fn settled_keeps_the_carried_point_and_merges_equal_neighbours() {
+        let points = vec![
+            (0, Some(100)),
+            (95, Some(120)),  // transient, 5 s
+            (100, Some(100)), // back to the carried price: merged
+            (400, Some(130)), // blip
+            (401, Some(100)), // same price again: merged
+            (900, None),
+        ];
+        assert_eq!(settled(&points), vec![(0, Some(100)), (900, None)]);
+        // A transient first point stays: it is the carried state.
+        assert_eq!(
+            settled(&[(0, Some(100)), (5, Some(90))]),
+            vec![(0, Some(100)), (5, Some(90))]
+        );
+    }
+
+    #[test]
+    fn contested_share_and_rate_ignore_chart_bucket_width() {
+        // One trim in hour 0 and one in hour 6 of a 12 h window.
+        let events = vec![ev(10, 9, 1000, 999), ev(6 * HOUR + 10, 9, 1000, 999)];
+        let rows = [fc(0, 0, 1000)];
+        let hourly = pressure(&events, &rows, &params(0, 12 * HOUR, HOUR, 12 * HOUR));
+        let six = pressure(&events, &rows, &params(0, 12 * HOUR, 6 * HOUR, 12 * HOUR));
+        assert_eq!(hourly.summary.contested_share, Some(2.0 / 12.0));
+        assert_eq!(six.summary.contested_share, hourly.summary.contested_share);
+        assert_eq!(
+            six.summary.typical_undercuts_per_hour,
+            hourly.summary.typical_undercuts_per_hour
+        );
+        // The pane's dashed line stays in chart-bucket units.
+        assert_eq!(six.baseline, Some(1.0));
+        assert_eq!(hourly.baseline, Some(0.0));
+    }
+
+    #[test]
+    fn hourly_summary_covers_at_most_the_last_120_days() {
+        let to = 400 * DAY;
+        // An hourly trim storm long before the last 120 days; quiet after.
+        let events: Vec<UndercutEvent> = (0..24 * 100)
+            .map(|h| ev(h * HOUR + 10, 9, 1000, 999))
+            .collect();
+        let rows = [fc(0, 0, 1000)];
+        let out = pressure(&events, &rows, &params(0, to, DAY, to));
+        assert_eq!(out.summary.contested_share, Some(0.0));
+        assert_eq!(out.summary.typical_undercuts_per_hour, Some(0.0));
     }
 
     fn params(from: i64, to: i64, bucket_seconds: i64, now: i64) -> PressureParams {

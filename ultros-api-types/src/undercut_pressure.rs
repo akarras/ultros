@@ -62,9 +62,12 @@ pub struct PressureSummary {
     /// Most recent war span in the last 24 h.
     #[serde(default)]
     pub last_war: Option<WarSpan>,
-    /// Share of the chart window's known buckets in Churn or War.
+    /// Share of the chart window's known hours in Churn or War, classified
+    /// hourly (last 120 days of the window at most) so it reads the same at
+    /// every chart bucket width.
     #[serde(default)]
     pub contested_share: Option<f64>,
+    /// Median undercuts per known hour over the same hourly buckets.
     #[serde(default)]
     pub typical_undercuts_per_hour: Option<f64>,
     /// Median life of a floor price that started and ended in the window.
