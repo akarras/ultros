@@ -190,7 +190,7 @@ impl Effect<LocalStorage> {
 
                             let old_value =
                                 mem::take(&mut *value.write().or_poisoned());
-                            let new_value = owner.run_effect_body(|| {
+                            let Some(new_value) = owner.run_effect_body(|| {
                                 owner.with_cleanup(|| {
                                     subscriber.with_observer(|| {
                                         run_in_effect_scope(|| {
@@ -198,7 +198,10 @@ impl Effect<LocalStorage> {
                                         })
                                     })
                                 })
-                            });
+                            }) else {
+                                // The tree is gone; so is this effect.
+                                break;
+                            };
                             *value.write().or_poisoned() = Some(new_value);
                         }
                     }
@@ -345,7 +348,9 @@ impl Effect<LocalStorage> {
 
                             // Both closures run under one in-flight guard;
                             // see `Owner::run_effect_body`.
-                            let _run = owner.effect_body_guard();
+                            let Some(_run) = owner.effect_body_guard() else {
+                                break;
+                            };
 
                             let old_dep_value = mem::take(
                                 &mut *dep_value.write().or_poisoned(),
@@ -435,13 +440,16 @@ impl Effect<SyncStorage> {
 
                         let old_value =
                             mem::take(&mut *value.write().or_poisoned());
-                        let new_value = owner.run_effect_body(|| {
+                        let Some(new_value) = owner.run_effect_body(|| {
                             owner.with_cleanup(|| {
                                 subscriber.with_observer(|| {
                                     run_in_effect_scope(|| fun.run(old_value))
                                 })
                             })
-                        });
+                        }) else {
+                            // The tree is gone; so is this effect.
+                            break;
+                        };
                         *value.write().or_poisoned() = Some(new_value);
                     }
                 }
@@ -490,7 +498,9 @@ impl Effect<SyncStorage> {
 
                             // Both closures run under one in-flight guard;
                             // see `Owner::run_effect_body`.
-                            let _run = owner.effect_body_guard();
+                            let Some(_run) = owner.effect_body_guard() else {
+                                break;
+                            };
 
                             let old_dep_value = mem::take(
                                 &mut *dep_value.write().or_poisoned(),

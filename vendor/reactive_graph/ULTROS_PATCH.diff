@@ -878,36 +878,48 @@
                  paused,
              })),
              #[cfg(feature = "hydration")]
-@@ -368,9 +378,28 @@
+@@ -368,9 +378,40 @@
                  mem::take(owner);
              }
          });
 +        // An effect body of this tree may be mid-run on another thread; let
 +        // it finish before its signals are pulled out from under it. Clone
 +        // the tracker out first so the wait doesn't hold this owner's read
-+        // lock against a body that needs to write to it.
-+        let activity = self.inner.read().or_poisoned().activity.clone();
-+        activity.wait_idle();
++        // lock against a body that needs to write to it. Tearing down the
++        // root also closes the tracker, so no body starts afterwards.
++        let (activity, is_root) = {
++            let inner = self.inner.read().or_poisoned();
++            (inner.activity.clone(), inner.parent.is_none())
++        };
++        if is_root {
++            activity.close();
++        } else {
++            activity.wait_idle();
++        }
          self.cleanup();
      }
  
 +    /// Runs an effect body, marking it as in flight for this owner's tree so
-+    /// a forced teardown of the tree waits for it — see `activity`.
-+    pub(crate) fn run_effect_body<T>(&self, fun: impl FnOnce() -> T) -> T {
-+        let _guard = self.effect_body_guard();
-+        fun()
++    /// a forced teardown of the tree waits for it — see `activity`. Returns
++    /// `None` without running it once the tree's root has been torn down.
++    pub(crate) fn run_effect_body<T>(
++        &self,
++        fun: impl FnOnce() -> T,
++    ) -> Option<T> {
++        let _guard = self.effect_body_guard()?;
++        Some(fun())
 +    }
 +
 +    /// Marks an effect body of this owner's tree as in flight until the
 +    /// guard drops — see [`Owner::run_effect_body`].
-+    pub(crate) fn effect_body_guard(&self) -> RunGuard {
++    pub(crate) fn effect_body_guard(&self) -> Option<RunGuard> {
 +        self.inner.read().or_poisoned().activity.enter()
 +    }
 +
      /// Returns the current [`SharedContext`], if any.
      #[cfg(feature = "hydration")]
      pub fn current_shared_context(
-@@ -502,6 +531,8 @@
+@@ -502,6 +543,8 @@
      pub children: Vec<Weak<RwLock<OwnerInner>>>,
      #[cfg(feature = "sandboxed-arenas")]
      arena: Arc<RwLock<ArenaMap>>,
@@ -916,21 +928,21 @@
      paused: bool,
  }
  
-@@ -518,6 +549,11 @@
+@@ -518,6 +561,11 @@
  
  impl Drop for OwnerInner {
      fn drop(&mut self) {
 +        // A root dropped without a forced cleanup (an abandoned render) tears
 +        // the whole tree down too; give a running effect body the same grace.
 +        if self.parent.is_none() {
-+            self.activity.wait_idle();
++            self.activity.close();
 +        }
          for child in std::mem::take(&mut self.children) {
              if let Some(child) = child.upgrade() {
                  child.cleanup();
 --- a/src/owner/activity.rs
 +++ b/src/owner/activity.rs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,122 @@
 +//! Tracks effect bodies that are currently running somewhere in an owner
 +//! tree, so a forced teardown of the tree can wait for them.
 +//!
@@ -943,11 +955,18 @@
 +//! parent like the arena) and counts bodies in flight; the root's forced
 +//! cleanup waits for the count to reach zero — bounded, and never for a body
 +//! running on the waiting thread itself.
++//!
++//! Waiting alone leaves a window: an effect task that has already taken its
++//! wake-up but not yet entered its body is not counted, so the teardown sees
++//! nothing running, clears the arena, and the body then starts against dead
++//! signals. A root teardown therefore also *closes* the tracker, under the
++//! same lock `enter` takes: a body either entered before the close (and is
++//! waited for) or sees the tracker closed and does not run.
 +
 +use or_poisoned::OrPoisoned;
 +use std::{
 +    cell::RefCell,
-+    sync::{Arc, Condvar, Mutex},
++    sync::{Arc, Condvar, Mutex, MutexGuard},
 +    time::Duration,
 +};
 +
@@ -959,8 +978,16 @@
 +
 +#[derive(Default)]
 +pub(crate) struct Activity {
-+    running: Mutex<usize>,
++    state: Mutex<State>,
 +    idle: Condvar,
++}
++
++#[derive(Default)]
++struct State {
++    /// Effect bodies currently running.
++    running: usize,
++    /// Set once the tree's root is torn down; no body may start after it.
++    closed: bool,
 +}
 +
 +thread_local! {
@@ -974,31 +1001,48 @@
 +        Arc::as_ptr(self) as usize
 +    }
 +
-+    /// Marks an effect body as running until the returned guard drops.
-+    pub(crate) fn enter(self: &Arc<Self>) -> RunGuard {
-+        *self.running.lock().or_poisoned() += 1;
++    /// Marks an effect body as running until the returned guard drops, or
++    /// returns `None` if the tree has been torn down and the body must not
++    /// run.
++    pub(crate) fn enter(self: &Arc<Self>) -> Option<RunGuard> {
++        {
++            let mut state = self.state.lock().or_poisoned();
++            if state.closed {
++                return None;
++            }
++            state.running += 1;
++        }
 +        ENTERED.with_borrow_mut(|entered| entered.push(self.id()));
-+        RunGuard(Arc::clone(self))
++        Some(RunGuard(Arc::clone(self)))
 +    }
 +
 +    /// Blocks until no effect body of this tree is running, or until
 +    /// [`IDLE_TIMEOUT`] passes. Returns at once if the current thread is
 +    /// itself inside one of this tree's effect bodies.
 +    pub(crate) fn wait_idle(self: &Arc<Self>) {
++        drop(self.idle_state());
++    }
++
++    /// [`Activity::wait_idle`], then closes the tracker so no effect body of
++    /// the tree starts afterwards. For the teardown of a tree's root.
++    pub(crate) fn close(self: &Arc<Self>) {
++        self.idle_state().closed = true;
++    }
++
++    fn idle_state(self: &Arc<Self>) -> MutexGuard<'_, State> {
++        let state = self.state.lock().or_poisoned();
 +        let id = self.id();
-+        if ENTERED.with_borrow(|entered| entered.contains(&id)) {
-+            return;
-+        }
-+        let running = self.running.lock().or_poisoned();
-+        if *running == 0 {
-+            return;
++        if state.running == 0
++            || ENTERED.with_borrow(|entered| entered.contains(&id))
++        {
++            return state;
 +        }
 +        // A body that unwound has already released its guard, so a poisoned
 +        // lock carries nothing worth propagating; either way the wait ends.
-+        _ = self
-+            .idle
-+            .wait_timeout_while(running, IDLE_TIMEOUT, |running| *running > 0)
-+            .unwrap_or_else(|poisoned| poisoned.into_inner());
++        self.idle
++            .wait_timeout_while(state, IDLE_TIMEOUT, |state| state.running > 0)
++            .unwrap_or_else(|poisoned| poisoned.into_inner())
++            .0
 +    }
 +}
 +
@@ -1014,23 +1058,23 @@
 +                entered.remove(pos);
 +            }
 +        });
-+        let mut running = self.0.running.lock().or_poisoned();
-+        *running -= 1;
-+        if *running == 0 {
++        let mut state = self.0.state.lock().or_poisoned();
++        state.running -= 1;
++        if state.running == 0 {
 +            self.0.idle.notify_all();
 +        }
 +    }
 +}
 --- a/src/effect/effect.rs
 +++ b/src/effect/effect.rs
-@@ -190,9 +190,13 @@
+@@ -190,11 +190,18 @@
  
                              let old_value =
                                  mem::take(&mut *value.write().or_poisoned());
 -                            let new_value = owner.with_cleanup(|| {
 -                                subscriber.with_observer(|| {
 -                                    run_in_effect_scope(|| fun.run(old_value))
-+                            let new_value = owner.run_effect_body(|| {
++                            let Some(new_value) = owner.run_effect_body(|| {
 +                                owner.with_cleanup(|| {
 +                                    subscriber.with_observer(|| {
 +                                        run_in_effect_scope(|| {
@@ -1038,20 +1082,28 @@
 +                                        })
 +                                    })
                                  })
-                             });
+-                            });
++                            }) else {
++                                // The tree is gone; so is this effect.
++                                break;
++                            };
                              *value.write().or_poisoned() = Some(new_value);
-@@ -339,6 +343,10 @@
+                         }
+                     }
+@@ -339,6 +346,12 @@
                          {
                              subscriber.clear_sources(&subscriber);
  
 +                            // Both closures run under one in-flight guard;
 +                            // see `Owner::run_effect_body`.
-+                            let _run = owner.effect_body_guard();
++                            let Some(_run) = owner.effect_body_guard() else {
++                                break;
++                            };
 +
                              let old_dep_value = mem::take(
                                  &mut *dep_value.write().or_poisoned(),
                              );
-@@ -365,6 +373,7 @@
+@@ -365,6 +378,7 @@
                                  Some(new_dep_value);
  
                              first_run = false;
@@ -1059,33 +1111,41 @@
                          }
                      }
                  }
-@@ -426,9 +435,11 @@
+@@ -426,11 +440,16 @@
  
                          let old_value =
                              mem::take(&mut *value.write().or_poisoned());
 -                        let new_value = owner.with_cleanup(|| {
 -                            subscriber.with_observer(|| {
 -                                run_in_effect_scope(|| fun.run(old_value))
-+                        let new_value = owner.run_effect_body(|| {
++                        let Some(new_value) = owner.run_effect_body(|| {
 +                            owner.with_cleanup(|| {
 +                                subscriber.with_observer(|| {
 +                                    run_in_effect_scope(|| fun.run(old_value))
 +                                })
                              })
-                         });
+-                        });
++                        }) else {
++                            // The tree is gone; so is this effect.
++                            break;
++                        };
                          *value.write().or_poisoned() = Some(new_value);
-@@ -477,6 +488,10 @@
+                     }
+                 }
+@@ -477,6 +496,12 @@
                          {
                              subscriber.clear_sources(&subscriber);
  
 +                            // Both closures run under one in-flight guard;
 +                            // see `Owner::run_effect_body`.
-+                            let _run = owner.effect_body_guard();
++                            let Some(_run) = owner.effect_body_guard() else {
++                                break;
++                            };
 +
                              let old_dep_value = mem::take(
                                  &mut *dep_value.write().or_poisoned(),
                              );
-@@ -503,6 +518,7 @@
+@@ -503,6 +528,7 @@
                                  Some(new_dep_value);
  
                              first_run = false;
@@ -1095,7 +1155,7 @@
                  }
 --- a/tests/effect_disposed_first_run.rs
 +++ b/tests/effect_disposed_first_run.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,291 @@
 +//! Regression test for the SSR panics that survived akarras/ultros#1520
 +//! (GlitchTip #7388 `cookies.rs:174`, and the `leptos_i18n context.rs:213`
 +//! tail of #7382): an effect whose owner is cleaned up before its spawned
@@ -1339,4 +1399,51 @@
 +    })
 +    .await;
 +    assert!(finished.is_ok(), "the body blocked on its own teardown");
++}
++
++/// The window the in-flight guard alone left open (the `context.rs:213`
++/// tail of GlitchTip #7382 that kept firing after the guard shipped): the
++/// effect task has already taken its wake-up off the channel, and the
++/// teardown checks the tracker, finds nothing running and clears the arena
++/// before the task gets to enter its body. The body must not run then.
++///
++/// This races the effect task's first poll against the teardown on real
++/// threads, so a single iteration rarely lands in the window; enough of
++/// them do.
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn an_effect_body_never_starts_after_its_tree_is_torn_down() {
++    _ = Executor::init_tokio();
++    let ran_disposed = Arc::new(AtomicUsize::new(0));
++
++    for i in 0..20_000u32 {
++        let owner = Owner::new();
++        let signal = owner.with(|| {
++            let signal = RwSignal::new(1);
++            Effect::new_isomorphic({
++                let ran_disposed = Arc::clone(&ran_disposed);
++                move |_| {
++                    if signal.try_get().is_none() {
++                        ran_disposed.fetch_add(1, Ordering::SeqCst);
++                    }
++                }
++            });
++            signal
++        });
++        // Stagger the teardown against the effect task's first poll.
++        for _ in 0..(i % 64) {
++            std::hint::spin_loop();
++        }
++        owner.unset_with_forced_cleanup();
++        drop(signal);
++        if i % 256 == 0 {
++            tokio::task::yield_now().await;
++        }
++    }
++    tokio::time::sleep(Duration::from_millis(200)).await;
++
++    assert_eq!(
++        ran_disposed.load(Ordering::SeqCst),
++        0,
++        "an effect body started after its tree was torn down"
++    );
 +}

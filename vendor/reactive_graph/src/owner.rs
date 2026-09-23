@@ -381,22 +381,34 @@ impl Owner {
         // An effect body of this tree may be mid-run on another thread; let
         // it finish before its signals are pulled out from under it. Clone
         // the tracker out first so the wait doesn't hold this owner's read
-        // lock against a body that needs to write to it.
-        let activity = self.inner.read().or_poisoned().activity.clone();
-        activity.wait_idle();
+        // lock against a body that needs to write to it. Tearing down the
+        // root also closes the tracker, so no body starts afterwards.
+        let (activity, is_root) = {
+            let inner = self.inner.read().or_poisoned();
+            (inner.activity.clone(), inner.parent.is_none())
+        };
+        if is_root {
+            activity.close();
+        } else {
+            activity.wait_idle();
+        }
         self.cleanup();
     }
 
     /// Runs an effect body, marking it as in flight for this owner's tree so
-    /// a forced teardown of the tree waits for it — see `activity`.
-    pub(crate) fn run_effect_body<T>(&self, fun: impl FnOnce() -> T) -> T {
-        let _guard = self.effect_body_guard();
-        fun()
+    /// a forced teardown of the tree waits for it — see `activity`. Returns
+    /// `None` without running it once the tree's root has been torn down.
+    pub(crate) fn run_effect_body<T>(
+        &self,
+        fun: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let _guard = self.effect_body_guard()?;
+        Some(fun())
     }
 
     /// Marks an effect body of this owner's tree as in flight until the
     /// guard drops — see [`Owner::run_effect_body`].
-    pub(crate) fn effect_body_guard(&self) -> RunGuard {
+    pub(crate) fn effect_body_guard(&self) -> Option<RunGuard> {
         self.inner.read().or_poisoned().activity.enter()
     }
 
@@ -552,7 +564,7 @@ impl Drop for OwnerInner {
         // A root dropped without a forced cleanup (an abandoned render) tears
         // the whole tree down too; give a running effect body the same grace.
         if self.parent.is_none() {
-            self.activity.wait_idle();
+            self.activity.close();
         }
         for child in std::mem::take(&mut self.children) {
             if let Some(child) = child.upgrade() {

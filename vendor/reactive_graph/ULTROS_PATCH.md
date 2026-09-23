@@ -135,9 +135,10 @@ the tail left after #1520 (which fixed the *arena* mix-up): GlitchTip #7388
 (`cookies.rs:174`, the home-world cookie memo read by a `<Suspense>` effect's
 `dry_resolve` walk) and the `leptos_i18n context.rs:213` locale effect in
 #7382, a handful per day, clustered under load when the effect task lags the
-render. The pre-poll ordering is already safe — the effect's `Receiver` holds
-a `Weak`, so a cleanup that lands *before* the body starts ends the task
-silently — only the concurrent one panics.
+render. A cleanup that lands before the task is polled is already safe — the
+effect's `Receiver` holds a `Weak`, so the task ends silently. One that lands
+after the task has taken its wake-up but before its body starts is not: see
+"closing the tracker" below.
 
 `src/owner/activity.rs` adds a per-tree in-flight counter (`Activity`,
 shared by every owner in a tree the same way the arena is). The four effect
@@ -151,6 +152,22 @@ the wait is never entered. `tests/effect_disposed_first_run.rs` reproduces
 the race on a multi-thread runtime through both teardown paths (fails on the
 previous version of the patch with the exact production message) and pins the
 pre-poll orderings and the self-teardown case.
+
+**Closing the tracker (2026-09-23).** Waiting alone left a window, and #7382
+kept firing (~1/day, always during DB-pool stalls) after it shipped. An effect
+task that has passed `rx.next()` but not yet taken its guard is not counted.
+The teardown then sees `running == 0`, clears the arena, and the body starts
+against dead signals. So a *root* teardown (`unset_with_forced_cleanup` on an
+owner with no parent, or the root's `Drop`) now also sets `closed` on the
+tracker, under the same mutex `enter` takes. A body either entered before the
+close, and is waited for, or `enter` returns `None`. Then
+`run_effect_body` / `effect_body_guard` return `None` and the effect task
+breaks out of its loop without running. A non-root forced cleanup only waits,
+because its tracker is shared with sibling subtrees that live on.
+`an_effect_body_never_starts_after_its_tree_is_torn_down` races 20,000
+effect first-polls against teardowns on a 4-worker runtime. Before the fix,
+about 2,500 of them ran their body against a disposed signal. After it, none
+do.
 
 ## Upstream status
 
