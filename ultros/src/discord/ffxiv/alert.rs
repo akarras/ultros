@@ -2,7 +2,11 @@ use anyhow::anyhow;
 use itertools::Itertools;
 use poise::CreateReply;
 use poise::serenity_prelude::CreateEmbed;
+use ultros_api_types::alert::{
+    BACK_IN_STOCK_MIN_EMPTY_SECS, BELOW_MEDIAN_MIN_SAMPLES, BELOW_MEDIAN_PERCENT_RANGE,
+};
 use ultros_api_types::list::ListPermission;
+use ultros_db::NewMarketTriggerAlert;
 
 use crate::discord::ffxiv::helpers;
 use crate::discord::ffxiv::helpers::{discord_locale_to_xiv_language, localized_item_name};
@@ -23,6 +27,8 @@ use super::{Context, Error, ULTROS_COLOR};
     prefix_command,
     subcommands(
         "price",
+        "below_median",
+        "back_in_stock",
         "list",
         "list_subscribe",
         "list_updates",
@@ -37,7 +43,7 @@ use super::{Context, Error, ULTROS_COLOR};
 )]
 pub(crate) async fn alert(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say(
-        "Use one of: `price`, `list`, `list-subscribe`, `list-updates`, `mute`, `unmute`, `remove`, `endpoint-list`, `endpoint-remove`, `endpoint-here`, `webhook`.\n\
+        "Use one of: `price`, `below-median`, `back-in-stock`, `list`, `list-subscribe`, `list-updates`, `mute`, `unmute`, `remove`, `endpoint-list`, `endpoint-remove`, `endpoint-here`, `webhook`.\n\
          e.g. `/ffxiv alert price item:Tsai_tou_Vounou price:50000`",
     )
     .await?;
@@ -118,6 +124,130 @@ async fn price(
     )
     .await?;
     Ok(())
+}
+
+/// Alert when a listing is at least `percent`% under the item's 30-day median.
+#[poise::command(slash_command, prefix_command, rename = "below-median")]
+async fn below_median(
+    ctx: Context<'_>,
+    #[description = "Item name"]
+    #[autocomplete = "helpers::autocomplete_item"]
+    item: String,
+    #[description = "Alert when a listing is at least this % below the 30-day median (5-90)"]
+    percent: i32,
+    #[description = "Only match HQ listings (default: any)"] hq: Option<bool>,
+    #[description = "World/DC/region to watch (default: your home world)"] world: Option<String>,
+    #[description = "Min seconds between repeats (60-86400, default 3600)"] cooldown: Option<i32>,
+) -> Result<(), Error> {
+    if !BELOW_MEDIAN_PERCENT_RANGE.contains(&percent) {
+        ctx.say(format!(
+            "Percent must be between {} and {}.",
+            BELOW_MEDIAN_PERCENT_RANGE.start(),
+            BELOW_MEDIAN_PERCENT_RANGE.end()
+        ))
+        .await?;
+        return Ok(());
+    }
+    let hq_only = hq.unwrap_or(false);
+    let alert = create_market_alert(&ctx, &item, world, hq_only, cooldown, Some(percent)).await?;
+    ctx.send(
+        CreateReply::default().embed(
+            CreateEmbed::new()
+                .color(ULTROS_COLOR)
+                .title("Below-median alert created")
+                .description(format!(
+                    "**{item}** at least {percent}% below its 30-day median{hq_str}. Alert id: `{id}`.\n\
+                     Items with fewer than {min} recent sales are skipped until they have more history.\n\
+                     Delivery: Discord DM to you.\nCooldown: {cooldown}s.",
+                    hq_str = if hq_only { " (HQ only)" } else { "" },
+                    min = BELOW_MEDIAN_MIN_SAMPLES,
+                    id = alert.id,
+                    cooldown = alert.cooldown_seconds,
+                )),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Alert when an item that has been sold out for a while is listed again.
+#[poise::command(slash_command, prefix_command, rename = "back-in-stock")]
+async fn back_in_stock(
+    ctx: Context<'_>,
+    #[description = "Item name"]
+    #[autocomplete = "helpers::autocomplete_item"]
+    item: String,
+    #[description = "Only count HQ listings (default: any)"] hq: Option<bool>,
+    #[description = "World/DC/region to watch (default: your home world)"] world: Option<String>,
+    #[description = "Min seconds between repeats (60-86400, default 3600)"] cooldown: Option<i32>,
+) -> Result<(), Error> {
+    let hq_only = hq.unwrap_or(false);
+    let alert = create_market_alert(&ctx, &item, world, hq_only, cooldown, None).await?;
+    ctx.send(
+        CreateReply::default().embed(
+            CreateEmbed::new()
+                .color(ULTROS_COLOR)
+                .title("Back-in-stock alert created")
+                .description(format!(
+                    "**{item}**{hq_str} coming back after at least {mins} minutes with no listings. \
+                     Alert id: `{id}`.\nDelivery: Discord DM to you.\nCooldown: {cooldown}s.",
+                    hq_str = if hq_only { " (HQ)" } else { "" },
+                    mins = BACK_IN_STOCK_MIN_EMPTY_SECS / 60,
+                    id = alert.id,
+                    cooldown = alert.cooldown_seconds,
+                )),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Shared body of `below-median` / `back-in-stock`: resolve the item and
+/// scope, bind the caller's DM endpoint, create the alert (`percent_below`
+/// picks the variant), and wake the market-trigger listener.
+async fn create_market_alert(
+    ctx: &Context<'_>,
+    item: &str,
+    world: Option<String>,
+    hq_only: bool,
+    cooldown: Option<i32>,
+    percent_below: Option<i32>,
+) -> Result<ultros_db::entity::alert::Model, Error> {
+    let owner = ctx.author().id.get() as i64;
+    let item_id = helpers::resolve_item_id(item).ok_or_else(|| anyhow!("unknown item: {item}"))?;
+    let world_selector = match world {
+        Some(s) => helpers::parse_world_selector(ctx, &s).await?,
+        None => helpers::user_home_world_selector(ctx).await?,
+    };
+    let dm_endpoint = ctx
+        .data()
+        .db
+        .get_or_create_dm_endpoint(owner, &format!("DM to {}", ctx.author().name))
+        .await?;
+    let endpoint_ids = [dm_endpoint];
+    let new = NewMarketTriggerAlert {
+        owner,
+        item_id,
+        world_selector_json: serde_json::to_value(world_selector)?,
+        hq_only,
+        cooldown_seconds: cooldown.unwrap_or(3600).clamp(60, 86400),
+        endpoint_ids: &endpoint_ids,
+    };
+    let alert = match percent_below {
+        Some(percent) => {
+            ctx.data()
+                .db
+                .create_below_median_alert(new, percent)
+                .await?
+                .0
+        }
+        None => ctx.data().db.create_back_in_stock_alert(new).await?.0,
+    };
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::added(alert.clone()))?;
+    Ok(alert)
 }
 
 // Mirrors the web "Notify me on this list" flow — fires per-item when a list
@@ -299,10 +429,14 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
         .db
         .get_user_retainer_undercut_alerts(owner)
         .await?;
+    let median_rows = ctx.data().db.get_user_below_median_alerts(owner).await?;
+    let stock_rows = ctx.data().db.get_user_back_in_stock_alerts(owner).await?;
     if rows.is_empty()
         && list_threshold_rows.is_empty()
         && list_update_rows.is_empty()
         && retainer_rows.is_empty()
+        && median_rows.is_empty()
+        && stock_rows.is_empty()
     {
         ctx.say("You have no alerts. Create one with `/ffxiv alert price`.")
             .await?;
@@ -347,6 +481,33 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
         format!(
             "{status} `#{}` retainer undercut alerts over {}%",
             a.id, t.margin_percent
+        )
+    }));
+    let item_label = |item_id: i32| {
+        let name = localized_item_name(item_id, user_lang);
+        if name.is_empty() {
+            "?".to_string()
+        } else {
+            name
+        }
+    };
+    lines.extend(median_rows.into_iter().map(|(a, t)| {
+        let status = if a.enabled { "✅" } else { "⏸" };
+        format!(
+            "{status} `#{}` {} ≥ {}% below 30-day median{}",
+            a.id,
+            item_label(t.item_id),
+            t.percent_below,
+            if t.hq_only { " (HQ)" } else { "" },
+        )
+    }));
+    lines.extend(stock_rows.into_iter().map(|(a, t)| {
+        let status = if a.enabled { "✅" } else { "⏸" };
+        format!(
+            "{status} `#{}` {} back in stock{}",
+            a.id,
+            item_label(t.item_id),
+            if t.hq_only { " (HQ)" } else { "" },
         )
     }));
     ctx.send(

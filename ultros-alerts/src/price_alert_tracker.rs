@@ -57,7 +57,7 @@ pub fn format_threshold_alert_message(
     (title, body)
 }
 
-fn item_click_url(item_id: i32, world_name: Option<&str>) -> String {
+pub(crate) fn item_click_url(item_id: i32, world_name: Option<&str>) -> String {
     world_name.map_or_else(
         || format!("/item/{item_id}"),
         |world_name| format!("/item/{world_name}/{item_id}"),
