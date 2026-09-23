@@ -131,6 +131,25 @@ pub async fn get_floor_history(
     fetch_api(&url).await
 }
 
+/// Undercut pressure for one item on one world, bucketed like the price
+/// chart (`bucket_seconds` from the price series response).
+pub async fn get_undercut_pressure(
+    item_id: i32,
+    world: &str,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+    bucket_seconds: i64,
+) -> AppResult<ultros_api_types::undercut_pressure::UndercutPressure> {
+    let mut url = format!(
+        "/api/v1/undercut_pressure/{world}/{item_id}?hq={}&bucket={bucket_seconds}",
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
 /// Time × price sale-count grid for the chart's density mode. Fetched only
 /// while density mode is active — see the gated LocalResource in item_view.
 pub async fn get_price_density(

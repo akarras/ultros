@@ -208,6 +208,7 @@ pub fn build_price_density_chart(
             let center = ts + TimeDelta::seconds(bucket_secs / 2);
             let display = center + TimeDelta::minutes(options.utc_offset_minutes as i64);
             HoverBucket {
+                ts: ts.and_utc().timestamp(),
                 x: time.scale(center),
                 label: display.format(label_format).to_string(),
                 series_values: Vec::new(),
