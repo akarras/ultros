@@ -4,6 +4,7 @@
 //! calculations can be compiled and tested without building application views.
 
 pub mod analysis;
+pub mod bulk_basket;
 pub mod formula;
 pub mod list_estimate;
 pub mod list_travel;

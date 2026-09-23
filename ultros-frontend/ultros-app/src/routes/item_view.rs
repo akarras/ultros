@@ -17,8 +17,8 @@ use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, alert_drawer::AlertDrawer, clipboard::*, item_icon::*,
-    item_tooltip::ItemTooltip, listings_panel::ListingsPanel, meta::*,
-    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
+    item_tooltip::ItemTooltip, listing_quality::ListingQuality, listings_panel::ListingsPanel,
+    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
     sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
     toggle::Toggle, tooltip::Tooltip,
 };
@@ -1397,6 +1397,9 @@ fn ListingsContent(
             )
         }
     });
+    // The listings table's All/HQ/NQ filter, shared with the bulk basket so
+    // both answer for the same quality.
+    let quality = RwSignal::new(ListingQuality::default());
     let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
     Effect::new(move |_| {
         market_subscriptions.update_value(|subscriptions| subscriptions.clear());
@@ -1480,6 +1483,14 @@ fn ListingsContent(
                     item_id
                 />
             </div>
+            // Right under the verdict: for a bulk buyer, "which world fills
+            // 99 cheapest" replaces "which listing is cheapest". One slim row
+            // until a quantity is set.
+            <super::item_view_bulk_basket::BulkBasket
+                listing_resource
+                filtered_listings
+                quality
+            />
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
             // Both tables force `min-w-[720px]`, so two columns only fit when
@@ -1495,6 +1506,7 @@ fn ListingsContent(
                             listing_resource
                             filtered_listings
                             item_id
+                            quality
                         />
                     </div>
                     <div id=super::item_view_sections::Section::History.id() class="scroll-mt-16 min-w-0">

@@ -16,9 +16,12 @@ pub fn ListingsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     #[prop(into)] filtered_listings: Signal<ListingRows>,
     item_id: Memo<i32>,
+    /// Owned by the item page so the bulk basket buys the same quality the
+    /// table shows.
+    quality: RwSignal<ListingQuality>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let (quality, set_quality) = signal(ListingQuality::default());
+    let set_quality = quality.write_only();
 
     let quality_button = move |value: ListingQuality, label: String| {
         view! {
