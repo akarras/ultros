@@ -14,6 +14,7 @@ use ultros_api_types::{
         VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsColumnar, CheapestListingsMap},
+    floor_history::{FloorHistoryBatch, FloorHistoryRequest},
     item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
@@ -426,6 +427,17 @@ pub async fn post_sparklines(
     req: SparklinesRequest,
 ) -> AppResult<SparklinesResponse> {
     post_api(&format!("/api/v1/sparklines/{}", world_name), req).await
+}
+
+/// Sampled scope floors plus exact bounds for at most 20 items and 10k
+/// samples per request (`FloorHistoryRequest::valid`). The server runs at
+/// most four uncached batches at once and answers 503 past that, so callers
+/// send their batches one after another.
+pub async fn post_floor_history(
+    scope_name: &str,
+    req: FloorHistoryRequest,
+) -> AppResult<FloorHistoryBatch> {
+    post_api(&format!("/api/v1/floor_history/{scope_name}"), req).await
 }
 
 /// Returns a list of the logged in user's retainers

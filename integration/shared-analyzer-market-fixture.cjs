@@ -46,7 +46,7 @@ function marketFixture(itemIds = ids) {
       const now = Math.floor(Date.now() / 1000);
       const coverage = { first_observed_unix: now - 86400, last_observed_unix: now, observed_span_secs: 86400, continuity_verified: false };
       const window = days ? { window_days: days, from: now - days * 86400, to: now, additions: 0, removals: 0, listing_coverage: coverage,
-        floor_min: null, floor_max: null, floor_known_secs: 0, floor_empty_secs: 0, floor_unknown_secs: 0,
+        floor_min: 550, floor_max: null, floor_known_secs: 86400, floor_empty_secs: 0, floor_unknown_secs: 0,
         matches: { matched: 0, ambiguous: 0, repriced: 0, unmatched: 0, sales_without_receipt: 0, receipt_coverage: coverage,
           received_sales: 0, settled_through_unix: now - 601, pending: 0, median_time_to_sell_secs: null, age_origin: 'last_review_time' },
         stock_status: 'unavailable', days_of_stock: null, undercuts: 4, undercuts_per_day: 0.5, undercut_median: 0.1 } : undefined;

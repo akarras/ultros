@@ -41,7 +41,8 @@ pub fn Sparkline(
     /// Pixel height. Default 24.
     #[prop(default = 24)]
     height: u32,
-    /// Hours represented by one point step (all current feeds are hourly).
+    /// Hours represented by one point step. A whole number of days labels
+    /// the tooltip in days.
     #[prop(default = 1)]
     hours_per_point: u32,
 ) -> impl IntoView {
@@ -194,6 +195,10 @@ pub fn Sparkline(
                                                             * hours_per_point;
                                                         let when = if steps_back == 0 {
                                                             t_string!(i18n, sparkline_now).to_string()
+                                                        } else if hours_per_point.is_multiple_of(24) {
+                                                            t_string!(i18n, sparkline_days_ago)
+                                                                .to_string()
+                                                                .replace("{n}", &(steps_back / 24).to_string())
                                                         } else {
                                                             t_string!(i18n, sparkline_hours_ago)
                                                                 .to_string()
