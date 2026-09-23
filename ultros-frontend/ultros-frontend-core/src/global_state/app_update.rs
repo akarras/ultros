@@ -35,6 +35,37 @@ pub fn update_pending(client: &str, server: Option<&str>) -> bool {
     client != server
 }
 
+/// Whether a response's `Cache-Control` lets the browser store and replay it.
+///
+/// A replayed response carries the `x-ultros-commit` it was *stored* with, so
+/// right after a deploy the fresh bundle reads the previous commit off it and
+/// decides it is the stale one. Reloading replays the same entry, so the
+/// banner comes straight back until the entry expires (up to an hour for the
+/// price-history endpoints). Only responses the browser cannot have served
+/// from its cache are trusted as evidence of the server's commit.
+#[cfg(any(not(feature = "ssr"), test))]
+pub fn may_be_cached_replay(cache_control: Option<&str>) -> bool {
+    let Some(cache_control) = cache_control else {
+        return false;
+    };
+    let mut cacheable = false;
+    for directive in cache_control.split(',') {
+        let directive = directive.trim().to_ascii_lowercase();
+        let (name, value) = directive
+            .split_once('=')
+            .map_or((directive.as_str(), ""), |(n, v)| (n.trim(), v.trim()));
+        match name {
+            "no-store" => return false,
+            "max-age" if value.trim_matches('"').parse::<u64>().is_ok_and(|s| s > 0) => {
+                cacheable = true;
+            }
+            "stale-while-revalidate" | "stale-if-error" | "immutable" => cacheable = true,
+            _ => {}
+        }
+    }
+    cacheable
+}
+
 /// App-wide update state. Provided once in `AppInner`.
 #[derive(Clone, Copy)]
 pub struct AppUpdate {
@@ -98,7 +129,7 @@ pub fn observe_server_commit(header: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::update_pending;
+    use super::{may_be_cached_replay, update_pending};
 
     #[test]
     fn same_commit_is_not_pending() {
@@ -127,5 +158,27 @@ mod tests {
     #[test]
     fn header_whitespace_is_ignored() {
         assert!(!update_pending("283f84e5", Some(" 283f84e5 ")));
+    }
+
+    #[test]
+    fn uncacheable_responses_are_trusted() {
+        assert!(!may_be_cached_replay(None));
+        assert!(!may_be_cached_replay(Some("private, no-store")));
+        assert!(!may_be_cached_replay(Some("no-cache")));
+        assert!(!may_be_cached_replay(Some("max-age=0")));
+        assert!(!may_be_cached_replay(Some(
+            "public, max-age=3600, no-store"
+        )));
+    }
+
+    #[test]
+    fn cacheable_responses_are_ignored() {
+        // The shapes the API actually sends (changelog, price history, bulk stats).
+        assert!(may_be_cached_replay(Some("public, max-age=300")));
+        assert!(may_be_cached_replay(Some("max-age=15")));
+        assert!(may_be_cached_replay(Some(
+            "public, max-age=300, s-maxage=300, stale-while-revalidate=1800"
+        )));
+        assert!(may_be_cached_replay(Some("Private, Max-Age=604800")));
     }
 }

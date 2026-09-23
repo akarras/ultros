@@ -1080,11 +1080,17 @@ where
 
 /// Feed the server's `x-ultros-commit` header to the update detector. Runs on
 /// error statuses too: a 500 from a newer server still carries the header.
+/// Skips cacheable responses, which may be browser-cache replays stamped with
+/// an older commit (see `may_be_cached_replay`).
 #[cfg(not(feature = "ssr"))]
 fn report_server_commit(response: &gloo_net::http::Response) {
-    let header = response
-        .headers()
-        .get(ultros_api_types::app_version::APP_COMMIT_HEADER);
+    let headers = response.headers();
+    if crate::global_state::app_update::may_be_cached_replay(
+        headers.get("cache-control").as_deref(),
+    ) {
+        return;
+    }
+    let header = headers.get(ultros_api_types::app_version::APP_COMMIT_HEADER);
     crate::global_state::app_update::observe_server_commit(header.as_deref());
 }
 
