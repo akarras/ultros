@@ -1,7 +1,7 @@
 //! A single native scrollport with independently virtualized rows and columns.
 pub mod filter;
 pub mod registry;
-pub use ultros_grid_core::{layout, metrics};
+pub use ultros_grid_core::{layout, metrics, units};
 pub mod query_grid;
 pub mod row_source;
 pub mod saved_views;
@@ -1021,56 +1021,77 @@ where
                 <Portal>
                     <div class="grid-menu-backdrop" on:pointerdown=move |_| close_menu()></div>
                     <div class="grid-menu-panel" node_ref=menu_ref tabindex="-1" role="dialog" aria-modal="true" aria-label=t_string!(i18n, grid_column_menu).to_string()
-                        style=format!("left:clamp(8px,{}px,calc(100vw - 280px));top:clamp(8px,{}px,calc(100dvh - 430px));",m.x,m.y)
+                        style=format!("left:clamp(8px,{}px,calc(100vw - 316px));top:clamp(8px,{}px,calc(100dvh - 460px));",m.x,m.y)
                         on:keydown=move |e| {
                             if e.key()=="Escape"{e.prevent_default();close_menu();}
                             else if let Some(el)=menu_ref.get_untracked(){cycle_focus(&e,&el);}
                         }
                     >
-                        <strong>{columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.label.clone()).unwrap_or_default())}</strong>
-                        {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.query_sort)).then(||view! {<filter::MetricSortControls column=m.id/>})}
-                        {columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.filters.clone()).unwrap_or_default()).into_iter()
-                            .filter(|filter| !filter.calculation)
-                            .map(|filter|view! {<filter::ColumnFilterEditor filter/>}).collect_view()}
-                        <button type="button" on:click=move |_| {fit(m.id);close_menu();}>{t!(i18n,grid_auto_fit)}</button>
-                        <label>{t!(i18n,grid_width)}<input type="number" min="60" max="800" prop:value=move || width_input.get() on:input=move |e|width_input.set(event_target_value(&e))/></label>
-                        <button type="button" on:click=move |_| {
-                            if let Ok(width)=width_input.get_untracked().parse::<f64>()
-                                && let Some(def)=columns.with_untracked(|defs|defs.iter().find(|c|c.id==m.id).cloned()) {
-                                    fit_generation.update(|n| *n += 1);
-                                    state.update(|s|{s.widths.insert(m.id.into(),def.clamp(width));}); commit(None);close_menu();
+                        {
+                            let set_width = move || {
+                                if let Ok(width)=width_input.get_untracked().trim().parse::<f64>()
+                                    && let Some(def)=columns.with_untracked(|defs|defs.iter().find(|c|c.id==m.id).cloned()) {
+                                        fit_generation.update(|n| *n += 1);
+                                        state.update(|s|{s.widths.insert(m.id.into(),def.clamp(width));}); commit(None);
+                                }
+                            };
+                            let icon_button = move |label: String, icon: icondata::Icon, run: Callback<()>| view! {
+                                <button type="button" class="grid-icon-btn" title=label.clone() aria-label=label
+                                    on:click=move |_| run.run(())><Icon icon aria_hidden=true/></button>
+                            };
+                            view! {
+                                <div class="grid-menu-header">
+                                    <strong>{columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.label.clone()).unwrap_or_default())}</strong>
+                                    <div class="grid-menu-icons">
+                                        {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.query_sort)).then(||view! {<filter::MetricSortControls column=m.id/>})}
+                                        {icon_button(t_string!(i18n,grid_close).to_string(), icondata::MdiClose, Callback::new(move |_| close_menu()))}
+                                    </div>
+                                </div>
+                                {columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.filters.clone()).unwrap_or_default()).into_iter()
+                                    .filter(|filter| !filter.calculation)
+                                    .map(|filter|view! {<filter::ColumnFilterEditor filter/>}).collect_view()}
+                                <div class="grid-menu-toolbar" role="group" aria-label=t_string!(i18n,grid_column_menu).to_string()>
+                                    {icon_button(t_string!(i18n,grid_move_left).to_string(), icondata::MdiArrowCollapseLeft, Callback::new(move |_| {
+                                        let p=placed.get_untracked(); if let Some(i)=p.iter().position(|c|c.column.id==m.id) && i>0 {state.update(|s|s.move_to(m.id,p[i-1].column.id,false));commit(None);} close_menu();
+                                    }))}
+                                    {icon_button(t_string!(i18n,grid_move_right).to_string(), icondata::MdiArrowCollapseRight, Callback::new(move |_| {
+                                        let p=placed.get_untracked();if let Some(i)=p.iter().position(|c|c.column.id==m.id) && i+1<p.len(){state.update(|s|s.move_to(m.id,p[i+1].column.id,true));commit(None);} close_menu();
+                                    }))}
+                                    {icon_button(t_string!(i18n,grid_insert_before).to_string(), icondata::MdiTableColumnPlusBefore, Callback::new(move |_| insert_side.update(|s| *s = (*s != Some(false)).then_some(false))))}
+                                    {icon_button(t_string!(i18n,grid_insert_after).to_string(), icondata::MdiTableColumnPlusAfter, Callback::new(move |_| insert_side.update(|s| *s = (*s != Some(true)).then_some(true))))}
+                                    {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.optional)).then(||
+                                        icon_button(t_string!(i18n,grid_hide_column).to_string(), icondata::MdiEyeOff, Callback::new(move |_| {commit(Some((m.id,false)));close_menu();})))}
+                                </div>
+                                {move || insert_side.get().map(move |after| view! {
+                                    <div class="grid-insert">
+                                        <input type="search" aria-label=t_string!(i18n,grid_search_columns).to_string() placeholder=t_string!(i18n,grid_search_columns).to_string() on:input=move |e|search.set(event_target_value(&e))/>
+                                        <div class="grid-insert-options">{move || {
+                                            let mut previous_group = None;
+                                            columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).map(|c| {
+                                                let group = if previous_group != c.picker_group { c.picker_group.clone() } else { None };
+                                                previous_group = c.picker_group;
+                                                view! {
+                                                    {group.map(|label| view! { <span class="block px-2 pt-3 text-xs font-semibold text-[color:var(--color-text-muted)]" data-column-picker-group>{label}</span> })}
+                                                    <button type="button" on:click=move |_| {state.update(|s|s.move_to(c.id,m.id,after));commit(Some((c.id,true)));close_menu();}>{c.label}</button>
+                                                }
+                                            }).collect_view()
+                                        }}</div>
+                                    </div>
+                                })}
+                                <div class="grid-menu-width">
+                                    {icon_button(t_string!(i18n,grid_auto_fit).to_string(), icondata::MdiArrowExpandHorizontal, Callback::new(move |_| {fit(m.id);close_menu();}))}
+                                    <span class="grid-field has-suffix">
+                                        <input type="number" min="60" max="800" inputmode="numeric" aria-label=t_string!(i18n,grid_width).to_string()
+                                            prop:value=move || width_input.get() on:input=move |e|width_input.set(event_target_value(&e))
+                                            on:change=move |_| set_width()
+                                            on:keydown=move |e| if e.key()=="Enter" { e.prevent_default(); set_width(); close_menu(); }/>
+                                        <span class="grid-field-suffix" aria-hidden="true">"px"</span>
+                                    </span>
+                                    {icon_button(t_string!(i18n,grid_reset_width).to_string(), icondata::MdiRestore, Callback::new(move |_| {fit_generation.update(|n| *n += 1);state.update(|s|{s.widths.remove(m.id);});commit(None);close_menu();}))}
+                                </div>
+                                <button type="button" class="grid-menu-reset" on:click=move |_| {fit_generation.update(|n| *n += 1);on_change.run(GridChange{layout:None,visibility:None,reset:true});close_menu();}>{t!(i18n,grid_reset_layout)}</button>
                             }
-                        }>{t!(i18n,grid_set_width)}</button>
-                        <button type="button" on:click=move |_| {fit_generation.update(|n| *n += 1);state.update(|s|{s.widths.remove(m.id);});commit(None);close_menu();}>{t!(i18n,grid_reset_width)}</button>
-                        <div class="grid-menu-actions">
-                            <button type="button" on:click=move |_| {
-                                let p=placed.get_untracked(); if let Some(i)=p.iter().position(|c|c.column.id==m.id) && i>0 {state.update(|s|s.move_to(m.id,p[i-1].column.id,false));commit(None);} close_menu();
-                            }>{t!(i18n,grid_move_left)}</button>
-                            <button type="button" on:click=move |_| {
-                                let p=placed.get_untracked();if let Some(i)=p.iter().position(|c|c.column.id==m.id) && i+1<p.len(){state.update(|s|s.move_to(m.id,p[i+1].column.id,true));commit(None);} close_menu();
-                            }>{t!(i18n,grid_move_right)}</button>
-                        </div>
-                        <button type="button" on:click=move |_| insert_side.set(Some(false))>{t!(i18n,grid_insert_before)}</button>
-                        <button type="button" on:click=move |_| insert_side.set(Some(true))>{t!(i18n,grid_insert_after)}</button>
-                        {move || insert_side.get().map(move |after| view! {
-                            <input type="search" aria-label=t_string!(i18n,grid_search_columns).to_string() placeholder=t_string!(i18n,grid_search_columns).to_string() on:input=move |e|search.set(event_target_value(&e))/>
-                            <div class="grid-insert-options">{move || {
-                                let mut previous_group = None;
-                                columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).map(|c| {
-                                    let group = if previous_group != c.picker_group { c.picker_group.clone() } else { None };
-                                    previous_group = c.picker_group;
-                                    view! {
-                                        {group.map(|label| view! { <span class="block px-2 pt-3 text-xs font-semibold text-[color:var(--color-text-muted)]" data-column-picker-group>{label}</span> })}
-                                        <button type="button" on:click=move |_| {state.update(|s|s.move_to(c.id,m.id,after));commit(Some((c.id,true)));close_menu();}>{c.label}</button>
-                                    }
-                                }).collect_view()
-                            }}</div>
-                        })}
-                        {columns.with(|defs|defs.iter().any(|c|c.id==m.id&&c.optional)).then(||view! {
-                            <button type="button" on:click=move |_| {commit(Some((m.id,false)));close_menu();}>{t!(i18n,grid_hide_column)}</button>
-                        })}
-                        <button type="button" on:click=move |_| {fit_generation.update(|n| *n += 1);on_change.run(GridChange{layout:None,visibility:None,reset:true});close_menu();}>{t!(i18n,grid_reset_layout)}</button>
-                        <button type="button" on:click=move |_|close_menu()>{t!(i18n,grid_close)}</button>
+                        }
                     </div>
                 </Portal>
             })}

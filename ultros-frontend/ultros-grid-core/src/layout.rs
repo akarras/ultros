@@ -8,6 +8,8 @@ pub struct ColumnFilter {
     pub numeric: bool,
     pub options: Vec<(&'static str, String)>,
     pub metric: Option<super::metrics::ValueKind>,
+    /// A metric filter's unit, from its column's metric.
+    pub unit: super::units::Unit,
     /// Runtime choices, for example localized job categories or worlds.
     pub choices: Vec<(String, String)>,
     pub multiple: bool,
@@ -27,6 +29,7 @@ impl ColumnFilter {
             numeric,
             options: Vec::new(),
             metric: None,
+            unit: super::units::Unit::Plain,
             choices: Vec::new(),
             multiple: false,
             default_value: None,

@@ -2938,16 +2938,61 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 /* Native dialogs have their own default text color, while preflight resets
    their auto margins. Restore the panel theme and modal centering. */
 dialog.panel { color: var(--color-text); margin: auto; }
-.grid-menu-panel { position: fixed; z-index: 81; width: 272px; max-height: min(420px, calc(100dvh - 16px)); overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--color-outline); border-radius: 8px; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 8px 32px #0008; font-size: 14px; }
+.grid-menu-panel { position: fixed; z-index: 81; width: 300px; max-width: calc(100vw - 16px); max-height: min(460px, calc(100dvh - 16px)); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--color-outline); border-radius: 10px; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 8px 32px #0008; font-size: 14px; }
 .grid-menu-panel > * { flex-shrink: 0; }
-.grid-column-filter { padding-bottom: 8px; border-bottom: 1px solid var(--color-outline); }
-.grid-column-filter label { display: grid; gap: 4px; }
-.grid-column-filter select { width: 100%; padding: 6px; background: var(--color-background); }
-.grid-menu-panel button { padding: 6px 8px; text-align: left; border-radius: 4px; }
-.grid-menu-panel button:hover, .grid-menu-panel button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
-.grid-menu-panel input { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--color-outline); border-radius: 4px; background: var(--color-background); }
-.grid-menu-actions { display: flex; gap: 8px; }
+/* Column menu and filter popover share one vocabulary: a header with the
+   column name and icon actions, a filter card, then layout tools. */
+.grid-menu-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.grid-menu-header > strong { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid-menu-icons { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.grid-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 6px; color: var(--color-text-muted); font-size: 18px; transition: background-color 120ms, color 120ms; }
+.grid-icon-btn:hover, .grid-icon-btn:focus-visible { color: var(--color-text); background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+.grid-icon-btn:focus-visible, .grid-chip:focus-visible, .grid-filter-apply:focus-visible, .grid-menu-reset:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+.grid-icon-btn[data-active="true"] { color: var(--brand-fg); background: color-mix(in srgb, var(--brand-ring) 30%, transparent); }
+.grid-menu-toolbar { display: flex; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--color-outline); }
+.grid-menu-width { display: flex; align-items: center; gap: 6px; }
+.grid-menu-width .grid-field { flex: 1; }
+.grid-menu-panel .grid-menu-reset { align-self: flex-start; padding: 8px 0 2px; font-size: 12px; color: var(--color-text-muted); text-decoration: underline; text-underline-offset: 3px; border-top: 1px solid var(--color-outline); width: 100%; border-radius: 0; }
+.grid-menu-panel .grid-menu-reset:hover { background: none; color: var(--color-text); }
+.grid-insert { display: flex; flex-direction: column; gap: 4px; }
 .grid-insert-options { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; }
+.grid-insert-options button { padding: 6px 8px; text-align: left; border-radius: 4px; }
+.grid-insert-options button:hover, .grid-insert-options button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+/* Fields: one height, one outline, one focus ring, unit inside. */
+.grid-field { position: relative; display: flex; min-width: 0; }
+.grid-menu-panel input, .grid-menu-panel select, .grid-menu-popover input, .grid-menu-popover select { width: 100%; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--color-outline); border-radius: 6px; background: var(--color-background); color: var(--color-text); font-size: 13px; }
+.grid-menu-panel input:focus-visible, .grid-menu-panel select:focus-visible, .grid-menu-popover input:focus-visible, .grid-menu-popover select:focus-visible { outline: none; border-color: var(--brand-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-ring) 35%, transparent); }
+.grid-menu-panel input:disabled, .grid-menu-popover input:disabled, .grid-menu-panel select:disabled, .grid-menu-popover select:disabled { opacity: 0.5; }
+.grid-menu-panel input[aria-invalid="true"], .grid-menu-popover input[aria-invalid="true"] { border-color: #f87171; }
+.grid-menu-panel input[type="checkbox"], .grid-menu-popover input[type="checkbox"] { width: auto; height: auto; }
+.grid-field.has-suffix input { padding-right: 38px; }
+.grid-field-suffix { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--color-text-muted); pointer-events: none; }
+.grid-field-label { display: block; margin-bottom: 3px; font-size: 11px; color: var(--color-text-muted); }
+.grid-field-preview { display: block; min-height: 15px; margin-top: 3px; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.grid-field-preview.is-error, .grid-filter-error { color: #f87171; }
+.grid-filter-error { font-size: 12px; }
+/* The filter card. */
+.grid-filter-card, .grid-column-filter { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 8px; background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.grid-column-filter fieldset { display: flex; flex-direction: column; gap: 6px; }
+.grid-column-filter legend { margin-bottom: 4px; font-size: 11px; color: var(--color-text-muted); }
+.grid-range { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: start; }
+.grid-range-dash { padding-top: 24px; color: var(--color-text-muted); }
+.grid-range-side { display: block; min-width: 0; }
+.grid-filter-text { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 6px; }
+.grid-filter-presence, .grid-filter-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.grid-filter-quick { margin-bottom: 8px; }
+.grid-chip { padding: 4px 10px; border: 1px solid var(--color-outline); border-radius: 999px; font-size: 12px; color: var(--color-text-muted); }
+.grid-chip:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--brand-ring) 60%, transparent); }
+.grid-chip[aria-pressed="true"] { color: var(--brand-fg); border-color: var(--brand-ring); background: color-mix(in srgb, var(--brand-ring) 25%, transparent); }
+.grid-chip:disabled { opacity: 0.5; pointer-events: none; }
+.grid-filter-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: color-mix(in srgb, var(--color-background) 70%, transparent); }
+.grid-filter-tabs button { flex: 1; height: 26px; border-radius: 6px; font-size: 12px; color: var(--color-text-muted); }
+.grid-filter-tabs button[aria-selected="true"] { color: var(--color-text); background: var(--color-background-panel); box-shadow: 0 1px 2px #0004; }
+.grid-filter-dates { display: flex; flex-direction: column; gap: 8px; }
+.grid-filter-dates input { color-scheme: dark light; }
+.grid-filter-actions, .grid-menu-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.grid-filter-apply { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--brand-fg); background: var(--brand-bg); border: 1px solid var(--brand-ring); }
+.grid-filter-apply:hover { background: color-mix(in srgb, var(--brand-ring) 40%, var(--brand-bg)); }
 /* Default widths for the Flip Finder loading skeleton. Live grid geometry
    is controlled by VirtualGrid column definitions and saved layout state. */
 .tool-table {
