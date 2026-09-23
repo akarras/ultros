@@ -42,8 +42,26 @@ type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
 
 const CARD_CLASS: &str = "item-surface flex min-w-0 flex-col gap-1.5 p-3 text-sm";
 const MUTED: &str = "text-[color:var(--color-text-muted)]";
-/// The craft card's rows, in order; its skeleton renders the same rows.
-const CRAFT_ROWS: [&str; 6] = ["heading", "craft", "buy", "verdict", "notes", "link"];
+/// The craft card's rows, in order, with the height each reserves. Its
+/// skeleton renders the same rows at the same heights, so swapping the card
+/// in after hydration doesn't move the page.
+const CRAFT_ROWS: [(&str, &str); 6] = [
+    ("heading", "min-h-6"),
+    ("craft", "min-h-[29px]"),
+    ("buy", "min-h-[29px]"),
+    ("verdict", "min-h-[26px]"),
+    ("notes", "min-h-4"),
+    ("link", "min-h-4"),
+];
+
+/// The height class [`CRAFT_ROWS`] reserves for `slot`.
+fn row_min_h(slot: &str) -> &'static str {
+    CRAFT_ROWS
+        .iter()
+        .find(|(name, _)| *name == slot)
+        .map(|(_, min_h)| *min_h)
+        .unwrap_or_default()
+}
 /// Lines in a typical sell card, for its loading skeleton.
 const SELL_SKELETON_ROWS: usize = 7;
 
@@ -483,7 +501,13 @@ fn craft_card_skeleton() -> AnyView {
         <div class=CARD_CLASS aria-hidden="true">
             {CRAFT_ROWS
                 .iter()
-                .map(|slot| view! { <div data-slot=*slot><SingleLineSkeleton /></div> })
+                .map(|(slot, min_h)| {
+                    view! {
+                        <div class=format!("flex items-center {min_h}") data-slot=*slot>
+                            <SingleLineSkeleton />
+                        </div>
+                    }
+                })
                 .collect_view()}
         </div>
     }
@@ -632,15 +656,15 @@ fn craft_card_body(
     };
     view! {
         <div class=CARD_CLASS data-testid="craft-verdict">
-            <div class="flex items-center justify-between gap-2" data-slot="heading">
+            <div class=format!("flex items-center justify-between gap-2 {}", row_min_h("heading")) data-slot="heading">
                 <h2 class="text-base font-bold text-brand-200">{t!(i18n, item_verdict_craft_heading)}</h2>
                 {quality_chip(hq)}
             </div>
-            <div class="flex items-baseline justify-between gap-2" data-slot="craft">
+            <div class=format!("flex items-baseline justify-between gap-2 {}", row_min_h("craft")) data-slot="craft">
                 <span class=MUTED>{t!(i18n, item_verdict_craft_unit)}</span>
                 <span class="font-bold"><Gil amount=craft_unit /></span>
             </div>
-            <div class="flex items-baseline justify-between gap-2" data-slot="buy">
+            <div class=format!("flex items-baseline justify-between gap-2 {}", row_min_h("buy")) data-slot="buy">
                 <span class=format!("flex items-center gap-1 {MUTED}")>
                     {buy_label}
                     {nq_fallback.then(|| quality_chip(false))}
@@ -652,12 +676,12 @@ fn craft_card_body(
                     }}
                 </span>
             </div>
-            <div class="flex" data-slot="verdict">{verdict_view}</div>
-            <p class=format!("text-xs {MUTED}") data-slot="notes">
+            <div class=format!("flex {}", row_min_h("verdict")) data-slot="verdict">{verdict_view}</div>
+            <p class=format!("text-xs {MUTED} {}", row_min_h("notes")) data-slot="notes">
                 {t!(i18n, item_verdict_incl_subcrafts)}
                 {crystals_excluded.then(|| view! { " · "{t!(i18n, item_verdict_crystals_excluded)} })}
             </p>
-            <a class="self-start text-xs underline text-brand-300 hover:text-brand-200" href=Section::Sources.href() data-slot="link">
+            <a class=format!("self-start text-xs underline text-brand-300 hover:text-brand-200 {}", row_min_h("link")) href=Section::Sources.href() data-slot="link">
                 {t!(i18n, item_verdict_recipe_link)}" ↓"
             </a>
         </div>
@@ -773,6 +797,7 @@ mod tests {
     }
 
     fn with_i18n<T>(f: impl FnOnce() -> T) -> T {
+        let _ = any_spawner::Executor::init_futures_executor();
         Owner::new().with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
             f()
@@ -888,6 +913,53 @@ mod tests {
         Owner::new().with(|| {
             let _ = render_sell_card(&sell);
             let _ = render_craft_card(craft);
+        });
+    }
+
+    /// Each row's `min-h-*` class on the element carrying `data-slot`.
+    fn row_heights(html: &str) -> Vec<(String, Option<String>)> {
+        html.split('<')
+            .filter(|tag| tag.contains("data-slot=\""))
+            .map(|tag| {
+                let slot = tag
+                    .split("data-slot=\"")
+                    .nth(1)
+                    .and_then(|s| s.split('"').next());
+                let min_h = tag
+                    .split("class=\"")
+                    .nth(1)
+                    .and_then(|s| s.split('"').next())
+                    .and_then(|class| class.split(' ').find(|c| c.starts_with("min-h-")));
+                (
+                    slot.unwrap_or_default().to_string(),
+                    min_h.map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    /// Same rows is not enough: a 12px skeleton bar per row left the card
+    /// ~70px taller than its skeleton at phone width. Every row reserves the
+    /// same minimum height in both.
+    #[test]
+    fn craft_skeleton_rows_reserve_the_card_row_heights() {
+        with_i18n(|| {
+            let card = craft_card_body(
+                false,
+                18,
+                None,
+                CraftVerdict::NoBuyPrice,
+                "North-America".to_string(),
+                true,
+            )
+            .to_html();
+            let skeleton = craft_card_skeleton().to_html();
+            let card_rows = row_heights(&card);
+            assert!(
+                card_rows.iter().all(|(_, min_h)| min_h.is_some()),
+                "{card_rows:?}"
+            );
+            assert_eq!(row_heights(&skeleton), card_rows);
         });
     }
 }
