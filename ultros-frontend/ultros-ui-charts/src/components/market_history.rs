@@ -1,4 +1,5 @@
 //! Visual shell and scope-wide summary around the full market chart engine.
+use crate::i18n::{t, t_string, use_i18n};
 use leptos::prelude::*;
 use ultros_api_types::{PriceSeries, floor_history::FloorHistory};
 
@@ -47,13 +48,26 @@ fn number(value: f64) -> String {
 fn price(value: Option<f64>) -> String {
     value.map(number).unwrap_or_else(|| "—".into())
 }
-fn interval_label(seconds: i64) -> String {
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum IntervalUnit {
+    Minutes,
+    Hours,
+    Days,
+}
+/// Splits a sampling interval into a display unit and its formatted amount.
+fn interval_parts(seconds: i64) -> (IntervalUnit, String) {
     if seconds < 3600 {
-        format!("{} min", (seconds + 59) / 60)
+        (IntervalUnit::Minutes, ((seconds + 59) / 60).to_string())
     } else if seconds < 86400 {
-        format!("{:.1} hr", seconds as f64 / 3600.0)
+        (
+            IntervalUnit::Hours,
+            format!("{:.1}", seconds as f64 / 3600.0),
+        )
     } else {
-        format!("{:.1} days", seconds as f64 / 86400.0)
+        (
+            IntervalUnit::Days,
+            format!("{:.1}", seconds as f64 / 86400.0),
+        )
     }
 }
 
@@ -65,25 +79,40 @@ pub fn MarketHistory(
     #[prop(into)] scope: Signal<String>,
     children: Children,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let summary = Memo::new(move |_| summarize(sales.get().as_ref(), floor.get().as_ref()));
+    let interval_label = move |seconds: i64| {
+        let (unit, value) = interval_parts(seconds);
+        match unit {
+            IntervalUnit::Minutes => {
+                t_string!(i18n, market_history_interval_minutes, value = value).to_string()
+            }
+            IntervalUnit::Hours => {
+                t_string!(i18n, market_history_interval_hours, value = value).to_string()
+            }
+            IntervalUnit::Days => {
+                t_string!(i18n, market_history_interval_days, value = value).to_string()
+            }
+        }
+    };
     view! {
         <style>{include_str!("market_history.css")}</style>
-        <section class="market-history" aria-label="Market price history">
+        <section class="market-history" aria-label=move || t_string!(i18n, market_history_aria).to_string()>
             <div class="mh-stats">
-                <div class="mh-stat mh-floor-stat"><span>"Last observed floor"</span><strong>{move || price(summary.get().latest_floor)}<small>" gil"</small></strong>
-                    <p>{move || summary.get().floor_change.map(|v| format!("{v:+.1}% since first sample")).unwrap_or_else(|| "Waiting for listing history".into())}</p></div>
-                <div class="mh-stat"><span>"Average sale price"</span><strong>{move || price(summary.get().sale_average)}<small>" gil"</small></strong><p>"Weighted by units sold"</p></div>
-                <div class="mh-stat"><span>"Asking vs. sold"</span><strong>{move || summary.get().latest_floor.zip(summary.get().sale_average).filter(|(_, s)| *s > 0.0).map(|(f, s)| format!("{:+.1}%", (f / s - 1.0) * 100.0)).unwrap_or_else(|| "—".into())}</strong><p>"Last floor vs. period average"</p></div>
-                <div class="mh-stat"><span>"Units traded"</span><strong>{move || number(summary.get().units as f64)}</strong><p>{move || format!("{} completed sales", number(summary.get().transactions as f64))}</p></div>
+                <div class="mh-stat mh-floor-stat"><span>{t!(i18n, market_history_last_floor)}</span><strong>{move || price(summary.get().latest_floor)}<small>" "{t!(i18n, market_history_gil)}</small></strong>
+                    <p>{move || summary.get().floor_change.map(|v| t_string!(i18n, market_history_floor_change, change = format!("{v:+.1}%")).to_string()).unwrap_or_else(|| t_string!(i18n, market_history_waiting).to_string())}</p></div>
+                <div class="mh-stat"><span>{t!(i18n, market_history_avg_sale)}</span><strong>{move || price(summary.get().sale_average)}<small>" "{t!(i18n, market_history_gil)}</small></strong><p>{t!(i18n, market_history_weighted_by_units)}</p></div>
+                <div class="mh-stat"><span>{t!(i18n, market_history_asking_vs_sold)}</span><strong>{move || summary.get().latest_floor.zip(summary.get().sale_average).filter(|(_, s)| *s > 0.0).map(|(f, s)| format!("{:+.1}%", (f / s - 1.0) * 100.0)).unwrap_or_else(|| "—".into())}</strong><p>{t!(i18n, market_history_floor_vs_average)}</p></div>
+                <div class="mh-stat"><span>{t!(i18n, market_history_units_traded)}</span><strong>{move || number(summary.get().units as f64)}</strong><p>{move || t_string!(i18n, market_history_completed_sales, sales = number(summary.get().transactions as f64)).to_string()}</p></div>
             </div>
             {children()}
-            <div class="mh-footnote"><span><i class="mh-floor-dot"></i>"Listings are asking prices, not completed sales."</span><span>{move || format!("{} · selected period and quality · gil per unit", scope.get())}</span></div>
+            <div class="mh-footnote"><span><i class="mh-floor-dot"></i>{t!(i18n, market_history_listings_note)}</span><span>{move || t_string!(i18n, market_history_scope_note, scope = scope.get()).to_string()}</span></div>
             <p class="mh-data-note" role="status">{move || {
-                if floor_error.get() { "Listing history is temporarily unavailable. Sales are still shown.".into() }
+                if floor_error.get() { t_string!(i18n, market_history_floor_error).to_string() }
                 else if let Some(f) = floor.get() {
-                    if f.points.is_empty() { "No listing history recorded for this selection yet.".into() }
-                    else { format!("Lowest last-observed price across tracked worlds and qualities · sampled every {} · gaps mean no tracked listings. History begins when tracking starts.", interval_label(f.bucket_seconds)) }
-                } else { "Loading listing observations…".into() }
+                    if f.points.is_empty() { t_string!(i18n, market_history_no_listings).to_string() }
+                    else { t_string!(i18n, market_history_sampling_note, interval = interval_label(f.bucket_seconds)).to_string() }
+                } else { t_string!(i18n, market_history_loading).to_string() }
             }}</p>
         </section>
     }.into_any()
@@ -152,5 +181,11 @@ mod tests {
         assert_eq!(summary.units, 30);
         assert_eq!(summary.transactions, 2);
         assert_eq!(summary.sale_average, Some(5000.0 / 30.0));
+    }
+    #[test]
+    fn interval_parts_picks_unit_by_magnitude() {
+        assert_eq!(interval_parts(61), (IntervalUnit::Minutes, "2".into()));
+        assert_eq!(interval_parts(5400), (IntervalUnit::Hours, "1.5".into()));
+        assert_eq!(interval_parts(172800), (IntervalUnit::Days, "2.0".into()));
     }
 }
