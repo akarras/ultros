@@ -4,6 +4,8 @@ pub mod prelude;
 
 pub mod active_listing;
 pub mod alert;
+pub mod alert_back_in_stock;
+pub mod alert_below_median;
 pub mod alert_discord_destination;
 pub mod alert_event;
 pub mod alert_item_threshold;

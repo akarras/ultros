@@ -1368,6 +1368,200 @@ impl UltrosDb {
     }
 }
 
+/// Parameters for [`UltrosDb::create_below_median_alert`] and
+/// [`UltrosDb::create_back_in_stock_alert`]. `percent_below` is ignored by the
+/// back-in-stock variant.
+pub struct NewMarketTriggerAlert<'a> {
+    pub owner: i64,
+    pub item_id: i32,
+    pub world_selector_json: JsonValue,
+    pub hq_only: bool,
+    pub cooldown_seconds: i32,
+    pub endpoint_ids: &'a [i32],
+}
+
+impl UltrosDb {
+    /// Reject any endpoint id `owner` doesn't own, before a transaction opens.
+    async fn check_endpoints_owned(&self, owner: i64, endpoint_ids: &[i32]) -> Result<()> {
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        Ok(())
+    }
+
+    /// Insert the parent `alert` row for a new market-trigger alert.
+    async fn insert_market_trigger_parent(
+        txn: &DatabaseTransaction,
+        owner: i64,
+        cooldown_seconds: i32,
+    ) -> Result<alert::Model> {
+        Ok(alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(txn)
+        .await?)
+    }
+
+    async fn bind_rules_in(
+        txn: &DatabaseTransaction,
+        alert_id: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<()> {
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert_id),
+                endpoint_id: Set(eid),
+            })
+            .exec(txn)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Create an alert + alert_below_median in one transaction and bind the
+    /// supplied notification endpoints.
+    pub async fn create_below_median_alert(
+        &self,
+        new: NewMarketTriggerAlert<'_>,
+        percent_below: i32,
+    ) -> Result<(alert::Model, alert_below_median::Model)> {
+        self.check_endpoints_owned(new.owner, new.endpoint_ids)
+            .await?;
+        let txn = self.db.begin().await?;
+        let alert =
+            Self::insert_market_trigger_parent(&txn, new.owner, new.cooldown_seconds).await?;
+        let row = alert_below_median::Entity::insert(alert_below_median::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            item_id: Set(new.item_id),
+            world_selector: Set(new.world_selector_json),
+            percent_below: Set(percent_below),
+            hq_only: Set(new.hq_only),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        Self::bind_rules_in(&txn, alert.id, new.endpoint_ids).await?;
+        txn.commit().await?;
+        Ok((alert, row))
+    }
+
+    /// Create an alert + alert_back_in_stock in one transaction and bind the
+    /// supplied notification endpoints.
+    pub async fn create_back_in_stock_alert(
+        &self,
+        new: NewMarketTriggerAlert<'_>,
+    ) -> Result<(alert::Model, alert_back_in_stock::Model)> {
+        self.check_endpoints_owned(new.owner, new.endpoint_ids)
+            .await?;
+        let txn = self.db.begin().await?;
+        let alert =
+            Self::insert_market_trigger_parent(&txn, new.owner, new.cooldown_seconds).await?;
+        let row = alert_back_in_stock::Entity::insert(alert_back_in_stock::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            item_id: Set(new.item_id),
+            world_selector: Set(new.world_selector_json),
+            hq_only: Set(new.hq_only),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        Self::bind_rules_in(&txn, alert.id, new.endpoint_ids).await?;
+        txn.commit().await?;
+        Ok((alert, row))
+    }
+
+    pub async fn get_user_below_median_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_below_median::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_below_median::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_user_back_in_stock_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_back_in_stock::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_back_in_stock::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_below_median_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_below_median::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_below_median::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_back_in_stock_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_back_in_stock::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_back_in_stock::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Active listing counts per `(item_id, world_id, hq)` for every item in
+    /// `item_ids`, in one grouped query. Back-in-stock alerts sum these over
+    /// their own world set, so one call serves every rule on those items.
+    pub async fn count_active_listings_by_world_quality(
+        &self,
+        item_ids: &[i32],
+    ) -> Result<Vec<(i32, i32, bool, i64)>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.is_in(item_ids.to_vec()))
+            .select_only()
+            .column(active_listing::Column::ItemId)
+            .column(active_listing::Column::WorldId)
+            .column(active_listing::Column::Hq)
+            .column_as(Expr::col(active_listing::Column::Id).count(), "count")
+            .group_by(active_listing::Column::ItemId)
+            .group_by(active_listing::Column::WorldId)
+            .group_by(active_listing::Column::Hq)
+            .into_tuple()
+            .all(&self.db)
+            .await?)
+    }
+}
+
 #[cfg(test)]
 mod endpoint_tests {
     use super::*;
@@ -1819,5 +2013,229 @@ mod inbox_tests {
 
         let endpoints = db.list_endpoints(owner).await.unwrap();
         assert_eq!(endpoints.iter().filter(|e| e.method == "InApp").count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod market_trigger_tests {
+    use super::*;
+
+    /// Same convention as `inbox_tests`: `#[ignore]`d, run against a
+    /// disposable, already-migrated database:
+    ///
+    /// ```bash
+    /// MIGRATION_TEST_DATABASE_URL=... cargo test -p ultros-db market_trigger_tests -- --ignored --test-threads=1
+    /// ```
+    async fn test_db() -> UltrosDb {
+        let conn = Database::connect(std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        UltrosDb::from_connection(conn)
+    }
+
+    fn unique(salt: i64) -> i64 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        (nanos % 1_000_000_000) + salt
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn market_trigger_alerts_round_trip_and_cascade() {
+        let db = test_db().await;
+        let owner = unique(7);
+        db.get_or_create_discord_user(owner as u64, format!("MarketUser{owner}"))
+            .await
+            .unwrap();
+        let endpoint = db
+            .get_or_create_inapp_endpoint(owner, "Inbox")
+            .await
+            .unwrap();
+        let endpoints = [endpoint];
+        let new = |item_id| NewMarketTriggerAlert {
+            owner,
+            item_id,
+            world_selector_json: serde_json::json!({"Datacenter": 5}),
+            hq_only: true,
+            cooldown_seconds: 600,
+            endpoint_ids: &endpoints,
+        };
+        let (median_alert, median_row) = db.create_below_median_alert(new(11), 30).await.unwrap();
+        let (stock_alert, stock_row) = db.create_back_in_stock_alert(new(12)).await.unwrap();
+        assert_eq!(median_row.percent_below, 30);
+        assert!(stock_row.hq_only);
+        assert_eq!(median_alert.cooldown_seconds, 600);
+
+        let mine = db.get_user_below_median_alerts(owner).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].1.item_id, 11);
+        let mine = db.get_user_back_in_stock_alerts(owner).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(
+            mine[0].1.world_selector,
+            serde_json::json!({"Datacenter": 5})
+        );
+        assert_eq!(
+            db.list_endpoint_ids_for_alert(stock_alert.id)
+                .await
+                .unwrap(),
+            vec![endpoint]
+        );
+        assert!(
+            db.get_all_active_below_median_alerts()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(a, _)| a.id == median_alert.id)
+        );
+
+        // Disabled alerts drop out of the listener's view.
+        db.set_alert_enabled(owner, stock_alert.id, false)
+            .await
+            .unwrap();
+        assert!(
+            !db.get_all_active_back_in_stock_alerts()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(a, _)| a.id == stock_alert.id)
+        );
+
+        // Deleting the parent cascades the child row.
+        db.delete_alert_owned_by(owner, median_alert.id)
+            .await
+            .unwrap();
+        assert!(
+            db.get_user_below_median_alerts(owner)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            alert_below_median::Entity::find_by_id(median_row.id)
+                .one(&db.db)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn endpoint_of_another_user_is_rejected() {
+        let db = test_db().await;
+        let owner = unique(11);
+        let other = unique(13);
+        for id in [owner, other] {
+            db.get_or_create_discord_user(id as u64, format!("MarketUser{id}"))
+                .await
+                .unwrap();
+        }
+        let foreign = db
+            .get_or_create_inapp_endpoint(other, "Inbox")
+            .await
+            .unwrap();
+        let endpoints = [foreign];
+        let result = db
+            .create_back_in_stock_alert(NewMarketTriggerAlert {
+                owner,
+                item_id: 1,
+                world_selector_json: serde_json::json!({"World": 79}),
+                hq_only: false,
+                cooldown_seconds: 3600,
+                endpoint_ids: &endpoints,
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(
+            db.get_user_back_in_stock_alerts(owner)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn listing_counts_group_by_item_world_and_quality() {
+        let db = test_db().await;
+        // The scratch database has no world data (the app seeds it at
+        // startup), so seed a private region/datacenter/two worlds.
+        for sql in [
+            "INSERT INTO region (id, name) VALUES (9901, 'MarketTestRegion') ON CONFLICT DO NOTHING",
+            "INSERT INTO datacenter (id, name, region_id) VALUES (9902, 'MarketTestDc', 9901) ON CONFLICT DO NOTHING",
+            "INSERT INTO world (id, name, datacenter_id) VALUES (9903, 'MarketTestA', 9902), (9904, 'MarketTestB', 9902) ON CONFLICT DO NOTHING",
+            "INSERT INTO retainer_city (id, name) VALUES (1, 'Limsa Lominsa') ON CONFLICT DO NOTHING",
+        ] {
+            db.db.execute_unprepared(sql).await.unwrap();
+        }
+        let retainer_id = unique(0) as i32;
+        retainer::Entity::insert(retainer::ActiveModel {
+            id: Set(retainer_id),
+            world_id: Set(9903),
+            name: Set(format!("R{retainer_id}")),
+            retainer_city_id: Set(1),
+        })
+        .exec(&db.db)
+        .await
+        .unwrap();
+        let item_x = 2_000_000_000 + (unique(0) % 1_000_000) as i32;
+        let item_y = item_x + 1;
+        for (item_id, world_id, hq) in [
+            (item_x, 9903, false),
+            (item_x, 9903, false),
+            (item_x, 9904, true),
+            (item_y, 9903, false),
+        ] {
+            active_listing::Entity::insert(active_listing::ActiveModel {
+                id: ActiveValue::default(),
+                world_id: Set(world_id),
+                item_id: Set(item_id),
+                retainer_id: Set(retainer_id),
+                price_per_unit: Set(100),
+                quantity: Set(1),
+                hq: Set(hq),
+                timestamp: Set(chrono::Utc::now().naive_utc()),
+                listing_id: Set(None),
+                materia: Set(None),
+                stain_id: Set(None),
+                creator_name: Set(None),
+                is_crafted: Set(false),
+                on_mannequin: Set(false),
+            })
+            .exec(&db.db)
+            .await
+            .unwrap();
+        }
+        let mut counts = db
+            .count_active_listings_by_world_quality(&[item_x, item_y, item_y + 1])
+            .await
+            .unwrap();
+        counts.sort();
+        assert_eq!(
+            counts,
+            vec![
+                (item_x, 9903, false, 2),
+                (item_x, 9904, true, 1),
+                (item_y, 9903, false, 1),
+            ]
+        );
+        assert!(
+            db.count_active_listings_by_world_quality(&[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        active_listing::Entity::delete_many()
+            .filter(active_listing::Column::RetainerId.eq(retainer_id))
+            .exec(&db.db)
+            .await
+            .unwrap();
+        retainer::Entity::delete_by_id(retainer_id)
+            .exec(&db.db)
+            .await
+            .unwrap();
     }
 }

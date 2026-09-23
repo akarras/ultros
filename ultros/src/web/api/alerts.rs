@@ -1,15 +1,19 @@
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
 };
 use serde::Deserialize;
 use ultros_api_types::alert::{
-    Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, ClearAlertEventsRequest,
-    ClearAlertEventsResponse, CreateAlertRequest, MarkAlertEventsReadRequest,
-    MarkAlertEventsReadResponse, ResendResult, UnreadAlertEventCount, UpdateAlertRequest,
+    Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, BELOW_MEDIAN_PERCENT_RANGE,
+    ClearAlertEventsRequest, ClearAlertEventsResponse, CreateAlertRequest,
+    MarkAlertEventsReadRequest, MarkAlertEventsReadResponse, ResendResult, UnreadAlertEventCount,
+    UpdateAlertRequest,
 };
 use ultros_api_types::list::ListPermission;
-use ultros_db::UltrosDb;
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
+use ultros_db::{NewMarketTriggerAlert, UltrosDb};
 
 use crate::alerts::inbox;
 use crate::event::{EventSenders, EventType};
@@ -94,9 +98,24 @@ pub(crate) fn validate_margin_percent(margin_percent: i32) -> Result<(), ApiErro
     }
 }
 
+/// Reject a below-median percentage outside [`BELOW_MEDIAN_PERCENT_RANGE`].
+#[allow(clippy::result_large_err)]
+pub(crate) fn validate_percent_below(percent_below: i32) -> Result<(), ApiError> {
+    if BELOW_MEDIAN_PERCENT_RANGE.contains(&percent_below) {
+        Ok(())
+    } else {
+        Err(ApiError::from(anyhow::anyhow!(
+            "percent_below must be between {} and {}",
+            BELOW_MEDIAN_PERCENT_RANGE.start(),
+            BELOW_MEDIAN_PERCENT_RANGE.end()
+        )))
+    }
+}
+
 pub(crate) async fn create_alert(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
+    State(world_helper): State<Arc<WorldHelper>>,
     user: AuthDiscordUser,
     Json(req): Json<CreateAlertRequest>,
 ) -> Result<Json<Alert>, ApiError> {
@@ -133,6 +152,17 @@ pub(crate) async fn create_alert(
         AlertTrigger::ListUpdate { list_id } => {
             return create_list_update_alert_handler(&db, &senders, owner, list_id, cooldown, &req)
                 .await;
+        }
+        AlertTrigger::BelowMedian { .. } | AlertTrigger::BackInStock { .. } => {
+            return create_market_trigger_alert_handler(
+                &db,
+                &senders,
+                &world_helper,
+                owner,
+                cooldown,
+                &req,
+            )
+            .await;
         }
     };
 
@@ -409,6 +439,95 @@ async fn create_list_update_alert_handler(
     }))
 }
 
+/// Handle `create_alert` for the item-scoped market triggers (`BelowMedian`,
+/// `BackInStock`). Both require `endpoint_ids` and a world selector that
+/// resolves: an unresolvable scope would be saved but could never fire.
+async fn create_market_trigger_alert_handler(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    world_helper: &WorldHelper,
+    owner: i64,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    let (item_id, world_selector, hq_only, percent_below) = match req.trigger {
+        AlertTrigger::BelowMedian {
+            item_id,
+            world_selector,
+            percent_below,
+            hq_only,
+        } => {
+            validate_percent_below(percent_below)?;
+            (item_id, world_selector, hq_only, Some(percent_below))
+        }
+        AlertTrigger::BackInStock {
+            item_id,
+            world_selector,
+            hq_only,
+        } => (item_id, world_selector, hq_only, None),
+        _ => {
+            return Err(ApiError::from(anyhow::anyhow!(
+                "not a market-trigger alert"
+            )));
+        }
+    };
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "market alerts require endpoint_ids"
+        )));
+    }
+    validate_world_selector(world_helper, world_selector)?;
+    let world_selector_json = serde_json::to_value(world_selector)
+        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
+    let new = NewMarketTriggerAlert {
+        owner,
+        item_id,
+        world_selector_json,
+        hq_only,
+        cooldown_seconds: cooldown,
+        endpoint_ids: &req.endpoint_ids,
+    };
+    let alert = match percent_below {
+        Some(percent_below) => {
+            db.create_below_median_alert(new, percent_below)
+                .await
+                .map_err(ApiError::from)?
+                .0
+        }
+        None => {
+            db.create_back_in_stock_alert(new)
+                .await
+                .map_err(ApiError::from)?
+                .0
+        }
+    };
+    // The market-trigger listener rebuilds its rules on every `alerts` event.
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: req.trigger.clone(),
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_world_selector(
+    world_helper: &WorldHelper,
+    world_selector: AnySelector,
+) -> Result<(), ApiError> {
+    if world_helper.lookup_selector(world_selector).is_some() {
+        Ok(())
+    } else {
+        Err(ApiError::from(anyhow::anyhow!(
+            "world_selector does not name a known world, datacenter or region"
+        )))
+    }
+}
+
 pub(crate) async fn list_alerts(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -534,6 +653,59 @@ pub(crate) async fn list_alerts(
         out.push(Alert {
             id: a.id,
             trigger: AlertTrigger::ListUpdate { list_id: t.list_id },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    let median_rows = db
+        .get_user_below_median_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in median_rows {
+        let world_selector = serde_json::from_value(t.world_selector.clone())
+            .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::BelowMedian {
+                item_id: t.item_id,
+                world_selector,
+                percent_below: t.percent_below,
+                hq_only: t.hq_only,
+            },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    let stock_rows = db
+        .get_user_back_in_stock_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in stock_rows {
+        let world_selector = serde_json::from_value(t.world_selector.clone())
+            .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::BackInStock {
+                item_id: t.item_id,
+                world_selector,
+                hq_only: t.hq_only,
+            },
             delivery: AlertDelivery::DiscordDm,
             endpoint_ids,
             enabled: a.enabled,
