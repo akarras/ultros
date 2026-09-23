@@ -23,8 +23,8 @@ const COMPONENT_UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
 /// Canonical item URL for a scope name, carrying the current query string
 /// forward.
 ///
-/// Switching worlds must not discard the reader's filters: `?exclude-worlds=`,
-/// `?compare-buy-from=`, and `?lens=` once the lens work lands.
+/// Switching worlds must not discard the reader's filters: `?exclude-worlds=`
+/// and `?compare-buy-from=`.
 pub fn item_href(world: &str, item_id: i32, query: &str) -> String {
     let escaped_world = utf8_percent_encode(world, COMPONENT_UNRESERVED).to_string();
     let path = format!("/item/{escaped_world}/{item_id}");

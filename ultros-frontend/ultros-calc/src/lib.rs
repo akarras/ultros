@@ -9,6 +9,7 @@ pub mod list_estimate;
 pub mod list_travel;
 pub mod math;
 pub mod recipe_planner;
+pub mod verdict;
 
 pub mod needed;
 pub mod pricing;
