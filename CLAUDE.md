@@ -39,7 +39,7 @@ Clippy can also be **OOM-killed** on a memory-constrained machine (exit `137`, `
 
 ## Windows: OpenSSL via vendored build
 
-`web-push` (Tier 3 of the notification work) pulls in `openssl` transitively via the `ece` crate. The `ultros` crate pins `openssl = { features = ["vendored"] }` so cargo compiles OpenSSL from source via `openssl-src` instead of needing a system library. This means **no `libssl-dev` / OpenSSL-dev-headers required** on Linux or Windows for `cargo build`.
+`web-push` (Tier 3 of the notification work) pulls in `openssl` transitively via the `ece` crate. The `ultros-alerts` crate (home of the web-push delivery) pins `openssl = { features = ["vendored"] }` so cargo compiles OpenSSL from source via `openssl-src` instead of needing a system library. This means **no `libssl-dev` / OpenSSL-dev-headers required** on Linux or Windows for `cargo build`.
 
 Vendored builds need **Perl + a C compiler** to configure and build OpenSSL from source:
 

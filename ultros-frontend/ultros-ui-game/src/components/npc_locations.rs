@@ -3,43 +3,13 @@
 
 use crate::{global_state::xiv_data::tracked_data, i18n::*};
 use leptos::prelude::*;
+pub use ultros_game_sources::placement_label;
 use ultros_ui::components::app_link::AppLink;
-use xiv_gen::{ENpcResidentId, LeveId, MapId, NpcPlacement, PlaceNameId, TerritoryTypeId};
+use xiv_gen::{ENpcResidentId, LeveId, NpcPlacement};
 
 /// The page for an NPC.
 pub fn npc_href(npc_id: i32) -> String {
     format!("/npc/{npc_id}")
-}
-
-/// Zone label for a placement in the current locale: the territory's place
-/// name, plus the map's sub-area when it has one (`Ul'dah - Steps of Thal ·
-/// Merchant Strip`).
-pub fn placement_label(data: &xiv_gen::Data, placement: &NpcPlacement) -> String {
-    let name = |id: i32| {
-        data.place_names
-            .get(&PlaceNameId(id))
-            .map(|p| p.name.as_str())
-            .filter(|n| !n.is_empty())
-    };
-    let zone = data
-        .territory_types
-        .get(&TerritoryTypeId(placement.territory.0))
-        .and_then(|t| name(t.place_name))
-        .or_else(|| {
-            data.maps
-                .get(&MapId(placement.map.0))
-                .and_then(|m| name(m.place_name))
-        });
-    let sub = data
-        .maps
-        .get(&MapId(placement.map.0))
-        .and_then(|m| name(m.place_name_sub));
-    match (zone, sub) {
-        (Some(zone), Some(sub)) => format!("{zone} · {sub}"),
-        (Some(zone), None) => zone.to_string(),
-        (None, Some(sub)) => sub.to_string(),
-        (None, None) => String::new(),
-    }
 }
 
 /// `New Gridania · X: 11.8, Y: 13.4`.

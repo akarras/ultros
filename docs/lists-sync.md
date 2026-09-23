@@ -106,7 +106,7 @@ the final integrated build or complete the production soak.
   `list_doc` (`snapshot`, `version`, `changes_since_compaction`) and keeps
   `list_item` and the `list` name and scope as a projection of it. The REST
   handlers, the Discord bot and the socket
-  all call `ListSync` (`ultros/src/lists/sync.rs`), and the old row writers
+  all call `ListSync` (`ultros-lists/src/sync.rs`), and the old row writers
   were deleted from `ultros-db/src/lists.rs`. This prevents callers using
   those helpers; it does not prevent direct entity writes. List deletion
   intentionally removes the relational rows outside `ListSync`.

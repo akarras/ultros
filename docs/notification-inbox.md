@@ -33,9 +33,9 @@ Read state lives entirely server-side in `read_at`; there is no client-side
 
 Every tracker (`price_alert_tracker`, `list_update_alert_tracker`,
 `sold_alert`, `undercut_alert`) funnels through
-`ultros/src/alerts/inbox.rs::record_fire` instead of writing `alert_event`
+`ultros-alerts/src/inbox.rs::record_fire` instead of writing `alert_event`
 directly, so a fire is recorded *and* broadcast on the `notifications` event
-bus (`ultros/src/event.rs`, `NotificationEvent { owner, event }`, ring size
+bus (`ultros-server-core/src/event.rs`, `NotificationEvent { owner, event }`, ring size
 256) in one place — regardless of whether any endpoint actually delivered.
 `alert_event_to_api` is the single DB-model → wire-type mapping, reused by
 both the websocket push and the REST history endpoint so they never disagree
@@ -128,7 +128,7 @@ external destination. It exists so that an alert whose *only* endpoint is the
 inbox still counts as delivered:
 
 - `deliver_to_endpoint`/`deliver_non_discord_endpoint`
-  (`ultros/src/alerts/delivery.rs`) treat `EndpointConfig::InApp {}` as a
+  (`ultros-alerts/src/delivery.rs`) treat `EndpointConfig::InApp {}` as a
   no-op `Ok(())`. The actual inbox write happens separately, right after
   dispatch returns, via `inbox::record_fire` — regardless of this arm's
   result. Without the no-op arm, `dispatch_alert_detailed` would report
@@ -157,7 +157,7 @@ inbox still counts as delivered:
 `ultros-api-types::alert::ThresholdRule` + `threshold_listing_matches` (in
 `ultros-api-types/src/alert.rs`) are a pure, DB-free re-statement of an
 item-price-threshold alert rule, shared between the server
-(`ultros/src/alerts/price_alert_tracker.rs`) and the browser — so a guest
+(`ultros-alerts/src/price_alert_tracker.rs`) and the browser — so a guest
 without an account can evaluate the identical rule locally against a
 `WorldHelper` and an `ActiveListing`, and get the same answer an account-based
 alert would.

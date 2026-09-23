@@ -2,7 +2,7 @@
 //!
 //! One featured flip plus four compact follow-ups, ranked by absolute profit
 //! among rows that cleared the server-side eligibility gates (vendor anchor,
-//! velocity floor, ROI ceiling — see `ultros/src/resale_eligibility.rs`). The
+//! velocity floor, ROI ceiling — see `ultros-analyzer/src/resale_eligibility.rs`). The
 //! card asks for those gates explicitly rather than relying on server
 //! defaults, and its "view all" link carries the same ranking and floor into
 //! the Flip Finder so the two surfaces agree about the same item.

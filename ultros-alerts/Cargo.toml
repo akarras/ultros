@@ -1,0 +1,37 @@
+[package]
+name = "ultros-alerts"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Alert evaluation and delivery (Discord DMs and web push) for the Ultros server."
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = "0.1.89"
+chrono = { workspace = true }
+futures = { workspace = true }
+# `web-push` 0.11 still speaks `http` 0.2: `request_builder::build_request` yields
+# an `http` 0.2 request and `parse_response` takes an `http` 0.2 `StatusCode`,
+# while reqwest 0.12 is on `http` 1.x. This renamed dep bridges the two in
+# `delivery::send_webpush` until web-push moves to http 1.
+http02 = { package = "http", version = "0.2" }
+# `web-push` pulls in `openssl` transitively via `ece`. Pin the `vendored` feature here
+# so cargo compiles OpenSSL from source (via `openssl-src`) instead of linking the
+# system library. This means `cargo check`/`build` works on Windows MSVC without
+# installing OpenSSL dev headers separately, and on Linux it removes the libssl-dev
+# bootstrap requirement (CI still has libssl-dev installed; vendored is harmless there).
+openssl = { version = "0.10", features = ["vendored"] }
+poise = { version = "0.6.2" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7.18" }
+tracing = { workspace = true }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-db = { path = "../ultros-db" }
+ultros-server-core = { path = "../ultros-server-core" }
+url = "2.5.8"
+web-push = { workspace = true }
+xiv-gen = { workspace = true }
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }

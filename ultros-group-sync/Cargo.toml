@@ -1,0 +1,19 @@
+[package]
+name = "ultros-group-sync"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Discord role membership sync for Ultros groups."
+
+[dependencies]
+anyhow = { workspace = true }
+poise = { version = "0.6.2" }
+tokio = { workspace = true }
+tokio-util = { version = "0.7.18" }
+tracing = { workspace = true }
+ultros-alerts = { path = "../ultros-alerts" }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-db = { path = "../ultros-db" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
