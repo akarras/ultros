@@ -1,7 +1,7 @@
 //! A single native scrollport with independently virtualized rows and columns.
 pub mod filter;
 pub mod registry;
-pub use ultros_grid_core::{layout, metrics, units};
+pub use ultros_grid_core::{columns, layout, metrics, units};
 pub mod query_grid;
 pub mod row_source;
 pub mod saved_views;
@@ -214,6 +214,7 @@ where
             .map(|r| r.canonical(&query))
             .unwrap_or(query);
         let next = filter::cleared_query(&query, &filters);
+        let next = filter_registry.map(|r| r.readable(&next)).unwrap_or(next);
         #[cfg(feature = "hydrate")]
         navigate(
             &format!(

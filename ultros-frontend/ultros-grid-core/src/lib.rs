@@ -4,6 +4,7 @@
 //! The app supplies column definitions and values, owns reactive state, and
 //! renders the resulting rows and column positions.
 
+pub mod columns;
 pub mod layout;
 pub mod metrics;
 pub mod units;

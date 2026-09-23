@@ -189,23 +189,22 @@ impl ControlBarPopovers {
     }
 }
 
-/// Parse a `?cols=` value into the visible-column set.
+/// The visible-column set a URL's column keys state (see
+/// [`ultros_grid_core::columns`]).
 ///
-/// `None` (param absent) yields `default`; an explicit value — even the
-/// empty string — is respected verbatim, filtered to ids in `all` so a
-/// stale token from an old bookmark drops instead of lingering unrendered.
+/// No column keys yields `default`; an explicit `cols` list — even an empty
+/// one — is respected verbatim. Either way the result is filtered to ids in
+/// `all`, so a stale token from an old bookmark drops instead of lingering
+/// unrendered.
 pub fn parse_visible_cols(
-    raw: Option<&str>,
+    columns: ultros_grid_core::columns::ColumnQuery<'_>,
     all: &'static [&'static str],
     default: &'static [&'static str],
 ) -> HashSet<&'static str> {
-    match raw {
-        None => default.iter().copied().collect(),
-        Some(s) => s
-            .split(',')
-            .filter_map(|tok| all.iter().find(|c| **c == tok).copied())
-            .collect(),
-    }
+    all.iter()
+        .copied()
+        .filter(|id| columns.visible(id, default.contains(id)))
+        .collect()
 }
 
 /// Serialize the visible set back to the `?cols=` value, in `all`'s order
@@ -662,6 +661,7 @@ pub fn ControlBar(
 mod tests {
     use super::*;
     use leptos_i18n::context::init_i18n_context;
+    use ultros_grid_core::columns::ColumnQuery;
 
     fn render_list(cols: Vec<ColumnOption>) -> String {
         let _ = any_spawner::Executor::init_futures_executor();
@@ -867,24 +867,44 @@ mod tests {
             let default_cols: &[&str] = &["col1", "col2"];
 
             // None returns default
-            let parsed = parse_visible_cols(None, all_cols, default_cols);
+            let parsed = parse_visible_cols(ColumnQuery::default(), all_cols, default_cols);
             assert_eq!(parsed.len(), 2);
             assert!(parsed.contains("col1"));
             assert!(parsed.contains("col2"));
 
             // Empty string returns empty set
-            let parsed = parse_visible_cols(Some(""), all_cols, default_cols);
+            let parsed = parse_visible_cols(
+                ColumnQuery {
+                    cols: Some(""),
+                    ..Default::default()
+                },
+                all_cols,
+                default_cols,
+            );
             assert!(parsed.is_empty());
 
             // Valid values
-            let parsed = parse_visible_cols(Some("col1,col3"), all_cols, default_cols);
+            let parsed = parse_visible_cols(
+                ColumnQuery {
+                    cols: Some("col1,col3"),
+                    ..Default::default()
+                },
+                all_cols,
+                default_cols,
+            );
             assert_eq!(parsed.len(), 2);
             assert!(parsed.contains("col1"));
             assert!(parsed.contains("col3"));
 
             // Invalid values are filtered out
-            let parsed =
-                parse_visible_cols(Some("col1,unknown,col3,invalid"), all_cols, default_cols);
+            let parsed = parse_visible_cols(
+                ColumnQuery {
+                    cols: Some("col1,unknown,col3,invalid"),
+                    ..Default::default()
+                },
+                all_cols,
+                default_cols,
+            );
             assert_eq!(parsed.len(), 2);
             assert!(parsed.contains("col1"));
             assert!(parsed.contains("col3"));

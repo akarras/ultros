@@ -43,7 +43,9 @@ use crate::components::related_items::shard_item_ids;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::ColumnFilter;
 use crate::components::virtual_grid::metrics::{FilterOp, GridValue};
-use crate::components::virtual_grid::registry::{FilterAlias, FilterRegistry, resolve_filters};
+use crate::components::virtual_grid::registry::{
+    FilterAlias, FilterRegistry, column_query, resolve_filters,
+};
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
@@ -4674,17 +4676,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         )
     });
 
-    // `?cols=` lives here rather than in the table because the table
-    // remounts whenever its resources change.
-    let (cols_param, _) = query_signal::<String>("cols");
+    // The column keys are read here rather than in the table because the
+    // table remounts whenever its resources change.
     let (sort_mode, _) = query_signal::<SortMode>("sort");
     let (sort_dir, _) = query_signal::<SortDir>("dir");
     let visible_cols = Memo::new(move |_| {
-        parse_visible_cols(
-            cols_param().as_deref(),
-            &OPTIONAL_COLUMN_ORDER,
-            &DEFAULT_COLS,
-        )
+        query.with(|q| parse_visible_cols(column_query(q), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS))
     });
     let query_cols = Memo::new(move |_| {
         query.with(|q| {
@@ -5350,6 +5347,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::components::virtual_grid::columns::ColumnQuery;
 
     /// A preset is applied by rebuilding the URL from its query, so a stray
     /// separator or an empty pair would ship straight into the address bar.
@@ -11020,7 +11018,14 @@ mod test {
         // Visibility and the sort target are separate paths into the gate,
         // and each 30-day column reaches it on its own.
         for token in [COL_VOLUME_30D, COL_VWAP_30D] {
-            let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            let on = parse_visible_cols(
+                ColumnQuery {
+                    cols: Some(token),
+                    ..Default::default()
+                },
+                &OPTIONAL_COLUMN_ORDER,
+                &DEFAULT_COLS,
+            );
             assert!(stats_30_wanted(&on, None), "{token} visible");
         }
         for mode in [SortMode::Volume30, SortMode::Vwap30] {
@@ -11030,7 +11035,11 @@ mod test {
         // reaches the 438 KB body.
         assert!(!stats_30_wanted(&HashSet::new(), None));
         assert!(!stats_30_wanted(&HashSet::new(), Some(SortMode::Profit)));
-        let default_page = parse_visible_cols(None, &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+        let default_page = parse_visible_cols(
+            ColumnQuery::default(),
+            &OPTIONAL_COLUMN_ORDER,
+            &DEFAULT_COLS,
+        );
         assert!(!stats_30_wanted(&default_page, None));
 
         // End to end, the way the page composes them: the visible columns
@@ -11045,7 +11054,14 @@ mod test {
                 Some("Gilgamesh"),
             )
         };
-        let vwap_on = parse_visible_cols(Some(COL_VWAP_30D), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+        let vwap_on = parse_visible_cols(
+            ColumnQuery {
+                cols: Some(COL_VWAP_30D),
+                ..Default::default()
+            },
+            &OPTIONAL_COLUMN_ORDER,
+            &DEFAULT_COLS,
+        );
         assert_eq!(from(&vwap_on, None), Some("Gilgamesh".into()));
         assert_eq!(
             from(&HashSet::new(), Some(SortMode::Volume30)),
@@ -11057,12 +11073,19 @@ mod test {
     #[test]
     fn the_sparkline_fetch_only_runs_for_requested_columns() {
         for token in [COL_TREND, COL_DRIFT] {
-            let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            let on = parse_visible_cols(
+                ColumnQuery {
+                    cols: Some(token),
+                    ..Default::default()
+                },
+                &OPTIONAL_COLUMN_ORDER,
+                &DEFAULT_COLS,
+            );
             assert!(spark_rows_wanted(&on), "{token} visible");
         }
         // The default page wants neither, toggle or no toggle.
         assert!(!spark_rows_wanted(&parse_visible_cols(
-            None,
+            ColumnQuery::default(),
             &OPTIONAL_COLUMN_ORDER,
             &DEFAULT_COLS
         )));
@@ -11086,7 +11109,14 @@ mod test {
     #[test]
     fn explicit_market_columns_fetch_without_viewport_or_query_overrides() {
         for token in [COL_VOLUME_30D, COL_VWAP_30D, COL_TREND, COL_DRIFT] {
-            let visible = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            let visible = parse_visible_cols(
+                ColumnQuery {
+                    cols: Some(token),
+                    ..Default::default()
+                },
+                &OPTIONAL_COLUMN_ORDER,
+                &DEFAULT_COLS,
+            );
             let queried = recipe_query_columns(visible.clone(), &HashSet::new(), None);
             assert_eq!(queried, visible);
             assert_eq!(
@@ -11103,7 +11133,11 @@ mod test {
         for mode in [SortMode::Volume30, SortMode::Vwap30] {
             assert!(stats_30_wanted(&HashSet::new(), Some(mode)));
         }
-        let default_page = parse_visible_cols(None, &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+        let default_page = parse_visible_cols(
+            ColumnQuery::default(),
+            &OPTIONAL_COLUMN_ORDER,
+            &DEFAULT_COLS,
+        );
         assert!(!stats_30_wanted(&default_page, None));
         assert!(!spark_rows_wanted(&default_page));
 

@@ -80,6 +80,11 @@ pub struct GridColumn {
     pub auto_fit: bool,
     pub optional: bool,
     pub visible: bool,
+    /// Whether the page shows this column when the URL says nothing. `new`
+    /// takes it from `visible`; a page that folds the URL into `visible`
+    /// itself sets it apart, so `show-cols`/`hide-cols` are written against
+    /// the real defaults.
+    pub default_visible: bool,
     pub aria_sort: &'static str,
     pub filters: Vec<ColumnFilter>,
     pub query_sort: bool,
@@ -104,6 +109,7 @@ impl GridColumn {
             auto_fit: true,
             optional,
             visible,
+            default_visible: visible,
             aria_sort: "none",
             filters: Vec::new(),
             query_sort: false,
@@ -159,7 +165,12 @@ impl GridLayout {
         let parsed = raw
             .filter(|s| s.len() <= 16_384)
             .and_then(|s| {
-                if let Some(body) = s.strip_prefix("2~") {
+                // `3~` widths are decimal pixels, `2~` (older links) base 36.
+                let (body, radix) = match s.strip_prefix("3~") {
+                    Some(body) => (Some(body), 10),
+                    None => (s.strip_prefix("2~"), 36),
+                };
+                if let Some(body) = body {
                     let (order, widths) = body.split_once('~')?;
                     let tokens: Vec<_> = widths.split('.').filter(|s| !s.is_empty()).collect();
                     if tokens.len() % 2 != 0 {
@@ -170,7 +181,10 @@ impl GridLayout {
                         .0
                         .iter()
                         .map(|[key, width]| {
-                            Some((key.to_string(), u32::from_str_radix(width, 36).ok()? as f64))
+                            Some((
+                                key.to_string(),
+                                u32::from_str_radix(width, radix).ok()? as f64,
+                            ))
                         })
                         .collect::<Option<BTreeMap<_, _>>>()?;
                     Some(Self {
@@ -241,14 +255,14 @@ impl GridLayout {
             .filter_map(|(id, width)| {
                 let column = columns.iter().find(|c| c.id == id)?;
                 let width = column.clamp(*width).round() as u32;
-                Some(format!("{id}.{}", base36(width)))
+                Some(format!("{id}.{width}"))
             })
             .collect::<Vec<_>>()
             .join(".");
         if prefix == 0 && widths.is_empty() {
             return None;
         }
-        Some(format!("2~{}~{}", self.order[..prefix].join("."), widths))
+        Some(format!("3~{}~{}", self.order[..prefix].join("."), widths))
     }
 
     pub fn move_to(&mut self, id: &str, target: &str, after: bool) {
@@ -299,18 +313,6 @@ impl GridLayout {
             })
             .collect()
     }
-}
-
-fn base36(mut value: u32) -> String {
-    let mut digits = Vec::new();
-    loop {
-        digits.push(char::from_digit(value % 36, 36).unwrap());
-        value /= 36;
-        if value == 0 {
-            break;
-        }
-    }
-    digits.into_iter().rev().collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -412,14 +414,14 @@ mod tests {
         let mut layout = GridLayout::parse(None, &defs);
         assert_eq!(layout.compact(&defs), None);
         layout.widths.insert("profit".into(), 100.0);
-        assert_eq!(layout.compact(&defs).as_deref(), Some("2~~profit.2s"));
+        assert_eq!(layout.compact(&defs).as_deref(), Some("3~~profit.100"));
         assert_eq!(
             GridLayout::parse(layout.compact(&defs).as_deref(), &defs),
             layout
         );
         layout.move_to("trend", "item", false);
         let compact = layout.compact(&defs).unwrap();
-        assert_eq!(compact, "2~trend~profit.2s");
+        assert_eq!(compact, "3~trend~profit.100");
         let mut newer = defs.clone();
         newer.insert(1, GridColumn::new("new", "New".into(), 100.0, true, false));
         let restored = GridLayout::parse(Some(&compact), &newer);
@@ -430,9 +432,17 @@ mod tests {
         // it the column would auto-fit instead.
         layout.widths.insert("profit".into(), 120.0);
         layout.move_to("trend", "profit", true);
-        assert_eq!(layout.compact(&defs).as_deref(), Some("2~~profit.3c"));
+        assert_eq!(layout.compact(&defs).as_deref(), Some("3~~profit.120"));
         layout.widths.clear();
         assert_eq!(layout.compact(&defs), None);
+    }
+    #[test]
+    fn older_base36_layouts_still_parse() {
+        let defs = columns();
+        let old = GridLayout::parse(Some("2~trend~profit.3a"), &defs);
+        assert_eq!(old.order[0], "trend");
+        assert_eq!(old.widths["profit"], 118.0);
+        assert_eq!(GridLayout::parse(old.compact(&defs).as_deref(), &defs), old);
     }
     #[test]
     fn fitted_widths_fill_in_below_explicit_ones() {

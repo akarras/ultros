@@ -266,15 +266,15 @@ mod development {
             IDS.iter()
                 .enumerate()
                 .map(|(i, id)| {
-                    let enabled =
-                        query.with(|q| q.get("cols").map(|s| s.split(',').any(|v| v == *id)));
-                    GridColumn::new(
-                        id,
-                        format!("Column {i}"),
-                        120.0,
-                        i > 0,
-                        i == 0 || enabled.unwrap_or(i < 60),
-                    )
+                    let default = i < 60;
+                    let enabled = query.with(|q| {
+                        crate::components::virtual_grid::registry::column_query(q)
+                            .visible(id, default)
+                    });
+                    let mut column =
+                        GridColumn::new(id, format!("Column {i}"), 120.0, i > 0, i == 0 || enabled);
+                    column.default_visible = i == 0 || default;
+                    column
                 })
                 .collect::<Vec<_>>()
         });
