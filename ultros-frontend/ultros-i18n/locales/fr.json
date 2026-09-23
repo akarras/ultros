@@ -20,6 +20,8 @@
   "connected_regions_group": "Régions connectées où acheter",
   "connected_regions_include": "Inclure les annonces de {{region}}",
   "connected_regions_exclude": "Exclure les annonces de {{region}}",
+  "connected_regions_load_failed": "Impossible de charger les annonces de {{regions}}",
+  "connected_regions_retry": "Réessayer",
   "analyzer_listing_hide_suspicious": "Masquer les estimations d'annonces suspectes",
   "analyzer_listing_unverified_label": "Estimation d'annonce non vérifiée",
   "analyzer_listing_unverified_help": "Aucun historique de ventes comparable n'est disponible pour la qualité et le marché de cette annonce. L'absence d'historique ne prouve pas que le prix demandé est réaliste.",

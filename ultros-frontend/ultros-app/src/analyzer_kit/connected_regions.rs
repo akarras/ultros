@@ -13,10 +13,16 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+use serde::{Deserialize, Serialize};
+use ultros_api_types::cheapest_listings::{
+    CheapestListingItem, CheapestListings, CheapestListingsColumnar,
+};
 
 use crate::{
-    api::get_cheapest_listings_live, columnar_wire::ColumnarJson, error::AppResult, i18n::*,
+    api::get_cheapest_listings_live,
+    columnar_wire::{ColumnarJson, ColumnarWire},
+    error::AppResult,
+    i18n::*,
     query_defaults::filter_query_signal,
 };
 
@@ -98,33 +104,108 @@ pub fn widened_listings(
 /// page's error; a partner failure only means fewer places to buy from.
 pub fn buy_listings(
     home: Option<AppResult<CheapestListings>>,
-    partners: Option<AppResult<Vec<CheapestListings>>>,
+    partners: Option<AppResult<PartnerListings>>,
 ) -> Option<AppResult<CheapestListings>> {
     let home = match home? {
         Ok(home) => home,
         Err(error) => return Some(Err(error)),
     };
     let partners = partners?.unwrap_or_default();
-    Some(Ok(merge_cheapest_listings(&home, &partners)))
+    Some(Ok(merge_cheapest_listings(&home, &partners.boards)))
 }
 
-/// Fetch each region's board concurrently. A region that fails to load is
-/// left out rather than failing the page: the home region's own board is
-/// fetched separately and still prices every row, so a missing partner only
-/// means fewer places to buy from.
+/// The other connected regions' boards, and the regions whose board failed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PartnerListings {
+    pub boards: Vec<CheapestListings>,
+    /// Regions that failed to load. Their listings are missing from
+    /// `boards`, and a page that merges them has to say so: without that the
+    /// table looks complete while one region silently dropped out.
+    pub failed: Vec<String>,
+}
+
+impl PartnerListings {
+    fn collect(results: Vec<(&str, AppResult<CheapestListings>)>) -> Self {
+        let mut partners = Self::default();
+        for (region, board) in results {
+            match board {
+                Ok(board) => partners.boards.push(board),
+                Err(_) => partners.failed.push(region.to_string()),
+            }
+        }
+        partners
+    }
+}
+
+/// The SSR wire shape of [`PartnerListings`]: each board columnar.
+#[derive(Serialize, Deserialize)]
+pub struct PartnerListingsColumnar {
+    boards: Vec<CheapestListingsColumnar>,
+    failed: Vec<String>,
+}
+
+impl ColumnarWire for PartnerListings {
+    type Columnar = PartnerListingsColumnar;
+    fn to_columnar(&self) -> Self::Columnar {
+        PartnerListingsColumnar {
+            boards: self.boards.to_columnar(),
+            failed: self.failed.clone(),
+        }
+    }
+    fn from_columnar(columnar: Self::Columnar) -> Self {
+        Self {
+            boards: Vec::from_columnar(columnar.boards),
+            failed: columnar.failed,
+        }
+    }
+}
+
+/// Fetch each region's board concurrently. A region that fails to load does
+/// not fail the page: the home region's own board is fetched separately and
+/// still prices every row. It is reported in [`PartnerListings::failed`]
+/// instead, for [`ConnectedRegionsControl`] to show.
 pub async fn get_partner_listings(
     regions: Vec<&'static str>,
     refresh_version: u64,
-) -> AppResult<Vec<CheapestListings>> {
-    Ok(futures::future::join_all(
-        regions
-            .into_iter()
-            .map(|region| get_cheapest_listings_live(region, refresh_version)),
-    )
-    .await
-    .into_iter()
-    .filter_map(Result::ok)
-    .collect())
+) -> AppResult<PartnerListings> {
+    let results = futures::future::join_all(regions.into_iter().map(|region| async move {
+        (
+            region,
+            get_cheapest_listings_live(region, refresh_version).await,
+        )
+    }))
+    .await;
+    Ok(PartnerListings::collect(results))
+}
+
+/// Which partner boards failed on the page's last fetch, and how to fetch
+/// them again. Provided by whichever owner holds the partner resource;
+/// [`ConnectedRegionsControl`] reads it to warn about and retry a failure.
+#[derive(Clone, Copy)]
+pub struct PartnerLoadStatus {
+    pub failed: Signal<Vec<String>>,
+    pub retry: Callback<()>,
+}
+
+impl PartnerLoadStatus {
+    /// Provide for every connected-regions control below the current owner.
+    /// The failed list holds through a refetch (the resource reads `None`
+    /// while loading), so Retry does not blank the warning before it knows.
+    pub fn provide(
+        resource: &ArcResource<AppResult<PartnerListings>, ColumnarJson>,
+        retry: Callback<()>,
+    ) {
+        let resource = resource.clone();
+        let failed = Memo::new(move |prev: Option<&Vec<String>>| match resource.get() {
+            Some(Ok(partners)) => partners.failed,
+            Some(Err(_)) => Vec::new(),
+            None => prev.cloned().unwrap_or_default(),
+        });
+        provide_context(Self {
+            failed: failed.into(),
+            retry,
+        });
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -200,11 +281,12 @@ impl ConnectedRegions {
     /// The other regions' boards while `active` holds, none otherwise. The
     /// home region's own board is not included: every caller already fetches
     /// it, and it is what a failed partner falls back to.
+    /// Also provides the resource's [`PartnerLoadStatus`].
     pub fn listings_resource(
         self,
         active: Signal<bool>,
-    ) -> ArcResource<AppResult<Vec<CheapestListings>>, ColumnarJson> {
-        crate::columnar_wire::columnar_resource(
+    ) -> ArcResource<AppResult<PartnerListings>, ColumnarJson> {
+        let resource = crate::columnar_wire::columnar_resource(
             move || {
                 if active.get() {
                     self.included()
@@ -213,7 +295,10 @@ impl ConnectedRegions {
                 }
             },
             move |regions| get_partner_listings(regions, 0),
-        )
+        );
+        let retry = resource.clone();
+        PartnerLoadStatus::provide(&resource, Callback::new(move |_| retry.refetch()));
+        resource
     }
 }
 
@@ -227,6 +312,7 @@ pub fn ConnectedRegionsControl(
     #[prop(into)] on_activate: Callback<()>,
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let status = use_context::<PartnerLoadStatus>();
     move || {
         if !regions.available() {
             return None;
@@ -272,6 +358,20 @@ pub fn ConnectedRegionsControl(
                             </button>
                         }
                     }).collect_view()}
+                    {move || {
+                        let status = status?;
+                        let failed = status.failed.get();
+                        (!failed.is_empty()).then(|| view! {
+                            <span role="alert" class="inline-flex items-center gap-1 text-xs text-amber-300"
+                                data-testid="connected-regions-failed">
+                                {t_string!(i18n, connected_regions_load_failed, regions = failed.join(", ")).to_string()}
+                                <button type="button" class="connected-region-toggle"
+                                    on:click=move |_| status.retry.run(())>
+                                    {t!(i18n, connected_regions_retry)}
+                                </button>
+                            </span>
+                        })
+                    }}
                 </span>
             }
             .into_any(),
@@ -335,6 +435,29 @@ mod tests {
         let europe = board(&[(1, false, 100, 20)]);
         let merged = merge_cheapest_listings(&home, &[europe]);
         assert_eq!(merged, home);
+    }
+
+    #[test]
+    fn a_failed_partner_is_reported_not_dropped() {
+        let europe = board(&[(1, false, 80, 20)]);
+        let partners = PartnerListings::collect(vec![
+            ("Europe", Ok(europe.clone())),
+            ("Japan", Err(crate::error::AppError::ParamMissing)),
+        ]);
+        assert_eq!(partners.boards, vec![europe]);
+        assert_eq!(partners.failed, vec!["Japan".to_string()]);
+    }
+
+    #[test]
+    fn partner_listings_cross_the_ssr_wire_intact() {
+        let partners = PartnerListings {
+            boards: vec![board(&[(1, false, 80, 20)])],
+            failed: vec!["Oceania".into()],
+        };
+        let json = serde_json::to_string(&partners.to_columnar()).unwrap();
+        assert!(json.contains(r#""failed":["Oceania"]"#), "{json}");
+        let back = PartnerListings::from_columnar(serde_json::from_str(&json).unwrap());
+        assert_eq!(back, partners);
     }
 
     #[test]

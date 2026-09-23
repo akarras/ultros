@@ -8,7 +8,7 @@ use crate::analyzer_kit::calculation::{
     CONNECTED_PLACE, Calculation, CalculationPlace, CalculationStrip, CalculationTerm,
 };
 use crate::analyzer_kit::connected_regions::{
-    ConnectedRegions, get_partner_listings, use_connected_regions,
+    ConnectedRegions, PartnerLoadStatus, get_partner_listings, use_connected_regions,
 };
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
@@ -2646,6 +2646,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
         move |(regions, refresh_version)| get_partner_listings(regions, refresh_version),
     );
+    // Retry refetches only the partner boards; the world and home-region
+    // boards loaded fine and stay put.
+    PartnerLoadStatus::provide(
+        &cross_region,
+        Callback::new(move |_| set_cross_board_version.update(|v| *v = v.wrapping_add(1))),
+    );
 
     // Coalesce realtime ticks. A busy world delivers many relevant listing
     // events per second and each one previously refetched every board
@@ -2706,7 +2712,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         let cross = cross_region
             .get()
             .and_then(|r: Result<_, AppError>| r.ok())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .boards;
         let world_board = world_cheapest_listings.get();
         let sales_board = sales.get();
         let region_board = global_cheapest_listings.get();

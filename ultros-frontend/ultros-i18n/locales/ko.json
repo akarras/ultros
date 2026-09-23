@@ -20,6 +20,8 @@
   "connected_regions_group": "구매할 연결된 지역",
   "connected_regions_include": "{{region}} 매물 포함",
   "connected_regions_exclude": "{{region}} 매물 제외",
+  "connected_regions_load_failed": "{{regions}}의 판매 목록을 불러오지 못했습니다",
+  "connected_regions_retry": "다시 시도",
   "analyzer_listing_hide_suspicious": "의심스러운 매물 평가 숨기기",
   "analyzer_listing_unverified_label": "미검증 매물 추정치",
   "analyzer_listing_unverified_help": "이 매물의 품질과 시장에 맞는 판매 이력 비교가 없습니다. 이력이 없다고 해서 요청 가격이 현실적이라는 뜻은 아닙니다.",

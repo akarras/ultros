@@ -345,10 +345,24 @@ mod tests {
     /// The Buy chip of a scope that can widen, rendered with `value` selected
     /// and `home` as the home region.
     fn connected_chip(value: &'static str, home: &'static str) -> String {
+        connected_chip_failing(value, home, &[])
+    }
+
+    /// [`connected_chip`] on a page whose partner boards in `failed` did not
+    /// load.
+    fn connected_chip_failing(
+        value: &'static str,
+        home: &'static str,
+        failed: &'static [&'static str],
+    ) -> String {
         let _ = any_spawner::Executor::init_futures_executor();
         let owner = Owner::new();
         owner.with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            provide_context(crate::analyzer_kit::connected_regions::PartnerLoadStatus {
+                failed: Signal::derive(move || failed.iter().map(|r| r.to_string()).collect()),
+                retry: Callback::new(|_| {}),
+            });
             let window = MarketWindow::new(Window::D7, &Window::ALL);
             let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
             let regions = crate::analyzer_kit::connected_regions::use_connected_regions(
@@ -391,6 +405,15 @@ mod tests {
         // With no opt-outs in the URL every partner is bought from.
         assert_eq!(html.matches("aria-pressed=\"true\"").count(), 3);
         assert!(!html.contains("connected-regions-enable"));
+    }
+
+    #[test]
+    fn a_partner_that_failed_to_load_is_named_on_the_chip() {
+        let html = connected_chip_failing(CONNECTED_PLACE, "North-America", &["Oceania"]);
+        assert!(html.contains("data-testid=\"connected-regions-failed\""));
+        assert!(html.contains("load listings from Oceania"), "{html}");
+        let html = connected_chip(CONNECTED_PLACE, "North-America");
+        assert!(!html.contains("connected-regions-failed"));
     }
 
     #[test]
