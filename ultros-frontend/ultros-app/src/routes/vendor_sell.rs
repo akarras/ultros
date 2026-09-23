@@ -7,7 +7,10 @@ use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{category_id_token, register_filters};
 use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
-use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
+use crate::analyzer_kit::{
+    connected_regions::buy_listings,
+    scope::{MarketScope, use_buy_market_scope},
+};
 use crate::columnar_wire::columnar_resource;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
@@ -531,7 +534,9 @@ pub fn VendorSell() -> impl IntoView {
     provide_grid_saved_views("vendor-sell-grid");
     let i18n = use_i18n();
     let (selected_world, set_selected_world) = use_analyzer_world("/vendor-sell");
-    let scope = use_market_scope(Signal::derive(move || {
+    // Every listing here is a purchase, so the scope can reach into the
+    // connected regions; vendor prices and statistics stay on `scope.name`.
+    let scope = use_buy_market_scope(Signal::derive(move || {
         selected_world.get().map(|world| world.name)
     }));
     let region = scope.name;
@@ -539,6 +544,7 @@ pub fn VendorSell() -> impl IntoView {
     let listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
+    let connected_listings = scope.connected_listings();
 
     view! {
         <div class="flex flex-col gap-4 h-full">
@@ -573,7 +579,7 @@ pub fn VendorSell() -> impl IntoView {
                 </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
-                        match listings.get() {
+                        match buy_listings(listings.get(), connected_listings.get()) {
                             Some(Ok(listings)) => view! {
                                 <VendorSellTable listings region=region.into() scope />
                             }.into_any(),

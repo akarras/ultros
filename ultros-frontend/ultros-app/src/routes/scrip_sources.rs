@@ -1,7 +1,10 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
+use crate::analyzer_kit::{
+    connected_regions::buy_listings,
+    scope::{MarketScope, use_buy_market_scope},
+};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -824,7 +827,9 @@ pub fn ScripSources() -> impl IntoView {
     provide_grid_saved_views("scrip-sources-grid");
     let i18n = use_i18n();
     let (selected_world, set_selected_world) = use_analyzer_world("/scrip-sources");
-    let scope = use_market_scope(Signal::derive(move || {
+    // Listings only price the ingredients bought for a turn-in, so the scope
+    // can reach into the connected regions.
+    let scope = use_buy_market_scope(Signal::derive(move || {
         selected_world.get().map(|world| world.name)
     }));
     let region = scope.name;
@@ -832,6 +837,7 @@ pub fn ScripSources() -> impl IntoView {
     let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
+    let connected_listings = scope.connected_listings();
 
     view! {
         <div class="flex flex-col gap-4 h-full">
@@ -869,7 +875,8 @@ pub fn ScripSources() -> impl IntoView {
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
-                        let listings = global_cheapest_listings.get();
+                        let listings =
+                            buy_listings(global_cheapest_listings.get(), connected_listings.get());
                         match listings {
                             Some(Ok(listings)) => {
                                 view! {

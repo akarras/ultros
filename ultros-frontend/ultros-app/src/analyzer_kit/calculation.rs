@@ -3,7 +3,10 @@
 //! setters created once in the route owner, outside reactive rendering closures.
 use leptos::prelude::*;
 
-use super::window::{MarketWindow, MarketWindowControl};
+use super::{
+    connected_regions::{ConnectedRegions, ConnectedRegionsControl},
+    window::{MarketWindow, MarketWindowControl},
+};
 use crate::{
     components::{
         term_badge::{TermBadge, TermRole},
@@ -36,7 +39,14 @@ pub struct CalculationPlace {
     /// tier, so the chip reads as the market it prices from.
     pub options: Signal<Vec<(&'static str, String, bool)>>,
     pub on_change: Callback<String>,
+    /// Set when one option widens the market to every connected region
+    /// ([`CONNECTED_PLACE`]): the chip then carries the regions themselves,
+    /// one click to widen and one per region to leave out.
+    pub connected: Option<ConnectedRegions>,
 }
+
+/// The [`CalculationPlace`] token for "home region plus connected regions".
+pub const CONNECTED_PLACE: &str = "connected";
 
 impl CalculationTerm {
     pub fn fixed(role: TermRole, label: String, column: Option<&'static str>) -> Self {
@@ -201,7 +211,7 @@ pub fn CalculationStrip(calculation: Calculation, window: MarketWindow) -> impl 
                         }}
                         {match (term.place_select, term.place) {
                             (Some(place), _) => Some(view! {
-                                <span class="inline-flex max-w-full items-center gap-1" data-testid="analyzer-price-scope">
+                                <span class="inline-flex max-w-full flex-wrap items-center gap-1" data-testid="analyzer-price-scope">
                                     <span class="filter-chip-label">"·"</span>
                                     <select class="filter-chip-value max-w-full"
                                         aria-label=move || t_string!(i18n, analyzer_price_scope).to_string()
@@ -211,6 +221,11 @@ pub fn CalculationStrip(calculation: Calculation, window: MarketWindow) -> impl 
                                             <option value=value disabled=!enabled selected=move || place.value.get() == value>{label}</option>
                                         }).collect_view()}
                                     </select>
+                                    {place.connected.map(|regions| view! {
+                                        <ConnectedRegionsControl regions
+                                            active=Signal::derive(move || place.value.get() == CONNECTED_PLACE)
+                                            on_activate=Callback::new(move |_| place.on_change.run(CONNECTED_PLACE.to_string())) />
+                                    })}
                                 </span>
                             }.into_any()),
                             (None, Some(place)) => Some(view! {
@@ -327,6 +342,71 @@ mod tests {
         });
     }
 
+    /// The Buy chip of a scope that can widen, rendered with `value` selected
+    /// and `home` as the home region.
+    fn connected_chip(value: &'static str, home: &'static str) -> String {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let window = MarketWindow::new(Window::D7, &Window::ALL);
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            let regions = crate::analyzer_kit::connected_regions::use_connected_regions(
+                Signal::derive(move || Some(home.to_string())),
+            );
+            let place = CalculationPlace {
+                value: Signal::derive(move || value.to_string()),
+                options: Signal::derive(move || {
+                    vec![
+                        ("region", home.to_string(), true),
+                        (CONNECTED_PLACE, format!("{home} + connected"), true),
+                    ]
+                }),
+                on_change: Callback::new(|_: String| {}),
+                connected: Some(regions),
+            };
+            let calculation = Calculation::provide(
+                registry,
+                vec![
+                    CalculationTerm::fixed(TermRole::Cost, "Buy price".into(), Some("buy"))
+                        .with_place_select(place),
+                ],
+                None,
+            );
+            view! { <CalculationStrip calculation window /> }.to_html()
+        })
+    }
+
+    #[test]
+    fn a_connected_place_lists_the_other_regions_on_the_chip() {
+        let html = connected_chip(CONNECTED_PLACE, "North-America");
+        for region in ["Europe", "Japan", "Oceania"] {
+            assert!(
+                html.contains(&format!("data-connected-region=\"{region}\"")),
+                "{region}"
+            );
+        }
+        // The home region is the market itself, never a toggle.
+        assert!(!html.contains("data-connected-region=\"North-America\""));
+        // With no opt-outs in the URL every partner is bought from.
+        assert_eq!(html.matches("aria-pressed=\"true\"").count(), 3);
+        assert!(!html.contains("connected-regions-enable"));
+    }
+
+    #[test]
+    fn a_home_only_place_offers_the_widening_in_one_click() {
+        let html = connected_chip("region", "Europe");
+        assert!(html.contains("data-testid=\"connected-regions-enable\""));
+        assert!(!html.contains("data-connected-region"));
+    }
+
+    #[test]
+    fn a_region_that_cannot_travel_shows_no_connected_control() {
+        let html = connected_chip("region", "China");
+        assert!(!html.contains("connected-regions"));
+        assert!(!html.contains("data-connected-region"));
+    }
+
     #[test]
     fn a_place_select_renders_inside_its_term_chip() {
         let _ = any_spawner::Executor::init_futures_executor();
@@ -345,6 +425,7 @@ mod tests {
                     ]
                 }),
                 on_change: Callback::new(|_: String| {}),
+                connected: None,
             };
             let calculation = Calculation::provide(
                 registry,

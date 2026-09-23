@@ -1,7 +1,10 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
+use crate::analyzer_kit::{
+    connected_regions::widened_listings,
+    scope::{MarketScope, use_buy_market_scope},
+};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -253,6 +256,9 @@ fn leve_metrics() -> Vec<GridMetric<(usize, Arc<LeveProfitData>)>> {
 fn LeveAnalyzerTable(
     scope: MarketScope,
     global_cheapest_listings: CheapestListings,
+    /// Where turn-in items are bought, when that reaches past
+    /// `global_cheapest_listings` into the connected regions.
+    buy_listings: Option<CheapestListings>,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
     sales_world: Signal<String>,
@@ -276,6 +282,7 @@ fn LeveAnalyzerTable(
         revenue_basis.get().unwrap_or_default()
     }));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let buy_prices = buy_listings.map(CheapestListingsMap::from);
     let data = tracked_data();
     let items = &data.items;
     let leves = &data.leves;
@@ -349,8 +356,9 @@ fn LeveAnalyzerTable(
             }
 
             // Calculate Cost
+            let turn_in_prices = buy_prices.as_ref().unwrap_or(&prices);
             let Some(resolved) = resolve_price(
-                &prices,
+                turn_in_prices,
                 stats.as_deref(),
                 item_id,
                 None,
@@ -360,7 +368,7 @@ fn LeveAnalyzerTable(
             };
             let market_price = resolved.price;
             let hq = resolved.hq;
-            let listing = prices.find_matching_listings(item_id);
+            let listing = turn_in_prices.find_matching_listings(item_id);
             let listing = if hq { listing.hq } else { listing.lq };
             let listing_price = listing.map(|entry| entry.price);
             let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
@@ -786,7 +794,9 @@ pub fn LeveAnalyzer() -> impl IntoView {
     provide_grid_saved_views("leve-analyzer-grid");
     let i18n = use_i18n();
     let (selected_world, set_selected_world) = use_analyzer_world("/leve-analyzer");
-    let scope = use_market_scope(Signal::derive(move || {
+    // The connected tier widens the turn-in items alone: reward items still
+    // sell at home, so they stay priced on `scope.name`.
+    let scope = use_buy_market_scope(Signal::derive(move || {
         selected_world.get().map(|world| world.name)
     }));
     let region = scope.name;
@@ -794,6 +804,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
     let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
+    let connected_listings = scope.connected_listings();
 
     let recent_sales = columnar_resource(selected_world, move |world| async move {
         if let Some(world) = world {
@@ -847,24 +858,19 @@ pub fn LeveAnalyzer() -> impl IntoView {
                     {move || {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
-                        match (listings, sales) {
-                            (Some(Ok(listings)), Some(Ok(sales))) => {
+                        // Held back until the connected regions answer too, so
+                        // a widened chip never renders home-only costs.
+                        let partners = connected_listings.get();
+                        match (listings, partners) {
+                            (Some(Ok(listings)), Some(partners)) => {
+                                let buy_listings =
+                                    widened_listings(&listings, &partners.unwrap_or_default());
                                 view! {
                                     <LeveAnalyzerTable
                                         scope
                                         global_cheapest_listings=listings
-                                        recent_sales=Some(sales)
-                                        world=region.into()
-                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
-                                    />
-                                }.into_any()
-                            }
-                            (Some(Ok(listings)), _) => {
-                                view! {
-                                    <LeveAnalyzerTable
-                                        scope
-                                        global_cheapest_listings=listings
-                                        recent_sales=None
+                                        buy_listings
+                                        recent_sales=sales.and_then(Result::ok)
                                         world=region.into()
                                         sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />
