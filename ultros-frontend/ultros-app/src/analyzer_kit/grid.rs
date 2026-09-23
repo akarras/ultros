@@ -12,6 +12,7 @@ use crate::components::icon::Icon;
 use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
+use crate::components::virtual_grid::units::Unit;
 use crate::components::virtual_grid::{ColumnFilter, GridColumn};
 use crate::i18n::*;
 use icondata as i;
@@ -367,7 +368,8 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                 GridMetric::mixed(grid_id(col), value)
             } else {
                 GridMetric::number(grid_id(col), value)
-            };
+            }
+            .unit(column_unit(col.spec.kind));
             let metric = if let (Some(compare), Sortability::By(mode)) = (&custom_compare, col.sort)
             {
                 let compare = compare.clone();
@@ -504,6 +506,38 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
                 }
             }
         />
+    }
+}
+
+/// What a column's numbers mean, for its filter editor and chips.
+fn column_unit(kind: ColumnKind) -> Unit {
+    match kind {
+        ColumnKind::Profit
+        | ColumnKind::ProfitPerDay
+        | ColumnKind::CostSlot
+        | ColumnKind::RevenueSlot
+        | ColumnKind::AvgPrice
+        | ColumnKind::Vwap7
+        | ColumnKind::Vwap30
+        | ColumnKind::Tax
+        | ColumnKind::RevSignal(_)
+        | ColumnKind::CostSignal(_)
+        | ColumnKind::RevGil
+        | ColumnKind::CostGil
+        | ColumnKind::HopGain
+        | ColumnKind::ScopeVsHome => Unit::Gil,
+        ColumnKind::Roi | ColumnKind::DriftSpark => Unit::Percent,
+        ColumnKind::SalesPerDay7 => Unit::Rate,
+        ColumnKind::LastSold => Unit::Timestamp,
+        ColumnKind::Item
+        | ColumnKind::Confidence
+        | ColumnKind::VolumeUnits7
+        | ColumnKind::VolumeUnits30
+        | ColumnKind::Trend
+        | ColumnKind::ListingWorld
+        | ColumnKind::ListingDc
+        | ColumnKind::HopWorlds
+        | ColumnKind::Actions => Unit::Plain,
     }
 }
 

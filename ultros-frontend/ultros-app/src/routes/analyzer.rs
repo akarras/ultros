@@ -21,6 +21,7 @@ use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -1442,22 +1443,14 @@ fn AnalyzerTable(
             if id == "item" {
                 col = col.fixed_width();
             }
+            // Numeric thresholds are aliases of each column's own range
+            // filter, which the grid adds; only choices and the controls
+            // without a column of their own stay here.
             let filters: &[(&str, bool)] = match id {
                 "item" => &[(FILTER_NAME, false), (FILTER_CATEGORY, true)],
-                "profit" => &[(FILTER_PROFIT, true)],
-                "buy_price" => &[(FILTER_MIN_BUY, true), (FILTER_MAX_PRICE, true)],
                 "hq" => &[(FILTER_QUALITY, false)],
-                COL_PROFIT_PER_DAY => &[(FILTER_PROFIT_PER_DAY, true)],
-                COL_DRIFT => &[(FILTER_MIN_DRIFT, true)],
                 COL_CONFIDENCE => &[(FILTER_MIN_CONFIDENCE, false)],
-                COL_ROI => &[(FILTER_ROI, true)],
-                COL_SALES_PER_DAY => &[
-                    (FILTER_VELOCITY, true),
-                    (FILTER_SALES, true),
-                    (FILTER_NEXT_SALE, false),
-                ],
-                COL_VOLUME_30D => &[(FILTER_MIN_VOLUME, true)],
-                COL_LAST_SOLD => &[(FILTER_LAST_SOLD, false)],
+                COL_SALES_PER_DAY => &[(FILTER_SALES, true), (FILTER_NEXT_SALE, false)],
                 COL_WORLD => &[(FILTER_WORLD, false)],
                 COL_DATACENTER => &[(FILTER_DATACENTER, false)],
                 _ => &[],
@@ -2072,7 +2065,7 @@ fn AnalyzerTable(
                 measure_version=Signal::derive(move || native_measure_version.get())
                 market
                 on_rows=Callback::new(move |rows| queried_rows.set(rows))
-                metrics=native_metrics
+                metrics=with_units(native_metrics, &[("profit", Unit::Gil), (COL_PROFIT_PER_DAY, Unit::Gil), (COL_TAX, Unit::Gil), (COL_ROI, Unit::Percent), ("buy_price", Unit::Gil), ("sale_estimate", Unit::Gil), (COL_DRIFT, Unit::Percent), (COL_LAST_SOLD, Unit::Seconds), (COL_SALES_PER_DAY, Unit::Rate)])
                 subject=Arc::new(move |(_, data): &(usize, CalculatedProfitData)| { let mut subject = MarketSubject::new(data.inner.sale_summary.item_id, data.inner.sale_summary.hq, data.inner.cheapest_world_id); subject.listing_price = Some(data.inner.cheapest_price); subject })
                 each=sorted_data
                 columns=grid_columns

@@ -121,6 +121,20 @@ impl<T> GridMetric<T> {
     }
 }
 
+/// Assign units by metric id, so a page states what its numbers mean in one
+/// table beside its metric list. Unlisted ids keep their unit.
+pub fn with_units<T>(metrics: Vec<GridMetric<T>>, units: &[(&str, Unit)]) -> Vec<GridMetric<T>> {
+    metrics
+        .into_iter()
+        .map(
+            |metric| match units.iter().find(|(id, _)| *id == metric.id) {
+                Some((_, unit)) => metric.unit(*unit),
+                None => metric,
+            },
+        )
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FilterOp {

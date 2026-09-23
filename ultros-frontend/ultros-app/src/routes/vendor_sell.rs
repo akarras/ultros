@@ -15,6 +15,7 @@ use crate::components::virtual_grid::registry::FilterAlias;
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::query_defaults::{filter_query_signal, query_signal};
@@ -340,15 +341,12 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
     let filters = register_filters(
         vec![FilterAlias::integer(FILTER_PROFIT, "profit", FilterOp::Gte)],
         Signal::derive(move || {
-            vec![
-                ColumnFilter::new(FILTER_PROFIT, filter_label(FILTER_PROFIT), true),
-                {
-                    let mut f =
-                        ColumnFilter::new(FILTER_CATEGORY, filter_label(FILTER_CATEGORY), false);
-                    f.options = category_options();
-                    f
-                },
-            ]
+            vec![{
+                let mut f =
+                    ColumnFilter::new(FILTER_CATEGORY, filter_label(FILTER_CATEGORY), false);
+                f.options = category_options();
+                f
+            }]
         }),
     );
 
@@ -421,7 +419,7 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                     label=t_string!(i18n, vendor_sell_col_item).to_string()
                     row_height=40.0
                     market
-                    metrics=vendor_sell_metrics(worlds.clone())
+                    metrics=with_units(vendor_sell_metrics(worlds.clone()), &[("listing", Unit::Gil), ("tax", Unit::Gil), ("vendor-price", Unit::Gil), ("profit", Unit::Gil), ("margin", Unit::Percent)])
                     subject=Arc::new(move |(_, row): &Row| {
                         let mut subject = MarketSubject::new(row.item_id, row.hq, row.world_id);
                         subject.listing_price = Some(row.listing);
@@ -443,11 +441,7 @@ fn VendorSellTable(listings: CheapestListings, region: Signal<String>) -> impl I
                             GridColumn::new("listing", t_string!(i18n, vendor_sell_col_listing).to_string(), 120.0, true, true).native_sort("listing", true).sorted(listing_on, listing_asc),
                             GridColumn::new("tax", t_string!(i18n, vendor_sell_col_tax).to_string(), 90.0, true, true).native_sort("tax", true).sorted(tax_on, tax_asc),
                             GridColumn::new("vendor-price", t_string!(i18n, vendor_sell_col_vendor_price).to_string(), 130.0, true, true).native_sort("vendor-price", false).sorted(vendor_on, vendor_asc),
-                            {
-                                let mut col = GridColumn::new("profit", t_string!(i18n, vendor_sell_col_profit).to_string(), 130.0, true, true).native_sort("profit", false).sorted(profit_on, profit_asc);
-                                col.filters.push(ColumnFilter::new(FILTER_PROFIT, filter_label(FILTER_PROFIT), true));
-                                col
-                            },
+                            GridColumn::new("profit", t_string!(i18n, vendor_sell_col_profit).to_string(), 130.0, true, true).native_sort("profit", false).sorted(profit_on, profit_asc),
                             GridColumn::new("margin", t_string!(i18n, vendor_sell_col_margin).to_string(), 100.0, true, true).native_sort("margin", false).sorted(margin_on, margin_asc),
                         ]
                     })

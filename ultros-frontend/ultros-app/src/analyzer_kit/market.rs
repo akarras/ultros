@@ -26,6 +26,7 @@ use crate::{
             GridColumn,
             metrics::{GridMetric, GridValue, active_metric_columns},
             query_grid::{MetricSortHeader, QueryGrid},
+            units::Unit,
         },
     },
     global_state::LocalWorldData,
@@ -562,7 +563,6 @@ impl MarketMetric {
                 | Self::World
                 | Self::Datacenter
                 | Self::Confidence
-                | Self::LastSold
                 | Self::TrendWorld
                 | Self::ListingAssessment
         )
@@ -570,6 +570,30 @@ impl MarketMetric {
 
     fn partial(self) -> bool {
         matches!(self, Self::Trend7 | Self::Drift7)
+    }
+
+    /// How a filter on this column reads and prints its bounds.
+    fn unit(self) -> Unit {
+        let stat = |kind| match kind {
+            StatKind::Min
+            | StatKind::Median
+            | StatKind::Average
+            | StatKind::Vwap
+            | StatKind::GilVolume => Unit::Gil,
+            StatKind::SalesPerDay => Unit::Rate,
+            StatKind::Cadence => Unit::Hours,
+            StatKind::Units | StatKind::Sales => Unit::Plain,
+        };
+        match self {
+            Self::Listing => Unit::Gil,
+            Self::Stat(kind, _) | Self::Follow(kind) => stat(kind),
+            Self::LastSold => Unit::Timestamp,
+            Self::Trend7 | Self::Drift7 => Unit::Percent,
+            Self::Listings(kind) if kind.is_age() => Unit::Seconds,
+            Self::ListingWindow(ListingWindowKind::UndercutsPerDay) => Unit::Rate,
+            Self::ListingWindow(ListingWindowKind::UndercutMedian) => Unit::Percent,
+            _ => Unit::Plain,
+        }
     }
 
     /// The bulk body this metric reads. Last-sold and confidence are
@@ -713,11 +737,15 @@ fn stats_value(metric: MarketMetric, stats: Option<ItemSaleStats>) -> GridValue 
             ConfidenceBand::Unknown => GridValue::Missing,
             band => GridValue::Text(format!("{band:?}")),
         },
-        MarketMetric::LastSold => chrono::DateTime::from_timestamp(s.last_sold_unix, 0)
-            .filter(|_| s.last_sold_unix > 0)
-            .map_or(GridValue::Missing, |time| {
-                GridValue::Text(time.format("%Y-%m-%d %H:%M UTC").to_string())
-            }),
+        // Unix seconds, so a filter can ask for "within the last 7 days";
+        // `display_value` prints the same date the column always showed.
+        MarketMetric::LastSold => {
+            if s.last_sold_unix > 0 {
+                GridValue::Number(s.last_sold_unix as f64)
+            } else {
+                GridValue::Missing
+            }
+        }
         MarketMetric::Stat(kind, _) | MarketMetric::Follow(kind) => number(match kind {
             StatKind::Min => positive(s.min_price),
             StatKind::Median => positive(s.median_price),
@@ -933,6 +961,11 @@ fn market_value(
 
 fn display_value(metric: MarketMetric, value: GridValue) -> String {
     match value {
+        GridValue::Number(n) if metric == MarketMetric::LastSold => {
+            chrono::DateTime::from_timestamp(n as i64, 0)
+                .map(|time| time.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_default()
+        }
         GridValue::Number(n) if matches!(metric, MarketMetric::Trend7 | MarketMetric::Drift7) => {
             format!("{n:+.1}%")
         }
@@ -1260,7 +1293,8 @@ where
             GridMetric::text(metric.id(), value)
         } else {
             GridMetric::number(metric.id(), value)
-        };
+        }
+        .unit(metric.unit());
         let def = if metric == MarketMetric::Confidence {
             def.with_comparator(move |left, right, ascending| {
                 // Key extraction above already tracks this scope and D7
@@ -1414,6 +1448,51 @@ mod tests {
     }
     use super::*;
     use ultros_api_types::cheapest_listings::CheapestListingData;
+
+    #[test]
+    fn last_sold_is_a_timestamp_that_still_prints_its_date() {
+        use crate::components::virtual_grid::metrics::{FilterOp, MetricFilter};
+        let metric = MarketMetric::LastSold;
+        assert!(!metric.text());
+        assert_eq!(metric.unit(), Unit::Timestamp);
+        let sold = 1_756_684_800.0;
+        assert_eq!(
+            display_value(metric, GridValue::Number(sold)),
+            "2025-09-01 00:00 UTC"
+        );
+        // "Within the last day" now reaches this column.
+        let within = MetricFilter::range(Some("-1d".into()), None).resolved(sold + 3_600.0);
+        assert_eq!(within.op, FilterOp::Range);
+        assert_eq!(within.matches(&GridValue::Number(sold), false), Some(true));
+        assert_eq!(
+            within.matches(&GridValue::Number(sold - 2.0 * 86_400.0), false),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn market_units_follow_what_each_statistic_measures() {
+        assert_eq!(MarketMetric::Listing.unit(), Unit::Gil);
+        assert_eq!(
+            MarketMetric::Stat(StatKind::Median, Window::D7).unit(),
+            Unit::Gil
+        );
+        assert_eq!(
+            MarketMetric::Follow(StatKind::SalesPerDay).unit(),
+            Unit::Rate
+        );
+        assert_eq!(MarketMetric::Follow(StatKind::Cadence).unit(), Unit::Hours);
+        assert_eq!(MarketMetric::Trend7.unit(), Unit::Percent);
+        assert_eq!(
+            MarketMetric::Listings(ListingKind::MedianAge).unit(),
+            Unit::Seconds
+        );
+        assert_eq!(
+            MarketMetric::Listings(ListingKind::Alive).unit(),
+            Unit::Plain
+        );
+        assert_eq!(MarketMetric::Confidence.unit(), Unit::Plain);
+    }
 
     #[test]
     fn hidden_legacy_filters_request_their_window_before_any_edit() {

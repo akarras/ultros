@@ -13,6 +13,7 @@ use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
 };
 use crate::components::virtual_grid::{metrics::FilterOp, registry::FilterAlias};
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
@@ -674,14 +675,14 @@ fn ScripSourceTable(
          subject.listing_price = row.listing_price;
          subject
      })
-     metrics=vec![
+     metrics=with_units(vec![
          GridMetric::text("item", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(row.item_name.clone())).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::text("market-ingredient", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Text(row.market_item_name.clone())).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::number("cost-per-scrip", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost_per_scrip as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::number("scrip-amount", |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Number(row.scrip_amount as f64)).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::number("cost", |(_, row): &(usize, Arc<ScripSourceData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.cost as f64) }).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
          GridMetric::text("scrip-type", move |(_, row): &(usize, Arc<ScripSourceData>)| GridValue::Set(vec![scrip_label(row.scrip_type), format!("{:?}", row.scrip_type)])).tier(|(_, row): &(usize, Arc<ScripSourceData>)| row.coverage_tier()),
-     ]
+     ], &[("cost-per-scrip", Unit::Gil), ("cost", Unit::Gil)])
      row_height=60.0
      columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true).fixed_width(),
     GridColumn::new("market-ingredient", t_string!(i18n, market_ingredient).to_string(), 240.0, false, true),
