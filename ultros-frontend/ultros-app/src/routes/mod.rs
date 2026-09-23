@@ -20,6 +20,7 @@ pub mod item_explorer_roles;
 pub mod item_explorer_scope;
 pub mod item_explorer_toolbar;
 pub mod item_view;
+pub mod item_view_bulk_basket;
 pub mod item_view_scope;
 pub mod item_view_sections;
 pub mod job_set_detail;
