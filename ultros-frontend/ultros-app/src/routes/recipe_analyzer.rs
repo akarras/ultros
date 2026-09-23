@@ -1,3 +1,5 @@
+mod breakdown;
+
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::cells::{CellNote, CellValue, Enrich};
 use crate::analyzer_kit::columns::{
@@ -78,6 +80,7 @@ use crate::{
         region_for_world::use_region_for_world,
     },
 };
+use breakdown::{BreakdownToggle, RecipeBreakdownDrawer};
 use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
@@ -97,7 +100,6 @@ use ultros_api_types::{
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
 
 use crate::components::app_link::use_query_map_or_default;
-use crate::components::crafting_cost::SubcraftInfo;
 use crate::query_defaults::query_signal;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -234,7 +236,11 @@ struct RecipeProfitData {
     line: Option<ProfitLine>,
     cost: i32,
     cheapest_world_id: i32,
-    sub_crafts: Vec<SubcraftInfo>,
+    /// The selected cost signal's full run, kept for the cost breakdown
+    /// drawer and the sub-craft badge. Moved in, never cloned: one
+    /// allocation per row, and the alternative signals' runs are still
+    /// dropped once `cost_alt` has read them.
+    breakdown: Arc<CostBreakdown>,
     daily_sales: f32,
     avg_price: i32,
     total_sales: usize,
@@ -3036,6 +3042,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             matching_listing,
             matching_median,
         );
+        let unpriced_lines = breakdown.unpriced_market_lines;
 
         results.push(RecipeProfitData {
             listing_assessment,
@@ -3045,7 +3052,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             line: (!unpriced).then_some(line),
             cost: line.cost,
             cheapest_world_id,
-            sub_crafts: breakdown.sub_crafts,
+            breakdown: Arc::new(breakdown),
             daily_sales: sales_stats.daily_sales,
             avg_price: sales_stats.avg_price,
             total_sales: sales_stats.total_sales,
@@ -3074,7 +3081,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             cost_alt,
             rev_alt,
             sell_median,
-            unpriced: breakdown.unpriced_market_lines,
+            unpriced: unpriced_lines,
             hop,
             worlds,
             scope_vs_home,
@@ -3422,6 +3429,9 @@ fn RecipeAnalyzerTable(
     /// the page's hook fills, the client-only 30-day body, the scroller's
     /// rendered range and the rows mirror the hook reads.
     market: MarketHandles,
+    /// The recipe whose cost breakdown drawer is open. Owned by the page so
+    /// the drawer survives the table remounting on a scope change.
+    breakdown_selected: RwSignal<Option<i32>>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -4015,10 +4025,12 @@ fn RecipeAnalyzerTable(
                 let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                 let job_abbrev = craft_type_acronym(data.recipe.craft_type);
                 let unverified = data.listing_assessment == ListingAssessment::Unverified;
+                let item_name = item.to_string();
                 view! {
                     <div  class=class>
+                        <div class="flex flex-row items-center gap-1 w-full min-w-0">
                          <a
-                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip flex-1 min-w-0"
                             href=crate::routes::recipe_view::recipe_href(data.recipe.key_id.0, &world(), &recipe_query.get())
                         >
                             <div class="shrink-0">
@@ -4038,6 +4050,8 @@ fn RecipeAnalyzerTable(
                                 })}
                             </div>
                         </a>
+                        <BreakdownToggle selected=breakdown_selected recipe_id=data.recipe.key_id.0 item_name=item_name />
+                        </div>
                     </div>
                 }
                 .into_any()
@@ -4081,8 +4095,8 @@ fn RecipeAnalyzerTable(
                     })
                 };
                 let sub_badge = {
-                    let has_sub_crafts = !data.sub_crafts.is_empty();
-                    let sub_crafts = data.sub_crafts.clone();
+                    let has_sub_crafts = !data.breakdown.sub_crafts.is_empty();
+                    let sub_crafts = data.breakdown.sub_crafts.clone();
                     view! {
                         <Show when=move || has_sub_crafts>
                             {
@@ -4269,7 +4283,7 @@ fn RecipeAnalyzerTable(
             }
             ColumnKind::Actions => view! {
                 <div  class=format!("{class} ")>
-                    <AddRecipeToList recipe=data.recipe />
+                    <AddRecipeToList recipe=data.recipe initial_hq=require_hq.get_untracked().unwrap_or(false) />
                 </div>
             }
             .into_any(),
@@ -4423,7 +4437,7 @@ fn RecipeAnalyzerTable(
                     picker=native_picker
                     custom_measure=Arc::new(move |data: &RecipeRow, kind| {
                         match kind {
-                            ColumnKind::Item => (items.get(&ItemId(data.recipe.item_result)).map(|i|i.name.as_str()).unwrap_or_default().to_string(),80.0),
+                            ColumnKind::Item => (items.get(&ItemId(data.recipe.item_result)).map(|i|i.name.as_str()).unwrap_or_default().to_string(),108.0),
                             ColumnKind::Profit => (data.profit().map(|p| p.separate_with_commas()).unwrap_or_default(), 42.0),
                             ColumnKind::CostSlot => (data.cost.separate_with_commas(),42.0),
                             ColumnKind::SalesPerDay7 => (format!("{:.1}",data.daily_sales),40.0),
@@ -4568,6 +4582,19 @@ fn RecipeAnalyzerTable(
             }}
 
             {grid}
+            <RecipeBreakdownDrawer
+                selected=breakdown_selected
+                rows=computed_data
+                shards=Signal::derive(move || if exclude_shards_enabled() {
+                    ShardsMode::ExcludeShards
+                } else {
+                    ShardsMode::IncludeMarket
+                })
+                require_hq=Signal::derive(move || require_hq().unwrap_or(false))
+                revenue_signal=Signal::derive(move || formula.get().revenue_signal())
+                revenue_place=revenue_place
+                window=window
+            />
         </div>
     }
 }
@@ -4592,6 +4619,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
     seed_analyzer_default_view("recipe-analyzer");
+    let breakdown_selected = RwSignal::new(None::<i32>);
     let query = use_query_map_or_default();
     let (selected_world, set_selected_world) = use_analyzer_world("/recipe-analyzer");
     let region = use_region_for_world(move || selected_world.get().map(|world| world.name));
@@ -5293,6 +5321,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         home_world_id=home_world_id
                                         on_pill=on_pill
                                         market=market
+                                        breakdown_selected=breakdown_selected
                                     />
                                 }.into_any()
                             }
@@ -6589,6 +6618,85 @@ mod test {
         needed_signals(&f, &wants, false)
     }
 
+    /// The drawer explains the Cost column, so the run a row keeps must be
+    /// the selected signal's — not whichever alternative ran last — and its
+    /// lines must add up to exactly the number the column shows.
+    #[test]
+    fn the_kept_breakdown_is_the_selected_signals_run() {
+        for cost in PriceSignal::ALL {
+            let rows = run_with(
+                cost,
+                PriceSignal::ListingMin,
+                &RunOpts {
+                    needs: everything_wanted(cost),
+                    ..RunOpts::default()
+                },
+            );
+            assert!(!rows.is_empty(), "{cost:?}");
+            for r in &rows {
+                let model = breakdown::breakdown_model(
+                    &r.breakdown,
+                    r.recipe.amount_result,
+                    ShardsMode::ExcludeShards,
+                );
+                assert!(!model.lines.is_empty(), "{cost:?}");
+                let lines: i32 = model.lines.iter().filter_map(|l| l.total).sum();
+                assert_eq!(lines, model.cost_per_craft, "{cost:?}");
+                assert_eq!(model.cost_per_unit, r.cost, "{cost:?}");
+                assert_eq!(r.cost_alt[cost.index()], Some(r.cost), "{cost:?}");
+            }
+        }
+    }
+
+    /// Server-rendered, so no hydration: the drawer names the recipe, one
+    /// row per ingredient, the add-to-list button and the ledger's profit.
+    #[test]
+    fn the_breakdown_drawer_renders_the_selected_row() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+            let first = rows.first().expect("a priced fixture row").clone();
+            let id = first.recipe.key_id.0;
+            let expected_lines = first.breakdown.ingredient_lines.len();
+            let profit = first.profit().expect("priced");
+            let sorted: Vec<(usize, RecipeRow)> =
+                rows.into_iter().map(Arc::new).enumerate().collect();
+            let rows = Memo::new(move |_| sorted.clone());
+            let selected = RwSignal::new(Some(id));
+            let render = || {
+                view! {
+                    <breakdown::RecipeBreakdownDrawer
+                        selected
+                        rows
+                        shards=ShardsMode::ExcludeShards
+                        require_hq=false
+                        revenue_signal=PriceSignal::ListingMin
+                        revenue_place="Gilgamesh".to_string()
+                        window=Window::D7
+                    />
+                }
+                .to_html()
+            };
+            let html = render();
+            assert!(
+                html.contains(&format!("data-recipe-breakdown=\"{id}\"")),
+                "{html}"
+            );
+            assert_eq!(html.matches("data-breakdown-line=").count(), expected_lines);
+            assert!(html.contains("data-recipe-breakdown-add"));
+            assert!(html.contains("Add to craft list"));
+            assert!(html.contains(&format!("data-breakdown-profit=\"{profit}\"")));
+            assert!(
+                html.contains("Gilgamesh"),
+                "the revenue line names the place"
+            );
+            selected.set(None);
+            assert!(!render().contains("data-recipe-breakdown="));
+        });
+    }
+
     /// The drop rule, ROI and the row set are the selected pair's alone;
     /// alternative columns are informational.
     #[test]
@@ -7519,7 +7627,7 @@ mod test {
             }),
             cost: 1,
             cheapest_world_id: world,
-            sub_crafts: vec![],
+            breakdown: Arc::default(),
             daily_sales: daily,
             avg_price: 0,
             total_sales: 0,

@@ -1,8 +1,8 @@
 use crate::analysis::{
     DELTA_DEAD_BAND_PCT, DerivedConfidence, SaleSummary, derived_confidence,
-    flip_estimated_sale_price, flip_profit, get_sales_cadence, is_troll_listing,
+    flip_estimated_sale_price, flip_profit, flip_sale_prices, get_sales_cadence, is_troll_listing,
     median_in_place_i32, price_drift_pct, profit_per_day_from_rate, return_on_investment,
-    roi_badge_class, sale_tax, signed_delta_class, sniper_clamp, velocity_per_day,
+    roi_badge_class, sale_tax, signed_delta_class, velocity_per_day,
 };
 use crate::analyzer_kit::calculation::{
     Calculation, CalculationPlace, CalculationStrip, CalculationTerm,
@@ -19,6 +19,7 @@ use crate::analyzer_kit::{
     signals::{StatsIndex, stat_only},
 };
 use crate::columnar_wire::columnar_resource;
+use crate::components::crafting_cost::vendor_price_map;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
@@ -609,7 +610,14 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
         .collect()
 }
 
-fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
+/// `vendor_price` is the item's NPC gil-shop price when an NPC sells it (see
+/// [`drop_laundering`](crate::analysis::drop_laundering)). When every sale is
+/// laundering the price fields come back 0 — no credible price exists.
+fn compute_summary(
+    sale: SaleData,
+    filter_outliers: bool,
+    vendor_price: Option<i32>,
+) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
 
@@ -627,10 +635,12 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
         };
     }
 
-    // 1 & 2. Sniper-clamp: drop sales priced below 10% of the raw median, unless
-    // that would remove everything.
-    let clamped = sniper_clamp(sales.iter().map(|s| s.price_per_unit).collect());
-    let mut clamped = clamped;
+    // 1 & 2. Drop laundering, then sniper-clamp: drop sales priced below 10%
+    // of the raw median, unless that would remove everything.
+    let mut clamped = flip_sale_prices(
+        sales.iter().map(|s| s.price_per_unit).collect(),
+        vendor_price,
+    );
     let min_price = clamped.iter().copied().min().unwrap_or(0);
     let max_price = clamped.iter().copied().max().unwrap_or(0);
     let median_price = median_in_place_i32(&mut clamped);
@@ -644,6 +654,8 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
         } else {
             (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32
         }
+    } else if clamped.is_empty() {
+        0
     } else {
         (clamped.iter().map(|&p| p as i64).sum::<i64>() / clamped.len() as i64) as i32
     };
@@ -709,12 +721,16 @@ impl std::fmt::Display for SortMode {
 }
 
 impl ProfitTable {
+    /// `vendor_prices` maps item id to NPC gil-shop price for the items an
+    /// NPC actually sells (`vendor_price_map`); it anchors the laundering
+    /// guard in [`compute_summary`].
     fn new(
         sales: RecentSales,
         global_cheapest_listings: CheapestListings,
         world_cheapest_listings: CheapestListings,
         cross_region: Vec<CheapestListings>,
         filter_outliers: bool,
+        vendor_prices: &HashMap<i32, i32>,
     ) -> Self {
         let mut region_cheapest = listings_to_map(global_cheapest_listings);
         let world_cheapest = listings_to_map(world_cheapest_listings);
@@ -746,7 +762,14 @@ impl ProfitTable {
                 // Capture the wire-order prices before `compute_summary` consumes
                 // the SaleData — the Drift column reads them newest-first.
                 let prices: Vec<i32> = sale.sales.iter().map(|s| s.price_per_unit).collect();
-                let summary = compute_summary(sale, filter_outliers);
+                let summary =
+                    compute_summary(sale, filter_outliers, vendor_prices.get(&item_id).copied());
+
+                // Every recent sale was laundering: there is no price to
+                // estimate a flip from.
+                if summary.median_price <= 0 {
+                    return None;
+                }
 
                 // Troll-listing guard: if the region floor is implausibly high vs the median,
                 // drop the row entirely — the displayed "deal" would be fictional.
@@ -2730,6 +2753,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     w,
                     cross,
                     filter_outliers,
+                    vendor_price_map(),
                 ))),
                 failed: false,
             },
@@ -3262,7 +3286,7 @@ mod tests {
             false,
             &[(100, 0), (110, 1), (120, 2), (130, 3), (140, 4), (150, 5)],
         );
-        let summary = compute_summary(row, false);
+        let summary = compute_summary(row, false, None);
         // Six even-length sample: the conservative median is the lower middle
         // (third of six), never the average of the two middles.
         assert_eq!(summary.median_price, 120);
@@ -3277,7 +3301,7 @@ mod tests {
             false,
             &[(1, 0), (100, 1), (110, 2), (120, 3), (130, 4), (140, 5)],
         );
-        let summary = compute_summary(row, false);
+        let summary = compute_summary(row, false, None);
         // Median of remaining [100, 110, 120, 130, 140] = 120.
         assert_eq!(summary.median_price, 120);
         // min_price should also reflect the clamp, not the sniper.
@@ -3292,7 +3316,7 @@ mod tests {
             false,
             &[(500, 0), (510, 1), (520, 2), (530, 3), (540, 4), (550, 5)],
         );
-        let summary = compute_summary(row, false);
+        let summary = compute_summary(row, false, None);
         assert_eq!(summary.min_price, 500);
         assert_eq!(summary.median_price, 520);
     }
@@ -3335,7 +3359,7 @@ mod tests {
             }],
         };
 
-        let table = ProfitTable::new(sales, region, world, vec![], false);
+        let table = ProfitTable::new(sales, region, world, vec![], false, &HashMap::new());
         // The troll 999M region listing should cause the row to be dropped entirely
         // (the displayed "deal" would be fictional). table.0 should be empty.
         assert_eq!(table.0.len(), 0);
@@ -3380,7 +3404,7 @@ mod tests {
             }],
         };
 
-        let table = ProfitTable::new(sales, region, world, vec![], false);
+        let table = ProfitTable::new(sales, region, world, vec![], false, &HashMap::new());
         // Row is kept (region floor is sane), but the troll world floor is ignored —
         // estimated_sale_price falls through to median, not the troll value.
         assert_eq!(table.0.len(), 1);
@@ -3433,7 +3457,7 @@ mod tests {
             }],
         };
 
-        let table = ProfitTable::new(sales, region, world, vec![], false);
+        let table = ProfitTable::new(sales, region, world, vec![], false, &HashMap::new());
         assert_eq!(table.0.len(), 1);
         let row = &table.0[0];
         assert_eq!(row.sale_summary.median_price, 1000);
@@ -3446,22 +3470,76 @@ mod tests {
     /// and no local listing existed to cap the median.
     #[test]
     fn conservative_estimate_ignores_laundering_half_of_the_buffer() {
+        let table = fang_earrings_table(
+            &[
+                (23_005, 3),
+                (20_005, 10),
+                (918_000_000, 14),
+                (916_000_000, 14),
+                (916_000_000, 14),
+                (13_005, 18),
+            ],
+            &HashMap::new(),
+        );
+        assert_eq!(table.0.len(), 1);
+        let row = &table.0[0];
+        // The laundered half is removed outright, so the estimate is the
+        // median of the three real sales rather than the highest of them.
+        assert_eq!(row.sale_summary.median_price, 20_005);
+        assert_eq!(row.sale_summary.max_price, 23_005);
+        assert_eq!(row.estimated_sale_price, 20_005);
+    }
+
+    /// Four laundered sales in six outvote any median. The vendor ceiling
+    /// catches them (Fang Earrings vendor for 384 gil), and so does the gap
+    /// test for an item no NPC sells.
+    #[test]
+    fn conservative_estimate_ignores_laundering_majority_of_the_buffer() {
+        let buffer = [
+            (23_005, 3),
+            (918_000_000, 10),
+            (916_000_000, 14),
+            (916_000_000, 14),
+            (916_000_000, 14),
+            (13_005, 18),
+        ];
+        for vendor_prices in [HashMap::from([(4204, 384)]), HashMap::new()] {
+            let table = fang_earrings_table(&buffer, &vendor_prices);
+            assert_eq!(table.0.len(), 1);
+            let row = &table.0[0];
+            assert_eq!(row.sale_summary.median_price, 13_005, "{vendor_prices:?}");
+            assert_eq!(row.estimated_sale_price, 13_005, "{vendor_prices:?}");
+            // The buffer still counts every sale; only the price ignores them.
+            assert_eq!(row.sale_summary.num_sold, 6);
+        }
+    }
+
+    /// Every buffered sale above the vendor ceiling: no credible price, so
+    /// no row — rather than a row priced off laundering.
+    #[test]
+    fn fully_laundered_vendor_item_has_no_row() {
+        let table = fang_earrings_table(
+            &[
+                (918_000_000, 3),
+                (916_000_000, 10),
+                (916_000_000, 14),
+                (916_000_000, 14),
+                (916_000_000, 14),
+                (916_000_000, 18),
+            ],
+            &HashMap::from([(4204, 384)]),
+        );
+        assert_eq!(table.0.len(), 0);
+    }
+
+    /// Fang Earrings NQ (item 4204) as on Gilgamesh: buyable at 5,000 in the
+    /// region, no listing on the sell world to cap the median.
+    fn fang_earrings_table(sales: &[(i32, i64)], vendor_prices: &HashMap<i32, i32>) -> ProfitTable {
         use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
         use ultros_api_types::recent_sales::RecentSales;
 
         let sales = RecentSales {
-            sales: vec![sales_row(
-                4204,
-                false,
-                &[
-                    (23_005, 3),
-                    (20_005, 10),
-                    (918_000_000, 14),
-                    (916_000_000, 14),
-                    (916_000_000, 14),
-                    (13_005, 18),
-                ],
-            )],
+            sales: vec![sales_row(4204, false, sales)],
         };
         let region = CheapestListings {
             cheapest_listings: vec![CheapestListingItem {
@@ -3471,16 +3549,10 @@ mod tests {
                 world_id: 42,
             }],
         };
-        // No listing on the sell world: nothing caps the median.
         let world = CheapestListings {
             cheapest_listings: vec![],
         };
-
-        let table = ProfitTable::new(sales, region, world, vec![], false);
-        assert_eq!(table.0.len(), 1);
-        let row = &table.0[0];
-        assert_eq!(row.sale_summary.median_price, 23_005);
-        assert_eq!(row.estimated_sale_price, 23_005);
+        ProfitTable::new(sales, region, world, vec![], false, vendor_prices)
     }
 
     fn calc(profit: i32, roi: i32, ppd: i32) -> CalculatedProfitData {
@@ -3995,7 +4067,7 @@ mod tests {
             cheapest_listings: vec![],
         };
 
-        let table = ProfitTable::new(sales, region, world, vec![], false);
+        let table = ProfitTable::new(sales, region, world, vec![], false, &HashMap::new());
         assert_eq!(table.0.len(), 1);
         assert_eq!(table.0[0].prices, vec![90, 95, 100, 300, 110, 105]);
     }

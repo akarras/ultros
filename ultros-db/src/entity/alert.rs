@@ -16,6 +16,10 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::alert_back_in_stock::Entity")]
+    AlertBackInStock,
+    #[sea_orm(has_many = "super::alert_below_median::Entity")]
+    AlertBelowMedian,
     #[sea_orm(has_many = "super::alert_discord_destination::Entity")]
     AlertDiscordDestination,
     #[sea_orm(has_many = "super::alert_event::Entity")]
@@ -38,6 +42,18 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     DiscordUser,
+}
+
+impl Related<super::alert_back_in_stock::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AlertBackInStock.def()
+    }
+}
+
+impl Related<super::alert_below_median::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AlertBelowMedian.def()
+    }
 }
 
 impl Related<super::alert_discord_destination::Entity> for Entity {

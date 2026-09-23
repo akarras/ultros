@@ -1475,6 +1475,13 @@ fn ListingsContent(
             <div id="overview" class="scroll-mt-16">
                 <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
                 <DecisionHeader listing_resource filtered_listings world item_id />
+                <crate::routes::item_view_verdicts::ItemVerdicts
+                    listing_resource
+                    filtered_listings
+                    excluded_worlds
+                    world
+                    item_id
+                />
             </div>
             // Right under the verdict: for a bulk buyer, "which world fills
             // 99 cheapest" replaces "which listing is cheapest". One slim row

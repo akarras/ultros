@@ -566,7 +566,15 @@
   }
 
   var TACHYS_FRAME_RE = /^<*tachys::/;
-  var TACHYS_HYDRATION_FRAME_RE = /tachys::hydration::|^<*tachys::.*::hydrate\b/;
+  // `hydrate_async` too: tachys's `HtmlElement::hydrate` and `hydrate_async`
+  // each define an identical, non-generic `inner_1` (cursor step + inlined
+  // `failed_to_cast_element`), the optimizer folds the two into one function,
+  // and the name map can carry the async twin's name. GlitchTip #7964 is the
+  // sync hydrate of a head <meta> trapping in
+  // `<tachys::html::element::HtmlElement<_, _, _> as
+  // tachys::view::RenderHtml>::hydrate_async::{closure#0}::inner_1`.
+  var TACHYS_HYDRATION_FRAME_RE =
+    /tachys::hydration::|^<*tachys::.*::hydrate(?:_async)?\b/;
   var WASM_FRAME_FILE_RE = /\.wasm:wasm-function\[\d+\]/;
   var TRAP_CLASSIFY_DEPTH = 3;
 

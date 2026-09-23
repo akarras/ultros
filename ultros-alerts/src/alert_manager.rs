@@ -9,6 +9,7 @@ use ultros_api_types::{
     websocket::{ListEventData, ListingEventData, SaleEventData},
     world_helper::WorldHelper,
 };
+use ultros_clickhouse::ClickHouseClient;
 use ultros_db::{
     UltrosDb,
     entity::{alert, alert_retainer_undercut},
@@ -18,6 +19,8 @@ use ultros_db::{
 use crate::event::{EventBus, EventProducer, EventType, NotificationEvent};
 
 use super::list_update_alert_tracker::ListUpdateAlertListener;
+use super::market_trigger_tracker::{MarketTriggerListener, MarketTriggerServices};
+use super::median_cache::{ClickHouseBaselineSource, MedianCache};
 use super::price_alert_tracker::{PriceAlertListener, PriceAlertServices};
 use super::sold_alert::RetainerSaleListener;
 use super::undercut_alert::{RetainerAlertListener, RetainerAlertServices, RetainerAlertTx};
@@ -32,6 +35,8 @@ pub struct AlertManagerServices {
     pub world_cache: Arc<WorldCache>,
     pub world_helper: Arc<WorldHelper>,
     pub notifications: EventProducer<NotificationEvent>,
+    /// Source of the 30-day medians below-median alerts compare against.
+    pub ch_client: ClickHouseClient,
 }
 
 /// The alerts whose undercut rules get a listener when the manager starts.
@@ -54,6 +59,7 @@ pub struct AlertManager {
     price_alerts: Option<PriceAlertListener>,
     list_update_alerts: Option<ListUpdateAlertListener>,
     sale_alerts: Option<RetainerSaleListener>,
+    market_alerts: Option<MarketTriggerListener>,
     notifications: EventProducer<NotificationEvent>,
 }
 
@@ -74,6 +80,7 @@ impl AlertManager {
             world_cache,
             world_helper,
             notifications,
+            ch_client,
         } = services;
         // start all alerts we know about from the db, then use the alert busses to monitor for new alerts being spawned
         let mut manager = AlertManager {
@@ -81,6 +88,7 @@ impl AlertManager {
             price_alerts: None,
             list_update_alerts: None,
             sale_alerts: None,
+            market_alerts: None,
             notifications: notifications.clone(),
         };
         match ultros_db.get_all_alerts().await {
@@ -105,6 +113,26 @@ impl AlertManager {
                 }
             }
             Err(e) => error!("Error creating all alerts {e:?}"),
+        }
+        let medians = Arc::new(MedianCache::new(Arc::new(ClickHouseBaselineSource::new(
+            ch_client,
+            world_helper.clone(),
+        ))));
+        match MarketTriggerListener::start(
+            ultros_db.clone(),
+            listings.resubscribe(),
+            alerts.resubscribe(),
+            MarketTriggerServices {
+                ctx: ctx.clone(),
+                world_helper: world_helper.clone(),
+                notifications: notifications.clone(),
+                medians,
+            },
+        )
+        .await
+        {
+            Ok(listener) => manager.market_alerts = Some(listener),
+            Err(e) => error!("failed to start market-trigger alert listener: {e}"),
         }
         match PriceAlertListener::start(
             ultros_db.clone(),
@@ -165,7 +193,11 @@ impl AlertManager {
                                     Ok(retainer_alerts) => {
                                         for retainer_alert in retainer_alerts {
                                             if alert.enabled {
-                                                if !manager.current_retainer_alerts.contains_key(&retainer_alert.id) {
+                                                if manager.current_retainer_alerts.contains_key(&retainer_alert.id) {
+                                                    manager
+                                                        .update_cooldown(&retainer_alert, alert.cooldown_seconds)
+                                                        .await;
+                                                } else {
                                                     manager
                                                         .create_retainer_alert_listener(
                                                             &retainer_alert,
@@ -255,6 +287,17 @@ impl AlertManager {
             let _ = listener
                 .cancellation_sender
                 .send(RetainerAlertTx::Stop)
+                .await;
+        }
+    }
+
+    /// A running listener keeps its own copy of the alert's cooldown; this is
+    /// how an edit reaches it.
+    async fn update_cooldown(&self, alert: &alert_retainer_undercut::Model, cooldown_seconds: i32) {
+        if let Some(listener) = self.current_retainer_alerts.get(&alert.id) {
+            let _ = listener
+                .cancellation_sender
+                .send(RetainerAlertTx::UpdateCooldown(cooldown_seconds))
                 .await;
         }
     }

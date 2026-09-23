@@ -58,6 +58,13 @@ const SYMBOLS = {
   22: "<ultros_app::routes::item_view::ItemView as tachys::view::Render>::hydrate",
   23: "leptos::hydration::hydrate_body",
   24: "reactive_graph::effect::render_effect::RenderEffect<T>::new",
+  // The top three frames of GlitchTip #7964 (prod build 60d983f, Chrome 120),
+  // verbatim: a <meta> in <head> failing to hydrate, where the trapping
+  // function resolves to tachys's `hydrate_async` body rather than `hydrate`.
+  30: "<tachys::html::element::HtmlElement<_, _, _> as tachys::view::RenderHtml>::hydrate_async::{closure#0}::inner_1",
+  31: "<leptos_meta::RegisteredMetaTag<tachys::html::element::elements::Meta, alloc::vec::Vec<tachys::html::attribute::any_attribute::AnyAttribute>, ()> as tachys::view::RenderHtml>::hydrate::<true>",
+  32: "<_ as tachys::view::any_view::IntoAny>::into_any::hydrate_from_server::<leptos_meta::RegisteredMetaTag<tachys::html::element::elements::Meta, alloc::vec::Vec<tachys::html::attribute::any_attribute::AnyAttribute>, ()>>",
+  33: "ultros_client::hydrate::{closure#0}",
 };
 const SYMBOLS_TEXT = Object.entries(SYMBOLS)
   .map(([i, n]) => `${i}:${n}`)
@@ -182,6 +189,21 @@ test("a failed_to_cast closure on top is the hydration panic", async () => {
 test("a tachys Cursor fn inlined into a tachys `hydrate` impl on top is the hydration panic", async () => {
   const env = load({ ua: STALE_CHROME, document: doc() });
   assert.strictEqual(await outcome(env, trap([13, 14, 23])), "dropped");
+});
+
+// GlitchTip #7964: 95 events in the first 90 minutes after #1585 shipped, all
+// the stale-Chrome population, all a head <meta> failing to hydrate.
+test("#7964: a tachys `hydrate_async` body on top (head <meta> mismatch) is the hydration panic", async () => {
+  const env = load({
+    ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    document: doc(),
+  });
+  assert.strictEqual(await outcome(env, trap([30, 31, 32, 33])), "dropped");
+});
+
+test("#7964's frames from a clean current browser are still SENT", async () => {
+  const env = load({ ua: CURRENT_CHROME, document: doc() });
+  assert.strictEqual(await outcome(env, trap([30, 31, 32, 33])), "sent");
 });
 
 test("tachys code on top but no hydration in the top three frames is SENT", async () => {

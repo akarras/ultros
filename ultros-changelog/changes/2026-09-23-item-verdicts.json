@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Sell and craft-or-buy verdicts on item pages",
+  "blurb": "Item pages now open with two quick answers. The sell card suggests a fast price (just under the floor) and a patient one (just above the cheapest cluster of listings), with how many units sit ahead of you and roughly how long they take to sell. For craftable items, the craft card compares the per-unit cost of crafting against buying it, and says how much you save either way."
+}

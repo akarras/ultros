@@ -4,7 +4,7 @@ Date: 2026-09-01
 Status: draft, pending Aaron's review
 Issue: #1233 (part of; never "closes" while phases remain), #1202, #1178
 Supersedes the PR plan of `2026-09-01-recipe-analyzer-profit-formula-columns-design.md`
-(its recipe-analyzer decisions stand and are re-homed onto the kit; its phases 1a/1b/2 become
+(deleted 2026-09-22 as superseded — see git history; its recipe-analyzer decisions stand and are re-homed onto the kit; its phases 1a/1b/2 become
 Phases A/C/D below)
 
 ## Why this spec exists

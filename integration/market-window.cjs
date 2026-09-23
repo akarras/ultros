@@ -38,14 +38,33 @@ async function main() {
   const listingWindowHits = new Map();
   // Every field of ListingWindowStats is required by the wire except the
   // undercut trio; row 42 carries history, row 43 is a synthesized alive row.
+  // History began 12 days ago: the 7-day window is covered, the 30-day one is not.
   const windowBody = (days, now) => {
-    const coverage = { first_observed_unix: now - days * 86400, last_observed_unix: now, observed_span_secs: days * 86400, continuity_verified: false };
-    return { window_days: days, from: now - days * 86400, to: now, additions: 0, removals: 0, listing_coverage: coverage,
-      floor_min: null, floor_max: null, floor_known_secs: 0, floor_empty_secs: 0, floor_unknown_secs: 0,
-      matches: { matched: 0, ambiguous: 0, repriced: 0, unmatched: 0, sales_without_receipt: 0, receipt_coverage: coverage,
-        received_sales: 0, settled_through_unix: now - 601, pending: 0, median_time_to_sell_secs: null, age_origin: 'last_review_time' },
-      stock_status: 'unavailable', days_of_stock: null,
+    const observed = Math.min(days, 12) * 86400;
+    const coverage = { first_observed_unix: now - observed, last_observed_unix: now, observed_span_secs: observed, continuity_verified: false };
+    return { window_days: days, from: now - days * 86400, to: now, additions: days * 2, removals: days, listing_coverage: coverage,
+      floor_min: days === 7 ? 980 : 950, floor_max: 1200, floor_known_secs: observed, floor_empty_secs: 0, floor_unknown_secs: days * 86400 - observed,
+      matches: { matched: 4, ambiguous: 0, repriced: 0, unmatched: 0, sales_without_receipt: 0, receipt_coverage: coverage,
+        received_sales: 4, settled_through_unix: now - 601, pending: 0, median_time_to_sell_secs: 5400, age_origin: 'last_review_time' },
+      stock_status: 'estimated', days_of_stock: 2.5,
       undercuts: days, undercuts_per_day: days === 7 ? 0.29 : 1.5, undercut_median: 0.026 };
+  };
+  // Daily floors: row 42 has 18 unknown days, then a floor that climbs;
+  // row 43 is entirely unknown; row 44 is absent from the response.
+  const floorBodies = [];
+  const floorBody = request => {
+    const { item_ids, from, to, hq } = request;
+    const timestamps = [];
+    for (let t = from; ; t = Math.min(t + 86400, to)) { timestamps.push(t); if (t === to) break; }
+    const series = item_ids.filter(id => id !== 44).map(item_id => {
+      const unknown = item_id === 42 ? timestamps.slice(0, 18) : timestamps;
+      const points = timestamps.map((timestamp, index) => ({ timestamp,
+        price: unknown.includes(timestamp) ? null : 1000 + (index - 18) * 10 }));
+      return { item_id, hq, unknown_timestamps: unknown,
+        history: { from, to, bucket_seconds: 86400, points },
+        bounds: { min: null, max: null, known_secs: 0, empty_secs: 0, unknown_secs: 0 } };
+    });
+    return { series };
   };
   let holdListings = false;
   const heldListings = [];
@@ -55,6 +74,11 @@ async function main() {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
+    if (url.pathname.startsWith('/api/v1/floor_history/') && request.method() === 'POST') {
+      const body = JSON.parse(request.postData());
+      floorBodies.push({ scope: decodeURIComponent(url.pathname.split('/').at(-1)), body });
+      return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(floorBody(body)) }).catch(() => {});
+    }
     if (url.pathname.startsWith('/api/v1/listing_stats/')) {
       // The alive set is one window-free body per scope. Row 42 has three
       // listings, row 43 an empty board, and row 44 is absent; Cactuar fails.
@@ -174,9 +198,8 @@ async function main() {
     assert.equal(hits.get('Gilgamesh/7'), 1, 'default and follow/fixed columns share one request');
     assert.equal(hits.get('Gilgamesh/30'), undefined);
     await page.click('.virtual-grid-heading[data-column="item"]', { button: 'right' });
-    for (const button of await page.$$('.grid-menu-panel button')) {
-      if ((await button.evaluate(el => el.textContent.trim())).startsWith('Insert column after')) { await button.click(); break; }
-    }
+    // Since #1595 the menu's actions are icon buttons named by aria-label.
+    await page.click('.grid-menu-panel button[aria-label^="Insert column after"]');
     await page.waitForSelector('[data-column-picker-group]');
     const groups = await page.$$eval('[data-column-picker-group]', labels => labels.map(el => el.textContent));
     assert(groups.includes('Sale history (selected window)'));
@@ -279,6 +302,46 @@ async function main() {
     await heading('market-undercuts', '(30d)');
     await cell('market-undercuts', '1.50');
     assert.equal(listingWindowHits.get('Gilgamesh/30'), 1, 'returning to a window reuses its slot');
+    await query({ cols: 'market-sale-median,market-sale-median-7', sort: 'grid:market-sale-median', dir: 'asc' });
+    await rows(3);
+
+    // The rest of the listing-history family reads that same window body.
+    await query({ cols: 'market-sale-median,market-floor-min,market-floor-max,market-listings-added,market-listings-removed,market-time-to-sell,market-days-of-stock' });
+    await cell('market-floor-min', '950');
+    await cell('market-floor-max', '1,200');
+    await cell('market-listings-added', '60');
+    await cell('market-listings-removed', '30');
+    await cell('market-time-to-sell', '1h 30m');
+    await cell('market-days-of-stock', '2.5');
+    await cell('market-floor-min', '—'); // row 43: no history row, never a 0-gil floor
+    await heading('market-floor-min', 'Lowest floor (30d)');
+    assert.equal(listingWindowHits.get('Gilgamesh/30'), 1, 'every history column shares the window body');
+    // History younger than the window says so; a covered window does not.
+    const floorTitle = () => page.$eval('[data-metric-sort="market-floor-min"]', el => el.parentElement.title);
+    assert.match(await floorTitle(), /observed about 12 of these 30 days/);
+    await page.select('[data-market-window]', '7');
+    await cell('market-floor-min', '980');
+    assert.doesNotMatch(await floorTitle(), /observed about/);
+    await page.select('[data-market-window]', '30');
+    await cell('market-floor-min', '950');
+
+    // The 30-day floor sparkline: one daily batch per quality, visible rows only.
+    assert.equal(floorBodies.length, 0, 'no floor history before the sparkline is wanted');
+    await query({ cols: 'market-sale-median,market-floor-30' });
+    await heading('market-floor-30', 'Floor trend (30d)');
+    await page.waitForSelector(`${selector('market-floor-30')} svg polyline`);
+    await cell('market-floor-30', '—'); // row 43 unknown throughout; row 44 absent
+    assert.equal(await page.$$eval(`${selector('market-floor-30')} svg`, svgs => svgs.length), 1);
+    assert.equal(floorBodies.length, 1, 'three NQ rows are one request');
+    const [{ scope: floorScope, body: floorRequest }] = floorBodies;
+    assert.equal(floorScope, 'Gilgamesh');
+    assert.deepEqual([...floorRequest.item_ids].sort(), [42, 43, 44]);
+    assert.equal(floorRequest.interval, 'daily');
+    assert.equal(floorRequest.hq, false);
+    assert.equal(floorRequest.to - floorRequest.from, 30 * 86400);
+    assert.equal(floorRequest.to % 3600, 0, 'hour-aligned so visitors share the server cache');
+    assert.equal(await page.$('[data-metric-sort="market-floor-30"]'), null, 'a visible-rows feed never sorts the list');
+    assert(await page.$('.virtual-grid-heading[data-column="market-floor-30"] [title*="shorter line"]'), 'the header explains the trimmed history');
     await query({ cols: 'market-sale-median,market-sale-median-7', sort: 'grid:market-sale-median', dir: 'asc' });
     await rows(3);
 

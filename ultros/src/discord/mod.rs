@@ -227,6 +227,7 @@ pub(crate) async fn start_discord(
                         world_cache: world_cache.clone(),
                         world_helper: world_helper.clone(),
                         notifications: event_senders.notifications.clone(),
+                        ch_client: ch_client.clone(),
                     },
                 ));
                 Ok(Data {

@@ -334,6 +334,37 @@ fn error_reporting_script() -> Option<String> {
     ))
 }
 
+/// The boot-progress bar and its status label, shown from first paint until
+/// hydration. This runs before the wasm loads, so `t!` is unreachable: every
+/// locale's strings ship as one small JSON map and the script picks the entry
+/// matching `<html lang>`. leptos_meta holds `<head>` back until the app has
+/// resolved its locale and injected `lang` into `<html>`, so the attribute is
+/// already the page's language when this runs. The strings are only ever
+/// assigned through `textContent`, never parsed as HTML.
+fn boot_progress_script() -> String {
+    use leptos_i18n::Locale as _;
+    let strings: serde_json::Map<String, serde_json::Value> = Locale::get_all()
+        .iter()
+        .map(|&locale| {
+            let entry = serde_json::json!({
+                "loading": td_string!(locale, boot_loading).to_string(),
+                "failed": td_string!(locale, boot_failed).to_string(),
+                "crashed": td_string!(locale, boot_crashed).to_string(),
+                "slow": td_string!(locale, boot_slow).to_string(),
+                "reload": td_string!(locale, boot_reload).to_string(),
+            });
+            (locale.as_str().to_string(), entry)
+        })
+        .collect();
+    let strings = serde_json::to_string(&strings).expect("boot strings should serialize");
+    [
+        "(function(){try{var L=",
+        &script_escape::escape_for_script_tag(&strings),
+        r#";var root=document.documentElement;var S=L[root.getAttribute('lang')]||L.en;var bar=document.createElement('div');bar.id='boot-progress';var inner=document.createElement('div');inner.id='boot-progress-bar';bar.appendChild(inner);var status=document.createElement('span');status.id='boot-progress-status';status.textContent=S.loading;root.appendChild(bar);root.appendChild(status);var done=false;var finish=function(){if(done)return;done=true;clearTimeout(wd);bar.classList.add('done');setTimeout(function(){if(bar.parentNode)bar.parentNode.removeChild(bar);if(status.parentNode)status.parentNode.removeChild(status);},450)};var fail=function(msg){if(done)return;done=true;clearTimeout(wd);bar.classList.add('error');status.textContent=msg+' — ';var a=document.createElement('a');a.href='';a.textContent=S.reload;a.style.cssText='color:inherit;text-decoration:underline';a.onclick=function(){location.reload();return false};status.appendChild(a)};window.addEventListener('ultros:wasm-loaded',function(){bar.classList.add('mid')});window.addEventListener('ultros:hydrated',finish);window.addEventListener('error',function(e){var f=(e&&e.filename)||'';if(f.indexOf('.wasm')!==-1||f.indexOf('/pkg/')!==-1)fail(S.failed)});window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;var msg=(r&&(r.message||(''+r)))||'';if(msg.indexOf('wasm')!==-1||msg.indexOf('WebAssembly')!==-1)fail(S.crashed)});var wd=setTimeout(function(){fail(S.slow)},30000)}catch(_){}})();"#,
+    ]
+    .concat()
+}
+
 pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
     let error_reporting_script = error_reporting_script();
@@ -367,9 +398,7 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 <style>
     "#boot-progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:99999;pointer-events:none;transition:opacity .4s ease}#boot-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent,#a78bfa),var(--accent-decor,#e3a0ca));box-shadow:0 0 8px rgba(167,139,250,.55);animation:boot-progress-grow 12s cubic-bezier(.05,.7,.1,1) forwards}#boot-progress.mid #boot-progress-bar{animation:boot-progress-mid 3s cubic-bezier(.2,.6,.2,1) forwards}#boot-progress.done{opacity:0}#boot-progress.done #boot-progress-bar{width:100%!important;transition:width .25s ease;animation:none}#boot-progress.error #boot-progress-bar{background:#ef4444;width:100%;animation:none;box-shadow:0 0 8px rgba(239,68,68,.55)}#boot-progress-status{position:fixed;top:8px;right:12px;z-index:99999;font:12px/1.2 system-ui,-apple-system,sans-serif;color:rgba(255,255,255,.55);pointer-events:none;letter-spacing:.02em}#boot-progress.error~#boot-progress-status,#boot-progress.error+#boot-progress-status{color:#fca5a5;pointer-events:auto}@keyframes boot-progress-grow{0%{width:0%}30%{width:25%}60%{width:50%}100%{width:75%}}@keyframes boot-progress-mid{0%{width:75%}100%{width:92%}}@media (prefers-reduced-motion:reduce){#boot-progress-bar{animation-duration:1s!important}#boot-progress{transition:none}}"
                 </style>
-                <script>
-    "(function(){try{var root=document.documentElement;var bar=document.createElement('div');bar.id='boot-progress';var inner=document.createElement('div');inner.id='boot-progress-bar';bar.appendChild(inner);var status=document.createElement('span');status.id='boot-progress-status';status.textContent='Loading\\u2026';root.appendChild(bar);root.appendChild(status);var done=false;var finish=function(){if(done)return;done=true;clearTimeout(wd);bar.classList.add('done');setTimeout(function(){if(bar.parentNode)bar.parentNode.removeChild(bar);if(status.parentNode)status.parentNode.removeChild(status);},450)};var fail=function(msg){if(done)return;done=true;clearTimeout(wd);bar.classList.add('error');status.innerHTML=msg+' \\u2014 <a href=\"\" onclick=\"location.reload();return false\" style=\"color:inherit;text-decoration:underline\">reload</a>'};window.addEventListener('ultros:wasm-loaded',function(){bar.classList.add('mid')});window.addEventListener('ultros:hydrated',finish);window.addEventListener('error',function(e){var f=(e&&e.filename)||'';if(f.indexOf('.wasm')!==-1||f.indexOf('/pkg/')!==-1)fail('Failed to load app')});window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;var msg=(r&&(r.message||(''+r)))||'';if(msg.indexOf('wasm')!==-1||msg.indexOf('WebAssembly')!==-1)fail('App crashed during load')});var wd=setTimeout(function(){fail('Loading is taking longer than expected')},30000)}catch(_){}})();"
-                </script>
+                <script inner_html=boot_progress_script() />
                 <link
                     id="xiv-icons"
                     rel="stylesheet"
@@ -958,6 +987,25 @@ mod region_locale_guess_tests {
             region_locale_guess(Some("中国"), None, false, Locale::ja),
             None
         );
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod boot_progress_tests {
+    /// The pre-wasm boot script embeds every locale's strings, so a locale
+    /// missing from the map would silently fall back to English.
+    #[test]
+    fn boot_script_carries_every_locale() {
+        let script = super::boot_progress_script();
+        for locale in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            assert!(script.contains(&format!("\"{locale}\":{{")), "{locale}");
+        }
+        assert!(script.contains("Loading is taking longer than expected"));
+        assert!(script.contains("読み込み中…"));
+        // Nothing in the payload may close the inline <script> element.
+        assert!(!script.contains("</"));
+        // Translations reach the DOM only as text, never as markup.
+        assert!(!script.contains("innerHTML"));
     }
 }
 

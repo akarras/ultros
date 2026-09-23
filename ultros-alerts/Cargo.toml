@@ -29,6 +29,7 @@ tokio = { workspace = true }
 tokio-util = { version = "0.7.18" }
 tracing = { workspace = true }
 ultros-api-types = { path = "../ultros-api-types" }
+ultros-clickhouse = { path = "../ultros-clickhouse" }
 ultros-db = { path = "../ultros-db" }
 ultros-server-core = { path = "../ultros-server-core" }
 url = "2.5.8"

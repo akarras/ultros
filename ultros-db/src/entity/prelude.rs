@@ -2,6 +2,8 @@
 
 pub use super::active_listing::Entity as ActiveListing;
 pub use super::alert::Entity as Alert;
+pub use super::alert_back_in_stock::Entity as AlertBackInStock;
+pub use super::alert_below_median::Entity as AlertBelowMedian;
 pub use super::alert_discord_destination::Entity as AlertDiscordDestination;
 pub use super::alert_event::Entity as AlertEvent;
 pub use super::alert_item_threshold::Entity as AlertItemThreshold;
