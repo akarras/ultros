@@ -5,9 +5,11 @@ pub mod csv_to_rkyv;
 
 pub mod browser;
 mod deserialize_custom;
+pub mod id_map;
 pub mod subrow_key;
 
 use deserialize_custom::*;
+pub use id_map::{IdMap, RowId};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -88,6 +90,12 @@ macro_rules! define_id {
         // in archived `Data`, so it has to implement Hash + Eq.
         #[archive_attr(derive(PartialEq, Eq, Hash))]
         pub struct $name(pub i32);
+
+        impl $crate::id_map::RowId for $name {
+            fn row_id(&self) -> i32 {
+                self.0
+            }
+        }
     };
 }
 
@@ -1360,18 +1368,18 @@ pub struct CraftLeve {
 )]
 #[archive(check_bytes)]
 pub struct Data {
-    pub items: HashMap<ItemId, Item>,
-    pub recipes: HashMap<RecipeId, Recipe>,
-    pub class_jobs: HashMap<ClassJobId, ClassJob>,
-    pub class_job_categorys: HashMap<ClassJobCategoryId, ClassJobCategory>,
-    pub base_params: HashMap<BaseParamId, BaseParam>,
-    pub special_shops: HashMap<SpecialShopId, SpecialShop>,
-    pub leves: HashMap<LeveId, Leve>,
-    pub leve_reward_items: HashMap<LeveRewardItemId, LeveRewardItem>,
-    pub leve_reward_item_groups: HashMap<LeveRewardItemGroupId, LeveRewardItemGroup>,
-    pub e_npc_residents: HashMap<ENpcResidentId, ENpcResident>,
-    pub gil_shops: HashMap<GilShopId, GilShop>,
-    pub gil_shop_items: HashMap<GilShopId, Vec<GilShopItem>>,
+    pub items: IdMap<ItemId, Item>,
+    pub recipes: IdMap<RecipeId, Recipe>,
+    pub class_jobs: IdMap<ClassJobId, ClassJob>,
+    pub class_job_categorys: IdMap<ClassJobCategoryId, ClassJobCategory>,
+    pub base_params: IdMap<BaseParamId, BaseParam>,
+    pub special_shops: IdMap<SpecialShopId, SpecialShop>,
+    pub leves: IdMap<LeveId, Leve>,
+    pub leve_reward_items: IdMap<LeveRewardItemId, LeveRewardItem>,
+    pub leve_reward_item_groups: IdMap<LeveRewardItemGroupId, LeveRewardItemGroup>,
+    pub e_npc_residents: IdMap<ENpcResidentId, ENpcResident>,
+    pub gil_shops: IdMap<GilShopId, GilShop>,
+    pub gil_shop_items: IdMap<GilShopId, Vec<GilShopItem>>,
     /// Which NPCs offer each gil shop, resolved at pack-generation time.
     ///
     /// The game models this the other way round: `ENpcBase.ENpcData` lists the
@@ -1386,49 +1394,49 @@ pub struct Data {
     /// sheets are dropped. Values are the ids of NPCs that have an
     /// `ENpcResident` row (the ones that can actually be displayed), sorted
     /// ascending so render order is stable between SSR and hydration.
-    pub gil_shop_npcs: HashMap<GilShopId, Vec<ENpcResidentId>>,
+    pub gil_shop_npcs: IdMap<GilShopId, Vec<ENpcResidentId>>,
     /// Which NPCs offer each special shop (currency and item exchanges), built
     /// the same way as [`Data::gil_shop_npcs`] and by the same walk. Special
     /// shops sit behind two more kinds of handler than gil shops do: the
     /// tabbed scrip/tomestone exchanges are `InclusionShop`s (category ->
     /// series -> special shop), and a few dozen sit in a `CustomTalk` script's
     /// arguments or nested handlers. See `csv_to_rkyv::ShopRoutes`.
-    pub special_shop_npcs: HashMap<SpecialShopId, Vec<ENpcResidentId>>,
+    pub special_shop_npcs: IdMap<SpecialShopId, Vec<ENpcResidentId>>,
     /// Which NPCs run each collectables shop. The material exchanges reference
     /// their shop from an NPC data slot like any other; the scrip turn-in
     /// counters (Collectable Appraisers) are all one `CustomTalk` script, so
     /// they are attributed to every `RewardType = 1` shop by rule.
-    pub collectables_shop_npcs: HashMap<CollectablesShopId, Vec<ENpcResidentId>>,
-    pub item_search_categorys: HashMap<ItemSearchCategoryId, ItemSearchCategory>,
-    pub item_ui_categorys: HashMap<ItemUiCategoryId, ItemUiCategory>,
-    pub item_sort_categorys: HashMap<ItemSortCategoryId, ItemSortCategory>,
-    pub company_craft_sequences: HashMap<CompanyCraftSequenceId, CompanyCraftSequence>,
-    pub company_craft_parts: HashMap<CompanyCraftPartId, CompanyCraftPart>,
-    pub company_craft_processs: HashMap<CompanyCraftProcessId, CompanyCraftProcess>,
-    pub company_craft_supply_items: HashMap<CompanyCraftSupplyItemId, CompanyCraftSupplyItem>,
+    pub collectables_shop_npcs: IdMap<CollectablesShopId, Vec<ENpcResidentId>>,
+    pub item_search_categorys: IdMap<ItemSearchCategoryId, ItemSearchCategory>,
+    pub item_ui_categorys: IdMap<ItemUiCategoryId, ItemUiCategory>,
+    pub item_sort_categorys: IdMap<ItemSortCategoryId, ItemSortCategory>,
+    pub company_craft_sequences: IdMap<CompanyCraftSequenceId, CompanyCraftSequence>,
+    pub company_craft_parts: IdMap<CompanyCraftPartId, CompanyCraftPart>,
+    pub company_craft_processs: IdMap<CompanyCraftProcessId, CompanyCraftProcess>,
+    pub company_craft_supply_items: IdMap<CompanyCraftSupplyItemId, CompanyCraftSupplyItem>,
     pub company_craft_draft_categorys:
-        HashMap<CompanyCraftDraftCategoryId, CompanyCraftDraftCategory>,
-    pub company_craft_types: HashMap<CompanyCraftTypeId, CompanyCraftType>,
-    pub company_craft_drafts: HashMap<CompanyCraftDraftId, CompanyCraftDraft>,
-    pub retainer_tasks: HashMap<RetainerTaskId, RetainerTask>,
-    pub retainer_task_normals: HashMap<RetainerTaskNormalId, RetainerTaskNormal>,
-    pub recipe_level_tables: HashMap<RecipeLevelTableId, RecipeLevelTable>,
-    pub collectables_shops: HashMap<CollectablesShopId, CollectablesShop>,
-    pub collectables_shop_items: HashMap<CollectablesShopItemId, Vec<CollectablesShopItem>>,
+        IdMap<CompanyCraftDraftCategoryId, CompanyCraftDraftCategory>,
+    pub company_craft_types: IdMap<CompanyCraftTypeId, CompanyCraftType>,
+    pub company_craft_drafts: IdMap<CompanyCraftDraftId, CompanyCraftDraft>,
+    pub retainer_tasks: IdMap<RetainerTaskId, RetainerTask>,
+    pub retainer_task_normals: IdMap<RetainerTaskNormalId, RetainerTaskNormal>,
+    pub recipe_level_tables: IdMap<RecipeLevelTableId, RecipeLevelTable>,
+    pub collectables_shops: IdMap<CollectablesShopId, CollectablesShop>,
+    pub collectables_shop_items: IdMap<CollectablesShopItemId, Vec<CollectablesShopItem>>,
     pub collectables_shop_reward_scrips:
-        HashMap<CollectablesShopRewardScripId, CollectablesShopRewardScrip>,
-    pub craft_leves: HashMap<CraftLeveId, CraftLeve>,
-    pub place_names: HashMap<PlaceNameId, PlaceName>,
-    pub maps: HashMap<MapId, Map>,
-    pub territory_types: HashMap<TerritoryTypeId, TerritoryType>,
+        IdMap<CollectablesShopRewardScripId, CollectablesShopRewardScrip>,
+    pub craft_leves: IdMap<CraftLeveId, CraftLeve>,
+    pub place_names: IdMap<PlaceNameId, PlaceName>,
+    pub maps: IdMap<MapId, Map>,
+    pub territory_types: IdMap<TerritoryTypeId, TerritoryType>,
     /// Placements of the NPCs the app can show: gil-shop vendors, exchange
     /// and collectables NPCs, and leve issuers. Sorted by (territory, x, y)
     /// so render order is stable between SSR and hydration.
-    pub npc_placements: HashMap<ENpcResidentId, Vec<NpcPlacement>>,
+    pub npc_placements: IdMap<ENpcResidentId, Vec<NpcPlacement>>,
     /// Which NPCs offer each leve, from Teamcraft's hand-kept levemete table
     /// (`data/npc-locations/leve-issuers.json`). `Leve.LevelLevemete` is the
     /// *delivery* NPC, not the issuer, so this cannot be derived from sheets.
-    pub leve_issuers: HashMap<LeveId, Vec<ENpcResidentId>>,
+    pub leve_issuers: IdMap<LeveId, Vec<ENpcResidentId>>,
 }
 
 impl HasId for Item {

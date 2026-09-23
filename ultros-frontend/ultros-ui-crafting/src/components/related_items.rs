@@ -571,10 +571,10 @@ fn vendor_sources_for_item(item_id: i32) -> Vec<VendorSource> {
                 })
         })
         .collect();
-    // `gil_shop_items` is a std HashMap whose iteration order is randomized per
-    // process (RandomState). Without a stable sort the SSR server and the
-    // hydrating wasm client emit the vendor rows in different orders, desyncing
-    // the DOM and tripping tachys' hydration walker (#6831).
+    // Rows are gathered across several shops, so their order is the walk's,
+    // not any one table's. Without a stable sort the SSR server and the
+    // hydrating wasm client can emit the vendor rows in different orders,
+    // desyncing the DOM and tripping tachys' hydration walker (#6831).
     sources.sort_unstable_by_key(|s| (s.npc.key_id.0, s.shop.0));
     sources
 }
@@ -738,15 +738,14 @@ fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
 /// Collect the special shops that trade for `item_id`, in a stable,
 /// `key_id`-ascending order.
 ///
-/// `special_shops` is a `std::collections::HashMap` whose iteration order is
-/// randomized per process (`RandomState`). The SSR server process and the
-/// client wasm instance each build their own copy of the game data, so an
-/// unsorted `.values()` yields the shops in a *different* order on each side.
-/// That makes the server-rendered DOM and the hydrating DOM disagree, tripping
-/// tachys' hydration walker (`failed_to_cast_element`) — the #6831 crash.
-/// Sorting by the stable `key_id` makes both sides render the same sequence.
+/// The SSR server process and the client wasm instance each build their own
+/// copy of the game data. If the two ever yield the shops in a different
+/// order, the server-rendered DOM and the hydrating DOM disagree and tachys'
+/// hydration walker trips (`failed_to_cast_element`) — the #6831 crash.
+/// `special_shops` is an `IdMap` and so already iterates in `key_id` order;
+/// sorting states the requirement at the boundary that has to hold it.
 fn exchange_shops_for_item(
-    special_shops: &std::collections::HashMap<xiv_gen::SpecialShopId, SpecialShop>,
+    special_shops: &xiv_gen::IdMap<xiv_gen::SpecialShopId, SpecialShop>,
     item_id: i32,
 ) -> Vec<&SpecialShop> {
     special_shops
@@ -1239,15 +1238,13 @@ mod tests {
         assert_eq!(get_trade_costs(&multiple_offers, 123).len(), 2);
     }
 
-    /// Regression guard for #6831: the exchange-source shops must come out in a
-    /// stable, `key_id`-ascending order no matter what order they sit in the
-    /// (randomly seeded) `special_shops` HashMap. If this order ever depends on
-    /// HashMap iteration order again, SSR and CSR render different DOM and the
-    /// item page crashes on hydration.
+    /// Regression guard for #6831: the exchange-source shops must come out in
+    /// a stable, `key_id`-ascending order no matter what order they were put
+    /// into `special_shops`. If this order ever becomes insertion-dependent,
+    /// SSR and CSR render different DOM and the item page crashes on
+    /// hydration.
     #[test]
     fn exchange_shops_for_item_is_deterministically_sorted() {
-        use std::collections::HashMap;
-
         // A shop whose first receive slot trades for `received`.
         fn mk_shop(key_id: i32, received: u16) -> SpecialShop {
             SpecialShop {
@@ -1267,7 +1264,7 @@ mod tests {
             }
         }
 
-        let mut shops = HashMap::new();
+        let mut shops = xiv_gen::IdMap::new();
         // Insert in a deliberately non-ascending key order.
         for key_id in [7, 2, 9, 4, 1] {
             shops.insert(xiv_gen::SpecialShopId(key_id), mk_shop(key_id, 123));
@@ -1281,8 +1278,8 @@ mod tests {
             .map(|shop| shop.key_id.0)
             .collect();
 
-        // Ascending key_id order regardless of HashMap seed — the deterministic
-        // sequence both SSR and CSR must produce.
+        // Ascending key_id order regardless of insertion order — the
+        // deterministic sequence both SSR and CSR must produce.
         assert_eq!(ids, vec![1, 2, 4, 7, 9]);
     }
 }
@@ -1290,8 +1287,8 @@ mod tests {
 pub fn leve_rewards_item(
     leve: &Leve,
     item_id: i32,
-    reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
-    groups: &std::collections::HashMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
+    reward_items: &xiv_gen::IdMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
+    groups: &xiv_gen::IdMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
 ) -> bool {
     if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item)) {
         // Check all 8 groups

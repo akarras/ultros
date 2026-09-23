@@ -286,6 +286,45 @@ fn en_pack_carries_npc_placements_and_map_sheets() {
     );
 }
 
+/// Every table is stored in ascending row-id order.
+///
+/// This is what makes the pack compress: the sheets are runs of near-identical
+/// rows, and in id order those runs sit inside zlib's window. Packing `items`
+/// in hash order instead cost 1.1 MB of the ~2.5 MB English pack. It is also
+/// what lets the SSR render and the hydrating client walk a table in the same
+/// sequence without each call site sorting first.
+#[test]
+fn en_pack_tables_are_in_row_id_order() {
+    let Some(data) = decode_en_pack("en_pack_tables_are_in_row_id_order") else {
+        return;
+    };
+    macro_rules! assert_sorted {
+        ($($table:ident),* $(,)?) => {
+            $(
+                let ids: Vec<i32> = data.$table.keys().map(|k| k.0).collect();
+                assert!(
+                    ids.windows(2).all(|w| w[0] < w[1]),
+                    concat!(stringify!($table), " is not in ascending row-id order"),
+                );
+            )*
+        };
+    }
+    assert_sorted!(
+        items,
+        recipes,
+        special_shops,
+        gil_shops,
+        gil_shop_items,
+        e_npc_residents,
+        leves,
+        place_names,
+        maps,
+        territory_types,
+        npc_placements,
+        leve_issuers,
+    );
+}
+
 /// Decodes the committed pack, or returns `None` after explaining why it could
 /// not (missing file or un-pulled LFS stub) so a fresh clone stays green.
 fn decode_en_pack(test_name: &str) -> Option<xiv_gen::Data> {

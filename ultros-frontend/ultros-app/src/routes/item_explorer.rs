@@ -237,14 +237,14 @@ pub(crate) fn job_category_lookup(
 /// When `market_only` is true, drops items without an `item_search_category`
 /// (FFXIV's "not listable on the market board" flag).
 ///
-/// Returned in **ascending `ItemId` order**. `data.items` is a HashMap whose
-/// iteration order differs between the server's SSR process and the client's
-/// WASM process (different `RandomState` seed). Downstream `For` rendering
-/// and the `JobSetCard` grid both lay out children in iteration order, so a
-/// divergence drives the view tree out of sync with the SSR DOM and tachys
-/// panics at `hydration.rs:163` (`failed_to_cast_element`) on
-/// `/items/jobset/<JOB>`. Sorting by `ItemId` pins one order across both
-/// processes.
+/// Returned in **ascending `ItemId` order**. Downstream `For` rendering and
+/// the `JobSetCard` grid both lay out children in iteration order, so any
+/// divergence between the SSR process' order and the WASM process' drives the
+/// view tree out of sync with the SSR DOM and tachys panics at
+/// `hydration.rs:163` (`failed_to_cast_element`) on `/items/jobset/<JOB>`.
+/// `data.items` is an `IdMap`, which already iterates in row-id order on both
+/// sides; sorting keeps that guarantee at this helper's own boundary, where
+/// the filters above may reorder nothing but the intent is explicit.
 pub(crate) fn collect_job_items_sorted<'a>(
     data: &'a xiv_gen::Data,
     canonical_abbr: &str,
@@ -284,8 +284,8 @@ pub(crate) fn collect_job_items_sorted<'a>(
 /// The name match is kept as a fallback so links minted before the switch to
 /// ids keep resolving; it carries exactly the locale caveat it always had.
 /// Duplicate names (`Primary Tools` is both id 2 and id 3) are broken by
-/// lowest id rather than by `HashMap` iteration order, so the fallback is at
-/// least deterministic across the two processes.
+/// lowest id rather than by whatever the table yields first, so the fallback
+/// is at least deterministic across the two processes.
 pub(crate) fn resolve_category_param<'a>(
     data: &'a xiv_gen::Data,
     raw_param: &str,
@@ -1859,7 +1859,7 @@ mod tests {
     }
 
     /// `Primary Tools` is the name of both id 2 and id 3. The name fallback
-    /// must not pick between them by `HashMap` iteration order, or it
+    /// must not pick between them by table iteration order, or it
     /// reintroduces the very SSR/CSR divergence the id key removes.
     #[test]
     fn duplicate_category_names_resolve_to_the_lowest_id() {
@@ -1891,12 +1891,10 @@ mod tests {
     #[test]
     fn collect_job_items_returns_ascending_ids() {
         // Hydration regression for tachys `hydration.rs:163`
-        // (`failed_to_cast_element`) panics on `/items/jobset/<JOB>`:
-        // `data.items` is a HashMap whose iteration order differs between
-        // the server's SSR process and the client's WASM process, and the
+        // (`failed_to_cast_element`) panics on `/items/jobset/<JOB>`: the
         // downstream `For` / card-grid rendering is order-sensitive during
-        // hydration. The helper must return a deterministic order so the
-        // SSR DOM and client view tree match.
+        // hydration, so the helper must return a deterministic order or the
+        // SSR DOM and client view tree stop matching.
         let data = xiv_gen_db::data();
         let items = collect_job_items_sorted(data, "DNC", true);
         assert!(

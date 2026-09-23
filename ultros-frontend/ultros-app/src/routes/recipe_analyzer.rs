@@ -2471,7 +2471,7 @@ struct PriceInputs<'a> {
     listing_stats_match: bool,
     stats_failed: StatFailures,
     recipes: &'a [&'static Recipe],
-    recipe_level_tables: &'static HashMap<RecipeLevelTableId, xiv_gen::RecipeLevelTable>,
+    recipe_level_tables: &'static xiv_gen::IdMap<RecipeLevelTableId, xiv_gen::RecipeLevelTable>,
     recipes_by_output: &'a HashMap<ItemId, Vec<&'static Recipe>>,
     /// Buy-scope listings.
     buy_listings: &'a CheapestListingsMap,
