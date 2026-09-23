@@ -62,7 +62,8 @@ fn QuantityStepper(quantity: Signal<i64>, set_quantity: Callback<i64>) -> impl I
                     type="button"
                     class=step_class
                     aria-label=move || t_string!(i18n, bulk_basket_decrease_aria).to_string()
-                    disabled=move || quantity.get() <= 1
+                    // Braced: a bare `<`/`>` in an attribute ends the tag in `view!`.
+                    disabled=move || { quantity.get() <= 1 }
                     on:click=move |_| set_quantity.run(quantity.get_untracked() - 1)
                 >
                     "−"
@@ -86,7 +87,7 @@ fn QuantityStepper(quantity: Signal<i64>, set_quantity: Callback<i64>) -> impl I
                     type="button"
                     class=step_class
                     aria-label=move || t_string!(i18n, bulk_basket_increase_aria).to_string()
-                    disabled=move || quantity.get() >= MAX_QUANTITY
+                    disabled=move || { quantity.get() >= MAX_QUANTITY }
                     on:click=move |_| set_quantity.run(quantity.get_untracked() + 1)
                 >
                     "+"
@@ -132,17 +133,17 @@ fn basket_cells(basket: &Basket) -> impl IntoView + use<> {
     let received = basket.received();
     let missing = basket.missing();
     view! {
-        <td class="px-2 py-1.5 text-right font-semibold" title=move || {
+        <td class="px-2 py-1.5 align-middle text-right font-semibold" title=move || {
             approximate.then(|| t_string!(i18n, bulk_basket_approximate).to_string())
         }>
             <GilTotal amount=cost approximate />
         </td>
-        <td class="px-2 py-1.5 text-right">
+        <td class="px-2 py-1.5 align-middle text-right">
             {unit.map(|unit| view! { <GilTotal amount=unit /> })}
         </td>
-        <td class="px-2 py-1.5 text-right">{listings}</td>
-        <td class="px-2 py-1.5 text-right">{retainers}</td>
-        <td class="px-2 py-1.5 text-right">
+        <td class="px-2 py-1.5 align-middle text-right">{listings}</td>
+        <td class="px-2 py-1.5 align-middle text-right">{retainers}</td>
+        <td class="px-2 py-1.5 align-middle text-right">
             {if missing > 0 {
                 view! {
                     <span class="font-semibold text-amber-300">
@@ -199,7 +200,7 @@ fn BasketTable(baskets: BulkBaskets, show_all: RwSignal<bool>) -> impl IntoView 
                 class="border-b border-[color:var(--color-outline)] bg-emerald-500/10"
                 data-testid="bulk-basket-cross-world"
             >
-                <td class="px-2 py-1.5 text-left">
+                <td class="px-2 py-1.5 align-middle text-left">
                     <div class="font-semibold text-emerald-200">
                         {t!(i18n, bulk_basket_cross_world, count = worlds)}
                     </div>
@@ -222,7 +223,7 @@ fn BasketTable(baskets: BulkBaskets, show_all: RwSignal<bool>) -> impl IntoView 
                     class:opacity-60=short
                     class:hidden=move || { index >= COLLAPSED_WORLDS && !show_all.get() }
                 >
-                    <td class="px-2 py-1.5 text-left">
+                    <td class="px-2 py-1.5 align-middle text-left">
                         <WorldName id=AnySelector::World(row.world) />
                     </td>
                     {basket_cells(&row.basket)}
