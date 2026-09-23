@@ -379,18 +379,26 @@ mod tests {
 
     #[test]
     fn a_connected_place_lists_the_other_regions_on_the_chip() {
-        let html = connected_chip(CONNECTED_PLACE, "North-America");
-        for region in ["Europe", "Japan", "Oceania"] {
+        let html = connected_chip(CONNECTED_PLACE, "Oceania");
+        for region in ["Europe", "Japan", "North-America"] {
             assert!(
                 html.contains(&format!("data-connected-region=\"{region}\"")),
                 "{region}"
             );
         }
         // The home region is the market itself, never a toggle.
-        assert!(!html.contains("data-connected-region=\"North-America\""));
+        assert!(!html.contains("data-connected-region=\"Oceania\""));
         // With no opt-outs in the URL every partner is bought from.
         assert_eq!(html.matches("aria-pressed=\"true\"").count(), 3);
         assert!(!html.contains("connected-regions-enable"));
+    }
+
+    #[test]
+    fn a_spoke_region_reaches_only_the_hub() {
+        let html = connected_chip(CONNECTED_PLACE, "North-America");
+        assert!(html.contains("data-connected-region=\"Oceania\""));
+        assert!(!html.contains("data-connected-region=\"Europe\""));
+        assert!(!html.contains("data-connected-region=\"Japan\""));
     }
 
     #[test]

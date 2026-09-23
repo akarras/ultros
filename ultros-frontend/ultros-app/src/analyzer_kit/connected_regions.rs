@@ -24,16 +24,25 @@ use crate::{
 /// own services and are never connected.
 pub const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
 
+/// Travel between regions is a hub, not a mesh: every connected region links
+/// to Oceania, and none of the others link to each other. Europe is two hops
+/// from North-America, which is not somewhere to go shopping.
+const HUB_REGION: &str = "Oceania";
+
 /// Whether `region` can reach the others at all.
 pub fn is_connected_region(region: &str) -> bool {
     CONNECTED_REGIONS.contains(&region)
 }
 
-/// The regions a character in `home` can travel to, excluding `home` itself.
-/// Empty when `home` is not a connected region.
+/// The regions a character in `home` can travel to directly, excluding
+/// `home` itself: everything from the hub, the hub from anywhere else. Empty
+/// when `home` is not a connected region.
 pub fn partner_regions(home: &str) -> Vec<&'static str> {
     if !is_connected_region(home) {
         return Vec::new();
+    }
+    if home != HUB_REGION {
+        return vec![HUB_REGION];
     }
     CONNECTED_REGIONS
         .iter()
@@ -291,10 +300,13 @@ mod tests {
     }
 
     #[test]
-    fn partners_exclude_home_and_unconnected_regions_have_none() {
+    fn every_region_reaches_the_hub_and_only_the_hub_reaches_all() {
+        for home in ["Europe", "Japan", "North-America"] {
+            assert_eq!(partner_regions(home), vec!["Oceania"], "{home}");
+        }
         assert_eq!(
-            partner_regions("North-America"),
-            vec!["Europe", "Japan", "Oceania"]
+            partner_regions("Oceania"),
+            vec!["Europe", "Japan", "North-America"]
         );
         assert!(partner_regions("China").is_empty());
         assert!(!is_connected_region("Korea"));
