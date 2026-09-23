@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Flip Finder sees through gil laundering even when it fills most recent sales",
+  "blurb": "The Flip Finder's conservative estimate now throws out sales that can only be gil laundering before taking the middle of recent sales. A sale over a million gil for an item any NPC sells for a few hundred is ignored, as is a sale over a million gil that towers fifty times above the item's other recent sales. Previously, four laundering sales out of six could still put a nine-figure estimate on an item that really sells for 20,000 gil. The item page's flip comparison card uses the same rules.",
+  "link": "/flip-finder"
+}

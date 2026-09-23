@@ -1,7 +1,7 @@
 use super::oauth::AuthDiscordUser;
 use crate::web::shutdown::until_shutdown;
 use crate::{
-    alerts::undercut_alert::{Undercut, UndercutTracker},
+    alerts::undercut_alert::{DetectedUndercut, Undercut, UndercutTracker},
     event::EventReceivers,
     utils,
 };
@@ -148,9 +148,13 @@ async fn handle_upgrade(
                                 None => {
                                     continue;
                                 }
-                                Some(Undercut {
-                                    item_id,
-                                    undercut_retainers,
+                                Some(DetectedUndercut {
+                                    undercut:
+                                        Undercut {
+                                            item_id,
+                                            undercut_retainers,
+                                        },
+                                    ..
                                 }) => {
                                     let item_name = utils::get_item_name(item_id).to_string();
                                     Action::Tx(AlertsTx::RetainerUndercut {

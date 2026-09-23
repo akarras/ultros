@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Alerts for bargains and restocks",
+  "blurb": "Two new alert types from the bell on any item: \"Below median\" tells you when a listing appears at least a chosen percentage under the item's 30-day median on your world, data center or region (HQ compared with HQ, NQ with NQ), and \"Back in stock\" tells you when an item that has had no listings for at least ten minutes is listed again. Items with too little sales history to trust are skipped until they have more. Both work with Discord, webhooks, push and the inbox, and from Discord as /ffxiv alert below-median and /ffxiv alert back-in-stock.",
+  "link": "/alerts"
+}

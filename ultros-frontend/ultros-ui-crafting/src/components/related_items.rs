@@ -227,6 +227,9 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                         vendor_prices: Some(vendor_price_map()),
                     };
                     let hq = compute_cost(recipe, prices, &recipes_by_output, &hq_opts, &is_shard_item);
+                    // One craft yields `amount_result` units; show what one unit
+                    // costs, the same basis the profit chip compares to a price.
+                    let (hq, lq) = (hq.per_unit(recipe.amount_result), lq.per_unit(recipe.amount_result));
 
                     Some(view! {
                         <span class="flex flex-row gap-2 items-center flex-wrap">
@@ -443,7 +446,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
             <div class="grid gap-3 pt-3 border-t border-brand-700/30 sm:grid-cols-2">
                 <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <span class="text-brand-300">{t!(i18n, related_recipe_est_cost)}</span>
+                    <span class="flex flex-wrap items-baseline gap-1.5">
+                        <span class="text-brand-300">{t!(i18n, related_recipe_est_unit_cost)}</span>
+                        {(recipe.amount_result > 1).then(|| view! {
+                            <span class="text-xs text-[color:var(--color-text-muted)]">
+                                {t!(i18n, related_recipe_yield_note, n = move || recipe.amount_result)}
+                            </span>
+                        })}
+                    </span>
                     <RecipePriceEstimate recipe />
                 </div>
 
@@ -490,6 +500,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                 vendor_prices: Some(vendor_price_map()),
                             };
                             let hq = compute_cost(recipe, data, &recipes_by_output, &hq_opts, &is_shard_item);
+                            // Listing prices are per unit, so compare them to the
+                            // cost of one unit, not of the whole (multi-yield) craft.
+                            let (hq, lq) = (hq.per_unit(recipe.amount_result), lq.per_unit(recipe.amount_result));
 
                             let lq_sell = data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }).map(|d| d.price);
                             let hq_sell = if target_item.can_be_hq {
@@ -511,10 +524,10 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
                             Some(view! {
                                 <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
-                                    <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
+                                    <span class="text-brand-300">{t!(i18n, related_recipe_est_unit_profit)}</span>
                                     <div class="flex flex-wrap justify-end gap-2">
-                                        {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq.cost))}
-                                        {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq.cost))}
+                                        {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| hq.profit(p)))}
+                                        {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| lq.profit(p)))}
                                     </div>
                                 </div>
                             }.into_any())

@@ -12,6 +12,7 @@ leptos = { workspace = true, features = [
 ] }
 leptos_i18n = { workspace = true }
 log = "0.4.29"
+thousands = "0.2.0"
 time = "0.3.47"
 ultros-api-types = { path = "../../ultros-api-types" }
 ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }

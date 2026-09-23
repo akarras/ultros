@@ -174,10 +174,25 @@ fn finish(needed: i64, offers: Vec<Offer>, vendor: Option<i64>, approximate: boo
     }
 }
 
+/// Knapsack cells (`needed * offers`) `purchase` solves exactly. Route search
+/// re-solves every item once per candidate world set, so it stays small.
+pub const PURCHASE_BUDGET: usize = 200_000;
+
 /// Bounded 0/1 knapsack: listings cannot be split or reused. Vendor supply can
 /// fill any remaining quantity. Large batches use two greedy candidates and
 /// explicitly mark the result as a best-found estimate, never an exact optimum.
 pub fn purchase(needed: i64, offers: &[Offer], vendor: Option<i64>) -> Purchase {
+    purchase_with_budget(needed, offers, vendor, PURCHASE_BUDGET)
+}
+
+/// [`purchase`] with a caller-chosen exact-solve budget in knapsack cells, for
+/// callers that solve one item once rather than once per route.
+pub fn purchase_with_budget(
+    needed: i64,
+    offers: &[Offer],
+    vendor: Option<i64>,
+    budget: usize,
+) -> Purchase {
     let vendor = vendor.filter(|p| *p > 0);
     let mut seen = BTreeSet::new();
     let offers: Vec<_> = offers
@@ -192,7 +207,7 @@ pub fn purchase(needed: i64, offers: &[Offer], vendor: Option<i64>) -> Purchase 
     if supply < needed && vendor.is_none() {
         return finish(needed, offers, None, false);
     }
-    if needed > 10_000 || needed as usize * offers.len() > 200_000 {
+    if needed > 10_000 || needed as usize * offers.len() > budget {
         let mut candidates = Vec::new();
         for by_stack in [false, true] {
             let mut sorted = offers.clone();

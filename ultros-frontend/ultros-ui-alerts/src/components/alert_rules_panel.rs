@@ -1,6 +1,7 @@
 use icondata as i;
 use leptos::{prelude::*, task::spawn_local};
 use ultros_api_types::alert::{Alert, AlertTrigger, Endpoint, UpdateAlertRequest};
+use ultros_api_types::world_helper::AnySelector;
 use xiv_gen::ItemId;
 
 use crate::api::{delete_alert, get_alerts, list_endpoints, patch_alert};
@@ -30,6 +31,32 @@ struct AlertRow {
     world_str: String,
     hq_str: String,
     endpoints_str: String,
+}
+
+/// Item name, world and HQ cells shared by every item-scoped trigger (item
+/// price, below median, back in stock) — only the threshold cell differs.
+fn item_scope_cells(
+    i18n: I18nContext<Locale, crate::i18n::I18nKeys>,
+    item_id: i32,
+    world_selector: AnySelector,
+    hq_only: bool,
+) -> (String, String, String) {
+    let name = tracked_data()
+        .items
+        .get(&ItemId(item_id))
+        .map(|it| it.name.as_str().to_string())
+        .unwrap_or_else(|| format!("Item {item_id}"));
+    let world = match world_selector {
+        AnySelector::World(id) => format!("World({id})"),
+        AnySelector::Datacenter(id) => format!("DC({id})"),
+        AnySelector::Region(id) => format!("Region({id})"),
+    };
+    let hq = if hq_only {
+        t_string!(i18n, alerts_hq_any).to_string()
+    } else {
+        t_string!(i18n, alerts_any).to_string()
+    };
+    (name, world, hq)
 }
 
 /// Skeleton columns matching [`alert_rules_columns`]'s seven columns, in the
@@ -265,29 +292,36 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                             hq_only,
                                             world_selector,
                                         } => {
-                                            let name = tracked_data()
-                                                .items
-                                                .get(&ItemId(item_id))
-                                                .map(|it| it.name.as_str().to_string())
-                                                .unwrap_or_else(|| format!("Item {item_id}"));
-                                            let threshold = format!("≤ {price_threshold} gil");
-                                            let world = match world_selector {
-                                                ultros_api_types::world_helper::AnySelector::World(id) => {
-                                                    format!("World({id})")
-                                                }
-                                                ultros_api_types::world_helper::AnySelector::Datacenter(id) => {
-                                                    format!("DC({id})")
-                                                }
-                                                ultros_api_types::world_helper::AnySelector::Region(id) => {
-                                                    format!("Region({id})")
-                                                }
-                                            };
-                                            let hq = if hq_only {
-                                                t_string!(i18n, alerts_hq_any).to_string()
-                                            } else {
-                                                t_string!(i18n, alerts_any).to_string()
-                                            };
-                                            (name, threshold, world, hq)
+                                            let (name, world, hq) =
+                                                item_scope_cells(i18n, item_id, world_selector, hq_only);
+                                            (name, format!("≤ {price_threshold} gil"), world, hq)
+                                        }
+                                        AlertTrigger::BelowMedian {
+                                            item_id,
+                                            world_selector,
+                                            percent_below,
+                                            hq_only,
+                                        } => {
+                                            let (name, world, hq) =
+                                                item_scope_cells(i18n, item_id, world_selector, hq_only);
+                                            let condition = t_string!(
+                                                i18n,
+                                                alerts_below_median_rule,
+                                                percent = percent_below
+                                            )
+                                            .to_string();
+                                            (name, condition, world, hq)
+                                        }
+                                        AlertTrigger::BackInStock {
+                                            item_id,
+                                            world_selector,
+                                            hq_only,
+                                        } => {
+                                            let (name, world, hq) =
+                                                item_scope_cells(i18n, item_id, world_selector, hq_only);
+                                            let condition =
+                                                t_string!(i18n, alert_kind_back_in_stock).to_string();
+                                            (name, condition, world, hq)
                                         }
                                         AlertTrigger::ListItemThreshold { list_id } => (
                                             format!("List #{list_id}"),

@@ -242,3 +242,50 @@ async fn a_body_tearing_down_its_own_tree_does_not_deadlock() {
     .await;
     assert!(finished.is_ok(), "the body blocked on its own teardown");
 }
+
+/// The window the in-flight guard alone left open (the `context.rs:213`
+/// tail of GlitchTip #7382 that kept firing after the guard shipped): the
+/// effect task has already taken its wake-up off the channel, and the
+/// teardown checks the tracker, finds nothing running and clears the arena
+/// before the task gets to enter its body. The body must not run then.
+///
+/// This races the effect task's first poll against the teardown on real
+/// threads, so a single iteration rarely lands in the window; enough of
+/// them do.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_effect_body_never_starts_after_its_tree_is_torn_down() {
+    _ = Executor::init_tokio();
+    let ran_disposed = Arc::new(AtomicUsize::new(0));
+
+    for i in 0..20_000u32 {
+        let owner = Owner::new();
+        let signal = owner.with(|| {
+            let signal = RwSignal::new(1);
+            Effect::new_isomorphic({
+                let ran_disposed = Arc::clone(&ran_disposed);
+                move |_| {
+                    if signal.try_get().is_none() {
+                        ran_disposed.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            });
+            signal
+        });
+        // Stagger the teardown against the effect task's first poll.
+        for _ in 0..(i % 64) {
+            std::hint::spin_loop();
+        }
+        owner.unset_with_forced_cleanup();
+        drop(signal);
+        if i % 256 == 0 {
+            tokio::task::yield_now().await;
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert_eq!(
+        ran_disposed.load(Ordering::SeqCst),
+        0,
+        "an effect body started after its tree was torn down"
+    );
+}

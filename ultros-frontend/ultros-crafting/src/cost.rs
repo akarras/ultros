@@ -1,6 +1,7 @@
 //! Crafting costs from caller-supplied recipes, prices, and inventory.
 
 use std::collections::HashMap;
+use ultros_calc::formula::per_unit_cost;
 use ultros_calc::pricing::PriceLookup;
 use xiv_gen::{ItemId, Recipe};
 
@@ -91,7 +92,7 @@ pub struct MarketPurchase {
     pub hq: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CostBreakdown {
     /// Resolved cost for the `require_hq` flavor of the caller's options.
     /// Surfaces that need both HQ and LQ totals call `compute_cost` twice
@@ -110,6 +111,35 @@ pub struct CostBreakdown {
     /// `ExcludeShards` and actual vendor purchases are not counted, and the
     /// winning sub-run's count propagates up.
     pub unpriced_market_lines: u16,
+}
+
+impl CostBreakdown {
+    /// The breakdown's gil totals for one unit of output. `cost` covers one
+    /// execution of the recipe, which yields `amount_result` units, while
+    /// market prices are per unit — divide before comparing (as the
+    /// sub-craft pass does).
+    pub fn per_unit(&self, amount_result: i32) -> UnitCost {
+        UnitCost {
+            cost: per_unit_cost(self.cost, amount_result),
+            shard_cost: per_unit_cost(self.shard_cost, amount_result),
+            on_hand_savings: per_unit_cost(self.on_hand_savings, amount_result),
+        }
+    }
+}
+
+/// [`CostBreakdown`]'s gil totals divided by the recipe's yield.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct UnitCost {
+    pub cost: i32,
+    pub shard_cost: i32,
+    pub on_hand_savings: i32,
+}
+
+impl UnitCost {
+    /// Profit from selling one unit at `unit_price`.
+    pub fn profit(&self, unit_price: i32) -> i32 {
+        unit_price - self.cost
+    }
 }
 
 /// Iterator over the (non-zero) ingredients of a recipe. Moved from
@@ -1192,6 +1222,47 @@ mod tests {
         assert_eq!(cb.cost, 10);
         assert_eq!(cb.sub_crafts.len(), 1);
         assert_eq!(cb.sub_crafts[0].unit_cost, 10);
+    }
+
+    #[test]
+    fn multi_yield_recipe_is_priced_and_profited_per_unit() {
+        // One craft: 2x item 1000 (@100) + 5x shard 1001 (@5) yields 3 units.
+        // Per craft: 200 cost (shards excluded), 25 shard value, and one of
+        // the 1000s is on hand (100 saved). A unit sells for 100.
+        let prices = fixture_shard_recipe_prices();
+        let cats = fixture_categories();
+        let recipe = make_recipe_yielding(&[(1000, 3), (1001, 5)], 2000, 3);
+        let oh = MapOnHand::new(&[(1000, 1)]);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: None,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let cb = compute_cost(&recipe, &prices, &by_output, &opts, &is_shard);
+        assert_eq!(
+            (cb.cost, cb.shard_cost, cb.on_hand_savings),
+            (200, 25, 100),
+            "compute_cost stays per craft"
+        );
+
+        let unit = cb.per_unit(recipe.amount_result);
+        assert_eq!(
+            unit,
+            UnitCost {
+                cost: 66,
+                shard_cost: 8,
+                on_hand_savings: 33,
+            }
+        );
+        // Against a single-unit sale price the craft is profitable; comparing
+        // the whole craft's cost would have called it a 100g loss.
+        assert_eq!(unit.profit(100), 34);
+        // A 0 yield (bad sheet row) is one unit, never a division by zero.
+        assert_eq!(cb.per_unit(0).cost, 200);
     }
 
     #[test]
