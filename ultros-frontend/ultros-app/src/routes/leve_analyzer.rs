@@ -1,7 +1,7 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
+use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -250,6 +250,7 @@ fn leve_metrics() -> Vec<GridMetric<(usize, Arc<LeveProfitData>)>> {
 
 #[component]
 fn LeveAnalyzerTable(
+    scope: MarketScope,
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
@@ -618,8 +619,10 @@ fn LeveAnalyzerTable(
                 t_string!(i18n, calculation_fixed_gil).to_string(),
                 None,
             ),
-            CalculationTerm::input(TermRole::Revenue, "revenue", "revenue"),
-            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost"),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "revenue")
+                .with_place(scope.name.into()),
+            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost")
+                .with_place_select(scope.place()),
         ],
         Some("cost-basis"),
     );
@@ -838,7 +841,6 @@ pub fn LeveAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <MarketScopeControl scope/>
                 </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -848,6 +850,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
                             (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <LeveAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
                                         world=region.into()
@@ -858,6 +861,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
                             (Some(Ok(listings)), _) => {
                                 view! {
                                     <LeveAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
                                         recent_sales=None
                                         world=region.into()

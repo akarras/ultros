@@ -4,7 +4,9 @@ use crate::analysis::{
     median_in_place_i32, price_drift_pct, profit_per_day_from_rate, return_on_investment,
     roi_badge_class, sale_tax, signed_delta_class, sniper_clamp, velocity_per_day,
 };
-use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
+use crate::analyzer_kit::calculation::{
+    Calculation, CalculationPlace, CalculationStrip, CalculationTerm,
+};
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
 };
@@ -1820,6 +1822,8 @@ fn AnalyzerTable(
                         t_string!(i18n, analyzer_cross_region_enabled).to_string(),
                     );
                     control.clear_with_filters = false;
+                    // Picked on the Buy price chip, not in the filter menu.
+                    control.calculation = true;
                     control
                 },
                 {
@@ -1993,6 +1997,28 @@ fn AnalyzerTable(
         .partial(),
     ];
     let worlds_for_measure = worlds.clone();
+    // The buy side's market: the home region, or it plus every connected
+    // region (`?cross=`). Only a connected region can widen.
+    let (cross_region, set_cross_region) = filter_query_signal::<bool>("cross");
+    let buy_place = CalculationPlace {
+        value: Signal::derive(move || cross_region.get().unwrap_or_default().to_string()),
+        options: Signal::derive(move || {
+            let current = region
+                .get()
+                .unwrap_or_else(|| t_string!(i18n, analyzer_scope_region).to_string());
+            let connected = CONNECTED_REGIONS.contains(&current.as_str());
+            let widened = t_string!(
+                i18n,
+                analyzer_scope_connected_regions,
+                region = current.clone()
+            )
+            .to_string();
+            vec![("false", current, true), ("true", widened, connected)]
+        }),
+        on_change: Callback::new(move |value: String| {
+            set_cross_region.set((value == "true").then_some(true));
+        }),
+    };
     let calculation = Calculation::provide(
         registry,
         vec![
@@ -2007,7 +2033,8 @@ fn AnalyzerTable(
                 TermRole::Cost,
                 t_string!(i18n, analyzer_col_buy_price).to_string(),
                 Some("buy_price"),
-            ),
+            )
+            .with_place_select(buy_place),
         ],
         Some("revenue"),
     );

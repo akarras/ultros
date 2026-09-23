@@ -14,6 +14,7 @@
   "analyzer_scope_world": "Welt",
   "analyzer_scope_datacenter": "Rechenzentrum",
   "analyzer_scope_region": "Region",
+  "analyzer_scope_connected_regions": "{{region}} + verbundene Regionen",
   "analyzer_listing_hide_suspicious": "Verdächtige Angebotsbewertungen ausblenden",
   "analyzer_listing_unverified_label": "Ungeprüfte Angebotsschätzung",
   "analyzer_listing_unverified_help": "Für Qualität und Markt dieses Angebots gibt es keinen passenden Vergleich aus dem Verkaufsverlauf. Fehlender Verlauf belegt nicht, dass der Angebotspreis realistisch ist.",

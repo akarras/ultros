@@ -14,6 +14,7 @@
   "analyzer_scope_world": "Monde",
   "analyzer_scope_datacenter": "Centre de données",
   "analyzer_scope_region": "Région",
+  "analyzer_scope_connected_regions": "{{region}} + régions connectées",
   "analyzer_listing_hide_suspicious": "Masquer les estimations d'annonces suspectes",
   "analyzer_listing_unverified_label": "Estimation d'annonce non vérifiée",
   "analyzer_listing_unverified_help": "Aucun historique de ventes comparable n'est disponible pour la qualité et le marché de cette annonce. L'absence d'historique ne prouve pas que le prix demandé est réaliste.",

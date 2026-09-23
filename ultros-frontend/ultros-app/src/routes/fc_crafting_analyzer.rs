@@ -2,7 +2,7 @@ use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
+use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -339,6 +339,7 @@ fn calculate_fc_project_cost<P: PriceLookup + ?Sized>(
 
 #[component]
 fn FCCraftingAnalyzerTable(
+    scope: MarketScope,
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
@@ -630,8 +631,10 @@ fn FCCraftingAnalyzerTable(
                 t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(),
                 Some("profit"),
             ),
-            CalculationTerm::input(TermRole::Revenue, "revenue", "market-price"),
-            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost"),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "market-price")
+                .with_place(scope.name.into()),
+            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost")
+                .with_place_select(scope.place()),
         ],
         Some("cost-basis"),
     );
@@ -946,7 +949,6 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <MarketScopeControl scope/>
                 </ToolHeader>
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -956,6 +958,7 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                             (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <FCCraftingAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
                                         world=region.into()
@@ -966,6 +969,7 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                              (Some(Ok(listings)), _) => {
                                 view! {
                                     <FCCraftingAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
                                         recent_sales=None
                                         world=region.into()

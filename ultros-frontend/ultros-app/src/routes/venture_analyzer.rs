@@ -1,7 +1,7 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
+use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -222,6 +222,7 @@ fn venture_metrics() -> Vec<GridMetric<(usize, Arc<VentureProfitData>)>> {
 
 #[component]
 fn VentureAnalyzerTable(
+    scope: MarketScope,
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
@@ -469,7 +470,8 @@ fn VentureAnalyzerTable(
                 t_string!(i18n, venture_analyzer_col_profit).to_string(),
                 Some("profit"),
             ),
-            CalculationTerm::input(TermRole::Value, "revenue", "unit-price"),
+            CalculationTerm::input(TermRole::Value, "revenue", "unit-price")
+                .with_place_select(scope.place()),
             CalculationTerm::fixed(
                 TermRole::Multiply,
                 t_string!(i18n, calculation_quantity).to_string(),
@@ -679,7 +681,6 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <MarketScopeControl scope/>
                 </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -689,6 +690,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <VentureAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
                                         world=region.into()
@@ -699,6 +701,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             (Some(Ok(listings)), _) => {
                                 view! {
                                     <VentureAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
                                         recent_sales=None
                                         world=region.into()

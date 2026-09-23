@@ -19,6 +19,23 @@ pub struct CalculationTerm {
     pub label: String,
     pub column: Option<&'static str>,
     pub key: Option<&'static str>,
+    /// The market this term is priced in, read-only: `Revenue · Aether`.
+    /// For a term that follows another term's picker.
+    pub place: Option<Signal<String>>,
+    /// The market this term is priced in, picked on the chip itself:
+    /// `Cost · [Aether ▾]`. Wins over `place`.
+    pub place_select: Option<CalculationPlace>,
+}
+
+/// A market picked inline on a term chip, as the recipe analyzer's strip
+/// does, instead of a separate scope control in the page header.
+#[derive(Clone, Copy)]
+pub struct CalculationPlace {
+    pub value: Signal<String>,
+    /// `(token, label, enabled)`. Labels name the place ("Aether"), not the
+    /// tier, so the chip reads as the market it prices from.
+    pub options: Signal<Vec<(&'static str, String, bool)>>,
+    pub on_change: Callback<String>,
 }
 
 impl CalculationTerm {
@@ -28,6 +45,8 @@ impl CalculationTerm {
             label,
             column,
             key: None,
+            place: None,
+            place_select: None,
         }
     }
 
@@ -37,7 +56,19 @@ impl CalculationTerm {
             label: String::new(),
             column: Some(column),
             key: Some(key),
+            place: None,
+            place_select: None,
         }
+    }
+
+    pub fn with_place(mut self, place: Signal<String>) -> Self {
+        self.place = Some(place);
+        self
+    }
+
+    pub fn with_place_select(mut self, place: CalculationPlace) -> Self {
+        self.place_select = Some(place);
+        self
     }
 }
 
@@ -146,6 +177,7 @@ impl Calculation {
 
 #[component]
 pub fn CalculationStrip(calculation: Calculation, window: MarketWindow) -> impl IntoView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
     view! {
         <div class="flex flex-wrap items-center gap-2" data-analyzer-price-controls>
             {calculation.terms.get_value().into_iter().map(|term| {
@@ -166,6 +198,25 @@ pub fn CalculationStrip(calculation: Calculation, window: MarketWindow) -> impl 
                                     </select>
                                 </label>
                             }.into_any(),
+                        }}
+                        {match (term.place_select, term.place) {
+                            (Some(place), _) => Some(view! {
+                                <span class="inline-flex max-w-full items-center gap-1" data-testid="analyzer-price-scope">
+                                    <span class="filter-chip-label">"·"</span>
+                                    <select class="filter-chip-value max-w-full"
+                                        aria-label=move || t_string!(i18n, analyzer_price_scope).to_string()
+                                        prop:value=move || place.value.get()
+                                        on:change=move |event| place.on_change.run(event_target_value(&event))>
+                                        {move || place.options.get().into_iter().map(|(value, label, enabled)| view! {
+                                            <option value=value disabled=!enabled selected=move || place.value.get() == value>{label}</option>
+                                        }).collect_view()}
+                                    </select>
+                                </span>
+                            }.into_any()),
+                            (None, Some(place)) => Some(view! {
+                                <span class="filter-chip-label">"· " {move || place.get()}</span>
+                            }.into_any()),
+                            (None, None) => None,
                         }}
                     </span>
                 }
@@ -273,6 +324,52 @@ mod tests {
             let html = view! { <CalculationStrip calculation window /> }.to_html();
             assert!(html.contains("Sale median (30d)"));
             assert!(!html.contains("Sale median (7d)"));
+        });
+    }
+
+    #[test]
+    fn a_place_select_renders_inside_its_term_chip() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let window = MarketWindow::new(Window::D7, &Window::ALL);
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            let place = CalculationPlace {
+                value: Signal::derive(|| "datacenter".to_string()),
+                options: Signal::derive(|| {
+                    vec![
+                        ("world", "Gilgamesh".to_string(), true),
+                        ("datacenter", "Aether".to_string(), true),
+                        ("region", "North-America".to_string(), false),
+                    ]
+                }),
+                on_change: Callback::new(|_: String| {}),
+            };
+            let calculation = Calculation::provide(
+                registry,
+                vec![
+                    CalculationTerm::fixed(TermRole::Revenue, "Vendor price".into(), None)
+                        .with_place(Signal::derive(|| "Aether".to_string())),
+                    CalculationTerm::fixed(TermRole::Cost, "Listing".into(), Some("listing"))
+                        .with_place_select(place),
+                ],
+                None,
+            );
+            let html = view! { <CalculationStrip calculation window /> }.to_html();
+            // One picker, on the Listing chip, after its label.
+            assert_eq!(
+                html.matches("data-testid=\"analyzer-price-scope\"").count(),
+                1
+            );
+            assert!(html.find("Listing").unwrap() < html.find("analyzer-price-scope").unwrap());
+            assert!(html.contains("Gilgamesh") && html.contains("North-America"));
+            assert!(html.contains("disabled"));
+            // The read-only place prints beside Vendor price, before the
+            // picker's own "Aether" option.
+            let vendor = html.find("Vendor price").unwrap();
+            let label = vendor + html[vendor..].find("Aether").unwrap();
+            assert!(label < html.find("analyzer-price-scope").unwrap());
         });
     }
 }

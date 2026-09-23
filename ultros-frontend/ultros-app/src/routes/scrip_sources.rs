@@ -1,7 +1,7 @@
 use super::world_nav::use_analyzer_world;
 use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
 use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
-use crate::analyzer_kit::scope::{MarketScopeControl, use_market_scope};
+use crate::analyzer_kit::scope::{MarketScope, use_market_scope};
 use crate::analyzer_kit::{
     formula::PriceSignal,
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
@@ -462,6 +462,7 @@ fn rank_scrip_sources(
 
 #[component]
 fn ScripSourceTable(
+    scope: MarketScope,
     global_cheapest_listings: CheapestListings,
     world: Signal<String>,
 ) -> impl IntoView {
@@ -796,7 +797,8 @@ fn ScripSourceTable(
                 t_string!(i18n, scrip_sources_cost_per_scrip).to_string(),
                 Some("cost-per-scrip"),
             ),
-            CalculationTerm::input(TermRole::Value, "cost-basis", "cost"),
+            CalculationTerm::input(TermRole::Value, "cost-basis", "cost")
+                .with_place_select(scope.place()),
             CalculationTerm::fixed(
                 TermRole::Divide,
                 t_string!(i18n, scrip_sources_scrips).to_string(),
@@ -1054,7 +1056,6 @@ pub fn ScripSources() -> impl IntoView {
                             set_current_world=set_selected_world
                         />
                     </div>
-                    <MarketScopeControl scope/>
                 </ToolHeader>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
@@ -1064,6 +1065,7 @@ pub fn ScripSources() -> impl IntoView {
                             Some(Ok(listings)) => {
                                 view! {
                                     <ScripSourceTable
+                                        scope
                                         global_cheapest_listings=listings
                                         world=region.into()
                                     />

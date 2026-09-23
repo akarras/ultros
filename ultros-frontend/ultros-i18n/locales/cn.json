@@ -14,6 +14,7 @@
   "analyzer_scope_world": "服务器",
   "analyzer_scope_datacenter": "大区",
   "analyzer_scope_region": "区域",
+  "analyzer_scope_connected_regions": "{{region}} 及互通大区",
   "analyzer_listing_hide_suspicious": "隐藏可疑出品估值",
   "analyzer_listing_unverified_label": "未验证的出品估算",
   "analyzer_listing_unverified_help": "此出品的品质和市场没有可对比的成交历史。缺少历史记录并不代表要价合理。",
