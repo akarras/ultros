@@ -429,7 +429,10 @@ async fn reload(ctx: &Ctx) -> Result<()> {
         guard.baseline_keys()
     };
     reconcile_all(ctx).await;
-    ctx.services.medians.fill_missing(&keys, Utc::now()).await;
+    // Detached: a slow or unreachable ClickHouse must not hold up startup
+    // (the other alert listeners start after this one) or the listing loop.
+    let medians = ctx.services.medians.clone();
+    tokio::spawn(async move { medians.fill_missing(&keys, Utc::now()).await });
     Ok(())
 }
 
