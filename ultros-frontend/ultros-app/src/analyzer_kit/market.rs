@@ -4,13 +4,18 @@
 //! hourly history is fetched for the displayed window, accumulated for the
 //! life of that scope, and advertises partial filter coverage to QueryGrid.
 
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    sync::Arc,
+};
 
 use leptos::prelude::*;
 use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
-    listing_stats::ItemListingStats,
+    floor_history::{FloorHistoryBatch, FloorHistoryRequest, FloorInterval, ItemFloorHistory},
+    listing_stats::{ItemListingStats, StockStatus},
     sale_stats::ItemSaleStats,
     sparklines::{SparklinesRequest, SparklinesResponse},
     trends::ConfidenceBand,
@@ -18,7 +23,10 @@ use ultros_api_types::{
 
 use crate::{
     analysis::format_duration_short,
-    api::{get_listing_stats, get_listing_stats_window, get_sale_stats, post_sparklines},
+    api::{
+        get_listing_stats, get_listing_stats_window, get_sale_stats, post_floor_history,
+        post_sparklines,
+    },
     components::{
         app_link::use_location_or_default,
         sparkline::Sparkline,
@@ -41,11 +49,13 @@ use super::{
     formula::PriceSignal,
     signals::{StatsIndex, stat_only, stats_index},
     stat_columns::{
-        FOLLOW_COLUMNS, LISTING_COLUMNS, LISTING_WINDOW_COLUMNS, ListingKind, ListingWindowKind,
-        STAT_COLUMNS, StatKind, Window, follow_id, listing_id, listing_label, listing_title,
-        listing_window_id, listing_window_label, listing_window_title, listing_window_wanted,
-        listings_wanted, market_picker_group, market_picker_group_listings, required_windows,
-        stat_column, stat_label, stat_picker_hint, stat_picker_label,
+        FLOOR_TREND_ID, FLOOR_TREND_WINDOW, FOLLOW_COLUMNS, LISTING_COLUMNS,
+        LISTING_WINDOW_COLUMNS, ListingKind, ListingWindowKind, STAT_COLUMNS, StatKind, Window,
+        floor_trend_label, floor_trend_title, follow_id, history_observed_note, listing_id,
+        listing_label, listing_title, listing_window_id, listing_window_label,
+        listing_window_title, listing_window_wanted, listings_wanted, market_picker_group,
+        market_picker_group_listings, required_windows, stat_column, stat_label, stat_picker_hint,
+        stat_picker_label,
     },
     window::MarketWindow,
 };
@@ -64,12 +74,70 @@ pub struct ListingSlot {
     /// The request failed; the empty index is not evidence of an empty board.
     pub failed: bool,
     pub fetched_unix: i64,
+    /// How far back a windowed body's observations reach. `None` on the
+    /// alive set and on a body with no history rows.
+    pub reach: Option<HistoryReach>,
 }
 
 type ScopedListings = Option<ListingSlot>;
 
 pub fn listing_index(stats: &[ItemListingStats]) -> ListingIndex {
     stats.iter().map(|s| ((s.item_id, s.hq), *s)).collect()
+}
+
+/// The window a body describes and the earliest observation any of its rows
+/// holds, per source. A single row's coverage says little (a quiet item has
+/// one event), but the earliest across the whole scope is where Ultros's
+/// history begins, which is what bounds every row's statistic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistoryReach {
+    pub from: i64,
+    pub to: i64,
+    pub listings: Option<i64>,
+    pub receipts: Option<i64>,
+}
+
+impl HistoryReach {
+    /// Whole days of the window Ultros has observed, when that is at least
+    /// a day short of the window. `None` when the window is covered or
+    /// nothing was observed to date it by.
+    pub fn observed_days(self, counts_receipts: bool) -> Option<u16> {
+        const DAY: i64 = 86_400;
+        let first = if counts_receipts {
+            self.receipts
+        } else {
+            self.listings
+        }?;
+        let span = self.to - self.from;
+        if first <= self.from + DAY || span <= 0 {
+            return None;
+        }
+        let days = (self.to - first.min(self.to) + DAY / 2) / DAY;
+        (days < (span + DAY / 2) / DAY).then_some(days as u16)
+    }
+}
+
+pub fn history_reach(stats: &[ItemListingStats]) -> Option<HistoryReach> {
+    let mut windows = stats.iter().filter_map(|s| s.window.as_ref());
+    let first = windows.next()?;
+    let mut reach = HistoryReach {
+        from: first.from,
+        to: first.to,
+        listings: first.listing_coverage.first_observed_unix,
+        receipts: first.matches.receipt_coverage.first_observed_unix,
+    };
+    let earliest = |held: Option<i64>, seen: Option<i64>| match (held, seen) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    for window in windows {
+        reach.listings = earliest(reach.listings, window.listing_coverage.first_observed_unix);
+        reach.receipts = earliest(
+            reach.receipts,
+            window.matches.receipt_coverage.first_observed_unix,
+        );
+    }
+    Some(reach)
 }
 
 /// A cheap reactive handle; the payloads are cloned only by Arc. One slot
@@ -293,6 +361,7 @@ fn fetch_listing_stats(
                 index: Arc::new(ListingIndex::new()),
                 failed: true,
                 fetched_unix: 0,
+                reach: None,
             }));
             return;
         }
@@ -318,9 +387,10 @@ fn fetch_listing_stats(
                     return;
                 }
             };
-            let result = result.map(|body| listing_index(&body.stats));
+            let result =
+                result.map(|body| (listing_index(&body.stats), history_reach(&body.stats)));
             let failed = result.is_err();
-            let index = result.unwrap_or_default();
+            let (index, reach) = result.unwrap_or_default();
             if scope.try_get_untracked().as_ref() != Some(&name)
                 || generation.try_get_value() != Some(epoch)
             {
@@ -331,6 +401,7 @@ fn fetch_listing_stats(
                 index: Arc::new(index),
                 failed,
                 fetched_unix: chrono::Utc::now().timestamp(),
+                reach,
             }));
         });
     });
@@ -530,6 +601,9 @@ enum MarketMetric {
     /// Listing history over the selected window; ids and labels come from
     /// `LISTING_WINDOW_COLUMNS`.
     ListingWindow(ListingWindowKind),
+    /// The pinned 30-day scope floor sparkline; its value is the first to
+    /// last observed floor change, in percent.
+    FloorTrend,
 }
 
 impl MarketMetric {
@@ -537,6 +611,7 @@ impl MarketMetric {
         match self {
             Self::Listings(kind) => listing_id(kind),
             Self::ListingWindow(kind) => listing_window_id(kind),
+            Self::FloorTrend => FLOOR_TREND_ID,
             Self::Subject => "market-subject",
             Self::Scope => "market-scope",
             Self::Quality => "market-quality",
@@ -568,8 +643,9 @@ impl MarketMetric {
         )
     }
 
+    /// Filled per visible row, so it never sorts or filters the whole list.
     fn partial(self) -> bool {
-        matches!(self, Self::Trend7 | Self::Drift7)
+        matches!(self, Self::Trend7 | Self::Drift7 | Self::FloorTrend)
     }
 
     /// How a filter on this column reads and prints its bounds.
@@ -588,10 +664,17 @@ impl MarketMetric {
             Self::Listing => Unit::Gil,
             Self::Stat(kind, _) | Self::Follow(kind) => stat(kind),
             Self::LastSold => Unit::Timestamp,
-            Self::Trend7 | Self::Drift7 => Unit::Percent,
+            Self::Trend7 | Self::Drift7 | Self::FloorTrend => Unit::Percent,
             Self::Listings(kind) if kind.is_age() => Unit::Seconds,
-            Self::ListingWindow(ListingWindowKind::UndercutsPerDay) => Unit::Rate,
-            Self::ListingWindow(ListingWindowKind::UndercutMedian) => Unit::Percent,
+            Self::ListingWindow(kind) => match kind {
+                ListingWindowKind::FloorMin | ListingWindowKind::FloorMax => Unit::Gil,
+                ListingWindowKind::TimeToSell => Unit::Seconds,
+                ListingWindowKind::UndercutsPerDay => Unit::Rate,
+                ListingWindowKind::UndercutMedian => Unit::Percent,
+                ListingWindowKind::Additions
+                | ListingWindowKind::Removals
+                | ListingWindowKind::DaysOfStock => Unit::Plain,
+            },
             _ => Unit::Plain,
         }
     }
@@ -653,6 +736,7 @@ fn market_metrics() -> impl Iterator<Item = MarketMetric> {
                 .iter()
                 .map(|(kind, _)| MarketMetric::ListingWindow(*kind)),
         )
+        .chain([MarketMetric::FloorTrend])
 }
 
 fn metric_by_id(id: &str) -> Option<MarketMetric> {
@@ -668,7 +752,27 @@ fn metric_title(metric: MarketMetric) -> Option<String> {
         }
         MarketMetric::Listings(kind) => listing_title(kind),
         MarketMetric::ListingWindow(kind) => Some(listing_window_title(kind)),
+        MarketMetric::FloorTrend => Some(floor_trend_title()),
         _ => None,
+    }
+}
+
+/// The sortable header's hover text: a windowed listing column also says
+/// how much of the selected window Ultros has actually observed.
+fn metric_header_title(metric: MarketMetric, market: MarketData) -> Option<String> {
+    let title = metric_title(metric);
+    let MarketMetric::ListingWindow(kind) = metric else {
+        return title;
+    };
+    let window = market.window.selected.get();
+    let note = market
+        .listing_window(window)
+        .and_then(|slot| slot.reach)
+        .and_then(|reach| reach.observed_days(kind.counts_receipts()))
+        .map(|days| history_observed_note(days, window));
+    match (title, note) {
+        (Some(title), Some(note)) => Some(format!("{title} {note}")),
+        (title, note) => title.or(note),
     }
 }
 
@@ -677,6 +781,7 @@ fn metric_label(metric: MarketMetric, selected: Window) -> String {
     match metric {
         MarketMetric::Listings(kind) => return listing_label(kind),
         MarketMetric::ListingWindow(kind) => return listing_window_label(kind, selected),
+        MarketMetric::FloorTrend => return floor_trend_label(),
         MarketMetric::Subject => t_string!(i18n, market_subject),
         MarketMetric::Scope => t_string!(i18n, market_scope),
         MarketMetric::Quality => t_string!(i18n, market_quality),
@@ -788,14 +893,29 @@ fn listing_value(
 
 /// A row absent from a successful body, or one the server synthesized for a
 /// newly alive key without a snapshot row (`window` is `None`), has no
-/// history to show. A zero rate is a real zero; a missing median means no
-/// undercuts happened. `undercut_median` is a fraction on the wire; it is
-/// scaled to a percentage here and `display_value` adds the `%`.
+/// history to show. A zero rate or count is a real zero; a missing median
+/// means nothing happened to take one of. `undercut_median` is a fraction on
+/// the wire; it is scaled to a percentage here and `display_value` adds the
+/// `%`. A floor is an observed floor: never an unknown stretch read as 0 gil.
+/// Days of stock exists only as an estimate; no sales is not "0 days".
 fn listing_window_value(kind: ListingWindowKind, stats: Option<&ItemListingStats>) -> GridValue {
     let Some(window) = stats.and_then(|s| s.window.as_ref()) else {
         return GridValue::Missing;
     };
+    let floor = |price: Option<u32>| number(price.filter(|p| *p > 0).map(f64::from));
     match kind {
+        ListingWindowKind::FloorMin => floor(window.floor_min),
+        ListingWindowKind::FloorMax => floor(window.floor_max),
+        ListingWindowKind::Additions => GridValue::Number(window.additions as f64),
+        ListingWindowKind::Removals => GridValue::Number(window.removals as f64),
+        ListingWindowKind::TimeToSell => {
+            number(window.matches.median_time_to_sell_secs.map(|s| s as f64))
+        }
+        ListingWindowKind::DaysOfStock => number(
+            (window.stock_status == StockStatus::Estimated)
+                .then_some(window.days_of_stock)
+                .flatten(),
+        ),
         ListingWindowKind::UndercutsPerDay => number(window.undercuts_per_day),
         ListingWindowKind::UndercutMedian => number(window.undercut_median.map(|m| m * 100.0)),
     }
@@ -848,7 +968,132 @@ fn spark_response(
     }
 }
 
-fn spark_metric_value(store: &MarketSparkStore, key: &MarketSparkKey) -> GridValue {
+/// A floor series is per scope, so its key needs no world.
+type FloorKey = (i32, bool);
+type FloorStore = Enrichment<FloorKey, MarketSpark>;
+
+/// The server's per-request caps (`FloorHistoryRequest::valid`).
+const FLOOR_IDS_PER_REQUEST: usize = 20;
+
+/// The end of the requested range: an hour boundary, so every row and every
+/// visitor within the hour shares the server's cache entry, five minutes
+/// back so a client clock slightly ahead of the server's is not refused.
+fn floor_trend_to(now_unix: i64) -> i64 {
+    (now_unix - 300).div_euclid(3_600) * 3_600
+}
+
+/// Daily floors, oldest first, from the first day Ultros knew the whole
+/// scope's board. Earlier days are unknown rather than empty, so they are
+/// dropped instead of drawn; a known-empty day inside the series (no
+/// listings at all) is a gap the sparkline bridges. The change runs from the
+/// first observed floor to the last one.
+fn floor_spark(series: &ItemFloorHistory) -> SparkValue {
+    let unknown: HashSet<i64> = series.unknown_timestamps.iter().copied().collect();
+    let points: Vec<u32> = series
+        .history
+        .points
+        .iter()
+        .skip_while(|point| unknown.contains(&point.timestamp))
+        .map(|point| point.price.unwrap_or(0))
+        .collect();
+    let first = points.iter().copied().find(|p| *p > 0).unwrap_or(0);
+    let last = points.iter().copied().rfind(|p| *p > 0).unwrap_or(0);
+    SparkValue {
+        delta_pct: crate::analysis::first_to_last_pct(first, last),
+        points,
+    }
+}
+
+/// Every requested key settles: a failed batch as Unavailable, a key the
+/// server left out of a successful batch as Missing (via the store).
+fn floor_response(
+    requested: &[FloorKey],
+    response: Option<FloorHistoryBatch>,
+) -> Vec<(FloorKey, MarketSpark)> {
+    match response {
+        Some(body) => body
+            .series
+            .iter()
+            .map(|series| {
+                (
+                    (series.item_id, series.hq),
+                    MarketSpark::Ready(floor_spark(series)),
+                )
+            })
+            .collect(),
+        None => requested
+            .iter()
+            .map(|key| (*key, MarketSpark::Unavailable))
+            .collect(),
+    }
+}
+
+/// One daily-cadence request per quality and per 20 items: the key set a
+/// request settles, and the request.
+fn floor_requests(keys: &[FloorKey], now_unix: i64) -> Vec<(Vec<FloorKey>, FloorHistoryRequest)> {
+    let to = floor_trend_to(now_unix);
+    let from = to - i64::from(FLOOR_TREND_WINDOW.days()) * 86_400;
+    let mut out = Vec::new();
+    for hq in [false, true] {
+        // Row order (nearest the viewport first), without repeats.
+        let mut seen = HashSet::new();
+        let ids: Vec<i32> = keys
+            .iter()
+            .filter(|k| k.1 == hq && seen.insert(k.0))
+            .map(|k| k.0)
+            .collect();
+        for chunk in ids.chunks(FLOOR_IDS_PER_REQUEST) {
+            out.push((
+                chunk.iter().map(|id| (*id, hq)).collect(),
+                FloorHistoryRequest {
+                    item_ids: chunk.to_vec(),
+                    from,
+                    to,
+                    interval: FloorInterval::Daily,
+                    hq: Some(hq),
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// The planned requests, sent one after another: the server answers 503
+/// rather than queue a fifth uncached batch, so a burst of parallel requests
+/// from one grid would mostly fail. A failed request retries twice before
+/// its keys settle as unavailable. `alive` is checked before each request so
+/// a grid that moved to another scope stops asking.
+async fn fetch_floor_trends(
+    scope: String,
+    keys: Vec<FloorKey>,
+    alive: impl Fn() -> bool,
+) -> Vec<(FloorKey, MarketSpark)> {
+    const RETRY_MS: [u32; 2] = [1_500, 4_000];
+    let mut out = Vec::with_capacity(keys.len());
+    for (requested, request) in floor_requests(&keys, chrono::Utc::now().timestamp()) {
+        let mut attempt = 0;
+        let response = loop {
+            if !alive() {
+                break None;
+            }
+            match post_floor_history(&scope, request.clone()).await {
+                Ok(body) => break Some(body),
+                Err(_) if attempt < RETRY_MS.len() => {
+                    gloo_timers::future::TimeoutFuture::new(RETRY_MS[attempt]).await;
+                    attempt += 1;
+                }
+                Err(_) => break None,
+            }
+        };
+        out.extend(floor_response(&requested, response));
+    }
+    out
+}
+
+fn spark_metric_value<K: Copy + Eq + Hash>(
+    store: &Enrichment<K, MarketSpark>,
+    key: &K,
+) -> GridValue {
     match store.get(key) {
         Some(MarketSpark::Ready(s)) => number(s.delta_pct.map(f64::from)),
         Some(MarketSpark::Unavailable) => GridValue::Unavailable,
@@ -865,14 +1110,47 @@ fn spark_key(subject: &MarketSubject, scope_world: Option<i32>) -> (i32, bool, i
     )
 }
 
+/// The two per-row feeds a grid fills for its visible window.
+#[derive(Clone, Copy)]
+struct RowFeeds {
+    /// Hourly VWAP for Trend/Drift, per world.
+    sparks: RwSignal<MarketSparkStore>,
+    /// Daily scope floors for the floor sparkline.
+    floors: RwSignal<FloorStore>,
+}
+
+impl RowFeeds {
+    fn new() -> Self {
+        Self {
+            sparks: RwSignal::new(MarketSparkStore::default()),
+            floors: RwSignal::new(FloorStore::default()),
+        }
+    }
+
+    fn track(self) {
+        self.sparks.with(|_| ());
+        self.floors.with(|_| ());
+    }
+
+    /// The floor series to draw, once one with an observed floor landed.
+    fn floor_spark(self, subject: &MarketSubject) -> Option<SparkValue> {
+        self.floors
+            .with(|store| match store.get(&(subject.item_id, subject.hq)) {
+                Some(MarketSpark::Ready(value)) if value.delta_pct.is_some() => Some(value.clone()),
+                _ => None,
+            })
+    }
+}
+
 fn market_value(
     metric: MarketMetric,
     subject: &MarketSubject,
     market: MarketData,
-    sparks: RwSignal<MarketSparkStore>,
+    feeds: RowFeeds,
     scope_world: Memo<Option<i32>>,
     worlds: &WorldNames,
 ) -> GridValue {
+    let sparks = feeds.sparks;
     let text = |value: Option<String>| {
         value
             .filter(|v| !v.is_empty())
@@ -916,6 +1194,9 @@ fn market_value(
             let key = spark_key(subject, scope_world.get());
             spark_metric_value(store, &key)
         }),
+        MarketMetric::FloorTrend => feeds
+            .floors
+            .with(|store| spark_metric_value(store, &(subject.item_id, subject.hq))),
         MarketMetric::Listings(kind) => match market.listings() {
             None => GridValue::Pending,
             Some(slot) if slot.failed => GridValue::Unavailable,
@@ -966,11 +1247,24 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
                 .map(|time| time.format("%Y-%m-%d %H:%M UTC").to_string())
                 .unwrap_or_default()
         }
-        GridValue::Number(n) if matches!(metric, MarketMetric::Trend7 | MarketMetric::Drift7) => {
+        GridValue::Number(n)
+            if matches!(
+                metric,
+                MarketMetric::Trend7 | MarketMetric::Drift7 | MarketMetric::FloorTrend
+            ) =>
+        {
             format!("{n:+.1}%")
         }
-        GridValue::Number(n) if matches!(metric, MarketMetric::Listings(kind) if kind.is_age()) => {
+        GridValue::Number(n)
+            if matches!(metric, MarketMetric::Listings(kind) if kind.is_age())
+                || metric == MarketMetric::ListingWindow(ListingWindowKind::TimeToSell) =>
+        {
             format_duration_short(n.max(0.0).round() as u64)
+        }
+        GridValue::Number(n)
+            if metric == MarketMetric::ListingWindow(ListingWindowKind::DaysOfStock) =>
+        {
+            format!("{n:.1}")
         }
         GridValue::Number(n)
             if matches!(
@@ -1086,7 +1380,8 @@ where
     );
     let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
     let filtered = RwSignal::new(Vec::<T>::new());
-    let sparks = RwSignal::new(MarketSparkStore::default());
+    let feeds = RowFeeds::new();
+    let sparks = feeds.sparks;
     // Providers update independently of row identities and query results.
     // Track their revisions without copying payloads or measuring every row
     // in a reactive effect; the grid performs one debounced, chunked pass.
@@ -1095,7 +1390,7 @@ where
         market.scope.with(|_| ());
         market.window.selected.get();
         market.track_all();
-        sparks.with(|_| ());
+        feeds.track();
         previous.copied().unwrap_or_default().wrapping_add(1)
     });
     let worlds_scope = worlds.clone();
@@ -1129,9 +1424,9 @@ where
             column.picker_group = match metric {
                 MarketMetric::Follow(_) => Some(market_picker_group(None)),
                 MarketMetric::Stat(_, window) => Some(market_picker_group(Some(window))),
-                MarketMetric::Listings(_) | MarketMetric::ListingWindow(_) => {
-                    Some(market_picker_group_listings())
-                }
+                MarketMetric::Listings(_)
+                | MarketMetric::ListingWindow(_)
+                | MarketMetric::FloorTrend => Some(market_picker_group_listings()),
                 _ => None,
             };
             match metric {
@@ -1277,6 +1572,41 @@ where
             max_keys_per_request: 200,
         },
     );
+    let subject_floors = subject.clone();
+    let floor_rows = Signal::derive(move || {
+        if !needs.with(|n| n.contains(FLOOR_TREND_ID)) {
+            return Vec::new();
+        }
+        filtered.with(|rows| {
+            rows.iter()
+                .map(|row| {
+                    let s = subject_floors(row);
+                    (s.item_id, s.hq)
+                })
+                .collect()
+        })
+    });
+    use_visible_enrichment(
+        feeds.floors,
+        floor_rows,
+        range.into(),
+        market.scope,
+        |key| *key,
+        move |scope: String, keys| {
+            let alive = {
+                let scope = scope.clone();
+                move || market.scope.try_get_untracked().as_ref() == Some(&scope)
+            };
+            fetch_floor_trends(scope, keys, alive)
+        },
+        // One window's keys arrive in one call, which paces its own
+        // 20-item requests; see `fetch_floor_trends`.
+        EnrichmentConfig {
+            prefetch_margin: PREFETCH_MARGIN,
+            debounce_ms: DEBOUNCE_MS,
+            max_keys_per_request: 200,
+        },
+    );
     let mut all_metrics = metrics;
     let confidence_stats = Memo::new(move |_| market.stats(Window::D7));
     for metric in market_metrics() {
@@ -1286,9 +1616,8 @@ where
         let comparator_subject = subject.clone();
         let subject = subject.clone();
         let worlds = worlds.clone();
-        let value = move |row: &T| {
-            market_value(metric, &subject(row), market, sparks, scope_world, &worlds)
-        };
+        let value =
+            move |row: &T| market_value(metric, &subject(row), market, feeds, scope_world, &worlds);
         let def = if metric.text() {
             GridMetric::text(metric.id(), value)
         } else {
@@ -1344,11 +1673,15 @@ where
             header=move |id| {
                 let header = match metric_by_id(id) {
                 Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {
-                    <span title=metric_title(metric)>
+                    <span title=move || metric_header_title(metric, market)>
                         <MetricSortHeader column=id label=Signal::derive(move || metric_label(metric, market.window.selected.get())) />
                     </span>
                 }.into_any(),
-                Some(metric) => (move || metric_label(metric, market.window.selected.get())).into_any(),
+                Some(metric) => view! {
+                    <span title=metric_title(metric)>
+                        {move || metric_label(metric, market.window.selected.get())}
+                    </span>
+                }.into_any(),
                 None => native_header.with_value(|header| header(id)),
                 };
                 let header = super::calculation::decorate_header(calculation, id, header);
@@ -1371,7 +1704,7 @@ where
                 let title_subject = subject.clone();
                 let title_worlds = worlds.clone();
                 view! { <div class="px-3 flex h-full items-center tabular-nums" title=move || {
-                    if metric.partial() {
+                    if matches!(metric, MarketMetric::Trend7 | MarketMetric::Drift7) {
                         let world = title_worlds.get(&spark_key(&title_subject, scope_world.get()).2)
                             .map(|v| v.0.clone()).unwrap_or_else(|| "—".into());
                         format!("{}: {world}", metric_label(MarketMetric::TrendWorld, market.window.selected.get()))
@@ -1381,18 +1714,26 @@ where
                         && let Some(MarketSpark::Ready(value)) = sparks.with(|s| s.get(&spark_key(&subject, scope_world.get())).cloned()) {
                         return view! { <Sparkline points=value.points pct_change=value.delta_pct.unwrap_or_default() width=120 /> }.into_any();
                     }
-                    display_value(metric, market_value(metric, &subject, market, sparks, scope_world, &worlds)).into_any()
+                    if matches!(metric, MarketMetric::FloorTrend)
+                        && let Some(value) = feeds.floor_spark(&subject) {
+                        return view! { <Sparkline points=value.points pct_change=value.delta_pct.unwrap_or_default() width=120 hours_per_point=24 /> }.into_any();
+                    }
+                    display_value(metric, market_value(metric, &subject, market, feeds, scope_world, &worlds)).into_any()
                 }}</div> }.into_any()
             }
             measure=move |row: &T, id| match metric_by_id(id) {
                 Some(metric) => {
                     let subject = subject_measure(row);
-                    if matches!(metric, MarketMetric::Trend7)
-                        && sparks.with(|store| matches!(store.get(&spark_key(&subject, scope_world.get())), Some(MarketSpark::Ready(_)))) {
+                    let svg = match metric {
+                        MarketMetric::Trend7 => sparks.with(|store| matches!(store.get(&spark_key(&subject, scope_world.get())), Some(MarketSpark::Ready(_)))),
+                        MarketMetric::FloorTrend => feeds.floor_spark(&subject).is_some(),
+                        _ => false,
+                    };
+                    if svg {
                         // This cell renders a 120px SVG, rather than its numeric delta.
                         (String::new(), 144.0)
                     } else {
-                        (display_value(metric, market_value(metric, &subject, market, sparks, scope_world, &worlds_measure)), 24.0)
+                        (display_value(metric, market_value(metric, &subject, market, feeds, scope_world, &worlds_measure)), 24.0)
                     }
                 },
                 None => native_measure.with_value(|measure| measure(row, id)),
@@ -1575,7 +1916,7 @@ mod tests {
                 Some(Window::D7)
             );
 
-            let sparks = RwSignal::new(MarketSparkStore::default());
+            let feeds = RowFeeds::new();
             let scope_world = Memo::new(|_| None);
             let subject = MarketSubject::new(42, false, 7);
             let worlds = Arc::new(HashMap::new());
@@ -1584,7 +1925,7 @@ mod tests {
                     MarketMetric::Follow(StatKind::Median),
                     &subject,
                     market,
-                    sparks,
+                    feeds,
                     scope_world,
                     &worlds,
                 )
@@ -1625,7 +1966,7 @@ mod tests {
         owner.with(|| {
             let scope = RwSignal::new("Gilgamesh".to_owned());
             let market = use_market_data(scope.into());
-            let sparks = RwSignal::new(MarketSparkStore::default());
+            let feeds = RowFeeds::new();
             let scope_world = Memo::new(|_| None);
             let worlds = Arc::new(HashMap::new());
             let subject = MarketSubject::new(42, true, 7);
@@ -1634,7 +1975,7 @@ mod tests {
                     MarketMetric::Listings(kind),
                     &subject,
                     market,
-                    sparks,
+                    feeds,
                     scope_world,
                     &worlds,
                 )
@@ -1648,6 +1989,7 @@ mod tests {
                     index: Arc::new(listing_index(&rows)),
                     failed,
                     fetched_unix: 1_000_000,
+                    reach: None,
                 })
             };
             // A body from another scope never satisfies this scope's cells.
@@ -1694,7 +2036,7 @@ mod tests {
             let selected = RwSignal::new(Window::D7);
             let mut market = use_market_data(scope.into());
             market.window.selected = Memo::new(move |_| selected.get());
-            let sparks = RwSignal::new(MarketSparkStore::default());
+            let feeds = RowFeeds::new();
             let scope_world = Memo::new(|_| None);
             let worlds = Arc::new(HashMap::new());
             let subject = MarketSubject::new(42, true, 7);
@@ -1703,7 +2045,7 @@ mod tests {
                     MarketMetric::ListingWindow(kind),
                     &subject,
                     market,
-                    sparks,
+                    feeds,
                     scope_world,
                     &worlds,
                 )
@@ -1724,6 +2066,7 @@ mod tests {
                     index: Arc::new(listing_index(&rows)),
                     failed,
                     fetched_unix: 1_000_000,
+                    reach: None,
                 })
             };
             // Nothing wanted yet: the slot is empty and cells wait.
@@ -2156,5 +2499,343 @@ mod tests {
         assert_eq!(recent_sample_value(0.0, false, 0), GridValue::Unavailable);
         assert_eq!(recent_sample_value(0.0, true, 0), GridValue::Missing);
         assert_eq!(recent_sample_value(2.5, true, 3), GridValue::Number(2.5));
+    }
+
+    fn history(window: ListingWindowStats) -> ItemListingStats {
+        ItemListingStats {
+            window: Some(window),
+            ..row(42, false, 3)
+        }
+    }
+
+    use ultros_api_types::listing_stats::{HistoryCoverage, ListingWindowStats, MatchedSalesStats};
+
+    #[test]
+    fn history_columns_read_observed_values_and_never_invent_zeros() {
+        let value = |kind, window| listing_window_value(kind, Some(&history(window)));
+        let observed = ListingWindowStats {
+            window_days: 7,
+            additions: 12,
+            removals: 0,
+            floor_min: Some(900),
+            floor_max: Some(1_450),
+            matches: MatchedSalesStats {
+                median_time_to_sell_secs: Some(5_400),
+                ..Default::default()
+            },
+            stock_status: StockStatus::Estimated,
+            days_of_stock: Some(3.25),
+            ..Default::default()
+        };
+        assert_eq!(
+            value(ListingWindowKind::FloorMin, observed),
+            GridValue::Number(900.0)
+        );
+        assert_eq!(
+            value(ListingWindowKind::FloorMax, observed),
+            GridValue::Number(1_450.0)
+        );
+        assert_eq!(
+            value(ListingWindowKind::Additions, observed),
+            GridValue::Number(12.0)
+        );
+        // Nothing left the board: a real zero.
+        assert_eq!(
+            value(ListingWindowKind::Removals, observed),
+            GridValue::Number(0.0)
+        );
+        assert_eq!(
+            value(ListingWindowKind::TimeToSell, observed),
+            GridValue::Number(5_400.0)
+        );
+        assert_eq!(
+            value(ListingWindowKind::DaysOfStock, observed),
+            GridValue::Number(3.25)
+        );
+        // Unknown floors, no matched sales, no sales at all, or unknown sales.
+        let unknown = ListingWindowStats {
+            floor_min: None,
+            floor_max: Some(0),
+            matches: MatchedSalesStats::default(),
+            stock_status: StockStatus::NoSales,
+            days_of_stock: None,
+            ..observed
+        };
+        for kind in [
+            ListingWindowKind::FloorMin,
+            ListingWindowKind::FloorMax,
+            ListingWindowKind::TimeToSell,
+            ListingWindowKind::DaysOfStock,
+        ] {
+            assert_eq!(value(kind, unknown), GridValue::Missing, "{kind:?}");
+        }
+        let unavailable = ListingWindowStats {
+            stock_status: StockStatus::Unavailable,
+            ..observed
+        };
+        assert_eq!(
+            value(ListingWindowKind::DaysOfStock, unavailable),
+            GridValue::Missing,
+            "a stale estimate is not shown once the server calls stock unavailable"
+        );
+        // No history row at all.
+        assert_eq!(
+            listing_window_value(ListingWindowKind::Additions, Some(&row(42, false, 3))),
+            GridValue::Missing
+        );
+    }
+
+    #[test]
+    fn history_columns_format_units_and_follow_the_window() {
+        let metric = MarketMetric::ListingWindow;
+        assert_eq!(metric(ListingWindowKind::FloorMin).unit(), Unit::Gil);
+        assert_eq!(metric(ListingWindowKind::TimeToSell).unit(), Unit::Seconds);
+        assert_eq!(metric(ListingWindowKind::Additions).unit(), Unit::Plain);
+        assert_eq!(
+            display_value(
+                metric(ListingWindowKind::TimeToSell),
+                GridValue::Number(5_400.0)
+            ),
+            "1h 30m"
+        );
+        assert_eq!(
+            display_value(
+                metric(ListingWindowKind::DaysOfStock),
+                GridValue::Number(3.26)
+            ),
+            "3.3"
+        );
+        assert_eq!(
+            display_value(
+                metric(ListingWindowKind::FloorMax),
+                GridValue::Number(1_450.0)
+            ),
+            "1,450"
+        );
+        for id in [
+            "market-floor-min",
+            "market-floor-max",
+            "market-listings-added",
+            "market-listings-removed",
+            "market-time-to-sell",
+            "market-days-of-stock",
+        ] {
+            let found = metric_by_id(id).unwrap();
+            assert!(matches!(found, MarketMetric::ListingWindow(_)), "{id}");
+            assert!(!found.partial(), "{id} sorts the whole list");
+            assert_eq!(found.window(Window::D30), Some(Window::D30), "{id}");
+            assert!(listing_window_wanted(&[id.to_owned()].into()), "{id}");
+        }
+    }
+
+    fn coverage(first: Option<i64>) -> HistoryCoverage {
+        HistoryCoverage {
+            first_observed_unix: first,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn history_reach_is_the_earliest_observation_across_the_scope() {
+        const DAY: i64 = 86_400;
+        let to = 100 * DAY;
+        let from = to - 30 * DAY;
+        let window = |listings: Option<i64>, receipts: Option<i64>| ListingWindowStats {
+            window_days: 30,
+            from,
+            to,
+            listing_coverage: coverage(listings),
+            matches: MatchedSalesStats {
+                receipt_coverage: coverage(receipts),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Tracking began 12 days ago; receipts 10 days ago. A quiet item's
+        // late first event does not shorten the scope's reach.
+        let rows = [
+            history(window(Some(to - 12 * DAY), None)),
+            history(window(Some(to - 2 * DAY), Some(to - 10 * DAY + 3_600))),
+            row(43, false, 1),
+        ];
+        let reach = history_reach(&rows).unwrap();
+        assert_eq!(reach.listings, Some(to - 12 * DAY));
+        assert_eq!(reach.receipts, Some(to - 10 * DAY + 3_600));
+        assert_eq!(reach.observed_days(false), Some(12));
+        assert_eq!(reach.observed_days(true), Some(10));
+        // A full window, give or take a few hours, says nothing.
+        let full = HistoryReach {
+            listings: Some(from + 3_600),
+            ..reach
+        };
+        assert_eq!(full.observed_days(false), None);
+        // Nothing observed at all dates nothing.
+        let none = HistoryReach {
+            receipts: None,
+            ..reach
+        };
+        assert_eq!(none.observed_days(true), None);
+        assert_eq!(history_reach(&[row(42, false, 3)]), None);
+        assert_eq!(history_reach(&[]), None);
+    }
+
+    #[test]
+    fn a_short_history_is_named_in_the_header_title() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let scope = RwSignal::new("Gilgamesh".to_owned());
+            let selected = RwSignal::new(Window::D30);
+            let mut market = use_market_data(scope.into());
+            market.window.selected = Memo::new(move |_| selected.get());
+            let metric = MarketMetric::ListingWindow(ListingWindowKind::FloorMin);
+            let plain = metric_header_title(metric, market).unwrap();
+            assert!(!plain.contains("observed about"));
+            let to = 100 * 86_400;
+            market.listing_windows[Window::D30.index()].set(Some(ListingSlot {
+                scope: "Gilgamesh".into(),
+                index: Arc::new(ListingIndex::new()),
+                failed: false,
+                fetched_unix: to,
+                reach: Some(HistoryReach {
+                    from: to - 30 * 86_400,
+                    to,
+                    listings: Some(to - 12 * 86_400),
+                    receipts: None,
+                }),
+            }));
+            let noted = metric_header_title(metric, market).unwrap();
+            assert!(noted.starts_with(&plain), "{noted}");
+            assert!(
+                noted.ends_with("Ultros has observed about 12 of these 30 days so far."),
+                "{noted}"
+            );
+            // Time to sell dates itself by receipts, which this body lacks.
+            let receipts = metric_header_title(
+                MarketMetric::ListingWindow(ListingWindowKind::TimeToSell),
+                market,
+            )
+            .unwrap();
+            assert!(!receipts.contains("observed about"), "{receipts}");
+            // Current-listing columns never carry a window note.
+            assert_eq!(
+                metric_header_title(MarketMetric::Listings(ListingKind::Alive), market),
+                None
+            );
+        });
+    }
+
+    fn floor_series(points: &[(i64, Option<u32>)], unknown: &[i64]) -> ItemFloorHistory {
+        use ultros_api_types::floor_history::{FloorBounds, FloorHistory, FloorPoint};
+        ItemFloorHistory {
+            item_id: 42,
+            hq: true,
+            history: FloorHistory {
+                from: points.first().map_or(0, |p| p.0),
+                to: points.last().map_or(0, |p| p.0),
+                bucket_seconds: 86_400,
+                points: points
+                    .iter()
+                    .map(|&(timestamp, price)| FloorPoint { timestamp, price })
+                    .collect(),
+            },
+            bounds: FloorBounds::default(),
+            unknown_timestamps: unknown.to_vec(),
+        }
+    }
+
+    #[test]
+    fn floor_sparkline_drops_days_before_tracking_and_keeps_empty_days_as_gaps() {
+        let spark = floor_spark(&floor_series(
+            &[
+                (0, None),
+                (1, None),
+                (2, Some(1_000)),
+                (3, None),
+                (4, Some(1_100)),
+            ],
+            &[0, 1],
+        ));
+        assert_eq!(spark.points, vec![1_000, 0, 1_100]);
+        assert_eq!(spark.delta_pct, Some(10.0));
+        // Nothing known: nothing to draw, and no change to sort by.
+        let unknown = floor_spark(&floor_series(&[(0, None), (1, None)], &[0, 1]));
+        assert!(unknown.points.is_empty());
+        assert_eq!(unknown.delta_pct, None);
+        // Known but always empty: points to lay out, still no change.
+        let empty = floor_spark(&floor_series(&[(0, None), (1, None)], &[]));
+        assert_eq!(empty.points, vec![0, 0]);
+        assert_eq!(empty.delta_pct, None);
+    }
+
+    #[test]
+    fn floor_trend_failures_are_unknown_and_absent_series_are_missing() {
+        let key = (42, true);
+        let mut store = FloorStore::default();
+        assert_eq!(spark_metric_value(&store, &key), GridValue::Pending);
+        store.merge(&[key], floor_response(&[key], None));
+        assert_eq!(spark_metric_value(&store, &key), GridValue::Unavailable);
+        let mut store = FloorStore::default();
+        store.merge(
+            &[key, (43, true)],
+            floor_response(
+                &[key, (43, true)],
+                Some(FloorHistoryBatch {
+                    series: vec![floor_series(&[(0, Some(200)), (1, Some(150))], &[])],
+                }),
+            ),
+        );
+        assert_eq!(spark_metric_value(&store, &key), GridValue::Number(-25.0));
+        assert_eq!(spark_metric_value(&store, &(43, true)), GridValue::Missing);
+        assert_eq!(
+            display_value(MarketMetric::FloorTrend, GridValue::Number(-25.0)),
+            "-25.0%"
+        );
+    }
+
+    #[test]
+    fn floor_trend_requests_stay_inside_the_server_caps() {
+        let now = 1_758_600_000 + 1_234;
+        let to = floor_trend_to(now);
+        assert_eq!(to % 3_600, 0);
+        assert!(to <= now - 300 && to > now - 300 - 3_600);
+        // 45 NQ keys (one repeated) and 3 HQ keys.
+        let mut keys: Vec<FloorKey> = (1..=45).map(|id| (id, false)).collect();
+        keys.push((7, false));
+        keys.extend([(1, true), (2, true), (3, true)]);
+        let requests = floor_requests(&keys, now);
+        let sizes: Vec<_> = requests.iter().map(|(k, _)| k.len()).collect();
+        assert_eq!(sizes, vec![20, 20, 5, 3]);
+        for (requested, request) in &requests {
+            assert!(request.valid(), "{request:?}");
+            assert_eq!(request.to - request.from, 30 * 86_400);
+            assert_eq!(request.interval, FloorInterval::Daily);
+            assert!(requested.iter().all(|k| Some(k.1) == request.hq));
+            assert_eq!(
+                requested.iter().map(|k| k.0).collect::<Vec<_>>(),
+                request.item_ids
+            );
+        }
+        // Row order survives, so the rows nearest the viewport go first.
+        assert_eq!(requests[0].1.item_ids[..3], [1, 2, 3]);
+    }
+
+    #[test]
+    fn floor_trend_is_a_pinned_partial_listing_column() {
+        let metric = metric_by_id("market-floor-30").unwrap();
+        assert_eq!(metric, MarketMetric::FloorTrend);
+        assert!(
+            metric.partial(),
+            "filled per visible row, never a global sort"
+        );
+        assert_eq!(metric.unit(), Unit::Percent);
+        assert_eq!(metric.window(Window::D7), None, "reads no bulk body");
+        assert!(!listing_window_wanted(
+            &["market-floor-30".to_owned()].into()
+        ));
+        assert!(
+            required_windows(&["market-floor-30".to_owned()].into(), Window::D7, false).is_empty()
+        );
     }
 }

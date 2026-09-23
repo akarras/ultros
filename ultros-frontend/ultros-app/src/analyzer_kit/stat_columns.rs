@@ -179,18 +179,50 @@ pub fn listing_title(kind: ListingKind) -> Option<String> {
 /// follow-window sale columns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ListingWindowKind {
+    /// Lowest observed scope floor (cheapest alive listing) in the window.
+    FloorMin,
+    /// Highest observed scope floor in the window.
+    FloorMax,
+    /// Listings observed arriving; a remove-and-relist counts here too.
+    Additions,
+    /// Listings observed leaving, for any reason.
+    Removals,
+    /// Median seconds from a listing's last review to its matched sale.
+    TimeToSell,
+    /// Alive units over the window's average units sold per day.
+    DaysOfStock,
     /// Same-listing price drops per day of scope-wide listing coverage.
     UndercutsPerDay,
     /// Median relative drop across those undercuts, shown as a percentage.
     UndercutMedian,
 }
 
+impl ListingWindowKind {
+    /// Time to sell counts from sale receipts; every other statistic from
+    /// listing events. Their coverage starts at different instants.
+    pub const fn counts_receipts(self) -> bool {
+        matches!(self, ListingWindowKind::TimeToSell)
+    }
+}
+
 /// Follow-window ids only: one body per scope and selected window, never a
 /// pinned `-N` variant, because every window body is a separate fetch.
-pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 2] = [
+pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 8] = [
+    (ListingWindowKind::FloorMin, "market-floor-min"),
+    (ListingWindowKind::FloorMax, "market-floor-max"),
+    (ListingWindowKind::Additions, "market-listings-added"),
+    (ListingWindowKind::Removals, "market-listings-removed"),
+    (ListingWindowKind::TimeToSell, "market-time-to-sell"),
+    (ListingWindowKind::DaysOfStock, "market-days-of-stock"),
     (ListingWindowKind::UndercutsPerDay, "market-undercuts"),
     (ListingWindowKind::UndercutMedian, "market-undercut-pct"),
 ];
+
+/// The pinned 30-day floor sparkline. It reads its own per-row feed
+/// (`POST /api/v1/floor_history/{scope}`), not a listing-stats body, so it
+/// carries its window in the id like the pinned sale-history columns.
+pub const FLOOR_TREND_ID: &str = "market-floor-30";
+pub const FLOOR_TREND_WINDOW: Window = Window::D30;
 
 pub fn listing_window_id(kind: ListingWindowKind) -> &'static str {
     LISTING_WINDOW_COLUMNS
@@ -210,6 +242,12 @@ pub fn listing_window_wanted(needs: &HashSet<String>) -> bool {
 pub fn listing_window_label(kind: ListingWindowKind, window: Window) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let name = match kind {
+        ListingWindowKind::FloorMin => t_string!(i18n, market_floor_min),
+        ListingWindowKind::FloorMax => t_string!(i18n, market_floor_max),
+        ListingWindowKind::Additions => t_string!(i18n, market_listings_added),
+        ListingWindowKind::Removals => t_string!(i18n, market_listings_removed),
+        ListingWindowKind::TimeToSell => t_string!(i18n, market_time_to_sell),
+        ListingWindowKind::DaysOfStock => t_string!(i18n, market_days_of_stock),
         ListingWindowKind::UndercutsPerDay => t_string!(i18n, market_undercuts),
         ListingWindowKind::UndercutMedian => t_string!(i18n, market_undercut_pct),
     }
@@ -217,14 +255,47 @@ pub fn listing_window_label(kind: ListingWindowKind, window: Window) -> String {
     with_window(name, window)
 }
 
-/// Hover text: what counts as an undercut, and what the percentage is of.
+/// Hover text: what each statistic counts, and what it leaves out.
 pub fn listing_window_title(kind: ListingWindowKind) -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     match kind {
+        ListingWindowKind::FloorMin => t_string!(i18n, market_floor_min_title),
+        ListingWindowKind::FloorMax => t_string!(i18n, market_floor_max_title),
+        ListingWindowKind::Additions => t_string!(i18n, market_listings_added_title),
+        ListingWindowKind::Removals => t_string!(i18n, market_listings_removed_title),
+        ListingWindowKind::TimeToSell => t_string!(i18n, market_time_to_sell_title),
+        ListingWindowKind::DaysOfStock => t_string!(i18n, market_days_of_stock_title),
         ListingWindowKind::UndercutsPerDay => t_string!(i18n, market_undercuts_title),
         ListingWindowKind::UndercutMedian => t_string!(i18n, market_undercut_pct_title),
     }
     .to_string()
+}
+
+/// "Ultros has observed about 12 of these 30 days so far": appended to a
+/// windowed column's hover text while the history is younger than the
+/// window, so a 30-day label never overstates what the numbers cover.
+pub fn history_observed_note(observed_days: u16, window: Window) -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    t_string!(
+        i18n,
+        market_history_observed,
+        days = observed_days.to_string(),
+        window = window.days().to_string()
+    )
+    .to_string()
+}
+
+pub fn floor_trend_label() -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    with_window(
+        t_string!(i18n, market_floor_trend).to_string(),
+        FLOOR_TREND_WINDOW,
+    )
+}
+
+pub fn floor_trend_title() -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    t_string!(i18n, market_floor_trend_title).to_string()
 }
 
 pub fn window_label(window: Window) -> String {
@@ -428,7 +499,15 @@ mod tests {
     #[test]
     fn listing_window_columns_are_follow_window_ids_wanted_together() {
         let ids: HashSet<_> = LISTING_WINDOW_COLUMNS.iter().map(|(_, id)| *id).collect();
-        assert_eq!(ids.len(), 2);
+        assert_eq!(ids.len(), LISTING_WINDOW_COLUMNS.len());
+        assert!(
+            !ids.contains(FLOOR_TREND_ID),
+            "the sparkline has its own feed"
+        );
+        assert!(FLOOR_TREND_ID.ends_with(&format!("-{}", FLOOR_TREND_WINDOW.days())));
+        assert!(!STAT_COLUMNS.iter().any(|c| c.id == FLOOR_TREND_ID));
+        assert!(ListingWindowKind::TimeToSell.counts_receipts());
+        assert!(!ListingWindowKind::FloorMin.counts_receipts());
         for (kind, id) in &LISTING_WINDOW_COLUMNS {
             assert!(!STAT_COLUMNS.iter().any(|c| c.id == *id), "{id} collides");
             assert!(
@@ -497,6 +576,21 @@ mod tests {
             assert_eq!(
                 listing_window_title(ListingWindowKind::UndercutMedian),
                 "Median drop as a share of the previous price across those undercuts."
+            );
+            assert_eq!(
+                listing_window_label(ListingWindowKind::FloorMin, Window::D30),
+                "Lowest floor (30d)"
+            );
+            assert_eq!(
+                listing_window_label(ListingWindowKind::TimeToSell, Window::D7),
+                "Time to sell (7d)"
+            );
+            assert!(listing_window_title(ListingWindowKind::Additions).contains("relisting"));
+            assert_eq!(floor_trend_label(), "Floor trend (30d)");
+            assert!(floor_trend_title().contains("shorter line"));
+            assert_eq!(
+                history_observed_note(12, Window::D30),
+                "Ultros has observed about 12 of these 30 days so far."
             );
             assert_eq!(
                 market_picker_group(Some(Window::D7)),
