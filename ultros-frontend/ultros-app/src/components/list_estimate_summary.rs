@@ -186,7 +186,7 @@ mod tests {
             .enumerate()
             .map(|(index, &(_, _, stock))| {
                 let id = index as i32 + 1;
-                vec![listing(id, id, false, 10, stock)]
+                vec![listing(id.into(), id, false, 10, stock)]
             })
             .collect();
         estimate_cart(

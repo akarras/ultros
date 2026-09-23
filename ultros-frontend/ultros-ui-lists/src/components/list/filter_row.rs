@@ -350,7 +350,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, world_id)| ActiveListing {
-                id: id * 100 + index as i32,
+                id: i64::from(id) * 100 + index as i64,
                 world_id: *world_id,
                 item_id: id,
                 retainer_id: 1,

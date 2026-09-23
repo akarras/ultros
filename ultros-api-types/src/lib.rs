@@ -140,7 +140,7 @@ mod tests {
     use crate::websocket::{EventType, ListingEventData, SaleEventData};
     use chrono::{DateTime, NaiveDateTime};
 
-    fn test_listing(id: i32, item_id: i32, price: i32) -> (ActiveListing, Retainer) {
+    fn test_listing(id: i64, item_id: i32, price: i32) -> (ActiveListing, Retainer) {
         (
             ActiveListing {
                 id,

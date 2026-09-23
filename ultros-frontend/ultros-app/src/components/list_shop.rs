@@ -78,7 +78,7 @@ impl Trip {
 }
 
 /// Stacks already recorded against physical listings, keyed by listing id.
-type Receipts = BTreeMap<i32, (String, i64)>;
+type Receipts = BTreeMap<i64, (String, i64)>;
 
 /// A refreshed trip the player has not adopted yet. The active trip keeps
 /// rendering unchanged until the player accepts this one or dismisses it.
@@ -90,7 +90,7 @@ struct Review {
     mode: usize,
     frontier: Vec<ShoppingPlan>,
     policy: TravelPolicy,
-    unavailable: BTreeSet<i32>,
+    unavailable: BTreeSet<i64>,
 }
 
 /// A review authorizes exactly the cart and settings it displays. Purchases,
@@ -99,7 +99,7 @@ fn review_is_current(
     review: &Review,
     live: &ShopInput,
     policy: &TravelPolicy,
-    unavailable: &BTreeSet<i32>,
+    unavailable: &BTreeSet<i64>,
 ) -> bool {
     review.policy == *policy
         && review.unavailable == *unavailable
@@ -147,7 +147,7 @@ impl CartDrift {
     }
 }
 
-fn listing_shape(listing: &ActiveListing) -> (i32, i32, bool, i32, i32) {
+fn listing_shape(listing: &ActiveListing) -> (i64, i32, bool, i32, i32) {
     (
         listing.id,
         listing.world_id,
@@ -226,7 +226,7 @@ fn trip_totals(plan: &ShoppingPlan) -> TripTotals {
 // stacks to Any-quality rows. Each physical listing can appear at most once.
 // This allocation is conservative; all route choices are labelled best-found.
 #[cfg(test)]
-fn candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn candidates(input: &ShopInput, unavailable: &BTreeSet<i64>) -> Vec<ShoppingPlan> {
     let frontier = candidate_frontier(input, unavailable);
     quick_candidates(&frontier)
 }
@@ -293,7 +293,7 @@ fn refreshed_mode(
 /// Keep the planner's complete frontier for marginal route comparisons.
 /// Input listings have already been narrowed by the editor's travel policy;
 /// neither this search nor its separate home allocation may expand that scope.
-fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i64>) -> Vec<ShoppingPlan> {
     let plans = scoped_frontier(input, unavailable);
     let mut home = input.clone();
     for row in &mut home.rows {
@@ -313,7 +313,7 @@ fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<Sho
     )
 }
 
-fn scoped_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn scoped_frontier(input: &ShopInput, unavailable: &BTreeSet<i64>) -> Vec<ShoppingPlan> {
     let mut materials = Vec::new();
     let mut market = BTreeMap::new();
     let mut used = BTreeSet::new();
@@ -404,7 +404,7 @@ struct CompanionRow {
 fn replan(
     previous: Option<&Trip>,
     source: &ShopInput,
-    unavailable: &BTreeSet<i32>,
+    unavailable: &BTreeSet<i64>,
     consumed: &Receipts,
 ) -> (Receipts, Vec<ShoppingPlan>, Vec<ShoppingPlan>) {
     let mut receipts = consumed.clone();
@@ -572,7 +572,7 @@ pub fn ListShop(
     if let Some(on_trip_active) = on_trip_active {
         Effect::new(move |_| on_trip_active.run(trip.with(|trip| trip.is_some())));
     }
-    let unavailable = RwSignal::new(BTreeSet::<i32>::new());
+    let unavailable = RwSignal::new(BTreeSet::<i64>::new());
     let consumed = RwSignal::new(Receipts::new());
     let review = RwSignal::new(None::<Review>);
     let stop = RwSignal::new(0_usize);
@@ -1304,7 +1304,7 @@ mod tests {
             }));
     }
 
-    fn listing(id: i32, world: i32, quantity: i32, price: i32, hq: bool) -> ActiveListing {
+    fn listing(id: i64, world: i32, quantity: i32, price: i32, hq: bool) -> ActiveListing {
         ActiveListing {
             id,
             world_id: world,

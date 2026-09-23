@@ -945,7 +945,7 @@ impl UltrosDb {
         });
         let (written, removed_result) =
             futures::future::join(fan_out_listing_writes(added), async move {
-                let ids_to_remove: Vec<i32> = remove_iter.map(|(l, _)| l.id).collect();
+                let ids_to_remove: Vec<i64> = remove_iter.map(|(l, _)| l.id).collect();
                 if ids_to_remove.is_empty() {
                     return Result::<usize>::Ok(0);
                 }
@@ -1170,7 +1170,7 @@ mod remove_listings_query_tests {
     use super::*;
     use sea_orm::QueryTrait;
 
-    fn row(id: i32, price_per_unit: i32, quantity: i32, hq: bool) -> active_listing::Model {
+    fn row(id: i64, price_per_unit: i32, quantity: i32, hq: bool) -> active_listing::Model {
         active_listing::Model {
             id,
             price_per_unit,
@@ -1307,7 +1307,7 @@ mod diff_tests {
         hq: bool,
     ) -> active_listing::Model {
         active_listing::Model {
-            id,
+            id: id.into(),
             world_id,
             item_id: 1,
             retainer_id,
@@ -1389,7 +1389,7 @@ mod diff_tests {
 
         // pick a pseudo-random subset (every listing whose rng draw is divisible by 3) to remove
         let mut rng = Xorshift(777);
-        let mut expected_removed_ids: Vec<i32> = Vec::new();
+        let mut expected_removed_ids: Vec<i64> = Vec::new();
         let mut remove_views = Vec::new();
         for (i, view) in views.iter().enumerate() {
             if rng.next_u32().is_multiple_of(3) {
@@ -1407,7 +1407,7 @@ mod diff_tests {
         let remove_views = shuffled(remove_views, 99);
 
         let removed = listings_to_remove(db_rows, remove_views);
-        let mut removed_ids: Vec<i32> = removed.iter().map(|l| l.id).collect();
+        let mut removed_ids: Vec<i64> = removed.iter().map(|l| l.id).collect();
         removed_ids.sort();
 
         assert_eq!(removed_ids, expected_removed_ids);
@@ -2228,5 +2228,72 @@ mod diff_tests {
         // contract this test relies on is that an empty return from
         // `listings_to_remove` means nothing was deleted (and thus no marker
         // stamp).
+    }
+}
+
+#[cfg(test)]
+mod bigint_id_tests {
+    use super::*;
+    use chrono::Local;
+    use sea_orm::{
+        ActiveModelTrait, ActiveValue::NotSet, ConnectionTrait, Database, Set, TransactionTrait,
+    };
+
+    /// `active_listing.id` is `bigint` and the sequence starts at `2^31`, so
+    /// the entity must round-trip ids past `i32::MAX` — sqlx rejects decoding
+    /// `INT8` into `i32`, which is how a stale entity type would surface.
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn listing_ids_beyond_i32_round_trip() {
+        let db = Database::connect(std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        let tx = db.begin().await.unwrap();
+        tx.execute_unprepared(
+            "INSERT INTO region (id, name) VALUES (1, 'North-America') ON CONFLICT DO NOTHING;
+             INSERT INTO datacenter (id, name, region_id) VALUES (5, 'Aether', 1) ON CONFLICT DO NOTHING;
+             INSERT INTO world (id, name, datacenter_id) VALUES (79, 'Gilgamesh', 5) ON CONFLICT DO NOTHING;
+             INSERT INTO retainer_city (id, name) VALUES (1, 'Limsa') ON CONFLICT DO NOTHING;
+             INSERT INTO retainer (id, world_id, name, retainer_city_id)
+                 VALUES (987654321, 79, 'Bigint Retainer', 1) ON CONFLICT DO NOTHING;",
+        )
+        .await
+        .unwrap();
+        let listing = |id: Option<i64>| active_listing::ActiveModel {
+            id: id.map(Set).unwrap_or(NotSet),
+            world_id: Set(79),
+            item_id: Set(5057),
+            retainer_id: Set(987654321),
+            price_per_unit: Set(100),
+            quantity: Set(1),
+            hq: Set(false),
+            timestamp: Set(Local::now().naive_utc()),
+            is_crafted: Set(false),
+            on_mannequin: Set(false),
+            ..Default::default()
+        };
+
+        let explicit = listing(Some(9_000_000_000)).insert(&tx).await.unwrap();
+        assert_eq!(explicit.id, 9_000_000_000);
+        let from_sequence = listing(None).insert(&tx).await.unwrap();
+        assert!(
+            from_sequence.id > i64::from(i32::MAX),
+            "{}",
+            from_sequence.id
+        );
+
+        let found = active_listing::Entity::find_by_id(9_000_000_000_i64)
+            .one(&tx)
+            .await
+            .unwrap()
+            .expect("listing was inserted");
+        assert_eq!(ActiveListing::from(found).id, 9_000_000_000);
+        let removed = active_listing::Entity::delete_many()
+            .filter(active_listing::Column::Id.is_in([explicit.id, from_sequence.id]))
+            .exec(&tx)
+            .await
+            .unwrap();
+        assert_eq!(removed.rows_affected, 2);
+        tx.rollback().await.unwrap();
     }
 }

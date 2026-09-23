@@ -367,7 +367,7 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
-    fn mock_listing(id: i32, price_per_unit: i32, quantity: i32, hq: bool) -> ActiveListing {
+    fn mock_listing(id: i64, price_per_unit: i32, quantity: i32, hq: bool) -> ActiveListing {
         ActiveListing {
             id,
             world_id: 1,

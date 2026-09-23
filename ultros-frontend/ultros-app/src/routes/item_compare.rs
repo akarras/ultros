@@ -462,7 +462,7 @@ mod tests {
     ) -> (ActiveListing, Retainer) {
         (
             ActiveListing {
-                id,
+                id: id.into(),
                 world_id,
                 item_id: 1,
                 retainer_id: id,
