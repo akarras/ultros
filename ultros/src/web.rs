@@ -946,9 +946,14 @@ async fn undercut_pressure(
     if let Some(hit) = cache.get(&key) {
         return Ok(cached_json(hit, ttl));
     }
-    let Ok(_permit) = QUERIES.try_acquire() else {
-        return Err(WebError::TemporarilyUnavailable);
-    };
+    // One 15 s budget covers queueing for a slot and the load itself: a burst
+    // waits its turn rather than failing fast. The permit is held until the
+    // response is built.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let _permit = tokio::time::timeout_at(deadline, QUERIES.acquire())
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?
+        .map_err(|_| WebError::TemporarilyUnavailable)?;
     let work = async {
         let anchor = ultros_clickhouse::floor_history::anchors(&ch, &[world_id])
             .await?
@@ -973,7 +978,7 @@ async fn undercut_pressure(
         )
         .await
     };
-    let payload = tokio::time::timeout(std::time::Duration::from_secs(15), work)
+    let payload = tokio::time::timeout_at(deadline, work)
         .await
         .map_err(|_| WebError::TemporarilyUnavailable)?
         .map_err(|e| crate::web::error::ClickHouseQueryError::new("undercut_pressure", e))?;
