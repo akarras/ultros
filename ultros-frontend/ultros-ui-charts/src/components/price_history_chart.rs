@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use leptos_use::{UseElementSizeReturn, use_element_size};
 use ultros_api_types::price_density::PriceDensity;
 use ultros_api_types::price_series::{PriceSeries, SeriesGroup};
+use ultros_api_types::undercut_pressure::{PressureState, UndercutPressure};
 use ultros_charts::charts::ChartMode;
 use ultros_charts::charts::grid::{GridOptions, GridSort, build_price_grid, nearest_x};
 use ultros_charts::charts::price_density::{
@@ -875,6 +876,7 @@ fn HoverTooltip(
     hover_index: RwSignal<Option<usize>>,
     #[prop(into)] show_quantity: Signal<bool>,
     #[prop(into)] show_listing_floor: Signal<bool>,
+    #[prop(into)] pressure: Signal<Option<UndercutPressure>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     move || {
@@ -932,6 +934,27 @@ fn HoverTooltip(
                                     </div>
                                 }
                             })}
+                        {move || pressure.with(|p| {
+                            let p = p.as_ref()?;
+                            let b = crate::components::undercut_pressure::pressure_bucket_at(p, bucket.ts)?;
+                            let state = match b.state {
+                                PressureState::War => t_string!(i18n, undercut_pressure_state_war),
+                                PressureState::Churn => t_string!(i18n, undercut_pressure_state_churn),
+                                PressureState::Calm => t_string!(i18n, undercut_pressure_state_calm),
+                                PressureState::Unknown => return None,
+                            }
+                            .to_string();
+                            let total = b.trims + b.cuts;
+                            Some(view! {
+                                <div class="mt-1 border-t border-[color:var(--color-outline)]/60 pt-1 text-[color:var(--color-text-muted)]">
+                                    <div class="font-semibold text-[color:var(--color-text)]">{state}</div>
+                                    <div>{t_string!(i18n, undercut_pressure_tooltip_undercuts, total = total, cuts = b.cuts, trims = b.trims).to_string()}</div>
+                                    {(b.sellers > 0).then(|| view! {
+                                        <div>{t_string!(i18n, undercut_pressure_tooltip_sellers, sellers = b.sellers).to_string()}</div>
+                                    })}
+                                </div>
+                            })
+                        })}
                     </div>
                 })
             })
@@ -945,6 +968,7 @@ fn HoverTooltip(
 pub fn PriceHistoryChart(
     #[prop(into)] series: Signal<Option<PriceSeries>>,
     #[prop(into)] floor: Signal<Option<ultros_api_types::floor_history::FloorHistory>>,
+    #[prop(into, default = Signal::derive(|| None))] pressure: Signal<Option<UndercutPressure>>,
     #[prop(into)] density: Signal<Option<PriceDensity>>,
     #[prop(into)] scope_name: Signal<String>,
     #[prop(into)] mode: Signal<ChartMode>,
@@ -1272,9 +1296,11 @@ pub fn PriceHistoryChart(
                 listing_floor: active_floor.get(),
                 time_range: selected_range.get(),
                 theme: market_theme(),
-                // Undercut pressure's war spans are wired through the
-                // separate pressure pane (Task 9); this chart draws none.
-                war_spans: Vec::new(),
+                war_spans: pressure.with(|p| {
+                    p.as_ref()
+                        .map(|p| p.wars.iter().map(|w| (w.start, w.end)).collect())
+                        .unwrap_or_default()
+                }),
             },
         )
     });
@@ -1437,6 +1463,28 @@ pub fn PriceHistoryChart(
 
     let stats = Signal::derive(move || model.with(|m| m.stats.clone()));
     let hover_index = RwSignal::new(None::<usize>);
+
+    // Feeds the undercut pressure pane, which shares the price chart's time
+    // axis and hovered bucket rather than tracking its own.
+    let pane_sales = Memo::new(move |_| {
+        resolved_series.with(|s| {
+            let mut out: Vec<(i64, u32)> = s
+                .series
+                .iter()
+                .flat_map(|e| &e.buckets)
+                .map(|b| (b.ts.and_utc().timestamp(), b.sales))
+                .collect();
+            out.sort_unstable_by_key(|(ts, _)| *ts);
+            out
+        })
+    });
+    let pane_domain = Signal::derive(move || model.with(|m| m.time_domain));
+    let pane_width = Signal::derive(move || model.with(|m| m.scene.width));
+    let pane_hover_x = Signal::derive(move || {
+        hover_index
+            .get()
+            .and_then(|i| model.with(|m| m.hover.buckets.get(i).map(|b| b.x)))
+    });
 
     // Clear stale hover state whenever either model is rebuilt (e.g. after
     // a window resize snaps to a new quantised width or the data changes).
@@ -1986,14 +2034,25 @@ pub fn PriceHistoryChart(
                         return empty_state();
                     }
                     view! {
-                        <svg
-                            class="block w-full h-auto"
-                            viewBox=format!("0 0 {:.0} {:.0}", m.scene.width, m.scene.height)
-                            preserveAspectRatio="xMidYMid meet"
-                        >
-                            {scene_view(&m.scene)}
-                            <HoverLayer model=model hover_index=hover_index />
-                        </svg>
+                        <>
+                            <svg
+                                class="block w-full h-auto"
+                                viewBox=format!("0 0 {:.0} {:.0}", m.scene.width, m.scene.height)
+                                preserveAspectRatio="xMidYMid meet"
+                            >
+                                {scene_view(&m.scene)}
+                                <HoverLayer model=model hover_index=hover_index />
+                            </svg>
+                            <Show when=move || mode.get() != ChartMode::Density>
+                                <crate::components::undercut_pressure::UndercutPressurePane
+                                    pressure=pressure
+                                    sales=pane_sales
+                                    time_domain=pane_domain
+                                    width=pane_width
+                                    hover_x=pane_hover_x
+                                />
+                            </Show>
+                        </>
                     }
                         .into_any()
                 }}
@@ -2003,7 +2062,7 @@ pub fn PriceHistoryChart(
                 <Show when=move || {
                     view.get() == ChartView::Overlay && mode.get() != ChartMode::Density
                 }>
-                    <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity show_listing_floor=Signal::derive(move || active_floor.get().is_some()) />
+                    <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity show_listing_floor=Signal::derive(move || active_floor.get().is_some()) pressure=pressure />
                 </Show>
                 <Show when=move || mode.get() == ChartMode::Density>
                     <DensityTooltip density_model=density_model hover_index=hover_index />

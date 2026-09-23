@@ -59,6 +59,7 @@ pub use ultros_ui::components::patreon;
 pub use ultros_ui::components::relative_time;
 pub use ultros_ui::components::reorderable_list;
 pub use ultros_ui_charts::components::price_history_chart;
+pub use ultros_ui_charts::components::undercut_pressure;
 pub use ultros_ui_crafting::components::on_hand_input;
 pub use ultros_ui_crafting::components::related_items;
 pub use ultros_ui_market::components::realtime_status;

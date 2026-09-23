@@ -1,5 +1,6 @@
 use crate::api::{
     get_floor_history, get_item_stats, get_listings, get_price_density, get_price_series,
+    get_undercut_pressure,
 };
 use crate::components::app_link::AppLink;
 use crate::components::app_link::use_query_map_or_default;
@@ -14,6 +15,7 @@ use crate::components::listing_filters::filter_listing_rows;
 use crate::components::market_history::MarketHistory;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
+use crate::components::undercut_pressure::UndercutPressureCards;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, alert_drawer::AlertDrawer, clipboard::*, item_icon::*,
@@ -1086,6 +1088,49 @@ pub fn ChartWrapper(
     let floor_error =
         Signal::derive(move || floor_resource.get().flatten().is_some_and(|r| r.is_err()));
 
+    // Undercut pressure is per world (retainers only compete on their own
+    // world) and its bars share the price chart's time axis, so it is
+    // fetched only at world scope, in time-axis modes, once the price series
+    // has told us its bucket width.
+    let world_data_scope = world_data.clone();
+    let is_world_scope = Memo::new(move |_| {
+        world.with(|w| {
+            world_data_scope
+                .lookup_world_by_name(&Url::unescape(w))
+                .is_some_and(|scope| scope.as_world().is_some())
+        })
+    });
+    let pressure_resource = LocalResource::new(move || {
+        let active = is_world_scope.get() && mode.get() != ChartMode::Density;
+        let bucket = series.with(|s| s.as_ref().map(|s| s.bucket_seconds));
+        let id = item_id.get();
+        let world_name = world.get();
+        let quality = hq.get();
+        let decision = debounced_decision.get();
+        async move {
+            let (true, Some(bucket), RangeDecision::Resolved(range)) = (active, bucket, decision)
+            else {
+                return None;
+            };
+            Some(get_undercut_pressure(id, &world_name, quality, range, bucket).await)
+        }
+    });
+    // Gated again on read so a world → datacenter navigation drops the stale
+    // world payload before the resource re-runs.
+    let pressure = Signal::derive(move || {
+        is_world_scope
+            .get()
+            .then(|| pressure_resource.get().flatten().and_then(|r| r.ok()))
+            .flatten()
+    });
+    let pressure_error = Signal::derive(move || {
+        is_world_scope.get()
+            && pressure_resource
+                .get()
+                .flatten()
+                .is_some_and(|r| r.is_err())
+    });
+
     // Fetched only while density mode is active — the mode is the gate, so
     // flipping to Density triggers the fetch and every other mode costs
     // nothing. Same LocalResource/hydration rationale as series_resource.
@@ -1223,9 +1268,11 @@ pub fn ChartWrapper(
                                 }}
 
                                 <MarketHistory sales=series floor=floor floor_error=floor_error scope=world>
+                                <UndercutPressureCards pressure=pressure error=pressure_error />
                                 <PriceHistoryChart
                                     series=series
                                     floor=floor
+                                    pressure=pressure
                                     density=density
                                     scope_name=world
                                     mode=mode
