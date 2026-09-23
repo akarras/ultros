@@ -606,6 +606,7 @@
     "item_verdict_buy_cheaper": "購入の方が安い",
     "item_verdict_about_even": "ほぼ同じ",
     "item_verdict_incomplete": "一部の素材に出品がありません",
+    "item_verdict_no_buy_price": "比較できる出品がありません",
     "item_verdict_incl_subcrafts": "中間素材の製作を含む",
     "item_verdict_crystals_excluded": "クリスタル除外",
     "item_verdict_recipe_link": "レシピの内訳を見る",

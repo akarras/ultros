@@ -606,6 +606,7 @@
     "item_verdict_buy_cheaper": "Kaufen ist günstiger um",
     "item_verdict_about_even": "Etwa gleich",
     "item_verdict_incomplete": "Für einige Zutaten gibt es keine Angebote",
+    "item_verdict_no_buy_price": "Kein Angebot zum Vergleich",
     "item_verdict_incl_subcrafts": "inkl. Zwischenprodukte",
     "item_verdict_crystals_excluded": "Kristalle ausgenommen",
     "item_verdict_recipe_link": "Rezeptdetails ansehen",

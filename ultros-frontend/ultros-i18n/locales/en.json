@@ -599,6 +599,7 @@
     "item_verdict_buy_cheaper": "Buying is cheaper by",
     "item_verdict_about_even": "About even",
     "item_verdict_incomplete": "Some ingredients have no listings",
+    "item_verdict_no_buy_price": "No listing to compare with",
     "item_verdict_incl_subcrafts": "incl. sub-crafts",
     "item_verdict_crystals_excluded": "crystals excluded",
     "item_verdict_recipe_link": "See recipe breakdown",

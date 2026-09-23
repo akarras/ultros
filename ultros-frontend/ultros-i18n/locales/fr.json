@@ -606,6 +606,7 @@
     "item_verdict_buy_cheaper": "Acheter est moins cher de",
     "item_verdict_about_even": "À peu près égal",
     "item_verdict_incomplete": "Certains ingrédients n'ont aucune annonce",
+    "item_verdict_no_buy_price": "Aucune annonce pour comparer",
     "item_verdict_incl_subcrafts": "sous-fabrications incluses",
     "item_verdict_crystals_excluded": "cristaux exclus",
     "item_verdict_recipe_link": "Voir le détail de la recette",

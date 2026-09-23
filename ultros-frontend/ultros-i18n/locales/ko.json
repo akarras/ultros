@@ -606,6 +606,7 @@
     "item_verdict_buy_cheaper": "구매가 더 저렴함",
     "item_verdict_about_even": "거의 같음",
     "item_verdict_incomplete": "일부 재료에 매물이 없습니다",
+    "item_verdict_no_buy_price": "비교할 매물이 없습니다",
     "item_verdict_incl_subcrafts": "중간 재료 제작 포함",
     "item_verdict_crystals_excluded": "크리스탈 제외",
     "item_verdict_recipe_link": "레시피 내역 보기",

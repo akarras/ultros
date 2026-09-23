@@ -21,9 +21,10 @@ pub const FLOOR_HIGH: f64 = 1.5;
 pub const EVEN_BAND: f64 = 0.03;
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
-/// Shortest rate window, so a burst of same-second sales (or a client clock
-/// behind the server) cannot divide by zero.
-const MIN_WINDOW_DAYS: f64 = 1.0 / 24.0;
+/// Shortest rate window, in seconds, so a burst of same-second sales (or a
+/// client clock behind the server) cannot divide by zero. Kept small: a busy
+/// market's 200-sale buffer can cover only minutes.
+const MIN_WINDOW_SECS: i64 = 60;
 
 /// One listing on the board.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,9 +130,11 @@ pub fn sale_rate(sales: &[SaleSample], world_id: i32, hq: bool, now: i64) -> Sal
     let Some(oldest) = sales.iter().map(|sale| sale.sold_at).min() else {
         return SaleRate::TooFewSales;
     };
-    let window_days =
-        ((now - oldest) as f64 / SECONDS_PER_DAY).clamp(MIN_WINDOW_DAYS, RATE_WINDOW_DAYS);
-    let cutoff = now - (window_days * SECONDS_PER_DAY) as i64;
+    // Whole seconds, so a window that reaches back to the oldest sale keeps it.
+    let max_window_secs = (RATE_WINDOW_DAYS * SECONDS_PER_DAY) as i64;
+    let window_secs = (now - oldest).clamp(MIN_WINDOW_SECS, max_window_secs);
+    let cutoff = now - window_secs;
+    let window_days = window_secs as f64 / SECONDS_PER_DAY;
     let (count, sold) = sales
         .iter()
         .filter(|sale| sale.world_id == world_id && sale.hq == hq && sale.sold_at >= cutoff)
@@ -328,19 +331,22 @@ pub enum CraftVerdict {
         percent: f64,
     },
     AboutEven,
-    /// An ingredient had no listing, or there is nothing to buy to compare with.
-    Incomplete,
+    /// An ingredient had no listing, so the craft cost is a lower bound.
+    UnpricedIngredients,
+    /// Nothing to compare with: the item has no listing in the price zone
+    /// and no usable vendor price.
+    NoBuyPrice,
 }
 
 /// Compare one crafted unit with one bought unit. `unpriced_lines` is
 /// `CostBreakdown::unpriced_market_lines`.
 pub fn craft_verdict(craft_unit: i32, buy: Option<i32>, unpriced_lines: u16) -> CraftVerdict {
-    let Some(buy) = buy.filter(|price| *price > 0) else {
-        return CraftVerdict::Incomplete;
-    };
     if unpriced_lines > 0 {
-        return CraftVerdict::Incomplete;
+        return CraftVerdict::UnpricedIngredients;
     }
+    let Some(buy) = buy.filter(|price| *price > 0) else {
+        return CraftVerdict::NoBuyPrice;
+    };
     let (craft, bought) = (f64::from(craft_unit), f64::from(buy));
     if craft < bought * (1.0 - EVEN_BAND) {
         CraftVerdict::CraftSaves {
@@ -512,6 +518,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sale_rate_keeps_the_oldest_sale_at_any_span() {
+        // A float round-trip of the window used to land one second past the
+        // oldest sale and drop it (first failing span: 3,642 s).
+        for span in [3_642, 100_000, 86_399, 604_799] {
+            let sales = [
+                sale(WORLD, 100, 1, false, NOW - span),
+                sale(WORLD, 100, 1, false, NOW - span / 2),
+                sale(WORLD, 100, 1, false, NOW - 1),
+            ];
+            match sale_rate(&sales, WORLD, false, NOW) {
+                SaleRate::UnitsPerDay(rate) => {
+                    let expected = 3.0 / (span as f64 / 86_400.0);
+                    assert!(
+                        (rate - expected).abs() < 1e-9,
+                        "span {span}: {rate} vs {expected}"
+                    );
+                }
+                other => panic!("span {span}: expected a rate, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn sale_rate_uses_short_windows_for_busy_markets() {
+        // 3 units in the last 10 minutes is 432 units/day, not 72.
+        let sales = [
+            sale(WORLD, 100, 1, false, NOW - 600),
+            sale(WORLD, 100, 1, false, NOW - 300),
+            sale(WORLD, 100, 1, false, NOW - 60),
+        ];
+        match sale_rate(&sales, WORLD, false, NOW) {
+            SaleRate::UnitsPerDay(rate) => assert!((rate - 432.0).abs() < 1e-9, "{rate}"),
+            other => panic!("expected a rate, got {other:?}"),
+        }
+    }
+
     fn steady_sales(world_id: i32, hq: bool) -> Vec<SaleSample> {
         // 4 sales of 1 unit at 1000 over the last 2 days: rate 2 units/day.
         (0..4)
@@ -669,10 +712,22 @@ mod tests {
     }
 
     #[test]
-    fn craft_verdict_is_incomplete_without_prices() {
-        assert_eq!(craft_verdict(500, Some(1000), 1), CraftVerdict::Incomplete);
-        assert_eq!(craft_verdict(500, None, 0), CraftVerdict::Incomplete);
-        assert_eq!(craft_verdict(500, Some(0), 0), CraftVerdict::Incomplete);
+    fn craft_verdict_blames_unpriced_ingredients() {
+        assert_eq!(
+            craft_verdict(500, Some(1000), 1),
+            CraftVerdict::UnpricedIngredients
+        );
+        // Both missing: the ingredient gap is the one the craft line can't show.
+        assert_eq!(
+            craft_verdict(500, None, 1),
+            CraftVerdict::UnpricedIngredients
+        );
+    }
+
+    #[test]
+    fn craft_verdict_without_a_buy_price_does_not_blame_ingredients() {
+        assert_eq!(craft_verdict(500, None, 0), CraftVerdict::NoBuyPrice);
+        assert_eq!(craft_verdict(500, Some(0), 0), CraftVerdict::NoBuyPrice);
     }
 
     #[test]

@@ -606,6 +606,7 @@
     "item_verdict_buy_cheaper": "购买更便宜",
     "item_verdict_about_even": "大致相当",
     "item_verdict_incomplete": "部分材料没有挂单",
+    "item_verdict_no_buy_price": "没有可比较的挂单",
     "item_verdict_incl_subcrafts": "含半成品制作",
     "item_verdict_crystals_excluded": "不含水晶",
     "item_verdict_recipe_link": "查看配方明细",
