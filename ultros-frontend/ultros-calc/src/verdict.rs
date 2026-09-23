@@ -260,6 +260,103 @@ pub fn sell_verdict(
     }
 }
 
+/// Where the "buy" side of the craft verdict comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuySource {
+    /// Cheapest listing in the viewer's price zone. `nq_fallback`: an HQ
+    /// verdict with no HQ listing, priced from the NQ one.
+    Market { nq_fallback: bool },
+    /// An NPC gil shop.
+    Vendor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuyPrice {
+    pub price: i32,
+    pub source: BuySource,
+}
+
+/// What buying one unit at the headline quality costs. Vendors only sell NQ,
+/// so `vendor` is considered for an NQ verdict only.
+pub fn buy_price(
+    hq: bool,
+    market_hq: Option<i32>,
+    market_nq: Option<i32>,
+    vendor: Option<i32>,
+) -> Option<BuyPrice> {
+    let market = |price, nq_fallback| BuyPrice {
+        price,
+        source: BuySource::Market { nq_fallback },
+    };
+    let market = if hq {
+        market_hq
+            .map(|price| market(price, false))
+            .or_else(|| market_nq.map(|price| market(price, true)))
+    } else {
+        market_nq.map(|price| market(price, false))
+    };
+    let vendor = vendor
+        .filter(|price| !hq && *price > 0)
+        .map(|price| BuyPrice {
+            price,
+            source: BuySource::Vendor,
+        });
+    match (market, vendor) {
+        (Some(market), Some(vendor)) => Some(if vendor.price < market.price {
+            vendor
+        } else {
+            market
+        }),
+        (market, vendor) => market.or(vendor),
+    }
+}
+
+/// `compute_cost` prices one execution of a recipe; this is the cost of one
+/// of the `amount_result` units it yields.
+pub fn craft_unit_cost(cost: i32, amount_result: i32) -> i32 {
+    cost / amount_result.max(1)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CraftVerdict {
+    CraftSaves {
+        gil: i32,
+        percent: f64,
+    },
+    BuyCheaper {
+        gil: i32,
+        percent: f64,
+    },
+    AboutEven,
+    /// An ingredient had no listing, or there is nothing to buy to compare with.
+    Incomplete,
+}
+
+/// Compare one crafted unit with one bought unit. `unpriced_lines` is
+/// `CostBreakdown::unpriced_market_lines`.
+pub fn craft_verdict(craft_unit: i32, buy: Option<i32>, unpriced_lines: u16) -> CraftVerdict {
+    let Some(buy) = buy.filter(|price| *price > 0) else {
+        return CraftVerdict::Incomplete;
+    };
+    if unpriced_lines > 0 {
+        return CraftVerdict::Incomplete;
+    }
+    let (craft, bought) = (f64::from(craft_unit), f64::from(buy));
+    if craft < bought * (1.0 - EVEN_BAND) {
+        CraftVerdict::CraftSaves {
+            gil: buy - craft_unit,
+            percent: (bought - craft) / bought * 100.0,
+        }
+    } else if craft > bought * (1.0 + EVEN_BAND) {
+        CraftVerdict::BuyCheaper {
+            gil: craft_unit - buy,
+            percent: (craft - bought) / craft * 100.0,
+        }
+    } else {
+        CraftVerdict::AboutEven
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +639,98 @@ mod tests {
         }
         assert_eq!(warning_for(1500), None);
         assert_eq!(warning_for(1501), Some(FloorWarning::AboveRecentSales));
+    }
+
+    #[test]
+    fn craft_unit_cost_divides_by_yield() {
+        assert_eq!(craft_unit_cost(300, 3), 100);
+        assert_eq!(craft_unit_cost(300, 1), 300);
+        assert_eq!(craft_unit_cost(300, 0), 300);
+    }
+
+    #[test]
+    fn craft_verdict_band_edges() {
+        match craft_verdict(969, Some(1000), 0) {
+            CraftVerdict::CraftSaves { gil, percent } => {
+                assert_eq!(gil, 31);
+                assert!((percent - 3.1).abs() < 1e-9);
+            }
+            other => panic!("expected craft saves, got {other:?}"),
+        }
+        assert_eq!(craft_verdict(971, Some(1000), 0), CraftVerdict::AboutEven);
+        assert_eq!(craft_verdict(1029, Some(1000), 0), CraftVerdict::AboutEven);
+        match craft_verdict(1031, Some(1000), 0) {
+            CraftVerdict::BuyCheaper { gil, percent } => {
+                assert_eq!(gil, 31);
+                assert!((percent - 100.0 * 31.0 / 1031.0).abs() < 1e-9);
+            }
+            other => panic!("expected buy cheaper, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn craft_verdict_is_incomplete_without_prices() {
+        assert_eq!(craft_verdict(500, Some(1000), 1), CraftVerdict::Incomplete);
+        assert_eq!(craft_verdict(500, None, 0), CraftVerdict::Incomplete);
+        assert_eq!(craft_verdict(500, Some(0), 0), CraftVerdict::Incomplete);
+    }
+
+    #[test]
+    fn craft_verdict_zero_cost_from_on_hand_saves_everything() {
+        match craft_verdict(0, Some(100), 0) {
+            CraftVerdict::CraftSaves { gil, percent } => {
+                assert_eq!(gil, 100);
+                assert!((percent - 100.0).abs() < 1e-9);
+            }
+            other => panic!("expected craft saves, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn buy_price_takes_the_cheaper_vendor_for_nq() {
+        assert_eq!(
+            buy_price(false, None, Some(200), Some(68)),
+            Some(BuyPrice {
+                price: 68,
+                source: BuySource::Vendor
+            })
+        );
+        assert_eq!(
+            buy_price(false, None, Some(50), Some(68)),
+            Some(BuyPrice {
+                price: 50,
+                source: BuySource::Market { nq_fallback: false }
+            })
+        );
+        assert_eq!(
+            buy_price(false, None, None, Some(68)),
+            Some(BuyPrice {
+                price: 68,
+                source: BuySource::Vendor
+            })
+        );
+    }
+
+    #[test]
+    fn buy_price_ignores_the_vendor_for_hq() {
+        assert_eq!(
+            buy_price(true, Some(300), Some(200), Some(68)),
+            Some(BuyPrice {
+                price: 300,
+                source: BuySource::Market { nq_fallback: false }
+            })
+        );
+        assert_eq!(buy_price(true, None, None, Some(68)), None);
+    }
+
+    #[test]
+    fn buy_price_falls_back_to_nq_for_hq() {
+        assert_eq!(
+            buy_price(true, None, Some(200), None),
+            Some(BuyPrice {
+                price: 200,
+                source: BuySource::Market { nq_fallback: true }
+            })
+        );
     }
 }
