@@ -1,11 +1,14 @@
 //! Flip-verification math for the item page's `?compare-buy-from=` card.
 //!
 //! Estimates use the exact flip-finder pipeline (`crate::analysis`):
-//! sniper-clamped median of recent sales, capped by the sell world's
-//! troll-guarded floor; profit is after the 5% market-board tax.
+//! median of recent sales with laundering and snipes removed, capped by the
+//! sell world's troll-guarded floor; profit is after the 5% market-board tax.
 
-use crate::analysis::{flip_estimated_sale_price, flip_profit, median_in_place_i32, sniper_clamp};
+use crate::analysis::{
+    flip_estimated_sale_price, flip_profit, flip_sale_prices, median_in_place_i32,
+};
 use crate::api::get_listings;
+use crate::components::crafting_cost::vendor_price_map;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
@@ -51,14 +54,17 @@ fn cheapest_buy(buy: &CurrentlyShownItem, hq: Option<bool>) -> Option<&ActiveLis
         .min_by_key(|listing| listing.price_per_unit)
 }
 
-fn sell_median(sell: &CurrentlyShownItem, hq: bool) -> i32 {
+/// `vendor_price` is the item's NPC gil-shop price when an NPC sells it; it
+/// anchors the laundering guard (`crate::analysis::drop_laundering`). 0 when
+/// no credible sale is left.
+fn sell_median(sell: &CurrentlyShownItem, hq: bool, vendor_price: Option<i32>) -> i32 {
     let prices: Vec<i32> = sell
         .sales
         .iter()
         .filter(|sale| sale.hq == hq && sale.price_per_item > 0)
         .map(|sale| sale.price_per_item)
         .collect();
-    let mut clamped = sniper_clamp(prices);
+    let mut clamped = flip_sale_prices(prices, vendor_price);
     median_in_place_i32(&mut clamped)
 }
 
@@ -77,8 +83,12 @@ fn sell_floor(sell: &CurrentlyShownItem, hq: bool) -> Option<i32> {
 /// buy-side listing, so the sell cell can show an honest estimate for the
 /// cheapest buy listing's quality even when that quality never produced a
 /// full [`FlipVerdict`].
-fn sell_estimate_for_quality(sell: &CurrentlyShownItem, hq: bool) -> Option<i32> {
-    let median = sell_median(sell, hq);
+fn sell_estimate_for_quality(
+    sell: &CurrentlyShownItem,
+    hq: bool,
+    vendor_price: Option<i32>,
+) -> Option<i32> {
+    let median = sell_median(sell, hq, vendor_price);
     if median == 0 {
         return None;
     }
@@ -89,9 +99,10 @@ fn verdict_for_quality(
     buy: &CurrentlyShownItem,
     sell: &CurrentlyShownItem,
     hq: bool,
+    vendor_price: Option<i32>,
 ) -> Option<FlipVerdict> {
     let buy_listing = cheapest_buy(buy, Some(hq))?.clone();
-    let median = sell_median(sell, hq);
+    let median = sell_median(sell, hq, vendor_price);
     if median == 0 {
         // No recent sales of this quality on the sell world — no estimate,
         // no verdict. Mirrors the flip-finder, whose rows come from sales.
@@ -114,10 +125,11 @@ fn verdict_for_quality(
 pub(crate) fn flip_verdict(
     buy: &CurrentlyShownItem,
     sell: &CurrentlyShownItem,
+    vendor_price: Option<i32>,
 ) -> Option<FlipVerdict> {
     [false, true]
         .into_iter()
-        .filter_map(|hq| verdict_for_quality(buy, sell, hq))
+        .filter_map(|hq| verdict_for_quality(buy, sell, hq, vendor_price))
         .max_by_key(|verdict| verdict.profit_per_unit)
 }
 
@@ -214,10 +226,11 @@ pub(crate) fn FlipRouteCard(
                                     _ => None,
                                 };
 
+                                let vendor_price = vendor_price_map().get(&item_id.get()).copied();
                                 let verdict = buy_data
                                     .as_ref()
                                     .zip(sell_data.as_ref())
-                                    .and_then(|(buy, sell)| flip_verdict(buy, sell));
+                                    .and_then(|(buy, sell)| flip_verdict(buy, sell, vendor_price));
 
                                 let quality_chip = |hq: bool| {
                                     let label = if hq {
@@ -339,7 +352,7 @@ pub(crate) fn FlipRouteCard(
                                     .as_ref()
                                     .and_then(|buy| cheapest_buy(buy, None).map(|listing| listing.hq))
                                     .zip(sell_data.as_ref())
-                                    .and_then(|(hq, sell)| sell_estimate_for_quality(sell, hq))
+                                    .and_then(|(hq, sell)| sell_estimate_for_quality(sell, hq, vendor_price))
                                 {
                                     // No verdict, but the cheapest buy
                                     // listing's own quality did sell recently
@@ -512,7 +525,7 @@ mod tests {
             vec![listing(2, 2, 900, 1, false)], // sell floor 900 < median 1000
             vec![sale(1000, false), sale(1000, false), sale(1200, false)],
         );
-        let verdict = flip_verdict(&buy, &sell).unwrap();
+        let verdict = flip_verdict(&buy, &sell, None).unwrap();
         assert_eq!(verdict.estimated_sale_price, 900);
         // (900 * 0.95) as i32 - 500 = 855 - 500
         assert_eq!(verdict.profit_per_unit, 355);
@@ -523,14 +536,14 @@ mod tests {
     fn verdict_none_without_buy_listings() {
         let buy = shown(Vec::new(), Vec::new());
         let sell = shown(Vec::new(), vec![sale(1000, false)]);
-        assert!(flip_verdict(&buy, &sell).is_none());
+        assert!(flip_verdict(&buy, &sell, None).is_none());
     }
 
     #[test]
     fn verdict_none_without_recent_sell_sales() {
         let buy = shown(vec![listing(1, 1, 500, 1, false)], Vec::new());
         let sell = shown(vec![listing(2, 2, 900, 1, false)], Vec::new());
-        assert!(flip_verdict(&buy, &sell).is_none());
+        assert!(flip_verdict(&buy, &sell, None).is_none());
     }
 
     #[test]
@@ -540,7 +553,7 @@ mod tests {
             Vec::new(),
         );
         let sell = shown(Vec::new(), vec![sale(700, false), sale(2000, true)]);
-        let verdict = flip_verdict(&buy, &sell).unwrap();
+        let verdict = flip_verdict(&buy, &sell, None).unwrap();
         assert!(verdict.hq); // (2000*0.95)-600 = 1300 beats (700*0.95)-500 = 165
     }
 
@@ -548,7 +561,7 @@ mod tests {
     fn verdict_keeps_negative_profit() {
         let buy = shown(vec![listing(1, 1, 5_000, 1, false)], Vec::new());
         let sell = shown(Vec::new(), vec![sale(1000, false)]);
-        let verdict = flip_verdict(&buy, &sell).unwrap();
+        let verdict = flip_verdict(&buy, &sell, None).unwrap();
         assert!(verdict.profit_per_unit < 0);
     }
 
@@ -569,13 +582,13 @@ mod tests {
     fn sell_estimate_for_quality_none_without_matching_sales() {
         // Only NQ sales exist; asking for HQ must not fabricate a number.
         let sell = shown(Vec::new(), vec![sale(1000, false)]);
-        assert!(sell_estimate_for_quality(&sell, true).is_none());
+        assert!(sell_estimate_for_quality(&sell, true, None).is_none());
     }
 
     #[test]
     fn sell_estimate_for_quality_some_with_matching_sales() {
         let sell = shown(Vec::new(), vec![sale(1000, true), sale(1200, true)]);
-        assert!(sell_estimate_for_quality(&sell, true).is_some());
+        assert!(sell_estimate_for_quality(&sell, true, None).is_some());
     }
 
     // -- resolve_route -------------------------------------------------
