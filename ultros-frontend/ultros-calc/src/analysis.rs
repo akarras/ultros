@@ -389,9 +389,91 @@ pub fn is_troll_listing(price: i32, median: i32) -> bool {
     median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
 }
 
+/// FFXIV caps a direct player-to-player trade at 1,000,000 gil. Moving more
+/// than that — between characters, or across worlds for RMT delivery — is
+/// what market-board laundering is for: list a worthless item at the amount,
+/// buy it from yourself. So a laundered sale almost always claims at least
+/// this much, and a genuine sale of a cheap item almost never does.
+pub const TRADE_CAP_GIL: i32 = 1_000_000;
+
+/// Multiple of an item's NPC vendor price that a genuine market sale can
+/// reach. Convenience buyers pay well over the vendor price — glamour
+/// accessories that vendor for 48 gil sell for 5,000 — so this alone is not a
+/// laundering test; [`vendor_sale_ceiling`] never drops below
+/// [`TRADE_CAP_GIL`]. Same multiple as `real_price`'s vendor guard and the
+/// backend's `resale_eligibility::VENDOR_ANCHOR_MULTIPLE`.
+const VENDOR_ANCHOR_MULTIPLE: i64 = 100;
+
+/// A sale at or above [`TRADE_CAP_GIL`] that stands at least this many times
+/// above the sale below it is not the same market. Same factor as
+/// [`TROLL_MULTIPLE`], which makes the matching call about listings.
+const LAUNDER_GAP: i64 = 50;
+
+/// Highest unit price a sale of an NPC-vendor-sold item can credibly claim:
+/// [`VENDOR_ANCHOR_MULTIPLE`] times the vendor price, but never below
+/// [`TRADE_CAP_GIL`].
+///
+/// Nobody pays over a million gil for something any NPC sells for a few
+/// hundred, but plenty pay a hundred times the vendor price for the
+/// convenience. Fang Earrings vendor for 384 gil and trade at ~20,000 (52×):
+/// a bare 100× anchor would sit at 38,400, uncomfortably close to real sales,
+/// and a cheaper item with the same market price would lose its real sales
+/// to it. Measured across 18 NA worlds' buffers (2026-09-22), every
+/// vendor-sold row this ceiling removes is laundering; the housing permits
+/// and flutes whose vendor prices run into the millions keep their headroom.
+pub fn vendor_sale_ceiling(vendor_price: i32) -> i32 {
+    (vendor_price as i64 * VENDOR_ANCHOR_MULTIPLE).clamp(TRADE_CAP_GIL as i64, i32::MAX as i64)
+        as i32
+}
+
+/// Removes sales that can only be gil laundering, before any median sees
+/// them. The median alone holds while laundering fills at most half the
+/// buffer; four laundered sales in six (common in prod) outvote it.
+///
+/// Two independent tests:
+///
+/// 1. **Vendor ceiling.** For an item an NPC sells (`vendor_price`), drop
+///    every sale above [`vendor_sale_ceiling`]. This holds however many
+///    laundered sales fill the buffer — all six included — so it can return
+///    an empty set: the item has no credible sale price.
+/// 2. **Gap.** Sorted ascending, the first sale at or above
+///    [`TRADE_CAP_GIL`] that sits [`LAUNDER_GAP`]× above the sale below it,
+///    with at least **two** sales below, starts the laundered tail: it and
+///    everything above it go. Two sales agreeing below the jump are a real
+///    price level; one lone sale below is the sniper clamp's case — a 1-gil
+///    snipe on a million-gil item — and the tail is kept. The gap test is
+///    what covers items no NPC sells, whose `price_mid` bears no relation to
+///    their market price.
+///
+/// Leaves launder-free input untouched (as a set; the order is not
+/// preserved), so the sniper clamp and median behave exactly as before for
+/// ordinary items.
+pub fn drop_laundering(mut prices: Vec<i32>, vendor_price: Option<i32>) -> Vec<i32> {
+    if let Some(vendor_price) = vendor_price.filter(|v| *v > 0) {
+        let ceiling = vendor_sale_ceiling(vendor_price);
+        prices.retain(|&p| p <= ceiling);
+    }
+    prices.sort_unstable();
+    let tail = (2..prices.len()).find(|&i| {
+        prices[i] >= TRADE_CAP_GIL && prices[i] as i64 >= prices[i - 1] as i64 * LAUNDER_GAP
+    });
+    if let Some(tail) = tail {
+        prices.truncate(tail);
+    }
+    prices
+}
+
+/// The sale prices the flip estimate is built from: laundering removed
+/// ([`drop_laundering`]), then snipes ([`sniper_clamp`]). Empty when nothing
+/// credible is left, which callers treat as "no estimate".
+pub fn flip_sale_prices(prices: Vec<i32>, vendor_price: Option<i32>) -> Vec<i32> {
+    sniper_clamp(drop_laundering(prices, vendor_price))
+}
+
 /// Sniper-clamped price set: drops sales priced below `SNIPER_FRACTION` of the
 /// raw median. If the clamp would remove everything, the raw set is kept.
-/// Shared by the analyzer's `compute_summary` and the item-page flip card.
+/// Shared by the analyzer's `compute_summary` and the item-page flip card,
+/// through [`flip_sale_prices`].
 ///
 /// # Note
 /// The clamp runs in-place, so the order of the returned elements is
@@ -538,6 +620,135 @@ mod tests {
         let clamped = sorted_clamp(buffer);
         assert!(clamped.contains(&13_005), "real sales dropped: {clamped:?}");
         assert_eq!(clamped.len(), 6);
+    }
+
+    /// Fang Earrings NQ vendor for 384 gil (`price_mid`).
+    const FANG_EARRINGS_VENDOR: i32 = 384;
+
+    fn sorted_launder_free(prices: &[i32], vendor_price: Option<i32>) -> Vec<i32> {
+        // `drop_laundering` sorts; this pins that so the assertions can too.
+        drop_laundering(prices.to_vec(), vendor_price)
+    }
+
+    #[test]
+    fn vendor_ceiling_never_drops_below_the_trade_cap() {
+        assert_eq!(vendor_sale_ceiling(10), TRADE_CAP_GIL);
+        assert_eq!(vendor_sale_ceiling(FANG_EARRINGS_VENDOR), TRADE_CAP_GIL);
+        // Housing permits vendor for millions and keep 100× headroom.
+        assert_eq!(vendor_sale_ceiling(1_000_000), 100_000_000);
+        // No overflow for the dearest vendor items.
+        assert_eq!(vendor_sale_ceiling(50_000_000), i32::MAX);
+    }
+
+    /// The case the median cannot catch: four laundered sales in six. Fang
+    /// Earrings is vendor-sold, so the vendor ceiling removes them; the gap
+    /// test alone (as for an item no NPC sells) removes them too.
+    #[test]
+    fn four_laundered_sales_in_six_are_removed() {
+        let buffer = [
+            23_005,
+            20_005,
+            918_000_000,
+            916_000_000,
+            916_000_000,
+            916_000_000,
+        ];
+        assert_eq!(
+            sorted_launder_free(&buffer, Some(FANG_EARRINGS_VENDOR)),
+            vec![20_005, 23_005]
+        );
+        assert_eq!(sorted_launder_free(&buffer, None), vec![20_005, 23_005]);
+        let mut estimate = flip_sale_prices(buffer.to_vec(), Some(FANG_EARRINGS_VENDOR));
+        assert_eq!(median_in_place_i32(&mut estimate), 20_005);
+    }
+
+    /// Black Star Ring of Casting on Siren, 2026-09-22: all six buffered sales
+    /// at 10M for an item NPCs sell for 21,654. No sale is credible, so no
+    /// estimate exists.
+    #[test]
+    fn vendor_ceiling_empties_a_fully_laundered_buffer() {
+        assert!(sorted_launder_free(&[10_000_000; 6], Some(21_654)).is_empty());
+        assert!(flip_sale_prices(vec![10_000_000; 6], Some(21_654)).is_empty());
+        assert_eq!(median_in_place_i32(&mut []), 0);
+    }
+
+    #[test]
+    fn convenience_markup_over_the_vendor_price_is_kept() {
+        // The Emperor's New Earrings vendor for 48 and trade at ~5,000 (104×).
+        let buffer = [4_950, 4_997, 4_998, 4_999, 5_000, 5_000];
+        assert_eq!(sorted_launder_free(&buffer, Some(48)), buffer.to_vec());
+        // Fang Earrings trade at 52× their vendor price.
+        let fang = [9_000, 13_005, 20_005, 23_005, 25_000, 30_000];
+        assert_eq!(
+            sorted_launder_free(&fang, Some(FANG_EARRINGS_VENDOR)),
+            fang.to_vec()
+        );
+    }
+
+    #[test]
+    fn expensive_items_without_a_gap_are_untouched() {
+        // Blitzring: `price_mid` 2, no vendor, genuinely ~15M.
+        let blitzring = [
+            15_000_000, 16_000_000, 17_199_999, 17_200_001, 17_777_777, 24_499_999,
+        ];
+        assert_eq!(sorted_launder_free(&blitzring, None), blitzring.to_vec());
+        // A housing permit that vendors for 1M sells above the trade cap.
+        let permit = [50_000, 99_000, 100_000, 1_500_000];
+        assert_eq!(
+            sorted_launder_free(&permit, Some(1_000_000)),
+            permit.to_vec()
+        );
+    }
+
+    /// Company Hat on Balmung: one 1-gil snipe beneath a genuine ~1.7M
+    /// market. A lone sale below the jump is not a price level, so the gap
+    /// test leaves the tail and the sniper clamp drops the snipe.
+    #[test]
+    fn a_lone_snipe_does_not_make_the_market_laundering() {
+        let buffer = [1, 1_200_000, 1_280_000, 1_700_000, 1_798_999, 1_799_000];
+        assert_eq!(sorted_launder_free(&buffer, None), buffer.to_vec());
+        let mut estimate = flip_sale_prices(buffer.to_vec(), None);
+        assert!(!estimate.contains(&1));
+        assert_eq!(median_in_place_i32(&mut estimate), 1_700_000);
+    }
+
+    #[test]
+    fn gap_test_cuts_at_the_first_jump_with_two_sales_below() {
+        // Rainbow Dahlia Corsage on Balmung: four laundered sales in six, no
+        // vendor.
+        assert_eq!(
+            sorted_launder_free(
+                &[821, 1_229, 10_000_000, 11_000_000, 11_000_000, 12_000_000],
+                None
+            ),
+            vec![821, 1_229]
+        );
+        // Red Archon Egg: the jump off the lone 250 is skipped, the later one
+        // off a two-sale level is cut.
+        assert_eq!(
+            sorted_launder_free(
+                &[
+                    250,
+                    1_000_000,
+                    1_000_000,
+                    2_000_000,
+                    200_000_000,
+                    216_000_000
+                ],
+                None
+            ),
+            vec![250, 1_000_000, 1_000_000, 2_000_000]
+        );
+    }
+
+    #[test]
+    fn gap_test_ignores_jumps_below_the_trade_cap() {
+        // A 50× jump that never reaches a million gil is left to the median.
+        let buffer = [100, 110, 50_000];
+        assert_eq!(sorted_launder_free(&buffer, None), buffer.to_vec());
+        // Nor does a jump under 50× count, however large the prices.
+        let ornate = [300_000, 370_000, 372_800, 372_900, 7_500_000, 10_000_000];
+        assert_eq!(sorted_launder_free(&ornate, None), ornate.to_vec());
     }
 
     #[test]
