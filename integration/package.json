@@ -12,6 +12,7 @@
     "test:analyzer-consistency": "node ./analyzer-consistency.cjs",
     "test:listing-history-api": "node ./listing-history-api.cjs",
     "test:market-window": "node ./market-window.cjs",
+    "test:undercut-pressure": "node ./undercut-pressure.cjs",
     "test:item-explorer-grid": "node ./item-explorer-grid.cjs",
     "test:shared-analyzer-data": "node ./shared-analyzer-data.cjs",
     "test:currency-exchange": "node ./currency-exchange.cjs",

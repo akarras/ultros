@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "See undercut pressure on item pages",
+  "blurb": "World-scope item pages now show an undercut-pressure pane under the price chart: calm, churn or price-war, plus the floor's trend, how long it's held, and how much of the market is sold versus undercut. Datacenter and region pages are unchanged for now."
+}
