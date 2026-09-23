@@ -1,5 +1,6 @@
 use crate::api::{
     get_floor_history, get_item_stats, get_listings, get_price_density, get_price_series,
+    get_undercut_pressure,
 };
 use crate::components::app_link::AppLink;
 use crate::components::app_link::use_query_map_or_default;
@@ -14,6 +15,7 @@ use crate::components::listing_filters::filter_listing_rows;
 use crate::components::market_history::MarketHistory;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
+use crate::components::undercut_pressure::UndercutPressureCards;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, alert_drawer::AlertDrawer, clipboard::*, item_icon::*,
@@ -1052,6 +1054,9 @@ pub fn ChartWrapper(
     // above: avoids a hydration mismatch when the fetch resolves at
     // different times on server vs. client. Resolves to `None` (no request
     // sent) while the range decision is still pending on the sale probe.
+    //
+    // Each result carries the (item, world, hq, range) it was fetched for,
+    // so undercut pressure can tell a stale series from the current one.
     let series_resource = LocalResource::new(move || {
         let id = item_id.get();
         let world_name = world.get();
@@ -1062,12 +1067,14 @@ pub fn ChartWrapper(
             match decision {
                 RangeDecision::Pending => None,
                 RangeDecision::Resolved(range) => {
-                    Some(get_price_series(id, &world_name, series_group, hq_filter, range).await)
+                    let result =
+                        get_price_series(id, &world_name, series_group, hq_filter, range).await;
+                    Some(((id, world_name, hq_filter, range), result))
                 }
             }
         }
     });
-    let series = Signal::derive(move || series_resource.get().flatten().and_then(|r| r.ok()));
+    let series = Signal::derive(move || series_resource.get().flatten().and_then(|(_, r)| r.ok()));
     let floor_resource = LocalResource::new(move || {
         let id = item_id.get();
         let world_name = world.get();
@@ -1085,6 +1092,70 @@ pub fn ChartWrapper(
     let floor = Signal::derive(move || floor_resource.get().flatten().and_then(|r| r.ok()));
     let floor_error =
         Signal::derive(move || floor_resource.get().flatten().is_some_and(|r| r.is_err()));
+
+    // Undercut pressure is per world (retainers only compete on their own
+    // world) and its bars share the price chart's time axis, so it is
+    // fetched only at world scope, in time-axis modes, once the price series
+    // has told us its bucket width.
+    let world_data_scope = world_data.clone();
+    let is_world_scope = Memo::new(move |_| {
+        world.with(|w| {
+            world_data_scope
+                .lookup_world_by_name(&Url::unescape(w))
+                .is_some_and(|scope| scope.as_world().is_some())
+        })
+    });
+    // What a pressure fetch is for, besides the bucket width. `None` while
+    // the range decision is pending.
+    let pressure_key = Memo::new(move |_| match debounced_decision.get() {
+        RangeDecision::Resolved(range) => Some((item_id.get(), world.get(), hq.get(), range)),
+        RangeDecision::Pending => None,
+    });
+    // The bucket width, only once the series for the *current* key has
+    // landed: a range/item/hq change must not fire one fetch with the old
+    // series' bucket and another when the new one arrives. A Memo, so a
+    // group switch (same key, same bucket) or a series re-read is a no-op.
+    let pressure_fetch = Memo::new(move |_| {
+        let key = pressure_key.get()?;
+        series_resource.with(|r| match r {
+            Some(Some((fetched, Ok(s)))) if *fetched == key => Some((key, s.bucket_seconds)),
+            _ => None,
+        })
+    });
+    let pressure_resource = LocalResource::new(move || {
+        let active = is_world_scope.get() && mode.get() != ChartMode::Density;
+        let fetch = pressure_fetch.get();
+        async move {
+            let (true, Some((key, bucket))) = (active, fetch) else {
+                return None;
+            };
+            let (id, world_name, quality, range) = key.clone();
+            let result = get_undercut_pressure(id, &world_name, quality, range, bucket).await;
+            Some((key, result))
+        }
+    });
+    // Gated on read to the current scope and key, so a world → datacenter or
+    // item → item navigation drops the stale payload (pane, cards, war
+    // shading) immediately instead of when the resource re-resolves. A Memo
+    // so each read doesn't clone up to 2000 buckets.
+    let pressure = Memo::new(move |_| {
+        if !is_world_scope.get() {
+            return None;
+        }
+        let key = pressure_key.get()?;
+        pressure_resource.with(|r| match r {
+            Some(Some((fetched, Ok(p)))) if *fetched == key => Some(p.clone()),
+            _ => None,
+        })
+    });
+    let pressure_error = Signal::derive(move || {
+        is_world_scope.get()
+            && pressure_key.with(|key| {
+                pressure_resource.with(
+                    |r| matches!(r, Some(Some((fetched, Err(_)))) if Some(fetched) == key.as_ref()),
+                )
+            })
+    });
 
     // Fetched only while density mode is active — the mode is the gate, so
     // flipping to Density triggers the fetch and every other mode costs
@@ -1205,7 +1276,7 @@ pub fn ChartWrapper(
                                     series_resource
                                         .get()
                                         .flatten()
-                                        .and_then(|r| r.err())
+                                        .and_then(|(_, r)| r.err())
                                         .map(|e| view! {
                                             <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl px-3 py-2 text-sm">
                                                 {e.to_string()}
@@ -1223,9 +1294,11 @@ pub fn ChartWrapper(
                                 }}
 
                                 <MarketHistory sales=series floor=floor floor_error=floor_error scope=world>
+                                <UndercutPressureCards pressure=pressure error=pressure_error />
                                 <PriceHistoryChart
                                     series=series
                                     floor=floor
+                                    pressure=pressure
                                     density=density
                                     scope_name=world
                                     mode=mode

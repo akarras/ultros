@@ -76,6 +76,9 @@ pub struct PriceChartOptions {
     pub listing_floor: Option<FloorHistory>,
     /// Exact requested window, shared by sales and listing observations.
     pub time_range: Option<(i64, i64)>,
+    /// War spans (unix seconds, `[start, end)`) shaded behind the series.
+    /// Empty = off, so exports and every other caller are unchanged.
+    pub war_spans: Vec<(i64, i64)>,
     pub theme: Theme,
 }
 
@@ -99,6 +102,7 @@ impl Default for PriceChartOptions {
             index_to_percent: false,
             listing_floor: None,
             time_range: None,
+            war_spans: Vec::new(),
             theme: Theme::dark_card(),
         }
     }
@@ -150,6 +154,8 @@ pub struct ChartStats {
 /// series has no sales in the bucket), and total volume.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoverBucket {
+    /// Bucket start, unix seconds.
+    pub ts: i64,
     pub x: f32,
     pub label: String,
     pub series_values: Vec<Option<(f32, f64)>>,
@@ -195,6 +201,9 @@ pub struct PriceChartModel {
     pub stats: Option<ChartStats>,
     /// The level the server actually grouped at (`series.group`, mapped).
     pub group_level: GroupLevel,
+    /// `TimeScale` start/end in unix seconds, so panes under the chart can
+    /// share its x axis exactly. `None` when nothing was drawn.
+    pub time_domain: Option<(i64, i64)>,
 }
 
 /// One `PriceSeriesEntry` resolved to a display name, dropping ids the
@@ -428,6 +437,7 @@ pub fn build_price_history_chart(
             series: series_info,
             stats: None,
             group_level,
+            time_domain: None,
         };
     };
     if let Some((from, to)) = options.time_range.filter(|(from, to)| from < to)
@@ -481,6 +491,28 @@ pub fn build_price_history_chart(
     };
 
     let time = TimeScale::new(first_ts, last_ts, (plot_left, plot_right));
+
+    for &(start, end) in &options.war_spans {
+        let (Some(a), Some(b)) = (
+            chrono::DateTime::from_timestamp(start, 0),
+            chrono::DateTime::from_timestamp(end, 0),
+        ) else {
+            continue;
+        };
+        let x0 = time.scale(a.naive_utc()).clamp(plot_left, plot_right);
+        let x1 = time.scale(b.naive_utc()).clamp(plot_left, plot_right);
+        if x1 > x0 {
+            scene.nodes.push(Node::Rect {
+                x: x0,
+                y: plot_top,
+                width: x1 - x0,
+                height: price_bottom - plot_top,
+                rx: 0.0,
+                fill: Color::rgb(227, 73, 72).with_alpha(0.12),
+            });
+        }
+    }
+
     // Don't anchor the price axis at zero: gil prices cluster far above it
     // and the signal is the variation. `robust_price_domain` also keeps a
     // laundered sale from flattening the rest of the history against the
@@ -1065,6 +1097,7 @@ pub fn build_price_history_chart(
             let center = start + TimeDelta::seconds(bucket_secs / 2);
             let display = center + TimeDelta::minutes(options.utc_offset_minutes as i64);
             HoverBucket {
+                ts: start.and_utc().timestamp(),
                 x: time.scale(center),
                 label: display.format(label_format).to_string(),
                 series_values,
@@ -1073,6 +1106,14 @@ pub fn build_price_history_chart(
             }
         })
         .collect();
+
+    let time_domain = {
+        let (a, b) = (
+            first_ts.and_utc().timestamp(),
+            last_ts.and_utc().timestamp(),
+        );
+        Some(if a == b { (a - 1800, b + 1800) } else { (a, b) })
+    };
 
     PriceChartModel {
         scene,
@@ -1084,6 +1125,7 @@ pub fn build_price_history_chart(
         series: series_info,
         stats,
         group_level,
+        time_domain,
     }
 }
 
@@ -1911,6 +1953,7 @@ mod tests {
             buckets: [10.0_f32, 20.0, 30.0]
                 .iter()
                 .map(|x| HoverBucket {
+                    ts: 0,
                     x: *x,
                     label: String::new(),
                     series_values: Vec::new(),
@@ -1929,6 +1972,47 @@ mod tests {
             buckets: Vec::new(),
         };
         assert_eq!(empty.nearest_index(10.0), None);
+    }
+
+    #[test]
+    fn model_exposes_time_domain_and_hover_timestamps() {
+        let helper = crate::test_util::world_helper();
+        let series = crate::test_util::synthetic_price_series();
+        let model = build_price_history_chart(&helper, &series, &PriceChartOptions::default());
+        let (start, end) = model.time_domain.expect("domain");
+        assert!(start < end);
+        let first_bucket = series
+            .series
+            .iter()
+            .flat_map(|s| &s.buckets)
+            .map(|b| b.ts.and_utc().timestamp())
+            .min()
+            .unwrap();
+        assert_eq!(model.hover.buckets.first().unwrap().ts, first_bucket);
+    }
+
+    #[test]
+    fn war_spans_draw_one_rect_each_and_default_off() {
+        let helper = crate::test_util::world_helper();
+        let series = crate::test_util::synthetic_price_series();
+        let plain = build_price_history_chart(&helper, &series, &PriceChartOptions::default());
+        let (start, end) = plain.time_domain.unwrap();
+        let shaded = build_price_history_chart(
+            &helper,
+            &series,
+            &PriceChartOptions {
+                war_spans: vec![(start, start + (end - start) / 4)],
+                ..Default::default()
+            },
+        );
+        let rects = |m: &PriceChartModel| {
+            m.scene
+                .nodes
+                .iter()
+                .filter(|n| matches!(n, Node::Rect { .. }))
+                .count()
+        };
+        assert_eq!(rects(&shaded), rects(&plain) + 1);
     }
 
     #[test]

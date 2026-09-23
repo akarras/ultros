@@ -11,7 +11,7 @@ use ultros_api_types::listing_stats::{HistoryCoverage, ListingWindowStats, Match
 
 pub const WINDOWS: [u16; 4] = [1, 7, 30, 90];
 const MATCH_SECS: i64 = 300;
-const LIMITS: &str = " SETTINGS max_execution_time=10, max_result_rows=2000000, result_overflow_mode='throw', max_memory_usage=536870912";
+pub(crate) const LIMITS: &str = " SETTINGS max_execution_time=10, max_result_rows=2000000, result_overflow_mode='throw', max_memory_usage=536870912";
 
 pub fn coverage(times: impl Iterator<Item = i64>, from: i64, to: i64) -> HistoryCoverage {
     let mut result = HistoryCoverage::default();
@@ -122,39 +122,48 @@ pub(crate) fn set_undercut_rates(
     }
 }
 
-/// Same-listing price drops, paired in ClickHouse so no listing id string
-/// reaches the Rust reducer. `DISTINCT` mirrors the events read: a retried
-/// writer batch stores every row twice. The first row of a partition has no
-/// predecessor; `lagInFrame` yields the type default (0) and the
-/// `prev_removed = 1` test rejects it. `event_time` has only second
-/// resolution and a remove-then-add reprice commonly arrives as two
-/// websocket messages within the same second, so the window orders by
-/// `event_time, kind = 'added'` to break same-second ties with `removed`
-/// first — without it, ties are undefined and a pair can silently sort
-/// `added` before `removed` and get dropped.
-fn reprice_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
+/// Every same-listing price drop in `[from, to)`, one row per event, paired
+/// in ClickHouse so no listing id string reaches Rust. Shared by the grid's
+/// undercut columns and the item page's pressure pane so they cannot drift.
+/// `DISTINCT` mirrors the events read: a retried writer batch stores every
+/// row twice. The first row of a partition has no predecessor; `lagInFrame`
+/// yields the type default (0) and the `prev_removed = 1` test rejects it.
+/// `event_time` has only second resolution and a remove-then-add reprice
+/// commonly arrives as two websocket messages within the same second, so the
+/// window orders by `event_time, kind = 'added'` to break same-second ties
+/// with `removed` first — without it, ties are undefined and a pair can
+/// silently sort `added` before `removed` and get dropped. For a pair,
+/// `retainer_id` is the `added` row's (the retainer that cut).
+pub(crate) fn reprice_events_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
     format!(
-        "SELECT item_id, hq, count() AS undercuts, quantileExact(0.5)(drop) AS undercut_median FROM (
-        SELECT item_id, hq, (prev_price - price_per_unit) / prev_price AS drop
-        FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, event_time, price_per_unit, prev_price FROM listing_events
+        "SELECT item_id, hq, world_id, event_time, retainer_id, prev_price, price_per_unit
+        FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, retainer_id, event_time, price_per_unit, prev_price FROM listing_events
               WHERE kind = 'updated' AND source != 'snapshot' AND item_id IN ({item_sql}) AND world_id IN ({world_sql})
                 AND event_time >= toDateTime({from}) AND event_time < toDateTime({to}))
         WHERE prev_price > price_per_unit
         UNION ALL
-        SELECT item_id, hq, (prev_price - price_per_unit) / prev_price AS drop
-        FROM (SELECT item_id, hq, kind, event_time, price_per_unit,
+        SELECT item_id, hq, world_id, event_time, retainer_id, prev_price, price_per_unit
+        FROM (SELECT item_id, hq, world_id, kind, event_time, retainer_id, price_per_unit,
                      lagInFrame(kind = 'removed') OVER w AS prev_removed,
                      lagInFrame(price_per_unit) OVER w AS prev_price,
                      lagInFrame(event_time) OVER w AS prev_time
-              FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, kind, event_time, price_per_unit FROM listing_events
+              FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, retainer_id, kind, event_time, price_per_unit FROM listing_events
                     WHERE kind IN ('removed', 'added') AND source != 'snapshot' AND listing_id != ''
                       AND item_id IN ({item_sql}) AND world_id IN ({world_sql})
                       AND event_time >= toDateTime({}) AND event_time < toDateTime({to}))
               WINDOW w AS (PARTITION BY item_id, hq, world_id, listing_id ORDER BY event_time, kind = 'added' ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
         WHERE kind = 'added' AND prev_removed = 1 AND event_time >= toDateTime({from})
-          AND dateDiff('second', prev_time, event_time) <= 600 AND prev_price > price_per_unit
-    ) GROUP BY item_id, hq{LIMITS}",
+          AND dateDiff('second', prev_time, event_time) <= 600 AND prev_price > price_per_unit",
         from - 600
+    )
+}
+
+fn reprice_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
+    format!(
+        "SELECT item_id, hq, count() AS undercuts,
+        quantileExact(0.5)((prev_price - price_per_unit) / prev_price) AS undercut_median
+        FROM ({}) GROUP BY item_id, hq{LIMITS}",
+        reprice_events_sql(item_sql, world_sql, from, to)
     )
 }
 
@@ -858,5 +867,25 @@ mod tests {
         let rate = long[&key(1)].undercuts_per_day.unwrap();
         assert!((rate - 1.0).abs() < 1e-3, "{rate}");
         assert!((long[&key(2)].undercuts_per_day.unwrap() - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn reprice_columns_and_pane_share_one_event_query() {
+        let events = reprice_events_sql("7", "34", 1000, 2000);
+        assert!(
+            !events.contains("SETTINGS"),
+            "subquery must stay composable"
+        );
+        assert!(events.contains("retainer_id"));
+        assert!(
+            events.contains("toDateTime(400)"),
+            "pair branch reads 600 s before from"
+        );
+        let grouped = reprice_sql("7", "34", 1000, 2000);
+        assert!(
+            grouped.contains(&events),
+            "grid column must aggregate the shared events"
+        );
+        assert!(grouped.ends_with(LIMITS));
     }
 }

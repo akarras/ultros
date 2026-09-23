@@ -164,3 +164,43 @@ fn snapshot_density_mode() {
     );
     assert_snapshot("density", &scene_to_svg(&model.scene));
 }
+
+#[test]
+fn undercut_pressure_pane_snapshot() {
+    use crate::charts::undercut_pressure::*;
+    let o = PressurePaneOptions {
+        width: 960.0,
+        height: pane_height(960.0),
+        time_domain: (0, 6 * 3600),
+        palette: PressurePalette::default(),
+    };
+    let m = build_undercut_pressure_chart(
+        &tests_fixture(),
+        &[(3600, 2), (2 * 3600, 1), (5 * 3600, 3)],
+        &o,
+    );
+    assert_snapshot(
+        "undercut_pressure_pane",
+        &crate::svg::scene_to_svg(&m.scene),
+    );
+}
+
+#[test]
+fn undercut_pressure_pane_unknown_prefix_snapshot() {
+    use crate::charts::undercut_pressure::*;
+    let o = PressurePaneOptions {
+        width: 960.0,
+        height: pane_height(960.0),
+        time_domain: (0, 6 * 3600),
+        palette: PressurePalette::default(),
+    };
+    let mut p = tests_fixture();
+    p.coverage_from = Some(2 * 3600);
+    p.from = 2 * 3600;
+    p.buckets.retain(|b| b.start >= 2 * 3600);
+    let m = build_undercut_pressure_chart(&p, &[(2 * 3600, 1), (5 * 3600, 3)], &o);
+    assert_snapshot(
+        "undercut_pressure_pane_unknown_prefix",
+        &crate::svg::scene_to_svg(&m.scene),
+    );
+}

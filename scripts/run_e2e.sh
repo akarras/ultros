@@ -235,6 +235,15 @@ if [ "${E2E_RELEASE:-0}" != "1" ] && [ "${RUN_SHARED_ANALYZER_DATA:-1}" != "0" ]
     fi
 fi
 
+if [ "${RUN_UNDERCUT_PRESSURE:-1}" != "0" ]; then
+    log "running undercut pressure E2E"
+    undercut_pressure_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:undercut-pressure ) || undercut_pressure_exit=$?
+    if [ "$undercut_pressure_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$undercut_pressure_exit"
+    fi
+fi
+
 if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
     log "running recipe planner E2E"
     recipe_planner_exit=0

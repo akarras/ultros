@@ -1,0 +1,19 @@
+/* Pressure tokens: the pane's scene colors resolve to these via color_attr. */
+.market-history { --mh-cut: #e34948; --mh-trim: #eda100; --mh-sales: #eb6834; --mh-baseline: #898781; --mh-war: #d23c3b; --mh-churn: #6b6875; --mh-calm: #1baf7a; --mh-unknown: #3a3644; }
+[data-theme="light"] .market-history { --mh-cut: #c62f2f; --mh-trim: #a86f00; --mh-sales: #c24e1f; --mh-baseline: #6b6962; --mh-war: #b32626; --mh-churn: #b9b6c2; --mh-calm: #0f8a5f; --mh-unknown: #e4e1ea; }
+.mh-pressure-stats { margin-top: -8px; }
+.mh-pressure-war>strong { color: var(--mh-war); }
+.mh-pressure-unavailable { font-size: 12px; color: var(--mh-muted); margin: 0 0 12px; }
+.mh-pressure-pane { margin-top: 10px; }
+.mh-pressure-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: var(--mh-muted); margin-bottom: 4px; align-items: center; }
+.mh-pressure-title { color: var(--color-text); font-weight: 600; }
+.mh-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.mh-swatch-cut { background: var(--mh-cut); }
+.mh-swatch-war { background: var(--mh-war); }
+.mh-swatch-trim { background: var(--mh-trim); }
+.mh-swatch-sales { height: 2px; width: 14px; background: var(--mh-sales); }
+.mh-swatch-baseline { height: 0; width: 14px; border-top: 2px dashed var(--mh-baseline); }
+.mh-swatch-churn { background: var(--mh-churn); }
+.mh-swatch-calm { background: var(--mh-calm); }
+.mh-swatch-unknown { background: var(--mh-unknown); }
+.mh-pressure-crosshair { stroke: var(--color-text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
