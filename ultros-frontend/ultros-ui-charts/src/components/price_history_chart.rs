@@ -50,6 +50,15 @@ fn color_attr(color: &ultros_charts::scene::Color) -> String {
         (156, 163, 175) => "var(--color-text-muted)",
         (162, 156, 184) => "var(--color-text-muted)",
         (250, 204, 21) => "var(--mh-average)",
+        (227, 73, 72) => "var(--mh-cut)",
+        (237, 161, 0) => "var(--mh-trim)",
+        (235, 104, 52) => "var(--mh-sales)",
+        (137, 135, 129) => "var(--mh-baseline)",
+        (210, 60, 59) => "var(--mh-war)",
+        (107, 104, 117) => "var(--mh-churn)",
+        (27, 175, 122) => "var(--mh-calm)",
+        (58, 54, 68) => "var(--mh-unknown)",
+        (44, 44, 42) => "var(--color-outline)",
         _ => {
             let opaque = ultros_charts::scene::Color { a: 1.0, ..*color };
             let hex = ultros_charts::components::color_attr(&opaque);
@@ -74,6 +83,11 @@ fn color_attr(color: &ultros_charts::scene::Color) -> String {
 
 fn scene_view(scene: &ultros_charts::scene::Scene) -> impl IntoView + use<> {
     scene_view_with_colors(scene, color_attr)
+}
+
+/// The pane under the chart renders through the same theme-token mapping.
+pub(crate) fn pressure_scene_view(scene: &ultros_charts::scene::Scene) -> impl IntoView + use<> {
+    scene_view(scene)
 }
 
 fn px(v: f32) -> String {
@@ -1258,6 +1272,9 @@ pub fn PriceHistoryChart(
                 listing_floor: active_floor.get(),
                 time_range: selected_range.get(),
                 theme: market_theme(),
+                // Undercut pressure's war spans are wired through the
+                // separate pressure pane (Task 9); this chart draws none.
+                war_spans: Vec::new(),
             },
         )
     });
