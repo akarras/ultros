@@ -91,7 +91,7 @@ pub struct MarketPurchase {
     pub hq: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CostBreakdown {
     /// Resolved cost for the `require_hq` flavor of the caller's options.
     /// Surfaces that need both HQ and LQ totals call `compute_cost` twice

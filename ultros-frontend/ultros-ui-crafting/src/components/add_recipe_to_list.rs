@@ -26,8 +26,13 @@ struct IngredientState {
     overridden: RwSignal<bool>,
 }
 
+/// `initial_hq` seeds the modal's HQ-ingredients toggle, e.g. from a page
+/// that already asked for HQ ingredients.
 #[component]
-pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
+pub fn AddRecipeToList(
+    recipe: &'static Recipe,
+    #[prop(optional)] initial_hq: bool,
+) -> impl IntoView {
     let i18n = use_i18n();
     let (modal_visible, set_modal_visible) = signal(false);
     let items = &tracked_data().items;
@@ -49,16 +54,19 @@ pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
                 <Icon icon=RiPlayListAddMediaLine />
                 <div class="sr-only">{t!(i18n, add_recipe_sr_only)}</div>
                 <Show when=modal_visible>
-                    <AddRecipeToListModal recipe set_visible=set_modal_visible />
+                    <AddRecipeToListModal recipe initial_hq set_visible=set_modal_visible />
                 </Show>
             </button>
         </Tooltip>
     }
 }
 
+/// The modal behind [`AddRecipeToList`], for callers that bring their own
+/// trigger. `initial_hq` seeds the HQ-ingredients toggle.
 #[component]
-fn AddRecipeToListModal(
+pub fn AddRecipeToListModal(
     recipe: &'static Recipe,
+    #[prop(optional)] initial_hq: bool,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -66,7 +74,7 @@ fn AddRecipeToListModal(
     let items = &data.items;
     let result_item = move || items.get(&ItemId(recipe.item_result));
     let lists = Resource::new(move || {}, move |_| get_lists());
-    let (hq, set_hq) = signal(false);
+    let (hq, set_hq) = signal(initial_hq);
     let (craft_quantity, set_craft_quantity) = signal(1);
     let (ignore_crystals, set_ignore_crystals) = signal(false);
 
