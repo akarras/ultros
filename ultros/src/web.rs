@@ -877,6 +877,111 @@ async fn floor_history(
     Ok(cached_json(body, ttl))
 }
 
+#[derive(serde::Deserialize, Debug)]
+struct PressureQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+    bucket: Option<i64>,
+    hq: Option<String>,
+}
+
+/// Most buckets one pressure response may carry.
+const PRESSURE_MAX_BUCKETS: i64 = 2000;
+
+/// Snap to the chart's bucket ladder, then widen until the window fits the
+/// cap. The client asks for the price chart's bucket so bars line up; only a
+/// window the chart itself would not draw at that width gets widened.
+fn fit_pressure_bucket(from: i64, to: i64, requested: i64) -> i64 {
+    let mut bucket = snap_bucket_seconds(requested.max(1));
+    while (to - from) / bucket > PRESSURE_MAX_BUCKETS {
+        match widen_bucket(bucket) {
+            Some(wider) => bucket = wider,
+            None => break,
+        }
+    }
+    bucket
+}
+
+/// Undercut pressure for one item on one world. Undercuts only compete
+/// within a world, so datacenter and region scopes are rejected.
+async fn undercut_pressure(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PressureQuery>,
+) -> Result<axum::response::Response, WebError> {
+    static QUERIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let now = chrono::Utc::now().timestamp();
+    let to = query.to.unwrap_or(now).min(now);
+    let from = query.from.unwrap_or(0);
+    if from < 0 || from >= to || to > i64::from(u32::MAX) {
+        return Err(WebError::BadRequest);
+    }
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let selected = world_cache.lookup_value_by_name(&world)?;
+    let AnySelector::World(world_id) = AnySelector::from(&selected) else {
+        return Err(WebError::BadRequest);
+    };
+    let requested_bucket = query.bucket.unwrap_or(3600);
+    let ttl = std::time::Duration::from_secs(60);
+    let key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from,
+        to: if query.to.is_some() {
+            to
+        } else {
+            open_window_cache_stamp(to, 60)
+        },
+        bucket: requested_bucket,
+        group: "pressure",
+        hq: hq.as_str(),
+        bins: 0,
+    };
+    if let Some(hit) = cache.get(&key) {
+        return Ok(cached_json(hit, ttl));
+    }
+    let Ok(_permit) = QUERIES.try_acquire() else {
+        return Err(WebError::TemporarilyUnavailable);
+    };
+    let work = async {
+        let anchor = ultros_clickhouse::floor_history::anchors(&ch, &[world_id])
+            .await?
+            .get(&world_id)
+            .copied();
+        // Nothing before the anchor is known; start the buckets there.
+        let from = anchor.map_or(from, |a| from.max(a)).min(to - 1);
+        let bucket_seconds = fit_pressure_bucket(from, to, requested_bucket);
+        ultros_clickhouse::undercut_pressure::load(
+            &ch,
+            item_id,
+            world_id,
+            hq,
+            ultros_clickhouse::undercut_pressure::PressureParams {
+                world_id,
+                from,
+                to,
+                bucket_seconds,
+                now,
+                anchor,
+            },
+        )
+        .await
+    };
+    let payload = tokio::time::timeout(std::time::Duration::from_secs(15), work)
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?
+        .map_err(|e| crate::web::error::ClickHouseQueryError::new("undercut_pressure", e))?;
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
 /// Bounded multi-item extension of the chart history API, with exact floor
 /// bounds and explicit unknown samples. Cache namespace includes cadence/quality.
 async fn floor_history_batch(
@@ -3681,6 +3786,10 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
         .route("/api/v1/floor_history/{world}/{itemid}", get(floor_history))
         .route(
+            "/api/v1/undercut_pressure/{world}/{itemid}",
+            get(undercut_pressure),
+        )
+        .route(
             "/api/v1/floor_history/{world}",
             post(floor_history_batch).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
         )
@@ -4186,5 +4295,28 @@ mod game_detail_tests {
             serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
                 .unwrap();
         assert_eq!(fetched.unwrap().singular, npc.singular);
+    }
+}
+
+#[cfg(test)]
+mod pressure_route_tests {
+    use super::fit_pressure_bucket;
+
+    #[test]
+    fn fit_pressure_bucket_snaps_to_the_ladder() {
+        assert_eq!(fit_pressure_bucket(0, 86_400, 3600), 3600);
+        assert_eq!(
+            fit_pressure_bucket(0, 86_400, 5000),
+            super::snap_bucket_seconds(5000)
+        );
+    }
+
+    #[test]
+    fn fit_pressure_bucket_widens_past_cap() {
+        let year = 365 * 86_400;
+        let bucket = fit_pressure_bucket(0, year, 3600);
+        assert!(year / bucket <= 2000, "{bucket}");
+        // 1 h → 8760 buckets (too many); 6 h → 1460 fits.
+        assert_eq!(bucket, 6 * 3600);
     }
 }
