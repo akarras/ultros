@@ -6,7 +6,9 @@ use wasm_encoder::{
     CodeSection, CustomSection, Function, FunctionSection, Instruction, Module, NameMap,
     NameSection, TypeSection, ValType,
 };
-use wasm_symbols::{extract_symbols, format_symbols, strip_hash_suffix, strip_name_section};
+use wasm_symbols::{
+    MAX_NAME_LEN, extract_symbols, format_symbols, normalize_name, strip_name_section,
+};
 
 /// Two functions; the first is unnamed to exercise sparse indices. The
 /// `producers` custom section sits *after* `name` to prove stripping is
@@ -33,7 +35,7 @@ fn module(with_names: bool) -> Vec<u8> {
         let mut fn_names = NameMap::new();
         fn_names.append(
             1,
-            "ultros_app::routes::item_view::ItemView::{{closure}}::h0123456789abcdef",
+            "ultros_app[1729e4642c0fad2d]::routes::item_view::ItemView::{{closure}}",
         );
         names.functions(&fn_names);
         m.section(&names);
@@ -79,11 +81,81 @@ fn strip_removes_only_the_name_section() {
 }
 
 #[test]
-fn hash_suffix_only_stripped_when_it_is_a_rustc_hash() {
-    assert_eq!(strip_hash_suffix("a::b::h0123456789abcdef"), "a::b");
+fn legacy_hash_suffix_only_stripped_when_it_is_a_rustc_hash() {
+    assert_eq!(normalize_name("a::b::h0123456789abcdef"), "a::b");
     // wasm-bindgen's closure disambiguator comes after the hash.
-    assert_eq!(strip_hash_suffix("a::b::h0123456789abcdef[3]"), "a::b[3]");
-    assert_eq!(strip_hash_suffix("a::b::hello"), "a::b::hello");
-    assert_eq!(strip_hash_suffix("__wbindgen_malloc"), "__wbindgen_malloc");
-    assert_eq!(strip_hash_suffix("a::b::h0123"), "a::b::h0123");
+    assert_eq!(normalize_name("a::b::h0123456789abcdef[3]"), "a::b[3]");
+    assert_eq!(normalize_name("a::b::hello"), "a::b::hello");
+    assert_eq!(normalize_name("__wbindgen_malloc"), "__wbindgen_malloc");
+    assert_eq!(normalize_name("a::b::h0123"), "a::b::h0123");
+}
+
+/// v0 mangling (the default on current nightlies) demangles with a
+/// `[<16 hex>]` crate disambiguator after every crate name. They are noise
+/// for a human, shift on every dependency bump, and are the bulk of the map.
+#[test]
+fn v0_crate_disambiguators_are_removed_everywhere() {
+    assert_eq!(
+        normalize_name(
+            "<ultros_app[1729e4642c0fad2d]::routes::item_view::ItemView as core[ed30c1ab14c18277]::ops::function::FnOnce<()>>::call_once"
+        ),
+        "<ultros_app::routes::item_view::ItemView as core::ops::function::FnOnce<()>>::call_once"
+    );
+    // A trailing `[N]` closure disambiguator is not a crate hash.
+    assert_eq!(
+        normalize_name("ultros_app[1729e4642c0fad2d]::f::{{closure}}[2]"),
+        "ultros_app::f::{{closure}}[2]"
+    );
+    // Only exactly 16 lowercase hex digits qualify.
+    assert_eq!(normalize_name("a[0123]::b"), "a[0123]::b");
+}
+
+/// Fully generic names run to tens of kilobytes (a `VirtualGrid`
+/// instantiation with all its type arguments). Fifty such frames would
+/// blow GlitchTip's event size limit, so names are capped; the prefix is
+/// the informative part.
+#[test]
+fn over_long_names_are_truncated_at_a_char_boundary() {
+    let long = format!("ultros_app::grid::{}", "é".repeat(MAX_NAME_LEN));
+    let out = normalize_name(&long);
+    assert!(out.ends_with('…'), "{out}");
+    assert!(out.chars().count() <= MAX_NAME_LEN + 1);
+    assert!(out.starts_with("ultros_app::grid::é"));
+    let exact = "x".repeat(MAX_NAME_LEN);
+    assert_eq!(normalize_name(&exact), exact);
+}
+
+/// `cargo leptos build --split` passes `--no-demangle` to wasm-bindgen
+/// (cargo-leptos gates it on `proj.split`), which skips the pass that
+/// rewrites `func.name`. The name section then holds RAW v0 symbols, so the
+/// map has to demangle them itself or GlitchTip shows `_RNvNtCs…`. The
+/// alternate form also omits crate disambiguators, so no further stripping
+/// is needed for this input.
+#[test]
+fn raw_v0_symbols_are_demangled() {
+    // _RNvNtCs1234_10ultros_app6routes4func
+    let mangled = "_RNvNtCsbKu1QBP2Rbi_10ultros_app6routes4func";
+    assert_eq!(normalize_name(mangled), "ultros_app::routes::func");
+}
+
+/// Legacy-mangled input demangles too, and its trailing hash is dropped by
+/// rustc-demangle's alternate form rather than by our suffix rule.
+#[test]
+fn raw_legacy_symbols_are_demangled() {
+    assert_eq!(
+        normalize_name("_ZN10ultros_app6routes4func17h0123456789abcdefE"),
+        "ultros_app::routes::func"
+    );
+}
+
+/// Anything that is not a Rust symbol — wasm-bindgen's own shims, and names
+/// wasm-bindgen ALREADY demangled (the unsplit build) — must pass through
+/// the demangler untouched and be handled by the existing normalization.
+#[test]
+fn non_symbols_and_pre_demangled_names_are_untouched_by_demangling() {
+    assert_eq!(normalize_name("__wbindgen_malloc"), "__wbindgen_malloc");
+    assert_eq!(
+        normalize_name("ultros_app[1729e4642c0fad2d]::routes::func"),
+        "ultros_app::routes::func"
+    );
 }

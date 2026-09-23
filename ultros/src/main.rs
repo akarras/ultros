@@ -1,28 +1,28 @@
 #![feature(trivial_bounds)]
 #![recursion_limit = "256"]
-pub(crate) mod alerts;
-pub(crate) mod analyzer_service;
-pub(crate) mod character_claim;
 mod discord;
-pub(crate) mod event;
 mod fd_limit;
-pub(crate) mod group_sync;
-mod ingest_health;
-mod item_update_service;
 pub mod leptos;
-pub(crate) mod lists;
-pub(crate) mod lodestone_profile;
 #[cfg(feature = "profiling")]
 pub mod profiling;
-pub(crate) mod resale_eligibility;
-pub(crate) mod search_service;
 mod ssr_drain;
-#[cfg(feature = "test-auth")]
-mod test_market_isolation;
-pub(crate) mod trend_candidates;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
+
+// The server's services live in their own crates so each one builds and tests
+// without the Leptos SSR app. Aliased here so the web and Discord layers keep
+// addressing them as `crate::alerts::…`, `crate::event::…` and so on.
+pub(crate) use ultros_alerts as alerts;
+pub(crate) use ultros_analyzer::analyzer_service;
+pub(crate) use ultros_character::{character_claim, lodestone_profile};
+pub(crate) use ultros_group_sync as group_sync;
+use ultros_ingest::{ingest_health, item_update_service};
+pub(crate) use ultros_lists as lists;
+pub(crate) use ultros_search as search_service;
+pub(crate) use ultros_server_core::event;
+#[cfg(feature = "test-auth")]
+use ultros_server_core::test_market_isolation;
 
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
@@ -51,6 +51,8 @@ use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::UltrosDb;
 use ultros_db::world_data::world_cache::WorldCache;
+use ultros_ingest::record_listing_changes;
+use ultros_server_core::env_flag::env_flag_enabled;
 use universalis::websocket::SocketRx;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
@@ -210,20 +212,6 @@ fn spawn_rollup_scheduler(
             }
         }
     });
-}
-
-/// Mirror a write path's change list into ClickHouse. Non-blocking: overflow
-/// is counted by the writer, never felt by ingest.
-pub(crate) fn record_listing_changes(
-    writer: &ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
-    changes: &[ultros_db::listings::ListingChange],
-    source: ultros_clickhouse::rows::ListingEventSource,
-) {
-    for change in changes {
-        writer.send(ultros_clickhouse::rows::ListingEventRow::from_change(
-            change, source,
-        ));
-    }
 }
 
 async fn run_socket_listener(
@@ -402,31 +390,6 @@ async fn init_db(db: &UltrosDb, world_data: Option<(WorldsView, DataCentersView)
 
 /// Name of the env var that turns the Universalis websocket ingest off.
 const DISABLE_WEBSOCKET_ENV: &str = "ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET";
-
-/// Interpret a boolean-ish environment variable.
-///
-/// Unset, empty, or any recognised falsy spelling means "off"; the usual truthy
-/// spellings mean "on". An unrecognised value is treated as "on" *and* warned
-/// about: someone who set the variable at all meant to flip it, so honouring
-/// the intent beats silently ignoring `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=please`
-/// and letting a QA deploy keep writing to the shared database.
-fn env_flag_enabled(name: &str, raw: Option<&str>) -> bool {
-    let Some(value) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
-        return false;
-    };
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => true,
-        "0" | "false" | "no" | "off" => false,
-        other => {
-            warn!(
-                variable = name,
-                value = other,
-                "unrecognised boolean value; treating it as enabled"
-            );
-            true
-        }
-    }
-}
 
 /// Whether this process should skip subscribing to the Universalis websocket.
 ///

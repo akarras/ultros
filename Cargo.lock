@@ -10428,8 +10428,6 @@ version = "0.1.0"
 dependencies = [
  "any_spawner",
  "anyhow",
- "arrayvec",
- "async-trait",
  "axum",
  "axum-extra",
  "axum-macros",
@@ -10439,9 +10437,7 @@ dependencies = [
  "cookie",
  "dotenvy",
  "envy",
- "flate2",
  "futures",
- "http 0.2.12",
  "http-body",
  "http-body-util",
  "hyper",
@@ -10459,14 +10455,11 @@ dependencies = [
  "metrics-exporter-prometheus",
  "mime_guess",
  "oauth2",
- "openssl",
  "poise",
  "reqwest 0.12.28",
  "resvg",
- "rkyv",
  "rustls 0.23.45",
  "sea-orm",
- "select",
  "sentry",
  "sentry-tower",
  "sentry-tracing",
@@ -10474,8 +10467,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "sitemap-rs",
- "smallvec",
- "tantivy",
  "tempfile",
  "thiserror 2.0.20",
  "tikv-jemallocator",
@@ -10486,18 +10477,79 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "ultros-alerts",
+ "ultros-analyzer",
  "ultros-api-types",
  "ultros-app",
  "ultros-changelog",
+ "ultros-character",
  "ultros-charts",
  "ultros-clickhouse",
  "ultros-db",
+ "ultros-game-sources",
+ "ultros-group-sync",
+ "ultros-ingest",
  "ultros-item-card",
  "ultros-list-doc",
+ "ultros-lists",
+ "ultros-search",
+ "ultros-server-core",
  "ultros-xiv-icons",
  "universalis",
  "url",
+ "xiv-gen",
+ "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-alerts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "http 0.2.12",
+ "openssl",
+ "poise",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ultros-api-types",
+ "ultros-db",
+ "ultros-server-core",
+ "url",
  "web-push",
+ "xiv-gen",
+ "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-analyzer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "chrono",
+ "flate2",
+ "futures",
+ "itertools 0.14.0",
+ "metrics",
+ "rkyv",
+ "serde",
+ "smallvec",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ultros-api-types",
+ "ultros-clickhouse",
+ "ultros-db",
+ "ultros-server-core",
  "xiv-gen",
  "xiv-gen-db",
 ]
@@ -10571,6 +10623,7 @@ dependencies = [
  "ultros-charts",
  "ultros-crafting",
  "ultros-frontend-core",
+ "ultros-game-sources",
  "ultros-i18n",
  "ultros-list-doc",
  "ultros-ui",
@@ -10608,6 +10661,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultros-character"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest 0.12.28",
+ "select",
+ "thiserror 2.0.20",
+ "ultros-db",
+]
+
+[[package]]
 name = "ultros-charts"
 version = "0.1.0"
 dependencies = [
@@ -10639,6 +10703,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "ultros-api-types",
  "ultros-db",
  "xiv-gen",
@@ -10744,11 +10809,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultros-game-sources"
+version = "0.1.0"
+dependencies = [
+ "xiv-gen",
+ "xiv-gen-db",
+]
+
+[[package]]
 name = "ultros-grid-core"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ultros-group-sync"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "poise",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ultros-alerts",
+ "ultros-api-types",
+ "ultros-db",
 ]
 
 [[package]]
@@ -10759,6 +10846,26 @@ dependencies = [
  "leptos",
  "leptos_i18n",
  "leptos_i18n_build",
+]
+
+[[package]]
+name = "ultros-ingest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "metrics",
+ "sea-orm",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ultros-api-types",
+ "ultros-clickhouse",
+ "ultros-db",
+ "ultros-server-core",
+ "universalis",
+ "xiv-gen-db",
 ]
 
 [[package]]
@@ -10788,6 +10895,43 @@ dependencies = [
  "loro",
  "thiserror 2.0.20",
  "ultros-api-types",
+]
+
+[[package]]
+name = "ultros-lists"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tracing",
+ "ultros-alerts",
+ "ultros-api-types",
+ "ultros-db",
+ "ultros-list-doc",
+ "ultros-server-core",
+]
+
+[[package]]
+name = "ultros-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tantivy",
+ "tracing",
+ "ultros-api-types",
+ "ultros-game-sources",
+ "xiv-gen",
+ "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-server-core"
+version = "0.1.0"
+dependencies = [
+ "metrics",
+ "tokio",
+ "tracing",
+ "ultros-api-types",
+ "ultros-db",
 ]
 
 [[package]]
@@ -10905,6 +11049,7 @@ dependencies = [
  "time",
  "ultros-api-types",
  "ultros-frontend-core",
+ "ultros-game-sources",
  "ultros-i18n",
  "ultros-ui",
  "web-sys",
@@ -11501,6 +11646,7 @@ dependencies = [
  "anyhow",
  "brotli",
  "flate2",
+ "rustc-demangle",
  "wasm-encoder",
  "wasmparser 0.259.0",
 ]

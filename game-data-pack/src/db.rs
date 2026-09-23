@@ -88,7 +88,13 @@ pub fn build_packs(
                     .iter()
                     .map(|(id, item)| (id.0, item.name.as_str(), item.icon)),
             );
-            en_npc_placements = data.npc_placements.clone();
+            // Back to a `HashMap`: this is what `data/npc-placements.json`
+            // stores and what `Supplements` hands back on a CSV-only rebuild.
+            en_npc_placements = data
+                .npc_placements
+                .iter()
+                .map(|(id, placements)| (*id, placements.clone()))
+                .collect();
             en_maps_used = maps_used(&data.npc_placements, &data.maps);
             en_vendor_npcs = data
                 .gil_shop_npcs
@@ -166,8 +172,8 @@ pub fn build_packs(
 
 /// Every map some placement refers to, with its texture stem, ascending.
 fn maps_used(
-    placements: &HashMap<ENpcResidentId, Vec<NpcPlacement>>,
-    maps: &HashMap<MapId, xiv_gen::Map>,
+    placements: &xiv_gen::IdMap<ENpcResidentId, Vec<NpcPlacement>>,
+    maps: &xiv_gen::IdMap<MapId, xiv_gen::Map>,
 ) -> Vec<(i32, String)> {
     let mut used: Vec<(i32, String)> = placements
         .values()

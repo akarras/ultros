@@ -33,6 +33,7 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
 ] }
 xiv-gen = { workspace = true }
+ultros-game-sources = { path = "../../ultros-game-sources" }
 
 [features]
 default = []

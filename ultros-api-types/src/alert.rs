@@ -267,7 +267,7 @@ pub struct DiscordWritableGuild {
 
 /// A resolved item-price-threshold alert rule, shaped for pure matching against
 /// a single [`ActiveListing`] via [`threshold_listing_matches`]. Shared between
-/// the server (`ultros/src/alerts/price_alert_tracker.rs`) and the browser, so a
+/// the server (`ultros-alerts/src/price_alert_tracker.rs`) and the browser, so a
 /// guest without an account can evaluate the same rule locally.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThresholdRule {

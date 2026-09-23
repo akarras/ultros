@@ -94,10 +94,40 @@ fn is_name_section(wasm: &[u8], section: &Section) -> Result<bool> {
     Ok(custom_section_name(wasm, &section.payload)?.0 == "name")
 }
 
+/// Longest name kept in the map, in chars. Generic-heavy names reach tens
+/// of kilobytes; a trace of such frames would exceed GlitchTip's event size
+/// limit, and nothing past the first few hundred chars helps a reader.
+pub const MAX_NAME_LEN: usize = 240;
+
+fn is_hex16(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Remove every v0 `[<16 hex>]` crate disambiguator (`core[ed30…]::` ->
+/// `core::`). A trailing `[N]` wasm-bindgen closure disambiguator is kept.
+fn strip_v0_disambiguators(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(open) = rest.find('[') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find(']') {
+            Some(close) if is_hex16(&after[..close]) => {
+                rest = &after[close + 1..];
+            }
+            _ => {
+                out.push('[');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Drop the trailing `::h<16 hex>` rustc legacy-mangling hash, keeping any
-/// wasm-bindgen closure disambiguator (`[N]`) that follows it. Names are
-/// then stable across builds and the map is smaller.
-pub fn strip_hash_suffix(name: &str) -> String {
+/// wasm-bindgen closure disambiguator (`[N]`) that follows it.
+fn strip_legacy_hash(name: &str) -> String {
     let (base, suffix) = match name.rfind('[') {
         Some(i) if name.ends_with(']') => (&name[..i], &name[i..]),
         _ => (name, ""),
@@ -105,11 +135,43 @@ pub fn strip_hash_suffix(name: &str) -> String {
     let Some(idx) = base.rfind("::h") else {
         return name.to_string();
     };
-    let hash = &base[idx + 3..];
-    if hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if is_hex16(&base[idx + 3..]) {
         format!("{}{}", &base[..idx], suffix)
     } else {
         name.to_string()
+    }
+}
+
+fn truncate(name: String) -> String {
+    match name.char_indices().nth(MAX_NAME_LEN) {
+        Some((byte_idx, _)) => {
+            let mut out = name[..byte_idx].to_string();
+            out.push('…');
+            out
+        }
+        None => name,
+    }
+}
+
+/// The name as it goes into the map.
+///
+/// Demangles first, as a guard: `cargo leptos build --split` makes
+/// cargo-leptos pass `--no-demangle` to wasm-bindgen, which skips the pass
+/// that rewrites `func.name`, and the section then holds raw `_RNv…` /
+/// `_ZN…` symbols. The current build does not split (that pilot was
+/// reverted in #1588), so today every name arrives already demangled —
+/// which is not a valid symbol, so `try_demangle` declines it and the
+/// explicit strips below do the work. The branch costs four lines and keeps
+/// the map readable if splitting returns.
+///
+/// Either way the result has its build-specific hashes removed (names stable
+/// across builds, map a fraction of the size) and is capped at
+/// [`MAX_NAME_LEN`]. `rustc_demangle`'s alternate form drops the v0 crate
+/// disambiguators and the legacy `::h<hash>` on its own.
+pub fn normalize_name(name: &str) -> String {
+    match rustc_demangle::try_demangle(name) {
+        Ok(symbol) => truncate(format!("{symbol:#}")),
+        Err(_) => truncate(strip_legacy_hash(&strip_v0_disambiguators(name))),
     }
 }
 
@@ -129,7 +191,7 @@ pub fn extract_symbols(wasm: &[u8]) -> Result<Vec<(u32, String)>> {
         if let Name::Function(map) = subsection.context("malformed name subsection")? {
             for naming in map {
                 let naming = naming.context("malformed function name entry")?;
-                symbols.push((naming.index, strip_hash_suffix(naming.name)));
+                symbols.push((naming.index, normalize_name(naming.name)));
             }
         }
     }

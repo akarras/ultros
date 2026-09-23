@@ -44,7 +44,7 @@ These metrics do not count sale events abandoned on the broadcast bus during
 shutdown. Use parity checks after deployments as well as after reported drops.
 
 1. Restore ClickHouse availability and verify new inserts succeed.
-2. Run `cargo run --bin clickhouse_parity_check -- <start-year>` against the
+2. Run `cargo run -p ultros-clickhouse --bin clickhouse_parity_check -- <start-year>` against the
    intended deployment credentials. This is a potentially expensive historical
    scan; choose the smallest affected year range. The command uses logical
    (`FINAL`) sales counts, not physical pre-merge duplicate counts.
@@ -59,7 +59,7 @@ shutdown. Use parity checks after deployments as well as after reported drops.
    SETTINGS mutations_sync = 1;
    ```
 
-4. Run `cargo run --bin clickhouse_backfill -- <start-year>`, then rerun parity.
+4. Run `cargo run -p ultros-clickhouse --bin clickhouse_backfill -- <start-year>`, then rerun parity.
    Backfill overlaps are safe because both paths use the real Postgres sale id.
    Counts from a live system can move between the Postgres and ClickHouse reads;
    investigate persistent drift rather than assuming every live difference is

@@ -1,0 +1,15 @@
+[package]
+name = "ultros-search"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The server's in-process full-text search index over the game data."
+
+[dependencies]
+anyhow = { workspace = true }
+tantivy = "0.26.1"
+tracing = { workspace = true }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-game-sources = { path = "../ultros-game-sources" }
+xiv-gen = { workspace = true }
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }

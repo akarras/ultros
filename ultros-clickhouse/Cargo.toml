@@ -20,10 +20,14 @@ ultros-db = { path = "../ultros-db" }
 ultros-api-types = { path = "../ultros-api-types" }
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 xiv-gen = { workspace = true }
+# The one-shot maintenance binaries in src/bin (backfill, parity check,
+# inspect). They used to live in the server crate, which made building them
+# wait on the whole Leptos SSR app.
+dotenvy = { workspace = true }
+sea-orm = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
-dotenvy = { workspace = true }
 # `start_paused` runtimes: the shutdown-drain budget test would otherwise
 # spend its budget in real seconds.
 tokio = { workspace = true, features = ["test-util"] }
-sea-orm = { workspace = true }

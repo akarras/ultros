@@ -5,13 +5,22 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 use syn::{GenericArgument, Item, PathArguments, Type};
 
 fn type_args(ty: &Type, expected: &str) -> Vec<Type> {
+    type_args_of(ty, &[expected])
+}
+
+/// Like `type_args`, for a position that may hold any of `expected`.
+fn type_args_of(ty: &Type, expected: &[&str]) -> Vec<Type> {
     let Type::Path(path) = ty else {
-        panic!("expected {expected}")
+        panic!("expected one of {expected:?}")
     };
     let segment = path.path.segments.last().unwrap();
-    assert_eq!(segment.ident, expected);
+    assert!(
+        expected.iter().any(|name| segment.ident == name),
+        "expected one of {expected:?}, found {}",
+        segment.ident
+    );
     let PathArguments::AngleBracketed(args) = &segment.arguments else {
-        panic!("expected generic arguments for {expected}")
+        panic!("expected generic arguments for {expected:?}")
     };
     args.args
         .iter()
@@ -48,7 +57,9 @@ fn main() {
     );
     for table in &data.fields {
         let name = table.ident.as_ref().unwrap().to_string();
-        let types = type_args(&table.ty, "HashMap");
+        // Tables are `IdMap`s (row-id order, see xiv-gen/src/id_map.rs); a
+        // plain `HashMap` is still accepted so a new table can land either way.
+        let types = type_args_of(&table.ty, &["IdMap", "HashMap"]);
         let value = &types[1];
         let vector = type_name(value) == "Vec";
         let row_type = if vector {

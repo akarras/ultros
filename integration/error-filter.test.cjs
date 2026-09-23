@@ -211,8 +211,10 @@ const cases = [
   // (see the "hydration panic on a CURRENT browser ... is preserved" case
   // above). The executor twin points only at singlethread.rs — identical for
   // every panic — so it adds nothing the retained primary doesn't already show.
-  // Dropped unconditionally as a redundant twin (Category 7), exactly like the
-  // RuntimeError onerror twin in Category 6 (PR #921).
+  // Dropped unconditionally as a redundant twin (Category 7), as the
+  // RuntimeError onerror twin was in the retired Category 6 (PR #921) before
+  // production moved to panic=immediate-abort, where no hook runs and the
+  // onerror trap is the only report.
   {
     name: "RefCell-already-borrowed executor cascade on a clean page is dropped (redundant twin of the retained primary)",
     ua: CURRENT_CHROME,
@@ -391,15 +393,20 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Under panic=immediate-abort every prod panic is this bare trap, so the
+  // synchronous check can no longer tell the hydration panic from an app
+  // panic. It passes the trap on; beforeSend symbolicates it and drops it only
+  // if its top frames are tachys hydration code — see
+  // integration/immediate-abort-trap-filter.test.cjs.
   {
-    name: "stale Chrome onerror RuntimeError unreachable (NO tachys breadcrumb) is dropped",
+    name: "stale Chrome onerror RuntimeError unreachable (NO tachys breadcrumb) is left to the post-symbolication check",
     ua: staleChromeUA(106),
     document: fakeDocumentEx({ fontCount: 0 }),
     event: {
       exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
-    expectDrop: true,
+    expectDrop: false,
   },
   {
     name: "RefCell cascade (js-sys loc) with injected <font>, NO tachys breadcrumb, is dropped",
@@ -422,8 +429,9 @@ const cases = [
   // primary fault. The genuine hydration bug it cascades from is still reported
   // via the PRIMARY `internal error` panic at the tachys location, which is
   // preserved on a clean browser (see the cases above) — so nothing actionable
-  // is lost. This is the same reasoning as the Category 6 RuntimeError twin
-  // (PR #921), which drops its onerror copy even on a clean browser.
+  // is lost. This was the same reasoning as the retired Category 6 RuntimeError
+  // twin (PR #921); that one is preserved now (see below), because under
+  // panic=immediate-abort the hook never runs and the trap is the only report.
   {
     name: "RefCell executor cascade (js-sys loc) on a current clean browser is dropped (Category 7 redundant twin)",
     ua: CURRENT_CHROME,
@@ -448,17 +456,18 @@ const cases = [
     expectDrop: false,
   },
 
-  // ── Category 6: redundant onerror wasm `unreachable` trap (dedup) ──
-  // The onerror "RuntimeError: unreachable" the browser captures after Rust's
-  // abort() runs the wasm `unreachable` instruction. When its stack carries one
-  // of our pkg-bundle frames it is provably OUR wasm trap — the guaranteed
-  // duplicate of the actionable RustWasmPanic the panic hook already reported —
-  // so it is dropped UNCONDITIONALLY (no font / translate / stale-Chrome
-  // fingerprint), which the gated category-3 prong above could not do. This is
-  // the #6781–#6828 per-deploy fragmenting fleet. The frameless variant above
-  // is left preserved: only an attributable-to-our-bundle trap is a known dup.
+  // ── Category 6 (retired): the onerror wasm `unreachable` trap is KEPT ──
+  // Production wasm is built with `panic = "immediate-abort"`: a panic runs no
+  // hook and formats no message, it executes the wasm `unreachable`
+  // instruction where it stands. The browser's global onerror then captures a
+  // "RuntimeError: unreachable" whose frames ARE the panic site — the only
+  // report that exists, symbolicated and fingerprinted by wasm_symbolicate.js.
+  // It used to be dropped as the twin of a hook-reported RustWasmPanic; that
+  // twin no longer exists in production, so every shape below is preserved.
+  // (The injected-translation hydration flood is still caught by the gated
+  // category-3 prong above, which fingerprints the injecting population.)
   {
-    name: "onerror RuntimeError unreachable WITH our pkg frames is dropped on a current clean browser (real #6827)",
+    name: "onerror RuntimeError unreachable WITH our pkg frames is preserved on a current clean browser (was #6827; now the panic report itself)",
     ua: CURRENT_CHROME,
     document: fakeDocumentEx({ fontCount: 0 }),
     event: {
@@ -486,10 +495,10 @@ const cases = [
       },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
-    expectDrop: true,
+    expectDrop: false,
   },
   {
-    name: "Firefox phrasing 'unreachable executed' from our wasm frame is dropped",
+    name: "Firefox phrasing 'unreachable executed' from our wasm frame is preserved",
     ua: CURRENT_CHROME,
     document: fakeDocumentEx({ fontCount: 0 }),
     event: {
@@ -510,7 +519,7 @@ const cases = [
         ],
       },
     },
-    expectDrop: true,
+    expectDrop: false,
   },
   {
     name: "RuntimeError unreachable from a THIRD-PARTY wasm module (no pkg frame) is preserved",
@@ -546,7 +555,7 @@ const cases = [
     // ENTIRELY wasm-module frames is a wasm abort trap; the only wasm on an
     // Ultros page is our bundle, so it is the guaranteed duplicate of the kept
     // RustWasmPanic and safe to drop.
-    name: "onerror RuntimeError unreachable with ONLY wasm://wasm module frames is dropped (real #6848 crawler variant)",
+    name: "onerror RuntimeError unreachable with ONLY wasm://wasm module frames is preserved on a clean browser (#6848 shape; crawler fleets are caught by the category-3 UA gate)",
     ua: CURRENT_CHROME,
     document: fakeDocumentEx({ fontCount: 0 }),
     event: {
@@ -577,7 +586,7 @@ const cases = [
       },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
-    expectDrop: true,
+    expectDrop: false,
   },
   {
     // Over-drop guard: the all-wasm-module rule must require EVERY frame to be a
@@ -664,8 +673,8 @@ const cases = [
   // reported with its own actionable location. Dropped UNCONDITIONALLY (no
   // injecting-population fingerprint) — the retained primary keeps the bug
   // visible. This is #6758 (23k+ events), the single largest issue, the
-  // RefCell twin of the per-deploy RuntimeError flood Category 6 / PR #921
-  // dedups. Scoped tightly: keyed on the executor location, so an APP-code
+  // RefCell twin of the per-deploy RuntimeError flood the retired Category 6
+  // (PR #921) used to dedup. Scoped tightly: keyed on the executor location, so an APP-code
   // double-borrow (which panics at an app/leptos path, NOT singlethread.rs)
   // still reports, and a RefCell event with no rust_panic context is preserved.
   {

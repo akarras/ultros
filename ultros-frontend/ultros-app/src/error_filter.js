@@ -41,7 +41,12 @@
 //      the wasm-bindgen-futures executor (a js-sys path — matched via a
 //      tachys hydration breadcrumb instead), and the unhandled
 //      `RuntimeError: unreachable` that reaches window.onerror with no
-//      rust_panic context at all. Suppressed only when an injecting /
+//      rust_panic context at all. That last shape is ambiguous in production:
+//      the wasm is built with `panic = "immediate-abort"`, so EVERY panic
+//      arrives as it. beforeSend therefore symbolicates such a trap first and
+//      drops it only when its top frames are tachys hydration code
+//      (__ultrosIsInjectedTrapCandidate / __ultrosShouldDropSymbolicatedTrap).
+//      Suppressed only when an injecting /
 //      stale-population fingerprint is present: a <font> element in the
 //      live DOM (which Ultros never emits, so it is necessarily
 //      translation-injected), the full-page-translation class on <html>
@@ -67,29 +72,16 @@
 //      truncated the streamed bootstrap before the wasm hydrated — the same
 //      translation-proxy population behind category 3. GlitchTip issues
 //      #6620, #6667, #6760, #6761.
-//   6. The redundant "RuntimeError: unreachable" that every Rust panic
-//      emits a SECOND time. The panic hook first reports an actionable
-//      RustWasmPanic (kept — it carries contexts.rust_panic.location and a
-//      stable per-location fingerprint, so it collapses to one issue per
-//      panic site). Then Rust's abort() runs the wasm `unreachable`
-//      instruction, whose trap the browser's global onerror re-captures as
-//      a "RuntimeError: unreachable" with NO rust_panic context. That copy
-//      never gets the stable fingerprint, and its
-//      /pkg/<hash>/ultros.wasm:wasm-function[N] frame filename fragments it
-//      into a NEW issue every deploy — the per-build #67xx/#68xx rotation
-//      (#6781–#6828) that prior triage had to ignore by hand each release.
-//      When the trap's stack carries one of our own pkg-bundle frames it is
-//      provably our wasm, hence a guaranteed duplicate of the kept
-//      RustWasmPanic, so it is dropped unconditionally — no injecting-
-//      population fingerprint needed: a real hydration bug on a current
-//      browser still reaches GlitchTip via the untouched RustWasmPanic. Some
-//      browsers and crawlers instead name every wasm frame with the engine-
-//      internal `wasm://wasm/<hash>:wasm-function[N]` scheme (the Mediapartners-
-//      Google crawler variant, #6848), so the pkg-frame test never fires; a
-//      RuntimeError "unreachable" whose stack is ENTIRELY such wasm-module
-//      frames is likewise our abort trap and is dropped too. A frameless or
-//      third-party-JS-framed RuntimeError (and a third-party wasm loaded from an
-//      https URL, which keeps its source-URL frame form) is left untouched.
+//   6. (Retired.) The onerror "RuntimeError: unreachable" used to be dropped
+//      as the redundant twin of a hook-reported RustWasmPanic. The production
+//      wasm is now built with `panic = "immediate-abort"` (Dockerfile): a
+//      panic runs NO hook and formats NO message, it executes the wasm
+//      `unreachable` instruction on the spot. That trap, caught by the
+//      browser's global onerror / unhandledrejection, is therefore THE panic
+//      report — wasm_symbolicate.js resolves its `wasm-function[N]` frames
+//      to Rust function names and fingerprints it by the top frames. It must
+//      never be dropped on frame shape alone. (Debug and local release
+//      builds keep the hook, so RustWasmPanic still exists there.)
 //   7. The "RefCell already borrowed" panic in the wasm-bindgen-futures
 //      single-threaded executor (js-sys .../futures/task/singlethread.rs).
 //      Every Rust panic that unwinds through a running future poll re-enters
@@ -123,18 +115,6 @@
 //      a real Ultros bug is never swept up.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
-  // Like ULTROS_PKG_BUNDLE_RE but tolerant of the trailing
-  // `:wasm-function[N]:0xADDR` the browser appends to a wasm trap's stack
-  // frame, so `/pkg/<hash>/ultros.wasm:wasm-function[5501]` still counts as
-  // originating in our bundle.
-  var ULTROS_PKG_FRAME_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)\b/;
-  // Engine-internal wasm-module stack-frame scheme. Some browsers — and the
-  // Mediapartners-Google crawler (GlitchTip #6848) — name wasm frames
-  // `wasm://wasm/<module-hash>:wasm-function[N]:0xADDR` rather than attributing
-  // them to the /pkg/<hash>/ultros.wasm source URL, so ULTROS_PKG_FRAME_RE never
-  // matches. On an Ultros page the only wasm is our own bundle, so a stack made
-  // ENTIRELY of these frames is still ours (see isRedundantWasmUnreachableTrap).
-  var ULTROS_WASM_MODULE_FRAME_RE = /^wasm:\/\/wasm\/[^:]+:wasm-function\[\d+\]/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
   // scripts from these (Cloudflare Web Analytics' beacon, Google Analytics /
   // gtag, AdSense, the funding-choices consent frame, ad-traffic-quality), but
@@ -388,16 +368,11 @@
     ) {
       return true;
     }
-    // (c) The unhandled wasm trap at window.onerror has no rust_panic context;
-    //     its only event-level signal is the exact RuntimeError "unreachable"
-    //     value. (A genuine wasm `unreachable` on a clean current browser still
-    //     reports — this is gated behind the injecting-population fingerprint in
-    //     isInjectedTachysHydrationPanic.) Matched exactly so other RuntimeError
-    //     values, e.g. "table index is out of bounds", are untouched.
-    var ex = firstException(event);
-    if (ex && ex.type === "RuntimeError" && ex.value === "unreachable") {
-      return true;
-    }
+    // (c) The bare `RuntimeError: unreachable` trap is NOT recognized here.
+    //     Production wasm is built with `panic = "immediate-abort"`, so EVERY
+    //     panic — not just the tachys hydration one — reaches window.onerror in
+    //     exactly that shape. It is classified by its symbolicated frames
+    //     instead: see isBareWasmTrap / __ultrosIsTachysHydrationTrap below.
     // (b) Best-effort fallback: the original tachys hydration panic console
     //     breadcrumb, when the SDK path does attach it.
     var crumbs = breadcrumbList(event);
@@ -524,11 +499,20 @@
 
   function isInjectedTachysHydrationPanic(event) {
     try {
-      if (!isTachysHydrationPanicEvent(event)) return false;
-
       // Only suppress when an injecting-population fingerprint is present, so
       // a genuine hydration mismatch on a clean page still reaches GlitchTip.
+      return isTachysHydrationPanicEvent(event) && hasInjectingFingerprint(event);
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
 
+  // The populations whose hydration panics are injected, not ours: a
+  // translation overlay (breadcrumb, <font>, translated-* class on <html>) or
+  // a stale, version-pinned Chrome.
+  function hasInjectingFingerprint(event) {
+    try {
       // Page-stability detector breadcrumb (the injected overlay's own log).
       var crumbs = breadcrumbList(event);
       if (Array.isArray(crumbs)) {
@@ -565,57 +549,60 @@
     return false;
   }
 
-  // Category 6: the redundant onerror copy of a Rust panic. See the header.
-  // An onerror "RuntimeError: unreachable" whose stack carries one of OUR
-  // pkg-bundle frames is the abort()-propagation of a panic the hook already
-  // reported as an actionable RustWasmPanic — a guaranteed duplicate that
-  // fragments per deploy. Drop it. Unlike the category-3 onerror prong (which
-  // is fingerprint-gated to preserve a possible real bug), this is safe to drop
-  // UNCONDITIONALLY because the actionable copy is retained: the panic hook is
-  // browser-agnostic, so even a clean current browser still emits the kept
-  // RustWasmPanic. Scoped to our bundle (a frameless or third-party-framed
-  // RuntimeError is preserved) and to the `unreachable` value (other wasm traps
-  // from our bundle, e.g. "memory access out of bounds", still report). The
-  // value is matched loosely so SpiderMonkey's "unreachable executed" and JSC's
-  // "Unreachable code should not be executed" are covered too.
-  function isRedundantWasmUnreachableTrap(event) {
-    try {
-      var ex = firstException(event);
-      if (!ex) return false;
-      if (ex.type !== "RuntimeError" || typeof ex.value !== "string")
-        return false;
-      if (!/unreachable/i.test(ex.value)) return false;
-      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
-      if (frames.length === 0) return false;
-      // (i) Any frame attributable to our pkg bundle (the JS glue or the wasm)
-      //     proves the trap is ours — the #6781–#6828 per-deploy fleet.
-      // (ii) Otherwise fall back to the frame-scheme test: some browsers /
-      //     crawlers name wasm frames `wasm://wasm/<hash>:wasm-function[N]`
-      //     rather than /pkg/<hash>/ultros.wasm (GlitchTip #6848,
-      //     Mediapartners-Google hitting the #6831 hydration panic), so the pkg
-      //     check never fires. A RuntimeError "unreachable" whose stack is
-      //     ENTIRELY such wasm-module frames is a wasm abort trap, and the only
-      //     wasm on an Ultros page is our bundle, so it too is the guaranteed
-      //     duplicate of the kept RustWasmPanic. Requiring EVERY frame to be a
-      //     wasm-module frame preserves a stack that reaches any third-party JS
-      //     frame; and a third-party wasm loaded from an https URL keeps its
-      //     `…/foo.wasm:wasm-function[N]` source-URL form (not wasm://wasm/), so
-      //     it is not swept up either.
-      var allWasmModuleFrames = true;
-      for (var i = 0; i < frames.length; i++) {
-        var fname = frames[i] && frames[i].filename;
-        if (typeof fname === "string" && ULTROS_PKG_FRAME_RE.test(fname)) {
-          return true;
-        }
-        if (
-          !(typeof fname === "string" && ULTROS_WASM_MODULE_FRAME_RE.test(fname))
-        ) {
-          allWasmModuleFrames = false;
-        }
+  // The unhandled wasm trap at window.onerror: no rust_panic context, value
+  // exactly "unreachable" (V8's wording — the population rule 3 targets is
+  // Chrome). Matched exactly so other RuntimeError values, e.g. "table index
+  // is out of bounds", are untouched. Must be read BEFORE symbolication, which
+  // rewrites the value to "unreachable in <site>".
+  function isBareWasmTrap(event) {
+    var ex = firstException(event);
+    var ctx = event && event.contexts && event.contexts.rust_panic;
+    return !!(
+      ex &&
+      ex.type === "RuntimeError" &&
+      ex.value === "unreachable" &&
+      !ctx
+    );
+  }
+
+  var TACHYS_FRAME_RE = /^<*tachys::/;
+  var TACHYS_HYDRATION_FRAME_RE = /tachys::hydration::|^<*tachys::.*::hydrate\b/;
+  var WASM_FRAME_FILE_RE = /\.wasm:wasm-function\[\d+\]/;
+  var TRAP_CLASSIFY_DEPTH = 3;
+
+  // Classify a SYMBOLICATED trap: is it the tachys hydration panic?
+  //   true  — the top wasm frame is tachys code and one of the top three is in
+  //           tachys::hydration (`failed_to_cast_*`, `Cursor::*`) or a tachys
+  //           `hydrate` impl. Under immediate-abort the trap fires in the
+  //           panicking function itself, so there is no panic machinery above.
+  //   false — resolved, and something else: an app panic during hydration has
+  //           an `ultros_*` frame on top and is reported.
+  //   null  — the top frame did not resolve (map missing or failed to load),
+  //           so the trap cannot be told apart.
+  function tachysHydrationTrap(event) {
+    var ex = firstException(event);
+    var frames = ex && ex.stacktrace && ex.stacktrace.frames;
+    if (!Array.isArray(frames)) return null;
+    var wasm = [];
+    for (var i = frames.length - 1; i >= 0 && wasm.length < TRAP_CLASSIFY_DEPTH; i--) {
+      var f = frames[i];
+      var file = f && (f.filename || f.abs_path);
+      if (typeof file === "string" && WASM_FRAME_FILE_RE.test(file)) wasm.push(f);
+    }
+    if (!wasm.length) return null;
+    // Resolved names are Rust paths; an unresolved frame has none (or
+    // `wasm-function[N]` / `?`), never a `::`.
+    var names = wasm.map(function (f) {
+      return typeof f.function === "string" && f.function.indexOf("::") !== -1
+        ? f.function
+        : null;
+    });
+    if (names[0] === null) return null;
+    if (!TACHYS_FRAME_RE.test(names[0])) return false;
+    for (var j = 0; j < names.length; j++) {
+      if (names[j] !== null && TACHYS_HYDRATION_FRAME_RE.test(names[j])) {
+        return true;
       }
-      return allWasmModuleFrames;
-    } catch (_) {
-      /* never let the filter throw */
     }
     return false;
   }
@@ -721,7 +708,7 @@
   // panics are never touched. Mutates the event in place and returns it.
   window.__ultrosAnnotateEvent = function (event) {
     try {
-      if (event && isTachysHydrationPanicEvent(event)) {
+      if (event && (isTachysHydrationPanicEvent(event) || isBareWasmTrap(event))) {
         event.contexts = event.contexts || {};
         if (!event.contexts.dom_injection) {
           event.contexts.dom_injection = domInjectionSnapshot();
@@ -733,6 +720,29 @@
     return event;
   };
 
+  // Rule 3 for the bare trap, part 1 — read BEFORE symbolication: is this a
+  // trap from an injecting population? Only these are symbolicated-then-
+  // classified; every other trap is simply reported.
+  window.__ultrosIsInjectedTrapCandidate = function (event) {
+    try {
+      return !!event && isBareWasmTrap(event) && hasInjectingFingerprint(event);
+    } catch (_) {
+      return false;
+    }
+  };
+
+  // Rule 3 for the bare trap, part 2 — read AFTER symbolication: drop a
+  // candidate only when its frames say tachys hydration. An unresolved trap
+  // (no map) keeps the pre-immediate-abort behaviour and is dropped, so a
+  // missing map cannot re-open the flood.
+  window.__ultrosShouldDropSymbolicatedTrap = function (event) {
+    try {
+      return tachysHydrationTrap(event) !== false;
+    } catch (_) {
+      return true;
+    }
+  };
+
   window.__ultrosShouldDropEvent = function (event) {
     return (
       isUltrosWasmFetchAbort(event) ||
@@ -740,7 +750,6 @@
       isStrippedHydrationBootstrap(event) ||
       isInjectedDocumentTypeError(event) ||
       isInjectedTachysHydrationPanic(event) ||
-      isRedundantWasmUnreachableTrap(event) ||
       isExecutorReentryCascade(event) ||
       isThirdPartyScriptError(event) ||
       isEmptyPromiseRejection(event)

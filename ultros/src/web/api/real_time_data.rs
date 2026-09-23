@@ -33,7 +33,7 @@ use ultros_api_types::websocket::{
 use ultros_api_types::{websocket::EventType as WEvent, world_helper::WorldHelper};
 
 use crate::event::{EventReceivers, EventType, ListDocEvent, NotificationEvent};
-use crate::lists::{Actor, ListSync, Origin};
+use crate::lists::{ListSync, Origin};
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 use crate::web::shutdown::until_shutdown;
@@ -137,16 +137,6 @@ pub(crate) async fn real_time_data(
             error!("{e:?}");
         }
     })
-}
-
-impl<T> From<EventType<T>> for ultros_api_types::websocket::EventType<T> {
-    fn from(value: EventType<T>) -> Self {
-        match value {
-            EventType::Remove(t) => WEvent::Removed(t),
-            EventType::Add(t) => WEvent::Added(t),
-            EventType::Update(t) => WEvent::Updated(t),
-        }
-    }
 }
 
 fn janky_map_event_type<T, Y>(e: EventType<T>, data: Y) -> WEvent<Y> {
@@ -616,8 +606,7 @@ async fn handle_socket(
                                                 .await?;
                                             continue;
                                         };
-                                        let actor =
-                                            Actor::from_user(user, Origin::Socket(socket_id));
+                                        let actor = user.actor(Origin::Socket(socket_id));
                                         if let Err(e) =
                                             list_sync.apply_update(list_id, &actor, &update).await
                                         {

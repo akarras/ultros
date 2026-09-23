@@ -8,6 +8,10 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+# Defensive: a build that skips wasm-bindgen's demangling pass (as
+# `cargo leptos build --split` did, before #1588 reverted that pilot) leaves
+# raw `_RNv…` / `_ZN…` symbols in the name section. See `normalize_name`.
+rustc-demangle = "0.1"
 # Only the `name` custom-section readers are used; no validation, no
 # component model.
 wasmparser = { version = "0.259", default-features = false, features = ["std"] }

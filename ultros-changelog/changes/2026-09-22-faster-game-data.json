@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Game data downloads about 30% smaller",
+  "blurb": "The item, recipe and NPC data Ultros loads before a page opens is packed more tightly, so first visits in every language download roughly half a megabyte less."
+}
