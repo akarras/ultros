@@ -755,9 +755,6 @@
     "welcome_continue_cta": "Weiter zu Ultros",
     "welcome_skip_for_now": "Vorerst überspringen",
     "welcome_pick_world_to_continue": "Wähle oben eine Heimatwelt, um fortzufahren",
-    "home_onboarding_banner_title": "Zum ersten Mal hier?",
-    "home_onboarding_banner_body": "Setze deine Heimatwelt, um personalisierte Flip-Angebote, Marktbewegungen und Preisvergleiche freizuschalten.",
-    "home_onboarding_banner_cta": "Einrichten",
     "default_price_zone": "Standard-Preiszone",
     "default_price_zone_desc_1": "Welche Welt/Region standardmäßig für Preise auf ",
     "items": "Items",
@@ -2799,5 +2796,17 @@
     "recipe_breakdown_revenue": "Einnahmen",
     "recipe_breakdown_cost": "Kosten",
     "recipe_breakdown_revenue_assumption": "Verkauf zum Preis „{{signal}}“ · {{place}}, {{quality}}, vor 5 % Marktsteuer.",
-    "recipe_breakdown_revenue_fell_back": "Das gewählte Preissignal hat für diesen Gegenstand keinen Wert, daher wird das günstigste verfügbare Angebot verwendet."
+    "recipe_breakdown_revenue_fell_back": "Das gewählte Preissignal hat für diesen Gegenstand keinen Wert, daher wird das günstigste verfügbare Angebot verwendet.",
+    "home_region_live_title": "Live-Markt: %region%",
+    "home_region_live_hint": "Live-Verkäufe aller Welten der Region. Lege eine Heimatwelt fest, um die Preise und Flips deines eigenen Servers zu sehen.",
+    "home_region_picker_label": "Region",
+    "home_features_title": "Was du tun kannst",
+    "home_feature_flips_title": "Zwischen Welten handeln",
+    "home_feature_flips_body": "Günstig auf einer Welt kaufen, teurer auf deiner verkaufen. Der Flip-Finder sortiert Items nach echtem Gewinn und Verkaufstempo.",
+    "home_feature_crafts_title": "Crafts kalkulieren",
+    "home_feature_crafts_body": "Vergleiche, was ein Rezept in der Herstellung kostet, mit seinem Verkaufspreis – Zutat für Zutat.",
+    "home_feature_alerts_title": "Wissen, wann du unterboten wirst",
+    "home_feature_alerts_body": "Behalte deine Gehilfen im Blick und werde benachrichtigt, sobald jemand günstiger anbietet.",
+    "home_feature_discord_title": "Benachrichtigungen in Discord",
+    "home_feature_discord_body": "Füge den Bot deinem Server hinzu – für Preisabfragen und Benachrichtigungen dort, wo du ohnehin chattest."
 }

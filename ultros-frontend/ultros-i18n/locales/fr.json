@@ -755,9 +755,6 @@
     "welcome_continue_cta": "Continuer vers Ultros",
     "welcome_skip_for_now": "Passer pour l'instant",
     "welcome_pick_world_to_continue": "Choisis un monde d'origine ci-dessus pour continuer",
-    "home_onboarding_banner_title": "Première visite ?",
-    "home_onboarding_banner_body": "Définis ton monde d'origine pour débloquer les offres de flip personnalisées, les mouvements du marché et les comparaisons de prix.",
-    "home_onboarding_banner_cta": "Configurer",
     "default_price_zone": "Zone de prix par défaut",
     "default_price_zone_desc_1": "Quel monde/région afficher par défaut pour les prix sur les pages ",
     "items": "objets",
@@ -2799,5 +2796,17 @@
     "recipe_breakdown_revenue": "Revenu",
     "recipe_breakdown_cost": "Coût",
     "recipe_breakdown_revenue_assumption": "Vendu au prix {{signal}} · {{place}}, {{quality}}, avant la taxe de marché de 5 %.",
-    "recipe_breakdown_revenue_fell_back": "Le signal de prix choisi n'a pas de valeur pour cet objet ; l'annonce la moins chère disponible le remplace."
+    "recipe_breakdown_revenue_fell_back": "Le signal de prix choisi n'a pas de valeur pour cet objet ; l'annonce la moins chère disponible le remplace.",
+    "home_region_live_title": "Marché en direct : %region%",
+    "home_region_live_hint": "Les ventes en direct de tous les mondes de la région. Choisissez un monde d’origine pour voir les prix et les flips de votre serveur.",
+    "home_region_picker_label": "Région",
+    "home_features_title": "Ce que vous pouvez faire",
+    "home_feature_flips_title": "Revendre entre mondes",
+    "home_feature_flips_body": "Achetez bas sur un monde, revendez haut sur le vôtre. Le Chercheur de flips classe les objets selon le bénéfice réel et la vitesse de vente.",
+    "home_feature_crafts_title": "Estimer vos fabrications",
+    "home_feature_crafts_body": "Comparez le coût de fabrication d’une recette à son prix de vente, ingrédient par ingrédient.",
+    "home_feature_alerts_title": "Sachez quand on vous sous-cote",
+    "home_feature_alerts_body": "Suivez vos servants et soyez alerté dès que quelqu’un vend moins cher que vous.",
+    "home_feature_discord_title": "Alertes sur Discord",
+    "home_feature_discord_body": "Ajoutez le bot à votre serveur pour consulter les prix et recevoir des alertes là où vous discutez déjà."
 }

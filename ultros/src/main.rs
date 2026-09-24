@@ -852,6 +852,7 @@ async fn main() -> Result<()> {
         listing_events: listing_events_writer.clone(),
         universalis: universalis_client,
         price_series_cache: Default::default(),
+        home_feed_cache: Default::default(),
         sale_stats_cache: Default::default(),
         listing_stats_cache: Default::default(),
         list_sync,

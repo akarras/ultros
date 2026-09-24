@@ -755,9 +755,6 @@
     "welcome_continue_cta": "Ultros로 계속",
     "welcome_skip_for_now": "지금은 건너뛰기",
     "welcome_pick_world_to_continue": "계속하려면 위에서 홈 서버를 선택하세요",
-    "home_onboarding_banner_title": "처음이신가요?",
-    "home_onboarding_banner_body": "홈 서버를 설정하여 맞춤형 플립 거래, 시장 변동 정보, 가격 비교를 잠금 해제하세요.",
-    "home_onboarding_banner_cta": "설정 시작",
     "default_price_zone": "기본 가격 영역",
     "default_price_zone_desc_1": "",
     "items": "아이템",
@@ -2799,5 +2796,17 @@
     "recipe_breakdown_revenue": "매출",
     "recipe_breakdown_cost": "비용",
     "recipe_breakdown_revenue_assumption": "{{signal}} 가격으로 판매 · {{place}}, {{quality}}, 5% 시장 세금 공제 전.",
-    "recipe_breakdown_revenue_fell_back": "선택한 가격 기준에 이 아이템의 값이 없어 가장 싼 매물로 대신합니다."
+    "recipe_breakdown_revenue_fell_back": "선택한 가격 기준에 이 아이템의 값이 없어 가장 싼 매물로 대신합니다.",
+    "home_region_live_title": "%region% 시장 동향",
+    "home_region_live_hint": "지역 내 모든 월드의 실시간 거래입니다. 홈 월드를 설정하면 내 서버의 가격과 되팔기 정보를 볼 수 있습니다.",
+    "home_region_picker_label": "지역",
+    "home_features_title": "Ultros로 할 수 있는 일",
+    "home_feature_flips_title": "월드 간 되팔기",
+    "home_feature_flips_body": "한 월드에서 싸게 사서 내 월드에서 비싸게 파세요. 플립 파인더가 실제 수익과 판매 속도로 아이템을 정렬합니다.",
+    "home_feature_crafts_title": "제작품 가격 계산",
+    "home_feature_crafts_body": "레시피의 제작 비용과 판매 가격을 재료별로 비교하세요.",
+    "home_feature_alerts_title": "최저가 경쟁 알림",
+    "home_feature_alerts_body": "친구상인의 판매 목록을 추적하고 누군가 더 싸게 등록하는 순간 알려 드립니다.",
+    "home_feature_discord_title": "Discord 알림",
+    "home_feature_discord_body": "봇을 서버에 추가하면 평소 대화하는 곳에서 시세 확인과 알림을 받을 수 있습니다."
 }

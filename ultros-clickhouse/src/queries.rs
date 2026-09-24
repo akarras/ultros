@@ -202,50 +202,113 @@ pub struct MoverRow {
     pub gil_volume_24h: u64,
 }
 
-/// Fetch the top N movers for a world.
+/// Fetch the top N movers across `world_ids` — one world, or every world of
+/// a datacenter/region. `scope_id` is echoed back as each row's `world_id`
+/// (the world id, or 0 for a group).
 ///
 /// `direction` controls ordering: "rising" (pct desc), "falling" (pct asc),
 /// "volume" (raw 24h unit count desc), "gil" (24h gil volume desc). All
 /// return up to `limit` rows.
 ///
-/// Filtered to items with at least `min_samples_24h` to weed out items
-/// where a single sale would dominate the metric.
+/// [`MoverScope::World`] keeps the original ranking: first vs last hourly
+/// VWAP, items with at least 3 sales. [`MoverScope::Group`] (a datacenter or
+/// region) ranks many more thin items, where a single 1-gil or troll sale in
+/// the first or last hour produced "+42,979,900%" risers. It compares the
+/// median hourly price of each half of the window instead, and requires real
+/// trade: 10+ sales, 1M+ gil, 3+ active hours per half, and a change within
+/// -95%..+1000%. `price_now` is then the recent-half median, not the last
+/// hour's (possibly troll) VWAP.
 pub async fn top_movers(
     ch: &ClickHouseClient,
-    world_id: i32,
+    scope_id: i32,
+    world_ids: &[i32],
+    scope: MoverScope,
     direction: MoverDirection,
     limit: u32,
 ) -> Result<Vec<MoverRow>, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let order_by = match direction {
         MoverDirection::Rising => "pct_change_24h DESC",
         MoverDirection::Falling => "pct_change_24h ASC",
         MoverDirection::Volume => "volume_24h DESC",
         MoverDirection::Gil => "gil_volume_24h DESC",
     };
-    // argMin/argMax pick the value at the earliest/latest bucket per
-    // group — exactly the first vs last VWAP we need for %change. Items
-    // with < 3 sales in 24h are filtered out so a single noisy trade
-    // doesn't dominate the rankings.
+    let worlds = id_list(world_ids);
+    let ranking = match scope {
+        MoverScope::World => {
+            r#"SELECT
+            item_id, toUInt8(hq) AS hq, toInt32(?) AS world_id,
+            argMax(hour_vwap, bucket) AS price_now,
+            if(argMin(hour_vwap, bucket) > 0,
+               toFloat32((toFloat64(argMax(hour_vwap, bucket))
+                          - toFloat64(argMin(hour_vwap, bucket)))
+                         / toFloat64(argMin(hour_vwap, bucket)) * 100),
+               toFloat32(0)) AS pct_change_24h,
+            toUInt32(sum(hour_units)) AS volume_24h,
+            sum(hour_gil) AS gil_volume_24h
+        FROM per_hour
+        GROUP BY item_id, hq
+        HAVING sum(hour_sales) >= 3
+           AND argMin(hour_vwap, bucket) > 0
+           AND argMax(hour_vwap, bucket) > 0"#
+        }
+        // The inner query computes the gates; the outer one selects exactly
+        // the `MoverRow` columns (the client checks column names).
+        MoverScope::Group => {
+            r#"SELECT item_id, hq, world_id, price_now, pct_change_24h, volume_24h, gil_volume_24h
+        FROM (
+            SELECT
+                item_id, toUInt8(hq) AS hq, toInt32(?) AS world_id,
+                toUInt32(quantileExactIf(0.5)(hour_vwap, bucket <= now() - INTERVAL 12 HOUR))
+                    AS early_price,
+                toUInt32(quantileExactIf(0.5)(hour_vwap, bucket > now() - INTERVAL 12 HOUR))
+                    AS price_now,
+                if(early_price > 0,
+                   toFloat32((toFloat64(price_now) - toFloat64(early_price))
+                             / toFloat64(early_price) * 100),
+                   toFloat32(0)) AS pct_change_24h,
+                toUInt32(sum(hour_units)) AS volume_24h,
+                sum(hour_gil) AS gil_volume_24h,
+                sum(hour_sales) AS sales_24h,
+                countIf(bucket <= now() - INTERVAL 12 HOUR) AS early_hours,
+                countIf(bucket > now() - INTERVAL 12 HOUR) AS late_hours
+            FROM per_hour
+            GROUP BY item_id, hq
+        )
+        WHERE sales_24h >= 10
+          AND gil_volume_24h >= 1000000
+          AND early_hours >= 3
+          AND late_hours >= 3
+          AND early_price > 0
+          AND price_now > 0
+          AND pct_change_24h BETWEEN -95 AND 1000"#
+        }
+    };
+    // `per_hour` folds the requested worlds into one series per item: each
+    // hour's price is the unit-weighted VWAP across worlds. For a single
+    // world that is exactly the stored `vwap` (one row per hour), so the
+    // world case ranks the same as before. argMin/argMax then pick the
+    // earliest/latest hour — the first vs last price we need for %change.
     let sql = format!(
         r#"
-        SELECT
-            item_id, toUInt8(hq) AS hq, world_id,
-            argMax(vwap, bucket) AS price_now,
-            if(argMin(vwap, bucket) > 0,
-               toFloat32((toFloat64(argMax(vwap, bucket))
-                          - toFloat64(argMin(vwap, bucket)))
-                         / toFloat64(argMin(vwap, bucket)) * 100),
-               toFloat32(0)) AS pct_change_24h,
-            toUInt32(sum(unit_volume)) AS volume_24h,
-            sum(toUInt64(unit_volume) * toUInt64(vwap)) AS gil_volume_24h
-        FROM sales_hourly FINAL
-        WHERE world_id = toInt32(?)
-          AND bucket > now() - INTERVAL 24 HOUR
-          AND vwap > 0
-        GROUP BY item_id, hq, world_id
-        HAVING sum(sale_count) >= 3
-           AND argMin(vwap, bucket) > 0
-           AND argMax(vwap, bucket) > 0
+        WITH per_hour AS (
+            SELECT
+                item_id, hq, bucket,
+                sum(sale_count) AS hour_sales,
+                sum(unit_volume) AS hour_units,
+                sum(toUInt64(unit_volume) * toUInt64(vwap)) AS hour_gil,
+                if(sum(unit_volume) > 0,
+                   toUInt32(sum(toUInt64(unit_volume) * toUInt64(vwap)) / sum(unit_volume)),
+                   toUInt32(avg(vwap))) AS hour_vwap
+            FROM sales_hourly FINAL
+            WHERE world_id IN ({worlds})
+              AND bucket > now() - INTERVAL 24 HOUR
+              AND vwap > 0
+            GROUP BY item_id, hq, bucket
+        )
+        {ranking}
         ORDER BY {order_by}
         LIMIT ?
         "#
@@ -254,11 +317,103 @@ pub async fn top_movers(
     let rows: Vec<MoverRow> = ch
         .client()
         .query(&sql)
-        .bind(world_id)
+        .bind(scope_id)
         .bind(limit)
         .fetch_all()
         .await?;
     Ok(rows)
+}
+
+/// Trailing hourly VWAP series for `items`, each folded across `world_ids`
+/// the same way [`top_movers`] folds them (unit-weighted VWAP per hour), so a
+/// datacenter or region mover's sparkline matches its ranking. Rows come back
+/// with `world_id = scope_id`. Same right-aligned, zero-filled grid as
+/// [`sparklines_batch`].
+pub async fn sparklines_folded(
+    ch: &ClickHouseClient,
+    scope_id: i32,
+    world_ids: &[i32],
+    items: &[(i32, u8)],
+    hours: u16,
+) -> Result<Vec<SparklineRow>, ClickHouseError> {
+    if items.is_empty() || world_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let worlds = id_list(world_ids);
+    let tuples = items
+        .iter()
+        .map(|(item_id, hq)| format!("({item_id},{hq})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+        WITH
+            req AS (
+                SELECT
+                    toInt32(tupleElement(t, 1)) AS item_id,
+                    toUInt8(tupleElement(t, 2)) AS hq
+                FROM (SELECT arrayJoin([{tuples}]) AS t)
+            ),
+            buckets AS (
+                SELECT toStartOfInterval(now() - INTERVAL n HOUR, INTERVAL 1 HOUR) AS bucket,
+                       (? - 1 - n) AS slot
+                FROM (SELECT arrayJoin(range(0, ?)) AS n)
+            ),
+            folded AS (
+                SELECT item_id, hq, bucket,
+                       if(sum(unit_volume) > 0,
+                          toUInt32(sum(toUInt64(unit_volume) * toUInt64(vwap)) / sum(unit_volume)),
+                          toUInt32(avg(vwap))) AS folded_vwap
+                FROM sales_hourly FINAL
+                WHERE (item_id, hq) IN ({tuples})
+                  AND world_id IN ({worlds})
+                  AND bucket >= toStartOfInterval(now() - INTERVAL ? HOUR, INTERVAL 1 HOUR)
+                  AND vwap > 0
+                GROUP BY item_id, hq, bucket
+            ),
+            data AS (
+                SELECT r.item_id AS item_id, r.hq AS hq, b.slot AS slot,
+                       coalesce(f.folded_vwap, 0) AS vwap
+                FROM req r
+                CROSS JOIN buckets b
+                LEFT JOIN folded f
+                  ON r.item_id = f.item_id
+                 AND r.hq = f.hq
+                 AND b.bucket = f.bucket
+            )
+        SELECT
+            item_id, toUInt8(hq) AS hq, toInt32(?) AS world_id,
+            groupArray(vwap) AS points,
+            arrayElement(arrayFilter(x -> x > 0, points), 1) AS first_price,
+            arrayElement(reverse(arrayFilter(x -> x > 0, points)), 1) AS last_price
+        FROM (
+            SELECT * FROM data
+            ORDER BY item_id, hq, slot
+        )
+        GROUP BY item_id, hq
+        "#
+    );
+
+    let rows: Vec<SparklineRow> = ch
+        .client()
+        .query(&sql)
+        .bind(hours as u32)
+        .bind(hours as u32)
+        .bind(hours as u32)
+        .bind(scope_id)
+        .fetch_all()
+        .await?;
+    Ok(rows)
+}
+
+/// Which ranking rules [`top_movers`] applies; see its docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoverScope {
+    /// One world: first-vs-last hour, 3+ sales. Unchanged historical ranking.
+    World,
+    /// A datacenter or region folded together: half-window medians plus
+    /// minimum-trade gates, because thin items multiply across worlds.
+    Group,
 }
 
 /// Which sort to apply for [`top_movers`].
@@ -332,40 +487,73 @@ pub async fn category_heat(
     Ok(rows)
 }
 
-/// Fetch today's + yesterday's rolled-up KPIs for a world.
+/// Comma-joined id list for a `world_id IN (…)` clause. Ids are `i32`s, so
+/// inlining them is injection-safe; ClickHouse parameter binding has no
+/// array-into-IN form for this client.
+fn id_list(ids: &[i32]) -> String {
+    ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+}
+
+/// Fetch today's + yesterday's rolled-up KPIs summed over `world_ids` — one
+/// world, or every world of a datacenter/region. `scope_id` is echoed back
+/// as `world_id` (the caller passes the world id, or 0 for a group).
 ///
 /// One query for both windows via conditional `sumIf` — the alternative
 /// (two queries) would double the round-trip on every home-page load.
 pub async fn market_pulse(
     ch: &ClickHouseClient,
-    world_id: i32,
+    scope_id: i32,
+    world_ids: &[i32],
 ) -> Result<MarketPulse, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(MarketPulse {
+            world_id: scope_id,
+            sales_today: 0,
+            sales_yesterday: 0,
+            gil_volume_today: 0,
+            gil_volume_yesterday: 0,
+            unit_volume_today: 0,
+            unit_volume_yesterday: 0,
+        });
+    }
+    let worlds = id_list(world_ids);
+    // The filter lives in an inner query on purpose. ClickHouse resolves an
+    // identifier to a same-scope SELECT alias before a column, so the old
+    // single-level `toInt32(?) AS world_id ... WHERE world_id = ?` compared
+    // the bound parameter with itself — the filter was always true and every
+    // world's strip showed the global total. Inside the subquery `world_id`
+    // can only mean the column.
     let row: MarketPulse = ch
         .client()
-        .query(
+        .query(&format!(
             "SELECT
                 toInt32(?) AS world_id,
-                sumIf(sale_count,  bucket >  now() - INTERVAL 24 HOUR)
-                    AS sales_today,
-                sumIf(sale_count,  bucket <= now() - INTERVAL 24 HOUR
-                                AND bucket >  now() - INTERVAL 48 HOUR)
-                    AS sales_yesterday,
-                sumIf(gil_volume,  bucket >  now() - INTERVAL 24 HOUR)
-                    AS gil_volume_today,
-                sumIf(gil_volume,  bucket <= now() - INTERVAL 24 HOUR
-                                AND bucket >  now() - INTERVAL 48 HOUR)
-                    AS gil_volume_yesterday,
-                sumIf(unit_volume, bucket >  now() - INTERVAL 24 HOUR)
-                    AS unit_volume_today,
-                sumIf(unit_volume, bucket <= now() - INTERVAL 24 HOUR
-                                AND bucket >  now() - INTERVAL 48 HOUR)
-                    AS unit_volume_yesterday
-            FROM world_kpi_5min FINAL
-            WHERE world_id = ?
-              AND bucket > now() - INTERVAL 48 HOUR",
-        )
-        .bind(world_id)
-        .bind(world_id)
+                sales_today, sales_yesterday,
+                gil_volume_today, gil_volume_yesterday,
+                unit_volume_today, unit_volume_yesterday
+            FROM (
+                SELECT
+                    sumIf(sale_count,  bucket >  now() - INTERVAL 24 HOUR)
+                        AS sales_today,
+                    sumIf(sale_count,  bucket <= now() - INTERVAL 24 HOUR
+                                    AND bucket >  now() - INTERVAL 48 HOUR)
+                        AS sales_yesterday,
+                    sumIf(gil_volume,  bucket >  now() - INTERVAL 24 HOUR)
+                        AS gil_volume_today,
+                    sumIf(gil_volume,  bucket <= now() - INTERVAL 24 HOUR
+                                    AND bucket >  now() - INTERVAL 48 HOUR)
+                        AS gil_volume_yesterday,
+                    sumIf(unit_volume, bucket >  now() - INTERVAL 24 HOUR)
+                        AS unit_volume_today,
+                    sumIf(unit_volume, bucket <= now() - INTERVAL 24 HOUR
+                                    AND bucket >  now() - INTERVAL 48 HOUR)
+                        AS unit_volume_yesterday
+                FROM world_kpi_5min FINAL
+                WHERE world_id IN ({worlds})
+                  AND bucket > now() - INTERVAL 48 HOUR
+            )"
+        ))
+        .bind(scope_id)
         .fetch_one()
         .await?;
     Ok(row)

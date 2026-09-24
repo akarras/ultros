@@ -2,6 +2,7 @@ mod alerts_websocket;
 pub(crate) mod api;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
+pub(crate) mod home_feed_cache;
 pub(crate) mod item_card;
 #[cfg(feature = "test-auth")]
 mod list_market_fixture;

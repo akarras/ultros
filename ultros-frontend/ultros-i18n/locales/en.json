@@ -748,9 +748,6 @@
     "welcome_continue_cta": "Continue to Ultros",
     "welcome_skip_for_now": "Skip for now",
     "welcome_pick_world_to_continue": "Pick a home world above to continue",
-    "home_onboarding_banner_title": "First time here?",
-    "home_onboarding_banner_body": "Set your home world to unlock personalized flip deals, market movers, and price comparisons.",
-    "home_onboarding_banner_cta": "Get set up",
     "default_price_zone": "Default Price Zone",
     "default_price_zone_desc_1": "What world/region to show prices by default for within ",
     "items": "items",
@@ -2799,5 +2796,17 @@
     "recipe_breakdown_revenue": "Revenue",
     "recipe_breakdown_cost": "Cost",
     "recipe_breakdown_revenue_assumption": "Sells at the {{signal}} price · {{place}}, {{quality}}, before the 5% market tax.",
-    "recipe_breakdown_revenue_fell_back": "The selected price signal had no figure for this item, so the cheapest available listing stands in."
+    "recipe_breakdown_revenue_fell_back": "The selected price signal had no figure for this item, so the cheapest available listing stands in.",
+    "home_region_live_title": "What's moving in %region%",
+    "home_region_live_hint": "Live sales from every world in the region. Set a home world to see your own server's prices and flips.",
+    "home_region_picker_label": "Region",
+    "home_features_title": "What you can do",
+    "home_feature_flips_title": "Flip across worlds",
+    "home_feature_flips_body": "Buy low on one world, sell high on yours. Flip Finder ranks items by real profit and how fast they sell.",
+    "home_feature_crafts_title": "Price your crafts",
+    "home_feature_crafts_body": "Compare what a recipe costs to make with what it sells for, ingredient by ingredient.",
+    "home_feature_alerts_title": "Know when you're undercut",
+    "home_feature_alerts_body": "Track your retainers and get alerted the moment someone lists below you.",
+    "home_feature_discord_title": "Alerts in Discord",
+    "home_feature_discord_body": "Add the bot to your server for price checks and alerts where you already chat."
 }

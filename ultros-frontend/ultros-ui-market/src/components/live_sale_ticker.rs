@@ -14,6 +14,7 @@ use xiv_gen::ItemId;
 use crate::components::realtime_status::RealtimeStatus;
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::local_world_data::use_world_helper;
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient, SocketMessageType};
@@ -36,8 +37,14 @@ fn Item(item_id: i32) -> impl IntoView {
     })
 }
 
+/// Recent sales, backfilled over HTTP and then kept live over the websocket.
+///
+/// `scope` is a world, datacenter or region name; it defaults to the home
+/// world. The logged-out home page passes the visitor's region.
 #[component]
-pub fn LiveSaleTicker() -> impl IntoView {
+pub fn LiveSaleTicker(
+    #[prop(optional, into)] scope: Option<Signal<Option<String>>>,
+) -> impl IntoView {
     let i18n = use_i18n();
     let (realtime_status, set_realtime_status) = signal("connecting".to_string());
     let (last_update_at, set_last_update_at) =
@@ -45,14 +52,17 @@ pub fn LiveSaleTicker() -> impl IntoView {
     let (done_loading, set_done_loading) = signal(false);
     let sales = RwSignal::<VecDeque<SaleView>>::new(VecDeque::new());
     let (homeworld, _) = use_home_world();
+    let scope: Signal<Option<String>> = scope.unwrap_or_else(|| {
+        Signal::derive(move || homeworld.with(|w| w.as_ref().map(|w| w.name.clone())))
+    });
+    let world_helper = use_world_helper().ok();
     let retrigger = RwSignal::new(false);
     let live_subscription = StoredValue::new(None::<RealtimeSubscription>);
     let realtime = use_realtime();
-    // auto-trigger initial load and refresh on homeworld changes
+    // auto-trigger initial load and refresh on scope changes
     Effect::new({
         move |_| {
-            let hw = homeworld();
-            if hw.is_some() {
+            if scope.with(|s| s.is_some()) {
                 sales.update(|s| s.clear());
                 set_done_loading(false);
                 retrigger.set(true);
@@ -60,16 +70,18 @@ pub fn LiveSaleTicker() -> impl IntoView {
         }
     });
     Effect::new(move |_| {
-        let hw_1 = homeworld();
-        let hw_2 = homeworld();
+        let scope_name = scope.get();
         if !retrigger.get() {
             return;
         }
         live_subscription.update_value(|sub| *sub = None);
-        if let (Some(sale), Some(realtime)) = (
-            hw_1.map(|h| ultros_api_types::world_helper::AnySelector::World(h.id)),
-            realtime.clone(),
-        ) {
+        let selector = scope_name.as_deref().and_then(|name| {
+            world_helper
+                .as_ref()
+                .and_then(|helper| helper.lookup_world_by_name(name))
+                .map(|result| ultros_api_types::world_helper::AnySelector::from(&result))
+        });
+        if let (Some(sale), Some(realtime)) = (selector, realtime.clone()) {
             let sub = realtime.subscribe_market(
                 FilterPredicate::World(sale),
                 SocketMessageType::Sales,
@@ -115,7 +127,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
         }
         spawn_local(async move {
             #[allow(clippy::collapsible_if)]
-            if let Some(world) = hw_2.map(|h| h.name) {
+            if let Some(world) = scope_name {
                 #[allow(clippy::collapsible_if)]
                 if let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await {
                     let mut first_sales = recent_sales
@@ -158,7 +170,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
     view! {
         <div class="py-2">
             // No homeworld set warning
-            <div class="space-y-3" class:hidden=move || homeworld.with(|w| w.is_some())>
+            <div class="space-y-3" class:hidden=move || scope.with(|w| w.is_some())>
                 <h3 class="dashboard-section-title">{t!(i18n, live_sale_no_homeworld_title)}</h3>
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, live_sale_no_homeworld_prefix)}
@@ -175,12 +187,12 @@ pub fn LiveSaleTicker() -> impl IntoView {
             // Sales ticker content — vertical timeline. Each entry gets a
             // glowing dot anchored to a vertical accent line on the left,
             // matching the dashboard mockup.
-            <div class="" class:hidden=move || homeworld.with(|w| w.is_none())>
+            <div class="" class:hidden=move || scope.with(|w| w.is_none())>
                 <div class="flex items-baseline justify-between mb-3">
                     <h3 class="dashboard-section-title">
                         {t!(i18n, live_sale_recent_sales_on)}
                         <span class="text-[color:var(--color-text)] normal-case tracking-normal ml-1">
-                            {move || homeworld().map(|world| world.name).unwrap_or_default()}
+                            {move || scope.get().map(|name| name.replace('-', " ")).unwrap_or_default()}
                         </span>
                     </h3>
                     <div class="flex items-center gap-3">
@@ -219,7 +231,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             <AppLink href=move || {
                                 format!(
                                     "/item/{}/{}",
-                                    homeworld().map(|world| world.name).unwrap_or_default(),
+                                    scope.get().unwrap_or_default(),
                                     sale.item_id,
                                 )
                             }>

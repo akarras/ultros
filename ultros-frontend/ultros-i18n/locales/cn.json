@@ -755,9 +755,6 @@
     "welcome_continue_cta": "前往 Ultros",
     "welcome_skip_for_now": "暂时跳过",
     "welcome_pick_world_to_continue": "请在上方选择一个主服务器以继续",
-    "home_onboarding_banner_title": "第一次来吗？",
-    "home_onboarding_banner_body": "设置您的主服务器，解锁个性化倒卖交易、市场动向和价格比较。",
-    "home_onboarding_banner_cta": "开始设置",
     "default_price_zone": "默认价格区域",
     "default_price_zone_desc_1": "在“",
     "items": "物品",
@@ -2799,5 +2796,17 @@
     "recipe_breakdown_revenue": "收入",
     "recipe_breakdown_cost": "成本",
     "recipe_breakdown_revenue_assumption": "按{{signal}}价格出售 · {{place}}，{{quality}}，扣除 5% 市场税前。",
-    "recipe_breakdown_revenue_fell_back": "所选价格指标没有该物品的数据，因此改用可用的最低挂单。"
+    "recipe_breakdown_revenue_fell_back": "所选价格指标没有该物品的数据，因此改用可用的最低挂单。",
+    "home_region_live_title": "%region% 市场动态",
+    "home_region_live_hint": "该大区所有服务器的实时成交。设置主服务器即可查看你所在服务器的价格和倒卖机会。",
+    "home_region_picker_label": "大区",
+    "home_features_title": "Ultros 能做什么",
+    "home_feature_flips_title": "跨服倒卖",
+    "home_feature_flips_body": "在一个服务器低价买入，在你的服务器高价卖出。倒卖搜索按实际利润和售出速度为物品排序。",
+    "home_feature_crafts_title": "计算制作成本",
+    "home_feature_crafts_body": "逐项材料比较配方的制作成本与售价。",
+    "home_feature_alerts_title": "被压价时立即知晓",
+    "home_feature_alerts_body": "追踪你的雇员出售情况，一旦有人以更低价格上架立即提醒你。",
+    "home_feature_discord_title": "Discord 提醒",
+    "home_feature_discord_body": "将机器人添加到你的服务器，在常用的聊天频道中查询价格、接收提醒。"
 }

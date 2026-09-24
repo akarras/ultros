@@ -47,6 +47,9 @@ pub(crate) struct WebState {
     /// Absorbs bursts of identical chart requests. See
     /// [`crate::web::price_series_cache`].
     pub(crate) price_series_cache: crate::web::price_series_cache::PriceSeriesCache,
+    /// Absorbs the identical home-page feed requests every anonymous visitor
+    /// in a region makes. See [`crate::web::home_feed_cache`].
+    pub(crate) home_feed_cache: crate::web::home_feed_cache::HomeFeedCache,
     /// Coalesces and serves stale bulk market-stat snapshots so page traffic
     /// cannot multiply ClickHouse work. See [`crate::web::stats_cache`].
     pub(crate) sale_stats_cache: crate::web::stats_cache::SaleStatsCache,
@@ -153,6 +156,12 @@ impl FromRef<WebState> for UniversalisClient {
 impl FromRef<WebState> for crate::web::price_series_cache::PriceSeriesCache {
     fn from_ref(input: &WebState) -> Self {
         input.price_series_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::home_feed_cache::HomeFeedCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.home_feed_cache.clone()
     }
 }
 
