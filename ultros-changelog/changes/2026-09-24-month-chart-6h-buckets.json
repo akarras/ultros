@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "More detail on one-month price charts",
+  "blurb": "The one-month view on an item's price chart now plots a point every 6 hours instead of once a day, so you can see how prices move within a week, not just from day to day.",
+  "importance": "low"
+}
