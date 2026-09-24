@@ -195,6 +195,12 @@ pub enum ListingWindowKind {
     UndercutsPerDay,
     /// Median relative drop across those undercuts, shown as a percentage.
     UndercutMedian,
+    /// New listings by local hour of first sight, drawn as a 24-cell strip;
+    /// sorts by the busiest hour.
+    ListingHours,
+    /// Undercuts by local hour, drawn as a 24-cell strip; sorts by the
+    /// busiest hour.
+    UndercutHours,
 }
 
 impl ListingWindowKind {
@@ -203,11 +209,19 @@ impl ListingWindowKind {
     pub const fn counts_receipts(self) -> bool {
         matches!(self, ListingWindowKind::TimeToSell)
     }
+
+    /// Drawn as an hour-of-day strip; the value is the busiest local hour.
+    pub const fn is_hours(self) -> bool {
+        matches!(
+            self,
+            ListingWindowKind::ListingHours | ListingWindowKind::UndercutHours
+        )
+    }
 }
 
 /// Follow-window ids only: one body per scope and selected window, never a
 /// pinned `-N` variant, because every window body is a separate fetch.
-pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 8] = [
+pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 10] = [
     (ListingWindowKind::FloorMin, "market-floor-min"),
     (ListingWindowKind::FloorMax, "market-floor-max"),
     (ListingWindowKind::Additions, "market-listings-added"),
@@ -216,6 +230,8 @@ pub static LISTING_WINDOW_COLUMNS: [(ListingWindowKind, &str); 8] = [
     (ListingWindowKind::DaysOfStock, "market-days-of-stock"),
     (ListingWindowKind::UndercutsPerDay, "market-undercuts"),
     (ListingWindowKind::UndercutMedian, "market-undercut-pct"),
+    (ListingWindowKind::ListingHours, "market-listing-hours"),
+    (ListingWindowKind::UndercutHours, "market-undercut-hours"),
 ];
 
 /// The pinned 30-day floor sparkline. It reads its own per-row feed
@@ -250,6 +266,8 @@ pub fn listing_window_label(kind: ListingWindowKind, window: Window) -> String {
         ListingWindowKind::DaysOfStock => t_string!(i18n, market_days_of_stock),
         ListingWindowKind::UndercutsPerDay => t_string!(i18n, market_undercuts),
         ListingWindowKind::UndercutMedian => t_string!(i18n, market_undercut_pct),
+        ListingWindowKind::ListingHours => t_string!(i18n, market_listing_hours),
+        ListingWindowKind::UndercutHours => t_string!(i18n, market_undercut_hours),
     }
     .to_string();
     with_window(name, window)
@@ -267,6 +285,8 @@ pub fn listing_window_title(kind: ListingWindowKind) -> String {
         ListingWindowKind::DaysOfStock => t_string!(i18n, market_days_of_stock_title),
         ListingWindowKind::UndercutsPerDay => t_string!(i18n, market_undercuts_title),
         ListingWindowKind::UndercutMedian => t_string!(i18n, market_undercut_pct_title),
+        ListingWindowKind::ListingHours => t_string!(i18n, market_listing_hours_title),
+        ListingWindowKind::UndercutHours => t_string!(i18n, market_undercut_hours_title),
     }
     .to_string()
 }

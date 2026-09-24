@@ -161,11 +161,15 @@ pub(crate) fn reprice_events_sql(item_sql: &str, world_sql: &str, from: i64, to:
 fn reprice_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
     format!(
         "SELECT item_id, hq, count() AS undercuts,
-        quantileExact(0.5)((prev_price - price_per_unit) / prev_price) AS undercut_median
+        quantileExact(0.5)((prev_price - price_per_unit) / prev_price) AS undercut_median,
+        sumForEach(arrayMap(h -> toUInt64(h = {UTC_HOUR}), range(24))) AS undercut_hours
         FROM ({}) GROUP BY item_id, hq{LIMITS}",
         reprice_events_sql(item_sql, world_sql, from, to)
     )
 }
+
+/// UTC hour of day of `event_time`, independent of the server's zone.
+const UTC_HOUR: &str = "intDiv(toUnixTimestamp(event_time) % 86400, 3600)";
 
 #[derive(Row, Deserialize)]
 struct RepriceRow {
@@ -173,6 +177,83 @@ struct RepriceRow {
     hq: u8,
     undercuts: u64,
     undercut_median: f64,
+    undercut_hours: Vec<u64>,
+}
+
+/// Every listing first seen in `[from, to)`, one row per listing: an `added`
+/// event that is not the add half of a remove-then-add reprice (the same
+/// pairing as [`reprice_events_sql`], keyed on listing identity with the
+/// legacy `pg_listing_id` fallback). `seen` is the earlier of our
+/// observation and the uploader's review time, which Dalamud stamps with the
+/// moment its client read the board.
+fn new_listings_sql(item_sql: &str, world_sql: &str, from: i64, to: i64) -> String {
+    format!(
+        "SELECT item_id, hq, world_id,
+            if(toInt64(reviewed_at) > 0, least(toInt64(event_time), toInt64(reviewed_at)), toInt64(event_time)) AS seen
+        FROM (SELECT item_id, hq, world_id, kind, event_time, reviewed_at,
+                     lagInFrame(kind = 'removed') OVER w AS prev_removed,
+                     lagInFrame(event_time) OVER w AS prev_time
+              FROM (SELECT DISTINCT item_id, hq, world_id, listing_id, pg_listing_id, kind, event_time, reviewed_at FROM listing_events
+                    WHERE kind IN ('removed', 'added') AND source != 'snapshot'
+                      AND item_id IN ({item_sql}) AND world_id IN ({world_sql})
+                      AND event_time >= toDateTime({}) AND event_time < toDateTime({to}))
+              WINDOW w AS (PARTITION BY item_id, hq, world_id, if(listing_id != '', listing_id, toString(pg_listing_id))
+                           ORDER BY event_time, kind = 'added' ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
+        WHERE kind = 'added' AND event_time >= toDateTime({from})
+          AND NOT (prev_removed = 1 AND dateDiff('second', prev_time, event_time) <= 600){LIMITS}",
+        from - 600
+    )
+}
+
+#[derive(Row, Deserialize, Debug, Clone, Copy, PartialEq)]
+struct NewListing {
+    item_id: i32,
+    hq: u8,
+    world_id: i32,
+    seen: i64,
+}
+
+/// A new listing is pinned when its board was observed at most this long
+/// before it was first seen.
+const PIN_SECS: i64 = 3600;
+/// Rows of the listing's own upload batch land within a few seconds of it;
+/// they are not an earlier look at the board.
+const SAME_UPLOAD_SECS: i64 = 5;
+
+#[derive(Debug, Default, PartialEq)]
+struct NewListingHours {
+    total: u64,
+    pinned: u64,
+    hours: [u32; 24],
+}
+
+fn utc_hour(unix: i64) -> usize {
+    (unix.rem_euclid(86_400) / 3_600) as usize
+}
+
+/// Bins each new listing by the UTC hour it was first seen and counts how
+/// many are pinned. `observed` holds every event time per `(item, world)`,
+/// either quality, sorted ascending.
+fn bin_new_listings(
+    listings: &[NewListing],
+    observed: &HashMap<(i32, i32), Vec<i64>>,
+) -> BTreeMap<(i32, bool), NewListingHours> {
+    let mut out: BTreeMap<(i32, bool), NewListingHours> = BTreeMap::new();
+    for listing in listings {
+        let before = listing.seen - SAME_UPLOAD_SECS;
+        let pinned = observed
+            .get(&(listing.item_id, listing.world_id))
+            .and_then(|times| {
+                let earlier = times.partition_point(|t| *t < before);
+                earlier.checked_sub(1).map(|i| times[i])
+            })
+            .is_some_and(|prev| listing.seen - prev <= PIN_SECS);
+        let entry = out.entry((listing.item_id, listing.hq != 0)).or_default();
+        entry.total += 1;
+        entry.pinned += u64::from(pinned);
+        entry.hours[utc_hour(listing.seen)] += 1;
+    }
+    out
 }
 
 // Reconcile authoritative sales in the SAME bounded item batches as the
@@ -271,6 +352,11 @@ async fn window_items(
         .query(&reprice_sql(&item_sql, &world_sql, from, to))
         .fetch_all::<RepriceRow>()
         .await?;
+    let new_listings = ch
+        .client()
+        .query(&new_listings_sql(&item_sql, &world_sql, from, to))
+        .fetch_all::<NewListing>()
+        .await?;
     let mut unique = HashMap::<(i32, i32), SaleReceiptRow>::new();
     for (index, receipt) in receipts.into_iter().enumerate() {
         if index.is_multiple_of(4096) {
@@ -293,10 +379,15 @@ async fn window_items(
     let mut grouped_floors: BTreeMap<_, Vec<_>> = BTreeMap::new();
     // A bounded SQL result can still take seconds to process locally. Let the
     // enclosing StatsCache deadline and other requests run during large loads.
+    let mut observed: HashMap<(i32, i32), Vec<i64>> = HashMap::new();
     for (index, event) in events.into_iter().enumerate() {
         if index.is_multiple_of(4096) {
             tokio::task::yield_now().await;
         }
+        observed
+            .entry((event.item_id, event.world_id))
+            .or_default()
+            .push(event.event_time.timestamp());
         grouped_events
             .entry((event.item_id, event.hq != 0))
             .or_default()
@@ -376,6 +467,21 @@ async fn window_items(
             .or_insert_with(|| empty_window(days, from, to));
         stats.undercuts = row.undercuts;
         stats.undercut_median = (row.undercuts > 0).then_some(row.undercut_median);
+        for (slot, n) in stats.undercut_hours.iter_mut().zip(&row.undercut_hours) {
+            *slot = u32::try_from(*n).unwrap_or(u32::MAX);
+        }
+    }
+    for times in observed.values_mut() {
+        times.sort_unstable();
+    }
+    for (key, binned) in bin_new_listings(&new_listings, &observed) {
+        // Every new listing has its own `added` row in the events read.
+        let stats = output
+            .entry(key)
+            .or_insert_with(|| empty_window(days, from, to));
+        stats.new_listings = binned.total;
+        stats.new_listings_pinned = binned.pinned;
+        stats.new_listing_hours = binned.hours;
     }
     add_missing_receipts(ch, &mut output, &world_sql, &item_sql, days, from, to).await?;
     Ok(output)
@@ -887,5 +993,69 @@ mod tests {
             "grid column must aggregate the shared events"
         );
         assert!(grouped.ends_with(LIMITS));
+    }
+
+    #[test]
+    fn new_listings_skip_the_seed_and_reprice_readds() {
+        let sql = new_listings_sql("7", "34", 1000, 2000);
+        assert!(sql.contains("source != 'snapshot'"));
+        assert!(sql.contains("toDateTime(400)"), "reads 600 s before from");
+        assert!(sql.contains("if(listing_id != '', listing_id, toString(pg_listing_id))"));
+        assert!(sql.contains(
+            "NOT (prev_removed = 1 AND dateDiff('second', prev_time, event_time) <= 600)"
+        ));
+        assert!(sql.ends_with(LIMITS));
+    }
+
+    fn new(item_id: i32, hq: u8, world_id: i32, seen: i64) -> NewListing {
+        NewListing {
+            item_id,
+            hq,
+            world_id,
+            seen,
+        }
+    }
+
+    #[test]
+    fn new_listings_bin_by_utc_hour_and_pin_on_a_recent_look() {
+        let day = 20_000 * 86_400;
+        let at = |h: i64, m: i64| day + h * 3_600 + m * 60;
+        let observed: HashMap<(i32, i32), Vec<i64>> = [
+            // World 1 was looked at 20 minutes before; world 2 two hours before.
+            ((7, 1), vec![at(20, 40), at(21, 0)]),
+            ((7, 2), vec![at(19, 0), at(21, 0)]),
+        ]
+        .into();
+        let binned = bin_new_listings(
+            &[
+                new(7, 0, 1, at(21, 0)),
+                new(7, 0, 2, at(21, 0)),
+                // Only its own upload batch precedes it: not pinned.
+                new(7, 1, 3, at(3, 0)),
+            ],
+            &observed,
+        );
+        let nq = &binned[&(7, false)];
+        assert_eq!((nq.total, nq.pinned), (2, 1));
+        assert_eq!(nq.hours[21], 2);
+        let hq = &binned[&(7, true)];
+        assert_eq!((hq.total, hq.pinned), (1, 0));
+        assert_eq!(hq.hours[3], 1);
+    }
+
+    #[test]
+    fn the_listing_s_own_upload_batch_is_not_an_earlier_look() {
+        let observed: HashMap<(i32, i32), Vec<i64>> = [((7, 1), vec![1_000, 1_003])].into();
+        let binned = bin_new_listings(&[new(7, 0, 1, 1_004)], &observed);
+        assert_eq!(binned[&(7, false)].pinned, 0);
+        let binned = bin_new_listings(&[new(7, 0, 1, 1_010)], &observed);
+        assert_eq!(binned[&(7, false)].pinned, 1);
+    }
+
+    #[test]
+    fn utc_hour_ignores_negative_and_day_offsets() {
+        assert_eq!(utc_hour(0), 0);
+        assert_eq!(utc_hour(86_400 + 3 * 3_600 + 59), 3);
+        assert_eq!(utc_hour(-1), 23);
     }
 }

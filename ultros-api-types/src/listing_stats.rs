@@ -203,6 +203,31 @@ mod tests {
         assert_eq!(window.undercuts, 0);
         assert_eq!(window.undercuts_per_day, None);
         assert_eq!(window.undercut_median, None);
+        assert_eq!(window.new_listings, 0);
+        assert_eq!(window.new_listing_hours, [0; 24]);
+        assert_eq!(window.undercut_hours, [0; 24]);
+    }
+
+    #[test]
+    fn hour_arrays_are_omitted_when_empty_and_round_trip_when_not() {
+        let empty = serde_json::to_string(&ListingWindowStats::default()).unwrap();
+        assert!(!empty.contains("new_listing_hours"));
+        assert!(!empty.contains("undercut_hours"));
+        let mut hours = [0; 24];
+        hours[21] = 5;
+        let window = ListingWindowStats {
+            new_listings: 5,
+            new_listings_pinned: 4,
+            new_listing_hours: hours,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&window).unwrap();
+        assert!(json.contains("new_listing_hours"));
+        assert!(!json.contains("undercut_hours"));
+        assert_eq!(
+            serde_json::from_str::<ListingWindowStats>(&json).unwrap(),
+            window
+        );
     }
 
     #[test]
@@ -398,6 +423,27 @@ pub struct ListingWindowStats {
     /// `undercuts == 0`.
     #[serde(default)]
     pub undercut_median: Option<f64>,
+    /// Listings first seen in the window: seed rows and the add half of a
+    /// remove-then-add reprice are excluded. Nothing upstream reports when a
+    /// listing was posted, so "first seen" is the earliest of our observation
+    /// and the uploader's `lastReviewTime`.
+    #[serde(default)]
+    pub new_listings: u64,
+    /// Of `new_listings`, those whose board was observed at most an hour
+    /// before first sight, so the hour they are binned into is right to
+    /// within an hour.
+    #[serde(default)]
+    pub new_listings_pinned: u64,
+    /// `new_listings` by UTC hour of day of first sight.
+    #[serde(default, skip_serializing_if = "hours_empty")]
+    pub new_listing_hours: [u32; 24],
+    /// `undercuts` by UTC hour of day.
+    #[serde(default, skip_serializing_if = "hours_empty")]
+    pub undercut_hours: [u32; 24],
+}
+
+fn hours_empty(hours: &[u32; 24]) -> bool {
+    hours.iter().all(|n| *n == 0)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

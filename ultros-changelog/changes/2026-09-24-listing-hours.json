@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Listing hours and undercut hours columns",
+  "blurb": "Two new Listings columns show when during the day an item's new listings appear and when it gets undercut, as a 24-hour strip in your time zone over the selected window. Sort either one by its busiest hour. The game never reports when a listing was posted, so listings are placed at the first upload that showed them; when an item gets too few uploads to place most listings within an hour, its strip is faded and the tooltip says so."
+}

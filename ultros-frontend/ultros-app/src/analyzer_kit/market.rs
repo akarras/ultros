@@ -15,7 +15,7 @@ use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
     floor_history::{FloorHistoryBatch, FloorHistoryRequest, FloorInterval, ItemFloorHistory},
-    listing_stats::{ItemListingStats, StockStatus},
+    listing_stats::{ItemListingStats, ListingWindowStats, StockStatus},
     sale_stats::ItemSaleStats,
     sparklines::{SparklinesRequest, SparklinesResponse},
     trends::ConfidenceBand,
@@ -47,6 +47,7 @@ use super::{
         use_visible_enrichment,
     },
     formula::PriceSignal,
+    hour_profile::{self, HourStrip, local_offset_hours},
     signals::{StatsIndex, stat_only, stats_index},
     stat_columns::{
         FLOOR_TREND_ID, FLOOR_TREND_WINDOW, FOLLOW_COLUMNS, LISTING_COLUMNS,
@@ -673,7 +674,9 @@ impl MarketMetric {
                 ListingWindowKind::UndercutMedian => Unit::Percent,
                 ListingWindowKind::Additions
                 | ListingWindowKind::Removals
-                | ListingWindowKind::DaysOfStock => Unit::Plain,
+                | ListingWindowKind::DaysOfStock
+                | ListingWindowKind::ListingHours
+                | ListingWindowKind::UndercutHours => Unit::Plain,
             },
             _ => Unit::Plain,
         }
@@ -918,7 +921,54 @@ fn listing_window_value(kind: ListingWindowKind, stats: Option<&ItemListingStats
         ),
         ListingWindowKind::UndercutsPerDay => number(window.undercuts_per_day),
         ListingWindowKind::UndercutMedian => number(window.undercut_median.map(|m| m * 100.0)),
+        ListingWindowKind::ListingHours | ListingWindowKind::UndercutHours => number(
+            hour_profile::peak_hour(&local_hours(kind, window, local_offset_hours()))
+                .map(|h| h as f64),
+        ),
     }
+}
+
+/// The strip's counts in the viewer's day.
+fn local_hours(kind: ListingWindowKind, window: &ListingWindowStats, offset: i64) -> [u32; 24] {
+    let utc = match kind {
+        ListingWindowKind::UndercutHours => &window.undercut_hours,
+        _ => &window.new_listing_hours,
+    };
+    hour_profile::to_local(utc, offset)
+}
+
+/// What an hour-strip cell draws: local counts, whether the placement is too
+/// loose to trust, and the hover text. `None` when there is nothing to bin,
+/// so the cell falls back to its dash.
+fn hour_strip(
+    kind: ListingWindowKind,
+    stats: Option<&ItemListingStats>,
+    offset: i64,
+) -> Option<([u32; 24], bool, String)> {
+    let window = stats.and_then(|s| s.window.as_ref())?;
+    let hours = local_hours(kind, window, offset);
+    let peak = hour_profile::peak_hour(&hours)?;
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let mut label = t_string!(
+        i18n,
+        market_hours_peak,
+        hour = hour_profile::hour_label(peak)
+    )
+    .to_string();
+    let mut faded = false;
+    if kind == ListingWindowKind::ListingHours && window.new_listings > 0 {
+        let share = window.new_listings_pinned as f64 / window.new_listings as f64;
+        let pct = (share * 100.0).round().to_string();
+        label = format!(
+            "{label} · {}",
+            t_string!(i18n, market_hours_pinned, pct = pct)
+        );
+        if share < hour_profile::PINNED_FLOOR {
+            faded = true;
+            label = format!("{label}. {}", t_string!(i18n, market_hours_uncertain));
+        }
+    }
+    Some((hours, faded, label))
 }
 
 type WorldNames = Arc<HashMap<i32, (String, String)>>;
@@ -1102,6 +1152,23 @@ fn spark_metric_value<K: Copy + Eq + Hash>(
     }
 }
 
+/// The hour strip for a row, read from the selected window's listing body.
+fn market_hour_strip(
+    kind: ListingWindowKind,
+    subject: &MarketSubject,
+    market: MarketData,
+) -> Option<([u32; 24], bool, String)> {
+    let slot = market.listing_window(market.window.selected.get())?;
+    if slot.failed {
+        return None;
+    }
+    hour_strip(
+        kind,
+        slot.index.get(&(subject.item_id, subject.hq)),
+        local_offset_hours(),
+    )
+}
+
 fn spark_key(subject: &MarketSubject, scope_world: Option<i32>) -> (i32, bool, i32) {
     (
         subject.item_id,
@@ -1260,6 +1327,9 @@ fn display_value(metric: MarketMetric, value: GridValue) -> String {
                 || metric == MarketMetric::ListingWindow(ListingWindowKind::TimeToSell) =>
         {
             format_duration_short(n.max(0.0).round() as u64)
+        }
+        GridValue::Number(n) if matches!(metric, MarketMetric::ListingWindow(kind) if kind.is_hours()) => {
+            hour_profile::hour_label(n.max(0.0) as usize)
         }
         GridValue::Number(n)
             if metric == MarketMetric::ListingWindow(ListingWindowKind::DaysOfStock) =>
@@ -1718,6 +1788,11 @@ where
                         && let Some(value) = feeds.floor_spark(&subject) {
                         return view! { <Sparkline points=value.points pct_change=value.delta_pct.unwrap_or_default() width=120 hours_per_point=24 /> }.into_any();
                     }
+                    if let MarketMetric::ListingWindow(kind) = metric
+                        && kind.is_hours()
+                        && let Some((hours, faded, label)) = market_hour_strip(kind, &subject, market) {
+                        return view! { <HourStrip hours faded label /> }.into_any();
+                    }
                     display_value(metric, market_value(metric, &subject, market, feeds, scope_world, &worlds)).into_any()
                 }}</div> }.into_any()
             }
@@ -1727,6 +1802,13 @@ where
                     let svg = match metric {
                         MarketMetric::Trend7 => sparks.with(|store| matches!(store.get(&spark_key(&subject, scope_world.get())), Some(MarketSpark::Ready(_)))),
                         MarketMetric::FloorTrend => feeds.floor_spark(&subject).is_some(),
+                        MarketMetric::ListingWindow(kind) if kind.is_hours() => {
+                            if market_hour_strip(kind, &subject, market).is_some() {
+                                // 24 × 5px cells with 1px gaps, plus the cell padding.
+                                return (String::new(), 168.0);
+                            }
+                            false
+                        }
                         _ => false,
                     };
                     if svg {
@@ -2200,6 +2282,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hour_columns_sort_by_the_busiest_local_hour_and_fade_loose_placement() {
+        use ultros_api_types::listing_stats::ListingWindowStats;
+        let mut new_listing_hours = [0; 24];
+        new_listing_hours[3] = 9;
+        new_listing_hours[4] = 2;
+        let mut undercut_hours = [0; 24];
+        undercut_hours[20] = 1;
+        let stats = |pinned: u64| ItemListingStats {
+            item_id: 7,
+            window: Some(ListingWindowStats {
+                new_listings: 11,
+                new_listings_pinned: pinned,
+                new_listing_hours,
+                undercut_hours,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let trusted = stats(9);
+        assert_eq!(
+            listing_window_value(ListingWindowKind::ListingHours, Some(&trusted)),
+            GridValue::Number(3.0)
+        );
+        assert_eq!(
+            listing_window_value(ListingWindowKind::UndercutHours, Some(&trusted)),
+            GridValue::Number(20.0)
+        );
+        assert_eq!(
+            display_value(
+                MarketMetric::ListingWindow(ListingWindowKind::ListingHours),
+                GridValue::Number(3.0)
+            ),
+            "03:00"
+        );
+        let empty = ItemListingStats {
+            window: Some(ListingWindowStats::default()),
+            ..Default::default()
+        };
+        assert_eq!(
+            listing_window_value(ListingWindowKind::ListingHours, Some(&empty)),
+            GridValue::Missing
+        );
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            // UTC-7: 03:00 UTC is the viewer's 20:00.
+            let (hours, faded, label) =
+                hour_strip(ListingWindowKind::ListingHours, Some(&trusted), -7).unwrap();
+            assert_eq!((hours[20], faded), (9, false));
+            assert!(label.contains("20:00") && label.contains("82%"), "{label}");
+            let (_, faded, _) =
+                hour_strip(ListingWindowKind::ListingHours, Some(&stats(2)), 0).unwrap();
+            assert!(faded, "2 of 11 pinned mostly maps browsing");
+            let (_, faded, _) =
+                hour_strip(ListingWindowKind::UndercutHours, Some(&stats(2)), 0).unwrap();
+            assert!(!faded, "undercut timing does not depend on first sight");
+            assert!(hour_strip(ListingWindowKind::ListingHours, Some(&empty), 0).is_none());
+            assert!(hour_strip(ListingWindowKind::ListingHours, None, 0).is_none());
+        });
+    }
+
     fn row(item_id: i32, hq: bool, alive_count: u32) -> ItemListingStats {
         ItemListingStats {
             item_id,
@@ -2619,6 +2764,8 @@ mod tests {
             "market-listings-removed",
             "market-time-to-sell",
             "market-days-of-stock",
+            "market-listing-hours",
+            "market-undercut-hours",
         ] {
             let found = metric_by_id(id).unwrap();
             assert!(matches!(found, MarketMetric::ListingWindow(_)), "{id}");
