@@ -1,8 +1,8 @@
-//! Sell and craft verdicts at the top of the item page.
+//! Sell and craft verdicts on the item page.
 //!
 //! The arithmetic lives in `ultros_calc::verdict`; this module adapts the
 //! page's listings payload and contexts into it and renders two compact
-//! cards inside `#overview`.
+//! cards below the listings and sales tables.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -24,6 +24,7 @@ use crate::components::crafting_cost::{
     vendor_price_map,
 };
 use crate::components::gil::Gil;
+use crate::components::listing_quality::ListingQuality;
 use crate::components::on_hand_input::{LocalOnHand, OnHandMap};
 use crate::components::related_items::{get_vendor_price, is_shard_item};
 use crate::components::skeleton::SingleLineSkeleton;
@@ -35,7 +36,9 @@ use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
+use crate::query_defaults::filter_query_signal;
 use crate::routes::item_view::{get_or_default, with_or};
+use crate::routes::item_view_bulk_basket::{BULK_BASKET_HREF, BulkBasket, QUANTITY_PARAM};
 use crate::routes::item_view_sections::Section;
 
 type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
@@ -171,8 +174,56 @@ fn whole_percent(value: f64) -> String {
     format!("{value:.0}")
 }
 
+/// Where the sell and craft cards render; the summary chips and the section
+/// nav link here.
+pub(crate) const VERDICTS_ID: &str = "item-verdicts";
+
+/// The sell and craft cards, plus the bulk basket.
+///
+/// Without a craft card the basket takes the sell card's empty second column,
+/// so that pairing only goes side by side once there's room for the basket's
+/// table; with one, the basket spans the row below the two cards.
 #[component]
 pub(crate) fn ItemVerdicts(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    #[prop(into)] filtered_listings: Signal<ListingRows>,
+    #[prop(into)] excluded_worlds: Signal<HashSet<i32>>,
+    #[prop(into)] quality: Signal<ListingQuality>,
+    world: Memo<String>,
+    item_id: Memo<i32>,
+) -> impl IntoView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let craftable = Memo::new(move |_| !output_recipes(get_or_default(&item_id)).is_empty());
+    let is_craftable = move || get_or_default(&craftable);
+    view! {
+        <section
+            id=VERDICTS_ID
+            class="@container mt-4 scroll-mt-16"
+            aria-label=move || t_string!(i18n, item_verdict_region_label).to_string()
+        >
+            <div class=move || {
+                if is_craftable() {
+                    "grid grid-cols-1 gap-3 @min-[40rem]:grid-cols-2"
+                } else {
+                    "grid grid-cols-1 items-start gap-3 @min-[72rem]:grid-cols-2"
+                }
+            }>
+                <SellVerdictCard listing_resource filtered_listings excluded_worlds world item_id />
+                <Show when=is_craftable>
+                    <CraftVerdictCard listing_resource item_id />
+                </Show>
+                <div class=move || if is_craftable() { "min-w-0 @min-[40rem]:col-span-2" } else { "min-w-0" }>
+                    <BulkBasket listing_resource filtered_listings quality />
+                </div>
+            </div>
+        </section>
+    }
+}
+
+/// One-line answers from the verdict cards, at the top of the page. Each chip
+/// links down to the card that explains it.
+#[component]
+pub(crate) fn VerdictSummary(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     #[prop(into)] filtered_listings: Signal<ListingRows>,
     #[prop(into)] excluded_worlds: Signal<HashSet<i32>>,
@@ -181,19 +232,111 @@ pub(crate) fn ItemVerdicts(
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
     let craftable = Memo::new(move |_| !output_recipes(get_or_default(&item_id)).is_empty());
+    let sell = SellCardInputs::new(
+        listing_resource,
+        filtered_listings,
+        excluded_worlds,
+        world,
+        item_id,
+    );
+    let craft = CraftCardInputs::new(listing_resource, item_id);
+    let hydrated = craft.hydrated;
+    Effect::new(move |_| hydrated.set(true));
+    let (quantity, _) = filter_query_signal::<i64>(QUANTITY_PARAM);
     view! {
-        <section
-            class="@container mt-4"
-            aria-label=move || t_string!(i18n, item_verdict_region_label).to_string()
+        <nav
+            class="mb-4 flex flex-wrap items-center gap-2"
+            aria-label=move || t_string!(i18n, item_verdict_summary_aria).to_string()
+            data-testid="verdict-summary"
         >
-            <div class="grid grid-cols-1 gap-3 @min-[40rem]:grid-cols-2">
-                <SellVerdictCard listing_resource filtered_listings excluded_worlds world item_id />
-                <Show when=move || get_or_default(&craftable)>
-                    <CraftVerdictCard listing_resource item_id />
-                </Show>
-            </div>
-        </section>
+            <Transition fallback=|| ()>{move || sell_chip(&sell)}</Transition>
+            <Show when=move || get_or_default(&craftable)>
+                <Transition fallback=|| ()>{move || craft_chip(craft)}</Transition>
+            </Show>
+            <a class=SUMMARY_CHIP href=BULK_BASKET_HREF>
+                <span class="font-semibold">{t!(i18n, bulk_basket_title)}</span>
+                {move || {
+                    quantity
+                        .try_get()
+                        .flatten()
+                        .filter(|quantity| *quantity > 1)
+                        .map(|quantity| view! { <span class=MUTED>"×"{quantity}</span> })
+                }}
+            </a>
+        </nav>
     }
+}
+
+const SUMMARY_CHIP: &str = "inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[color:var(--color-outline)] px-3 py-1 text-sm transition-colors hover:border-brand-300 focus-visible:outline-2 focus-visible:outline-brand-300";
+
+pub(crate) fn verdicts_href() -> String {
+    format!("#{VERDICTS_ID}")
+}
+
+fn sell_chip(inputs: &SellCardInputs) -> AnyView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let SellModel::Ready {
+        verdict,
+        world_name,
+        ..
+    } = sell_model(inputs)
+    else {
+        return ().into_any();
+    };
+    let prices = verdict.board.map(|board| {
+        view! {
+            <span class="font-bold"><Gil amount=board.fast /></span>
+            {board.patient.filter(|patient| *patient != board.fast).map(|patient| view! {
+                <span class=MUTED>"–"</span>
+                <span class="font-bold"><Gil amount=patient /></span>
+            })}
+        }
+    });
+    view! {
+        <a class=SUMMARY_CHIP href=verdicts_href() data-testid="verdict-summary-sell">
+            <span class="font-semibold text-brand-200">
+                {t_string!(i18n, item_verdict_sell_heading, world = world_name.as_str()).to_string()}
+            </span>
+            {quality_chip(verdict.hq)}
+            {prices}
+        </a>
+    }
+    .into_any()
+}
+
+fn craft_chip(inputs: CraftCardInputs) -> AnyView {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let CraftModel::Ready(model) = craft_model(inputs) else {
+        return ().into_any();
+    };
+    let (class, label, gil) = match model.verdict {
+        CraftVerdict::CraftSaves { gil, percent } => (
+            "text-emerald-200",
+            t!(i18n, item_verdict_craft_saves).into_any(),
+            Some((gil, percent)),
+        ),
+        CraftVerdict::BuyCheaper { gil, percent } => (
+            "text-red-200",
+            t!(i18n, item_verdict_buy_cheaper).into_any(),
+            Some((gil, percent)),
+        ),
+        CraftVerdict::AboutEven => (MUTED, t!(i18n, item_verdict_about_even).into_any(), None),
+        // Nothing worth a one-liner; the card says why.
+        CraftVerdict::UnpricedIngredients | CraftVerdict::NoBuyPrice => return ().into_any(),
+    };
+    view! {
+        <a class=SUMMARY_CHIP href=verdicts_href() data-testid="verdict-summary-craft">
+            <span class=MUTED>{t!(i18n, item_verdict_craft_heading)}":"</span>
+            <span class=format!("inline-flex items-center gap-1 font-semibold {class}")>
+                {label}
+                {gil.map(|(gil, percent)| view! {
+                    <Gil amount=gil />
+                    <span>"("{whole_percent(percent)}"%)"</span>
+                })}
+            </span>
+        </a>
+    }
+    .into_any()
 }
 
 /// What the sell card's `<Transition>` body reads. Built once per card so
@@ -212,6 +355,29 @@ struct SellCardInputs {
     hydrated: RwSignal<bool>,
 }
 
+impl SellCardInputs {
+    fn new(
+        listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+        filtered_listings: Signal<ListingRows>,
+        excluded_worlds: Signal<HashSet<i32>>,
+        world: Memo<String>,
+        item_id: Memo<i32>,
+    ) -> Self {
+        Self {
+            listing_resource,
+            filtered_listings,
+            excluded_worlds,
+            world,
+            item_id,
+            world_data: use_context::<LocalWorldData>().and_then(|data| data.0.ok()),
+            // The item page always provides `Cookies`; the guard keeps the card
+            // buildable in a bare owner (see `item_verdicts_builds_without_contexts`).
+            home_world: use_context::<Cookies>().map(|_| use_home_world().0),
+            hydrated: RwSignal::new(false),
+        }
+    }
+}
+
 #[component]
 fn SellVerdictCard(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
@@ -220,18 +386,13 @@ fn SellVerdictCard(
     world: Memo<String>,
     item_id: Memo<i32>,
 ) -> impl IntoView {
-    let inputs = SellCardInputs {
+    let inputs = SellCardInputs::new(
         listing_resource,
         filtered_listings,
         excluded_worlds,
         world,
         item_id,
-        world_data: use_context::<LocalWorldData>().and_then(|data| data.0.ok()),
-        // The item page always provides `Cookies`; the guard keeps the card
-        // buildable in a bare owner (see `item_verdicts_builds_without_contexts`).
-        home_world: use_context::<Cookies>().map(|_| use_home_world().0),
-        hydrated: RwSignal::new(false),
-    };
+    );
     let hydrated = inputs.hydrated;
     Effect::new(move |_| hydrated.set(true));
 
@@ -251,15 +412,45 @@ fn sell_card_skeleton() -> AnyView {
     .into_any()
 }
 
+/// What the sell card (and its summary chip) shows.
+enum SellModel {
+    /// No listings payload yet, or it failed.
+    Empty,
+    /// No single world in scope to sell on.
+    PickWorld,
+    Ready {
+        verdict: SellVerdict,
+        world_name: String,
+        scope_name: String,
+    },
+}
+
 fn render_sell_card(inputs: &SellCardInputs) -> AnyView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let show_rate = inputs.hydrated.try_get().unwrap_or(false);
+    match sell_model(inputs) {
+        SellModel::Empty => ().into_any(),
+        SellModel::PickWorld => view! {
+            <div class=CARD_CLASS data-testid="sell-verdict">
+                <p class=MUTED>{t!(i18n, item_verdict_sell_pick_world)}</p>
+            </div>
+        }
+        .into_any(),
+        SellModel::Ready {
+            verdict,
+            world_name,
+            scope_name,
+        } => sell_card_body(verdict, world_name, scope_name, show_rate),
+    }
+}
+
+fn sell_model(inputs: &SellCardInputs) -> SellModel {
     // Every read goes through a `try_*` accessor: the server can walk this
     // body after the card's owner is gone (see `with_or` in item_view.rs).
-    let show_rate = inputs.hydrated.try_get().unwrap_or(false);
     let world_data = inputs.world_data.as_ref();
-    with_or(&inputs.listing_resource, ().into_any(), |data_ref| {
+    with_or(&inputs.listing_resource, SellModel::Empty, |data_ref| {
         let Some(Ok(data)) = data_ref.as_ref() else {
-            return ().into_any();
+            return SellModel::Empty;
         };
         let scope_name = Url::unescape(&get_or_default(&inputs.world));
         let scope = world_data.and_then(|helper| helper.lookup_world_by_name(&scope_name));
@@ -273,12 +464,7 @@ fn render_sell_card(inputs: &SellCardInputs) -> AnyView {
             .and_then(|signal| with_or(&signal, None, |w| w.as_ref().map(|w| w.id)));
         let excluded = get_or_default(&inputs.excluded_worlds);
         let Some(world_id) = sell_world(page_world, &scope_worlds, &excluded, home) else {
-            return view! {
-                <div class=CARD_CLASS data-testid="sell-verdict">
-                    <p class=MUTED>{t!(i18n, item_verdict_sell_pick_world)}</p>
-                </div>
-            }
-            .into_any();
+            return SellModel::PickWorld;
         };
         let world_name = world_data
             .and_then(|helper| helper.lookup_selector(AnySelector::World(world_id)))
@@ -300,7 +486,11 @@ fn render_sell_card(inputs: &SellCardInputs) -> AnyView {
             laundering_vendor_price(get_or_default(&inputs.item_id)),
             chrono::Utc::now().timestamp(),
         );
-        sell_card_body(verdict, world_name, scope_name, show_rate)
+        SellModel::Ready {
+            verdict,
+            world_name,
+            scope_name,
+        }
     })
 }
 
@@ -465,25 +655,34 @@ struct CraftCardInputs {
     hydrated: RwSignal<bool>,
 }
 
+impl CraftCardInputs {
+    fn new(
+        listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+        item_id: Memo<i32>,
+    ) -> Self {
+        let cookies = use_context::<Cookies>();
+        Self {
+            listing_resource,
+            item_id,
+            cheapest: use_context::<CheapestPrices>().map(|prices| prices.demand()),
+            options: cookies.as_ref().map(|cookies| {
+                cookies
+                    .use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME)
+                    .0
+            }),
+            price_zone: cookies.map(|_| get_price_zone().0),
+            on_hand_map: use_context::<OnHandMap>(),
+            hydrated: RwSignal::new(false),
+        }
+    }
+}
+
 #[component]
 fn CraftVerdictCard(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
 ) -> impl IntoView {
-    let cookies = use_context::<Cookies>();
-    let inputs = CraftCardInputs {
-        listing_resource,
-        item_id,
-        cheapest: use_context::<CheapestPrices>().map(|prices| prices.demand()),
-        options: cookies.as_ref().map(|cookies| {
-            cookies
-                .use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME)
-                .0
-        }),
-        price_zone: cookies.map(|_| get_price_zone().0),
-        on_hand_map: use_context::<OnHandMap>(),
-        hydrated: RwSignal::new(false),
-    };
+    let inputs = CraftCardInputs::new(listing_resource, item_id);
     let hydrated = inputs.hydrated;
     Effect::new(move |_| hydrated.set(true));
 
@@ -514,9 +713,42 @@ fn craft_card_skeleton() -> AnyView {
     .into_any()
 }
 
+/// What the craft card (and its summary chip) shows.
+enum CraftModel {
+    /// Nothing to show: no listings payload, or no price data at all.
+    Empty,
+    /// Waiting on hydration or the client-only cheapest prices.
+    Loading,
+    Ready(CraftResult),
+}
+
+struct CraftResult {
+    hq: bool,
+    craft_unit: i32,
+    buy: Option<BuyPrice>,
+    verdict: CraftVerdict,
+    zone: String,
+    crystals_excluded: bool,
+}
+
 fn render_craft_card(inputs: CraftCardInputs) -> AnyView {
+    match craft_model(inputs) {
+        CraftModel::Empty => ().into_any(),
+        CraftModel::Loading => craft_card_skeleton(),
+        CraftModel::Ready(CraftResult {
+            hq,
+            craft_unit,
+            buy,
+            verdict,
+            zone,
+            crystals_excluded,
+        }) => craft_card_body(hq, craft_unit, buy, verdict, zone, crystals_excluded),
+    }
+}
+
+fn craft_model(inputs: CraftCardInputs) -> CraftModel {
     let item = get_or_default(&inputs.item_id);
-    // Every read goes through a `try_*` accessor (see `render_sell_card`).
+    // Every read goes through a `try_*` accessor (see `sell_model`).
     let hq = with_or(&inputs.listing_resource, None, |data_ref| {
         data_ref
             .as_ref()
@@ -524,13 +756,13 @@ fn render_craft_card(inputs: CraftCardInputs) -> AnyView {
             .map(|data| headline_hq(&sale_samples(&data.sales), laundering_vendor_price(item)))
     });
     let Some(hq) = hq else {
-        return ().into_any();
+        return CraftModel::Empty;
     };
     if !inputs.hydrated.try_get().unwrap_or(false) {
-        return craft_card_skeleton();
+        return CraftModel::Loading;
     }
     let Some(cheapest) = inputs.cheapest else {
-        return ().into_any();
+        return CraftModel::Empty;
     };
     with_or(&cheapest, None, |prices| {
         let prices = prices.as_ref()?.as_ref().ok()?;
@@ -590,16 +822,16 @@ fn render_craft_card(inputs: CraftCardInputs) -> AnyView {
             .map(|zone| zone.get_name().to_string())
             .unwrap_or_else(|| "North-America".to_string());
         let verdict = craft_verdict(craft_unit, buy.map(|buy| buy.price), unpriced);
-        Some(craft_card_body(
+        Some(CraftModel::Ready(CraftResult {
             hq,
             craft_unit,
             buy,
             verdict,
             zone,
-            opts.exclude_shards,
-        ))
+            crystals_excluded: opts.exclude_shards,
+        }))
     })
-    .unwrap_or_else(|| ().into_any())
+    .unwrap_or(CraftModel::Empty)
 }
 
 fn craft_card_body(
@@ -737,9 +969,30 @@ mod tests {
             let excluded_worlds: Signal<HashSet<i32>> = Signal::derive(HashSet::new);
             let world = Memo::new(|_| "Gilgamesh".to_string());
             let item_id = Memo::new(|_| 5057);
+            let quality = Signal::derive(|| ListingQuality::All);
             let _ = view! {
-                <ItemVerdicts listing_resource filtered_listings excluded_worlds world item_id />
+                <ItemVerdicts listing_resource filtered_listings excluded_worlds quality world item_id />
+                <VerdictSummary listing_resource filtered_listings excluded_worlds world item_id />
             };
+        });
+    }
+
+    #[test]
+    fn verdicts_href_targets_the_section_id() {
+        with_i18n(|| {
+            let html = view! {
+                <ItemVerdicts
+                    listing_resource=Resource::new(|| (), |_| async { Err(AppError::ParamMissing) })
+                    filtered_listings=Signal::derive(Vec::new)
+                    excluded_worlds=Signal::derive(HashSet::new)
+                    quality=Signal::derive(|| ListingQuality::All)
+                    world=Memo::new(|_| "Gilgamesh".to_string())
+                    item_id=Memo::new(|_| 5057)
+                />
+            }
+            .to_html();
+            let id = verdicts_href().trim_start_matches('#').to_string();
+            assert!(html.contains(&format!("id=\"{id}\"")), "{html}");
         });
     }
 
@@ -913,6 +1166,8 @@ mod tests {
         Owner::new().with(|| {
             let _ = render_sell_card(&sell);
             let _ = render_craft_card(craft);
+            let _ = sell_chip(&sell);
+            let _ = craft_chip(craft);
         });
     }
 

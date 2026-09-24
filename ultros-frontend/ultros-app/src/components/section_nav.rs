@@ -1,8 +1,12 @@
 use crate::components::icon::Icon;
 use crate::components::related_items::item_source_counts;
 use crate::i18n::{t_string, use_i18n};
+use crate::routes::item_view_bulk_basket::BULK_BASKET_HREF;
 use crate::routes::item_view_sections::Section;
+use crate::routes::item_view_verdicts::verdicts_href;
 use leptos::prelude::*;
+
+const NAV_LINK: &str = "shrink-0 inline-flex min-h-11 items-center whitespace-nowrap rounded-md px-2.5 py-1 text-sm text-brand-300 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] hover:text-brand-100 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-300";
 
 /// Slim sticky bar for the item view: scope label on the left, in-page jump
 /// nav on the right.
@@ -66,13 +70,28 @@ pub fn SectionNav(#[prop(into)] item_id: Signal<i32>, children: Children) -> imp
                             view! {
                                 <a
                                     href=section.href()
-                                    class="shrink-0 inline-flex min-h-11 items-center whitespace-nowrap rounded-md px-2.5 py-1 text-sm text-brand-300 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] hover:text-brand-100 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-300"
+                                    class=NAV_LINK
                                 >
                                     {label(section)}
                                 </a>
                             }
                         })
                         .collect_view()}
+                    // The verdict cards and bulk basket sit below the tables,
+                    // not in DOM order with the sections above.
+                    <span aria-hidden="true" class="mx-2 h-5 shrink-0 border-l border-[color:var(--color-outline)]"></span>
+                    <a href=verdicts_href() class=NAV_LINK>
+                        {move || {
+                            if sources.get().craftable > 0 {
+                                t_string!(i18n, item_view_nav_sell_craft).to_string()
+                            } else {
+                                t_string!(i18n, item_view_nav_sell).to_string()
+                            }
+                        }}
+                    </a>
+                    <a href=BULK_BASKET_HREF class=NAV_LINK>
+                        {move || t_string!(i18n, bulk_basket_title).to_string()}
+                    </a>
                     {move || {
                         let counts = sources.get();
                         let links = [
@@ -136,6 +155,10 @@ mod tests {
             let offset = html.find(&format!("href=\"{}\"", section.href())).unwrap();
             assert!(offset >= last);
             last = offset;
+        }
+        let related = html.find("href=\"#related\"").unwrap();
+        for anchor in ["#item-verdicts", "#bulk-basket"] {
+            assert!(html.find(&format!("href=\"{anchor}\"")).unwrap() > related);
         }
         for anchor in [
             "#crafting-recipes",

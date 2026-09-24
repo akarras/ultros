@@ -1548,7 +1548,7 @@ fn ListingsContent(
             <div id="overview" class="scroll-mt-16">
                 <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
                 <DecisionHeader listing_resource filtered_listings world item_id />
-                <crate::routes::item_view_verdicts::ItemVerdicts
+                <crate::routes::item_view_verdicts::VerdictSummary
                     listing_resource
                     filtered_listings
                     excluded_worlds
@@ -1556,14 +1556,6 @@ fn ListingsContent(
                     item_id
                 />
             </div>
-            // Right under the verdict: for a bulk buyer, "which world fills
-            // 99 cheapest" replaces "which listing is cheapest". One slim row
-            // until a quantity is set.
-            <super::item_view_bulk_basket::BulkBasket
-                listing_resource
-                filtered_listings
-                quality
-            />
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
             // Both tables force `min-w-[720px]`, so two columns only fit when
@@ -1586,6 +1578,21 @@ fn ListingsContent(
                         <SalesDetails listing_resource />
                     </div>
                 </div>
+            </div>
+
+            // The sell/craft verdicts and the bulk basket are for sellers and
+            // bulk buyers deciding what to do next, so they follow the raw
+            // market data. `VerdictSummary` above keeps their one-line
+            // answers in the overview and links down here.
+            <div class="mt-2">
+                <crate::routes::item_view_verdicts::ItemVerdicts
+                    listing_resource
+                    filtered_listings
+                    excluded_worlds
+                    quality
+                    world
+                    item_id
+                />
             </div>
 
             <div id=super::item_view_sections::Section::SalesChart.id() class="item-market-history item-surface mt-6 p-3 sm:p-4 scroll-mt-16">
