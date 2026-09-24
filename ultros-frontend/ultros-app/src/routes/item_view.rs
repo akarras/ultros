@@ -1548,6 +1548,13 @@ fn ListingsContent(
             <div id="overview" class="scroll-mt-16">
                 <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
                 <DecisionHeader listing_resource filtered_listings world item_id />
+                <crate::routes::item_view_verdicts::VerdictSummary
+                    listing_resource
+                    filtered_listings
+                    excluded_worlds
+                    world
+                    item_id
+                />
             </div>
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
@@ -1574,23 +1581,17 @@ fn ListingsContent(
             </div>
 
             // The sell/craft verdicts and the bulk basket are for sellers and
-            // bulk buyers deciding what to do next; they follow the raw market
-            // data rather than leading the page. Each brings its own `mt-4`.
+            // bulk buyers deciding what to do next, so they follow the raw
+            // market data. `VerdictSummary` above keeps their one-line
+            // answers in the overview and links down here.
             <div class="mt-2">
                 <crate::routes::item_view_verdicts::ItemVerdicts
                     listing_resource
                     filtered_listings
                     excluded_worlds
+                    quality
                     world
                     item_id
-                />
-                // For a bulk buyer, "which world fills 99 cheapest" replaces
-                // "which listing is cheapest". One slim row until a quantity
-                // is set.
-                <super::item_view_bulk_basket::BulkBasket
-                    listing_resource
-                    filtered_listings
-                    quality
                 />
             </div>
 

@@ -26,7 +26,10 @@ use ultros_calc::bulk_basket::{Basket, BulkBaskets, bulk_baskets};
 type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
 
 /// Shared with `recipe_view`'s craft quantity: `?quantity=` is "how many".
-const QUANTITY_PARAM: &str = "quantity";
+pub(crate) const QUANTITY_PARAM: &str = "quantity";
+/// The basket's anchor, linked from the verdict summary and the section nav.
+const BULK_BASKET_ID: &str = "bulk-basket";
+pub(crate) const BULK_BASKET_HREF: &str = "#bulk-basket";
 /// Past this the planner's solver only estimates anyway, and no market board
 /// holds more of one item in practice.
 const MAX_QUANTITY: i64 = 9_999;
@@ -321,7 +324,8 @@ pub fn BulkBasket(
                 // stepper and drop focus from the input.
                 view! {
                     <section
-                        class="item-surface mt-4 px-3 py-2 sm:px-4"
+                        id=BULK_BASKET_ID
+                        class="item-surface scroll-mt-16 px-3 py-2 sm:px-4"
                         class:py-3=expanded
                         aria-labelledby="bulk-basket-title"
                         data-testid="bulk-basket"
@@ -384,6 +388,11 @@ mod tests {
         assert_eq!(clamp_quantity(-5), 1);
         assert_eq!(clamp_quantity(99), 99);
         assert_eq!(clamp_quantity(1_000_000), MAX_QUANTITY);
+    }
+
+    #[test]
+    fn href_targets_the_basket_id() {
+        assert_eq!(BULK_BASKET_HREF, format!("#{BULK_BASKET_ID}"));
     }
 
     /// Same hazard as `real_price_summary_builds_without_an_i18n_context`:
