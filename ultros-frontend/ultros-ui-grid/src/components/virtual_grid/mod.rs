@@ -20,7 +20,14 @@ use std::hash::Hash;
 use web_sys::wasm_bindgen::JsCast;
 
 pub const GRID_HEADER_HEIGHT: f64 = 56.0;
+/// Rows past each edge of the viewport reported as `visible_range`, which
+/// pages size their enrichment fetches from.
 pub const GRID_OVERSCAN: usize = 4;
+/// Rows past each edge of the viewport kept in the DOM. The browser scrolls
+/// on its own thread ahead of the page, so any row not built yet shows as a
+/// blank band until the next frame lands; four rows is less than one wheel
+/// notch. Wider than `GRID_OVERSCAN` so the fetch window stays unchanged.
+const GRID_RENDER_OVERSCAN: usize = 12;
 
 /// Space a heading needs around its label: the drag grip (20px) and the
 /// content wrapper's 4px side padding, plus the 1px right border. That padding rule
@@ -38,9 +45,12 @@ const HEADING_SORT_ICON: f64 = 20.0;
 /// Same 20px slot as the menu button it sits beside.
 #[cfg(feature = "hydrate")]
 const HEADING_FILTER_CLEAR: f64 = 20.0;
-/// Chunk of rows measured between yields to the event loop.
+/// Milliseconds of row formatting between yields to the event loop. A time
+/// budget rather than a row count: a row's cost scales with its columns, and
+/// 512 flip finder rows with the market columns made one 825 ms task in the
+/// 2026-09-24 profile, freezing every scroll frame behind it.
 #[cfg(feature = "hydrate")]
-const FIT_CHUNK_ROWS: usize = 512;
+const FIT_SLICE_MS: f64 = 8.0;
 /// Distinct texts per column that get a real `measureText`, taken from the
 /// head of a longest-first estimate. Only the longest few can decide a
 /// column's width; measuring every distinct gil value was a third of the
@@ -295,16 +305,18 @@ where
         placed.with(|cols| cols.last().map(|c| c.left + c.width).unwrap_or(0.0))
     });
     let count = Memo::new(move |_| each.with(Vec::len));
-    let rows = Memo::new(move |_| {
+    let rows_with = move |overscan| {
         let (_, y, _, h) = viewport.get();
         row_range(
             y,
             (h - GRID_HEADER_HEIGHT).max(0.0),
             row_height,
             count.get(),
-            GRID_OVERSCAN,
+            overscan,
         )
-    });
+    };
+    let rows = Memo::new(move |_| rows_with(GRID_OVERSCAN));
+    let rendered_rows = Memo::new(move |_| rows_with(GRID_RENDER_OVERSCAN));
     let cols = Memo::new(move |_| {
         let (x, _, w, _) = viewport.get();
         placed.with(|p| column_range(p, x, w))
@@ -565,7 +577,7 @@ where
     };
     // Measures `ids` against their heading labels and every current row with
     // the grid's real fonts, then hands the clamped widths to `apply`. Rows
-    // are formatted in chunks with a yield between them; only the longest
+    // are formatted in time slices with a yield between them; only the longest
     // distinct texts per column are then measured. A bump of `generation`
     // (a newer request, cleanup) drops the pass on the floor.
     // Values that are not cached yet measure as whatever the row's `measure`
@@ -654,22 +666,32 @@ where
                     .iter()
                     .map(|_| std::collections::HashMap::new())
                     .collect();
-                for chunk in data.chunks(FIT_CHUNK_ROWS) {
+                let mut remaining = data.iter();
+                loop {
                     if generation.try_get_untracked() != Some(expected) {
                         return;
                     }
+                    let started = js_sys::Date::now();
+                    let mut finished = true;
                     // Provider dependencies are owned by measure_version and
                     // the scheduling effect. This async snapshot must not try
                     // to subscribe once per cell (or warn for each debug read).
                     untrack(|| {
-                        for row in chunk {
+                        for row in remaining.by_ref() {
                             for (texts, def) in candidates.iter_mut().zip(&defs) {
                                 let (text, adornments) = measure.with_value(|m| m(row, def.id));
                                 let widest = texts.entry(text).or_insert(0.0);
                                 *widest = widest.max(adornments);
                             }
+                            if js_sys::Date::now() - started >= FIT_SLICE_MS {
+                                finished = false;
+                                break;
+                            }
                         }
                     });
+                    if finished {
+                        break;
+                    }
                     gloo_timers::future::TimeoutFuture::new(0).await;
                 }
                 if generation.try_get_untracked() != Some(expected) {
@@ -760,7 +782,7 @@ where
         })
     });
     let render_rows = Memo::new(move |_| {
-        let (start, end) = rows.get();
+        let (start, end) = rendered_rows.get();
         let focus_row = active.get().0.checked_sub(1);
         each.with(|data| {
             let mut visible = data[start.min(data.len())..end.min(data.len())]

@@ -739,8 +739,13 @@ fn market_metrics() -> impl Iterator<Item = MarketMetric> {
         .chain([MarketMetric::FloorTrend])
 }
 
+/// Called for every cell the grid renders or measures, so it must not scan:
+/// a scan of `market_metrics()` whose every `id()` scans its own table was
+/// half of the flip finder's auto-fit pass in the 2026-09-24 profile.
 fn metric_by_id(id: &str) -> Option<MarketMetric> {
-    market_metrics().find(|m| m.id() == id)
+    static BY_ID: std::sync::LazyLock<HashMap<&'static str, MarketMetric>> =
+        std::sync::LazyLock::new(|| market_metrics().map(|m| (m.id(), m)).collect());
+    BY_ID.get(id).copied()
 }
 
 /// Header hover text; only the age columns carry one.
