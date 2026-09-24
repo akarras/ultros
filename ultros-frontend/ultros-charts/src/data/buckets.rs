@@ -16,8 +16,10 @@ pub fn bucket_seconds(days_range: Option<i32>, data_span_days: i64) -> i64 {
     };
     match effective_days {
         ..=2 => HOUR,
-        3..=10 => 6 * HOUR,
-        11..=120 => DAY,
+        // A month at daily grain is only ~30 points — too coarse to see
+        // intra-week swings — so month-sized windows stay on 6h (~120 points).
+        3..=45 => 6 * HOUR,
+        46..=120 => DAY,
         121..=400 => 7 * DAY,
         _ => 30 * DAY,
     }
@@ -75,7 +77,9 @@ mod tests {
     #[test]
     fn bucket_seconds_scales_with_window() {
         assert_eq!(bucket_seconds(Some(7), 0), 6 * 3_600);
-        assert_eq!(bucket_seconds(Some(30), 0), 86_400);
+        assert_eq!(bucket_seconds(Some(30), 0), 6 * 3_600);
+        assert_eq!(bucket_seconds(Some(45), 0), 6 * 3_600);
+        assert_eq!(bucket_seconds(Some(46), 0), 86_400);
         assert_eq!(bucket_seconds(Some(90), 0), 86_400);
         assert_eq!(bucket_seconds(None, 2), 3_600);
         assert_eq!(bucket_seconds(None, 500), 30 * 86_400);
