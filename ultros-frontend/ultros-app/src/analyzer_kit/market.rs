@@ -50,12 +50,12 @@ use super::{
     signals::{StatsIndex, stat_only, stats_index},
     stat_columns::{
         FLOOR_TREND_ID, FLOOR_TREND_WINDOW, FOLLOW_COLUMNS, LISTING_COLUMNS,
-        LISTING_WINDOW_COLUMNS, ListingKind, ListingWindowKind, STAT_COLUMNS, StatKind, Window,
+        LISTING_WINDOW_COLUMNS, ListingKind, ListingWindowKind, StatKind, Window,
         floor_trend_label, floor_trend_title, follow_id, history_observed_note, listing_id,
         listing_label, listing_title, listing_window_id, listing_window_label,
-        listing_window_title, listing_window_wanted, listings_wanted, market_picker_group,
-        market_picker_group_listings, required_windows, stat_column, stat_label, stat_picker_hint,
-        stat_picker_label,
+        listing_window_title, listing_window_wanted, listings_wanted, market_picker_family_group,
+        market_picker_group, market_picker_group_listings, required_windows, stat_column,
+        stat_family, stat_label, stat_picker_hint, stat_picker_label, stat_variant_label,
     },
     window::MarketWindow,
 };
@@ -713,18 +713,15 @@ const TRAILING_METRICS: [MarketMetric; 5] = [
 /// Every shared column in default (appended) order: identity, then the
 /// window × statistic table, then the seven-day text and trend columns.
 fn market_metrics() -> impl Iterator<Item = MarketMetric> {
+    // Statistic-major: each statistic's windows sit side by side, so moving
+    // a shown statistic to another window (the columns picker's swap) keeps
+    // its place among the other columns without writing a `col-order`.
     LEADING_METRICS
         .into_iter()
-        .chain(
-            FOLLOW_COLUMNS
-                .iter()
-                .map(|(kind, _)| MarketMetric::Follow(*kind)),
-        )
-        .chain(
-            STAT_COLUMNS
-                .iter()
-                .map(|c| MarketMetric::Stat(c.kind, c.window)),
-        )
+        .chain(FOLLOW_COLUMNS.iter().flat_map(|(kind, _)| {
+            std::iter::once(MarketMetric::Follow(*kind))
+                .chain(Window::ALL.map(|window| MarketMetric::Stat(*kind, window)))
+        }))
         .chain(TRAILING_METRICS)
         .chain(
             LISTING_COLUMNS
@@ -1429,6 +1426,14 @@ where
                 | MarketMetric::FloorTrend => Some(market_picker_group_listings()),
                 _ => None,
             };
+            if let MarketMetric::Follow(kind) | MarketMetric::Stat(kind, _) = metric {
+                column.picker_family = Some(stat_family(kind));
+                column.picker_family_group = Some(market_picker_family_group());
+                column.picker_variant = Some(stat_variant_label(match metric {
+                    MarketMetric::Stat(_, window) => Some(window),
+                    _ => None,
+                }));
+            }
             match metric {
                 MarketMetric::Follow(kind) => {
                     column.picker_label =
@@ -2372,6 +2377,27 @@ mod tests {
             assert_eq!(metric_by_id(id).map(|m| m.id()), Some(id));
         }
         assert_eq!(metric_by_id("roi"), None);
+        // Every STAT_COLUMNS id is still offered, statistic by statistic.
+        for column in &super::super::stat_columns::STAT_COLUMNS {
+            assert!(unique.contains(column.id), "{}", column.id);
+        }
+        let median: Vec<_> = ids
+            .iter()
+            .copied()
+            .skip_while(|id| *id != "market-sale-median")
+            .take(5)
+            .collect();
+        assert_eq!(
+            median,
+            [
+                "market-sale-median",
+                "market-sale-median-1",
+                "market-sale-median-7",
+                "market-sale-median-30",
+                "market-sale-median-90",
+            ],
+            "a statistic's windows sit together so a window swap keeps its place"
+        );
     }
 
     #[test]

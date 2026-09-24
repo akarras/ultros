@@ -55,6 +55,39 @@ fn write_layout(query: &mut ParamsMap, layout: Option<String>) {
     }
 }
 
+/// `layout` with `new` in `old`'s place: the slot the user dragged `old` to
+/// and the width they gave it. Only an explicitly placed `old` moves `new`;
+/// otherwise `new` takes its definition position, which writes nothing — a
+/// forced position would spell out every column before it in `col-order`.
+fn swap_in_layout(layout: Option<String>, old: &str, new: &str) -> Option<String> {
+    let raw = layout?;
+    let Some((order, widths)) = raw.strip_prefix("3~").and_then(|b| b.split_once('~')) else {
+        return Some(raw);
+    };
+    let mut order: Vec<&str> = order.split('.').filter(|s| !s.is_empty()).collect();
+    if order.contains(&old) {
+        order.retain(|id| *id != new);
+        for id in &mut order {
+            if *id == old {
+                *id = new;
+            }
+        }
+    }
+    let tokens: Vec<&str> = widths.split('.').filter(|s| !s.is_empty()).collect();
+    let mut widths: std::collections::BTreeMap<&str, &str> = tokens
+        .chunks(2)
+        .filter_map(|pair| Some((*pair.first()?, *pair.get(1)?)))
+        .collect();
+    if let Some(width) = widths.remove(old) {
+        widths.entry(new).or_insert(width);
+    }
+    let widths: Vec<String> = widths
+        .into_iter()
+        .map(|(id, width)| format!("{id}.{width}"))
+        .collect();
+    Some(format!("3~{}~{}", order.join("."), widths.join(".")))
+}
+
 #[component]
 pub fn QueryGrid<T, K, KF, H, F, M>(
     #[prop(into)] each: Signal<Vec<T>>,
@@ -283,6 +316,7 @@ where
     });
     if let Some(registry) = registry {
         registry.register(resolved.into());
+        registry.register_layout(layout);
         registry.register_count(Signal::derive(move || queried.with(Vec::len)));
         // The toolbar picker shares these with the header menu, so a tick
         // there and "Hide column" here write the same `?cols=`. Neither
@@ -291,6 +325,21 @@ where
             set_visible: Callback::new(move |(id, visible)| {
                 let mut q = query.get_untracked();
                 write_visibility(&mut q, id, visible);
+                commit_query.run(q);
+            }),
+            swap: Callback::new(move |(old, new): (&'static str, &'static str)| {
+                let mut q = query.get_untracked();
+                let layout = swap_in_layout(layout_from_query(&q), old, new);
+                write_layout(&mut q, layout);
+                let mut defs = resolved.get_untracked();
+                for col in &mut defs {
+                    if col.id == old {
+                        col.visible = false;
+                    } else if col.id == new {
+                        col.visible = true;
+                    }
+                }
+                super::registry::write_columns(&mut q, &defs);
                 commit_query.run(q);
             }),
             reset: Callback::new(move |_| {
@@ -369,6 +418,45 @@ mod tests {
         write_layout(&mut query, None);
         assert_eq!(layout_from_query(&query), None);
         assert_eq!(query, params(&[("sort", "grid:profit")]));
+    }
+
+    #[test]
+    fn a_swap_takes_over_the_old_columns_place_and_width() {
+        // A dragged column hands its slot and its width to its replacement,
+        // and a stale position of the replacement is dropped.
+        assert_eq!(
+            swap_in_layout(
+                Some("3~trend.units-7.units-30~units-7.140.profit.90".into()),
+                "units-7",
+                "units-30"
+            )
+            .as_deref(),
+            Some("3~trend.units-30~profit.90.units-30.140")
+        );
+        // A column the layout never mentions keeps the layout as it is: its
+        // replacement takes its definition position instead.
+        let layout = Some("3~trend~profit.90".to_string());
+        assert_eq!(
+            swap_in_layout(layout.clone(), "units-7", "units-30"),
+            layout
+        );
+        // The replacement keeps a width of its own.
+        assert_eq!(
+            swap_in_layout(
+                Some("3~~units-7.140.units-30.200".into()),
+                "units-7",
+                "units-30"
+            )
+            .as_deref(),
+            Some("3~~units-30.200")
+        );
+        assert_eq!(swap_in_layout(None, "units-7", "units-30"), None);
+        // Older packed layouts are left alone rather than half-rewritten.
+        let packed = Some("2~~units-7.3a".to_string());
+        assert_eq!(
+            swap_in_layout(packed.clone(), "units-7", "units-30"),
+            packed
+        );
     }
 
     #[test]

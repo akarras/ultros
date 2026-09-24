@@ -330,11 +330,10 @@ pub fn grouped_picker_options<T, M>(
                 _ => {}
             }
             let option = ColumnOption {
-                id: c.id,
-                label,
                 group: Some(heading(c.spec.group, i18n, ctx)),
                 disabled,
                 hint,
+                ..ColumnOption::new(c.id, label)
             };
             (c.spec.group, i, option)
         })

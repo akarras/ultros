@@ -3112,6 +3112,76 @@ dialog.panel { color: var(--color-text); margin: auto; }
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
+/* Columns picker: the shown columns, then one add row per statistic with
+   its windows as pills. */
+.columns-picker-section {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+}
+.columns-picker-list {
+    display: flex;
+    flex-direction: column;
+}
+.columns-picker-heading {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+.columns-picker-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.5rem;
+    min-height: 2.25rem;
+    padding: 0.125rem 0.25rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-outline) 60%, transparent);
+    color: var(--color-text);
+}
+.columns-picker-row:last-child { border-bottom: none; }
+.columns-picker-name {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.columns-picker-empty { padding: 0.25rem; color: var(--color-text-muted); }
+.column-windows { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.column-window {
+    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 999px;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+.column-window:hover:not(:disabled) { color: var(--color-text); }
+.column-window[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--brand-ring) 22%, transparent);
+    border-color: color-mix(in srgb, var(--brand-ring) 50%, var(--color-outline));
+    color: var(--color-text);
+}
+.column-window:disabled { opacity: 0.4; cursor: not-allowed; }
+.column-window:focus-visible, .columns-picker-icon:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+.columns-picker-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.375rem;
+    color: var(--color-text-muted);
+}
+.columns-picker-icon:hover:not(:disabled) {
+    color: var(--color-text);
+    background: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+}
+.columns-picker-icon:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* Views menus have their own button-relative wrapper on desktop. On phones,
    right-aligning a wide menu to an icon in the middle of the toolbar can put
    its left edge offscreen. Use the full ControlBar as the containing block,

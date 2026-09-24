@@ -1068,7 +1068,13 @@ where
                                         <input type="search" aria-label=t_string!(i18n,grid_search_columns).to_string() placeholder=t_string!(i18n,grid_search_columns).to_string() on:input=move |e|search.set(event_target_value(&e))/>
                                         <div class="grid-insert-options">{move || {
                                             let mut previous_group = None;
-                                            columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).map(|c| {
+                                            let mut hidden: Vec<_> = columns.get().into_iter().filter(|c|c.optional&&!c.visible&&c.label.to_lowercase().contains(&search.get().to_lowercase())).collect();
+                                            // Each heading once: groups gathered in first-appearance order, since a
+                                            // table may interleave them (the market columns run statistic by statistic).
+                                            let mut groups: Vec<Option<String>> = vec![None];
+                                            for c in &hidden { if !groups.contains(&c.picker_group) { groups.push(c.picker_group.clone()); } }
+                                            hidden.sort_by_key(|c| groups.iter().position(|g| *g == c.picker_group).unwrap_or(0));
+                                            hidden.into_iter().map(|c| {
                                                 let group = if previous_group != c.picker_group { c.picker_group.clone() } else { None };
                                                 previous_group = c.picker_group;
                                                 view! {

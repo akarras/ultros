@@ -889,13 +889,12 @@ mod tests {
                     rows=Signal::derive(|| vec![(0usize, Row(7))])
                     visible_cols=visible
                     picker=Signal::derive(|| vec![ColumnOption {
-                        id: "extra",
-                        label: "Extra (selected input)".into(),
                         group: Some(crate::components::control_bar::PickerHeading {
                             label: "Cost".into(), title: Some("Ingredient prices".into()),
                         }),
                         hint: Some("Unavailable for this calculation".into()),
                         disabled: true,
+                        ..ColumnOption::new("extra", "Extra (selected input)".into())
                     }])
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
