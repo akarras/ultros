@@ -207,7 +207,7 @@ impl UltrosDb {
             .collect();
 
         let val = retainer::Entity::find()
-            .filter(retainer::Column::Name.like(format!("{retainer_name}%")))
+            .filter(retainer::Column::Name.like(format!("{}%", crate::group_roles::escape_like(&retainer_name))))
             .limit(10)
             .all(&self.db)
             .await?;
