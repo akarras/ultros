@@ -466,7 +466,7 @@ pub fn ColumnsPicker(
                 });
                 let title = label.clone();
                 view! {
-                    <li class="columns-picker-row" data-shown-column=id>
+                    <li class="columns-picker-chip" data-shown-column=id>
                         <span class="columns-picker-name" title=title>{label}</span>
                         {window}
                         {remove}
@@ -588,7 +588,7 @@ pub fn ColumnsPicker(
 
     view! {
         <h3 class="columns-picker-section">{t!(i18n, analyzer_columns_showing)}</h3>
-        <ul class="columns-picker-list" data-columns-shown>{shown_rows}</ul>
+        <ul class="columns-picker-chips" data-columns-shown>{shown_rows}</ul>
         <h3 class="columns-picker-section">{t!(i18n, analyzer_columns_add)}</h3>
         <input
             type="search"
