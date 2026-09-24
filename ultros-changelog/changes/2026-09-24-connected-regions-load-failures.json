@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Missing connected-region listings are now reported",
+  "blurb": "If listings from a connected region fail to load, the analyzers now say which region is missing and offer a Retry button, instead of quietly showing an incomplete table."
+}
