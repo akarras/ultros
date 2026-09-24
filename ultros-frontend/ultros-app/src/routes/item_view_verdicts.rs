@@ -1,8 +1,8 @@
-//! Sell and craft verdicts at the top of the item page.
+//! Sell and craft verdicts on the item page.
 //!
 //! The arithmetic lives in `ultros_calc::verdict`; this module adapts the
 //! page's listings payload and contexts into it and renders two compact
-//! cards inside `#overview`.
+//! cards below the listings and sales tables.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
