@@ -123,9 +123,16 @@ async fn top_movers_returns_rising_in_descending_order() {
         return;
     };
 
-    let risers = queries::top_movers(&ch, top.world_id, MoverDirection::Rising, 5)
-        .await
-        .expect("rising");
+    let risers = queries::top_movers(
+        &ch,
+        top.world_id,
+        &[top.world_id],
+        queries::MoverScope::World,
+        MoverDirection::Rising,
+        5,
+    )
+    .await
+    .expect("rising");
     eprintln!("  world={} top risers:", top.world_id);
     for r in &risers {
         eprintln!(
@@ -143,9 +150,16 @@ async fn top_movers_returns_rising_in_descending_order() {
         }
     }
 
-    let fallers = queries::top_movers(&ch, top.world_id, MoverDirection::Falling, 5)
-        .await
-        .expect("falling");
+    let fallers = queries::top_movers(
+        &ch,
+        top.world_id,
+        &[top.world_id],
+        queries::MoverScope::World,
+        MoverDirection::Falling,
+        5,
+    )
+    .await
+    .expect("falling");
     if fallers.len() >= 2 {
         for w in fallers.windows(2) {
             assert!(
@@ -155,9 +169,16 @@ async fn top_movers_returns_rising_in_descending_order() {
         }
     }
 
-    let by_vol = queries::top_movers(&ch, top.world_id, MoverDirection::Volume, 5)
-        .await
-        .expect("volume");
+    let by_vol = queries::top_movers(
+        &ch,
+        top.world_id,
+        &[top.world_id],
+        queries::MoverScope::World,
+        MoverDirection::Volume,
+        5,
+    )
+    .await
+    .expect("volume");
     if by_vol.len() >= 2 {
         for w in by_vol.windows(2) {
             assert!(

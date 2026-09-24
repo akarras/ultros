@@ -758,9 +758,6 @@
     "welcome_continue_cta": "Ultrosへ進む",
     "welcome_skip_for_now": "今はスキップ",
     "welcome_pick_world_to_continue": "続けるには上でホームワールドを選択してください",
-    "home_onboarding_banner_title": "はじめてのご利用ですか？",
-    "home_onboarding_banner_body": "ホームワールドを設定すると、パーソナライズされたフリップ情報、マーケット動向、価格比較がご利用いただけます。",
-    "home_onboarding_banner_cta": "セットアップする",
     "default_price_zone": "デフォルトの価格ゾーン",
     "default_price_zone_desc_1": "「",
     "items": "アイテム",
@@ -2804,5 +2801,17 @@
     "recipe_breakdown_revenue": "売上",
     "recipe_breakdown_cost": "コスト",
     "recipe_breakdown_revenue_assumption": "{{signal}}価格で売却 · {{place}}、{{quality}}、マーケット税5%控除前。",
-    "recipe_breakdown_revenue_fell_back": "選択した価格指標にこのアイテムの値がないため、入手可能な最安出品で代用しています。"
+    "recipe_breakdown_revenue_fell_back": "選択した価格指標にこのアイテムの値がないため、入手可能な最安出品で代用しています。",
+    "home_region_live_title": "%region%の相場の動き",
+    "home_region_live_hint": "地域内の全ワールドのリアルタイム取引です。ホームワールドを設定すると、あなたのサーバーの価格と転売候補が表示されます。",
+    "home_region_picker_label": "地域",
+    "home_features_title": "Ultrosでできること",
+    "home_feature_flips_title": "ワールド間で転売",
+    "home_feature_flips_body": "安いワールドで買い、自分のワールドで高く売る。フリップファインダーが実際の利益と売れる速さで商品を並べます。",
+    "home_feature_crafts_title": "製作品の価格を計算",
+    "home_feature_crafts_body": "レシピの製作コストと販売価格を、素材ごとに比較できます。",
+    "home_feature_alerts_title": "値下げされたらすぐわかる",
+    "home_feature_alerts_body": "リテイナーの出品を追跡し、誰かがより安く出品した瞬間に通知します。",
+    "home_feature_discord_title": "Discordで通知",
+    "home_feature_discord_body": "Botをサーバーに追加すれば、いつものチャットで価格確認や通知を受け取れます。"
 }
