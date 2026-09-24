@@ -206,8 +206,13 @@ impl UltrosDb {
             })
             .collect();
 
+        let escaped_name = retainer_name
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+
         let val = retainer::Entity::find()
-            .filter(retainer::Column::Name.like(format!("{retainer_name}%")))
+            .filter(retainer::Column::Name.like(format!("{escaped_name}%")))
             .limit(10)
             .all(&self.db)
             .await?;
