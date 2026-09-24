@@ -13,6 +13,10 @@ pub struct FilterAlias {
     pub column: &'static str,
     pub op: FilterOp,
     pub convert: fn(&str) -> Option<String>,
+    /// The inverse of `convert`: how a stored threshold reads under `key`.
+    /// [`readable_query`] only writes the alias when `convert` maps this
+    /// straight back to the stored value, so a lossy spelling stays in `gf`.
+    pub display: fn(&str) -> Option<String>,
 }
 
 impl FilterAlias {
@@ -25,6 +29,7 @@ impl FilterAlias {
                 let raw = raw.trim();
                 (!raw.is_empty()).then(|| raw.to_string())
             },
+            display: |value| Some(value.to_string()),
         }
     }
     /// Preserve the parsing contract of a legacy signed-integer parameter.
@@ -44,6 +49,9 @@ impl FilterAlias {
                     .filter(|v| v.is_finite())
                     .map(|v| (v as f64).to_string())
             },
+            // `0.1` is stored as the widened `0.10000000149011612`; the
+            // shortest f32 spelling converts back to exactly that.
+            display: |value| value.parse::<f64>().ok().map(|v| (v as f32).to_string()),
             ..Self::new(key, column, op)
         }
     }
@@ -124,9 +132,26 @@ pub fn resolve_filters(query: &ParamsMap, aliases: &[FilterAlias]) -> MetricFilt
     filters
 }
 
+/// `seconds` as the humantime duration a person would type (`86400` → `1d`),
+/// for aliases whose `convert` parses durations into seconds.
+pub fn seconds_as_duration(seconds: &str) -> Option<String> {
+    let seconds = seconds.parse::<f64>().ok()?;
+    if !seconds.is_finite() || seconds < 0.0 || seconds.fract() != 0.0 {
+        return None;
+    }
+    let seconds = seconds as u64;
+    let (unit, size) = [("d", 86_400), ("h", 3_600), ("m", 60)]
+        .into_iter()
+        .find(|(_, size)| seconds != 0 && seconds.is_multiple_of(*size))
+        .unwrap_or(("s", 1));
+    Some(format!("{}{unit}", seconds / size))
+}
+
 pub fn clear_key(query: &mut ParamsMap, key: &str) {
     query.remove(key);
-    if matches!(key, "next-sale" | "last-sold" | "min-sales") {
+    // The empty value keeps a seeded default from returning on reload. A `v`
+    // marker already stops every seed, so there it would only be URL noise.
+    if matches!(key, "next-sale" | "last-sold" | "min-sales") && query.get("v").is_none() {
         query.insert(key.to_string(), String::new());
     }
 }
@@ -139,6 +164,70 @@ pub fn canonical_query(query: &ParamsMap, aliases: &[FilterAlias]) -> ParamsMap 
     }
     write_filters(&mut next, &filters);
     next
+}
+
+/// `query` as a person should read it: every filter an alias states exactly
+/// moves out of the `gf` JSON into its alias key (`min-buy=5000`,
+/// `last-sold=1d`), and only the rest stay packed in `gf`.
+///
+/// The inverse of [`canonical_query`]: editors work on the canonical form,
+/// where every filter is in `gf`, and hand the result through this before it
+/// reaches the address bar. [`resolve_filters`] reads both forms the same.
+pub fn readable_query(query: &ParamsMap, aliases: &[FilterAlias]) -> ParamsMap {
+    let mut next = query.clone();
+    for alias in aliases {
+        next.remove(alias.key);
+    }
+    let mut packed = MetricFilters::new();
+    for (column, filter) in resolve_filters(query, aliases) {
+        match alias_values(&column, &filter, aliases) {
+            Some(values) => {
+                for (key, value) in values {
+                    // `insert` decodes its input.
+                    next.insert(key, leptos_router::location::Url::escape(&value));
+                }
+            }
+            None => {
+                packed.insert(column, filter);
+            }
+        }
+    }
+    for alias in aliases {
+        if next.get(alias.key).is_none() && query.get(alias.key).is_some() {
+            clear_key(&mut next, alias.key);
+        }
+    }
+    write_filters(&mut next, &packed);
+    next
+}
+
+/// The alias keys and values that state `filter` exactly, or `None` when any
+/// part of it has no alias (it then stays in `gf` whole). A two-sided range
+/// needs both a `Gte` and an `Lte` alias; the reader merges them back.
+fn alias_values(
+    column: &str,
+    filter: &MetricFilter,
+    aliases: &[FilterAlias],
+) -> Option<Vec<(&'static str, String)>> {
+    let find = |op| aliases.iter().find(|a| a.column == column && a.op == op);
+    let spell = |alias: &FilterAlias, value: &str| {
+        let shown = (alias.display)(value)?;
+        ((alias.convert)(&shown).as_deref() == Some(value)).then_some((alias.key, shown))
+    };
+    match filter.op {
+        FilterOp::Between | FilterOp::Range => {
+            let (low, high) = filter.range_sides()?;
+            let mut values = Vec::new();
+            if let Some(low) = low {
+                values.push(spell(find(FilterOp::Gte)?, low)?);
+            }
+            if let Some(high) = high {
+                values.push(spell(find(FilterOp::Lte)?, high)?);
+            }
+            (!values.is_empty()).then_some(values)
+        }
+        op => Some(vec![spell(find(op)?, &filter.value)?]),
+    }
 }
 
 pub fn write_filters(query: &mut ParamsMap, filters: &MetricFilters) {
@@ -160,20 +249,42 @@ pub struct RegisteredFilter {
 pub struct ColumnVisibility {
     /// Show or hide one optional column, leaving the layout delta untouched.
     pub set_visible: Callback<(&'static str, bool)>,
-    /// Drop `?cols=` so every optional column returns to its page default.
+    /// Drop the column keys so every optional column returns to its page
+    /// default.
     pub reset: Callback<()>,
 }
 
-/// The `?cols=` value for a resolved column set: every optional column that
-/// is on, in definition order, so the URL is stable regardless of toggle
-/// order. Shared by the header menu and the toolbar picker.
-pub fn cols_query(columns: &[GridColumn]) -> String {
-    columns
-        .iter()
-        .filter(|c| c.optional && c.visible)
-        .map(|c| c.id)
-        .collect::<Vec<_>>()
-        .join(",")
+/// Replace the column keys of `query` with where `columns` departs from its
+/// defaults (`show-cols`/`hide-cols`, see [`ultros_grid_core::columns`]), in
+/// definition order so the URL is stable regardless of toggle order. Shared
+/// by the header menu and the toolbar picker.
+pub fn write_columns(query: &mut ParamsMap, columns: &[GridColumn]) {
+    use ultros_grid_core::columns::{COLUMN_KEYS, HIDE_COLS, SHOW_COLS, column_departures};
+    for key in COLUMN_KEYS {
+        query.remove(key);
+    }
+    let (show, hide) = column_departures(
+        columns
+            .iter()
+            .filter(|c| c.optional)
+            .map(|c| (c.id, c.default_visible, c.visible)),
+    );
+    if let Some(show) = show {
+        query.insert(SHOW_COLS, show);
+    }
+    if let Some(hide) = hide {
+        query.insert(HIDE_COLS, hide);
+    }
+}
+
+/// The column keys of `query`.
+pub fn column_query(query: &ParamsMap) -> ultros_grid_core::columns::ColumnQuery<'_> {
+    use ultros_grid_core::columns::{HIDE_COLS, LEGACY_COLS, SHOW_COLS};
+    ultros_grid_core::columns::ColumnQuery {
+        cols: query.get_str(LEGACY_COLS),
+        show: query.get_str(SHOW_COLS),
+        hide: query.get_str(HIDE_COLS),
+    }
 }
 
 /// Only column identity and ordering policy belong in query resolution.
@@ -382,6 +493,13 @@ impl FilterRegistry {
             .with_value(|aliases| canonical_query(query, aliases))
     }
 
+    /// See [`readable_query`]. Apply to an edited canonical query right
+    /// before it is navigated to.
+    pub fn readable(self, query: &ParamsMap) -> ParamsMap {
+        self.aliases
+            .with_value(|aliases| readable_query(query, aliases))
+    }
+
     /// Register retired native sort tokens once at setup, before any grid
     /// or header reads the URL.
     pub fn register_sort_aliases(self, aliases: Vec<SortAlias>) {
@@ -488,7 +606,7 @@ impl FilterRegistry {
                 clear_key(&mut next, entry.filter.key);
             }
         }
-        next
+        self.readable(&next)
     }
 }
 
@@ -518,7 +636,7 @@ pub fn RegisteredFilterChips(registry: FilterRegistry) -> impl IntoView {
     let navigate = leptos_router::hooks::use_navigate();
     let remove = Callback::new(move |filter: ColumnFilter| {
         let query = registry.canonical(&location.query.get_untracked());
-        let _next = super::filter::cleared_query(&query, &[filter]);
+        let _next = registry.readable(&super::filter::cleared_query(&query, &[filter]));
         registry.editing.set(None);
         #[cfg(feature = "hydrate")]
         navigate(
@@ -974,6 +1092,119 @@ mod tests {
             assert_eq!(cleared.get(key), query.get(key));
         }
     }
+    fn flip_aliases() -> Vec<FilterAlias> {
+        let mut aliases = aliases();
+        aliases.push(FilterAlias::integer("roi", "roi", FilterOp::Gte));
+        aliases.push(FilterAlias {
+            convert: |raw| {
+                raw.strip_suffix('d')
+                    .and_then(|days| days.parse::<u64>().ok())
+                    .map(|days| (days * 86_400).to_string())
+            },
+            display: seconds_as_duration,
+            ..FilterAlias::new("last-sold", "last_sold", FilterOp::Lte)
+        });
+        aliases
+    }
+
+    /// The link that prompted this: three filters packed as percent-encoded
+    /// JSON, plus the empty `last-sold=` a clear left behind.
+    #[test]
+    fn readable_query_moves_aliased_filters_out_of_gf() {
+        let query = params(&[
+            ("v", "1"),
+            ("last-sold", ""),
+            (
+                "gf",
+                r#"{"buy_price":{"op":"gte","value":"5000"},"last_sold":{"op":"lte","value":"86400"},"roi":{"op":"gte","value":"30"}}"#,
+            ),
+        ]);
+        let readable = readable_query(&query, &flip_aliases());
+        assert_eq!(readable.get("gf"), None);
+        assert_eq!(readable.get("min-buy").as_deref(), Some("5000"));
+        assert_eq!(readable.get("last-sold").as_deref(), Some("1d"));
+        assert_eq!(readable.get("roi").as_deref(), Some("30"));
+        assert_eq!(readable.get("v").as_deref(), Some("1"));
+        assert_eq!(
+            resolve_filters(&readable, &flip_aliases()),
+            resolve_filters(&query, &flip_aliases())
+        );
+    }
+
+    #[test]
+    fn readable_query_splits_ranges_and_keeps_what_no_alias_states() {
+        let query = params(&[(
+            "gf",
+            r#"{"buy_price":{"op":"range","value":"10,20"},"roi":{"op":"range","value":"30,"},"daily-sales":{"op":"range","value":",5"},"profit":{"op":"gte","value":"1"}}"#,
+        )]);
+        let readable = readable_query(&query, &flip_aliases());
+        assert_eq!(readable.get("min-buy").as_deref(), Some("10"));
+        assert_eq!(readable.get("max-price").as_deref(), Some("20"));
+        assert_eq!(readable.get("roi").as_deref(), Some("30"));
+        // `min-sales` is a floor; an upper bound on daily sales has no alias,
+        // and `profit` has none at all in this set.
+        let packed = parse_filters(readable.get("gf").as_deref());
+        assert_eq!(
+            packed.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["daily-sales", "profit"]
+        );
+        let filters = resolve_filters(&readable, &flip_aliases());
+        for (price, pass) in [(9.0, false), (10.0, true), (20.0, true), (21.0, false)] {
+            assert_eq!(
+                filters["buy_price"].matches(&GridValue::Number(price), false),
+                Some(pass)
+            );
+        }
+    }
+
+    #[test]
+    fn readable_query_leaves_lossy_values_in_gf() {
+        // An integer alias cannot state 1.5, and a day-granular one cannot
+        // state 90 seconds; both must survive exactly.
+        let gf = r#"{"last_sold":{"op":"lte","value":"90"},"roi":{"op":"gte","value":"1.5"}}"#;
+        let readable = readable_query(&params(&[("gf", gf)]), &flip_aliases());
+        assert_eq!(readable.get("roi"), None);
+        assert_eq!(readable.get("last-sold"), None);
+        assert_eq!(
+            parse_filters(readable.get("gf").as_deref()),
+            parse_filters(Some(gf))
+        );
+    }
+
+    #[test]
+    fn clearing_keeps_the_seed_guard_only_without_an_explicit_view() {
+        let cleared = |pairs: &[(&str, &str)]| {
+            let mut query = canonical_query(&params(pairs), &aliases());
+            query.remove("gf");
+            readable_query(&query, &aliases())
+        };
+        let bare = cleared(&[("min-sales", "1")]);
+        assert_eq!(bare.get("min-sales").as_deref(), Some(""));
+        let explicit = cleared(&[("min-sales", "1"), ("v", "1")]);
+        assert_eq!(explicit.get("min-sales"), None);
+    }
+
+    #[test]
+    fn seconds_read_as_the_largest_whole_unit() {
+        for (seconds, duration) in [
+            ("86400", Some("1d")),
+            ("172800", Some("2d")),
+            ("7200", Some("2h")),
+            ("300", Some("5m")),
+            ("90", Some("90s")),
+            ("0", Some("0s")),
+            ("1.5", None),
+            ("-60", None),
+            ("soon", None),
+        ] {
+            assert_eq!(
+                seconds_as_duration(seconds).as_deref(),
+                duration,
+                "{seconds}"
+            );
+        }
+    }
+
     #[test]
     fn invalid_explicit_values_do_not_fall_back_to_a_legacy_threshold() {
         let query = params(&[
@@ -986,7 +1217,7 @@ mod tests {
     }
     /// The toolbar picker reads the grid's resolved columns and flips them
     /// through the grid's own command: required columns are never offered,
-    /// `?cols=` lists every optional column that is on, and an unknown id
+    /// the URL names only departures from the defaults, and an unknown id
     /// is ignored rather than written.
     #[test]
     fn registry_offers_optional_columns_and_toggles_through_the_grid() {
@@ -1000,7 +1231,16 @@ mod tests {
                 GridColumn::new("profit", "Profit".into(), 100.0, true, true),
                 GridColumn::new("level", "Level".into(), 100.0, true, false),
             ];
-            assert_eq!(cols_query(&defs), "profit");
+            let mut written = params(&[("cols", "profit,level")]);
+            write_columns(&mut written, &defs);
+            // Both columns are at their defaults: nothing to say.
+            assert_eq!(written, ParamsMap::new());
+            let mut flipped = defs.clone();
+            flipped[1].visible = false;
+            flipped[2].visible = true;
+            write_columns(&mut written, &flipped);
+            assert_eq!(written.get("show-cols").as_deref(), Some("level"));
+            assert_eq!(written.get("hide-cols").as_deref(), Some("profit"));
             registry.register(Signal::derive(move || defs.clone()));
             let writes = RwSignal::new(Vec::<(&'static str, bool)>::new());
             let resets = RwSignal::new(0usize);

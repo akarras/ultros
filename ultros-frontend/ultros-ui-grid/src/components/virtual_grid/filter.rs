@@ -64,6 +64,8 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
         if let Some(next) = next {
             q.replace(key, next);
         }
+        // Only the browser navigates; SSR renders the editor and stops.
+        let _q = registry.map(|r| r.readable(&q)).unwrap_or(q);
         if let Some(registry) = registry {
             registry.editing.set(None);
         }
@@ -72,7 +74,7 @@ pub fn ColumnFilterEditor(filter: ColumnFilter) -> impl IntoView {
             &format!(
                 "{}{}{}",
                 location.pathname.get_untracked(),
-                q.to_query_string(),
+                _q.to_query_string(),
                 location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {
@@ -513,6 +515,8 @@ fn MetricFilterEditor(
             }
         }
         super::registry::write_filters(&mut q, &filters);
+        // Only the browser navigates; SSR renders the editor and stops.
+        let _q = registry.map(|r| r.readable(&q)).unwrap_or(q);
         if let Some(registry) = registry {
             registry.editing.set(None);
         }
@@ -521,7 +525,7 @@ fn MetricFilterEditor(
             &format!(
                 "{}{}{}",
                 location.pathname.get_untracked(),
-                q.to_query_string(),
+                _q.to_query_string(),
                 location.hash.get_untracked()
             ),
             leptos_router::NavigateOptions {

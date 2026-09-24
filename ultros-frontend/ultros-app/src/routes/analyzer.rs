@@ -282,8 +282,12 @@ const DEFAULT_VISIBLE_COLS: &[&str] = &[
 // views omit `cols`, so they inherit this same selection.
 const DEFAULT_SHARED_COLS: &[&str] = &["sale_estimate", "market-sale-median"];
 
-fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    crate::components::control_bar::parse_visible_cols(raw, ALL_OPTIONAL_COLS, DEFAULT_VISIBLE_COLS)
+fn parse_visible_cols(columns: ColumnQuery<'_>) -> std::collections::HashSet<&'static str> {
+    crate::components::control_bar::parse_visible_cols(
+        columns,
+        ALL_OPTIONAL_COLS,
+        DEFAULT_VISIBLE_COLS,
+    )
 }
 
 #[cfg(test)]
@@ -292,8 +296,9 @@ fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> 
 }
 
 use crate::components::app_link::use_query_map_or_default;
+use crate::components::virtual_grid::columns::ColumnQuery;
+use crate::components::virtual_grid::registry::column_query;
 use crate::query_defaults::query_signal;
-use crate::query_defaults::query_signal_or_default;
 
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
@@ -1129,8 +1134,8 @@ fn AnalyzerControlBarSkeleton() -> impl IntoView {
 /// the only thing standing in for both.
 #[component]
 fn AnalyzerTableSkeleton() -> impl IntoView {
-    let (cols_param, _) = query_signal::<String>("cols");
-    let visible = parse_visible_cols(cols_param.get_untracked().as_deref());
+    let visible =
+        use_query_map_or_default().with_untracked(|q| parse_visible_cols(column_query(q)));
     view! {
         <div class="flex flex-col gap-4">
             <AnalyzerControlBarSkeleton />
@@ -1146,6 +1151,38 @@ fn AnalyzerTableSkeleton() -> impl IntoView {
             />
         </div>
     }
+}
+
+/// The Flip Finder's short URL names for its column filters: `?roi=30`
+/// rather than a `gf` JSON entry for the ROI column.
+fn flip_filter_aliases() -> Vec<FilterAlias> {
+    vec![
+        FilterAlias::integer("profit", "profit", FilterOp::Gte),
+        FilterAlias::integer("ppd", COL_PROFIT_PER_DAY, FilterOp::Gte),
+        FilterAlias::integer("roi", COL_ROI, FilterOp::Gte),
+        FilterAlias::integer("min-buy", "buy_price", FilterOp::Gte),
+        FilterAlias::integer("max-price", "buy_price", FilterOp::Lte),
+        FilterAlias::new("name", "item", FilterOp::Contains),
+        FilterAlias {
+            convert: |raw| matches!(raw, "hq" | "nq").then(|| raw.to_string()),
+            ..FilterAlias::new("quality", "hq", FilterOp::Eq)
+        },
+        FilterAlias::decimal("vel", COL_SALES_PER_DAY, FilterOp::Gte),
+        FilterAlias::decimal("drift", COL_DRIFT, FilterOp::Gte),
+        FilterAlias {
+            convert: |raw| raw.parse::<u32>().ok().map(|v| v.to_string()),
+            ..FilterAlias::new("min-volume", COL_VOLUME_30D, FilterOp::Gte)
+        },
+        FilterAlias {
+            convert: |raw| {
+                parse_duration(raw)
+                    .ok()
+                    .map(|d| d.as_secs_f64().to_string())
+            },
+            display: crate::components::virtual_grid::registry::seconds_as_duration,
+            ..FilterAlias::new("last-sold", COL_LAST_SOLD, FilterOp::Lte)
+        },
+    ]
 }
 
 /// Which of the analyzer's three market boards a realtime event invalidates.
@@ -1315,13 +1352,6 @@ fn AnalyzerTable(
 
     let (category_filter, _set_category_filter) = filter_query_signal::<i32>("category");
     let (show_suspicious, _set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
-    let (cols_param, _) = query_signal_or_default::<String>(
-        "cols",
-        NavigateOptions {
-            scroll: false,
-            ..Default::default()
-        },
-    );
     // The five column filters use `filter_query_signal` (replace: true,
     // scroll: false) — editing a filter must not push a history entry per
     // keystroke or yank the window back to the top.
@@ -1330,7 +1360,9 @@ fn AnalyzerTable(
 
     let (min_confidence, _set_min_confidence) =
         filter_query_signal::<ConfidenceFloor>("confidence");
-    let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
+    let column_keys = use_query_map_or_default();
+    let visible_cols =
+        Memo::new(move |_| column_keys.with(|q| parse_visible_cols(column_query(q))));
     let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1463,6 +1495,11 @@ fn AnalyzerTable(
                 optional,
                 !optional || visible.contains(id) || DEFAULT_SHARED_COLS.contains(&id),
             );
+            // `visible` above already folds in the URL; the grid writes
+            // column changes against the page's own defaults.
+            col.default_visible = !optional
+                || DEFAULT_VISIBLE_COLS.contains(&id)
+                || DEFAULT_SHARED_COLS.contains(&id);
             if id == "item" {
                 col = col.fixed_width();
             }
@@ -1793,32 +1830,7 @@ fn AnalyzerTable(
     });
 
     let registry = register_filters(
-        vec![
-            FilterAlias::integer("profit", "profit", FilterOp::Gte),
-            FilterAlias::integer("ppd", COL_PROFIT_PER_DAY, FilterOp::Gte),
-            FilterAlias::integer("roi", COL_ROI, FilterOp::Gte),
-            FilterAlias::integer("min-buy", "buy_price", FilterOp::Gte),
-            FilterAlias::integer("max-price", "buy_price", FilterOp::Lte),
-            FilterAlias::new("name", "item", FilterOp::Contains),
-            FilterAlias {
-                convert: |raw| matches!(raw, "hq" | "nq").then(|| raw.to_string()),
-                ..FilterAlias::new("quality", "hq", FilterOp::Eq)
-            },
-            FilterAlias::decimal("vel", COL_SALES_PER_DAY, FilterOp::Gte),
-            FilterAlias::decimal("drift", COL_DRIFT, FilterOp::Gte),
-            FilterAlias {
-                convert: |raw| raw.parse::<u32>().ok().map(|v| v.to_string()),
-                ..FilterAlias::new("min-volume", COL_VOLUME_30D, FilterOp::Gte)
-            },
-            FilterAlias {
-                convert: |raw| {
-                    parse_duration(raw)
-                        .ok()
-                        .map(|d| d.as_secs_f64().to_string())
-                },
-                ..FilterAlias::new("last-sold", COL_LAST_SOLD, FilterOp::Lte)
-            },
-        ],
+        flip_filter_aliases(),
         Signal::derive(move || {
             vec![
                 price_control(
@@ -3039,24 +3051,91 @@ mod tests {
         // No param at all means "the defaults", whatever they currently are —
         // asserting the literal set here would just duplicate the
         // `*_by_default` tests above and break on every column change.
-        let default_cols = parse_visible_cols(None);
+        let default_cols = parse_visible_cols(ColumnQuery::default());
         assert_eq!(default_cols.len(), DEFAULT_VISIBLE_COLS.len());
         for col in DEFAULT_VISIBLE_COLS {
             assert!(default_cols.contains(col), "{col} missing from defaults");
         }
 
-        let empty_cols = parse_visible_cols(Some(""));
+        let empty_cols = parse_visible_cols(ColumnQuery {
+            cols: Some(""),
+            ..Default::default()
+        });
         assert!(empty_cols.is_empty());
 
-        let some_cols = parse_visible_cols(Some("profit_per_day,world"));
+        let some_cols = parse_visible_cols(ColumnQuery {
+            cols: Some("profit_per_day,world"),
+            ..Default::default()
+        });
         assert_eq!(some_cols.len(), 2);
         assert!(some_cols.contains(COL_PROFIT_PER_DAY));
         assert!(some_cols.contains(COL_WORLD));
 
-        let unknown_cols = parse_visible_cols(Some("profit_per_day,unknown,world"));
+        let unknown_cols = parse_visible_cols(ColumnQuery {
+            cols: Some("profit_per_day,unknown,world"),
+            ..Default::default()
+        });
         assert_eq!(unknown_cols.len(), 2);
         assert!(unknown_cols.contains(COL_PROFIT_PER_DAY));
         assert!(unknown_cols.contains(COL_WORLD));
+    }
+
+    /// The link from the bug report, as the grid last wrote it: three
+    /// filters packed into percent-encoded `gf` JSON, a stray `last-sold=`,
+    /// every visible column listed, and a base-36 width.
+    #[test]
+    fn the_reported_link_rewrites_to_readable_keys() {
+        use crate::components::virtual_grid::registry::{readable_query, resolve_filters};
+        let mut query = leptos_router::params::ParamsMap::new();
+        for (key, value) in [
+            ("v", "1"),
+            ("cross", "true"),
+            ("last-sold", ""),
+            (
+                "gf",
+                r#"{"buy_price":{"op":"gte","value":"5000"},"last_sold":{"op":"lte","value":"86400"},"roi":{"op":"gte","value":"30"}}"#,
+            ),
+        ] {
+            query.insert(key, value.to_string());
+        }
+        let readable = readable_query(&query, &flip_filter_aliases());
+        assert_eq!(readable.get("gf"), None);
+        assert_eq!(readable.get("min-buy").as_deref(), Some("5000"));
+        assert_eq!(readable.get("last-sold").as_deref(), Some("1d"));
+        assert_eq!(readable.get("roi").as_deref(), Some("30"));
+        assert_eq!(
+            resolve_filters(&readable, &flip_filter_aliases()),
+            resolve_filters(&query, &flip_filter_aliases())
+        );
+        let mut keys: Vec<_> = readable
+            .into_iter()
+            .map(|(key, _)| key.to_string())
+            .collect();
+        keys.sort();
+        assert_eq!(keys, ["cross", "last-sold", "min-buy", "roi", "v"]);
+
+        // The columns it listed are the defaults minus ROI and Sales/day,
+        // plus 30d volume: that is all the URL now needs to say.
+        let listed = "profit_per_day,drift,confidence,world,last_sold,datacenter,trend,volume_30d";
+        let visible = parse_visible_cols(ColumnQuery {
+            cols: Some(listed),
+            ..Default::default()
+        });
+        let (show, hide) = crate::components::virtual_grid::columns::column_departures(
+            ALL_OPTIONAL_COLS
+                .iter()
+                .map(|id| (*id, DEFAULT_VISIBLE_COLS.contains(id), visible.contains(id))),
+        );
+        assert_eq!(show.as_deref(), Some("volume_30d"));
+        assert_eq!(hide.as_deref(), Some("roi.sales_per_day"));
+        assert_eq!(
+            parse_visible_cols(ColumnQuery {
+                show: show.as_deref(),
+                hide: hide.as_deref(),
+                ..Default::default()
+            }),
+            visible
+        );
     }
 
     #[test]
@@ -4002,18 +4081,33 @@ mod tests {
 
     #[test]
     fn visible_cols_round_trip_with_new_ids() {
-        let set = parse_visible_cols(Some("sales_per_day,drift,confidence"));
+        let set = parse_visible_cols(ColumnQuery {
+            cols: Some("sales_per_day,drift,confidence"),
+            ..Default::default()
+        });
         assert_eq!(set.len(), 3);
         let s = serialize_visible_cols(&set);
-        assert_eq!(parse_visible_cols(Some(&s)), set);
+        assert_eq!(
+            parse_visible_cols(ColumnQuery {
+                cols: Some(&s),
+                ..Default::default()
+            }),
+            set
+        );
     }
 
     #[test]
     fn explicit_empty_cols_param_is_respected() {
         // Regression guard: an explicit "" must mean "no optional columns",
         // not "fall back to defaults".
-        assert!(parse_visible_cols(Some("")).is_empty());
-        assert!(!parse_visible_cols(None).is_empty());
+        assert!(
+            parse_visible_cols(ColumnQuery {
+                cols: Some(""),
+                ..Default::default()
+            })
+            .is_empty()
+        );
+        assert!(!parse_visible_cols(ColumnQuery::default()).is_empty());
     }
 
     #[test]

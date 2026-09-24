@@ -211,6 +211,7 @@ fn vendor_filter_aliases() -> Vec<FilterAlias> {
                     .ok()
                     .map(|d| d.as_secs_f64().to_string())
             },
+            display: crate::components::virtual_grid::registry::seconds_as_duration,
             ..FilterAlias::new("next-sale", "sale-time", FilterOp::Lt)
         },
     ]

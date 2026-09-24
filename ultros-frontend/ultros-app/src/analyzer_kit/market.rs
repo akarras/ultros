@@ -1478,8 +1478,12 @@ where
                 .unwrap_or_else(|| active_metric_columns(q.get("gf").as_deref()))
         });
         query.with(|q| {
-            if let Some(cols) = q.get("cols") {
-                wanted.extend(cols.split(',').map(str::to_owned));
+            // Columns the URL turns on, old spelling or new.
+            let columns = crate::components::virtual_grid::registry::column_query(q);
+            for raw in [columns.cols, columns.show].into_iter().flatten() {
+                wanted.extend(
+                    crate::components::virtual_grid::columns::column_ids(raw).map(str::to_owned),
+                );
             }
             let sort = q.get("sort");
             let sort = match filter_registry {

@@ -7,7 +7,53 @@ use super::{GridChange, GridColumn, VirtualGrid};
 use crate::components::app_link::use_location_or_default;
 use crate::i18n::*;
 use leptos::prelude::*;
-use std::{collections::HashSet, hash::Hash};
+use leptos_router::params::ParamsMap;
+use std::hash::Hash;
+use ultros_grid_core::columns::COLUMN_KEYS;
+
+/// Where a grid's column layout lives in the URL: `col-order` (the moved
+/// columns, `.`-separated) and `col-widths` (`id.px` pairs), both readable as
+/// they stand. `l`/`layout` hold the packed form older links carry.
+const COL_ORDER: &str = "col-order";
+const COL_WIDTHS: &str = "col-widths";
+const LAYOUT_KEYS: [&str; 4] = [COL_ORDER, COL_WIDTHS, "l", "layout"];
+
+/// The grid's packed layout string (see `GridLayout::parse`) from the URL.
+fn layout_from_query(query: &ParamsMap) -> Option<String> {
+    let (order, widths) = (query.get_str(COL_ORDER), query.get_str(COL_WIDTHS));
+    if order.is_some() || widths.is_some() {
+        return Some(format!(
+            "3~{}~{}",
+            order.unwrap_or_default(),
+            widths.unwrap_or_default()
+        ));
+    }
+    query.get("l").or_else(|| query.get("layout"))
+}
+
+/// Replace the URL's layout keys with `layout`, a packed layout string, split
+/// into its readable keys.
+fn write_layout(query: &mut ParamsMap, layout: Option<String>) {
+    for key in LAYOUT_KEYS {
+        query.remove(key);
+    }
+    let Some(layout) = layout else {
+        return;
+    };
+    match layout
+        .strip_prefix("3~")
+        .and_then(|body| body.split_once('~'))
+    {
+        Some((order, widths)) => {
+            for (key, value) in [(COL_ORDER, order), (COL_WIDTHS, widths)] {
+                if !value.is_empty() {
+                    query.insert(key, value.to_string());
+                }
+            }
+        }
+        None => query.insert("l", layout),
+    }
+}
 
 #[component]
 pub fn QueryGrid<T, K, KF, H, F, M>(
@@ -125,7 +171,7 @@ where
     if let Some(on_rows) = on_rows {
         Effect::new(move |_| on_rows.run(queried.with(Clone::clone)));
     }
-    let layout = Signal::derive(move || query.with(|q| q.get("l").or_else(|| q.get("layout"))));
+    let layout = Signal::derive(move || query.with(layout_from_query));
     let resolved = Memo::new(move |_| {
         let mut defs = columns.get();
         let sort = query.with(sort_column);
@@ -174,19 +220,19 @@ where
                 }
             });
         }
-        if let Some(raw) = query.with(|q| q.get("cols")) {
-            let visible: HashSet<_> = raw.split(',').collect();
-            for col in &mut defs {
-                if col.optional {
-                    col.visible = visible.contains(col.id);
+        query.with(|q| {
+            let columns = super::registry::column_query(q);
+            if !columns.is_empty() {
+                for col in defs.iter_mut().filter(|col| col.optional) {
+                    col.visible = columns.visible(col.id, col.default_visible);
                 }
             }
-        }
+        });
         defs
     });
     let reset = Memo::new(move |_| {
         let mut q = query.get();
-        for key in ["l", "layout", "cols"] {
+        for key in LAYOUT_KEYS.iter().chain(&COLUMN_KEYS) {
             q.remove(key);
         }
         q.to_query_string()
@@ -213,25 +259,22 @@ where
             },
         );
     });
-    // `?cols=` with one optional column flipped, from the resolved defs so
-    // the first write lists the page defaults too.
+    // The column keys with one optional column flipped, from the resolved
+    // defs so every other departure already in the URL is kept.
     let write_visibility = move |q: &mut leptos_router::params::ParamsMap, id, visible| {
         let mut defs = resolved.get_untracked();
         if let Some(col) = defs.iter_mut().find(|c| c.id == id) {
             col.visible = visible;
         }
-        q.remove("cols");
-        q.insert("cols", super::registry::cols_query(&defs));
+        super::registry::write_columns(q, &defs);
     };
     let on_change = Callback::new(move |change: GridChange| {
         let mut q = query.get_untracked();
-        q.remove("l");
-        q.remove("layout");
-        if let Some(layout) = change.layout {
-            q.insert("l", layout);
-        }
+        write_layout(&mut q, change.layout);
         if change.reset {
-            q.remove("cols");
+            for key in COLUMN_KEYS {
+                q.remove(key);
+            }
         }
         if let Some((id, visible)) = change.visibility {
             write_visibility(&mut q, id, visible);
@@ -252,7 +295,9 @@ where
             }),
             reset: Callback::new(move |_| {
                 let mut q = query.get_untracked();
-                q.remove("cols");
+                for key in COLUMN_KEYS {
+                    q.remove(key);
+                }
                 commit_query.run(q);
             }),
         });
@@ -288,5 +333,52 @@ pub(crate) fn now_unix() -> f64 {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(pairs: &[(&str, &str)]) -> ParamsMap {
+        let mut query = ParamsMap::new();
+        for (key, value) in pairs {
+            query.insert(key.to_string(), value.to_string());
+        }
+        query
+    }
+
+    #[test]
+    fn a_layout_is_written_as_readable_keys_and_read_back() {
+        let mut query = params(&[("l", "2~~profit.3a"), ("sort", "grid:profit")]);
+        write_layout(&mut query, Some("3~trend~profit.118".into()));
+        assert_eq!(query.get("l"), None);
+        assert_eq!(query.get(COL_ORDER).as_deref(), Some("trend"));
+        assert_eq!(query.get(COL_WIDTHS).as_deref(), Some("profit.118"));
+        assert_eq!(query.get("sort").as_deref(), Some("grid:profit"));
+        assert_eq!(
+            layout_from_query(&query).as_deref(),
+            Some("3~trend~profit.118")
+        );
+
+        // Widths alone leave no empty `col-order=` behind.
+        write_layout(&mut query, Some("3~~profit.118".into()));
+        assert_eq!(query.get(COL_ORDER), None);
+        assert_eq!(layout_from_query(&query).as_deref(), Some("3~~profit.118"));
+
+        write_layout(&mut query, None);
+        assert_eq!(layout_from_query(&query), None);
+        assert_eq!(query, params(&[("sort", "grid:profit")]));
+    }
+
+    #[test]
+    fn older_layout_keys_are_still_read() {
+        for key in ["l", "layout"] {
+            assert_eq!(
+                layout_from_query(&params(&[(key, "2~~profit.3a")])).as_deref(),
+                Some("2~~profit.3a"),
+                "{key}"
+            );
+        }
     }
 }
