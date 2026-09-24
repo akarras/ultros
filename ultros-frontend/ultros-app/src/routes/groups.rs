@@ -642,7 +642,7 @@ pub(crate) fn GroupInvitePanel(group_id: i32) -> impl IntoView {
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        class="btn-ghost btn-xs shrink-0 text-red-400 hover:text-red-300"
+                                                        class="btn-ghost btn-xs shrink-0 text-negative hover:text-negative"
                                                         aria-label=move || t_string!(i18n, groups_invite_delete).to_string()
                                                         on:click=move |_| {
                                                             delete_invite.dispatch(delete_id.clone());
@@ -657,7 +657,7 @@ pub(crate) fn GroupInvitePanel(group_id: i32) -> impl IntoView {
                                 </div>
                             }.into_any(),
                             Err(e) => view! {
-                                <div class="text-xs text-red-400">
+                                <div class="text-xs text-negative">
                                     {move || t!(i18n, groups_invite_list_error, error = e.to_string())}
                                 </div>
                             }.into_any(),

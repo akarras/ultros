@@ -12,7 +12,7 @@ pub fn toast_color_class(level: &ToastLevel) -> &'static str {
         }
         ToastLevel::Success => "bg-green-500/10 border-green-500/20 text-green-400",
         ToastLevel::Warning => "bg-yellow-500/10 border-yellow-500/20 text-yellow-400",
-        ToastLevel::Error => "bg-red-500/10 border-red-500/20 text-red-400",
+        ToastLevel::Error => "bg-red-500/10 border-red-500/20 text-negative",
     }
 }
 

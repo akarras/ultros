@@ -144,7 +144,7 @@ pub fn LocalListTargets(
                 {move || match lists.get() {
                     None => EitherOf3::A(view! { <Loading /> }),
                     Some(Err(e)) => EitherOf3::B(view! {
-                        <div class="text-red-400 text-sm px-2">{e}</div>
+                        <div class="text-negative text-sm px-2">{e}</div>
                     }),
                     Some(Ok(lists)) => EitherOf3::C(view! {
                         <For
@@ -226,7 +226,7 @@ pub fn LocalListTargets(
                     </button>
                 </form>
                 <Show when=move || error.get().is_some()>
-                    <div class="text-xs text-red-400 px-2">{move || error.get().unwrap_or_default()}</div>
+                    <div class="text-xs text-negative px-2">{move || error.get().unwrap_or_default()}</div>
                 </Show>
             </div>
         </Show>

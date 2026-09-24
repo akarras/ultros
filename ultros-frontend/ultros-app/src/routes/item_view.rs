@@ -1207,7 +1207,7 @@ pub fn ChartWrapper(
                         <div role="alert" class="text-red-200 border border-red-500/40 rounded-xl p-4">
                             <strong class="font-semibold">{move || t_string!(i18n, error).to_string()} ":"</strong>
                             <span class="ml-2">{msg}</span>
-                            <div class="text-sm text-red-300/80 mt-1">{move || t_string!(i18n, unable_to_load_recent_sales).to_string()}</div>
+                            <div class="text-sm text-negative/80 mt-1">{move || t_string!(i18n, unable_to_load_recent_sales).to_string()}</div>
                         </div>
                     }.into_any()
                 } else {

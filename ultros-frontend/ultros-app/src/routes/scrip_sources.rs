@@ -889,7 +889,7 @@ pub fn ScripSources() -> impl IntoView {
                             }
                             Some(Err(e)) => {
                                 view! {
-                                    <div class="text-red-400">
+                                    <div class="text-negative">
                                         {t!(i18n, scrip_sources_error_loading)} {e.to_string()}
                                     </div>
                                 }.into_any()

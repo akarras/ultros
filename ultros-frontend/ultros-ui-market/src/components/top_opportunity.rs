@@ -287,7 +287,7 @@ fn FeaturedDeal(deal: ResaleStatsDto, home_world: String) -> impl IntoView {
                     <div class="text-[10px] uppercase tracking-wider text-[color:var(--color-text-muted)]">
                         {t!(i18n, top_opportunities_profit_each)}
                     </div>
-                    <div class="text-2xl font-semibold font-mono text-emerald-300 leading-none tabular-nums">
+                    <div class="text-2xl font-semibold font-mono text-positive leading-none tabular-nums">
                         <Gil amount=deal.profit />
                     </div>
                     // `Gil` renders a block-level `flex` div, so two of them
@@ -353,7 +353,7 @@ fn CompactDeal(deal: ResaleStatsDto, home_world: String) -> impl IntoView {
                 </div>
             </div>
             <div class="flex flex-col items-end text-right shrink-0">
-                <span class="text-sm font-semibold font-mono text-emerald-300 tabular-nums">
+                <span class="text-sm font-semibold font-mono text-positive tabular-nums">
                     <Gil amount=deal.profit />
                 </span>
                 <span

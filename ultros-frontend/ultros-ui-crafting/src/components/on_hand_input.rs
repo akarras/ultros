@@ -251,7 +251,7 @@ pub fn ActiveListBanner() -> impl IntoView {
         active_id().map(|id| {
             view! {
                 <div class="panel p-2 rounded-md border border-emerald-700/30 bg-emerald-900/10 flex flex-row items-center justify-between text-sm">
-                    <span class="text-emerald-300">
+                    <span class="text-positive">
                         "On-hand pulled from list #" {id}
                     </span>
                     <button

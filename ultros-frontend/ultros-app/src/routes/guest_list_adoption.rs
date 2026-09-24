@@ -169,7 +169,7 @@ mod browser {
                     }}
                 </Suspense>
                 <Show when=move || pending.get()><p class="basis-full text-sm" role="status">{t!(i18n, online_private_note)}</p></Show>
-                <Show when=move || !error.get().is_empty()><p role="alert" class="basis-full text-sm text-red-400">{t!(i18n, online_retry_note)}" "{move || error.get()}</p></Show>
+                <Show when=move || !error.get().is_empty()><p role="alert" class="basis-full text-sm text-negative">{t!(i18n, online_retry_note)}" "{move || error.get()}</p></Show>
             </div>
         }
     }
@@ -211,7 +211,7 @@ mod browser {
                             {move || if pending.get() { t_string!(i18n, online_connecting).to_string() } else { t_string!(i18n, online_upload_separate).to_string() }}
                         </button>
                     </div>
-                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-sm text-red-400">{t!(i18n, online_retry_note)}" "{move || error.get()}</p></Show>
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-sm text-negative">{t!(i18n, online_retry_note)}" "{move || error.get()}</p></Show>
                 </div>
             </Show>
         }

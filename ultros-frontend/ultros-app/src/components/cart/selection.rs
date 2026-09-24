@@ -65,7 +65,7 @@ pub fn CartSelectionBar(
                 <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
                 <button type="button" class="btn-ghost" disabled=pending data-testid="cart-bulk-hq" on:click=move |_| on_set_quality.run((hq_capable(selected_vec()), Some(true)))>{t!(i18n, list_view_bulk_set_hq)}</button>
                 <button type="button" class="btn-ghost" disabled=pending data-testid="cart-bulk-any" on:click=move |_| on_set_quality.run((selected_vec(), None))>{t!(i18n, list_view_bulk_any_quality)}</button>
-                <button type="button" class="btn-ghost text-red-300 hover:text-red-200" disabled=pending data-testid="cart-bulk-delete" on:click=move |_| {
+                <button type="button" class="btn-ghost text-negative hover:text-red-200" disabled=pending data-testid="cart-bulk-delete" on:click=move |_| {
                     let ids = selected_vec();
                     selected_items.update(|s| s.clear());
                     on_remove_many.run(ids);

@@ -69,7 +69,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<FfxivCharacter>>) -> 
                                 Err(e) => {
                                     Either::Right(
                                         view! {
-                                            <div class="text-red-400">
+                                            <div class="text-negative">
                                                 {t!(i18n, claim_error)} {e.to_string()}
                                             </div>
                                         },
@@ -179,7 +179,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<FfxivCharacter>>) -> 
                                         Err(e) => {
                                             Either::Right(
                                                 view! {
-                                                    <div class="text-red-400">
+                                                    <div class="text-negative">
                                                         {t!(i18n, failed_to_load_characters)} {e.to_string()}
                                                     </div>
                                                 },
@@ -281,7 +281,7 @@ fn DeleteUser() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 ">
-            <h3 class="text-2xl font-bold text-red-400 mb-4">{t!(i18n, delete_account)}</h3>
+            <h3 class="text-2xl font-bold text-negative mb-4">{t!(i18n, delete_account)}</h3>
             <p class="text-gray-300 mb-4">
                 {t!(i18n, delete_account_desc)}
             </p>
@@ -498,7 +498,7 @@ pub fn Profile() -> impl IntoView {
                                                                     <button
                                                                         class="p-2 rounded-lg bg-red-900/0 hover:bg-red-900/30
                                                                         border border-transparent hover:border-red-800/30
-                                                                        text-gray-400 hover:text-red-400
+                                                                        text-gray-400 hover:text-negative
                                                                         opacity-0 group-hover:opacity-100
                                                                         transition-all duration-200"
                                                                         aria-label=t_string!(i18n, settings_remove_character_aria)
@@ -519,7 +519,7 @@ pub fn Profile() -> impl IntoView {
                                     Err(e) => {
                                         EitherOf3::C(
                                             view! {
-                                                <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
+                                                <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-negative">
                                                     {t!(i18n, unable_to_fetch_characters)} {e.to_string()}
                                                 </div>
                                             },

@@ -302,9 +302,9 @@ mod browser {
                     </div>
                 </header>
                 <input type="search" class="input w-full" data-testid="lists-search" aria-label=move || t_string!(i18n, search_your_lists).to_string() placeholder=move || t_string!(i18n, search_your_lists).to_string() prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
-                <Show when=move || !creating() && !restoring() && !joining() && !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                <Show when=move || !creating() && !restoring() && !joining() && !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
                 {move || accounts.get().and_then(Result::err).map(|error|view! {
-                    <p role="alert" class="text-red-400">{t!(i18n,error_loading_lists,error=error.to_string())}</p>
+                    <p role="alert" class="text-negative">{t!(i18n,error_loading_lists,error=error.to_string())}</p>
                 })}
                 <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="lists-grid">
                     <For each=move || local_cards.get() key=move |l| (l.id.clone(),l.revision,l.online.as_ref().map(|b|(b.list_id,b.acknowledged,b.owner.clone())),user_id.get()) children=move |list| {
@@ -394,7 +394,7 @@ mod browser {
                                         </div>
                                         <div class="border-t border-gray-600/50 my-2"></div>
                                         <div class="flex justify-between items-center">
-                                            <span class="text-red-400 text-sm font-semibold">{t!(i18n,danger_zone)}</span>
+                                            <span class="text-negative text-sm font-semibold">{t!(i18n,danger_zone)}</span>
                                             <button type="button" class="btn-danger btn-sm" data-testid="list-card-delete" disabled=move || saving.get() on:click=move |_| set_confirm_delete(true)>
                                                 <Icon icon=i::BiTrashSolid /> {t!(i18n,delete)}
                                             </button>
@@ -437,7 +437,7 @@ mod browser {
                             <p class="text-sm text-[color:var(--color-text-muted)]" data-testid="device-list-storage-desc">{move || if storage_online.get() { Either::Left(t!(i18n,online_new_storage_online_desc)) } else { Either::Right(t!(i18n,online_new_storage_local_desc)) }}</p>
                         </div>
                     </Show>
-                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
                     <button class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty() on:click=create>{t!(i18n,create_list)}</button></div>
                 </Modal></Show>
                 <Show when=restoring><Modal set_visible=set_restoring aria_label=Signal::derive(move || t_string!(i18n,online_restore).to_string())>
@@ -447,7 +447,7 @@ mod browser {
                     }).collect_view()}</div>
                     <label for="device-restore">{t!(i18n,guest_workspace_paste_backup)}</label>
                     <textarea id="device-restore" class="input w-full h-32" data-testid="device-list-backup" prop:value=move || backup.get() on:input=move |ev|backup.set(event_target_value(&ev)) />
-                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
                     <button class="btn-primary" data-testid="device-list-restore" disabled=move || busy.get() || backup.get().trim().is_empty() on:click=move |_| {
                         busy.set(true); error.set(String::new()); let text=backup.get_untracked();
                         leptos::task::spawn_local(async move {
@@ -462,7 +462,7 @@ mod browser {
                 <Show when=joining><Modal set_visible=set_joining aria_label=Signal::derive(move || t_string!(i18n,lists_redeem_invite_label).to_string())><div class="space-y-3">
                     <h2 class="text-xl font-bold">{t!(i18n,lists_redeem_invite_label)}</h2>
                     <input class="input w-full" data-testid="list-join-code" aria-label=move ||t_string!(i18n,lists_invite_code_placeholder).to_string() prop:value=move ||invite.get() disabled=move ||redeem.pending().get() on:input=move |e|invite.set(event_target_value(&e)) />
-                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                    <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
                     <button class="btn-primary" data-testid="list-join-submit" disabled=move ||invite.get().trim().is_empty() || redeem.pending().get() on:click=move |_|{error.set(String::new());redeem.dispatch(invite.get_untracked());}>{t!(i18n,lists_redeem_button)}</button>
                 </div></Modal></Show>
             </section>
@@ -525,7 +525,7 @@ mod browser {
         });
         view! {
             <Show when=move || loaded.with(Option::is_none)><a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline mb-2" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a></Show>
-            <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+            <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
             <Show when=move ||account_required.get()><div class="panel rounded-xl p-5 space-y-3" data-testid="list-online-account-required">
                 <p>{t!(i18n,online_account_required)}</p>
                 <a class="btn-primary" rel="external" href=move || format!("/login?next={}",String::from(js_sys::encode_uri_component(&format!("/list/device/{}?labs=lists-sync",params.with(|p|p.get("device_id").unwrap_or_default())))))>{t!(i18n,lists_device_sign_in)}</a>
@@ -944,7 +944,7 @@ mod browser {
                     menu_testid="device-list-storage-toggle"
                     menu_open=storage_open
                     menu=move || view! {
-                        <Show when=move || !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                        <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
                         <crate::routes::guest_list_adoption::DeviceListSeparateUpload handle=handle.get_value() on_connect=Callback::new(move |()| storage_open.set(false)) />
                         <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_backup_warning)}</p>
                         <div class="flex flex-wrap gap-2">
@@ -980,12 +980,12 @@ mod browser {
                         </Show>
                     }
                     notices=move || view! {
-                        <Show when=move || !storage_open.get() && !error.get().is_empty()><p role="alert" class="text-red-400">{move || error.get()}</p></Show>
+                        <Show when=move || !storage_open.get() && !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
                         <Show when=move || {
                             draft_changed.track();
                             handle.with_value(|h| h.online().is_some_and(|online| online.list_id.is_some())) && editor_has_drafts()
                         }><p class="text-sm" role="status">{t!(i18n, online_finish_edit)}</p></Show>
-                        <Show when=move || !recovery.get() && !price_error.get().is_empty()><p role="alert" class="text-sm text-red-400" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
+                        <Show when=move || !recovery.get() && !price_error.get().is_empty()><p role="alert" class="text-sm text-negative" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
                     }
                     show_controls=Signal::derive(move || !recovery.get())
                     shop

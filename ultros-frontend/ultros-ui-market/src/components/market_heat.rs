@@ -28,10 +28,10 @@ fn category_label_key(id: u8) -> &'static str {
 /// just a colored arrow + label; no chip background.
 fn band_classes(band: HeatBand) -> (&'static str, &'static str) {
     match band {
-        HeatBand::Hot => ("text-emerald-300", "↑↑"),
+        HeatBand::Hot => ("text-positive", "↑↑"),
         HeatBand::Warm => ("text-emerald-200/90", "↑"),
         HeatBand::Stable => ("text-[color:var(--color-text)]", "→"),
-        HeatBand::Cool => ("text-red-300", "↓"),
+        HeatBand::Cool => ("text-negative", "↓"),
         HeatBand::NoData => ("text-[color:var(--color-text-muted)]", "—"),
     }
 }
@@ -141,13 +141,13 @@ mod tests {
     #[test]
     fn test_band_classes() {
         // Verify each heat band accurately maps to its styling class and text indicator
-        assert_eq!(band_classes(HeatBand::Hot), ("text-emerald-300", "↑↑"));
+        assert_eq!(band_classes(HeatBand::Hot), ("text-positive", "↑↑"));
         assert_eq!(band_classes(HeatBand::Warm), ("text-emerald-200/90", "↑"));
         assert_eq!(
             band_classes(HeatBand::Stable),
             ("text-[color:var(--color-text)]", "→")
         );
-        assert_eq!(band_classes(HeatBand::Cool), ("text-red-300", "↓"));
+        assert_eq!(band_classes(HeatBand::Cool), ("text-negative", "↓"));
         assert_eq!(
             band_classes(HeatBand::NoData),
             ("text-[color:var(--color-text-muted)]", "—")

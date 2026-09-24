@@ -147,9 +147,9 @@ fn format_pct(pct: f32) -> String {
 
 fn pct_class(pct: f32) -> &'static str {
     if pct > 0.0 {
-        "text-emerald-300"
+        "text-positive"
     } else if pct < 0.0 {
-        "text-red-300"
+        "text-negative"
     } else {
         "text-[color:var(--color-text-muted)]"
     }
@@ -558,7 +558,7 @@ pub fn Trends() -> impl IntoView {
                                 </div>
                             }.into_any(),
                             Some(Err(e)) => view! {
-                                <div class="text-xl text-red-400 text-center p-8 bg-red-950/20 rounded-2xl border border-red-500/30">
+                                <div class="text-xl text-negative text-center p-8 bg-red-950/20 rounded-2xl border border-red-500/30">
                                     {format!("Error loading trends: {}", e)}
                                 </div>
                             }.into_any(),
@@ -880,7 +880,7 @@ mod tests {
         assert_eq!(format_pct(0.04), "—");
         assert_eq!(format_pct(12.34), "+12.3%");
         assert_eq!(format_pct(-3.0), "-3.0%");
-        assert_eq!(pct_class(1.0), "text-emerald-300");
-        assert_eq!(pct_class(-1.0), "text-red-300");
+        assert_eq!(pct_class(1.0), "text-positive");
+        assert_eq!(pct_class(-1.0), "text-negative");
     }
 }

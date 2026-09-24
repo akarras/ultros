@@ -673,7 +673,7 @@ fn GroupMembersSection(
                                                             }>
                                                                 <button
                                                                     type="button"
-                                                                    class="btn-ghost btn-xs shrink-0 text-red-400 hover:text-red-300"
+                                                                    class="btn-ghost btn-xs shrink-0 text-negative hover:text-negative"
                                                                     aria-label=move || {
                                                                         t_string!(i18n, groups_remove_member).to_string()
                                                                     }
@@ -699,7 +699,7 @@ fn GroupMembersSection(
                 Some(Err(e)) => {
                     Either::Right(
                         view! {
-                            <div class="text-xs text-red-400">
+                            <div class="text-xs text-negative">
                                 {move || t!(i18n, groups_error_loading_members, error = e.to_string())}
                             </div>
                         }
@@ -850,7 +850,7 @@ fn MemberSearchPicker(
                                 }
                                 Err(e) => {
                                     view! {
-                                        <div class="text-xs text-red-400">
+                                        <div class="text-xs text-negative">
                                             {move || {
                                                 t!(i18n, groups_member_search_error, error = e.to_string())
                                             }}
@@ -1333,7 +1333,7 @@ fn GroupRoleRow(
                             if confirm_delete.get() {
                                 "btn-danger btn-xs shrink-0"
                             } else {
-                                "btn-ghost btn-xs shrink-0 text-red-400 hover:text-red-300"
+                                "btn-ghost btn-xs shrink-0 text-negative hover:text-negative"
                             }
                         }
                         aria-label=move || {
@@ -1442,7 +1442,7 @@ fn GroupRoleRow(
                                                                 <Show when=move || is_owner.get() && editable_members>
                                                                     <button
                                                                         type="button"
-                                                                        class="btn-ghost btn-xs shrink-0 text-red-400 hover:text-red-300"
+                                                                        class="btn-ghost btn-xs shrink-0 text-negative hover:text-negative"
                                                                         aria-label=move || {
                                                                             t_string!(i18n, groups_remove_from_role).to_string()
                                                                         }
@@ -1463,7 +1463,7 @@ fn GroupRoleRow(
                                     }
                                     Err(e) => {
                                         view! {
-                                            <div class="text-xs text-red-400">
+                                            <div class="text-xs text-negative">
                                                 {move || t!(i18n, groups_role_members_error, error = e.to_string())}
                                             </div>
                                         }

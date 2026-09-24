@@ -584,7 +584,7 @@ pub fn VendorSell() -> impl IntoView {
                                 <VendorSellTable listings region=region.into() scope />
                             }.into_any(),
                             Some(Err(e)) => view! {
-                                <div class="text-red-400">
+                                <div class="text-negative">
                                     {t!(i18n, vendor_sell_error_listings)} {e.to_string()}
                                 </div>
                             }.into_any(),

@@ -83,8 +83,8 @@ impl RecentItems {
 
 fn format_pct_change(pct_change: Option<f32>) -> (&'static str, String) {
     let pct_class = match pct_change {
-        Some(p) if p > 0.05 => "text-emerald-300",
-        Some(p) if p < -0.05 => "text-red-300",
+        Some(p) if p > 0.05 => "text-positive",
+        Some(p) if p < -0.05 => "text-negative",
         Some(_) => "text-[color:var(--color-text-muted)]",
         None => "text-[color:var(--color-text-muted)]",
     };
@@ -310,21 +310,21 @@ mod tests {
         // Positive delta (> 0.05)
         assert_eq!(
             format_pct_change(Some(0.06)),
-            ("text-emerald-300", "+0.1%".to_string()) // 0.06 rounds to 0.1
+            ("text-positive", "+0.1%".to_string()) // 0.06 rounds to 0.1
         );
         assert_eq!(
             format_pct_change(Some(5.42)),
-            ("text-emerald-300", "+5.4%".to_string())
+            ("text-positive", "+5.4%".to_string())
         );
 
         // Negative delta (< -0.05)
         assert_eq!(
             format_pct_change(Some(-0.06)),
-            ("text-red-300", "-0.1%".to_string())
+            ("text-negative", "-0.1%".to_string())
         );
         assert_eq!(
             format_pct_change(Some(-12.8)),
-            ("text-red-300", "-12.8%".to_string())
+            ("text-negative", "-12.8%".to_string())
         );
     }
 }

@@ -175,7 +175,7 @@ const SUB_LINE_GEOM: &str = "text-[10px] leading-3";
 /// returns below its dead band — named here only because the troll tell has
 /// no percentage to hand it — and pinned equal to it in
 /// `the_price_note_adds_the_median_tell_without_moving_phase_d`.
-const SUB_LINE_WARN: &str = "text-red-300";
+const SUB_LINE_WARN: &str = "text-negative";
 
 /// The bar a lazy or late cell shows while its fetch is in flight. Inline
 /// rather than `SingleLineSkeleton`: one shape needs the element present in
@@ -806,11 +806,11 @@ mod tests {
                 assert_eq!(count(&p_loading, "<span"), count(h, "<span"));
             }
             assert!(
-                p_up.contains("+4%") && p_up.contains("text-emerald-300"),
+                p_up.contains("+4%") && p_up.contains("text-positive"),
                 "{p_up}"
             );
             assert!(
-                p_down.contains("-4%") && p_down.contains("text-red-300"),
+                p_down.contains("-4%") && p_down.contains("text-negative"),
                 "{p_down}"
             );
             assert!(
@@ -931,11 +931,11 @@ mod tests {
                 "{listing}"
             );
             assert!(
-                up.contains("vs median +4%") && up.contains("text-emerald-300"),
+                up.contains("vs median +4%") && up.contains("text-positive"),
                 "{up}"
             );
             assert!(
-                both.contains("listing · vs median -4%") && both.contains("text-red-300"),
+                both.contains("listing · vs median -4%") && both.contains("text-negative"),
                 "{both}"
             );
             // Inside the dead band the composed class IS the plain one.
@@ -1024,14 +1024,14 @@ mod tests {
                 unavailable: true,
             });
             assert!(down.contains("-1,250"), "{down}");
-            assert!(down.contains("text-red-300"), "{down}");
+            assert!(down.contains("text-negative"), "{down}");
             assert!(down.contains("-8%"), "{down}");
             assert!(up.contains("+430"), "{up}");
-            assert!(up.contains("text-emerald-300"), "{up}");
+            assert!(up.contains("text-positive"), "{up}");
             assert!(
                 one_sided.contains("-1,250")
-                    && !one_sided.contains("text-red-300")
-                    && !one_sided.contains("text-emerald-300"),
+                    && !one_sided.contains("text-negative")
+                    && !one_sided.contains("text-positive"),
                 "a dropped percentage must render the delta with no colour: {one_sided}"
             );
             // Colour alone is not enough: `signed_delta_class(None, ..)` is

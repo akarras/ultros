@@ -2407,13 +2407,13 @@ COL_CONFIDENCE => ({
                                         let ch_band = enrichment
                                             .with(|store| quality_for(store, &row_key).map(|q| q.confidence_band));
                                         let (label, class) = match ch_band {
-                                            Some(ConfidenceBand::High) => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-emerald-300"),
+                                            Some(ConfidenceBand::High) => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-positive"),
                                             Some(ConfidenceBand::Medium) => (t_string!(i18n, analyzer_confidence_medium).to_string(), "text-amber-300"),
-                                            Some(ConfidenceBand::Low) | Some(ConfidenceBand::Unusable) => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-red-300"),
+                                            Some(ConfidenceBand::Low) | Some(ConfidenceBand::Unusable) => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-negative"),
                                             Some(ConfidenceBand::Unknown) | None => match row_confidence {
-                                                DerivedConfidence::High => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-emerald-300"),
+                                                DerivedConfidence::High => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-positive"),
                                                 DerivedConfidence::Medium => (t_string!(i18n, analyzer_confidence_medium).to_string(), "text-amber-300"),
-                                                DerivedConfidence::Low => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-red-300"),
+                                                DerivedConfidence::Low => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-negative"),
                                             },
                                         };
                                         view! {

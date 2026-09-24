@@ -233,7 +233,7 @@ pub(crate) fn ListCard(
                                 </div>
                                 <div class="border-t border-gray-600/50 my-2"></div>
                                 <div class="flex justify-between items-center">
-                                    <span class="text-red-400 text-sm font-semibold">{t!(i18n, danger_zone)}</span>
+                                    <span class="text-negative text-sm font-semibold">{t!(i18n, danger_zone)}</span>
                                     <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, delete).to_string())>
                                         <button
                                             class="btn-danger btn-sm"
