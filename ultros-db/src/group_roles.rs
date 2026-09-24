@@ -91,7 +91,7 @@ const DISPLAY_NAME_REFRESH_CHUNK: usize = 500;
 /// Neutralise the wildcards a user can type so `%` in a search box matches a
 /// literal `%` instead of every row. Postgres `LIKE`/`ILIKE` take `\` as the
 /// default escape character, so the backslash itself has to be doubled first.
-fn escape_like(query: &str) -> String {
+pub(crate) fn escape_like(query: &str) -> String {
     query
         .replace('\\', "\\\\")
         .replace('%', "\\%")
