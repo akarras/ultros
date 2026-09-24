@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Shorter, readable analyzer links",
+  "blurb": "Links copied from the Flip Finder and other analyzers now spell filters and columns in plain words, like min-buy=5000 and last-sold=1d, instead of encoded JSON. Older links and saved views still open the same way."
+}
