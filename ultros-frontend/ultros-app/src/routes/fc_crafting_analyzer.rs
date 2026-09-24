@@ -972,7 +972,7 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                         match (listings, partners) {
                             (Some(Ok(listings)), Some(partners)) => {
                                 let buy_listings =
-                                    widened_listings(&listings, &partners.unwrap_or_default());
+                                    widened_listings(&listings, &partners.unwrap_or_default().boards);
                                 view! {
                                     <FCCraftingAnalyzerTable
                                         scope

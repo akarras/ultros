@@ -20,6 +20,8 @@
   "connected_regions_group": "Verbundene Regionen zum Einkaufen",
   "connected_regions_include": "Angebote aus {{region}} einbeziehen",
   "connected_regions_exclude": "Angebote aus {{region}} ausschließen",
+  "connected_regions_load_failed": "Angebote aus {{regions}} konnten nicht geladen werden",
+  "connected_regions_retry": "Erneut versuchen",
   "analyzer_listing_hide_suspicious": "Verdächtige Angebotsbewertungen ausblenden",
   "analyzer_listing_unverified_label": "Ungeprüfte Angebotsschätzung",
   "analyzer_listing_unverified_help": "Für Qualität und Markt dieses Angebots gibt es keinen passenden Vergleich aus dem Verkaufsverlauf. Fehlender Verlauf belegt nicht, dass der Angebotspreis realistisch ist.",

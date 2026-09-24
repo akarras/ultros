@@ -31,6 +31,8 @@
     "connected_regions_group": "Connected regions to buy from",
     "connected_regions_include": "Include listings from {{region}}",
     "connected_regions_exclude": "Leave out listings from {{region}}",
+    "connected_regions_load_failed": "Couldn't load listings from {{regions}}",
+    "connected_regions_retry": "Retry",
     "analyzer_listing_hide_suspicious": "Hide suspicious listing valuations",
     "analyzer_listing_unverified_label": "Unverified listing estimate",
     "analyzer_listing_unverified_help": "No matching sale-history comparison is available for this listing's quality and market. Missing history does not establish that the asking price is realistic.",

@@ -1,11 +1,10 @@
 //! URL-backed relative pricing scope. The selected home world stays independent
 //! from the market used for prices and optional market-statistics columns.
 use leptos::prelude::*;
-use ultros_api_types::cheapest_listings::CheapestListings;
 
 use super::{
     calculation::{CONNECTED_PLACE, CalculationPlace},
-    connected_regions::{ConnectedRegions, use_connected_regions},
+    connected_regions::{ConnectedRegions, PartnerListings, use_connected_regions},
 };
 use crate::{
     columnar_wire::ColumnarJson,
@@ -93,12 +92,15 @@ impl MarketScope {
     /// [`MarketScope::name`] board with
     /// [`merge_cheapest_listings`](super::connected_regions::merge_cheapest_listings)
     /// for the buy side only.
-    pub fn connected_listings(self) -> ArcResource<AppResult<Vec<CheapestListings>>, ColumnarJson> {
+    pub fn connected_listings(self) -> ArcResource<AppResult<PartnerListings>, ColumnarJson> {
         match self.connected {
             Some(connected) => {
                 connected.listings_resource(Signal::derive(move || self.is_connected()))
             }
-            None => crate::columnar_wire::columnar_resource(|| (), |_| async { Ok(Vec::new()) }),
+            None => crate::columnar_wire::columnar_resource(
+                || (),
+                |_| async { Ok(PartnerListings::default()) },
+            ),
         }
     }
 

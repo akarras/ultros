@@ -20,6 +20,8 @@
   "connected_regions_group": "可購買的互通大區",
   "connected_regions_include": "包含 {{region}} 的出品",
   "connected_regions_exclude": "排除 {{region}} 的出品",
+  "connected_regions_load_failed": "無法載入{{regions}}的出售資訊",
+  "connected_regions_retry": "重試",
   "analyzer_listing_hide_suspicious": "隱藏可疑出品估值",
   "analyzer_listing_unverified_label": "未驗證的出品估算",
   "analyzer_listing_unverified_help": "此出品的品質與市場沒有可比較的成交歷史。缺少歷史紀錄並不代表要價合理。",
