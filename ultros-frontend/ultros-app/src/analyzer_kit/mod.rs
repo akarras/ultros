@@ -12,6 +12,7 @@ pub mod enrichment;
 pub mod filters;
 pub use ultros_calc::formula;
 pub mod grid;
+pub mod hour_profile;
 pub use ultros_crafting::hop;
 pub mod market;
 pub mod scope;
