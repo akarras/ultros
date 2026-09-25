@@ -149,15 +149,33 @@
   // The stale-Chrome population behind the hydration flood: stuck in-app
   // WebViews (Tencent QQ / UC / WeChat, frozen near Chrome 112) and
   // version-pinned crawler fleets, none of them self-updating real users.
-  // Chrome ships ~10 majors/year; current Chrome in mid-2026 is ~138, so any
-  // major at or below this is well over a year stale. The observed flood spans
-  // Chrome 108/111/112/120 (GlitchTip #4, #6456, #5918/#5919, #4936, #224/
-  // #5392 and the per-URL /item/<world>/<id> #65xx cluster) — all comfortably
-  // below — while real users sit at 130+. PR #764 only matched the single
-  // version `Chrome/112.`, so 108/111/120 leaked through. This is consulted
-  // ONLY for a recognized tachys hydration panic, so a genuine clean-page
-  // mismatch on a current browser still reaches GlitchTip.
-  var ULTROS_STALE_CHROME_MAX_MAJOR = 124;
+  // The observed flood spans Chrome 108/111/112/120 (GlitchTip #4, #6456,
+  // #5918/#5919, #4936, #224/#5392 and the per-URL /item/<world>/<id> #65xx
+  // cluster) and, by Sep 2026, a Tencent-Cloud crawler fleet pinned at Chrome
+  // 131 (#6758, #7964). PR #764 only matched the single version `Chrome/112.`,
+  // so 108/111/120 leaked through; a fixed ceiling of 124 then let 131 leak the
+  // same way once the fleets bumped their UA. So the ceiling tracks the clock:
+  // estimate today's stable major from Chrome's 4-week cadence (Chrome 140
+  // shipped 2025-09-02) and call anything ULTROS_STALE_CHROME_LAG_MAJORS (~15
+  // months) behind it stale. Never below the old fixed ceiling, so a skewed
+  // client clock cannot shrink it. This is consulted ONLY for a recognized
+  // tachys hydration panic, so a genuine clean-page mismatch on a current
+  // browser still reaches GlitchTip.
+  var ULTROS_STALE_CHROME_MIN_CEILING = 124;
+  var ULTROS_CHROME_ANCHOR_MAJOR = 140;
+  var ULTROS_CHROME_ANCHOR_MS = Date.UTC(2025, 8, 2);
+  var ULTROS_CHROME_CADENCE_MS = 28 * 24 * 60 * 60 * 1000;
+  var ULTROS_STALE_CHROME_LAG_MAJORS = 16;
+
+  function staleChromeMaxMajor() {
+    var current =
+      ULTROS_CHROME_ANCHOR_MAJOR +
+      Math.floor((Date.now() - ULTROS_CHROME_ANCHOR_MS) / ULTROS_CHROME_CADENCE_MS);
+    return Math.max(
+      ULTROS_STALE_CHROME_MIN_CEILING,
+      current - ULTROS_STALE_CHROME_LAG_MAJORS
+    );
+  }
   // Chrome major from a UA string ("…Chrome/120.0.0.0…") or a GlitchTip
   // `browser` tag ("Chrome 120.0.0"). Returns 0 when not Chrome/unknown.
   var ULTROS_CHROME_MAJOR_RE = /\bChrome[/ ](\d+)\./;
@@ -183,7 +201,7 @@
   }
 
   function isStaleChromeMajor(major) {
-    return major > 0 && major <= ULTROS_STALE_CHROME_MAX_MAJOR;
+    return major > 0 && major <= staleChromeMaxMajor();
   }
 
   function firstException(event) {
