@@ -126,8 +126,8 @@ fn saved_query(mut query: ParamsMap) -> String {
 /// The popover's list body: built-ins first, then the reader's own.
 ///
 /// Split out of [`GridSavedViews`] so a render test can reach it without the
-/// `open` gate hiding everything, the same reason `ColumnsPickerList` is a
-/// sibling of `ControlBar` (`components/control_bar.rs:154`).
+/// `open` gate hiding everything, the same reason `ColumnsPicker` is a
+/// sibling of `ControlBar` (`components/control_bar.rs`).
 #[component]
 fn GridSavedViewsList(
     #[prop(into)] presets: Signal<Vec<GridPresetView>>,

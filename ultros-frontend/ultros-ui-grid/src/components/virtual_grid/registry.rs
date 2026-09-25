@@ -249,6 +249,9 @@ pub struct RegisteredFilter {
 pub struct ColumnVisibility {
     /// Show or hide one optional column, leaving the layout delta untouched.
     pub set_visible: Callback<(&'static str, bool)>,
+    /// Hide the first column and show the second in one URL write, the
+    /// second taking over the first's dragged position and width.
+    pub swap: Callback<(&'static str, &'static str)>,
     /// Drop the column keys so every optional column returns to its page
     /// default.
     pub reset: Callback<()>,
@@ -307,6 +310,7 @@ pub struct FilterRegistry {
     sort_columns: RwSignal<Option<Memo<Vec<SortColumn>>>>,
     sortable_columns: StoredValue<HashSet<&'static str>>,
     visibility: RwSignal<Option<ColumnVisibility>>,
+    layout: RwSignal<Option<Signal<Option<String>>>>,
     pub editing: RwSignal<Option<ColumnFilter>>,
     count: RwSignal<Option<Signal<usize>>>,
 }
@@ -322,6 +326,7 @@ impl FilterRegistry {
             sort_columns: RwSignal::new(None),
             sortable_columns: StoredValue::new(HashSet::new()),
             visibility: RwSignal::new(None),
+            layout: RwSignal::new(None),
             editing: RwSignal::new(None),
             count: RwSignal::new(None),
         };
@@ -475,6 +480,48 @@ impl FilterRegistry {
         if let Some(visible) = current {
             visibility.set_visible.run((id, !visible));
         }
+    }
+
+    /// Replace a shown optional column with a hidden one in its place — a
+    /// statistic moving to another window. A no-op for any other pair.
+    pub fn swap_columns(self, shown: &'static str, hidden: &'static str) {
+        let Some(visibility) = self.visibility.get_untracked() else {
+            return;
+        };
+        let Some(columns) = self.columns.get_untracked() else {
+            return;
+        };
+        let state = |id: &str| {
+            columns.with_untracked(|defs| {
+                defs.iter()
+                    .find(|c| c.id == id && c.optional)
+                    .map(|c| c.visible)
+            })
+        };
+        if state(shown) == Some(true) && state(hidden) == Some(false) {
+            visibility.swap.run((shown, hidden));
+        }
+    }
+
+    /// The grid's layout string (`GridLayout::parse`), so the picker can list
+    /// columns in the order they are drawn.
+    pub fn register_layout(self, layout: Signal<Option<String>>) {
+        self.layout.set(Some(layout));
+    }
+
+    /// Every column on screen, required ones included, in display order.
+    pub fn displayed_columns(self) -> Vec<GridColumn> {
+        let Some(columns) = self.columns.get() else {
+            return Vec::new();
+        };
+        let layout = self.layout.get().and_then(|layout| layout.get());
+        columns.with(|defs| {
+            super::GridLayout::parse(layout.as_deref(), defs)
+                .order
+                .iter()
+                .filter_map(|id| defs.iter().find(|c| c.id == id && c.visible).cloned())
+                .collect()
+        })
     }
 
     pub fn reset_columns(self) {
@@ -1244,10 +1291,19 @@ mod tests {
             registry.register(Signal::derive(move || defs.clone()));
             let writes = RwSignal::new(Vec::<(&'static str, bool)>::new());
             let resets = RwSignal::new(0usize);
+            let swaps = RwSignal::new(Vec::<(&'static str, &'static str)>::new());
             registry.register_visibility(ColumnVisibility {
                 set_visible: Callback::new(move |change| writes.update(|w| w.push(change))),
+                swap: Callback::new(move |change| swaps.update(|s| s.push(change))),
                 reset: Callback::new(move |_| resets.update(|n| *n += 1)),
             });
+            // Only a shown optional column can be swapped, and only for a
+            // hidden optional one.
+            registry.swap_columns("profit", "level");
+            registry.swap_columns("level", "profit");
+            registry.swap_columns("item", "level");
+            registry.swap_columns("profit", "missing");
+            assert_eq!(swaps.get(), vec![("profit", "level")]);
             let ids: Vec<_> = registry.optional_columns().iter().map(|c| c.id).collect();
             assert_eq!(ids, ["profit", "level"]);
             assert_eq!(registry.visible_columns(), HashSet::from(["profit"]));
@@ -1258,6 +1314,31 @@ mod tests {
             assert_eq!(writes.get(), vec![("profit", false), ("level", true)]);
             registry.reset_columns();
             assert_eq!(resets.get(), 1);
+        });
+    }
+
+    /// The picker's "Showing" list reads the columns on screen, in the order
+    /// the user dragged them into, required ones included.
+    #[test]
+    fn displayed_columns_follow_the_layout_and_skip_hidden_ones() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = FilterRegistry::provide(Vec::new(), Signal::derive(Vec::new));
+            assert!(registry.displayed_columns().is_empty());
+            let defs = vec![
+                GridColumn::new("item", "Item".into(), 300.0, false, true),
+                GridColumn::new("profit", "Profit".into(), 100.0, true, true),
+                GridColumn::new("level", "Level".into(), 100.0, true, false),
+                GridColumn::new("roi", "ROI".into(), 100.0, true, true),
+            ];
+            registry.register(Signal::derive(move || defs.clone()));
+            let ids = || -> Vec<_> { registry.displayed_columns().iter().map(|c| c.id).collect() };
+            assert_eq!(ids(), ["item", "profit", "roi"]);
+            let layout = RwSignal::new(Some("3~roi~".to_string()));
+            registry.register_layout(layout.into());
+            assert_eq!(ids(), ["roi", "item", "profit"]);
+            layout.set(None);
+            assert_eq!(ids(), ["item", "profit", "roi"]);
         });
     }
 

@@ -34,7 +34,7 @@
 //!
 //! Anything added to row 1 needs to be able to yield too.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use ultros_ui_grid::components::virtual_grid::GridColumn;
 use ultros_ui_grid::components::virtual_grid::registry::{
     FilterRegistry, RegisteredFilterChips, RegisteredFilterEditor, RegisteredFilterMenu,
@@ -70,6 +70,13 @@ pub struct ColumnOption {
     /// Greyed out and not toggleable; `hint` says why.
     pub disabled: bool,
     pub hint: Option<String>,
+    /// The statistic this column is one window of. Options sharing a family
+    /// (and group) are offered as one row with a window choice.
+    pub family: Option<String>,
+    /// This option's window within its family ("7d").
+    pub variant: Option<String>,
+    /// The heading over the family's row; `group` names one window.
+    pub family_group: Option<PickerHeading>,
 }
 
 impl ColumnOption {
@@ -80,8 +87,96 @@ impl ColumnOption {
             group: None,
             disabled: false,
             hint: None,
+            family: None,
+            variant: None,
+            family_group: None,
         }
     }
+
+    fn same_family(&self, other: &ColumnOption) -> bool {
+        self.family.is_some()
+            && self.family == other.family
+            && self.family_group == other.family_group
+    }
+}
+
+/// A row of the picker's "Add a column" list.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AddRow {
+    /// A column with no window to choose.
+    Single(ColumnOption),
+    /// One statistic, offered in each of its windows.
+    Family(Vec<ColumnOption>),
+}
+
+impl AddRow {
+    fn group(&self) -> Option<&PickerHeading> {
+        match self {
+            AddRow::Single(column) => column.group.as_ref(),
+            AddRow::Family(variants) => variants[0].family_group.as_ref(),
+        }
+    }
+}
+
+/// The "Add a column" rows: every option not on screen, the windows of one
+/// statistic folded into a single row, in the options' order. A family row
+/// stays while any of its windows is hidden and lists all of them, so a
+/// search for "median 90" still offers the other windows beside the match.
+pub fn add_rows(
+    columns: &[ColumnOption],
+    visible: &HashSet<&'static str>,
+    query: &str,
+) -> Vec<AddRow> {
+    let matched: HashSet<&str> = search_column_options(columns, query)
+        .iter()
+        .map(|column| column.id)
+        .collect();
+    let mut rows: Vec<AddRow> = Vec::new();
+    for column in columns {
+        let family = rows.iter_mut().find_map(|row| match row {
+            AddRow::Family(variants) if variants[0].same_family(column) => Some(variants),
+            _ => None,
+        });
+        match (family, column.family.is_some()) {
+            (Some(variants), _) => variants.push(column.clone()),
+            (None, true) => rows.push(AddRow::Family(vec![column.clone()])),
+            (None, false) => rows.push(AddRow::Single(column.clone())),
+        }
+    }
+    rows.retain(|row| match row {
+        AddRow::Single(column) => matched.contains(column.id) && !visible.contains(column.id),
+        AddRow::Family(variants) => {
+            variants.iter().any(|v| matched.contains(v.id))
+                && variants.iter().any(|v| !visible.contains(v.id))
+        }
+    });
+    rows
+}
+
+/// One column on screen, as the picker's "Showing" list names it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShownColumn {
+    pub id: &'static str,
+    pub label: String,
+    /// Required columns are listed but cannot be removed.
+    pub removable: bool,
+}
+
+/// The "Showing" rows for a registered grid's displayed columns. A window
+/// of a statistic is named by its statistic; the window is the row's pill.
+pub fn shown_columns_from(columns: &[GridColumn]) -> Vec<ShownColumn> {
+    columns
+        .iter()
+        .map(|col| ShownColumn {
+            id: col.id,
+            label: col
+                .picker_family
+                .clone()
+                .or_else(|| col.picker_label.clone())
+                .unwrap_or_else(|| col.label.clone()),
+            removable: col.optional,
+        })
+        .collect()
 }
 
 /// The picker's options for a registered grid's optional columns.
@@ -118,6 +213,12 @@ pub fn picker_options_from(columns: &[GridColumn]) -> Vec<ColumnOption> {
                 }),
                 disabled: col.picker_disabled,
                 hint: col.picker_hint.clone(),
+                family: col.picker_family.clone(),
+                variant: col.picker_variant.clone(),
+                family_group: col.picker_family_group.clone().map(|label| PickerHeading {
+                    label,
+                    title: col.picker_group_title.clone(),
+                }),
                 ..ColumnOption::new(
                     col.id,
                     col.picker_label
@@ -142,6 +243,12 @@ pub fn search_column_options(columns: &[ColumnOption], query: &str) -> Vec<Colum
         .iter()
         .filter(|column| {
             let mut text = column.label.to_lowercase();
+            if let Some(family) = &column.family {
+                text.push_str(&format!(" {}", family.to_lowercase()));
+            }
+            if let Some(group) = &column.family_group {
+                text.push_str(&format!(" {}", group.label.to_lowercase()));
+            }
             if let Some(group) = &column.group {
                 text.push_str(&format!(" {}", group.label.to_lowercase()));
                 if let Some(title) = &group.title {
@@ -231,89 +338,267 @@ pub struct FilterOption {
     pub label: String,
 }
 
-/// The picker's option list. An option's `group` heading is rendered once,
-/// where it first differs from the previous option's, so a page that passes
-/// ungrouped options gets the flat list it always had. Options are a `Vec`
-/// in the page's order — nothing here iterates a map.
+/// A group heading in the "Add a column" list.
+fn picker_heading(heading: &PickerHeading) -> AnyView {
+    let label = heading.label.clone();
+    match heading.title.clone() {
+        Some(title) => {
+            view! { <li class="columns-picker-heading" title=title>{label}</li> }.into_any()
+        }
+        None => view! { <li class="columns-picker-heading">{label}</li> }.into_any(),
+    }
+}
+
+/// The Columns popover's body: what is on screen, then what can be added.
+///
+/// "Showing" lists the displayed columns in grid order, each removable one
+/// with an ×, and a statistic's window as a pill that opens the other windows
+/// to swap to in place. "Add a column" folds the windows of one statistic
+/// into a single row ([`add_rows`]), so a page offering nine statistics in
+/// five windows lists nine rows rather than forty-five checkboxes.
+///
+/// A sibling of [`ControlBar`] so a render test can reach it without the
+/// popover's open gate.
 #[component]
-pub fn ColumnsPickerList(
+pub fn ColumnsPicker(
     #[prop(into)] columns: Signal<Vec<ColumnOption>>,
+    #[prop(into)] shown: Signal<Vec<ShownColumn>>,
     #[prop(into)] visible_columns: Signal<HashSet<&'static str>>,
+    search: RwSignal<String>,
     // `optional_no_strip`: `optional` on an `Option<T>` field strips the
     // Option from the builder setter (leptos_macro `component.rs:1033`),
     // which would reject both the bar's pass-through and the test's `None`.
     #[prop(optional_no_strip)] on_toggle_column: Option<Callback<&'static str>>,
+    /// Replace a shown column with another window of its statistic.
+    #[prop(optional_no_strip)]
+    on_swap_column: Option<Callback<(&'static str, &'static str)>>,
 ) -> impl IntoView {
-    move || {
+    let i18n = use_i18n();
+    let toggle = move |id: &'static str| {
+        if let Some(toggle) = on_toggle_column {
+            toggle.run(id);
+        }
+    };
+    // The shown row whose window choices are open.
+    let choosing = RwSignal::new(None::<&'static str>);
+    // The window picked on each Add row, keyed by the row's first window.
+    let picked = RwSignal::new(HashMap::<&'static str, &'static str>::new());
+
+    let shown_rows = move || {
+        let visible = visible_columns.get();
+        let options = columns.get();
+        shown
+            .get()
+            .into_iter()
+            .map(|row| {
+                let id = row.id;
+                let label = row.label.clone();
+                let window = options.iter().find(|o| o.id == id).and_then(|current| {
+                    let variant = current.variant.clone()?;
+                    let variants: Vec<_> = options
+                        .iter()
+                        .filter(|o| o.same_family(current))
+                        .map(|o| {
+                            let taken = o.id != id && (visible.contains(o.id) || o.disabled);
+                            (o.id, o.variant.clone().unwrap_or_default(), taken, o.hint.clone())
+                        })
+                        .collect();
+                    let change = t_string!(i18n, analyzer_columns_change_window, column = label.clone()).to_string();
+                    Some(if choosing.get() == Some(id) {
+                        view! {
+                            <span class="column-windows" role="group" aria-label=change>
+                                {variants
+                                    .into_iter()
+                                    .map(|(target, variant, taken, hint)| {
+                                        view! {
+                                            <button
+                                                type="button"
+                                                class="column-window"
+                                                aria-pressed=(target == id).to_string()
+                                                disabled=taken
+                                                title=hint
+                                                on:click=move |_| {
+                                                    choosing.set(None);
+                                                    if target != id
+                                                        && let Some(swap) = on_swap_column
+                                                    {
+                                                        swap.run((id, target));
+                                                    }
+                                                }
+                                            >
+                                                {variant}
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </span>
+                        }
+                        .into_any()
+                    } else {
+                        view! {
+                            <button
+                                type="button"
+                                class="column-window"
+                                aria-pressed="true"
+                                aria-expanded="false"
+                                aria-label=change.clone()
+                                title=change
+                                on:click=move |_| choosing.set(Some(id))
+                            >
+                                {variant}
+                                <span aria-hidden="true">" ▾"</span>
+                            </button>
+                        }
+                        .into_any()
+                    })
+                });
+                let remove = row.removable.then(|| {
+                    view! {
+                        <button
+                            type="button"
+                            class="columns-picker-icon"
+                            aria-label=t_string!(i18n, analyzer_columns_remove, column = label.clone()).to_string()
+                            on:click=move |_| toggle(id)
+                        >
+                            <Icon icon=i::MdiClose />
+                        </button>
+                    }
+                });
+                let title = label.clone();
+                view! {
+                    <li class="columns-picker-chip" data-shown-column=id>
+                        <span class="columns-picker-name" title=title>{label}</span>
+                        {window}
+                        {remove}
+                    </li>
+                }
+            })
+            .collect_view()
+    };
+
+    let add_list = move || {
+        let visible = visible_columns.get();
+        let query = search.get();
+        let rows = add_rows(&columns.get(), &visible, &query);
+        if rows.is_empty() {
+            let empty = if query.trim().is_empty() {
+                t_string!(i18n, analyzer_columns_all_shown).to_string()
+            } else {
+                t_string!(i18n, analyzer_columns_empty).to_string()
+            };
+            return view! { <li class="columns-picker-empty" role="status">{empty}</li> }
+                .into_any();
+        }
         let mut out: Vec<AnyView> = Vec::new();
         let mut last_heading: Option<String> = None;
-        for col in columns.get() {
-            if let Some(heading) = &col.group
+        for row in rows {
+            if let Some(heading) = row.group()
                 && last_heading.as_deref() != Some(heading.label.as_str())
             {
                 last_heading = Some(heading.label.clone());
-                let label = heading.label.clone();
-                out.push(match heading.title.clone() {
-                    Some(title) => view! {
-                        <span class="basis-full text-xs uppercase tracking-wide text-[color:var(--color-text-muted)] mt-1" title=title>{label}</span>
-                    }
-                    .into_any(),
-                    None => view! {
-                        <span class="basis-full text-xs uppercase tracking-wide text-[color:var(--color-text-muted)] mt-1">{label}</span>
-                    }
-                    .into_any(),
-                });
+                out.push(picker_heading(heading));
             }
-            let id = col.id;
-            let toggle = move |_| {
-                if let Some(toggle) = on_toggle_column {
-                    toggle.run(id);
+            out.push(match row {
+                AddRow::Single(column) => {
+                    let id = column.id;
+                    let add = t_string!(i18n, analyzer_columns_add_one, column = column.label.clone()).to_string();
+                    view! {
+                        <li class="columns-picker-row" data-add-column=id title=column.hint.clone()>
+                            <span class="columns-picker-name" class:opacity-60=column.disabled>{column.label}</span>
+                            <button
+                                type="button"
+                                class="columns-picker-icon"
+                                aria-label=add
+                                disabled=column.disabled
+                                on:click=move |_| toggle(id)
+                            >
+                                <Icon icon=i::MdiPlus />
+                            </button>
+                        </li>
+                    }
+                    .into_any()
                 }
-            };
-            // A ticked column is never locked: the cap greys an unchecked
-            // capped entry, and only hints a checked one.
-            let disabled = col.disabled && !visible_columns.get().contains(id);
-            out.push(if disabled || col.hint.is_some() {
-                let hint = col.hint.clone().unwrap_or_default();
-                // The grey and the cursor follow `disabled`, not `hint`. A
-                // hint on a toggleable entry says why the column may look
-                // empty; rendering it as unavailable would be a lie, and
-                // the ticked-capped case above already relies on the entry
-                // staying usable.
-                let class = if disabled {
-                    "inline-flex items-center gap-2 cursor-not-allowed opacity-60 text-[color:var(--color-text)]"
-                } else {
-                    "inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]"
-                };
-                view! {
-                    <label class=class title=hint>
-                        <input
-                            type="checkbox"
-                            class="accent-brand-300"
-                            disabled=disabled
-                            prop:checked=move || visible_columns.get().contains(id)
-                            on:change=toggle
-                        />
-                        <span>{col.label.clone()}</span>
-                    </label>
+                AddRow::Family(variants) => {
+                    let key = variants[0].id;
+                    let family = variants[0].family.clone().unwrap_or_default();
+                    let open: Vec<&'static str> = variants
+                        .iter()
+                        .filter(|v| !visible.contains(v.id) && !v.disabled)
+                        .map(|v| v.id)
+                        .collect();
+                    let first_open = open.first().copied();
+                    let open = StoredValue::new(open);
+                    // The pick survives until its window goes on screen;
+                    // then the row falls back to the first one still hidden.
+                    let chosen = move || {
+                        picked
+                            .get()
+                            .get(key)
+                            .copied()
+                            .filter(|id| open.with_value(|open| open.contains(id)))
+                            .or(first_open)
+                    };
+                    let add = t_string!(i18n, analyzer_columns_add_one, column = family.clone()).to_string();
+                    let windows = variants
+                        .into_iter()
+                        .map(|v| {
+                            let id = v.id;
+                            let taken = !open.with_value(|open| open.contains(&id));
+                            view! {
+                                <button
+                                    type="button"
+                                    class="column-window"
+                                    aria-pressed=move || (chosen() == Some(id)).to_string()
+                                    disabled=taken
+                                    title=v.hint.clone()
+                                    on:click=move |_| picked.update(|picked| {
+                                        picked.insert(key, id);
+                                    })
+                                >
+                                    {v.variant.clone().unwrap_or(v.label)}
+                                </button>
+                            }
+                        })
+                        .collect_view();
+                    view! {
+                        <li class="columns-picker-row" data-add-family=key>
+                            <span class="columns-picker-name" title=family.clone()>{family.clone()}</span>
+                            <span class="column-windows" role="group" aria-label=family>{windows}</span>
+                            <button
+                                type="button"
+                                class="columns-picker-icon"
+                                aria-label=add
+                                disabled=move || chosen().is_none()
+                                on:click=move |_| {
+                                    if let Some(id) = chosen() {
+                                        toggle(id);
+                                    }
+                                }
+                            >
+                                <Icon icon=i::MdiPlus />
+                            </button>
+                        </li>
+                    }
+                    .into_any()
                 }
-                .into_any()
-            } else {
-                view! {
-                    <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                        <input
-                            type="checkbox"
-                            class="accent-brand-300"
-                            prop:checked=move || visible_columns.get().contains(id)
-                            on:change=toggle
-                        />
-                        <span>{col.label.clone()}</span>
-                    </label>
-                }
-                .into_any()
             });
         }
-        out
+        out.into_any()
+    };
+
+    view! {
+        <h3 class="columns-picker-section">{t!(i18n, analyzer_columns_showing)}</h3>
+        <ul class="columns-picker-chips" data-columns-shown>{shown_rows}</ul>
+        <h3 class="columns-picker-section">{t!(i18n, analyzer_columns_add)}</h3>
+        <input
+            type="search"
+            class="input min-w-0 px-2 py-1"
+            aria-label=t_string!(i18n, analyzer_columns_search)
+            placeholder=t_string!(i18n, analyzer_columns_search)
+            prop:value=move || search.get()
+            on:input=move |event| search.set(event_target_value(&event))
+        />
+        <ul class="columns-picker-list" data-columns-add>{add_list}</ul>
     }
 }
 
@@ -470,10 +755,39 @@ pub fn ControlBar(
         Some(registry) => Some(Callback::new(move |_| registry.reset_columns())),
         None => on_reset_columns,
     });
+    // A page with a registered grid (explicit options or not) lists what that
+    // grid draws, in its order; one without lists its ticked options.
+    let shown_columns = Signal::derive(move || {
+        let displayed = registry
+            .map(|registry| registry.displayed_columns())
+            .unwrap_or_default();
+        if !displayed.is_empty() {
+            return shown_columns_from(&displayed);
+        }
+        let visible = picker_visible.get();
+        picker_columns
+            .get()
+            .into_iter()
+            .filter(|option| visible.contains(option.id))
+            .map(|option| ShownColumn {
+                id: option.id,
+                label: option.family.unwrap_or(option.label),
+                removable: true,
+            })
+            .collect()
+    });
+    let swap_column =
+        Callback::new(
+            move |(shown, hidden): (&'static str, &'static str)| match registry {
+                Some(registry) => registry.swap_columns(shown, hidden),
+                None => {
+                    toggle_column.run(hidden);
+                    toggle_column.run(shown);
+                }
+            },
+        );
     let has_columns = Signal::derive(move || !picker_columns.get().is_empty());
     let column_search = RwSignal::new(String::new());
-    let matching_columns =
-        Signal::derive(move || search_column_options(&picker_columns.get(), &column_search.get()));
 
     view! {
         <div class="sticky-bar px-2 py-1 flex flex-col gap-1" class:registered-filter-bar=registry.is_some() style=format!("{} position: {};", if registry.is_some() { format!("min-height: {STICKY_BAR_HEIGHT}px;") } else { format!("height: {STICKY_BAR_HEIGHT}px;") }, if sticky { "sticky" } else { "relative" }) node_ref=bar_ref>
@@ -612,27 +926,14 @@ pub fn ControlBar(
                 (show_columns_picker.get() && has_columns())
                     .then(|| {
                         view! {
-                            <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] max-h-[60vh] overflow-y-auto flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                                <span class="font-semibold text-[color:var(--brand-fg)]">
-                                    {t!(i18n, analyzer_columns_picker_label)}
-                                </span>
-                                <input
-                                    type="search"
-                                    class="input basis-full min-w-0 px-2 py-1"
-                                    aria-label=t_string!(i18n, analyzer_columns_search)
-                                    placeholder=t_string!(i18n, analyzer_columns_search)
-                                    prop:value=move || column_search.get()
-                                    on:input=move |event| column_search.set(event_target_value(&event))
-                                />
-                                <Show when=move || matching_columns.get().is_empty()>
-                                    <span class="basis-full text-[color:var(--color-text-muted)]" role="status">
-                                        {t!(i18n, analyzer_columns_empty)}
-                                    </span>
-                                </Show>
-                                <ColumnsPickerList
-                                    columns=matching_columns
+                            <div class="sticky-bar-popover columns-picker p-3 w-[min(92vw,32rem)] max-h-[70vh] overflow-y-auto flex flex-col gap-2 text-sm">
+                                <ColumnsPicker
+                                    columns=picker_columns
+                                    shown=shown_columns
                                     visible_columns=picker_visible
+                                    search=column_search
                                     on_toggle_column=Some(toggle_column)
+                                    on_swap_column=Some(swap_column)
                                 />
                                 {move || {
                                     reset_columns
@@ -640,7 +941,7 @@ pub fn ControlBar(
                                         .map(|reset| {
                                             view! {
                                                 <button
-                                                    class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                                    class="self-end text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
                                                     on:click=move |_| reset.run(())
                                                 >
                                                     {t!(i18n, analyzer_columns_picker_reset)}
@@ -662,22 +963,6 @@ mod tests {
     use super::*;
     use leptos_i18n::context::init_i18n_context;
     use ultros_grid_core::columns::ColumnQuery;
-
-    fn render_list(cols: Vec<ColumnOption>) -> String {
-        let _ = any_spawner::Executor::init_futures_executor();
-        let owner = Owner::new();
-        owner.with(|| {
-            provide_context(init_i18n_context::<crate::i18n::Locale>());
-            view! {
-                <ColumnsPickerList
-                    columns=Signal::derive(move || cols.clone())
-                    visible_columns=Signal::derive(HashSet::new)
-                    on_toggle_column=None
-                />
-            }
-            .to_html()
-        })
-    }
 
     /// Native (ungrouped) columns lead in table order; shared columns are
     /// gathered under one heading per group in order of first appearance,
@@ -777,85 +1062,243 @@ mod tests {
         assert!(search_column_options(&columns, "profit median").is_empty());
     }
 
-    /// Ungrouped options render the flat list every page renders today:
-    /// no headings, no disabled inputs, no titles.
+    fn heading(label: &str) -> Option<PickerHeading> {
+        Some(PickerHeading {
+            label: label.into(),
+            title: None,
+        })
+    }
+
+    fn stat(id: &'static str, family: &str, variant: &str) -> ColumnOption {
+        ColumnOption {
+            group: heading(&format!("Sale history ({variant})")),
+            family_group: heading("Sale history"),
+            family: Some(family.into()),
+            variant: Some(variant.into()),
+            ..ColumnOption::new(id, format!("{family} ({variant})"))
+        }
+    }
+
+    fn picker_options() -> Vec<ColumnOption> {
+        vec![
+            ColumnOption::new("profit", "Profit".into()),
+            ColumnOption::new("level", "Level".into()),
+            stat("median", "Sale median", "Selected"),
+            stat("median-7", "Sale median", "7d"),
+            stat("median-30", "Sale median", "30d"),
+            stat("spd", "Sales/day", "Selected"),
+            stat("spd-7", "Sales/day", "7d"),
+            ColumnOption {
+                group: Some(PickerHeading {
+                    label: "Listings".into(),
+                    title: None,
+                }),
+                ..ColumnOption::new("alive", "Active listings".into())
+            },
+        ]
+    }
+
+    fn row_ids(rows: &[AddRow]) -> Vec<Vec<&'static str>> {
+        rows.iter()
+            .map(|row| match row {
+                AddRow::Single(column) => vec![column.id],
+                AddRow::Family(variants) => variants.iter().map(|v| v.id).collect(),
+            })
+            .collect()
+    }
+
+    /// Each statistic is one row carrying all its windows; plain columns
+    /// stay single rows; anything on screen leaves the list.
     #[test]
-    fn picker_list_without_groups_is_the_flat_list() {
-        let html = render_list(vec![
-            ColumnOption::new("tax", "Tax".into()),
-            ColumnOption::new("vwap", "VWAP (7d)".into()),
-        ]);
-        assert_eq!(html.matches("<label").count(), 2, "{html}");
+    fn add_rows_fold_windows_into_one_row_per_statistic() {
+        let options = picker_options();
+        let rows = add_rows(&options, &HashSet::from(["profit"]), "");
         assert_eq!(
-            html.matches("<label class=\"inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]\"><input type=\"checkbox\" class=\"accent-brand-300\"").count(),
-            2,
-            "{html}"
+            row_ids(&rows),
+            vec![
+                vec!["level"],
+                vec!["median", "median-7", "median-30"],
+                vec!["spd", "spd-7"],
+                vec!["alive"],
+            ]
         );
-        // `<span>Tax<` rather than `<span>Tax</span>`: erased components end
-        // the text with a `<!>` hydration marker.
-        assert!(html.contains("<span>Tax<"), "{html}");
-        assert!(!html.contains("basis-full"), "{html}");
-        assert!(!html.contains("disabled"), "{html}");
-        assert!(!html.contains("title="), "{html}");
+        // A statistic with one window still hidden keeps its row, with every
+        // window listed so the shown one reads as taken; with none hidden it
+        // goes.
+        let visible = HashSet::from(["median", "median-7", "spd", "spd-7"]);
+        assert_eq!(
+            row_ids(&add_rows(&options, &visible, "")),
+            vec![
+                vec!["profit"],
+                vec!["level"],
+                vec!["median", "median-7", "median-30"],
+                vec!["alive"],
+            ]
+        );
+    }
+
+    /// Search matches a statistic by its name or any one window, and the
+    /// row it keeps still offers every window.
+    #[test]
+    fn add_rows_search_keeps_the_whole_statistic() {
+        let options = picker_options();
+        let none = HashSet::new();
+        assert_eq!(
+            row_ids(&add_rows(&options, &none, "median 30d")),
+            vec![vec!["median", "median-7", "median-30"]]
+        );
+        assert_eq!(
+            row_ids(&add_rows(&options, &none, "sales/day")),
+            vec![vec!["spd", "spd-7"]]
+        );
+        assert!(add_rows(&options, &none, "nothing like this").is_empty());
+        // The same statistic under two groups (two markets) is two rows.
+        let mut two = picker_options();
+        two.push(ColumnOption {
+            family_group: heading("Cost · Aether"),
+            ..stat("cost-median-7", "Sale median", "7d")
+        });
+        assert_eq!(
+            row_ids(&add_rows(&two, &none, "median")),
+            vec![
+                vec!["median", "median-7", "median-30"],
+                vec!["cost-median-7"]
+            ]
+        );
+    }
+
+    /// The shown list names a statistic by its family and never offers to
+    /// remove a required column.
+    #[test]
+    fn shown_columns_name_statistics_and_lock_required_columns() {
+        let mut median = GridColumn::new("median-7", "Sale median (7d)".into(), 100.0, true, true);
+        median.picker_family = Some("Sale median".into());
+        median.picker_variant = Some("7d".into());
+        let mut profit = GridColumn::new("profit", "Profit".into(), 100.0, true, true);
+        profit.picker_label = Some("Profit per craft".into());
+        let shown = shown_columns_from(&[
+            GridColumn::new("item", "Item".into(), 300.0, false, true),
+            median,
+            profit,
+        ]);
+        assert_eq!(
+            shown,
+            vec![
+                ShownColumn {
+                    id: "item",
+                    label: "Item".into(),
+                    removable: false
+                },
+                ShownColumn {
+                    id: "median-7",
+                    label: "Sale median".into(),
+                    removable: true
+                },
+                ShownColumn {
+                    id: "profit",
+                    label: "Profit per craft".into(),
+                    removable: true
+                },
+            ]
+        );
+    }
+
+    fn render_picker(options: Vec<ColumnOption>, shown: Vec<ShownColumn>) -> String {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let visible: HashSet<&'static str> = shown.iter().map(|s| s.id).collect();
+            view! {
+                <ColumnsPicker
+                    columns=Signal::derive(move || options.clone())
+                    shown=Signal::derive(move || shown.clone())
+                    visible_columns=Signal::derive(move || visible.clone())
+                    search=RwSignal::new(String::new())
+                    on_toggle_column=None
+                    on_swap_column=None
+                />
+            }
+            .to_html()
+        })
     }
 
     #[test]
-    fn picker_list_renders_group_headings_once_and_disables_capped_options() {
-        let rev = PickerHeading {
-            label: "Revenue · Gilgamesh".into(),
-            title: None,
-        };
-        let cost = PickerHeading {
-            label: "Cost · Aether".into(),
-            title: Some("loads once".into()),
-        };
-        let html = render_list(vec![
-            ColumnOption {
-                group: Some(rev.clone()),
-                ..ColumnOption::new("rev-sale-min", "Sale minimum (7d)".into())
-            },
-            ColumnOption {
-                group: Some(rev),
-                ..ColumnOption::new("rev-sale-avg", "Sale average (7d)".into())
-            },
-            ColumnOption {
-                group: Some(cost.clone()),
-                ..ColumnOption::new("cost-sale-min", "Sale minimum (7d)".into())
-            },
-            ColumnOption {
-                group: Some(cost),
-                disabled: true,
-                hint: Some("capped".into()),
-                ..ColumnOption::new("cost-sale-avg", "Sale average (7d)".into())
-            },
-            // Hinted but perfectly toggleable — the recipe analyzer's
-            // "Needs a wider sell scope". It gets the title and NOT the
-            // lock, and the ticked-capped entry above relies on the same
-            // split (`disabled` is recomputed against the visible set, so
-            // a ticked capped column keeps its hint and loses its lock).
-            ColumnOption {
-                hint: Some("needs a wider scope".into()),
-                ..ColumnOption::new("scope-vs-home", "Scope vs home".into())
-            },
-        ]);
-        assert_eq!(html.matches("Revenue · Gilgamesh").count(), 1, "{html}");
-        assert_eq!(html.matches("Cost · Aether").count(), 1, "{html}");
-        assert!(html.contains("title=\"loads once\""), "{html}");
-        assert_eq!(html.matches("basis-full").count(), 2, "{html}");
-        assert_eq!(html.matches("disabled").count(), 1, "{html}");
-        assert!(html.contains("title=\"capped\""), "{html}");
-        // The grey and the cursor follow `disabled`, never `hint`: exactly
-        // one entry here is unavailable, so exactly one is drawn that way.
-        assert!(html.contains("title=\"needs a wider scope\""), "{html}");
-        assert_eq!(
-            html.matches("cursor-not-allowed").count(),
-            1,
-            "a hint explains an entry; it does not disable it: {html}"
+    fn picker_lists_shown_columns_then_one_add_row_per_statistic() {
+        let html = render_picker(
+            picker_options(),
+            vec![
+                ShownColumn {
+                    id: "item",
+                    label: "Item".into(),
+                    removable: false,
+                },
+                ShownColumn {
+                    id: "median-7",
+                    label: "Sale median".into(),
+                    removable: true,
+                },
+            ],
         );
-        // Headings precede their options.
-        let rev_at = html.find("Revenue · Gilgamesh").unwrap();
-        let first_opt = html.find("Sale minimum (7d)").unwrap();
-        assert!(rev_at < first_opt, "{html}");
+        let at = |needle: &str| {
+            html.find(needle)
+                .unwrap_or_else(|| panic!("{needle}: {html}"))
+        };
+        // Showing: the required column has no ×, the statistic has its
+        // window pill and an ×.
+        assert!(at("data-shown-column=\"item\"") < at("data-shown-column=\"median-7\""));
+        assert_eq!(html.matches("aria-label=\"Remove").count(), 1, "{html}");
+        assert!(html.contains("Remove Sale median"), "{html}");
+        assert!(html.contains("Change the window for Sale median"), "{html}");
+        // Add: one row per statistic, the shown window taken, the first
+        // hidden one picked.
+        assert_eq!(html.matches("data-add-family=").count(), 2, "{html}");
+        let family = &html[at("data-add-family=\"median\"")..at("data-add-family=\"spd\"")];
+        assert_eq!(
+            family.matches("class=\"column-window\"").count(),
+            3,
+            "{family}"
+        );
+        assert_eq!(family.matches("disabled").count(), 1, "{family}");
+        assert_eq!(
+            family.matches("aria-pressed=\"true\"").count(),
+            1,
+            "{family}"
+        );
+        assert!(at("data-shown-column=\"median-7\"") < at("data-add-column=\"profit\""));
+        // Group headings appear once, before their rows.
+        assert_eq!(html.matches(">Sale history<").count(), 1, "{html}");
+        assert!(at(">Sale history<") < at("data-add-family=\"median\""));
+        assert!(at(">Listings<") < at("data-add-column=\"alive\""));
+    }
+
+    #[test]
+    fn picker_says_when_everything_is_showing() {
+        let options = vec![ColumnOption::new("profit", "Profit".into())];
+        let html = render_picker(
+            options,
+            vec![ShownColumn {
+                id: "profit",
+                label: "Profit".into(),
+                removable: true,
+            }],
+        );
+        assert!(!html.contains("data-add-"), "{html}");
+        assert!(html.contains("role=\"status\""), "{html}");
+    }
+
+    /// An unavailable column is offered greyed out with its reason, never
+    /// as addable.
+    #[test]
+    fn picker_disables_unavailable_columns_with_their_reason() {
+        let options = vec![ColumnOption {
+            disabled: true,
+            hint: Some("capped".into()),
+            ..ColumnOption::new("cost", "Cost".into())
+        }];
+        let html = render_picker(options, Vec::new());
+        assert!(html.contains("title=\"capped\""), "{html}");
+        assert!(html.contains("disabled"), "{html}");
     }
 
     #[test]

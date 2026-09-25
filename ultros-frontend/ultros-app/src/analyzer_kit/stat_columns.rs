@@ -402,6 +402,29 @@ pub fn market_picker_group(window: Option<Window>) -> String {
     }
 }
 
+/// The columns picker folds each statistic's windows into one row under
+/// this heading ("Sale history"), named by the bare statistic.
+pub fn market_picker_family_group() -> String {
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    t_string!(i18n, market_picker_group_history).to_string()
+}
+
+pub fn stat_family(kind: StatKind) -> String {
+    stat_name(kind)
+}
+
+/// A statistic's window as a picker pill: "7d", or "Selected" for the
+/// column that follows the page's window.
+pub fn stat_variant_label(window: Option<Window>) -> String {
+    match window {
+        Some(window) => window_label(window),
+        None => {
+            let i18n = crate::i18n_fallback::use_i18n_or_default();
+            t_string!(i18n, analyzer_columns_window_selected).to_string()
+        }
+    }
+}
+
 /// The picker and filter-menu heading for the current-listing family.
 pub fn market_picker_group_listings() -> String {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
@@ -616,6 +639,10 @@ mod tests {
                 market_picker_group(None),
                 "Sale history (selected window)"
             );
+            assert_eq!(market_picker_family_group(), "Sale history");
+            assert_eq!(stat_family(StatKind::SalesPerDay), "Sales/day");
+            assert_eq!(stat_variant_label(Some(Window::D30)), "30d");
+            assert_eq!(stat_variant_label(None), "Selected");
         });
     }
 }

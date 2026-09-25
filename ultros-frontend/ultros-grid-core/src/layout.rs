@@ -66,6 +66,15 @@ pub struct GridColumn {
     pub picker_hint: Option<String>,
     /// Prevent adding unavailable columns; selected columns remain removable.
     pub picker_disabled: bool,
+    /// The statistic this column is one window of ("Sale median"). Columns
+    /// sharing a family collapse into one picker row with a window choice.
+    pub picker_family: Option<String>,
+    /// This column's window within its family ("7d", "Selected").
+    pub picker_variant: Option<String>,
+    /// The picker heading over the family's row ("Sale history"). Separate
+    /// from `picker_group`, which names one window's columns for the filter
+    /// and insert menus that still list each window apart.
+    pub picker_family_group: Option<String>,
     pub width: f64,
     /// Space beside the title for badges, in addition to the grid controls.
     pub heading_adornments: f64,
@@ -101,6 +110,9 @@ impl GridColumn {
             picker_group_title: None,
             picker_hint: None,
             picker_disabled: false,
+            picker_family: None,
+            picker_variant: None,
+            picker_family_group: None,
             width,
             heading_adornments: 0.0,
             heading_lines: Vec::new(),
