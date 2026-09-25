@@ -275,7 +275,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                                                 && input_id == owned_id
                                                                                                             {
                                                                                                                 return Some(view! {
-                                                                                                                    <span class="text-red-400 text-xs ml-1">
+                                                                                                                    <span class="text-negative text-xs ml-1">
                                                                                                                         {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
                                                                                                                     </span>
                                                                                                                 }.into_any());
@@ -310,7 +310,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                     Err(e) => {
                                                         Either::Right(
                                                             view! {
-                                                                <div class="text-red-400 bg-red-950/20 rounded-lg border border-red-500/30 p-3">
+                                                                <div class="text-negative bg-red-950/20 rounded-lg border border-red-500/30 p-3">
                                                                     <span>{t!(i18n, retainers_error_loading)} {e.to_string()}</span>
                                                                 </div>
                                                             },

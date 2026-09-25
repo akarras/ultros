@@ -24,7 +24,7 @@ pub fn AccountListsFailure(error: AppError) -> impl IntoView {
     let local_lists = use_local_lists();
     view! {
         <Show when=move || needs_explaining(&error, local_lists.get().is_some())>
-            <div class="text-red-400 text-sm">{t!(i18n, add_to_list_unable_to_load)}</div>
+            <div class="text-negative text-sm">{t!(i18n, add_to_list_unable_to_load)}</div>
         </Show>
     }
 }

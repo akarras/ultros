@@ -106,9 +106,9 @@ fn MoverRow(item: MoverItem, world_name: String, tab: MoverTab) -> impl IntoView
 
     let pct = item.pct_change_24h;
     let pct_class = if pct > 0.0 {
-        "text-emerald-300"
+        "text-positive"
     } else if pct < 0.0 {
-        "text-red-300"
+        "text-negative"
     } else {
         "text-[color:var(--color-text-muted)]"
     };

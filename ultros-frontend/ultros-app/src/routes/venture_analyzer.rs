@@ -672,7 +672,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             recent_sales_clone
                                 .get()
                                 .and_then(|r| r.err())
-                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, venture_analyzer_error_sales)}</div> })
+                                .map(|_| view! { <div class="text-negative text-sm">{t!(i18n, venture_analyzer_error_sales)}</div> })
                         }}
                     </Suspense>
                     <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, world)}</label>
@@ -712,7 +712,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             }
                             (Some(Err(e)), _) => {
                                 view! {
-                                    <div class="text-red-400">
+                                    <div class="text-negative">
                                         {t!(i18n, venture_analyzer_error_listings)} {e.to_string()}
                                     </div>
                                 }.into_any()

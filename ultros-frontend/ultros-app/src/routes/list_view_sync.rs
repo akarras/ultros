@@ -230,7 +230,7 @@ pub fn InlineListAdd(
                     if ev.key() == "Escape" { quality.set(committed_quality.get_untracked()); ev.stop_propagation(); }
                 }><option value="any">{t!(i18n, lists_workspace_any_quality)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq">{t!(i18n, lists_workspace_hq_available)}</option></select>
             </div>
-            <Show when=move || invalid_quantity.get()><p id="list-add-quantity-error" role="alert" class="mt-2 text-sm text-red-300">{move || if crate::components::cart::row::numeric_value_too_large(0, &quantity.get()) {
+            <Show when=move || invalid_quantity.get()><p id="list-add-quantity-error" role="alert" class="mt-2 text-sm text-negative">{move || if crate::components::cart::row::numeric_value_too_large(0, &quantity.get()) {
                 t_string!(i18n, cart_number_too_large).to_string()
             } else {
                 t_string!(i18n, cart_quantity_invalid).to_string()
@@ -2339,7 +2339,7 @@ pub fn ListViewSync() -> impl IntoView {
                     </div>
                     <Show when=move || can_admin.get() || can_leave.get()>
                         <div class="space-y-3 border-t border-[color:var(--color-outline)] pt-3" data-testid="list-danger-zone">
-                            <p class="text-sm font-semibold text-red-400">{t!(i18n, list_view_settings_danger_zone)}</p>
+                            <p class="text-sm font-semibold text-negative">{t!(i18n, list_view_settings_danger_zone)}</p>
                             <div class="flex flex-wrap gap-2">
                                 <Show when=move || can_leave.get()>
                                     <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="list-leave-btn" disabled=move || leave_action.pending().get() on:click=move |_| { if let Some(user) = self_user_id.get_untracked() { leave_action.dispatch(user); } }>
@@ -2363,7 +2363,7 @@ pub fn ListViewSync() -> impl IntoView {
                                     </div>
                                 </div>
                             </Show>
-                            {move || danger_error().map(|error| view! { <p role="alert" class="text-sm text-red-400">{error}</p> })}
+                            {move || danger_error().map(|error| view! { <p role="alert" class="text-sm text-negative">{error}</p> })}
                         </div>
                     </Show>
                 }

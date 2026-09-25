@@ -114,7 +114,7 @@ pub fn numeric_editor(
                 }
             } />
         <Show when=move || invalid.get()>
-            <p id=error_id.clone() role="alert" class="mt-1 text-xs text-red-300">{move || if too_large.get() {
+            <p id=error_id.clone() role="alert" class="mt-1 text-xs text-negative">{move || if too_large.get() {
                 t_string!(i18n, cart_number_too_large).to_string()
             } else { match field {
                 0 => t_string!(i18n, cart_quantity_invalid).to_string(),
@@ -315,7 +315,7 @@ pub fn CartRow(
                 <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
                     <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
                 </button>
-                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-red-300 sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-negative sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
                     <Icon icon=i::BiTrashRegular />
                 </button>
             </div>

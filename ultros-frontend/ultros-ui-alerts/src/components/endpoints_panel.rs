@@ -201,7 +201,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                                                     <span class="ml-1">{t!(i18n, endpoints_test_button)}</span>
                                                 </button>
                                                 <button
-                                                    class="btn-ghost text-red-400"
+                                                    class="btn-ghost text-negative"
                                                     aria-label=t_string!(i18n, endpoints_delete_aria)
                                                     on:click=move |_| on_delete(id)
                                                 >

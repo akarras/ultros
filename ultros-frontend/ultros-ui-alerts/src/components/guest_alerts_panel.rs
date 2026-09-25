@@ -226,7 +226,7 @@ pub fn GuestAlertsView() -> impl IntoView {
                                                                     <Icon icon=if enabled { i::BsPauseFill } else { i::BsPlayFill } />
                                                                 </button>
                                                                 <button
-                                                                    class="btn-ghost text-red-400"
+                                                                    class="btn-ghost text-negative"
                                                                     aria-label=t_string!(i18n, alert_rules_aria_delete_alert)
                                                                     on:click=move |_| {
                                                                         if let Some(guest) = guest {

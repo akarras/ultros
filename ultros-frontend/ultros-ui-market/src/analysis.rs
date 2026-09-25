@@ -58,8 +58,8 @@ pub const DELTA_DEAD_BAND_PCT: f32 = 1.0;
 /// sign). A NaN falls through both comparisons and reads neutral.
 pub fn signed_delta_class(pct: Option<f32>, dead_band: f32) -> &'static str {
     match pct {
-        Some(p) if p > dead_band => "text-emerald-300",
-        Some(p) if p < -dead_band => "text-red-300",
+        Some(p) if p > dead_band => "text-positive",
+        Some(p) if p < -dead_band => "text-negative",
         _ => "text-[color:var(--color-text-muted)]",
     }
 }
@@ -128,8 +128,8 @@ mod tests {
 
     #[test]
     fn signed_delta_class_has_a_dead_band() {
-        assert_eq!(signed_delta_class(Some(4.0), 1.0), "text-emerald-300");
-        assert_eq!(signed_delta_class(Some(-4.0), 1.0), "text-red-300");
+        assert_eq!(signed_delta_class(Some(4.0), 1.0), "text-positive");
+        assert_eq!(signed_delta_class(Some(-4.0), 1.0), "text-negative");
         // Inside the band, and exactly on it, read neutral.
         let muted = "text-[color:var(--color-text-muted)]";
         assert_eq!(signed_delta_class(Some(0.4), 1.0), muted);
@@ -137,13 +137,13 @@ mod tests {
         assert_eq!(signed_delta_class(Some(-1.0), 1.0), muted);
         assert_eq!(signed_delta_class(None, 1.0), muted);
         // A zero dead band colours any non-zero sign (the movers' rule).
-        assert_eq!(signed_delta_class(Some(0.2), 0.0), "text-emerald-300");
+        assert_eq!(signed_delta_class(Some(0.2), 0.0), "text-positive");
         // NaN is neither above nor below: neutral, never a panic.
         assert_eq!(signed_delta_class(Some(f32::NAN), 1.0), muted);
     }
 
-    /// `analyzer.rs`'s three Drift arms cut at ±1.0 with `text-emerald-300`
-    /// / `text-red-300` / muted; the new const and fn must reproduce exactly
+    /// `analyzer.rs`'s three Drift arms cut at ±1.0 with `text-positive`
+    /// / `text-negative` / muted; the new const and fn must reproduce exactly
     /// those thresholds (`signed_delta_class_has_a_dead_band` passes `1.0`
     /// by hand and so cannot pin the const). The cell's *text* is unchanged
     /// by construction — the fold touches only the class, and `+{d:.0}%`
@@ -156,13 +156,13 @@ mod tests {
         for d in [1.4f32, 4.6, 12.5, 99.5, 100.4] {
             assert_eq!(
                 signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
-                "text-emerald-300"
+                "text-positive"
             );
         }
         for d in [-1.4f32, -3.6, -50.0] {
             assert_eq!(
                 signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
-                "text-red-300"
+                "text-negative"
             );
         }
         for d in [0.0f32, 0.9, -0.9] {

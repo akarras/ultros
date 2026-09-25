@@ -316,7 +316,7 @@ pub fn ShareListSection(
                                         </button>
                                     </div>
                                     {move || invite_error.get().map(|message| view! {
-                                        <p id="list-invite-error" role="alert" class="text-sm text-red-300">{message}</p>
+                                        <p id="list-invite-error" role="alert" class="text-sm text-negative">{message}</p>
                                     })}
                                 </section>
     <section class="space-y-3" class:hidden=move || method.get() != "group">

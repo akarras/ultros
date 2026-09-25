@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Profit, loss and delete buttons are readable in light mode",
+  "blurb": "Green gains, red losses and errors, delete buttons and dividers now use darker colors on the light theme instead of washing out, and the keyboard focus outline is easier to see on every dark palette."
+}

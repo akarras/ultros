@@ -223,7 +223,7 @@ fn AddToListModal(
                                                     </button>
                                                 </div>
                                                 <Show when=Signal::derive(move || error().is_some())>
-                                                    <div class="text-xs text-red-400 px-2">
+                                                    <div class="text-xs text-negative px-2">
                                                         {move || error().unwrap_or_default()}
                                                     </div>
                                                 </Show>

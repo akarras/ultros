@@ -281,7 +281,7 @@ pub(crate) fn FlipRouteCard(
 
                                 let buy_cell = if buy_error {
                                     view! {
-                                        <span class="text-sm text-red-300">
+                                        <span class="text-sm text-negative">
                                             {t!(i18n, item_compare_unavailable)}
                                         </span>
                                     }
@@ -371,7 +371,7 @@ pub(crate) fn FlipRouteCard(
 
                                 let verdict_cell = if let Some(v) = verdict.as_ref() {
                                     let negative = v.profit_per_unit < 0;
-                                    let amount_class = if negative { "text-red-300" } else { "font-bold" };
+                                    let amount_class = if negative { "text-negative" } else { "font-bold" };
                                     view! {
                                         <div class="flex flex-col gap-0.5">
                                             <div class=amount_class>
@@ -388,7 +388,7 @@ pub(crate) fn FlipRouteCard(
                                             {negative
                                                 .then(|| {
                                                     view! {
-                                                        <span class="text-xs text-red-300">
+                                                        <span class="text-xs text-negative">
                                                             {t!(i18n, item_compare_not_profitable)}
                                                         </span>
                                                     }

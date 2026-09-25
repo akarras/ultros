@@ -26,8 +26,8 @@ fn compact_number(n: u64) -> String {
 
 fn format_delta(delta_pct: Option<f32>) -> (String, &'static str) {
     match delta_pct {
-        Some(p) if p >= 0.0 => (format!("+{p:.1}%"), "text-emerald-300"),
-        Some(p) => (format!("{p:.1}%"), "text-red-300"),
+        Some(p) if p >= 0.0 => (format!("+{p:.1}%"), "text-positive"),
+        Some(p) => (format!("{p:.1}%"), "text-negative"),
         None => ("—".to_string(), "text-[color:var(--color-text-muted)]"),
     }
 }
@@ -157,15 +157,15 @@ mod tests {
         );
         assert_eq!(
             format_delta(Some(0.0)),
-            ("+0.0%".to_string(), "text-emerald-300")
+            ("+0.0%".to_string(), "text-positive")
         );
         assert_eq!(
             format_delta(Some(12.34)),
-            ("+12.3%".to_string(), "text-emerald-300")
+            ("+12.3%".to_string(), "text-positive")
         );
         assert_eq!(
             format_delta(Some(-5.67)),
-            ("-5.7%".to_string(), "text-red-300")
+            ("-5.7%".to_string(), "text-negative")
         );
     }
 }

@@ -301,8 +301,11 @@
            propagates to the viewport. */
     }
 
+    /* `--brand-ring` is the rung every palette keeps legible on its own page
+       (brand-400 on dark, brand-600 on light). brand-700 fell under the 3:1
+       non-text minimum on the dark pages. */
     :focus-visible {
-        outline: 2px solid var(--color-brand-700);
+        outline: 2px solid var(--brand-ring);
         outline-offset: 2px;
     }
 
@@ -327,6 +330,11 @@
     /* Text */
     --color-text: #0b0b0c;
     --color-text-muted: #475569;
+
+    /* Gain/loss ink: the dark rungs (emerald-300, red-400) wash out on a
+       near-white page, so light mode drops to the 700 rungs. */
+    --color-positive: oklch(50.8% 0.118 165.612);
+    --color-negative: oklch(50.5% 0.213 27.518);
 
     /* Outlines and grid */
     --color-outline: rgba(0, 0, 0, 0.12);
@@ -1053,6 +1061,12 @@
     --color-background-muted: #0a0c14;
     --color-background-elevated: #0e1119;
     --color-background-panel: #0b0e16;
+
+    /* Gain/loss ink (`text-positive`, `text-negative`): profit, deltas,
+     * errors. Dark values; `[data-theme="light"]` re-points both. Never the
+     * only signal -- pair with a sign, arrow or word. */
+    --color-positive: oklch(84.5% 0.143 164.978);
+    --color-negative: oklch(70.4% 0.191 22.216);
 }
 
 .btn {
@@ -1612,9 +1626,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     @apply inline-flex items-center justify-center gap-2
     px-4 py-2 rounded-lg
     bg-red-600/20 hover:bg-red-600/30
-    border border-red-400/10 hover:border-red-400/20
-    transition-all duration-200
-    text-red-100;
+    transition-all duration-200;
+    border: 1px solid color-mix(in srgb, var(--color-negative) 10%, transparent);
+    /* Tinted toward the page ink: a pale rose on dark, a deep red on light.
+       A fixed red-100 was near-invisible on the light theme. */
+    color: color-mix(in srgb, var(--color-negative) 40%, var(--color-text));
+}
+.btn-danger:hover {
+    border-color: color-mix(in srgb, var(--color-negative) 20%, transparent);
 }
 
 /* Inputs */
@@ -1648,8 +1667,10 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 /* KBD */
 @utility kbd {
     @apply inline-block px-2 py-0.5 rounded-md
-    border border-white/10 bg-black/40
-    text-gray-300 text-xs font-mono shadow-inner;
+    border text-xs font-mono shadow-inner;
+    border-color: var(--color-outline);
+    background-color: color-mix(in srgb, var(--color-background) 60%, transparent);
+    color: var(--color-text-muted);
 }
 
 /* Utilities */
@@ -1662,11 +1683,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 
 @utility divider {
-    @apply w-full h-px bg-white/10;
+    @apply w-full h-px;
+    background-color: var(--color-outline);
 }
 
 @utility muted {
-    @apply text-gray-400;
+    color: var(--color-text-muted);
 }
 
 @utility gradient-ring {

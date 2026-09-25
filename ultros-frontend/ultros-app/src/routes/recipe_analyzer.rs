@@ -5185,7 +5185,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 .flatten()
                                 .is_some_and(|h| h.raw_failed);
                             (on_demand_failed || failover_failed)
-                                .then(|| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
+                                .then(|| view! { <div class="text-negative text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                         }}
                     </Suspense>
                 </ToolHeader>
@@ -5328,7 +5328,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 // outcome behind would keep stale dots lit.
                                 stats_loaded.set((true, true));
                                 view! {
-                                    <div class="text-red-400">
+                                    <div class="text-negative">
                                         "Error loading listings: " {e.to_string()}
                                     </div>
                                 }.into_any()
@@ -8120,13 +8120,13 @@ mod test {
         };
         assert_eq!(
             colour(cell_price(&price_row(key, 960, Some(1000), false), &ctx)),
-            "text-red-300",
+            "text-negative",
             "960 against a median of 1000 is -4%: the suspiciously cheap \
              listing is the warning, not the good news"
         );
         assert_eq!(
             colour(cell_price(&price_row(key, 1040, Some(1000), false), &ctx)),
-            "text-emerald-300",
+            "text-positive",
             "1040 against a median of 1000 is +4%"
         );
         // No sale history on the sell world: Phase D's note, unchanged.

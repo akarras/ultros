@@ -243,7 +243,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                                 </span>
                             })}
                             {(lq.on_hand_savings > 0).then(|| view! {
-                                <span class="px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-300 text-[10px]">
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-900/30 text-positive text-[10px]">
                                     {t!(i18n, related_recipe_on_hand_saved)} " " <Gil amount=lq.on_hand_savings />
                                 </span>
                             })}
@@ -364,7 +364,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             </span>
                         </Show>
                         <Show when=move || { on_hand_qty() > 0 }>
-                            <span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-900/30 text-emerald-300 whitespace-nowrap">
+                            <span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-900/30 text-positive whitespace-nowrap">
                                 {move || t_string!(i18n, related_recipe_ingredient_on_hand, count = on_hand_qty()).to_string()}
                             </span>
                         </Show>
@@ -514,9 +514,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             let profit_chip = |label: String, profit_opt: Option<i32>| {
                                 profit_opt.map(|profit| {
                                     let cls = if profit >= 0 {
-                                        "px-2 py-0.5 rounded-full text-xs font-bold text-emerald-300 border border-emerald-400/40 flex items-center gap-1"
+                                        "px-2 py-0.5 rounded-full text-xs font-bold text-positive border border-emerald-400/40 flex items-center gap-1"
                                     } else {
-                                        "px-2 py-0.5 rounded-full text-xs font-bold text-red-300 border border-red-400/40 flex items-center gap-1"
+                                        "px-2 py-0.5 rounded-full text-xs font-bold text-negative border border-red-400/40 flex items-center gap-1"
                                     };
                                     view! { <span class=cls><span>{label}</span><Gil amount=profit /></span> }.into_any()
                                 })

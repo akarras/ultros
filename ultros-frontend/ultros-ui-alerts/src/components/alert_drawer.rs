@@ -147,7 +147,7 @@ fn active_alert_row(
                 <div class="text-xs opacity-60 truncate">{sub_label}</div>
             </div>
             <button
-                class="btn-ghost text-red-400"
+                class="btn-ghost text-negative"
                 aria-label=delete_aria
                 on:click=move |_| on_delete()
             >

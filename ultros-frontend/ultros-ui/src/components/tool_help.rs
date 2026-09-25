@@ -162,9 +162,9 @@ pub enum ToolConfidenceLevel {
 impl ToolConfidenceLevel {
     pub fn css_class(&self) -> &'static str {
         match self {
-            Self::High => "text-emerald-300",
+            Self::High => "text-positive",
             Self::Medium => "text-amber-300",
-            Self::LowData => "text-red-300",
+            Self::LowData => "text-negative",
         }
     }
 
@@ -371,8 +371,8 @@ mod tests {
 
     #[test]
     fn test_tool_confidence_level_css_class() {
-        assert_eq!(ToolConfidenceLevel::High.css_class(), "text-emerald-300");
+        assert_eq!(ToolConfidenceLevel::High.css_class(), "text-positive");
         assert_eq!(ToolConfidenceLevel::Medium.css_class(), "text-amber-300");
-        assert_eq!(ToolConfidenceLevel::LowData.css_class(), "text-red-300");
+        assert_eq!(ToolConfidenceLevel::LowData.css_class(), "text-negative");
     }
 }
