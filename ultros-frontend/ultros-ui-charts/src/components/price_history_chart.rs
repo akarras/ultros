@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
     }
 
-    // One day of buckets — the width the server picks for a month-ish
+    // One day of buckets — the width the server picks for a quarter-ish
     // window, and the slack `range_is_stale` is allowed.
     const DAY: i64 = 86_400;
 
