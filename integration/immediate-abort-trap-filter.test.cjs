@@ -72,8 +72,9 @@ const SYMBOLS_TEXT = Object.entries(SYMBOLS)
 
 const STALE_CHROME =
   "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.136 Mobile Safari/537.36";
+// Far ahead of the clock-relative stale ceiling, so it never rots into it.
 const CURRENT_CHROME =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/999.0.0.0 Safari/537.36";
 
 function doc({ fontCount = 0, htmlClass = "" } = {}) {
   const classes = htmlClass ? htmlClass.split(/\s+/) : [];
@@ -196,6 +197,17 @@ test("a tachys Cursor fn inlined into a tachys `hydrate` impl on top is the hydr
 test("#7964: a tachys `hydrate_async` body on top (head <meta> mismatch) is the hydration panic", async () => {
   const env = load({
     ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    document: doc(),
+  });
+  assert.strictEqual(await outcome(env, trap([30, 31, 32, 33])), "dropped");
+});
+
+// #7964 again on 2026-09-25, same head <meta> frames, from a Tencent Cloud
+// crawler fleet pinned at Chrome 131: over the old fixed <=124 ceiling, so it
+// leaked. The ceiling now tracks the clock, and 131 is well over a year stale.
+test("#7964: the same trap from a Chrome 131 crawler fleet is the stale population", async () => {
+  const env = load({
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     document: doc(),
   });
   assert.strictEqual(await outcome(env, trap([30, 31, 32, 33])), "dropped");

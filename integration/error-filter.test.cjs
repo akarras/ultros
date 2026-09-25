@@ -93,10 +93,11 @@ function staleChromeUA(major) {
 const FROZEN_CHROME_112 =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36";
-// A current, non-frozen browser.
+// A current, non-frozen browser. Far ahead of the clock-relative stale ceiling
+// so the test never rots into the stale population.
 const CURRENT_CHROME =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+  "(KHTML, like Gecko) Chrome/999.0.0.0 Safari/537.36";
 
 const HYDRATION_LOC =
   "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
@@ -927,6 +928,23 @@ const cases = [
               'WebAssembly.instantiateStreaming(): section (code 10, "Code") ' +
               "extends past end of the module (length 10426626, remaining bytes " +
               "10359267) @+126488",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "WASM CompileError 'reached end while decoding' (truncated mid-header) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "CompileError",
+            value:
+              "WebAssembly.instantiateStreaming(): reached end while decoding " +
+              "section length @+16446385",
           },
         ],
       },
