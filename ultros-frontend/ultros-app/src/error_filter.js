@@ -24,7 +24,8 @@
 //      "WebAssembly compilation aborted"; "TypeError: Failed to execute
 //      'compile' on 'WebAssembly': HTTP status code is not ok" (the .wasm
 //      came back non-OK); and "CompileError: ... extends past end of the
-//      module" (a truncated download). GlitchTip issues #21, #2374, #2404,
+//      module" / "... reached end while decoding ..." (a truncated
+//      download). GlitchTip issues #21, #2374, #2404,
 //      #6755, #6762–#6767, and the count=1 flood of #62xx "Failed to fetch
 //      dynamically imported module: .../pkg/<hash>/ultros.js".
 //   2. A "Cannot read properties of undefined (reading 'document')"
@@ -261,7 +262,10 @@
   //     'WebAssembly': HTTP status code is not ok`;
   //   - a truncated / aborted download surfaces as `CompileError:
   //     WebAssembly.instantiateStreaming(): section (...) extends past end of
-  //     the module (...)`.
+  //     the module (...)` or, when the cut lands inside a section header,
+  //     `... reached end while decoding section length @+<offset>` (YandexBot
+  //     cutting off the ~16 MB bundle; the offset differs per cut, so each one
+  //     opened its own count=1 issue — #7966–#7970).
   // The CompileError match is scoped to the truncation signature so a genuinely
   // corrupt build (e.g. a bad opcode) still reports — that would be an
   // all-users flood worth seeing, not these count=1 blips. GlitchTip #6755,
@@ -280,7 +284,8 @@
       }
       if (
         ex.type === "CompileError" &&
-        ex.value.indexOf("extends past end of the module") !== -1
+        (ex.value.indexOf("extends past end of the module") !== -1 ||
+          ex.value.indexOf("reached end while decoding") !== -1)
       ) {
         return true;
       }

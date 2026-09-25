@@ -934,6 +934,23 @@ const cases = [
     },
     expectDrop: true,
   },
+  {
+    name: "WASM CompileError 'reached end while decoding' (truncated mid-header) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "CompileError",
+            value:
+              "WebAssembly.instantiateStreaming(): reached end while decoding " +
+              "section length @+16446385",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
   // Guard: a CompileError that is NOT a truncation (e.g. a genuinely corrupt
   // build we shipped) must still report — that is a real bug worth seeing.
   {
