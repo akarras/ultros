@@ -1,18 +1,16 @@
-//! Bridge to the lists saved on this device behind the `lists-sync` lab.
+//! Bridge to the lists saved on this device.
 //!
 //! The device-list runtime (`ultros-app`'s `list_doc::guest`) is browser-only
 //! and sits above the shared UI crates, so the add-to-list modals reach it
 //! through this context rather than a crate dependency. `ultros-app` provides
 //! it on the hydrate build; with no provider (SSR, a native test) the modals
-//! offer account lists only, exactly as they did before the lab existed.
+//! offer account lists only, until the browser runtime is ready.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use leptos::prelude::*;
 use ultros_api_types::list::ListItem;
-
-use super::labs::{LAB_LISTS_SYNC, use_lab};
 
 /// A browser-local future: the runtime talks to IndexedDB, so nothing here is
 /// `Send`. The error is the runtime's already-translated message.
@@ -26,9 +24,9 @@ pub struct LocalListSummary {
 }
 
 impl LocalListSummary {
-    /// The Labs editor route for this list.
+    /// The editor route for this list.
     pub fn href(&self) -> String {
-        format!("/list/device/{}?labs={LAB_LISTS_SYNC}", self.id)
+        format!("/list/device/{}", self.id)
     }
 }
 
@@ -48,12 +46,10 @@ pub struct LocalLists {
     pub add_items: fn(String, Vec<ListItem>) -> LocalResult<()>,
 }
 
-/// The bridge, when the lab is on and a runtime has been provided. Reactive
-/// on the lab so flipping it in Settings takes effect without a reload.
+/// The bridge, when the browser runtime has been provided.
 pub fn use_local_lists() -> Signal<Option<LocalLists>> {
-    let enabled = use_lab(LAB_LISTS_SYNC);
     let bridge = use_context::<LocalLists>();
-    Signal::derive(move || bridge.filter(|_| enabled.get()))
+    Signal::derive(move || bridge)
 }
 
 #[cfg(test)]
@@ -61,12 +57,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_editor_link_keeps_the_lab_switched_on() {
+    fn the_editor_link_needs_no_preview_flag() {
         let summary = LocalListSummary {
             id: "device:abc".into(),
             name: "Raid supplies".into(),
         };
-        assert_eq!(summary.href(), "/list/device/device:abc?labs=lists-sync");
+        assert_eq!(summary.href(), "/list/device/device:abc");
     }
 
     /// The bridge must be storable in Leptos context, which requires

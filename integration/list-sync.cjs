@@ -449,26 +449,18 @@ async function main() {
     const legacySync = await legacyPage.evaluate(
       () => !!document.querySelector('[data-testid="list-view-sync"]'),
     );
-    if (legacySync) fail(failures, "A: legacy session unexpectedly got the Labs page");
+    if (!legacySync) fail(failures, "A: default session did not get Lists 2.0");
     // Compare against what the server actually holds rather than a fixed
     // split, so a legitimate divergence is reported as such and an earlier
     // step's failure does not also mis-blame the legacy page.
     const serverNow = (await serverAcquired(ownerPage, listId)) || [];
-    const wantAcquired = serverNow.filter((a) => a > 0).length;
-    const wantUnacquired = serverNow.length - wantAcquired;
-    const legacy = await waitForState(
-      legacyPage,
-      (s) => s.acquired === wantAcquired && s.unacquired === wantUnacquired,
-      TIMEOUT_MS,
-    );
-    if (legacy.acquired !== wantAcquired || legacy.unacquired !== wantUnacquired) {
-      fail(
-        failures,
-        `A: legacy page disagrees with the server: page=${JSON.stringify(legacy)} server=${JSON.stringify(serverNow)}`,
-      );
-    } else {
-      pass(`A: legacy page shows the same rows as the server (${JSON.stringify(serverNow)})`);
-    }
+    await waitForDocKey(legacyPage, USERS.owner.id, listId, true, TIMEOUT_MS);
+    await rowState(legacyPage); // Open row details before comparing owned quantities.
+    await legacyPage.waitForFunction(expected => {
+      const values = Array.from(document.querySelectorAll('input[aria-label^="Owned for "]')).map(input => Number(input.value)).sort((a,b) => a-b);
+      return JSON.stringify(values) === JSON.stringify(expected.slice().sort((a,b) => a-b));
+    }, { timeout: TIMEOUT_MS }, serverNow);
+    pass("A: default workspace agrees with the server without a Labs cookie");
 
     console.log("[scenario A2] bounded access checks during continuous broadcasts");
     await require("./list-permission-latency.cjs")({

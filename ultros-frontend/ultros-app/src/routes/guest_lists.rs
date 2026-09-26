@@ -1,5 +1,4 @@
 //! Account-independent device lists. Browser storage is the source of truth.
-use crate::global_state::labs::{LAB_LISTS_SYNC, use_lab};
 use crate::i18n::*;
 use leptos::prelude::*;
 
@@ -21,16 +20,9 @@ pub fn DeviceLists() -> impl IntoView {
 #[component]
 pub fn GuestListRoute() -> impl IntoView {
     let i18n = use_i18n();
-    // Read once per mount, like `ListRoute`: the flag only changes with the
-    // route, and tracking it rebuilt this view inside a route the router was
-    // already leaving.
-    let enabled = use_lab(LAB_LISTS_SYNC).get_untracked();
     let ready = RwSignal::new(false);
     Effect::new(move |_| ready.set(true));
     move || {
-        if !enabled {
-            return view! { <p>{t!(i18n, guest_workspace_enable)}</p> }.into_any();
-        }
         ready.track();
         #[cfg(feature = "hydrate")]
         if ready.get() {
@@ -46,9 +38,9 @@ pub fn GuestListRoute() -> impl IntoView {
 #[cfg(any(feature = "hydrate", test))]
 fn device_list_href(id: &str, online: bool) -> String {
     if online {
-        format!("/list/device/{id}?labs=lists-sync&make_online=1")
+        format!("/list/device/{id}?make_online=1")
     } else {
-        format!("/list/device/{id}?labs=lists-sync")
+        format!("/list/device/{id}")
     }
 }
 
@@ -56,13 +48,13 @@ fn device_list_href(id: &str, online: bool) -> String {
 mod browser {
     use super::*;
     use crate::components::app_link::use_query_map_or_default;
-    use crate::components::cart::{ListCart, use_legacy_cart};
+    use crate::components::cart::ListCart;
     use crate::components::list::filter_row::SortSpec;
     use crate::list_doc::{
         adapter::{self, Edit},
         guest::GuestListHandle,
     };
-    use crate::routes::list_view_sync::{ListBuildWorkspace, ListWorkspaceSource};
+    use crate::routes::list_view_sync::ListWorkspaceSource;
     use leptos::either::Either;
     use leptos_router::hooks::{use_navigate, use_params_map};
     use std::collections::{BTreeSet, HashSet};
@@ -312,7 +304,7 @@ mod browser {
                         let binding=list.online.clone();
                         let matching=binding.as_ref().filter(|b| user_id.get_untracked().is_some_and(|u|u.to_string()==b.owner));
                         let destination=matching.filter(|b| b.legacy || b.acknowledged>=list.revision).and_then(|b|b.list_id);
-                        let link=destination.map(|id|format!("/list/{id}?labs=lists-sync")).unwrap_or_else(||format!("/list/device/{}?labs=lists-sync",list.id));
+                        let link=destination.map(|id|format!("/list/{id}")).unwrap_or_else(||format!("/list/device/{}",list.id));
                         let local=list.online.is_none();
                         let status=list.error.clone().unwrap_or_else(|| if destination.is_some() {t_string!(i18n,online_connected).to_string()} else if binding.is_some() {t_string!(i18n,online_pending).to_string()} else {t_string!(i18n,guest_workspace_saved).to_string()});
                         let original=StoredValue::new(list.name.clone());
@@ -376,7 +368,7 @@ mod browser {
                                             </button>
                                         </Show>
                                     </div>
-                                    <div class="mt-2 flex flex-wrap items-center justify-between gap-2"><a class="btn-secondary min-h-11" href=link.get_value()>{t!(i18n, view_items)}<Icon icon=i::AiArrowRightOutlined attr:class="ml-1" aria_hidden=true /></a><Show when=move || local><a class="btn-ghost min-h-11" data-testid="list-card-make-online" href=format!("/list/device/{}?labs=lists-sync&make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
+                                    <div class="mt-2 flex flex-wrap items-center justify-between gap-2"><a class="btn-secondary min-h-11" href=link.get_value()>{t!(i18n, view_items)}<Icon icon=i::AiArrowRightOutlined attr:class="ml-1" aria_hidden=true /></a><Show when=move || local><a class="btn-ghost min-h-11" data-testid="list-card-make-online" href=format!("/list/device/{}?make_online=1",id.get_value())>{t!(i18n,online_make)}</a></Show>
                                     </div>
                                 }>
                                     <div class="flex flex-col gap-3 w-full">
@@ -423,7 +415,7 @@ mod browser {
                 <Show when=move || local_loaded.get() && accounts.get().is_some_and(|r|r.is_ok()) && local_cards.get().is_empty() && online_cards.get().is_empty()>
                     <p class="py-8 text-center text-[color:var(--color-text-muted)]">{t!(i18n,online_empty)}</p>
                 </Show>
-                <Show when=move || user_id.get().is_none()><p class="text-sm"><a class="underline" rel="external" href="/login?next=/list%3Flabs%3Dlists-sync">{t!(i18n,lists_device_sign_in)}</a></p></Show>
+                <Show when=move || user_id.get().is_none()><p class="text-sm"><a class="underline" rel="external" href="/login?next=/list">{t!(i18n,lists_device_sign_in)}</a></p></Show>
                 <Show when=creating><Modal set_visible=set_creating aria_label=Signal::derive(move || t_string!(i18n,online_new).to_string())>
                     <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_new)}</h2>
                     <input class="input w-full" data-testid="device-list-name" aria-label=move || t_string!(i18n,list_name).to_string() placeholder=move || t_string!(i18n,guest_workspace_placeholder).to_string() prop:value=move || name.get() on:input=move |ev| name.set(event_target_value(&ev)) maxlength="100" />
@@ -443,7 +435,7 @@ mod browser {
                 <Show when=restoring><Modal set_visible=set_restoring aria_label=Signal::derive(move || t_string!(i18n,online_restore).to_string())>
                     <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_restore)}</h2>
                     <div class="flex flex-col gap-2">{move || summaries.get().into_iter().filter(|l|l.online.as_ref().is_some_and(|b|user_id.get().is_some_and(|id|id.to_string()==b.owner))).map(|l|view! {
-                        <a class="underline" href=format!("/list/device/{}?labs=lists-sync&recovery=1",l.id)>{t!(i18n,guest_workspace_export)}": "{l.name}</a>
+                        <a class="underline" href=format!("/list/device/{}?recovery=1",l.id)>{t!(i18n,guest_workspace_export)}": "{l.name}</a>
                     }).collect_view()}</div>
                     <label for="device-restore">{t!(i18n,guest_workspace_paste_backup)}</label>
                     <textarea id="device-restore" class="input w-full h-32" data-testid="device-list-backup" prop:value=move || backup.get() on:input=move |ev|backup.set(event_target_value(&ev)) />
@@ -452,7 +444,7 @@ mod browser {
                         busy.set(true); error.set(String::new()); let text=backup.get_untracked();
                         leptos::task::spawn_local(async move {
                             match GuestListHandle::restore(&text).await {
-                                Ok(h) => {let id=h.id();h.close();go.try_with_value(|go|go(&format!("/list/device/{id}?labs=lists-sync"),Default::default()));}
+                                Ok(h) => {let id=h.id();h.close();go.try_with_value(|go|go(&format!("/list/device/{id}"),Default::default()));}
                                 Err(e) => {let _=error.try_set(e);}
                             }
                             let _=busy.try_set(false);
@@ -524,11 +516,11 @@ mod browser {
             });
         });
         view! {
-            <Show when=move || loaded.with(Option::is_none)><a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline mb-2" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a></Show>
+            <Show when=move || loaded.with(Option::is_none)><a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline mb-2" href="/list">{t!(i18n, guest_workspace_back)}</a></Show>
             <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
             <Show when=move ||account_required.get()><div class="panel rounded-xl p-5 space-y-3" data-testid="list-online-account-required">
                 <p>{t!(i18n,online_account_required)}</p>
-                <a class="btn-primary" rel="external" href=move || format!("/login?next={}",String::from(js_sys::encode_uri_component(&format!("/list/device/{}?labs=lists-sync",params.with(|p|p.get("device_id").unwrap_or_default())))))>{t!(i18n,lists_device_sign_in)}</a>
+                <a class="btn-primary" rel="external" href=move || format!("/login?next={}",String::from(js_sys::encode_uri_component(&format!("/list/device/{}",params.with(|p|p.get("device_id").unwrap_or_default())))))>{t!(i18n,lists_device_sign_in)}</a>
             </div></Show>
             {move || loaded.get().map(|handle| view! { <DeviceEditor handle /> })}
         }
@@ -904,7 +896,6 @@ mod browser {
             set_sort: Callback::new(move |spec| sort.set(spec)),
         };
         let highlighted = crate::components::cart::use_changed_row_highlight(source.rows);
-        let legacy_cart = use_legacy_cart();
         let name = Signal::derive(move || {
             revision.track();
             handle.with_value(|h| h.meta().name)
@@ -928,12 +919,6 @@ mod browser {
                     status_testid="device-list-status"
                     primary=move || view! {
                         <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
-                        <Show when=move || legacy_cart.get() && !selected.get().is_empty()>
-                            <button class="btn-secondary" on:click=move |_| {
-                                apply.run(Edit::RemoveMany(selected.get_untracked().into_iter().collect()));
-                                selected.set(HashSet::new());
-                            }>{t!(i18n, guest_workspace_remove_selected)}</button>
-                        </Show>
                         <Show when=move || handle.with_value(|h| h.needs_save_retry())>
                         <button class="btn-secondary" on:click=move |_| {
                             let h = handle.get_value();
@@ -969,7 +954,7 @@ mod browser {
                                         let h = handle.get_value();
                                         leptos::task::spawn_local(async move {
                                             match h.remove().await {
-                                                Ok(()) => { navigate.try_with_value(|go| go("/list?labs=lists-sync", Default::default())); }
+                                                Ok(()) => { navigate.try_with_value(|go| go("/list", Default::default())); }
                                                 Err(e) => { let _ = error.try_set(e); }
                                             }
                                             let _ = deleting.try_set(false);
@@ -1008,11 +993,7 @@ mod browser {
                         <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy trip_active /></Show>
                     </div>
                     <div class:hidden=move || shop.get()>
-                    {move || if legacy_cart.get() {
-                        view! { <ListBuildWorkspace source selected_items=selected highlighted /> }.into_any()
-                    } else {
-                        view! { <ListCart source selected_items=selected highlighted /> }.into_any()
-                    }}
+                    <ListCart source selected_items=selected highlighted />
                     </div>
                 </crate::components::list_workspace_shell::ListWorkspaceShell>
             </section>
@@ -1103,17 +1084,14 @@ mod tests {
 
     #[test]
     fn local_list_opens_the_plain_device_editor() {
-        assert_eq!(
-            device_list_href("abc-123", false),
-            "/list/device/abc-123?labs=lists-sync"
-        );
+        assert_eq!(device_list_href("abc-123", false), "/list/device/abc-123");
     }
 
     #[test]
     fn online_list_resumes_make_online_in_the_editor() {
         assert_eq!(
             device_list_href("abc-123", true),
-            "/list/device/abc-123?labs=lists-sync&make_online=1"
+            "/list/device/abc-123?make_online=1"
         );
     }
 }

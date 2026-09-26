@@ -101,12 +101,12 @@ async function main() {
     await load(`/list/${listId}?labs=lists-sync`);
     await page.deleteCookie({ name: 'LABS', url: base });
     await load('/list?labs=lists-sync');
-    const cardLink = 'a[href^="/list/' + listId + '?"]';
+    const cardLink = 'a[href="/list/' + listId + '"]';
     await page.waitForSelector(cardLink, { visible: true });
-    assert.equal(new URL(await page.$eval(cardLink, node => node.href)).searchParams.get('labs'), 'lists-sync', 'online card preserves URL-only Labs opt-in');
+    assert.equal(new URL(await page.$eval(cardLink, node => node.href)).searchParams.get('labs'), null, 'online card uses the default route');
     await page.click(cardLink);
     await page.waitForSelector(tid('list-name-input'), { visible: true });
-    assert.equal(new URL(page.url()).searchParams.get('labs'), 'lists-sync', 'opening an online card keeps the new workspace');
+    assert.equal(new URL(page.url()).searchParams.get('labs'), null, 'opening an online card needs no Labs flag');
     await cycle('list-access-btn', 'Manage access');
 
     await cycle('list-settings-btn', 'More options');

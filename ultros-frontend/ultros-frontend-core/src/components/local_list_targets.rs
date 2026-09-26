@@ -1,4 +1,4 @@
-//! The "On this device" section of the add-to-list modals (`lists-sync` lab).
+//! The "On this device" section of the add-to-list modals.
 //!
 //! Renders nothing unless [`use_local_lists`] resolves a bridge, so the modals
 //! that embed it look exactly as before for everyone outside the lab. Inside

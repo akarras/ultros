@@ -2,6 +2,7 @@ use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
+#[cfg(feature = "hydrate")]
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::{
@@ -9,20 +10,17 @@ use leptos_router::{
     hooks::{use_navigate, use_params_map},
 };
 
-use crate::api::{
-    create_list, delete_list, edit_list, get_lists_with_permissions, get_login, leave_list,
-    use_list_invite,
-};
+use crate::api::{get_login, use_list_invite};
+#[cfg(feature = "hydrate")]
 use crate::components::list::share_list_modal::ShareListModal;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+#[cfg(feature = "hydrate")]
 use crate::components::modal::Modal;
 use crate::components::skeleton::BoxSkeleton;
-use crate::components::tool_help::{ActionableEmptyState, ToolHeader};
+#[cfg(feature = "hydrate")]
 use crate::components::{tooltip::*, world_name::*, world_picker::*};
-use crate::global_state::home_world::get_price_zone;
-use ultros_api_types::list::{
-    CreateList, List, ListCapabilities, ListPermission, ListWithPermission,
-};
+#[cfg(feature = "hydrate")]
+use ultros_api_types::list::{List, ListCapabilities, ListPermission, ListWithPermission};
 
 #[component]
 pub fn ListInviteAccept() -> impl IntoView {
@@ -123,6 +121,7 @@ pub fn ListInviteAccept() -> impl IntoView {
     }
 }
 
+#[cfg(feature = "hydrate")]
 #[component]
 fn PermissionPill(permission: ListPermission) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
@@ -141,19 +140,19 @@ fn PermissionPill(permission: ListPermission) -> impl IntoView {
     }
 }
 
+#[cfg(feature = "hydrate")]
 pub(crate) const LIST_CARD_CLASS: &str =
     "panel min-w-0 rounded-xl p-4 flex flex-col gap-3 h-full justify-between";
+#[cfg(feature = "hydrate")]
 pub(crate) const LIST_CARD_TITLE: &str =
     "text-lg font-semibold hover:underline break-words min-w-0";
 
-fn list_card_href(id: i32, labs: bool) -> String {
-    if labs {
-        format!("/list/{id}?labs=lists-sync")
-    } else {
-        format!("/list/{id}")
-    }
+#[cfg(any(feature = "hydrate", test))]
+fn list_card_href(id: i32) -> String {
+    format!("/list/{id}")
 }
 
+#[cfg(feature = "hydrate")]
 #[component]
 pub(crate) fn ListCard(
     list: ListWithPermission,
@@ -162,7 +161,6 @@ pub(crate) fn ListCard(
     leave_list_action: Action<(i32, u64), Result<(), crate::error::AppError>>,
     user_id: Signal<Option<u64>>,
 ) -> impl IntoView {
-    let labs = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
     let permission = list.permission;
     let caps = ListCapabilities::from(permission);
     let list_owner = list.list.owner;
@@ -276,7 +274,7 @@ pub(crate) fn ListCard(
                         <>
                             <div class="flex justify-between items-start gap-2">
                                 <div class="flex min-w-0 flex-col gap-1 overflow-hidden">
-                                    <a href=move || list_card_href(list.id, labs.get()) class=LIST_CARD_TITLE>
+                                    <a href=move || list_card_href(list.id) class=LIST_CARD_TITLE>
                                         {move || name()}
                                     </a>
                                     <div class="text-sm text-[color:var(--color-text-muted)] flex items-center gap-2 flex-wrap">
@@ -321,7 +319,7 @@ pub(crate) fn ListCard(
                                 </div>
                             </div>
                             <div class="mt-2 flex justify-start">
-                                <a href=move || list_card_href(list.id, labs.get()) class="btn-secondary min-h-11">
+                                <a href=move || list_card_href(list.id) class="btn-secondary min-h-11">
                                     {t!(i18n, view_items)} <Icon icon=i::AiArrowRightOutlined attr:class="ml-1"/>
                                 </a>
                             </div>
@@ -368,316 +366,13 @@ pub(crate) fn ListCard(
 
 #[component]
 pub fn EditLists() -> impl IntoView {
-    // Decided once per mount, like `ListRoute`: tracking the flag rebuilt
-    // the other index variant inside this route while the router was
-    // already leaving for a URL without (or with) `?labs=`.
-    let enabled = crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC)
-        .get_untracked();
     let i18n = use_i18n();
     view! {
         <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
-        <Show when=move || enabled fallback=|| view! { <LegacyEditLists /> }>
-            <crate::routes::guest_lists::DeviceLists />
-        </Show>
+        <crate::routes::guest_lists::DeviceLists />
     }
-}
-
-#[component]
-fn LegacyEditLists() -> impl IntoView {
-    let device_lists =
-        crate::global_state::labs::use_lab(crate::global_state::labs::LAB_LISTS_SYNC);
-    let i18n = crate::i18n::use_i18n();
-    let delete_list = Action::new(move |id: &i32| delete_list(*id));
-    let edit_list = Action::new(move |list: &List| edit_list(list.clone()));
-    let create_list = Action::new(move |list: &CreateList| create_list(list.clone()));
-    let redeem_invite = Action::new(move |invite_id: &String| use_list_invite(invite_id.clone()));
-    let leave_list_action =
-        Action::new(move |(list_id, user_id): &(i32, u64)| leave_list(*list_id, *user_id));
-    let lists = Resource::new(
-        move || {
-            (
-                delete_list.version().get(),
-                edit_list.version().get(),
-                create_list.version().get(),
-                redeem_invite.version().get(),
-                leave_list_action.version().get(),
-            )
-        },
-        move |_| get_lists_with_permissions(),
-    );
-    let user_resource = Resource::new(|| {}, |_| async move { get_login().await.ok() });
-    let user_id = Signal::derive(move || user_resource.get().flatten().map(|u| u.id));
-    let (creating, set_creating) = signal(false);
-    let (filter, set_filter) = signal(String::new());
-    let (invite_id, set_invite_id) = signal(String::new());
-    let (redeem_open, set_redeem_open) = signal(false);
-
-    let filtered_lists = Signal::derive(move || {
-        let filter_text = filter.get().to_lowercase();
-        lists.get().map(|res| {
-            res.map(|lists| {
-                if filter_text.is_empty() {
-                    lists
-                } else {
-                    lists
-                        .into_iter()
-                        .filter(|l| l.list.name.to_lowercase().contains(&filter_text))
-                        .collect()
-                }
-            })
-        })
-    });
-
-    view! {
-        <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
-        <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
-        <MetaRobotsNoIndex />
-        <div class="flex flex-col gap-4">
-            <Suspense fallback=move || view! { <BoxSkeleton rows=1 /> }>
-                {move || match user_resource.get() {
-                    None => view! { <BoxSkeleton rows=1 /> }.into_any(),
-                    Some(None) => {
-                        if device_lists.get() {
-                            return view! { <p class="text-sm opacity-70">{t!(i18n, lists_device_other_device)}" "<a class="underline" rel="external" href="/login?next=/list?labs=lists-sync">{t!(i18n, lists_device_sign_in)}</a></p> }.into_any();
-                        }
-                        view! {
-                            <ActionableEmptyState
-                                title=t_string!(i18n, lists_empty_title).to_string()
-                                body=t_string!(i18n, lists_empty_body).to_string()
-                                action_href="/login?next=/list"
-                                action_label=t_string!(i18n, sign_in_discord).to_string()
-                                action_external=true
-                            />
-                        }.into_any()
-                    }
-                    Some(Some(_)) => {
-                        view! {
-                            <ToolHeader
-                                title=t_string!(i18n, lists_page_title).to_string()
-                                summary=t_string!(i18n, lists_tool_summary).to_string()
-                                context=t_string!(i18n, lists_tool_context).to_string()
-                                help_href="/help"
-                                help_body=t_string!(i18n, lists_tool_help).to_string()
-                            />
-                            <div class="flex flex-wrap items-center justify-end gap-2">
-                                <button class="btn-secondary" on:click=move |_| set_redeem_open(true)>
-                                    <Icon icon=i::BiLinkRegular />
-                                    {t!(i18n, lists_redeem_invite_label)}
-                                </button>
-                                <button class="btn-primary" on:click=move |_| set_creating(!creating())>
-                                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                                    {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
-                                </button>
-                            </div>
-
-                            {move || {
-                                creating()
-                                    .then(|| {
-                                        let (new_list, set_new_list) = signal("".to_string());
-                                        let (global, _) = get_price_zone();
-                                        let selector = global().map(|global| global.into());
-                                        let (wdr_filter, set_wdr_filter) = signal(selector);
-                                        view! {
-                                            <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
-                                                <h3 class="text-lg font-bold mb-4">{t!(i18n, create_new_list)}</h3>
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                    <div class="flex flex-col gap-1">
-                                                        <label for="new-list-name" class="label font-semibold">{t!(i18n, list_name)}</label>
-                                                        <input
-                                                            class="input w-full"
-                                                            id="new-list-name"
-                                                            placeholder=t_string!(i18n, lists_new_list_placeholder)
-                                                            prop:value=new_list
-                                                            on:input=move |input| set_new_list(event_target_value(&input))
-                                                        />
-                                                    </div>
-                                                    <div class="flex flex-col gap-1">
-                                                        <label class="label font-semibold">{t!(i18n, world_region)}</label>
-                                                        <WorldPicker
-                                                            current_world=wdr_filter.into()
-                                                            set_current_world=set_wdr_filter.into()
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <div class="flex justify-end mt-4">
-                                                    <button
-                                                        prop:disabled=move || wdr_filter().is_none() || new_list().is_empty()
-                                                        class="btn-primary"
-                                                        on:click=move |_| {
-                                                            if let Some(wdr_filter) = wdr_filter() {
-                                                                let list = CreateList {
-                                                                    name: new_list(),
-                                                                    wdr_filter,
-                                                                };
-                                                                create_list.dispatch(list);
-                                                                set_new_list("".to_string());
-                                                                set_creating(false);
-                                                            }
-                                                        }
-                                                    >
-                                                        <Icon icon=i::BiSaveSolid /> {t!(i18n, create_list)}
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        }
-                                    })
-                            }}
-
-                            <div class="relative">
-                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                     <Icon icon=i::AiSearchOutlined attr:class="text-gray-400"/>
-                                </div>
-                                <input
-                                    class="input w-full pl-10"
-                                    aria-label=move || t_string!(i18n, search_your_lists).to_string()
-                                    placeholder=move || t_string!(i18n, search_your_lists).to_string()
-                                    prop:value=filter
-                                    on:input=move |ev| set_filter(event_target_value(&ev))
-                                />
-                            </div>
-
-                            <Show when=redeem_open>
-                                <Modal set_visible=set_redeem_open>
-                                    <div class="flex flex-col gap-4">
-                                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
-                                            {t!(i18n, lists_redeem_invite_label)}
-                                        </h2>
-                                        <div>
-                                            <label for="invite-code-input" class="label text-sm font-semibold">{t!(i18n, lists_invite_code_placeholder)}</label>
-                                            <input
-                                                id="invite-code-input"
-                                                class="input w-full"
-                                                placeholder=t_string!(i18n, lists_invite_code_placeholder)
-                                                prop:value=invite_id
-                                                on:input=move |ev| set_invite_id(event_target_value(&ev))
-                                            />
-                                        </div>
-                                        <div class="flex justify-end">
-                                            <button
-                                                class="btn-primary"
-                                                prop:disabled=move || invite_id().trim().is_empty()
-                                                on:click=move |_| {
-                                                    let id = invite_id().trim().to_string();
-                                                    if !id.is_empty() {
-                                                        redeem_invite.dispatch(id);
-                                                        set_invite_id(String::new());
-                                                        set_redeem_open(false);
-                                                    }
-                                                }
-                                            >
-                                                <Icon icon=i::BiLinkRegular /> {t!(i18n, lists_redeem_button)}
-                                            </button>
-                                        </div>
-                                    </div>
-                                </Modal>
-                            </Show>
-
-                            <Suspense fallback=move || view! { <BoxSkeleton rows=6 /> }>
-                                {move || {
-                                    filtered_lists
-                                        .get()
-                                        .map(|lists| {
-                                            match lists {
-                                                Ok(lists) => {
-                                                    let (owned, shared): (Vec<_>, Vec<_>) = lists
-                                                        .into_iter()
-                                                        .partition(|lwp| ListCapabilities::from(lwp.permission).can_admin);
-                                                    let shared_count = shared.len();
-
-                                                    if owned.is_empty() && shared.is_empty() {
-                                                        view! {
-                                                            <div class="flex flex-col items-center justify-center py-12 text-gray-400">
-                                                                <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" attr:class="mb-4 opacity-50"/>
-                                                                <h3 class="text-xl font-semibold">{t!(i18n, no_lists_found)}</h3>
-                                                                <p>{t!(i18n, create_new_list_to_get_started)}</p>
-                                                            </div>
-                                                        }.into_any()
-                                                    } else {
-                                                        view! {
-                                                            <div class="flex flex-col gap-6">
-                                                                {if owned.is_empty() && shared_count > 0 {
-                                                                    Some(view! {
-                                                                        <p class="italic text-gray-400 text-sm">
-                                                                            {t!(i18n, no_owned_lists_but_shared, count = shared_count)}
-                                                                        </p>
-                                                                    })
-                                                                } else {
-                                                                    None
-                                                                }}
-                                                                {if !owned.is_empty() {
-                                                                    Some(view! {
-                                                                        <section class="flex flex-col gap-3">
-                                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                                                                <For
-                                                                                    each=move || owned.clone()
-                                                                                    key=move |list| list.list.id
-                                                                                    children=move |list| {
-                                                                                        view! {
-                                                                                            <ListCard
-                                                                                                list=list
-                                                                                                edit_list=edit_list
-                                                                                                delete_list=delete_list
-                                                                                                leave_list_action=leave_list_action
-                                                                                                user_id=user_id
-                                                                                            />
-                                                                                        }
-                                                                                    }
-                                                                                />
-                                                                            </div>
-                                                                        </section>
-                                                                    })
-                                                                } else {
-                                                                    None
-                                                                }}
-                                                                {if !shared.is_empty() {
-                                                                    Some(view! {
-                                                                        <section class="flex flex-col gap-3">
-                                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, shared_with_me)}</h2>
-                                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                                                                <For
-                                                                                    each=move || shared.clone()
-                                                                                    key=move |list| list.list.id
-                                                                                    children=move |list| {
-                                                                                        view! {
-                                                                                            <ListCard
-                                                                                                list=list
-                                                                                                edit_list=edit_list
-                                                                                                delete_list=delete_list
-                                                                                                leave_list_action=leave_list_action
-                                                                                                user_id=user_id
-                                                                                            />
-                                                                                        }
-                                                                                    }
-                                                                                />
-                                                                            </div>
-                                                                        </section>
-                                                                    })
-                                                                } else {
-                                                                    None
-                                                                }}
-                                                            </div>
-                                                        }.into_any()
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    view! {
-                                                        <div class="alert alert-error">
-                                                            {move || t!(i18n, error_loading_lists, error = e.to_string())}
-                                                        </div>
-                                                    }.into_any()
-                                                }
-                                            }
-                                        })
-                                }}
-                            </Suspense>
-                        }.into_any()
-                    }
-                }}
-            </Suspense>
-        </div>
-    }.into_any()
 }
 
 #[component]
@@ -697,8 +392,7 @@ mod design_tests {
     use super::list_card_href;
 
     #[test]
-    fn online_card_navigation_preserves_the_active_lists_preview() {
-        assert_eq!(list_card_href(30, true), "/list/30?labs=lists-sync");
-        assert_eq!(list_card_href(30, false), "/list/30");
+    fn online_card_navigation_uses_the_default_workspace() {
+        assert_eq!(list_card_href(30), "/list/30");
     }
 }

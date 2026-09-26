@@ -5,7 +5,7 @@
 // Service-Worker-Allowed: / response header so this is allowed.
 
 // The push worker has origin-wide scope and claims tabs on activation.
-// Labs gates cache preparation, not registration or interception. Without a
+// Visiting Lists prepares the offline cache. Without a
 // prepared generation these fetch handlers remain network-only.
 // Device-list offline support deliberately NEVER stores server-rendered HTML,
 // current_user, account APIs, or market responses. The only navigation fallback

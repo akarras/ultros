@@ -54,11 +54,11 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     assert.equal(url.searchParams.get("excluded-worlds"), exclusions);
     assert.equal(url.searchParams.get("excluded-datacenters"), foreignDc.name);
     assert.equal(url.searchParams.get("buy"), "true");
-    assert.equal(url.searchParams.get("labs"), "lists-sync");
+    assert.equal(url.searchParams.get("labs"), null);
     assert.equal(url.searchParams.get("make_online"), device ? "1" : null);
     assert.equal(url.searchParams.has("recovery"), false);
     // The app appends its own `lang` after navigation; it is not a handoff key.
-    assert.deepEqual([...url.searchParams.keys()].filter(key => key !== "lang").sort(), ["labs", "buy", "travel", "excluded-worlds", "excluded-datacenters", ...(device ? ["make_online"] : [])].sort(), "handoff only forwards explicitly supported list settings");
+    assert.deepEqual([...url.searchParams.keys()].filter(key => key !== "lang").sort(), ["buy", "travel", "excluded-worlds", "excluded-datacenters", ...(device ? ["make_online"] : [])].sort(), "handoff only forwards explicitly supported list settings");
     assert.match(url.search, /excluded-worlds=\d+%2C\d+/i, "world list remains one encoded value");
   }
   async function shop() {
