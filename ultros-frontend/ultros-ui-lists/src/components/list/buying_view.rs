@@ -23,7 +23,7 @@ struct GroupedListing {
     quantity: i32,
     list_item: ListItem,
     hq: bool,
-    listing_id: i32,
+    listing_id: i64,
 }
 
 #[component]

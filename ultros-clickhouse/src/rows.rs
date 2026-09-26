@@ -142,7 +142,7 @@ pub struct ListingEventRow {
     /// identity migration.
     pub listing_id: String,
     /// `active_listing.id`, so a legacy add/remove pair can still be joined.
-    pub pg_listing_id: i32,
+    pub pg_listing_id: i64,
     pub retainer_id: i32,
     pub price_per_unit: u32,
     pub quantity: u16,

@@ -47,7 +47,7 @@ mod tests {
     fn listing(id: i32, hq: bool) -> (ActiveListing, ()) {
         (
             ActiveListing {
-                id,
+                id: id.into(),
                 world_id: 100,
                 item_id: 1,
                 retainer_id: id,
