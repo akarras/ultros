@@ -1414,6 +1414,9 @@ pub fn MarketGrid<T, K, KF, H, F, M>(
     #[prop(optional)] metrics: Vec<GridMetric<T>>,
     #[prop(optional)] on_rows: Option<Callback<Vec<T>>>,
     #[prop(default = true)] show_saved_views: bool,
+    /// Opt in for analyzer result cards; editable grids retain their table interaction.
+    #[prop(optional)]
+    mobile_cards: bool,
     #[prop(default = 40.0)] row_height: f64,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
     /// Forwarded to the grid: data-row index (in the rows `on_rows` reports)
@@ -1753,7 +1756,7 @@ where
         }
     });
     view! {
-        <QueryGrid each columns=all_columns key row_height visible_range=range reveal_index id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
+        <QueryGrid mobile_cards each columns=all_columns key row_height visible_range=range reveal_index id label metrics=all_metrics on_rows=handle_rows show_saved_views measure_version=sizing_version
             header=move |id| {
                 let header = match metric_by_id(id) {
                 Some(metric) if !metric.partial() && sortable.with_value(|ids| ids.contains(&id)) => view! {

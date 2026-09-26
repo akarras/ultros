@@ -170,7 +170,7 @@ fn AddSetToListModal(
             <div class="panel p-6 rounded-xl space-y-4 max-w-2xl">
                 <div class="flex items-start gap-3">
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">
+                        <div data-dialog-title="" class="text-xl font-extrabold text-[color:var(--brand-fg)]">
                             {move || modal_title.get()}
                         </div>
                         <div class="text-[color:var(--color-text-muted)] truncate">

@@ -7,6 +7,8 @@ pub use ultros_ui_crafting::components::add_set_to_list;
 pub use ultros_ui_lists::components::add_to_list;
 pub use ultros_ui_shell::components::account_menu;
 pub use ultros_ui_shell::components::ad;
+#[cfg(debug_assertions)]
+pub mod accessibility_fixture;
 pub mod app_shell;
 pub mod cart;
 pub use ultros_frontend_core::components::guest_alert_evaluator;

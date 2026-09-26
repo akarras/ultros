@@ -502,9 +502,20 @@ fn short_signal(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal, window: Win
 /// window every sale signal reads beside them.
 #[component]
 fn RecipePriceControls(terms: Callback<(), Vec<StripTerm>>, window: MarketWindow) -> impl IntoView {
+    let i18n = use_i18n();
+    let expanded = RwSignal::new(false);
     view! {
         <div class="flex flex-wrap items-center gap-2" data-analyzer-price-controls>
-            <FormulaStrip terms=terms.run(()) />
+            <div class="analyzer-assumptions">
+                <p class="sm:hidden text-sm text-[color:var(--color-text-muted)]">{move || terms.run(()).into_iter().map(|term| {
+                    let mut parts = vec![term.label.get()];
+                    if let Some(select) = term.select { let value = select.value.get(); parts.extend(select.options.into_iter().filter(|(key, _)| *key == value).map(|(_, label)| label)); }
+                    if let Some(place) = term.place { parts.push(place.get()); }
+                    parts.into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ")
+                }).collect::<Vec<_>>().join(" · ")}</p>
+                <button type="button" class="btn-secondary sm:hidden" aria-expanded=move || expanded.get().to_string() on:click=move |_| expanded.update(|value| *value = !*value)>{t!(i18n, a11y_assumptions)}</button>
+                <div class=move || if expanded.get() { "block" } else { "hidden sm:block" }><FormulaStrip terms=terms.run(()) /></div>
+            </div>
             <MarketWindowControl window=window />
         </div>
     }
@@ -5220,11 +5231,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, recipe_analyzer_sell_world_label)}</label>
                     <div class="w-full md:w-auto" data-testid="analyzer-world-picker">
                         <WorldOnlyPicker
+                            label=Signal::derive(move || t_string!(i18n, recipe_analyzer_sell_world_label).to_string())
                             current_world=selected_world.into()
                             set_current_world=set_selected_world
                         />
                     </div>
                 </div>
+                <Show when=move || selected_world.get().is_none()>
+                    <p role="status" class="text-sm text-[color:var(--status-warning)]">{t!(i18n, a11y_world_scope_notice, scope = move || buy_scope_name.get())}</p>
+                </Show>
                 {move || {
                     sell_scope_note
                         .get()

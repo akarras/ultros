@@ -82,7 +82,7 @@ fn AddToListModal(
                         <ItemIcon item_id icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">{t!(i18n, add_to_list_title)}</div>
+                        <div data-dialog-title="" class="text-xl font-extrabold text-[color:var(--brand-fg)]">{t!(i18n, add_to_list_title)}</div>
                         <div class="text-[color:var(--color-text-muted)] truncate">
                             {move || item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string())}
                         </div>

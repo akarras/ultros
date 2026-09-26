@@ -475,7 +475,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     });
     let subject_of = Arc::new(move |(_, row): &(usize, T)| subject(row));
     view! {
-        <MarketGrid id label metrics show_saved_views market subject=subject_of
+        <MarketGrid mobile_cards=true id label metrics show_saved_views market subject=subject_of
             measure_version=measure_version
             on_rows=on_rows.unwrap_or_else(||Callback::new(|_|{}))
             each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))

@@ -207,16 +207,16 @@ fn HomeWorldPicker() -> impl IntoView {
             <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, world_settings)}</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
-                    <label class="text-lg text-[color:var(--color-text)]">{t!(i18n, home_world)}</label>
-                    <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld />
+                    <label for="settings-home-world" class="text-lg text-[color:var(--color-text)]">{t!(i18n, home_world)}</label>
+                    <WorldOnlyPicker input_id="settings-home-world".to_string() label=Signal::derive(move || t_string!(i18n, home_world).to_string()) current_world=homeworld set_current_world=set_homeworld />
                     <p class="text-sm text-gray-400">
                         {t!(i18n, home_world_desc)}
                     </p>
                 </div>
 
                 <div class="space-y-2">
-                    <label class="text-lg text-[color:var(--color-text)]">{t!(i18n, default_price_zone)}</label>
-                    <WorldPicker current_world=price_region set_current_world=set_price_region />
+                    <label for="settings-price-zone" class="text-lg text-[color:var(--color-text)]">{t!(i18n, default_price_zone)}</label>
+                    <WorldPicker input_id="settings-price-zone".to_string() label=Signal::derive(move || t_string!(i18n, default_price_zone).to_string()) current_world=price_region set_current_world=set_price_region />
                     <p class="text-sm text-gray-400">
                         {t!(i18n, default_price_zone_desc_1)}
                         <a

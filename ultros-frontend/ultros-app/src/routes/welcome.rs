@@ -78,6 +78,7 @@ pub fn Welcome() -> impl IntoView {
                     </div>
                     <div class="max-w-md">
                         <WorldOnlyPicker
+                            label=Signal::derive(move || t_string!(i18n, home_world).to_string())
                             current_world=homeworld
                             set_current_world=set_homeworld
                         />
@@ -114,6 +115,7 @@ pub fn Welcome() -> impl IntoView {
                     </div>
                     <div class="max-w-md">
                         <WorldPicker
+                            label=Signal::derive(move || t_string!(i18n, default_price_zone).to_string())
                             current_world=price_region
                             set_current_world=set_price_region
                         />

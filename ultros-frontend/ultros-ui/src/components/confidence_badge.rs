@@ -28,7 +28,7 @@ impl ConfidenceTone {
                 "text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
             }
             Self::Warning => {
-                "text-amber-300 border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
+                "text-[color:var(--status-warning)] border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
             }
             Self::Error => {
                 "text-negative border-red-400/40 bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]"
@@ -111,11 +111,13 @@ pub fn ConfidenceBadge(
     let tone_classes = tone.css_classes();
 
     view! {
+        <crate::components::tooltip::Tooltip tooltip_text=Signal::derive(move || tooltip_full.clone())>
         <span
             class=format!("inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border {}", tone_classes)
-            title=tooltip_full>
-            {label}
+            >
+            {label.clone()}
         </span>
+        </crate::components::tooltip::Tooltip>
     }
     .into_any()
 }
@@ -136,7 +138,7 @@ mod tests {
         );
         assert_eq!(
             ConfidenceTone::Warning.css_classes(),
-            "text-amber-300 border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
+            "text-[color:var(--status-warning)] border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
         );
         assert_eq!(
             ConfidenceTone::Error.css_classes(),

@@ -1463,6 +1463,10 @@ pub fn PriceHistoryChart(
 
     let stats = Signal::derive(move || model.with(|m| m.stats.clone()));
     let hover_index = RwSignal::new(None::<usize>);
+    let data_open = RwSignal::new(false);
+    let keyboard_index = RwSignal::new(None::<usize>);
+    let announced_index: Signal<Option<usize>> =
+        leptos_use::signal_debounced(keyboard_index, 180.0);
 
     // Feeds the undercut pressure pane, which shares the price chart's time
     // axis and hovered bucket rather than tracking its own.
@@ -1701,6 +1705,34 @@ pub fn PriceHistoryChart(
                 range_preset=range_preset
                 set_range_preset=set_range_preset
             />
+            <p class="text-sm text-[color:var(--color-text-muted)]">{t_string!(i18n, a11y_chart_help)}</p>
+            <p role="status" aria-atomic="true" class="sr-only">{move || model.with(|m| {
+                announced_index.get().and_then(|i| m.hover.buckets.get(i)).map(|bucket| {
+                    let prices = bucket.series_values.iter().enumerate().filter_map(|(i, value)| {
+                        let (_, price) = (*value)?;
+                        let series = m.series.get(i)?;
+                        (!series.hidden).then(|| format!("{}: {price:.0} gil", series.name))
+                    }).collect::<Vec<_>>().join(", ");
+                    format!("{}; {}; {}: {}; {}: {}", bucket.label, prices, t_string!(i18n, a11y_units), bucket.volume, t_string!(i18n, a11y_floor), bucket.listing_floor.map(|p| p.to_string()).unwrap_or_else(|| "—".into()))
+                }).unwrap_or_default()
+            })}</p>
+            <button type="button" class="btn-secondary" aria-expanded=move || data_open.get().to_string()
+                on:click=move |_| data_open.update(|open| *open = !*open)>{t_string!(i18n, a11y_chart_data)}</button>
+            <Show when=move || data_open.get()>
+                <div class="overflow-auto max-h-96" tabindex="0" role="region" aria-label=move || t_string!(i18n, a11y_chart_data).to_string()>
+                    <table class="chart-data-table">
+                        <caption>{t_string!(i18n, a11y_chart_data)}</caption>
+                        <thead><tr><th scope="col">{t_string!(i18n, a11y_time)}</th><th scope="col">{t_string!(i18n, a11y_prices)}</th><th scope="col">{t_string!(i18n, a11y_units)}</th><th scope="col">{t_string!(i18n, a11y_floor)}</th></tr></thead>
+                        <tbody>{move || model.with(|m| m.hover.buckets.iter().map(|bucket| {
+                            let prices = bucket.series_values.iter().enumerate().filter_map(|(i, value)| {
+                                let (_, price) = (*value)?; let series = m.series.get(i)?;
+                                (!series.hidden).then(|| format!("{}: {price:.0}", series.name))
+                            }).collect::<Vec<_>>().join("; ");
+                            view! { <tr><th scope="row">{bucket.label.clone()}</th><td>{prices}</td><td>{bucket.volume}</td><td>{bucket.listing_floor.map(|p| p.to_string()).unwrap_or_else(|| "—".into())}</td></tr> }
+                        }).collect_view())}</tbody>
+                    </table>
+                </div>
+            </Show>
             <div
                 role="img"
                 aria-label=move || {
@@ -1747,8 +1779,9 @@ pub fn PriceHistoryChart(
                         "ArrowRight" => { event.prevent_default(); hover_index.update(|i| *i = Some(i.map_or(0, |i| (i + 1).min(len - 1)))); }
                         "ArrowLeft" => { event.prevent_default(); hover_index.update(|i| *i = Some(i.unwrap_or(1).saturating_sub(1))); }
                         "Escape" => hover_index.set(None),
-                        _ => {}
+                        _ => return,
                     }
+                    keyboard_index.set(hover_index.get_untracked());
                 }
                 // `pan-y` keeps vertical page scrolling but hands sideways
                 // gestures to us, so scrubbing the chart doesn't get stolen

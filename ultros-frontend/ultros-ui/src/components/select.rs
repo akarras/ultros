@@ -1,17 +1,22 @@
 use icondata as i;
+#[cfg(feature = "hydrate")]
+use leptos::portal::Portal;
 use leptos::{
     html::{Div, Input},
-    portal::Portal,
     prelude::*,
     reactive::wrappers::write::SignalSetter,
 };
 use web_sys::KeyboardEvent;
+#[cfg(feature = "hydrate")]
 use web_sys::wasm_bindgen::JsCast;
 
 use crate::components::icon::Icon;
+use crate::i18n::{t_string, use_i18n};
 
 #[component]
 pub fn Select<T, EF, L, ViewOut>(
+    #[prop(into)] label: Signal<String>,
+    #[prop(optional_no_strip)] input_id: Option<String>,
     items: Signal<Vec<T>>,
     as_label: L,
     choice: Signal<Option<T>>,
@@ -31,20 +36,17 @@ where
     ViewOut: RenderHtml + 'static,
     L: Fn(&T) -> String + 'static + Copy + Send + Sync,
 {
+    let i18n = use_i18n();
+    let id = RwSignal::new(String::new());
+    Effect::new(move |_| id.set(format!("select-{}", uuid::Uuid::new_v4())));
     let (current_input, set_current_input) = signal("".to_string());
     let (has_focus, set_focused) = signal(false);
     let dropdown = NodeRef::<Div>::new();
     let input = NodeRef::<Input>::new();
     let (highlighted_index, set_highlighted_index) = signal(0_usize);
 
-    #[cfg(feature = "hydrate")]
-    let hovered = leptos_use::use_element_hover(dropdown);
-    #[cfg(not(feature = "hydrate"))]
-    let hovered = Signal::derive(move || false);
-
-    // The dropdown is rendered in a portal at the document body so ancestor
-    // stacking contexts (e.g. `.panel`'s backdrop-filter) and overflow clipping
-    // can't hide it. Position it under the input in viewport coordinates.
+    // Portal into the owning dialog (or body) to escape panel clipping while
+    // remaining inside the native modal's focus boundary.
     #[cfg(feature = "hydrate")]
     let (dropdown_position, update_dropdown_position) = {
         let leptos_use::UseElementBoundingReturn {
@@ -67,6 +69,7 @@ where
     #[cfg(not(feature = "hydrate"))]
     let (dropdown_position, update_dropdown_position) = (Signal::derive(String::new), || {});
 
+    let update_dropdown_position = StoredValue::new(update_dropdown_position);
     let labels = Memo::new(move |_| {
         items.with(|i| {
             i.iter()
@@ -81,7 +84,11 @@ where
     });
     let search_results = Memo::new(move |_| {
         current_input.with(|input| {
-            let input_lower = input.to_lowercase();
+            let input_lower = if choice.get().is_some_and(|value| as_label(&value) == *input) {
+                String::new()
+            } else {
+                input.to_lowercase()
+            };
             labels.with(|s| {
                 s.iter()
                     .filter_map(|(i, label, lower)| {
@@ -95,23 +102,7 @@ where
             })
         })
     });
-    let final_result = Memo::new(move |_| {
-        let search_results = search_results();
-        if search_results.is_empty() {
-            labels().into_iter().map(|(i, l, _)| (i, l)).collect()
-        } else {
-            search_results
-        }
-    });
-
-    Effect::new(move |_| {
-        // Typing re-filters the list, so start again from the top of the new
-        // results. Deliberately keyed on the query rather than on
-        // `final_result` - the latter also fires when the item list itself
-        // arrives, which would yank the highlight away from the open selection.
-        current_input.track();
-        set_highlighted_index(0);
-    });
+    let final_result = search_results;
 
     // Keep the highlighted row inside the scroll viewport. Only the dropdown's
     // own scroll offset is touched (rather than `scroll_into_view`, which can
@@ -123,7 +114,7 @@ where
                 return;
             };
             let Some(item) = document()
-                .get_element_by_id(&format!("select-item-{}", render_idx))
+                .get_element_by_id(&format!("{}-item-{render_idx}", id.get_untracked()))
                 .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
             else {
                 return;
@@ -144,6 +135,7 @@ where
     let keydown = move |e: KeyboardEvent| {
         let key = e.key();
         if key == "ArrowDown" {
+            set_focused(true);
             e.prevent_default();
             set_highlighted_index.update(|i| {
                 let len = final_result.with(|r| r.len());
@@ -153,6 +145,7 @@ where
             });
             scroll_highlight_into_view(highlighted_index.get_untracked());
         } else if key == "ArrowUp" {
+            set_focused(true);
             e.prevent_default();
             set_highlighted_index.update(|i| {
                 let len = final_result.with(|r| r.len());
@@ -161,7 +154,7 @@ where
                 }
             });
             scroll_highlight_into_view(highlighted_index.get_untracked());
-        } else if key == "Enter" {
+        } else if key == "Enter" && has_focus.get_untracked() {
             e.prevent_default();
             let idx = highlighted_index.get_untracked();
             let item_opt = final_result.with_untracked(|res| {
@@ -174,22 +167,11 @@ where
                 set_choice(Some(item));
                 set_current_input("".to_string());
                 set_focused(false);
-                if let Some(element) = document()
-                    .active_element()
-                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                {
-                    let _ = element.blur();
-                }
             }
-        } else if key == "Escape" {
+        } else if key == "Escape" && has_focus.get_untracked() {
             e.prevent_default();
             set_focused(false);
-            if let Some(element) = document()
-                .active_element()
-                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                let _ = element.blur();
-            }
+            set_current_input(String::new());
         }
     };
 
@@ -204,15 +186,9 @@ where
         dropdown_class.unwrap_or("")
     );
 
-    // The collapsed value is rendered as plain text sized to match the input's
-    // own padding. It deliberately does *not* reuse `children` - the dropdown
-    // row decoration (hover fill, row padding, per-item badges) is taller than
-    // the input's content box and spills over the field's border.
+    // The input exposes the selected label as its actual value. Dropdown row
+    // decoration stays separate from that value.
     let current_choice_view = move || choice().map(|c| as_label(&c));
-    let current_prefix_view = move || {
-        let prefix = selected_prefix?;
-        choice().map(|c| prefix.run(c))
-    };
 
     let selected_index_memo = Memo::new(move |_| {
         choice.with(|c| {
@@ -248,18 +224,23 @@ where
                 <div
                     node_ref=dropdown
                     class=combined_dropdown_class.clone()
-                    class:hidden=move || !has_focus() && !hovered()
+                    class:hidden=move || !has_focus()
                     style=move || dropdown_position.get()
+                    id=move || format!("{}-list", id.get())
+                    aria-label=move || label.get()
                     role="listbox"
                 >
-                    <For each=move || final_result.get().into_iter().enumerate() key=move |(_, (l, _))| *l let:data>
+                    <For each=move || final_result.get().into_iter().enumerate() key=move |(render, (original, _))| (*render, *original) let:data>
                         {
                             let (render_idx, (original_idx, label)) = data;
                             let is_selected_selector = is_selected_selector.clone();
                             view! {
                                 <button
-                                    id=format!("select-item-{}", render_idx)
+                                    id=format!("{}-item-{render_idx}", id.get_untracked())
                                     class="w-full text-left scroll-mt-2"
+                                    type="button"
+                                    tabindex="-1"
+                                    on:pointerdown=move |e| e.prevent_default()
                                     role="option"
                                     aria-selected={
                                         let is_selected_selector = is_selected_selector.clone();
@@ -270,12 +251,6 @@ where
                                             set_choice(Some(item));
                                             set_focused(false);
                                             set_current_input("".to_string());
-                                            if let Some(element) = document()
-                                                .active_element()
-                                                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                                            {
-                                                let _ = element.blur();
-                                            }
                                         }
                                     }
                                     on:mousemove=move |_| {
@@ -310,6 +285,7 @@ where
                             }
                         }
                     </For>
+                    <Show when=move || final_result.with(Vec::is_empty)><p role="status" class="p-3">{t_string!(i18n, a11y_no_worlds)}</p></Show>
                 </div>
             }
         }
@@ -319,35 +295,64 @@ where
         <div class="relative">
             <input
                 node_ref=input
+                id=input_id
                 class=combined_input_class
                 class:cursor=move || !has_focus()
+                style:padding-left=move || if !has_focus() && choice.get().is_some() && selected_prefix.is_some() { "2.5rem" } else { "" }
                 on:focus=move |_| {
                     // Re-measure before opening: the bounding signals start at
                     // zero when the node ref was already set before the
                     // watcher's first run (hydration).
-                    update_dropdown_position();
+                    update_dropdown_position.with_value(|update| update());
+                    set_current_input(choice.get_untracked().map(|value| as_label(&value)).unwrap_or_default());
                     set_focused(true);
+                    #[cfg(feature = "hydrate")]
+                    request_animation_frame(move || {
+                        if let Some(input) = input.try_get_untracked().flatten()
+                            && document().active_element().is_some_and(|active| active.is_same_node(Some(&input)))
+                        { input.select(); }
+                    });
                     let render_idx = highlight_current_choice();
                     scroll_highlight_into_view(render_idx);
                 }
-                on:focusout=move |_| set_focused(false)
+                on:focusout=move |_| { set_focused(false); set_current_input(String::new()); }
                 on:input=move |e| {
-                    set_current_input(event_target_value(&e));
+                    // Read the browser value before notifying any reactive
+                    // property bindings, which may restore the previous value.
+                    let value = event_target_value(&e);
+                    set_current_input(value);
+                    set_focused(true);
                     set_highlighted_index(0);
                 }
                 on:keydown=keydown
-                prop:value=current_input
-                // While the field is open the overlay is hidden, so the current
-                // value is echoed as a placeholder - you can still see what you
-                // are replacing as you type over it.
-                prop:placeholder=move || {
-                    if has_focus() { current_choice_view().unwrap_or_default() } else { String::new() }
+                aria-label=move || label.get()
+                aria-controls=move || has_focus().then(|| format!("{}-list", id.get()))
+                on:click=move |_| {
+                    update_dropdown_position.with_value(|update| update());
+                    if !has_focus.get_untracked() {
+                        set_current_input(choice.get_untracked().map(|value| as_label(&value)).unwrap_or_default());
+                        set_focused(true);
+                        highlight_current_choice();
+                        #[cfg(feature = "hydrate")]
+                        request_animation_frame(move || {
+                            if let Some(input) = input.try_get_untracked().flatten()
+                                && document().active_element().is_some_and(|active| active.is_same_node(Some(&input)))
+                            { input.select(); }
+                        });
+                    }
                 }
+                // Serialize the selected value for SSR; the property binding
+                // keeps the editable query current after hydration.
+                value=move || current_choice_view().unwrap_or_default()
+                prop:value=move || if has_focus() { current_input.get() } else { current_choice_view().unwrap_or_default() }
+                // Keep the selection visible when a search query is cleared.
+                placeholder=move || current_choice_view().unwrap_or_else(|| t_string!(i18n, a11y_choose_world).to_string())
                 role="combobox"
                 aria-autocomplete="list"
-                aria-expanded=move || (has_focus() || hovered()).to_string()
-                aria-activedescendant=move || format!("select-item-{}", highlighted_index())
+                aria-expanded=move || (has_focus()).to_string()
+                aria-activedescendant=move || (has_focus() && highlighted_index() < final_result.with(Vec::len)).then(|| format!("{}-item-{}", id.get(), highlighted_index()))
             />
+            {move || if !has_focus() { choice.get().and_then(|value| selected_prefix.map(|prefix| view! { <span aria-hidden="true" class="absolute inset-y-0 left-3 flex items-center pointer-events-none">{prefix.run(value)}</span> })) } else { None }}
             <div
                 class="absolute inset-y-0 right-0 flex items-center pr-3 text-[color:var(--color-text-muted)] pointer-events-none"
                 aria-hidden="true"
@@ -355,7 +360,7 @@ where
                 <Icon
                     icon=i::BsChevronDown
                     attr:class=move || {
-                        if has_focus() || hovered() {
+                        if has_focus() {
                             "transition-transform duration-200 rotate-180"
                         } else {
                             "transition-transform duration-200"
@@ -363,19 +368,16 @@ where
                     }
                 />
             </div>
-            <div
-                class="absolute inset-0 flex items-center gap-2 pl-3 pr-9 py-2 border border-transparent select-none cursor overflow-hidden"
-                class:invisible=move || has_focus() || !current_input().is_empty()
-                on:click=move |_| {
-                    if let Some(input) = input.get() {
-                        let _ = input.focus();
-                    }
-                }
-            >
-                {current_prefix_view}
-                <span class="truncate">{current_choice_view}</span>
-            </div>
-            <Portal>{dropdown_panel.clone()}</Portal>
+            {move || {
+                #[cfg(feature = "hydrate")]
+                { has_focus().then(|| {
+                    let dropdown_panel = dropdown_panel.clone();
+                    let mount = input.get_untracked().and_then(|el| el.closest("dialog").ok().flatten());
+                    view! { <Portal mount=mount.unwrap_or_else(|| document().body().expect("document body").into())>{dropdown_panel.clone()}</Portal> }
+                }) }
+                #[cfg(not(feature = "hydrate"))]
+                { let _ = &dropdown_panel; None::<AnyView> }
+            }}
         </div>
     }
     .into_any()

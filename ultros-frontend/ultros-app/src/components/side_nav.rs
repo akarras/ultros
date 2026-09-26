@@ -121,7 +121,7 @@ pub fn SideNav() -> impl IntoView {
     view! {
         <aside class="side-nav" aria-label=t_string!(i18n, side_nav_aria_primary)>
             <div class="side-nav-brand">
-                <AppLink href="/" attr:class="side-nav-brand-link">
+                <AppLink href="/" attr:class="side-nav-brand-link" attr:aria-label=move || format!("Ultros {}", t_string!(i18n, home))>
                     <Icon icon=i::MdiJellyfish width="1.6em" height="1.6em" />
                     <span class="side-nav-brand-text">"ULTROS"</span>
                 </AppLink>
