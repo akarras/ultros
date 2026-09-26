@@ -32,32 +32,35 @@ struct IngredientState {
 pub fn AddRecipeToList(
     recipe: &'static Recipe,
     #[prop(optional)] initial_hq: bool,
+    #[prop(optional)] show_label: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (modal_visible, set_modal_visible) = signal(false);
     let items = &tracked_data().items;
     let result_item = items.get(&ItemId(recipe.item_result));
     view! {
-        <Tooltip tooltip_text=t_string!(i18n, add_recipe_tooltip).to_string()>
+        <Tooltip tooltip_text=Signal::derive(move || if modal_visible() { String::new() } else { t_string!(i18n, add_recipe_tooltip).to_string() })>
             <button
                 type="button"
-                class="btn-primary"
-                attr:aria-label=move || {
+                class=if show_label { "inline-flex items-center gap-1 text-xs rounded hover:underline focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)]" } else { "btn-primary" }
+                aria-label=move || {
                     result_item
-                        .map(|i| t_string!(i18n, add_recipe_aria_with_name, name = i.name.as_str().to_string()).to_string())
-                        .unwrap_or_else(|| t_string!(i18n, add_recipe_aria_fallback).to_string())
+                        .map(|i| format!("{}: {}", t_string!(i18n, add_recipe_tooltip), i.name.as_str()))
+                        .unwrap_or_else(|| t_string!(i18n, add_recipe_tooltip).to_string())
                 }
-                on:click=move |_| {
+                on:click=move |event| {
+                    event.prevent_default();
+                    event.stop_propagation();
                     set_modal_visible(!modal_visible());
                 }
             >
-                <Icon icon=RiPlayListAddMediaLine />
-                <div class="sr-only">{t!(i18n, add_recipe_sr_only)}</div>
-                <Show when=modal_visible>
-                    <AddRecipeToListModal recipe initial_hq set_visible=set_modal_visible />
-                </Show>
+                <Icon icon=RiPlayListAddMediaLine aria_hidden=true />
+                <span class=if show_label { "" } else { "sr-only" }>{t!(i18n, analyzer_add_ingredients)}</span>
             </button>
         </Tooltip>
+        <Show when=modal_visible>
+            <AddRecipeToListModal recipe initial_hq set_visible=set_modal_visible />
+        </Show>
     }
 }
 

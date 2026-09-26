@@ -1,4 +1,6 @@
 {
+    "analyzer_project_materials": "所持品とフィルターで除外したクリスタルを除くプロジェクト素材を確認",
+    "analyzer_add_ingredients": "素材を追加…",
   "fc_crafting_missing_prices": "一部の必要素材に価格がありません。コストと利益は算出できません。",
   "grid_view_recommended": "おすすめ",
   "grid_view_unrestricted": "制限なし",

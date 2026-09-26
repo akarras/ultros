@@ -8,6 +8,7 @@ use crate::analyzer_kit::{
 };
 use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::use_query_map_or_default;
+use crate::components::item_actions::ItemActions;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
@@ -580,19 +581,20 @@ fn VentureAnalyzerTable(
      let _ = index;
      match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
                                          <a
-                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=format!("/item/{}/{}", world(), item_id)
                                         >
                                             <div class="shrink-0">
                                                 <ItemIcon item_id=item_id icon_size=IconSize::Small />
                                             </div>
                                             <div class="flex flex-col truncate">
-                                                <span class="font-semibold">{item}</span>
+                                                <span class="font-semibold">{item.clone()}</span>
                                                 <span class="text-xs text-[color:var(--color-text-muted)] truncate">
                                                     {t!(i18n, venture_analyzer_quantity_x)} " " {data.quantity}
                                                 </span>
                                             </div>
                                         </a>
+                                    <ItemActions item_id item_name=item />
                                     </div>}.into_any(),
     "profit" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.profit />

@@ -12,6 +12,7 @@ use crate::analyzer_kit::{
     scope::{MarketScope, use_buy_market_scope},
 };
 use crate::columnar_wire::columnar_resource;
+use crate::components::item_actions::ItemActions;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
@@ -28,8 +29,6 @@ use crate::{
     analysis::roi_badge_class,
     api::get_cheapest_listings,
     components::{
-        add_to_list::AddToList,
-        clipboard::*,
         control_bar::ControlBar,
         gil::*,
         item_icon::*,
@@ -505,8 +504,7 @@ fn VendorSellTable(
                                         <div class="shrink-0"><ItemIcon item_id icon_size=IconSize::Small loading=icon_loading /></div>
                                         {item}
                                     </a>
-                                    <AddToList item_id />
-                                    <Clipboard clipboard_text=item.to_string() />
+                                    <ItemActions item_id item_name=item hq=row.hq />
                                 </div>
                             }.into_any(),
                             "world" => view! { <div class="truncate w-full min-w-0">{world_name}</div> }.into_any(),

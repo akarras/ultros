@@ -11,6 +11,7 @@ use crate::analyzer_kit::{
 };
 use crate::columnar_wire::columnar_resource;
 use crate::components::app_link::use_query_map_or_default;
+use crate::components::item_actions::ItemActions;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
@@ -22,8 +23,6 @@ use crate::query_defaults::query_signal;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList,
-        clipboard::*,
         control_bar::ControlBar,
         gil::*,
         icon::Icon,
@@ -836,8 +835,7 @@ GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_st
                                             </div>
                                             {item}
                                         </a>
-                                        <AddToList item_id />
-                                        <Clipboard clipboard_text=item.to_string() />
+                                        <ItemActions item_id item_name=item hq=false />
                                     </div>}.into_any(),
 "profit" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
                                         <Gil amount=data.profit />

@@ -1,4 +1,6 @@
 {
+    "analyzer_project_materials": "检查项目材料，排除已有物品和筛选器忽略的水晶",
+    "analyzer_add_ingredients": "添加材料…",
   "fc_crafting_missing_prices": "部分所需材料没有价格，无法计算成本和利润。",
   "grid_view_recommended": "推荐",
   "grid_view_unrestricted": "不限制",
