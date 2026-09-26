@@ -177,16 +177,19 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_outliers_iqr_in_place_all_outliers() {
+    fn test_filter_outliers_iqr_in_place_wide_symmetric_spread_keeps_all() {
+        // Q1 = -1000, Q3 = 1000: every value sits inside the fences.
         let mut data = vec![-1000, -1000, 0, 0, 1000, 1000];
         let filtered = filter_outliers_iqr_in_place(&mut data);
-        assert!(!filtered.is_empty());
+        assert_eq!(filtered.len(), 6);
     }
 
     #[test]
     fn test_filter_outliers_iqr_in_place_large_numbers() {
+        // Zero IQR: the fences collapse onto the repeated value, so 10M is dropped.
         let mut data = vec![1_000_000, 1_000_000, 1_000_000, 1_000_000, 10_000_000];
         let filtered = filter_outliers_iqr_in_place(&mut data);
         assert_eq!(filtered.len(), 4);
+        assert!(filtered.iter().all(|&v| v == 1_000_000));
     }
 }
