@@ -175,4 +175,18 @@ mod tests {
             assert_eq!(sum1, sum2, "Sum mismatch for input: {:?}", data);
         }
     }
+
+    #[test]
+    fn test_filter_outliers_iqr_in_place_all_outliers() {
+        let mut data = vec![-1000, -1000, 0, 0, 1000, 1000];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert!(!filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_outliers_iqr_in_place_large_numbers() {
+        let mut data = vec![1_000_000, 1_000_000, 1_000_000, 1_000_000, 10_000_000];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert_eq!(filtered.len(), 4);
+    }
 }
