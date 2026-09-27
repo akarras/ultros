@@ -52,12 +52,26 @@ pub fn quantile(values: &[f64], q: f64) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let position = q.clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
+    let mut elements = values.to_vec();
+    let position = q.clamp(0.0, 1.0) * (elements.len() - 1) as f64;
     let lower = position.floor() as usize;
     let upper = position.ceil() as usize;
-    Some(sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower as f64))
+
+    let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+
+    let (lower_val, upper_val) = if lower == upper {
+        let (_, &mut val, _) = elements.select_nth_unstable_by(lower, cmp);
+        (val, val)
+    } else {
+        let (left, &mut upper_val, _) = elements.select_nth_unstable_by(upper, cmp);
+        let lower_val = *left
+            .iter()
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+        (lower_val, upper_val)
+    };
+
+    Some(lower_val + (upper_val - lower_val) * (position - lower as f64))
 }
 
 /// Padded y-axis domain for a price lane, chosen so a handful of extreme
