@@ -85,7 +85,7 @@ Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only 
 **Learning:** In `<For>` components, creating multiple `Memo::new` blocks that each perform an `O(N)` search on a large collection (e.g., finding an item by ID in a `Vec`) can severely degrade performance, resulting in `O(M * C * N)` complexity where `M` is the number of rendered items, `C` is the number of columns/memos, and `N` is the total list size.
 **Action:** Batch the `O(N)` search into a single `Memo::new` that extracts all necessary data into a tuple. Then, use `Signal::derive` to cheaply project the individual fields from that tuple. This reduces the search complexity to `O(M * N)` and avoids creating multiple `Memo` reactive nodes.
 
-## 2024-10-10 - O(N) interpolating quantiles
+## 2026-09-27 - O(N) interpolating quantiles
 **Learning:**
 In `ultros-frontend/ultros-charts/src/data/stats.rs`, the `quantile` function used to fully sort the `Vec<f64>` just to linearly interpolate a single value using two neighbors. Because full sorting is `O(N log N)`, it incurs unnecessary overhead. The two target neighbors can instead be found efficiently in `O(N)` by using `select_nth_unstable_by` to partition around the upper index, and then using `.iter().max_by(...)` on the lower slice to find the preceding adjacent element if they aren't the same.
 **Action:**

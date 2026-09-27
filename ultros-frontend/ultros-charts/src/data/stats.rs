@@ -206,6 +206,15 @@ mod tests {
     }
 
     #[test]
+    fn quantile_interpolates_unsorted_input_with_duplicates() {
+        let values = [4.0, 1.0, 3.0, 2.0];
+        assert_eq!(quantile(&values, 0.25), Some(1.75));
+        assert_eq!(quantile(&values, 0.5), Some(2.5));
+        // Sorted: [1, 2, 2, 5, 5]; 0.625 * 4 = 2.5 -> halfway from 2 to 5.
+        assert_eq!(quantile(&[5.0, 2.0, 1.0, 5.0, 2.0], 0.625), Some(3.5));
+    }
+
+    #[test]
     fn robust_domain_matches_the_plain_extent_without_outliers() {
         // Prices walking 1000..1044 with a 20-wide bucket spread: nothing is
         // anywhere near three IQRs out, so the fence must not bite and the
