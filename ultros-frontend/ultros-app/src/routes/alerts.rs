@@ -20,6 +20,9 @@ pub fn Alerts() -> impl IntoView {
     let tab_btn = move |id: &'static str, label: String| {
         view! {
             <button
+                type="button"
+                role="tab"
+                aria-selected=move || (tab.get() == id).to_string()
                 class=move || if tab.get() == id { "btn" } else { "btn-ghost" }
                 on:click=move |_| set_tab.set(id)
             >
@@ -65,7 +68,7 @@ pub fn Alerts() -> impl IntoView {
 
                             <GuestAlertAdoptionBanner compact=false />
 
-                            <div class="flex gap-2 mt-4">
+                            <div class="flex gap-2 mt-4" role="tablist" aria-label=t_string!(i18n, alerts_page_heading).to_string()>
                                 {tab_btn("endpoints", t_string!(i18n, alerts_tab_endpoints).to_string())}
                                 {tab_btn("rules", t_string!(i18n, alerts_tab_rules).to_string())}
                                 {tab_btn("history", t_string!(i18n, alerts_tab_history).to_string())}
