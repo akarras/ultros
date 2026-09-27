@@ -685,24 +685,32 @@
   // script, or SSR HTML on ultros.app — none of which are on the host list)
   // fails the check and is preserved, so a real Ultros bug can never be swept
   // up. A frameless error is left untouched (nothing proves it third-party).
+  // `<anonymous>` frames (eval / CDP-injected code with no script URL — a
+  // headless crawler's monkey-patched addEventListener the beacon calls into,
+  // GlitchTip #7971) are neutral: Ultros never evals, so they are not ours,
+  // but they prove nothing either, so at least one frame must still be on a
+  // third-party host.
   function isThirdPartyScriptError(event) {
     try {
       var ex = firstException(event);
       if (!ex) return false;
       var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
       if (frames.length === 0) return false;
+      var sawThirdParty = false;
       for (var i = 0; i < frames.length; i++) {
         var f = frames[i] || {};
         var abs = typeof f.absPath === "string" ? f.absPath : "";
         var fname = typeof f.filename === "string" ? f.filename : "";
         if (
-          !ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(abs) &&
-          !ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(fname)
+          ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(abs) ||
+          ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(fname)
         ) {
+          sawThirdParty = true;
+        } else if (abs !== "<anonymous>" || fname !== "<anonymous>") {
           return false;
         }
       }
-      return true;
+      return sawThirdParty;
     } catch (_) {
       /* never let the filter throw */
     }

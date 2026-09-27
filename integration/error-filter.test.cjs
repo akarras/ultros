@@ -1184,6 +1184,113 @@ const cases = [
     },
     expectDrop: true,
   },
+  // The Cloudflare beacon calling addEventListener on a page where a headless
+  // crawler (UA "pc", Baidu referer, `[jshost]` console breadcrumbs) had
+  // monkey-patched it with an injected `addEL_hook` — GlitchTip #7971. The two
+  // innermost frames are the crawler's eval'd hook, reported as `<anonymous>`
+  // (no URL: CDP / eval-injected code, never an Ultros script). Every other
+  // frame is on the beacon host, so it is still external noise.
+  {
+    name: "a beacon error thrown inside a crawler's injected <anonymous> hook is dropped",
+    ua: "pc",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Cannot read properties of null (reading 'tagName')",
+            mechanism: {
+              type: "auto.browser.global_handlers.onerror",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495",
+                  absPath:
+                    "https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495",
+                  function: "?",
+                },
+                {
+                  filename: "/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495",
+                  absPath:
+                    "https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495",
+                  function: "F",
+                },
+                {
+                  filename: "<anonymous>",
+                  absPath: "<anonymous>",
+                  function: "top.addEventListener",
+                },
+                {
+                  filename: "<anonymous>",
+                  absPath: "<anonymous>",
+                  function: "addEL_hook",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // SAFETY: `<anonymous>` frames alone prove nothing about origin — at least
+  // one frame must be on a known third-party host.
+  {
+    name: "an error whose frames are ALL <anonymous> is preserved (no third-party proof)",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Cannot read properties of null (reading 'tagName')",
+            stacktrace: {
+              frames: [
+                { filename: "<anonymous>", absPath: "<anonymous>", function: "a" },
+                { filename: "<anonymous>", absPath: "<anonymous>", function: "b" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // SAFETY: an <anonymous> hook plus a beacon frame plus one of OUR frames is
+  // still a mixed stack and must report.
+  {
+    name: "beacon + <anonymous> + an app/pkg frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "x is not a function",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/pkg/97f9168/ultros.js",
+                  absPath: "https://ultros.app/pkg/97f9168/ultros.js",
+                  function: "c",
+                },
+                {
+                  filename: "/beacon.min.js/v451",
+                  absPath:
+                    "https://static.cloudflareinsights.com/beacon.min.js/v451",
+                  function: "o",
+                },
+                { filename: "<anonymous>", absPath: "<anonymous>", function: "addEL_hook" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   // SAFETY: a mixed stack that reaches even one of our own frames is a real
   // Ultros bug (a third-party callback into our code, or vice-versa) and MUST
   // report — the all-frames-third-party gate preserves it.
