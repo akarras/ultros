@@ -10,6 +10,7 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::columnar_wire::columnar_resource;
+use crate::components::item_actions::ItemActions;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
@@ -744,19 +745,20 @@ fn LeveAnalyzerTable(
      let _ = index;
      match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
                                          <a
-                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=format!("/item/{}/{}", world(), item_id.0)
                                         >
                                             <div class="shrink-0">
                                                 <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
                                             </div>
                                             <div class="flex flex-col truncate">
-                                                <span class="font-semibold">{leve_name}</span>
+                                                <span class="font-semibold">{item.clone()} " ×" {data.item_count}</span>
                                                 <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                    {item} {t!(i18n, leve_analyzer_quantity_x)} {data.item_count}
+                                                    {leve_name}
                                                 </span>
                                             </div>
                                         </a>
+                                        <ItemActions item_id=item_id.0 item_name=item hq=data.hq quantity=i32::try_from(data.item_count).unwrap_or(i32::MAX) />
                                     </div>}.into_any(),
     "profit" => view! {<div  class="text-right w-full min-w-0">
                                         <Gil amount=data.profit />

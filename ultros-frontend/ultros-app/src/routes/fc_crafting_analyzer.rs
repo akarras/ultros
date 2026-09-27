@@ -17,6 +17,7 @@ use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
     compute_ingredient_cost, vendor_price_map,
 };
+use crate::components::item_actions::ItemActions;
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
@@ -68,6 +69,7 @@ use ultros_api_types::{
     world::World,
     world_helper::WorldHelper,
 };
+use ultros_ui_crafting::components::add_set_to_list::AddSetToList;
 use xiv_gen::{
     CompanyCraftPartId, CompanyCraftProcessId, CompanyCraftSequence, CompanyCraftSupplyItemId,
     ItemId,
@@ -77,6 +79,7 @@ use xiv_gen::{
 struct MaterialInfo {
     item_id: ItemId,
     total_quantity: i32,
+    purchase_quantity: i32,
     unit_cost: i32,
     unpriced: bool,
 }
@@ -313,6 +316,11 @@ fn calculate_fc_project_cost<P: PriceLookup + ?Sized>(
         material_infos.push(MaterialInfo {
             item_id,
             total_quantity: quantity,
+            purchase_quantity: if is_shard && !matches!(opts.shards, ShardsMode::IncludeMarket) {
+                0
+            } else {
+                line.used_from_market
+            },
             unit_cost: line.unit_price,
             unpriced: unpriced_material(
                 line.used_from_market,
@@ -767,36 +775,42 @@ fn FCCraftingAnalyzerTable(
                                         )
                                     })
                                     .collect::<Vec<_>>();
+                                let material_entries = Signal::stored(data.materials.iter()
+                                    .filter(|material| material.purchase_quantity > 0)
+                                    .map(|material| (material.item_id, material.purchase_quantity))
+                                    .collect::<Vec<_>>());
+                                let material_subject = Signal::stored(item.clone());
 
          let _ = index;
-         match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
-                                            <div class="flex flex-row items-center gap-2 min-w-0 w-full">
-                                                <a
-                                                    class="shrink-0 hover:text-brand-300 transition-colors"
-                                                    href=format!("/item/{}/{}", world(), item_id.0)
-                                                >
-                                                    <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                                </a>
-                                                <div class="flex flex-col min-w-0">
-                                                    <a
-                                                        class="truncate hover:text-brand-300 transition-colors"
-                                                        href=format!("/item/{}/{}", world(), item_id.0)
-                                                    >
-                                                        {item}
-                                                    </a>
-                                                    <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
-                                                        <div class="flex flex-col gap-1">
-                                                            {material_rows.clone().into_iter().map(|(name, qty, unit_cost)| view! {
-                                                                <div class="flex justify-between gap-3">
-                                                                    <span class="truncate">{qty} "x " {name}</span>
-                                                                    <Gil amount=unit_cost />
-                                                                </div>
-                                                            }).collect_view()}
-                                                        </div>
-                                                    </ResultBreakdownDisclosure>
-                                                </div>
-                                            </div>
-                                        </div>}.into_any(),
+         match id {"item" => view! {
+            <div class="flex flex-col gap-1 w-full min-w-0">
+                <div class="flex items-center gap-1 min-w-0">
+                    <a class="flex items-center gap-2 min-w-0 hover:text-brand-300 transition-colors"
+                       href=format!("/item/{}/{}", world(), item_id.0)>
+                        <span class="shrink-0"><ItemIcon item_id=item_id.0 icon_size=IconSize::Small /></span>
+                        <span class="truncate" title=item.clone()>{item.clone()}</span>
+                    </a>
+                    <ItemActions item_id=item_id.0 item_name=item hq=data.market_hq />
+                </div>
+                <div class="flex items-center gap-2 pl-8">
+                    <AddSetToList compact=true
+                        button_label=t_string!(i18n, analyzer_add_ingredients).to_string()
+                        tooltip=t_string!(i18n, analyzer_project_materials).to_string()
+                        modal_title=t_string!(i18n, job_set_detail_add_materials_modal_title).to_string()
+                        subject=material_subject entries=material_entries
+                    />
+                    <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
+                        <div class="flex flex-col gap-1">
+                            {material_rows.clone().into_iter().map(|(name, qty, unit_cost)| view! {
+                                <div class="flex justify-between gap-3">
+                                    <span class="truncate">{qty} "x " {name}</span>
+                                    <Gil amount=unit_cost />
+                                </div>
+                            }).collect_view()}
+                        </div>
+                    </ResultBreakdownDisclosure>
+                </div>
+            </div>}.into_any(),
         "profit" => view! {<div  class="text-right w-full min-w-0">
                                             {if data.complete_prices() { view! { <Gil amount=data.profit /> }.into_any() } else { "—".into_any() }}
                                         </div>}.into_any(),
@@ -1007,6 +1021,51 @@ mod test {
     use super::*;
 
     #[test]
+    fn project_shopping_quantities_deduct_owned_materials() {
+        struct OneOfEach;
+        impl OnHand for OneOfEach {
+            fn available(&self, _item: ItemId) -> i32 {
+                1
+            }
+            fn consume(&self, _item: ItemId, _qty: i32) {}
+        }
+        let data = xiv_gen_db::data();
+        let project = data
+            .company_craft_sequences
+            .values()
+            .find(|project| project.result_item == 9462)
+            .expect("Aetherial Wheel Stand fixture");
+        let prices = CheapestListingsMap {
+            map: HashMap::new(),
+        };
+        let options = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &OneOfEach,
+            vendor_prices: None,
+        };
+        let (_, materials, _, _) = calculate_fc_project_cost(project, &prices, data, &options);
+        assert!(!materials.is_empty());
+        for material in materials {
+            let crystal = data
+                .items
+                .get(&material.item_id)
+                .unwrap()
+                .item_search_category
+                == CRYSTAL_SEARCH_CATEGORY;
+            assert_eq!(
+                material.purchase_quantity,
+                if crystal {
+                    0
+                } else {
+                    (material.total_quantity - 1).max(0)
+                }
+            );
+        }
+    }
+
+    #[test]
     fn missing_purchase_prices_are_not_confused_with_on_hand_or_excluded_materials() {
         assert!(unpriced_material(3, 0, false));
         assert!(
@@ -1025,6 +1084,7 @@ mod test {
         let material = |unpriced| MaterialInfo {
             item_id: ItemId(1),
             total_quantity: 3,
+            purchase_quantity: 3,
             unit_cost: 0,
             unpriced,
         };

@@ -26,40 +26,61 @@ use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 pub fn AddToList(
     #[prop(into)] item_id: Signal<i32>,
     #[prop(optional, into)] class: Option<String>,
+    #[prop(optional)] initial_hq: bool,
+    #[prop(default = 1)] initial_quantity: i32,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (modal_visible, set_modal_visible) = signal(false);
     let class = class.unwrap_or("btn-primary".to_string());
+    let label = move || {
+        let data = tracked_data();
+        let name = data
+            .items
+            .get(&ItemId(item_id()))
+            .map(|i| i.name.as_str())
+            .unwrap_or_default();
+        format!(
+            "{}: {}{}",
+            t_string!(i18n, add_to_list_aria_label),
+            name,
+            if initial_hq { " (HQ)" } else { "" }
+        )
+    };
     view! {
-        <Tooltip tooltip_text=t_string!(i18n, add_to_list_tooltip).to_string()>
+        <Tooltip tooltip_text=Signal::derive(move || if modal_visible() { String::new() } else { label() })>
             <button
+                type="button"
                 class=class.clone()
-                attr:aria-label=t_string!(i18n, add_to_list_aria_label).to_string()
-                on:click=move |_| {
+                aria-label=label
+                on:click=move |event| {
+                    event.prevent_default();
+                    event.stop_propagation();
                     set_modal_visible(!modal_visible());
                 }
             >
-                <Icon icon=RiPlayListAddMediaLine />
+                <Icon icon=RiPlayListAddMediaLine aria_hidden=true />
                 <div class="sr-only">{t!(i18n, add_to_list_sr_only)}</div>
-                <Show when=modal_visible>
-                    <AddToListModal item_id set_visible=set_modal_visible />
-                </Show>
             </button>
         </Tooltip>
+        <Show when=modal_visible>
+            <AddToListModal item_id initial_hq initial_quantity set_visible=set_modal_visible />
+        </Show>
     }
 }
 
 #[component]
 fn AddToListModal(
     item_id: Signal<i32>,
+    initial_hq: bool,
+    initial_quantity: i32,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let items = &tracked_data().items;
     let item = move || items.get(&ItemId(item_id()));
     let lists = Resource::new(move || {}, move |_| get_lists_with_permissions());
-    let (hq, set_hq) = signal(false);
-    let (quantity, set_quantity) = signal(1);
+    let (hq, set_hq) = signal(initial_hq);
+    let (quantity, set_quantity) = signal(initial_quantity.max(1));
     let quantity_id = move || format!("add-to-list-qty-{}", item_id());
     // The same row the account-list buttons build, read at click time.
     let local_items = Callback::new(move |()| {
