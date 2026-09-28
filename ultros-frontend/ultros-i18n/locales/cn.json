@@ -2747,6 +2747,7 @@
     "npc_map_zoom_in": "放大",
     "npc_map_zoom_out": "缩小",
     "npc_map_reset": "重置视图",
+    "npc_other_catalog_items": "另外出售或兑换 {{ count }} 件物品",
     "vendor_sell": "NPC出售",
     "vendor_sell_desc": "查找NPC收购价高于购买成本的市场出品",
     "vendor_sell_meta_title": "NPC出售 - Ultros",

@@ -2747,6 +2747,7 @@
     "npc_map_zoom_in": "Zoom avant",
     "npc_map_zoom_out": "Zoom arrière",
     "npc_map_reset": "Réinitialiser la vue",
+    "npc_other_catalog_items": "{{ count }} autres objets vendus ou échangés",
     "vendor_sell": "Vente au PNJ",
     "vendor_sell_desc": "Trouvez des annonces qui se revendent à un PNJ plus cher qu'elles ne coûtent",
     "vendor_sell_meta_title": "Vente au PNJ - Ultros",

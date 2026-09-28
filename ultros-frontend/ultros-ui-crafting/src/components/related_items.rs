@@ -801,7 +801,10 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                             view! {
                                 <div class="group flex flex-col gap-2 panel p-3">
                                     <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
-                                    <super::npc_locations::NpcLinkList npcs=npcs.clone() />
+                                    <super::npc_locations::NpcLinkList
+                                        npcs=npcs.clone()
+                                        current_item=ItemId(item_id())
+                                    />
                                     <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
                                         <span class="font-semibold text-brand-300">{t!(i18n, related_items_costs_label)}</span>
                                         {

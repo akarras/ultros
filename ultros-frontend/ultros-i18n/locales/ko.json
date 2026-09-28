@@ -2747,6 +2747,7 @@
     "npc_map_zoom_in": "확대",
     "npc_map_zoom_out": "축소",
     "npc_map_reset": "보기 초기화",
+    "npc_other_catalog_items": "판매 또는 교환하는 다른 아이템 {{ count }}개",
     "vendor_sell": "NPC 판매",
     "vendor_sell_desc": "구매 비용보다 NPC 판매가가 높은 시장 매물 찾기",
     "vendor_sell_meta_title": "NPC 판매 - Ultros",

@@ -2747,6 +2747,7 @@
     "npc_map_zoom_in": "Vergrößern",
     "npc_map_zoom_out": "Verkleinern",
     "npc_map_reset": "Ansicht zurücksetzen",
+    "npc_other_catalog_items": "{{ count }} weitere verkaufte oder getauschte Gegenstände",
     "vendor_sell": "Händlerverkauf",
     "vendor_sell_desc": "Finde Marktangebote, die ein NPC-Händler für mehr ankauft, als sie kosten",
     "vendor_sell_meta_title": "Händlerverkauf - Ultros",

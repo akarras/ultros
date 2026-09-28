@@ -2747,6 +2747,7 @@
     "npc_map_zoom_in": "拡大",
     "npc_map_zoom_out": "縮小",
     "npc_map_reset": "表示をリセット",
+    "npc_other_catalog_items": "販売・交換できるその他のアイテム：{{ count }}件",
     "vendor_sell": "NPC売却",
     "vendor_sell_desc": "購入価格よりNPC売却価格が高い出品を探す",
     "vendor_sell_meta_title": "NPC売却 - Ultros",
