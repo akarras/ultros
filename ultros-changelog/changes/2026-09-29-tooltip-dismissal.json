@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Tooltips close when you move away",
+  "blurb": "Moving across grid cells no longer leaves tooltips piled up on the screen. You can still hover over a tooltip to keep it open while reading."
+}

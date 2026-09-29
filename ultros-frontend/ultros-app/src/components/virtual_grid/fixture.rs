@@ -299,7 +299,23 @@ mod development {
             <QueryGrid mobile_cards=query.with_untracked(|q| q.get("cards").as_deref() == Some("true")) id="fixture-grid" label="Grid fixture" each=rows columns measure_version
                 key=|r:&(usize,u32)|r.0
                 header=move |id|view!{<button on:click=move |_|sorts.update(|s|*s+=1)>{id}</button>}.into_any()
-                view=move |row,id|view!{<div>{move || text(&row,id)}</div>}.into_any()
+                view=move |row,id| {
+                    if matches!(id, "c00" | "c01") {
+                        // Immediate help and delayed item-style cards share
+                        // the real hover lifecycle, without market data.
+                        view! {
+                            <ultros_ui::components::hover_card::HoverCard
+                                description=Signal::derive(move || format!("Help for row {} / {id}", row.0))
+                                open_delay_ms=if id == "c01" { 300 } else { 0 }
+                                content=move || view! { <div class="bg-black text-white p-4">{format!("Help for row {} / {id}", row.0)}</div> }
+                            >
+                                <span data-grid-tooltip>{move || text(&row,id)}</span>
+                            </ultros_ui::components::hover_card::HoverCard>
+                        }.into_any()
+                    } else {
+                        view!{<div>{move || text(&row,id)}</div>}.into_any()
+                    }
+                }
                 measure=move |row,id|(text(row,id),32.0)
             />
         }
