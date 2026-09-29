@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Retainer listings and undercuts update themselves",
+  "blurb": "Your retainer listings and undercuts pages now follow the market boards your retainers are actually on and refresh as prices move, with the same live pill the other tools use. The old \"this data may be stale, refresh the page\" notice is gone, because it no longer is. The undercuts page watches every item your retainers list rather than only the ones already undercut, so an item that is cheapest right now still tells you the moment someone goes under it.",
+  "link": "/retainers/undercuts"
+}

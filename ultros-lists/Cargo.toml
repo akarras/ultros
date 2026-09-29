@@ -1,0 +1,15 @@
+[package]
+name = "ultros-lists"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Server side of the local-first list document: sync, edits and activity."
+
+[dependencies]
+serde_json = { workspace = true }
+tracing = { workspace = true }
+ultros-alerts = { path = "../ultros-alerts" }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-db = { path = "../ultros-db" }
+ultros-list-doc = { path = "../ultros-list-doc" }
+ultros-server-core = { path = "../ultros-server-core" }

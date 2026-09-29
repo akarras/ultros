@@ -1,0 +1,1449 @@
+--- a/src/computed/inner.rs
++++ b/src/computed/inner.rs
+@@ -8,7 +8,8 @@
+ use or_poisoned::OrPoisoned;
+ use std::{
+     fmt::Debug,
+-    sync::{Arc, RwLock, RwLockWriteGuard},
++    sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard},
++    thread::{self, ThreadId},
+ };
+ 
+ pub struct MemoInner<T, S>
+@@ -21,6 +22,76 @@
+     pub(crate) fun: Arc<dyn Fn(Option<T>) -> (T, bool) + Send + Sync>,
+     pub(crate) owner: Owner,
+     pub(crate) reactivity: RwLock<MemoInnerReactivity>,
++    /// Serializes recomputation across threads. See [`MemoInner::update_if_necessary`].
++    pub(crate) compute: ComputeLock,
++}
++
++/// Tracks which thread (if any) is currently running a memo's closure.
++///
++/// `update_if_necessary` `take()`s the cached value out of `value` while the
++/// closure runs and only puts the new value back afterwards. Without this
++/// lock two threads could both observe the memo as needing an update and race
++/// through that window, or one thread could read the memo *between* the other
++/// thread's `take()` and its store and find nothing there -- which is what
++/// `ArcMemo::try_read_untracked` used to `unwrap()` on. On a multi-threaded
++/// server (tokio + streaming SSR, where `Suspense` spawns effects onto worker
++/// threads) that race is hit routinely.
++///
++/// The owning thread id is recorded so a reentrant read from inside the
++/// memo's own closure is still detected (and reported) rather than deadlocking.
++#[derive(Default)]
++pub(crate) struct ComputeLock {
++    owner: Mutex<Option<ThreadId>>,
++    released: Condvar,
++}
++
++impl ComputeLock {
++    /// Blocks until no *other* thread is computing, then claims the lock.
++    ///
++    /// Returns `None` when the current thread already holds it (a reentrant
++    /// recompute), in which case the caller proceeds without a guard.
++    pub(crate) fn acquire(&self) -> Option<ComputeGuard<'_>> {
++        let me = thread::current().id();
++        let mut owner = self.owner.lock().or_poisoned();
++        loop {
++            match *owner {
++                Some(id) if id == me => return None,
++                // Single-threaded targets (wasm32-unknown-unknown) can never
++                // reach this arm, so `Condvar::wait` being unsupported there
++                // is not a concern.
++                Some(_) => owner = self.released.wait(owner).or_poisoned(),
++                None => {
++                    *owner = Some(me);
++                    return Some(ComputeGuard { lock: self });
++                }
++            }
++        }
++    }
++}
++
++/// Releases the [`ComputeLock`] on drop, including during a panic unwind, so
++/// a closure that panics never leaves other threads waiting forever.
++pub(crate) struct ComputeGuard<'a> {
++    lock: &'a ComputeLock,
++}
++
++/// Mark a failed computation dirty so the next read can retry. Setting Clean
++/// before the closure must not leave an empty cache permanently marked Clean.
++struct RecomputeUnwindGuard<'a>(&'a RwLock<MemoInnerReactivity>);
++
++impl Drop for RecomputeUnwindGuard<'_> {
++    fn drop(&mut self) {
++        if thread::panicking() {
++            self.0.write().or_poisoned().state = ReactiveNodeState::Dirty;
++        }
++    }
++}
++
++impl Drop for ComputeGuard<'_> {
++    fn drop(&mut self) {
++        *self.lock.owner.lock().or_poisoned() = None;
++        self.lock.released.notify_all();
++    }
+ }
+ 
+ pub(crate) struct MemoInnerReactivity {
+@@ -58,6 +129,7 @@
+                 subscribers: SubscriberSet::new(),
+                 any_subscriber,
+             }),
++            compute: ComputeLock::default(),
+         }
+     }
+ }
+@@ -117,8 +189,48 @@
+         }
+ 
+         if needs_update(&self.reactivity) {
++            // Another thread may already be recomputing this memo. Wait for
++            // it rather than racing it: once it finishes, the memo is `Clean`
++            // and the re-check below skips the redundant (and, with the value
++            // already taken, `None`-seeded) second run.
++            //
++            // `None` means *this* thread is already inside the closure -- a
++            // memo reading itself. That was never supported (it used to
++            // recurse until the stack overflowed); now the nested read finds
++            // no value and fails the way a disposed memo does.
++            let Some(compute_guard) = self.compute.acquire() else {
++                return false;
++            };
++            // The recompute we may have waited for stamps `Clean` before it
++            // runs its closure and holds compute until the value is stored,
++            // so `Clean` here means another thread has already brought this
++            // memo up to date. `Dirty` is a change since then, and `Check` is
++            // the walk above having found a changed source without anyone
++            // marking this memo since (an async source reports its change
++            // exactly once) -- both still need the closure.
++            //
++            // This has to be a state check rather than a second
++            // `needs_update`: the walk is not idempotent. `update_if_necessary`
++            // on an async derived *consumes* its dirty flag, so walking the
++            // sources again would clear the flag the first walk raised, and
++            // the async task that wakes to it would find nothing to rerun on
++            // (akarras/ultros#1511, tests/async_source_walk.rs).
++            if self.reactivity.read().or_poisoned().state
++                == ReactiveNodeState::Clean
++            {
++                return false;
++            }
++
+             // No deadlock risk, because we only hold the value lock.
+             let value = self.value.write().or_poisoned().take();
++            // Mark `Clean` *before* running the closure rather than after
++            // it: a source that changes on another thread while the closure
++            // is running marks this memo `Dirty` again, and stamping `Clean`
++            // afterwards would silently discard that update and serve the
++            // stale value until the next change.
++            self.reactivity.write().or_poisoned().state =
++                ReactiveNodeState::Clean;
++            let _unwind = RecomputeUnwindGuard(&self.reactivity);
+ 
+             /// codegen optimisation:
+             fn inner_1(
+@@ -148,10 +260,10 @@
+             /// codegen optimisation:
+             fn inner_2(
+                 changed: bool,
+-                mut reactivity_lock: RwLockWriteGuard<'_, MemoInnerReactivity>,
++                reactivity_lock: RwLockWriteGuard<'_, MemoInnerReactivity>,
+             ) {
+-                reactivity_lock.state = ReactiveNodeState::Clean;
+-
++                // `state` was set to `Clean` before the closure ran and is
++                // deliberately left alone here: see above.
+                 if changed {
+                     let subs = reactivity_lock.subscribers.clone();
+                     drop(reactivity_lock);
+@@ -168,13 +280,21 @@
+                 }
+             }
+             inner_2(changed, reactivity_lock);
++            // Only now -- with the value stored and the state `Clean` -- may
++            // waiting readers proceed.
++            drop(compute_guard);
+ 
+             changed
+         } else {
+             /// codegen optimisation:
+             fn inner(reactivity: &RwLock<MemoInnerReactivity>) -> bool {
+                 let mut lock = reactivity.write().or_poisoned();
+-                lock.state = ReactiveNodeState::Clean;
++                // Only settle a `Check` we just walked. Overwriting a `Dirty`
++                // that another thread stamped in the meantime would drop that
++                // update on the floor.
++                if lock.state == ReactiveNodeState::Check {
++                    lock.state = ReactiveNodeState::Clean;
++                }
+                 false
+             }
+             inner(&self.reactivity)
+--- a/src/computed/arc_memo.rs
++++ b/src/computed/arc_memo.rs
+@@ -328,12 +328,57 @@
+     fn try_read_untracked(&self) -> Option<Self::Value> {
+         self.update_if_necessary();
+ 
+-        Mapped::try_new(Arc::clone(&self.inner.value), |t| {
+-            // safe to unwrap here because update_if_necessary
+-            // guarantees the value is Some
+-            t.as_ref().unwrap().as_borrowed()
+-        })
+-        .map(ReadGuard::new)
++        // `update_if_necessary` takes the cached value out while the memo's
++        // closure runs, so a concurrent reader on another thread can observe
++        // `None` here even though the memo is neither disposed nor broken:
++        // it saw the memo as `Clean` just before a source change made another
++        // thread start recomputing it. Wait for that recompute to land instead
++        // of unwrapping the hole. The `Some` check and the mapped guard share
++        // one read lock, so a recompute cannot slip in between them.
++        loop {
++            #[cfg(test)]
++            tests::read_stage(false);
++            match Plain::try_new(Arc::clone(&self.inner.value)) {
++                Some(guard) if guard.is_some() => {
++                    return Some(ReadGuard::new(Mapped::new_with_guard(
++                        guard,
++                        |t| {
++                            // checked above under the same lock
++                            t.as_ref().unwrap().as_borrowed()
++                        },
++                    )));
++                }
++                // The value has been taken out for a recompute.
++                Some(_) => {}
++                // `try_read` lost to the recomputing thread's brief write
++                // lock. A poisoned value lock is reported as unavailable by
++                // the protected read below.
++                None => {}
++            }
++
++            #[cfg(test)]
++            tests::read_stage(true);
++            // The cache miss and a later ownership observation are not one
++            // snapshot: the writer may already have published and released.
++            // Claim compute before checking the cache again, so another writer
++            // cannot take the value between these observations. None is only
++            // reentrancy (the current thread is computing this memo).
++            let compute_guard = self.inner.compute.acquire()?;
++            let guard = Plain::try_new(Arc::clone(&self.inner.value))?;
++            if guard.is_some() {
++                return Some(ReadGuard::new(Mapped::new_with_guard(
++                    guard,
++                    |t| t.as_ref().unwrap().as_borrowed(),
++                )));
++            }
++            // A computation may have unwound between our initial update and
++            // claiming compute. Its unwind guard restored Dirty. Release both
++            // locks before retrying; the update either publishes or propagates
++            // the computation's panic. Contention is never a retry budget.
++            drop(guard);
++            drop(compute_guard);
++            self.update_if_necessary();
++        }
+     }
+ }
+ 
+@@ -356,3 +401,120 @@
+         ArcMemo::new(move |_| value.get())
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{owner::Owner, traits::Set};
++    use std::{
++        cell::RefCell,
++        sync::{mpsc, Mutex},
++        thread,
++        time::Duration,
++    };
++
++    // Local to the reading thread, so the schedule cannot affect other tests
++    // or the writer's own memo reads. Entirely absent from production builds.
++    type ReadSchedule = Box<dyn FnMut(bool)>;
++    thread_local! {
++        static READ_SCHEDULE: RefCell<Option<ReadSchedule>> = RefCell::new(None);
++    }
++
++    pub(super) fn read_stage(after_miss: bool) {
++        READ_SCHEDULE.with_borrow_mut(|schedule| {
++            if let Some(schedule) = schedule {
++                schedule(after_miss);
++            }
++        });
++    }
++
++    #[test]
++    fn recompute_finishing_after_cache_miss_does_not_dispose_memo() {
++        finish_after_cache_miss(false);
++    }
++
++    #[test]
++    fn recompute_panicking_after_cache_miss_can_be_retried() {
++        finish_after_cache_miss(true);
++    }
++
++    fn finish_after_cache_miss(panic_after_miss: bool) {
++        use std::sync::atomic::{AtomicBool, Ordering};
++
++        let pause_next = Arc::new(AtomicBool::new(false));
++        let owner = Owner::new();
++        owner.set();
++        let source = ArcRwSignal::new(0);
++        let (start_tx, start_rx) = mpsc::channel();
++        let (entered_tx, entered_rx) = mpsc::channel();
++        let (finish_tx, finish_rx) = mpsc::channel();
++        let (done_tx, done_rx) = mpsc::channel();
++        let finish_rx = Mutex::new(finish_rx);
++        let memo = ArcMemo::new({
++            let source = source.clone();
++            let pause_next = Arc::clone(&pause_next);
++            move |_| {
++                let value = source.get();
++                if pause_next.swap(false, Ordering::SeqCst) {
++                    entered_tx.send(()).unwrap();
++                    finish_rx
++                        .lock()
++                        .unwrap()
++                        .recv_timeout(Duration::from_secs(5))
++                        .unwrap();
++                    assert!(!panic_after_miss, "scheduled computation failure");
++                }
++                value
++            }
++        });
++        assert_eq!(memo.get(), 0);
++        let writer = thread::spawn({
++            let memo = memo.clone();
++            move || {
++                for value in start_rx {
++                    source.set(value);
++                    let computed = std::panic::catch_unwind(
++                        std::panic::AssertUnwindSafe(|| memo.get()),
++                    );
++                    if panic_after_miss {
++                        assert!(computed.is_err());
++                    } else {
++                        assert_eq!(computed.unwrap(), value);
++                    }
++                    done_tx.send(()).unwrap();
++                }
++            }
++        });
++        let mut attempt = 0;
++        READ_SCHEDULE.with_borrow_mut(|schedule| {
++            *schedule = Some(Box::new(move |after_miss| {
++                if after_miss {
++                    // Publish the value AND release compute after the cache
++                    // miss, before the reader checks who owns compute.
++                    finish_tx.send(()).unwrap();
++                    done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
++                } else if !panic_after_miss || attempt == 0 {
++                    attempt += 1;
++                    pause_next.store(true, Ordering::SeqCst);
++                    assert!(
++                        attempt <= 2,
++                        "reader did not obtain the published value"
++                    );
++                    start_tx.send(attempt).unwrap();
++                    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
++                }
++            }));
++        });
++        let result =
++            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                memo.get()
++            }));
++        READ_SCHEDULE.with_borrow_mut(|schedule| *schedule = None);
++        writer.join().unwrap();
++        assert!(
++            result.is_ok(),
++            "a completed recompute was mistaken for a disposed memo"
++        );
++        assert!(result.unwrap() > 0);
++    }
++}
+--- a/src/signal/guards.rs
++++ b/src/signal/guards.rs
+@@ -12,6 +12,7 @@
+     marker::PhantomData,
+     ops::{Deref, DerefMut},
+     sync::{Arc, RwLock},
++    time::{Duration, Instant},
+ };
+ 
+ /// A wrapper type for any kind of guard returned by [`Read`](crate::traits::Read).
+@@ -102,11 +103,50 @@
+ }
+ 
+ impl<T: 'static> Plain<T> {
++    /// How long a read waits for a writer on another thread to let go of the
++    /// lock before giving up. A `set`/`update` holds the lock only for the
++    /// duration of the assignment or the closure, but a thread that is
++    /// preempted while holding it can keep it for a scheduler quantum or
++    /// more on a loaded machine, so this is generous.
++    const WRITER_GRACE: Duration = Duration::from_secs(1);
++
+     /// Takes a reference-counted read guard on the given lock.
++    ///
++    /// Returns `None` if the lock is poisoned, or if it stays held for writing
++    /// (or with a writer queued) for longer than [`Self::WRITER_GRACE`].
++    ///
++    /// A plain `try_read` would fail the moment a `get` on this thread
++    /// coincides with a `set` on another, and `get` would then report a live
++    /// signal as disposed. Waiting for the writer rides that out. A writer on
++    /// *this* thread (a signal read from inside its own `update` closure) can
++    /// never release the lock while we wait, so the wait is bounded rather
++    /// than blocking and such a read still fails the way it always has, just
++    /// later. Single-threaded targets skip the wait: there, a failed
++    /// `try_read` is always that reentrant case.
+     pub fn try_new(inner: Arc<RwLock<T>>) -> Option<Self> {
+-        ArcRwLockReadGuardian::try_take(inner)?
+-            .ok()
+-            .map(|guard| Plain { guard })
++        let mut waiting_since = None;
++        let mut attempts = 0u32;
++        loop {
++            match ArcRwLockReadGuardian::try_take(Arc::clone(&inner)) {
++                Some(guard) => return guard.ok().map(|guard| Plain { guard }),
++                None if cfg!(target_arch = "wasm32") => return None,
++                None => {
++                    let since = *waiting_since.get_or_insert_with(Instant::now);
++                    if since.elapsed() >= Self::WRITER_GRACE {
++                        return None;
++                    }
++                    // The writer usually only needs nanoseconds; spin briefly
++                    // before backing off to sleeps so a preempted writer is
++                    // not starved by readers burning the CPU.
++                    attempts += 1;
++                    if attempts <= 16 {
++                        std::thread::yield_now();
++                    } else {
++                        std::thread::sleep(Duration::from_micros(50));
++                    }
++                }
++            }
++        }
+     }
+ }
+ 
+--- a/tests/memo_concurrent.rs
++++ b/tests/memo_concurrent.rs
+@@ -0,0 +1,203 @@
++//! Regression tests for cross-thread reads racing writes.
++//!
++//! Reading a memo from several threads while one of its sources changes must
++//! never observe the "hole" left while another thread is recomputing it
++//! (`arc_memo.rs: called Option::unwrap() on a None value`), and reading a
++//! signal while another thread is writing it must wait for that write rather
++//! than report the signal as disposed.
++
++use reactive_graph::{
++    computed::ArcMemo,
++    owner::Owner,
++    signal::ArcRwSignal,
++    traits::{Get, Set},
++};
++use std::{
++    sync::{
++        atomic::{AtomicBool, AtomicUsize, Ordering},
++        Arc, Mutex,
++    },
++    thread,
++    time::{Duration, Instant},
++};
++
++#[test]
++fn a_panicking_computation_can_be_retried() {
++    let owner = Owner::new();
++    owner.set();
++    let calls = Arc::new(AtomicUsize::new(0));
++    let memo = ArcMemo::new(move |_| {
++        assert_ne!(calls.fetch_add(1, Ordering::SeqCst), 0, "first call fails");
++        7
++    });
++    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
++        || memo.get()
++    ))
++    .is_err());
++    assert_eq!(memo.get(), 7);
++}
++
++#[test]
++fn concurrent_reads_during_recompute_never_panic() {
++    let owner = Owner::new();
++    owner.set();
++
++    let source = ArcRwSignal::new(0u64);
++    let memo = ArcMemo::new({
++        let source = source.clone();
++        move |_| {
++            let value = source.get();
++            // Widen the window in which the cached value is taken out.
++            let start = Instant::now();
++            while start.elapsed() < Duration::from_micros(20) {}
++            value
++        }
++    });
++
++    let panics = Arc::new(Mutex::new(Vec::new()));
++    let stop = Arc::new(AtomicBool::new(false));
++    let readers = (0..4)
++        .map(|_| {
++            let memo = memo.clone();
++            let stop = Arc::clone(&stop);
++            let panics = Arc::clone(&panics);
++            thread::spawn(move || {
++                while !stop.load(Ordering::Relaxed) {
++                    let read = std::panic::catch_unwind(
++                        std::panic::AssertUnwindSafe(|| memo.get()),
++                    );
++                    if let Err(payload) = read {
++                        let message = payload
++                            .downcast_ref::<String>()
++                            .cloned()
++                            .or_else(|| {
++                                payload
++                                    .downcast_ref::<&str>()
++                                    .map(|s| s.to_string())
++                            })
++                            .unwrap_or_else(|| "non-string panic".to_string());
++                        panics.lock().unwrap().push(message);
++                    }
++                }
++            })
++        })
++        .collect::<Vec<_>>();
++
++    let deadline = Instant::now() + Duration::from_secs(2);
++    let mut writes = 0u64;
++    while Instant::now() < deadline {
++        writes += 1;
++        source.set(writes);
++        thread::sleep(Duration::from_micros(30));
++    }
++    stop.store(true, Ordering::Relaxed);
++    for reader in readers {
++        reader.join().unwrap();
++    }
++
++    let panics = panics.lock().unwrap();
++    assert!(
++        panics.is_empty(),
++        "memo reads panicked during recompute: {panics:?}"
++    );
++    assert_eq!(memo.get(), writes);
++}
++
++/// A signal's `get` on one thread that coincides with a `set` on another
++/// used to fail as "already been disposed", because the read is a plain
++/// `try_read` and the writer holds the lock (for as long as the scheduler
++/// lets it). This is what actually tripped
++/// `concurrent_reads_during_recompute_never_panic` on CI
++/// (akarras/ultros#1491): the memo's closure read its source signal at the
++/// moment the test's writer thread was setting it.
++#[test]
++fn signal_reads_during_concurrent_writes_never_panic() {
++    let owner = Owner::new();
++    owner.set();
++
++    let signal = ArcRwSignal::new(0u64);
++    let panics = Arc::new(Mutex::new(Vec::new()));
++    let stop = Arc::new(AtomicBool::new(false));
++    let readers = (0..4)
++        .map(|_| {
++            let signal = signal.clone();
++            let stop = Arc::clone(&stop);
++            let panics = Arc::clone(&panics);
++            thread::spawn(move || {
++                while !stop.load(Ordering::Relaxed) {
++                    let read = std::panic::catch_unwind(
++                        std::panic::AssertUnwindSafe(|| signal.get()),
++                    );
++                    if let Err(payload) = read {
++                        let message = payload
++                            .downcast_ref::<String>()
++                            .cloned()
++                            .or_else(|| {
++                                payload
++                                    .downcast_ref::<&str>()
++                                    .map(|s| s.to_string())
++                            })
++                            .unwrap_or_else(|| "non-string panic".to_string());
++                        panics.lock().unwrap().push(message);
++                    }
++                }
++            })
++        })
++        .collect::<Vec<_>>();
++
++    let deadline = Instant::now() + Duration::from_secs(1);
++    let mut writes = 0u64;
++    while Instant::now() < deadline {
++        writes += 1;
++        signal.set(writes);
++    }
++    stop.store(true, Ordering::Relaxed);
++    for reader in readers {
++        reader.join().unwrap();
++    }
++
++    let panics = panics.lock().unwrap();
++    assert!(
++        panics.is_empty(),
++        "signal reads panicked during writes: {panics:?}"
++    );
++    assert_eq!(signal.get(), writes);
++}
++
++#[test]
++fn reentrant_read_is_reported_not_deadlocked() {
++    use reactive_graph::traits::GetUntracked;
++
++    let owner = Owner::new();
++    owner.set();
++
++    // A memo whose closure reads itself. Never supported; it must fail fast
++    // (an `Option` from `try_get`, a panic from `get`) rather than hang.
++    let slot: Arc<std::sync::Mutex<Option<ArcMemo<u32>>>> =
++        Arc::new(std::sync::Mutex::new(None));
++    let memo = ArcMemo::new({
++        let slot = Arc::clone(&slot);
++        move |_| {
++            let me = slot.lock().unwrap().clone();
++            me.and_then(|m| m.try_get_untracked()).unwrap_or(7)
++        }
++    });
++    *slot.lock().unwrap() = Some(memo.clone());
++
++    let done = Arc::new(AtomicBool::new(false));
++    let worker = thread::spawn({
++        let memo = memo.clone();
++        let done = Arc::clone(&done);
++        move || {
++            let value = memo.get();
++            done.store(true, Ordering::Relaxed);
++            value
++        }
++    });
++    let deadline = Instant::now() + Duration::from_secs(5);
++    while !done.load(Ordering::Relaxed) {
++        assert!(Instant::now() < deadline, "reentrant memo read deadlocked");
++        thread::sleep(Duration::from_millis(5));
++    }
++    assert_eq!(worker.join().unwrap(), 7);
++}
+--- a/tests/async_source_walk.rs
++++ b/tests/async_source_walk.rs
+@@ -0,0 +1,183 @@
++//! Regression test for akarras/ultros#1511: a memo that reads an async
++//! derived must not eat the async derived's dirty flag.
++//!
++//! The graph is the one `ArcResource` builds — an `ArcAsyncDerived` with
++//! manual dependencies on a source `ArcMemo` that reads a chain of memos —
++//! plus the readers a page hangs off it: an effect on one of the chain's
++//! memos (a label), an effect reading the async value directly (a `Suspense`
++//! child), and an effect reading a memo that reads *both* the async value
++//! and another memo of the same root signal (a grid over `rows`).
++//!
++//! When the grid effect runs before the async task, its walk of `rows`
++//! reaches the async derived's `update_if_necessary`, which walks and
++//! recomputes the source memo; that marks the async derived dirty and the
++//! walk reports the change. Walking the same sources a second time — which
++//! the vendored `MemoInner::update_if_necessary` used to do after taking its
++//! compute lock — calls the async derived's `update_if_necessary` again,
++//! and that call *consumes* the dirty flag. The async task then wakes to a
++//! clean node over an already-clean source and never reruns its future:
++//! the resource's key changed and nothing was fetched.
++//!
++//! Run with `--features effects`: `Effect::new` is a no-op without it, and
++//! every shape then passes against the broken `inner.rs` as well.
++
++use any_spawner::Executor;
++use reactive_graph::{
++    computed::{ArcAsyncDerived, ArcMemo, Memo},
++    effect::Effect,
++    graph::{Source, ToAnySubscriber},
++    owner::Owner,
++    signal::ArcRwSignal,
++    traits::{Get, Set, WithUntracked},
++};
++use std::sync::{
++    atomic::{AtomicUsize, Ordering},
++    Arc,
++};
++
++async fn settle() {
++    for _ in 0..8 {
++        Executor::tick().await;
++    }
++}
++
++#[derive(Clone, Copy, Debug)]
++struct Shape {
++    label: bool,
++    view: bool,
++    grid: bool,
++    /// `true` mirrors hydration: the value is already present and the
++    /// future is not run at creation.
++    hydrated: bool,
++}
++
++async fn run(shape: Shape) {
++    let owner = Owner::new();
++    owner.set();
++
++    // The router's URL, and its query-map memo.
++    let url = ArcRwSignal::new((30u16, 0i32));
++    let query_map = Memo::new({
++        let url = url.clone();
++        move |_| url.get()
++    });
++    // The window param, the resolved window, and its day count.
++    let window_raw = Memo::new(move |_| Some(query_map.get().0));
++    let selected = Memo::new(move |_| window_raw.get().unwrap_or(30));
++    let days = Memo::new(move |_| selected.get());
++    // A second query param, read by `rows` alongside the async value.
++    let category = Memo::new(move |_| query_map.get().1);
++
++    // `ArcResource::new_with_options`, minus serialization.
++    let refetch = ArcRwSignal::new(0);
++    let source = ArcMemo::new({
++        let refetch = refetch.clone();
++        move |_| (refetch.get(), ("world".to_string(), days.get()))
++    });
++    let runs = Arc::new(AtomicUsize::new(0));
++    let fun = {
++        let source = source.clone();
++        let runs = runs.clone();
++        move || {
++            let (_, key) = source.get();
++            let runs = runs.clone();
++            async move {
++                runs.fetch_add(1, Ordering::SeqCst);
++                Executor::tick().await;
++                key
++            }
++        }
++    };
++    let initial = shape.hydrated.then(|| ("world".to_string(), 30u16));
++    let data =
++        ArcAsyncDerived::new_with_manual_dependencies(initial, fun, &source);
++    if shape.hydrated {
++        source.with_untracked(|_| ());
++        source.add_subscriber(data.to_any_subscriber());
++    }
++
++    let rows = Memo::new({
++        let data = data.clone();
++        move |_| (data.get(), category.get())
++    });
++
++    if shape.label {
++        Effect::new(move |_| {
++            let _ = selected.get();
++        });
++    }
++    if shape.view {
++        Effect::new({
++            let data = data.clone();
++            move |_| {
++                let _ = data.get();
++            }
++        });
++    }
++    if shape.grid {
++        Effect::new(move |_| {
++            let _ = rows.get();
++        });
++    }
++    settle().await;
++    let base = runs.load(Ordering::SeqCst);
++
++    url.set((7, 0));
++    settle().await;
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        base + 1,
++        "{shape:?}: the future must rerun after the key changes to 7"
++    );
++    assert_eq!(data.clone().await.1, 7, "{shape:?}");
++
++    url.set((90, 0));
++    settle().await;
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        base + 2,
++        "{shape:?}: the future must rerun after the key changes to 90"
++    );
++    assert_eq!(data.clone().await.1, 90, "{shape:?}");
++
++    // A change that only `rows` sees must not rerun the future.
++    url.set((90, 5));
++    settle().await;
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        base + 2,
++        "{shape:?}: a change outside the key must not rerun the future"
++    );
++    assert_eq!(rows.get().1, 5, "{shape:?}: rows still follow the change");
++}
++
++macro_rules! shape_test {
++    ($name:ident, $label:expr, $view:expr, $grid:expr, $hydrated:expr) => {
++        #[tokio::test]
++        async fn $name() {
++            _ = Executor::init_tokio();
++            tokio::task::LocalSet::new()
++                .run_until(run(Shape {
++                    label: $label,
++                    view: $view,
++                    grid: $grid,
++                    hydrated: $hydrated,
++                }))
++                .await;
++        }
++    };
++}
++
++// The shapes that never failed, kept as the control group.
++shape_test!(no_readers_hydrated, false, false, false, true);
++shape_test!(no_readers_fresh, false, false, false, false);
++shape_test!(label_only_hydrated, true, false, false, true);
++shape_test!(label_only_fresh, true, false, false, false);
++shape_test!(view_only_hydrated, false, true, false, true);
++shape_test!(view_only_fresh, false, true, false, false);
++// The shapes that reproduced #1511: a memo reader over the async value.
++shape_test!(grid_only_hydrated, false, false, true, true);
++shape_test!(grid_only_fresh, false, false, true, false);
++shape_test!(label_and_grid_hydrated, true, false, true, true);
++shape_test!(all_readers_hydrated, true, true, true, true);
++shape_test!(all_readers_fresh, true, true, true, false);
+--- a/src/owner.rs
++++ b/src/owner.rs
+@@ -12,6 +12,7 @@
+     sync::{Arc, RwLock, Weak},
+ };
+ 
++mod activity;
+ mod arc_stored_value;
+ mod arena;
+ mod arena_item;
+@@ -19,6 +20,7 @@
+ mod storage;
+ mod stored_value;
+ use self::arena::Arena;
++pub(crate) use activity::RunGuard;
+ pub use arc_stored_value::ArcStoredValue;
+ #[cfg(feature = "sandboxed-arenas")]
+ pub use arena::sandboxed::Sandboxed;
+@@ -174,6 +176,11 @@
+                     .and_then(|parent| parent.upgrade())
+                     .map(|parent| parent.read().or_poisoned().arena.clone())
+                     .unwrap_or_default(),
++                activity: parent
++                    .as_ref()
++                    .and_then(|parent| parent.upgrade())
++                    .map(|parent| parent.read().or_poisoned().activity.clone())
++                    .unwrap_or_default(),
+                 paused: false,
+             })),
+             #[cfg(feature = "hydration")]
+@@ -208,6 +215,7 @@
+                 children: Default::default(),
+                 #[cfg(feature = "sandboxed-arenas")]
+                 arena: Default::default(),
++                activity: Default::default(),
+                 paused: false,
+             })),
+             #[cfg(feature = "hydration")]
+@@ -242,6 +250,7 @@
+         let mut inner = self.inner.write().or_poisoned();
+         #[cfg(feature = "sandboxed-arenas")]
+         let arena = inner.arena.clone();
++        let activity = inner.activity.clone();
+         let paused = inner.paused;
+         let child = Self {
+             inner: Arc::new(RwLock::new(OwnerInner {
+@@ -252,6 +261,7 @@
+                 children: Default::default(),
+                 #[cfg(feature = "sandboxed-arenas")]
+                 arena,
++                activity,
+                 paused,
+             })),
+             #[cfg(feature = "hydration")]
+@@ -368,9 +378,40 @@
+                 mem::take(owner);
+             }
+         });
++        // An effect body of this tree may be mid-run on another thread; let
++        // it finish before its signals are pulled out from under it. Clone
++        // the tracker out first so the wait doesn't hold this owner's read
++        // lock against a body that needs to write to it. Tearing down the
++        // root also closes the tracker, so no body starts afterwards.
++        let (activity, is_root) = {
++            let inner = self.inner.read().or_poisoned();
++            (inner.activity.clone(), inner.parent.is_none())
++        };
++        if is_root {
++            activity.close();
++        } else {
++            activity.wait_idle();
++        }
+         self.cleanup();
+     }
+ 
++    /// Runs an effect body, marking it as in flight for this owner's tree so
++    /// a forced teardown of the tree waits for it — see `activity`. Returns
++    /// `None` without running it once the tree's root has been torn down.
++    pub(crate) fn run_effect_body<T>(
++        &self,
++        fun: impl FnOnce() -> T,
++    ) -> Option<T> {
++        let _guard = self.effect_body_guard()?;
++        Some(fun())
++    }
++
++    /// Marks an effect body of this owner's tree as in flight until the
++    /// guard drops — see [`Owner::run_effect_body`].
++    pub(crate) fn effect_body_guard(&self) -> Option<RunGuard> {
++        self.inner.read().or_poisoned().activity.enter()
++    }
++
+     /// Returns the current [`SharedContext`], if any.
+     #[cfg(feature = "hydration")]
+     pub fn current_shared_context(
+@@ -502,6 +543,8 @@
+     pub children: Vec<Weak<RwLock<OwnerInner>>>,
+     #[cfg(feature = "sandboxed-arenas")]
+     arena: Arc<RwLock<ArenaMap>>,
++    /// Shared by every owner in the tree; see `activity`.
++    activity: Arc<activity::Activity>,
+     paused: bool,
+ }
+ 
+@@ -518,6 +561,11 @@
+ 
+ impl Drop for OwnerInner {
+     fn drop(&mut self) {
++        // A root dropped without a forced cleanup (an abandoned render) tears
++        // the whole tree down too; give a running effect body the same grace.
++        if self.parent.is_none() {
++            self.activity.close();
++        }
+         for child in std::mem::take(&mut self.children) {
+             if let Some(child) = child.upgrade() {
+                 child.cleanup();
+--- a/src/owner/activity.rs
++++ b/src/owner/activity.rs
+@@ -0,0 +1,122 @@
++//! Tracks effect bodies that are currently running somewhere in an owner
++//! tree, so a forced teardown of the tree can wait for them.
++//!
++//! Effects run on spawned tasks. On a multi-threaded runtime an effect's body
++//! can be mid-run on one worker while another thread tears the tree's root
++//! down (leptos' `from_app` does that at the end of every response stream);
++//! every arena read the body makes after that point panics with "already
++//! been disposed", even though the body was started while the tree was
++//! alive. The tracker is shared by every owner in a tree (cloned from the
++//! parent like the arena) and counts bodies in flight; the root's forced
++//! cleanup waits for the count to reach zero — bounded, and never for a body
++//! running on the waiting thread itself.
++//!
++//! Waiting alone leaves a window: an effect task that has already taken its
++//! wake-up but not yet entered its body is not counted, so the teardown sees
++//! nothing running, clears the arena, and the body then starts against dead
++//! signals. A root teardown therefore also *closes* the tracker, under the
++//! same lock `enter` takes: a body either entered before the close (and is
++//! waited for) or sees the tracker closed and does not run.
++
++use or_poisoned::OrPoisoned;
++use std::{
++    cell::RefCell,
++    sync::{Arc, Condvar, Mutex, MutexGuard},
++    time::Duration,
++};
++
++/// Longest a forced teardown waits for a running effect body. An effect body
++/// is synchronous and short (a `<Suspense>`'s `dry_resolve` walk is the
++/// heaviest in practice); anything past this is a stuck body, and tearing
++/// down under it is the pre-existing behaviour.
++const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
++
++#[derive(Default)]
++pub(crate) struct Activity {
++    state: Mutex<State>,
++    idle: Condvar,
++}
++
++#[derive(Default)]
++struct State {
++    /// Effect bodies currently running.
++    running: usize,
++    /// Set once the tree's root is torn down; no body may start after it.
++    closed: bool,
++}
++
++thread_local! {
++    /// The trackers whose effect bodies this thread is currently inside,
++    /// so a teardown triggered from within a body never waits on itself.
++    static ENTERED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
++}
++
++impl Activity {
++    fn id(self: &Arc<Self>) -> usize {
++        Arc::as_ptr(self) as usize
++    }
++
++    /// Marks an effect body as running until the returned guard drops, or
++    /// returns `None` if the tree has been torn down and the body must not
++    /// run.
++    pub(crate) fn enter(self: &Arc<Self>) -> Option<RunGuard> {
++        {
++            let mut state = self.state.lock().or_poisoned();
++            if state.closed {
++                return None;
++            }
++            state.running += 1;
++        }
++        ENTERED.with_borrow_mut(|entered| entered.push(self.id()));
++        Some(RunGuard(Arc::clone(self)))
++    }
++
++    /// Blocks until no effect body of this tree is running, or until
++    /// [`IDLE_TIMEOUT`] passes. Returns at once if the current thread is
++    /// itself inside one of this tree's effect bodies.
++    pub(crate) fn wait_idle(self: &Arc<Self>) {
++        drop(self.idle_state());
++    }
++
++    /// [`Activity::wait_idle`], then closes the tracker so no effect body of
++    /// the tree starts afterwards. For the teardown of a tree's root.
++    pub(crate) fn close(self: &Arc<Self>) {
++        self.idle_state().closed = true;
++    }
++
++    fn idle_state(self: &Arc<Self>) -> MutexGuard<'_, State> {
++        let state = self.state.lock().or_poisoned();
++        let id = self.id();
++        if state.running == 0
++            || ENTERED.with_borrow(|entered| entered.contains(&id))
++        {
++            return state;
++        }
++        // A body that unwound has already released its guard, so a poisoned
++        // lock carries nothing worth propagating; either way the wait ends.
++        self.idle
++            .wait_timeout_while(state, IDLE_TIMEOUT, |state| state.running > 0)
++            .unwrap_or_else(|poisoned| poisoned.into_inner())
++            .0
++    }
++}
++
++/// Decrements the running count when the effect body it was taken for ends,
++/// whether it returned or unwound.
++pub(crate) struct RunGuard(Arc<Activity>);
++
++impl Drop for RunGuard {
++    fn drop(&mut self) {
++        let id = self.0.id();
++        ENTERED.with_borrow_mut(|entered| {
++            if let Some(pos) = entered.iter().rposition(|e| *e == id) {
++                entered.remove(pos);
++            }
++        });
++        let mut state = self.0.state.lock().or_poisoned();
++        state.running -= 1;
++        if state.running == 0 {
++            self.0.idle.notify_all();
++        }
++    }
++}
+--- a/src/effect/effect.rs
++++ b/src/effect/effect.rs
+@@ -190,11 +190,18 @@
+ 
+                             let old_value =
+                                 mem::take(&mut *value.write().or_poisoned());
+-                            let new_value = owner.with_cleanup(|| {
+-                                subscriber.with_observer(|| {
+-                                    run_in_effect_scope(|| fun.run(old_value))
++                            let Some(new_value) = owner.run_effect_body(|| {
++                                owner.with_cleanup(|| {
++                                    subscriber.with_observer(|| {
++                                        run_in_effect_scope(|| {
++                                            fun.run(old_value)
++                                        })
++                                    })
+                                 })
+-                            });
++                            }) else {
++                                // The tree is gone; so is this effect.
++                                break;
++                            };
+                             *value.write().or_poisoned() = Some(new_value);
+                         }
+                     }
+@@ -339,6 +346,12 @@
+                         {
+                             subscriber.clear_sources(&subscriber);
+ 
++                            // Both closures run under one in-flight guard;
++                            // see `Owner::run_effect_body`.
++                            let Some(_run) = owner.effect_body_guard() else {
++                                break;
++                            };
++
+                             let old_dep_value = mem::take(
+                                 &mut *dep_value.write().or_poisoned(),
+                             );
+@@ -365,6 +378,7 @@
+                                 Some(new_dep_value);
+ 
+                             first_run = false;
++                            drop(_run);
+                         }
+                     }
+                 }
+@@ -426,11 +440,16 @@
+ 
+                         let old_value =
+                             mem::take(&mut *value.write().or_poisoned());
+-                        let new_value = owner.with_cleanup(|| {
+-                            subscriber.with_observer(|| {
+-                                run_in_effect_scope(|| fun.run(old_value))
++                        let Some(new_value) = owner.run_effect_body(|| {
++                            owner.with_cleanup(|| {
++                                subscriber.with_observer(|| {
++                                    run_in_effect_scope(|| fun.run(old_value))
++                                })
+                             })
+-                        });
++                        }) else {
++                            // The tree is gone; so is this effect.
++                            break;
++                        };
+                         *value.write().or_poisoned() = Some(new_value);
+                     }
+                 }
+@@ -477,6 +496,12 @@
+                         {
+                             subscriber.clear_sources(&subscriber);
+ 
++                            // Both closures run under one in-flight guard;
++                            // see `Owner::run_effect_body`.
++                            let Some(_run) = owner.effect_body_guard() else {
++                                break;
++                            };
++
+                             let old_dep_value = mem::take(
+                                 &mut *dep_value.write().or_poisoned(),
+                             );
+@@ -503,6 +528,7 @@
+                                 Some(new_dep_value);
+ 
+                             first_run = false;
++                            drop(_run);
+                         }
+                     }
+                 }
+--- a/tests/effect_disposed_first_run.rs
++++ b/tests/effect_disposed_first_run.rs
+@@ -0,0 +1,291 @@
++//! Regression test for the SSR panics that survived akarras/ultros#1520
++//! (GlitchTip #7388 `cookies.rs:174`, and the `leptos_i18n context.rs:213`
++//! tail of #7382): an effect whose owner is cleaned up before its spawned
++//! first run gets polled must not run at all.
++//!
++//! `Effect::new_isomorphic` (and `Effect::new`) queue their first run as a
++//! detached task. That task keeps its own `Arc` to the effect and to the
++//! child owner, so nothing in it notices when the request's root owner is
++//! torn down — the body runs anyway and reads a signal whose arena node is
++//! gone: "you tried to access a reactive value … but it has already been
++//! disposed". On the server this happens whenever a render finishes before
++//! the tokio scheduler gets to the effect task (leptos' `<Suspense>` effect
++//! that `dry_resolve`s the boundary's children, `leptos_i18n`'s locale
++//! effect); on the client it is the "effect outlives its page" shape.
++//!
++//! Run with `--features effects` for the `Effect::new` case: without it
++//! `Effect::new` is a no-op and that test trivially passes.
++
++use any_spawner::Executor;
++use reactive_graph::{
++    effect::Effect,
++    owner::Owner,
++    signal::RwSignal,
++    traits::{Get, Set},
++};
++use std::{
++    sync::{
++        atomic::{AtomicBool, AtomicUsize, Ordering},
++        Arc, Barrier,
++    },
++    time::Duration,
++};
++
++async fn settle() {
++    for _ in 0..8 {
++        Executor::tick().await;
++    }
++}
++
++#[tokio::test]
++async fn isomorphic_effect_does_not_run_after_its_owner_is_cleaned_up() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let source = RwSignal::new(0);
++    let runs = Arc::new(AtomicUsize::new(0));
++
++    Effect::new_isomorphic({
++        let runs = Arc::clone(&runs);
++        move |_| {
++            runs.fetch_add(1, Ordering::SeqCst);
++            // The read that panics in production: the node is gone.
++            source.get();
++        }
++    });
++
++    // The render is over before the effect task was ever polled.
++    owner.unset_with_forced_cleanup();
++    settle().await;
++
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        0,
++        "an effect must not run once its owner has been cleaned up"
++    );
++}
++
++#[tokio::test]
++async fn isomorphic_effect_stops_rerunning_after_its_owner_is_cleaned_up() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let source = RwSignal::new(0);
++    let survivor = RwSignal::new(0);
++    let runs = Arc::new(AtomicUsize::new(0));
++
++    Effect::new_isomorphic({
++        let runs = Arc::clone(&runs);
++        move |_| {
++            runs.fetch_add(1, Ordering::SeqCst);
++            source.get();
++        }
++    });
++    settle().await;
++    assert_eq!(runs.load(Ordering::SeqCst), 1, "first run happens normally");
++
++    // Queue a rerun, then tear the owner down before the task gets to it.
++    source.set(1);
++    owner.unset_with_forced_cleanup();
++    settle().await;
++    // Unrelated activity must not resurrect it either.
++    survivor.set(1);
++    settle().await;
++
++    assert_eq!(
++        runs.load(Ordering::SeqCst),
++        1,
++        "a queued rerun must be dropped once the owner is cleaned up"
++    );
++}
++
++#[cfg(feature = "effects")]
++#[tokio::test]
++async fn local_effect_does_not_run_after_its_owner_is_cleaned_up() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    tokio::task::LocalSet::new()
++        .run_until(async {
++            let source = RwSignal::new(0);
++            let runs = Arc::new(AtomicUsize::new(0));
++
++            Effect::new({
++                let runs = Arc::clone(&runs);
++                move |_| {
++                    runs.fetch_add(1, Ordering::SeqCst);
++                    source.get();
++                }
++            });
++
++            owner.unset_with_forced_cleanup();
++            settle().await;
++
++            assert_eq!(
++                runs.load(Ordering::SeqCst),
++                0,
++                "a local effect must not run once its owner has been cleaned \
++                 up"
++            );
++        })
++        .await;
++}
++
++/// The production shape: the effect body is *mid-run* on one worker when
++/// the request's root owner is force-cleaned on another (leptos' from_app
++/// does that at the end of the response stream). Every read after that
++/// point used to panic with "already been disposed"; the forced cleanup
++/// must wait for the running body instead.
++#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
++async fn forced_cleanup_waits_for_a_running_effect_body() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let first = RwSignal::new(1);
++    let second = RwSignal::new(2);
++    let completed = Arc::new(AtomicBool::new(false));
++    let started = Arc::new(Barrier::new(2));
++
++    Effect::new_isomorphic({
++        let completed = Arc::clone(&completed);
++        let started = Arc::clone(&started);
++        move |_| {
++            first.get();
++            // Hand control to the test thread and give it time to run the
++            // cleanup while this body is still going.
++            started.wait();
++            std::thread::sleep(Duration::from_millis(100));
++            second.get();
++            completed.store(true, Ordering::SeqCst);
++        }
++    });
++
++    let cleanup = tokio::task::spawn_blocking(move || {
++        started.wait();
++        owner.unset_with_forced_cleanup();
++    });
++    cleanup.await.unwrap();
++    // Let the effect task finish (or die) before asserting.
++    tokio::time::sleep(Duration::from_millis(300)).await;
++
++    assert!(
++        completed.load(Ordering::SeqCst),
++        "the effect body must finish before its tree is torn down"
++    );
++}
++
++/// Same race through the other teardown path: the root `Owner` is simply
++/// dropped (an abandoned render past leptos' drain cap) while a body runs.
++#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
++async fn root_drop_waits_for_a_running_effect_body() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let first = RwSignal::new(1);
++    let second = RwSignal::new(2);
++    let completed = Arc::new(AtomicBool::new(false));
++    let started = Arc::new(Barrier::new(2));
++
++    Effect::new_isomorphic({
++        let completed = Arc::clone(&completed);
++        let started = Arc::clone(&started);
++        move |_| {
++            first.get();
++            started.wait();
++            std::thread::sleep(Duration::from_millis(100));
++            second.get();
++            completed.store(true, Ordering::SeqCst);
++        }
++    });
++
++    let teardown = tokio::task::spawn_blocking(move || {
++        started.wait();
++        // `set()` only keeps a weak handle, so this is the last strong one.
++        drop(owner);
++    });
++    teardown.await.unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++
++    assert!(
++        completed.load(Ordering::SeqCst),
++        "the effect body must finish before its tree is dropped"
++    );
++}
++
++/// A body that tears down its own tree must not wait on itself.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn a_body_tearing_down_its_own_tree_does_not_deadlock() {
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++
++    let done = Arc::new(AtomicBool::new(false));
++    let handle = owner.clone();
++    Effect::new_isomorphic({
++        let done = Arc::clone(&done);
++        move |_| {
++            handle.clone().unset_with_forced_cleanup();
++            done.store(true, Ordering::SeqCst);
++        }
++    });
++
++    let finished = tokio::time::timeout(Duration::from_secs(2), async {
++        while !done.load(Ordering::SeqCst) {
++            tokio::time::sleep(Duration::from_millis(5)).await;
++        }
++    })
++    .await;
++    assert!(finished.is_ok(), "the body blocked on its own teardown");
++}
++
++/// The window the in-flight guard alone left open (the `context.rs:213`
++/// tail of GlitchTip #7382 that kept firing after the guard shipped): the
++/// effect task has already taken its wake-up off the channel, and the
++/// teardown checks the tracker, finds nothing running and clears the arena
++/// before the task gets to enter its body. The body must not run then.
++///
++/// This races the effect task's first poll against the teardown on real
++/// threads, so a single iteration rarely lands in the window; enough of
++/// them do.
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn an_effect_body_never_starts_after_its_tree_is_torn_down() {
++    _ = Executor::init_tokio();
++    let ran_disposed = Arc::new(AtomicUsize::new(0));
++
++    for i in 0..20_000u32 {
++        let owner = Owner::new();
++        let signal = owner.with(|| {
++            let signal = RwSignal::new(1);
++            Effect::new_isomorphic({
++                let ran_disposed = Arc::clone(&ran_disposed);
++                move |_| {
++                    if signal.try_get().is_none() {
++                        ran_disposed.fetch_add(1, Ordering::SeqCst);
++                    }
++                }
++            });
++            signal
++        });
++        // Stagger the teardown against the effect task's first poll.
++        for _ in 0..(i % 64) {
++            std::hint::spin_loop();
++        }
++        owner.unset_with_forced_cleanup();
++        drop(signal);
++        if i % 256 == 0 {
++            tokio::task::yield_now().await;
++        }
++    }
++    tokio::time::sleep(Duration::from_millis(200)).await;
++
++    assert_eq!(
++        ran_disposed.load(Ordering::SeqCst),
++        0,
++        "an effect body started after its tree was torn down"
++    );
++}

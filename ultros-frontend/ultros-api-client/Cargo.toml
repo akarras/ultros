@@ -1,0 +1,27 @@
+[package]
+name = "ultros-api-client"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+ultros-api-types = { path = "../../ultros-api-types" }
+anyhow.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tower = { version = "0.5.3", features = ["util"], optional = true }
+percent-encoding = { version = "2.3.2", optional = true }
+tracing = { version = "0.1", optional = true }
+gloo-net = { workspace = true, optional = true }
+
+[features]
+default = []
+ssr = ["dep:axum", "dep:tokio", "dep:tower", "dep:percent-encoding", "dep:tracing"]
+hydrate = ["dep:gloo-net"]
+
+[dev-dependencies]
+futures = "0.3.32"
+serde_json.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

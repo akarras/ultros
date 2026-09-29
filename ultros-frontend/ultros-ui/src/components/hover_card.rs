@@ -1,0 +1,634 @@
+use crate::components::dismissable::use_dismiss_on_navigate;
+use cfg_if::cfg_if;
+use leptos::children::ViewFn;
+use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
+#[cfg(feature = "hydrate")]
+use leptos::portal::Portal;
+use leptos::{html::Div, prelude::*};
+#[cfg(feature = "hydrate")]
+use leptos_use::{
+    UseElementBoundingReturn, UseEventListenerOptions, use_element_bounding,
+    use_event_listener_with_options, use_window,
+};
+use std::time::Duration;
+
+/// Anchor geometry in viewport coordinates (as returned by
+/// `getBoundingClientRect`). The overlay is `position: fixed`, so all math in
+/// this module stays in viewport space — no scroll offsets.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+pub struct AnchorRect {
+    pub top: f64,
+    pub left: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+pub struct OverlaySize {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Minimum distance kept between the overlay and every viewport edge.
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+const EDGE_MARGIN: f64 = 8.0;
+/// Gap between the anchor and the overlay.
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+const ANCHOR_GAP: f64 = 8.0;
+
+/// Compute the `(top, left)` for a fixed-position overlay anchored to
+/// `anchor`: centered above it, flipped below when there is no room above,
+/// clamped to the viewport on both axes.
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+pub fn overlay_position(
+    anchor: AnchorRect,
+    overlay: OverlaySize,
+    viewport: OverlaySize,
+) -> (f64, f64) {
+    // Prefer above the anchor; flip below when the overlay would clip the top.
+    let mut top = anchor.top - overlay.height - ANCHOR_GAP;
+    if top < EDGE_MARGIN {
+        top = anchor.top + anchor.height + ANCHOR_GAP;
+    }
+    // `.max(EDGE_MARGIN)` keeps the clamp range valid when the overlay is
+    // larger than the viewport (f64::clamp panics when min > max).
+    let max_top = (viewport.height - overlay.height - EDGE_MARGIN).max(EDGE_MARGIN);
+    let top = top.clamp(EDGE_MARGIN, max_top);
+
+    let left = anchor.left + anchor.width / 2.0 - overlay.width / 2.0;
+    let max_left = (viewport.width - overlay.width - EDGE_MARGIN).max(EDGE_MARGIN);
+    let left = left.clamp(EDGE_MARGIN, max_left);
+
+    (top, left)
+}
+
+/// One active overlay per application, shared by text and item hover cards.
+#[derive(Clone, Copy)]
+pub struct ActiveHoverCard(RwSignal<Option<uuid::Uuid>>);
+
+pub fn provide_hover_card_context() {
+    provide_context(ActiveHoverCard(RwSignal::new(None)));
+}
+
+impl ActiveHoverCard {
+    fn claim(self, id: uuid::Uuid) {
+        if self.0.get_untracked() != Some(id) {
+            self.0.set(Some(id));
+        }
+    }
+
+    fn release(self, id: uuid::Uuid) {
+        if self.0.try_get_untracked() == Some(Some(id)) {
+            self.0.set(None);
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+fn overlay_position_avoiding(
+    anchor: AnchorRect,
+    overlay: OverlaySize,
+    viewport: OverlaySize,
+    obstacles: &[AnchorRect],
+) -> (f64, f64) {
+    let preferred = overlay_position(anchor, overlay, viewport);
+    let center_left = anchor.left + anchor.width / 2.0 - overlay.width / 2.0;
+    let center_top = anchor.top + anchor.height / 2.0 - overlay.height / 2.0;
+    let candidates = [
+        preferred,
+        (anchor.top + anchor.height + ANCHOR_GAP, center_left),
+        (center_top, anchor.left + anchor.width + ANCHOR_GAP),
+        (center_top, anchor.left - overlay.width - ANCHOR_GAP),
+        (anchor.top - overlay.height - ANCHOR_GAP, center_left),
+    ];
+    let max_top = (viewport.height - overlay.height - EDGE_MARGIN).max(EDGE_MARGIN);
+    let max_left = (viewport.width - overlay.width - EDGE_MARGIN).max(EDGE_MARGIN);
+    candidates
+        .into_iter()
+        .map(|(top, left)| {
+            let y = top.clamp(EDGE_MARGIN, max_top);
+            let x = left.clamp(EDGE_MARGIN, max_left);
+            let overlap: f64 = obstacles
+                .iter()
+                .map(|rect| {
+                    ((rect.left + rect.width).min(x + overlay.width) - rect.left.max(x)).max(0.0)
+                        * ((rect.top + rect.height).min(y + overlay.height) - rect.top.max(y))
+                            .max(0.0)
+                })
+                .sum();
+            let clipping = (top - y).abs() * overlay.width + (left - x).abs() * overlay.height;
+            ((y, x), overlap, clipping)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.total_cmp(&b.2)))
+        .expect("placement candidates")
+        .0
+}
+
+/// Shared chrome for hover overlays: palette-driven gradient body, accent
+/// hairline slot, glow shadow. Consumers append their own padding/sizing and
+/// render `<AccentHairline/>` as their first child. Every color rides the
+/// runtime brand CSS variables, so all palettes and light mode re-tint it.
+pub const HOVER_CARD_CHROME: &str = "relative overflow-hidden rounded-lg \
+    border border-brand-400/30 \
+    bg-gradient-to-br from-brand-950/95 via-brand-900/90 to-brand-950/95 \
+    backdrop-blur-md shadow-lg shadow-[color:var(--accent-glow)]";
+
+/// 1px accent gradient across the top edge of a hover card.
+#[component]
+pub fn AccentHairline() -> impl IntoView {
+    view! {
+        <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[color:var(--accent)] to-transparent"></div>
+    }
+}
+
+/// Hover/focus-triggered overlay primitive. Owns the portal, open/close state
+/// (with optional open delay), and fixed positioning via [`overlay_position`].
+/// No observers or listeners are created until the overlay actually opens.
+#[component]
+pub fn HoverCard<T>(
+    /// Overlay content, rendered into a body portal while open.
+    #[prop(into)]
+    content: ViewFn,
+    #[prop(optional, into)] description: Option<Signal<String>>,
+    /// Milliseconds of sustained hover before opening. Focus opens instantly.
+    #[prop(default = 0)]
+    open_delay_ms: u32,
+    /// While true, hover/focus never opens the overlay.
+    #[prop(optional, into)]
+    disabled: Signal<bool>,
+    /// Classes for the anchor wrapper div.
+    #[prop(optional, into)]
+    class: Option<String>,
+    children: TypedChildrenFn<T>,
+) -> impl IntoView
+where
+    T: Sized + Render + RenderHtml + Send + 'static,
+{
+    // Standalone consumers can opt into the shared context at their root.
+    let active =
+        use_context::<ActiveHoverCard>().unwrap_or_else(|| ActiveHoverCard(RwSignal::new(None)));
+    let id = uuid::Uuid::new_v4();
+    let description_id = RwSignal::new(String::new());
+    Effect::new(move |_| description_id.set(format!("help-{}", uuid::Uuid::new_v4())));
+    let (hover_open, set_hover_open) = signal(false);
+    let (is_focused, set_is_focused) = signal(false);
+    // Pending open-delay timer (`TimeoutHandle` wraps an i32, so plain
+    // sync storage is fine — `new_local`'s SendWrapper would panic when the
+    // SSR arena drops it from a different tokio worker thread).
+    let pending = StoredValue::new(None::<TimeoutHandle>);
+
+    let close_pending = StoredValue::new(None::<TimeoutHandle>);
+    let cancel_close = move || {
+        if let Some(handle) = close_pending.get_value() {
+            handle.clear();
+            close_pending.set_value(None);
+        }
+    };
+    let request_close = move || {
+        cancel_close();
+        close_pending.set_value(
+            set_timeout_with_handle(
+                move || {
+                    set_hover_open.set(false);
+                    close_pending.set_value(None);
+                },
+                Duration::from_millis(200),
+            )
+            .ok(),
+        );
+    };
+    on_cleanup(move || {
+        cancel_close();
+        active.release(id);
+        if let Some(handle) = pending.get_value() {
+            handle.clear();
+        }
+    });
+    let clear_pending = move || {
+        if let Some(handle) = pending.get_value() {
+            handle.clear();
+            pending.set_value(None);
+        }
+    };
+    let request_open = move || {
+        cancel_close();
+        if disabled.get_untracked() {
+            return;
+        }
+        if open_delay_ms == 0 {
+            active.claim(id);
+            set_hover_open.set(true);
+        } else if pending.get_value().is_none() {
+            let handle = set_timeout_with_handle(
+                move || {
+                    pending.set_value(None);
+                    if !disabled.get_untracked() {
+                        active.claim(id);
+                        set_hover_open.set(true);
+                    }
+                },
+                Duration::from_millis(u64::from(open_delay_ms)),
+            )
+            .ok();
+            pending.set_value(handle);
+        }
+    };
+
+    // A navigation must never strand the overlay. `mouseleave` is the only
+    // thing that closes a hover-opened card, and it does not fire when the
+    // route change leaves the anchor in place (the item page keeps its hero
+    // `HoverCard` across `/item/:world/:id` → `/item/:world/:other`) or when
+    // it removes the anchor from under a cursor that never moved. Either way
+    // the portal outlives the page it belonged to (#1283).
+    use_dismiss_on_navigate(move || {
+        clear_pending();
+        // Guarded: `set` notifies whether or not the value changed, and a
+        // page of item rows carries hundreds of closed cards whose overlay
+        // closures would all re-run on every navigation for nothing.
+        if hover_open.get_untracked() {
+            set_hover_open.set(false);
+        }
+        if is_focused.get_untracked() {
+            set_is_focused.set(false);
+        }
+    });
+
+    // Entering the portal sets hover_open even when it is already true (or
+    // focus is keeping the card open). Preserve the mounted overlay in that
+    // case: rebuilding it under the pointer loses its subsequent mouseleave
+    // and can strand a tooltip for every cell the pointer passes over.
+    let is_open = Memo::new(move |_| {
+        !disabled.get() && active.0.get() == Some(id) && (hover_open.get() || is_focused.get())
+    });
+    // Suppress unused warnings on the server build, where the overlay closure
+    // below compiles to `None`.
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = is_open;
+    }
+
+    let target = NodeRef::<Div>::new();
+    #[cfg(feature = "hydrate")]
+    target.on_load(move |element| {
+        // Native controls already supply the keyboard stop. Keep standalone
+        // help focusable without inserting a second stop around or inside a
+        // button/link (including the tooltip inside a clipboard button).
+        if description.is_some() {
+            let inside_control = element.parent_element().and_then(|parent| {
+                parent.closest("button,a[href],input,select,textarea").ok().flatten()
+            }).is_some();
+            let contains_control = element.query_selector(
+                "button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled)",
+            ).ok().flatten().is_some();
+            if inside_control || contains_control {
+                let _ = element.remove_attribute("tabindex");
+            }
+        }
+    });
+
+    let overlay = {
+        cfg_if! {
+            if #[cfg(feature = "hydrate")] {
+                let read_anchor_rect = move || {
+                    target
+                        .get_untracked()
+                        .map(|el| {
+                            let rect = el.get_bounding_client_rect();
+                            AnchorRect {
+                                top: rect.top(),
+                                left: rect.left(),
+                                width: rect.width(),
+                                height: rect.height(),
+                            }
+                        })
+                        .unwrap_or_default()
+                };
+                move || {
+                    is_open.get().then({
+                        let content = content.clone();
+                        move || {
+                            let anchor_rect = RwSignal::new(read_anchor_rect());
+                            // Track the anchor while open: any scroll (capture
+                            // catches nested containers) or resize moves its
+                            // viewport rect. Registered inside the overlay
+                            // view, so everything is dropped on close.
+                            let _ = use_event_listener_with_options(
+                                use_window(),
+                                leptos::ev::scroll,
+                                move |_| anchor_rect.set(read_anchor_rect()),
+                                UseEventListenerOptions::default().capture(true).passive(true),
+                            );
+                            let _ = use_event_listener_with_options(
+                                use_window(),
+                                leptos::ev::resize,
+                                move |_| anchor_rect.set(read_anchor_rect()),
+                                UseEventListenerOptions::default().capture(false).passive(true),
+                            );
+                            // Escape closes a hover-opened overlay too: keydown
+                            // fires on the focused element (usually `body`),
+                            // never on the merely-hovered anchor, so the
+                            // anchor-level handler can't catch this case.
+                            let _ = use_event_listener_with_options(
+                                use_window(),
+                                leptos::ev::keydown,
+                                move |ev| {
+                                    if ev.key() == "Escape" && is_open.get_untracked() {
+                                        ev.prevent_default();
+                                        ev.stop_propagation();
+                                        set_hover_open.set(false);
+                                        set_is_focused.set(false);
+                                    }
+                                },
+                                UseEventListenerOptions::default().capture(false).passive(false),
+                            );
+                            let node_ref = NodeRef::<Div>::new();
+                            let UseElementBoundingReturn {
+                                width: overlay_width,
+                                height: overlay_height,
+                                ..
+                            } = use_element_bounding(node_ref);
+                            let style = move || {
+                                let overlay = OverlaySize {
+                                    width: overlay_width.get(),
+                                    height: overlay_height.get(),
+                                };
+                                // The layout viewport (`clientWidth`, not
+                                // `innerWidth`) is the fixed-position
+                                // containing block: `innerWidth` includes a
+                                // classic scrollbar, so clamping against it
+                                // lets the overlay slide under the bar.
+                                let viewport = document()
+                                    .document_element()
+                                    .map(|root| OverlaySize {
+                                        width: f64::from(root.client_width()),
+                                        height: f64::from(root.client_height()),
+                                    })
+                                    .unwrap_or_default();
+                                let mut obstacles = Vec::new();
+                                if let Ok(nodes) = document().query_selector_all("[data-hover-card-trigger]") {
+                                    use wasm_bindgen::JsCast;
+                                    for index in 0..nodes.length() {
+                                        if let Some(element) = nodes.item(index).and_then(|node| node.dyn_into::<web_sys::Element>().ok()) {
+                                            let rect = element.get_bounding_client_rect();
+                                            obstacles.push(AnchorRect {
+                                                top: rect.top(), left: rect.left(),
+                                                width: rect.width(), height: rect.height(),
+                                            });
+                                        }
+                                    }
+                                }
+                                let (top, left) = overlay_position_avoiding(
+                                    anchor_rect.get(), overlay, viewport, &obstacles,
+                                );
+                                // Keep hidden until measured so the first
+                                // paint can't flash at the wrong position.
+                                let visibility =
+                                    if overlay.width == 0.0 && overlay.height == 0.0 {
+                                        "visibility: hidden;"
+                                    } else {
+                                        ""
+                                    };
+                                format!("top: {top}px; left: {left}px; {visibility}")
+                            };
+                            // `w-max`: the overlay's width must not depend on
+                            // its `left`. A `position: fixed` box with
+                            // `width: auto` shrink-to-fits the room to its
+                            // right, `left` is computed from the measured
+                            // width, and the measurement is a ResizeObserver
+                            // cycle behind — so the card slid (and reflowed)
+                            // for dozens of frames until that loop converged.
+                            // `max-w` (a percentage of the containing block,
+                            // i.e. the layout viewport) keeps long text
+                            // wrapping inside the edge margins.
+                            view! {
+                                <Portal mount=target.get_untracked().and_then(|el| el.closest("dialog").ok().flatten()).unwrap_or_else(|| document().body().expect("document body").into())>
+                                    <div
+                                        node_ref=node_ref
+                                        role="tooltip"
+                                        on:mouseenter=move |_| { cancel_close(); set_hover_open.set(true); }
+                                        on:mouseleave=move |_| request_close()
+                                        class="fixed z-50 w-max max-w-[calc(100%_-_1rem)] max-h-[calc(100%_-_1rem)] overflow-auto transition-opacity duration-150 animate-fade-in"
+                                        style=style
+                                    >
+                                        {content.run()}
+                                    </div>
+                                </Portal>
+                            }
+                            .into_any()
+                        }
+                    })
+                }
+            } else {
+                {
+                    let _ = content;
+                    move || None::<AnyView>
+                }
+            }
+        }
+    };
+
+    let children = children.into_inner();
+    view! {
+        <div
+            class=class.unwrap_or_default()
+            tabindex=description.map(|_| "0")
+            aria-describedby=move || description.and_then(|_| { let id = description_id.get(); (!id.is_empty()).then_some(id) })
+            attr:data-hover-card-trigger=""
+            on:click=move |_| {
+                if description.is_some() && !disabled.get_untracked() {
+                    let opening = !hover_open.get_untracked();
+                    if opening { active.claim(id); }
+                    set_hover_open.set(opening);
+                }
+            }
+            on:mouseenter=move |_| request_open()
+            on:mouseleave=move |_| {
+                clear_pending();
+                request_close();
+            }
+            on:focusin=move |_| {
+                if !disabled.get_untracked() { active.claim(id); set_is_focused.set(true); }
+            }
+            on:focusout=move |_| set_is_focused.set(false)
+            on:keydown=move |ev| {
+                if ev.key() == "Escape" && is_open.get_untracked() {
+                    ev.prevent_default();
+                    ev.stop_propagation();
+                    clear_pending();
+                    set_hover_open.set(false);
+                    set_is_focused.set(false);
+                }
+            }
+            node_ref=target
+        >
+            {children()}
+            {description.map(|text| view! { <span hidden id=move || { let id = description_id.get(); (!id.is_empty()).then_some(id) }>{move || text.get()}</span> })}
+            {overlay}
+        </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VIEWPORT: OverlaySize = OverlaySize {
+        width: 1280.0,
+        height: 800.0,
+    };
+    const OVERLAY: OverlaySize = OverlaySize {
+        width: 200.0,
+        height: 100.0,
+    };
+
+    fn anchor(top: f64, left: f64) -> AnchorRect {
+        AnchorRect {
+            top,
+            left,
+            width: 40.0,
+            height: 20.0,
+        }
+    }
+
+    #[test]
+    fn hover_card_positions_above_and_centered_when_there_is_room() {
+        let (top, left) = overlay_position(anchor(400.0, 600.0), OVERLAY, VIEWPORT);
+        // 8px above the anchor, horizontally centered on it.
+        assert_eq!(top, 400.0 - 100.0 - 8.0);
+        assert_eq!(left, 600.0 + 20.0 - 100.0);
+    }
+
+    #[test]
+    fn hover_card_flips_below_when_no_room_above() {
+        let (top, _) = overlay_position(anchor(50.0, 600.0), OVERLAY, VIEWPORT);
+        assert_eq!(top, 50.0 + 20.0 + 8.0);
+    }
+
+    #[test]
+    fn hover_card_clamps_to_left_edge() {
+        let (_, left) = overlay_position(anchor(400.0, 4.0), OVERLAY, VIEWPORT);
+        assert_eq!(left, 8.0);
+    }
+
+    #[test]
+    fn hover_card_clamps_to_right_edge() {
+        let (_, left) = overlay_position(anchor(400.0, 1270.0), OVERLAY, VIEWPORT);
+        assert_eq!(left, 1280.0 - 200.0 - 8.0);
+    }
+
+    #[test]
+    fn hover_card_flipped_overlay_near_bottom_is_clamped() {
+        // Anchor near the top forces a flip below; the short viewport then
+        // forces the vertical clamp so the overlay never overflows the bottom.
+        let viewport = OverlaySize {
+            width: 1280.0,
+            height: 160.0,
+        };
+        let (top, _) = overlay_position(anchor(40.0, 600.0), OVERLAY, viewport);
+        assert_eq!(top, 160.0 - 100.0 - 8.0);
+    }
+
+    #[test]
+    fn hover_card_tiny_viewport_does_not_panic_and_pins_to_margin() {
+        // Overlay bigger than the viewport: both clamp ranges collapse to the
+        // edge margin instead of panicking (f64::clamp panics when min > max).
+        let viewport = OverlaySize {
+            width: 100.0,
+            height: 60.0,
+        };
+        let (top, left) = overlay_position(anchor(10.0, 10.0), OVERLAY, viewport);
+        assert_eq!(top, 8.0);
+        assert_eq!(left, 8.0);
+    }
+    #[test]
+    fn opening_another_card_hides_the_previous_hovered_card() {
+        Owner::new().with(|| {
+            let active = ActiveHoverCard(RwSignal::new(None));
+            let first = uuid::Uuid::new_v4();
+            let second = uuid::Uuid::new_v4();
+            let first_open = Memo::new(move |_| active.0.get() == Some(first));
+            let second_open = Memo::new(move |_| active.0.get() == Some(second));
+            active.claim(first);
+            assert!(first_open.get());
+            assert!(!second_open.get());
+            active.claim(second);
+            assert!(!first_open.get());
+            assert!(second_open.get());
+            // Re-entering the same portal must not notify or rebuild it.
+            active.claim(second);
+            assert!(second_open.get());
+        });
+    }
+
+    #[test]
+    fn releasing_an_old_card_does_not_close_the_current_card() {
+        Owner::new().with(|| {
+            let active = ActiveHoverCard(RwSignal::new(None));
+            let first = uuid::Uuid::new_v4();
+            let second = uuid::Uuid::new_v4();
+            active.claim(first);
+            active.claim(second);
+            active.release(first);
+            assert_eq!(active.0.get_untracked(), Some(second));
+            active.release(second);
+            assert_eq!(active.0.get_untracked(), None);
+        });
+    }
+
+    #[test]
+    fn hover_card_avoids_neighbor_above() {
+        let trigger = anchor(400.0, 600.0);
+        let obstacles = [
+            trigger,
+            AnchorRect {
+                top: 280.0,
+                left: 500.0,
+                width: 140.0,
+                height: 110.0,
+            },
+        ];
+        assert_eq!(
+            overlay_position_avoiding(trigger, OVERLAY, VIEWPORT, &obstacles),
+            (428.0, 520.0)
+        );
+    }
+
+    #[test]
+    fn hover_card_uses_side_when_vertical_neighbors_block_placement() {
+        let trigger = anchor(400.0, 600.0);
+        let obstacles = [
+            trigger,
+            AnchorRect {
+                top: 280.0,
+                left: 500.0,
+                width: 140.0,
+                height: 110.0,
+            },
+            AnchorRect {
+                top: 425.0,
+                left: 500.0,
+                width: 140.0,
+                height: 110.0,
+            },
+        ];
+        assert_eq!(
+            overlay_position_avoiding(trigger, OVERLAY, VIEWPORT, &obstacles),
+            (360.0, 648.0)
+        );
+    }
+
+    #[test]
+    fn hover_card_avoiding_neighbors_handles_tiny_viewport() {
+        let viewport = OverlaySize {
+            width: 100.0,
+            height: 60.0,
+        };
+        let trigger = anchor(10.0, 10.0);
+        assert_eq!(
+            overlay_position_avoiding(trigger, OVERLAY, viewport, &[trigger]),
+            (8.0, 8.0)
+        );
+    }
+}

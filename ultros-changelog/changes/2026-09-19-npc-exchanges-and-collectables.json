@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "NPC pages show exchanges and collectable turn-ins",
+  "blurb": "An NPC's page now lists every exchange they run (scrip, tomestone and item trades) and every collectable an appraiser accepts with the scrip it pays, alongside their gil shop and map location. Item pages link each exchange to the NPCs who offer it.",
+  "link": "/npc/1001617"
+}

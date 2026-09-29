@@ -7,14 +7,30 @@ use std::process::Command;
 // hard-panics in those cases.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    let git_hash = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+    rerun_when_head_moves();
+    let git_hash =
+        git_stdout(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "dirty".to_string());
+    println!("cargo:rustc-env=GIT_HASH={git_hash}");
+}
+
+// The hash must track commits, so rerun when HEAD or the reflog changes.
+// `--git-path` resolves inside worktrees; when git is unavailable nothing is
+// emitted and the "dirty" fallback behaves as before.
+fn rerun_when_head_moves() {
+    for name in ["HEAD", "logs/HEAD"] {
+        if let Some(path) = git_stdout(&["rev-parse", "--git-path", name]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+}
+
+fn git_stdout(args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
         .output()
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "dirty".to_string());
-    println!("cargo:rustc-env=GIT_HASH={git_hash}");
 }

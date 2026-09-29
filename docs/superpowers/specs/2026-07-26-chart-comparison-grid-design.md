@@ -198,3 +198,21 @@ Frontend:
 - Sort-by-change needs a defined window — the visible range, presumably, but that
   makes sort order shift while dragging the timeline slicer. May need debouncing
   or an explicit "sort now" rather than live re-sorting.
+
+## As shipped (#1046)
+
+Deviations pinned in the implementation plan, recorded here when the plan was
+deleted:
+
+- **Grid is not offered in Density mode.** The premise that the per-series
+  payload already contains everything is false for Density, whose payload
+  (`PriceDensity`) is scope-wide, not per-series. A per-world density grid would
+  need N fetches, which the "no new fetching" non-goal forbids. The Grid toggle
+  is disabled with a reason in Density mode.
+- **`% change` applies to overlay Price mode only** (disabled with a reason
+  otherwise); rebasing OHLC candles is deferred until someone asks.
+- **Sort-by-change** computes first→last VWAP per series over the buckets in the
+  fetched window, recomputed only when the model rebuilds. The refetch debounce
+  already prevents the "sort order shifts while dragging" concern above.
+- Cell cap 24, with a "+N more" affordance that opens the world filter.
+

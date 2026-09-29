@@ -8,6 +8,8 @@ pub struct Model {
     pub group_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: i64,
+    /// See `ultros_api_types::user::group::GroupMemberSource`.
+    pub source: i16,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

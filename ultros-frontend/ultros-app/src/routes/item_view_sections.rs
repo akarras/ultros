@@ -1,8 +1,6 @@
 //! Jump-nav destinations for the item view.
 //!
-//! The order here is the page's DOM order. Later lens work reorders the
-//! rendered sections with CSS `order` while leaving this DOM order — and
-//! therefore this list — untouched.
+//! The order here is the page's DOM order.
 
 /// One navigable section of `/item/:world/:id`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,16 +8,18 @@ pub enum Section {
     Overview,
     Listings,
     History,
+    SalesChart,
     Sources,
     Related,
 }
 
 impl Section {
     /// Every section, in DOM order.
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Overview,
         Section::Listings,
         Section::History,
+        Section::SalesChart,
         Section::Sources,
         Section::Related,
     ];
@@ -35,6 +35,7 @@ impl Section {
             Section::Overview => "overview",
             Section::Listings => "listings",
             Section::History => "history",
+            Section::SalesChart => "market-history",
             Section::Sources => "sources",
             Section::Related => "related",
         }

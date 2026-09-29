@@ -1,0 +1,88 @@
+use leptos::prelude::*;
+use leptos_router::location::Location;
+
+use crate::components::app_link::use_location_or_default;
+
+/// A button that sets the query property to the given value
+#[component]
+pub fn QueryButton<T>(
+    /// query key that we filter against.
+    #[prop(into)]
+    key: Oco<'static, str>,
+    /// query value that is set when we check this box
+    #[prop(into)]
+    value: Signal<String>,
+    /// default state classes
+    #[prop(into)]
+    class: Signal<String>,
+    /// classes that will replace the main classes when this is active
+    #[prop(into)]
+    active_classes: Oco<'static, str>,
+    #[prop(optional)] default: bool,
+    /// List of other query names that should be removed when preparing this query
+    #[prop(optional)]
+    remove_queries: &'static [&'static str],
+    children: TypedChildren<T>,
+) -> impl IntoView + 'static
+where
+    T: IntoView + 'static,
+{
+    // Not `use_location()`: that is an `expect`, and a suspended SSR fragment
+    // can rebuild this button under an owner that never saw `<Router>`, which
+    // killed the whole response (GlitchTip #7278).
+    let Location {
+        pathname, query, ..
+    } = use_location_or_default();
+    let key_1 = key.clone();
+    let is_active = Signal::derive(move || {
+        query.with(|q| {
+            let name = key_1.as_str();
+            let query_val = q.get_str(name);
+            value.with(|val| val.as_str() == query_val.unwrap_or_default())
+                || (default && query_val.is_none())
+        })
+    });
+    view! {
+        <a
+            class=move || if is_active() { active_classes.to_string() } else { class.get() }
+            aria-current=move || if is_active() { "true" } else { "false" }
+            href=move || {
+                let mut query = query();
+                for remove in remove_queries {
+                    query.remove(remove);
+                }
+                // replace any existing value for this key instead of appending
+                query.remove(key.as_str());
+                query.insert(key.to_string(), value.get());
+                format!("{}{}", pathname(), query.to_query_string())
+            }
+        >
+            {children.into_inner()().into_view()}
+        </a>
+    }
+    .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GlitchTip #7278: rendered under an owner with no router context, this
+    /// button used to panic mid-SSR-stream. It must render a usable href
+    /// instead — query-only, so the browser resolves it against the page the
+    /// user is actually on.
+    #[test]
+    fn renders_a_relative_href_without_router_context() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! {
+                <QueryButton key="sort" value="price" class="c" active_classes="a">
+                    "Price"
+                </QueryButton>
+            }
+            .to_html();
+            assert!(html.contains("href=\"?sort=price\""), "{html}");
+            assert!(html.contains("Price"), "{html}");
+        });
+    }
+}

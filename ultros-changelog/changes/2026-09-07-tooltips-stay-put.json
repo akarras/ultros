@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Tooltips stay put",
+  "blurb": "Hover cards with longer text, like the recipe planner's share-link copy button, no longer drift across the screen and reflow for a second after opening. They now settle in place on the first frame."
+}

@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Trends follows the market window again",
+  "blurb": "Switching the Trends window between 7, 30 and 90 days now reloads the table for the selected window instead of keeping the rows from the first load. Changing world on the Trends page reloads it too.",
+  "link": "/trends"
+}

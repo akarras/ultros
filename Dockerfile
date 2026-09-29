@@ -43,6 +43,13 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ---- Builder: cook deps first (cached), then compile the project -------------
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
+# Path patches are not included in cargo-chef's generated workspace skeleton.
+# Supply their real sources before either native or WASM dependency cook.
+COPY --from=planner /app/vendor /app/vendor
+# leptos_config and leptos embed LEPTOS_OUTPUT_NAME at compile time. Cook with
+# the same value cargo-leptos supplies or Cargo rebuilds their dependency tree.
+ENV LEPTOS_OUTPUT_NAME=ultros \
+    WASM_BINDGEN_WEAKREF=1
 # Warm the dependency cache for BOTH targets cargo-leptos will use.
 # Scoping with `-p` is REQUIRED: without it, `chef cook` tries to build every
 # workspace member for the given target — and the workspace contains both the
@@ -50,30 +57,75 @@ COPY --from=planner /app/recipe.json recipe.json
 # (`ultros-client`, cdylib for wasm32). Cross-compiling the server crate for
 # wasm32 fails on mio; building the WASM cdylib for native x86_64 fails too.
 #  - bin-package = "ultros"        → server-release profile, native
-#  - lib-package = "ultros-client" → release profile, wasm32-unknown-unknown
+#  - lib-package = "ultros-client" → wasm-release profile, wasm32-unknown-unknown
 # Edits to source code below this line won't invalidate these layers.
-RUN cargo chef cook --profile server-release -p ultros --recipe-path recipe.json
-RUN cargo chef cook --release --target wasm32-unknown-unknown -p ultros-client --recipe-path recipe.json
+RUN cargo chef cook --locked --profile server-release -p ultros --bin ultros \
+    --no-default-features --features jemalloc --recipe-path recipe.json
+# cargo-leptos isolates its frontend artifacts in target/front. Match that
+# directory, profile and feature selection, not Cargo's default target/.
+#
+# The wasm build compiles its own std (`-Zbuild-std`) with the
+# `immediate-abort` panic strategy: a panic runs no hook and formats no
+# message, it executes the wasm `unreachable` instruction where it stands,
+# which drops the whole panic/formatting runtime from the bundle. The
+# browser still gets a stack — the trap surfaces as "RuntimeError:
+# unreachable" at window.onerror with `wasm-function[N]` frames, which
+# wasm_symbolicate.js resolves to Rust names via the symbol map built below.
+# The three env vars must match on this cook and on the frontend build, or
+# the cooked dependencies (fingerprinted against the custom sysroot) are
+# thrown away and rebuilt. They are env, not `.cargo/config.toml`: the
+# `[unstable]` table is not target-scoped and `-Zbuild-std` errors on the
+# native server build, and `[profile]` in the manifest would also hit local
+# `cargo leptos watch`, where the panic message and hook are what you debug
+# with. rust-src is installed above.
+RUN CARGO_UNSTABLE_BUILD_STD=std,panic_abort,core,alloc \
+    CARGO_UNSTABLE_PANIC_IMMEDIATE_ABORT=true \
+    CARGO_PROFILE_WASM_RELEASE_PANIC=immediate-abort \
+    cargo chef cook --locked --profile wasm-release --target wasm32-unknown-unknown \
+    --target-dir target/front -p ultros-client --no-default-features \
+    --recipe-path recipe.json
 # Now the actual source.
 COPY . .
-ENV WASM_BINDGEN_WEAKREF=1
-# Limit peak memory usage to prevent OOM errors on resource-constrained CI runners.
-#  - CARGO_BUILD_JOBS=1: Compile one crate at a time.
-#  - CARGO_INCREMENTAL=0: Avoid overhead of maintaining incremental build state.
-ENV CARGO_BUILD_JOBS=1 \
+# Keep low-memory local builds conservative; CI overrides this to 2 on its
+# 4-core / 16 GiB runner. Cargo's jobserver also limits LLVM codegen parallelism,
+# so forcing one job leaves cores idle even while compiling one large crate.
+# Declare this AFTER cooking so tuning concurrency preserves the dependency cache.
+ARG APP_BUILD_JOBS=1
+ENV CARGO_BUILD_JOBS=${APP_BUILD_JOBS} \
     CARGO_INCREMENTAL=0
-
 # cargo-leptos 0.3 builds the server and client in parallel. Even with
 # CARGO_BUILD_JOBS=1, the two distinct rustc processes (one for native, one
-# for WASM) can overlap and exceed the 7GB runner limit.
+# for WASM) can overlap and exceeded the old 7 GiB runner's memory limit.
 #
-# We force sequential build by compiling the server binary first.
-#  - Cargo will cache the server-release artifacts.
-#  - The subsequent cargo-leptos call will see the server is already built
-#    and spend its memory budget on the WASM client.
-RUN cargo build --profile server-release -p ultros --features jemalloc
-
-RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
+# Use Leptos for both passes so Cargo's environment and target selection stay
+# consistent. The frontend-only pass also generates CSS, JS and optimized WASM;
+# it cannot launch a second server compilation, even if a fingerprint changes.
+RUN cargo leptos --manifest-path=./Cargo.toml build --release --server-only \
+    --bin-cargo-args=--timings -vv
+# `--precompress` writes `.br` and `.gz` siblings (brotli -q 11 / gzip -9) for
+# every file in the pkg dir. The server's `/pkg/` ServeDir serves those directly
+# (see `pkg_service` in ultros/src/leptos.rs) instead of the CompressionLayer
+# re-compressing the 16 MB wasm on the fly at tower-http's default quality —
+# that default was the difference between 7.2 MB and 4.9 MB on the wire for the
+# same file.
+# Same build-std / immediate-abort env as the wasm cook above (see there).
+RUN CARGO_UNSTABLE_BUILD_STD=std,panic_abort,core,alloc \
+    CARGO_UNSTABLE_PANIC_IMMEDIATE_ABORT=true \
+    CARGO_PROFILE_WASM_RELEASE_PANIC=immediate-abort \
+    cargo leptos --manifest-path=./Cargo.toml build --release --frontend-only \
+    --precompress --lib-cargo-args=--timings -vv
+# Wasm symbol map for GlitchTip. wasm-opt ran with `-g` (`wasm-opt-features`
+# in Cargo.toml), so the optimized module still carries its `name` section.
+# `wasm-symbols` writes `ultros.symbols` (function index -> Rust name) next
+# to the wasm, strips the section from the module so it does not ship on
+# every page load, and regenerates the `.br`/`.gz` siblings cargo-leptos
+# wrote from the still-named file. The browser's Sentry `beforeSend` fetches
+# `/pkg/<hash>/ultros.symbols` when a panic happens and resolves the
+# `wasm-function[N]` frames itself (see wasm_symbolicate.js). Fails the
+# build if the name section is missing — a wasm with no map must not ship
+# silently.
+RUN cargo build --release -p wasm-symbols \
+    && ./target/release/wasm-symbols target/site/pkg/ultros.wasm
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the
@@ -101,6 +153,13 @@ RUN cp /app/target/server-release/ultros /app/target/server-release/ultros.unstr
 FROM scratch AS debug-files
 COPY --from=builder /app/target/server-release/ultros.unstripped /ultros.unstripped
 
+# ---- Compiler timings (export-only, including PR builds) ---------------------
+# Cargo records per-crate durations and codegen time. Keep these out of the
+# runtime image, but available to compare CI runs after changing build settings.
+FROM scratch AS build-timings
+COPY --from=builder /app/target/cargo-timings/ /server/
+COPY --from=builder /app/target/front/cargo-timings/ /frontend/
+
 # ---- Runtime image -----------------------------------------------------------
 FROM debian:bookworm-slim AS runner
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -111,12 +170,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LEPTOS_SITE_ROOT="site"
 # Minimal runtime deps: TLS roots, freetype + fontconfig for resvg rendering.
 # No `apt upgrade` — keeps builds reproducible against the pinned base image.
+#
+# `fonts-noto-cjk` is not optional decoration. The item-card PNG renderer
+# (`web/item_card.rs`) draws world names into the chart legend, and every
+# world on the Chinese and Korean data centres has a CJK name (紫水靈園,
+# 카벙클, 모그리). With only the Latin Jaldi/Pacifico faces installed usvg
+# finds no font covering those code points, logs `No fonts with a X character
+# were found`, and rasterizes a row of .notdef boxes — ~39k of those warnings
+# a day in production, and a tofu legend in every Discord embed for those
+# worlds.
+#
+# The package ships Sans and Serif in one deb; only Sans is ever selected, so
+# the Serif faces are dropped in the same layer (89 MB -> ~39 MB).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         fontconfig \
+        fonts-noto-cjk \
         libfontconfig1 \
         libfreetype6 \
+    && rm -f /usr/share/fonts/opentype/noto/NotoSerifCJK-*.ttc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

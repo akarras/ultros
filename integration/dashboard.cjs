@@ -38,13 +38,17 @@ function sanitize(s) {
   return s.replace(/[\\/?%*:|"<>]/g, "_").replace(/__+/g, "_") || "_root";
 }
 
+// Puppeteer 23 dropped the `headless: "new"` spelling: `true` is now the new
+// headless mode and `"shell"` selects the old chrome-headless-shell binary.
+// "new" is still accepted here so existing HEADLESS=new invocations keep working.
 function parseHeadless(value) {
-  if (value === undefined || value === null || value === "") return "new";
+  if (value === undefined || value === null || value === "") return true;
   const v = String(value).toLowerCase();
-  if (v === "new") return "new";
+  if (v === "new") return true;
+  if (v === "shell") return "shell";
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
-  return "new";
+  return true;
 }
 
 /**
@@ -77,7 +81,12 @@ const SURFACES = (world) => [
       "Low",
       "Suspicious",
       // Or the column header itself (in case all rows happen to be Unknown).
-      "Quality",
+      // Trends renders on the shared virtual grid (#1344), which mounts only
+      // the columns in view, so on a phone the confidence column is
+      // offscreen; the shared quality column Trends places first proves the
+      // grid itself rendered.
+      "Trend confidence",
+      "Market quality",
     ],
   },
   {
@@ -108,6 +117,7 @@ const DEFAULT_CONSOLE_ALLOW = [
   "favicon",
   "ERR_BLOCKED_BY_CLIENT",
   "net::ERR_ABORTED",
+  ...(process.env.E2E_BLOCK_EXTERNAL === "1" ? ["net::ERR_NAME_NOT_RESOLVED"] : []),
 ];
 
 async function navigateWithFallback(page, url, timeout) {
@@ -125,6 +135,7 @@ async function captureOneSurface(
   { baseUrl, world, viewport, deviceLabel, outdir, timeout, consoleAllow },
 ) {
   const page = await browser.newPage();
+  await page.setCookie({ name: "HIDE_ADS", value: "true", url: baseUrl });
   await page.setViewport(viewport);
 
   const consoleErrors = [];
@@ -272,6 +283,16 @@ async function captureOneSurface(
   return failures;
 }
 
+// E2E_BLOCK_EXTERNAL=1 makes Chrome resolve only loopback, so third-party
+// scripts (ads, analytics, Google frames) cannot load and cannot log
+// console errors that have nothing to do with the app. This reproduces the
+// no-network sandbox that earlier strict runs relied on.
+function blockExternalArgs() {
+  return process.env.E2E_BLOCK_EXTERNAL === "1"
+    ? ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"]
+    : [];
+}
+
 async function main() {
   const puppeteer = require("puppeteer");
 
@@ -308,7 +329,7 @@ async function main() {
   try {
     browser = await puppeteer.launch({
       headless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: ["--no-sandbox", "--disable-setuid-sandbox", ...blockExternalArgs()],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     });
 

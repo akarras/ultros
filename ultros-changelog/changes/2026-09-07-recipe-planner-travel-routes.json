@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Recipe planner routes that know a datacenter hop hurts",
+  "blurb": "The recipe planner now ranks shopping routes by gil plus the travel it takes: a world hop inside your datacenter is cheap, a datacenter hop is not. Pick from the five best routes, each labelled by its hops and the worlds it visits, and tune what a hop is worth to you in Planner settings. Tick off lines as you buy them and they stay put while the rest re-plans, and a new Not here button re-sources an item that turned out to be gone, preferring the worlds you are already visiting.",
+  "link": "/recipe/5057"
+}

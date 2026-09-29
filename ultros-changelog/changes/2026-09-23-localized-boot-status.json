@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Loading messages in your language",
+  "blurb": "The small status message in the corner while Ultros starts up (\"Loading…\", or the reload link if loading stalls) now appears in your chosen language instead of always in English. Returning visitors also get back a few megabytes of browser storage left behind by the old game-data cache."
+}

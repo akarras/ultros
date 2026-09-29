@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full pre-push: matches CI (fmt + clippy). Slower; runs only on `git push`.
+# Full Rust pre-push: matches CI (fmt + clippy + tests). Runs only on `git push`.
 set -e
 
 if ! command -v cargo >/dev/null 2>&1; then

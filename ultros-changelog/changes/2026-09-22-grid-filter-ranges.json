@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Column filters take ranges, units and dates",
+  "blurb": "Right-click a column and its filter now takes a Min and a Max in the column's own units: type 1.2m for gil, 15% for ROI, or 2d 4h for a sale time, and the menu shows what it read before you apply. Last sold dates can be filtered to the last 24 hours, 7 days or 30 days, or to a date range. Filter chips read the same way (Profit 100 – 1.2k, Avg Sale Time < 1d instead of < 86400), and the column menu's row of text buttons is now a compact set of labelled icons."
+}

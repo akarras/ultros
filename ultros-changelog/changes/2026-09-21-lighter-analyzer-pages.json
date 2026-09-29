@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Analyzer pages load with much less embedded market data",
+  "blurb": "Flip Finder, Venture, Leve, FC Crafting, Vendor Resale, Currency Exchange, Scrip and the recipe analyzer used to embed their whole market dataset as verbose JSON — Flip Finder alone ran about 13 MB of HTML, 1.7 MB compressed. That data is now packed column-wise, so Flip Finder's page is roughly a quarter of the size before compression and about 40% smaller compressed, and the market-data calls these pages make are 30-45% smaller on the wire."
+}

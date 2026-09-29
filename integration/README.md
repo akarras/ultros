@@ -14,7 +14,7 @@ This folder contains a lightweight Puppeteer harness for screenshot-driven E2E c
 ## Prerequisites
 
 - Rust toolchain and cargo-leptos installed
-- Node.js 18+ and npm installed
+- Node.js 22.12+ and npm installed (Puppeteer 25 requires it)
 - Internet access (Puppeteer will download a compatible Chromium on first install)
 
 ## First-time setup
@@ -111,6 +111,40 @@ const routes = ['/', '/items', '/flip-finder', '/flip-finder/Gilgamesh', '/analy
 
 Edit that array to add/remove pages you care about. Re-run `npm run test:desktop` or `npm run test:mobile` to generate fresh screenshots.
 
+## Focused probes
+
+Single-page regression scripts live beside `runner.cjs` and each has an npm
+script (`npm run test:<name>`). They need a running server on `BASE_URL`.
+`test:item-explorer-grid` covers the Item Explorer on the shared market grid:
+no pagination, legacy `?page=`/filter links, on-demand `sale_stats` requests
+and phone-width scrolling.
+
+## Horizontal-overflow guard
+
+Every route in both passes asserts that the page itself does not scroll sideways:
+
+```js
+document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+```
+
+`html` is `overflow-x: hidden`, so a document wider than the viewport is not merely ugly — the surplus is clipped with no scrollbar and no wrap, i.e. unreachable. That is how [#1055](https://github.com/akarras/ultros/issues/1055) presented: the Flip Finder's `Columns` and `Clear all` controls rendered outside the viewport.
+
+The assertion is on `documentElement`, never on descendants. Several surfaces are legitimately wider than the viewport and scroll inside their own scrollport — `.analyzer-hscroll` (the Flip Finder grid), `.filter-chip-row`, `.item-explorer-chip-row` — and measuring descendants would flag all of them. On failure the runner also lists the widest elements that are *not* inside a horizontal scrollport, so the message names the culprit rather than just a pixel count.
+
+**Known exceptions** live in `KNOWN_OVERFLOW` in `runner.cjs`, keyed by route, each naming the `devices` it applies to and a `reason`. They are not silent: a listed route that has *stopped* overflowing fails the run, so a fix cannot land without also deleting its exception. Scope `devices` as narrowly as the bug is — exempting a width where the route already fits would mask a future regression there.
+
+Set `SKIP_OVERFLOW=1` to disable the check.
+
+**What it does not cover:** headless Chrome uses overlay scrollbars, so `100vw === clientWidth` here. A page laid out against `100vw` while a real browser reserves a classic scrollbar gutter (the second half of PR #1082, which clipped ~15px off every desktop page) is invisible to this check. It guards content overflow, not viewport-unit mistakes.
+
+## Screenshots go through `capture.cjs`
+
+Any script that can have more than one page open at a time must screenshot via `capture(page, options)` from `./capture.cjs`, never `page.screenshot()` directly.
+
+Under puppeteer 25 a `Page.captureScreenshot` on a page that is not the browser's foreground tab never returns — it hangs with no timeout of its own — and puppeteer serializes `screenshot()` behind a *browser-wide* mutex, so that one wedged capture blocks every other page's screenshot and the run stalls until something kills it. The runner hit this immediately on the bump from puppeteer 22: its workers each hold their own page, and whichever page is not in front when it reaches its screenshot takes the whole suite down.
+
+`capture()` brings the page to the front and screenshots it under a single process-wide lock, so nothing can foreground another tab in between — `bringToFront()` on its own is not enough, because two workers racing it still end up capturing a backgrounded page. It also bounds each capture with `SCREENSHOT_TIMEOUT_MS` (default 30000) so a capture that hangs anyway degrades to a warning instead of wedging the run. Single-page scripts are unaffected either way, and `capture.test.cjs` covers the ordering and timeout behaviour.
+
 ## Changing viewport/device
 
 - Desktop: 1280×800
@@ -140,9 +174,24 @@ Remove-Item -Recurse -Force ultros/integration/artifacts
 - First run is slow: Puppeteer downloads Chromium; this is expected.
 - Port mismatch: Set `BASE_URL` to match your running server.
 - Antivirus/Corp device: Chromium download or launch can be blocked; use your system Chrome by setting `PUPPETEER_EXECUTABLE_PATH` and adjusting `puppeteer.launch()` accordingly.
+- `HEADLESS`: `false` to watch a run in a real window; otherwise headless. Puppeteer 23 dropped the `headless: 'new'` spelling — `true` *is* the new headless mode now and `'shell'` selects the old `chrome-headless-shell` binary — so `HEADLESS=shell` is the way to get the old behaviour. `HEADLESS=new` is still accepted as an alias for `true`.
 - Flaky waits: The runner uses `waitUntil: 'networkidle0'` and then a short `waitForTimeout(1000)`. If pages hydrate slower locally, bump the timeout.
 
 ## CI notes
+
+### Currency Exchange regression
+
+Against a server built from the current worktree, run:
+
+```bash
+BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:currency-exchange
+```
+
+This probe uses real shop definitions with deterministic browser API fixtures,
+so it does not require populated market history. It checks native estimates
+against actual listing prices, NQ sale statistics, window changes, legacy hidden
+filters, saved column links, quantity restoration, and the mobile layout.
+Screenshots go to `integration/artifacts/currency-exchange/`.
 
 In CI, you can do:
 

@@ -14,9 +14,10 @@
  *   7. Owner deletes the list and lands back on /list.
  *
  * Env:
- *   BASE_URL    default http://127.0.0.1:8080
- *   HEADLESS    "false" to watch, anything else uses puppeteer's "new" mode
- *   TIMEOUT_MS  default 30000
+ *   BASE_URL     default http://127.0.0.1:8080
+ *   HEADLESS     "false" to watch, anything else runs headless
+ *   TIMEOUT_MS   default 30000
+ *   LABS_COOKIE  set to a Labs token (e.g. lists-sync) to run the flow under that experiment
  */
 
 "use strict";
@@ -25,6 +26,7 @@ const USERS = {
   owner: { id: 990000000001, username: "ListFlowOwner" },
   reader: { id: 990000000002, username: "ListFlowReader" },
 };
+const LISTS_V2 = (process.env.LABS_COOKIE || "").split(",").includes("lists-sync");
 
 async function login(page, baseUrl, user) {
   const url = new URL("/test/login", baseUrl);
@@ -34,6 +36,15 @@ async function login(page, baseUrl, user) {
   const resp = await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
   if (!resp || resp.status() >= 400) {
     throw new Error(`test login failed for ${user.username}: ${resp ? resp.status() : -1}`);
+  }
+  // Opt this session into a Labs experiment. The cookie is server-visible,
+  // so SSR and hydration agree; the page reloads below to pick it up.
+  if (process.env.LABS_COOKIE) {
+    await page.setCookie({ name: "LABS", value: process.env.LABS_COOKIE, url: baseUrl, path: "/" });
+    const labsResp = await page.goto(new URL("/list", baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    if (!labsResp || labsResp.status() >= 400) {
+      throw new Error(`reload under LABS=${process.env.LABS_COOKIE} failed for ${user.username}: ${labsResp ? labsResp.status() : -1}`);
+    }
   }
 }
 
@@ -82,11 +93,12 @@ async function waitForHydration(page, timeout) {
     { timeout },
   );
   await page.waitForFunction(
-    () =>
+    labs => labs ? !!document.querySelector('[data-testid="inline-list-add"]') :
       Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
         (b.innerText || "").includes("Add Item"),
       ),
     { timeout },
+    LISTS_V2,
   );
 }
 
@@ -129,7 +141,7 @@ async function main() {
   const puppeteer = require("puppeteer");
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
-  const headless = process.env.HEADLESS === "false" ? false : "new";
+  const headless = process.env.HEADLESS !== "false";
 
   const browser = await puppeteer.launch({
     headless,
@@ -190,6 +202,36 @@ async function main() {
     await ownerPage.goto(listUrl, { waitUntil: "domcontentloaded" });
     await waitForHydration(ownerPage, TIMEOUT_MS);
 
+    // `ListRoute` picks `ListViewSync` (marked with data-testid="list-view-sync")
+    // or plain `ListView` based on the LABS cookie — assert the flow actually
+    // exercised the branch it thinks it did.
+    const hasSyncMarker = await ownerPage.evaluate(
+      () => !!document.querySelector('[data-testid="list-view-sync"]'),
+    );
+    if (process.env.LABS_COOKIE) {
+      if (!hasSyncMarker) {
+        fail(failures, "expected [data-testid=list-view-sync] under LABS_COOKIE");
+      } else {
+        pass("Labs list page rendered under LABS_COOKIE");
+      }
+    } else if (hasSyncMarker) {
+      fail(failures, "did not expect [data-testid=list-view-sync] without LABS_COOKIE");
+    } else {
+      pass("legacy list page rendered without LABS_COOKIE");
+    }
+
+    if (LISTS_V2) {
+      await ownerPage.type('input[aria-label="Add an item"]', "Maple Log");
+      await ownerPage.waitForSelector('button[aria-label="Add Maple Log"]');
+      await ownerPage.keyboard.press("Enter");
+      await ownerPage.waitForSelector('input[aria-label="Needed for Maple Log"]');
+      await ownerPage.waitForFunction(async id => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        return response.ok && (await response.json())[1].length >= 1;
+      }, { timeout: TIMEOUT_MS }, listId);
+      await ownerPage.keyboard.press("Escape");
+      pass("added item through the permanent inline composer and synchronized it");
+    } else {
     // Verify we can see write-only affordances (we are the owner).
     const hasAddItem = await ownerPage.evaluate(() =>
       Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
@@ -210,7 +252,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 1000));
       await waitFor(ownerPage, "input[placeholder*='search items']", 15000);
       const searchInput = await ownerPage.$("input[placeholder*='search items']");
-      await searchInput.click({ clickCount: 3 });
+      await searchInput.click({ count: 3 });
       await searchInput.type("Maple Log");
       // Wait for the row-level "add" button to render (locale string is lowercase).
       await ownerPage
@@ -244,12 +286,53 @@ async function main() {
       }
     }
 
-    // ===== Step 2: Add a recipe via the modal =====
+    }
+
+    // ===== Step 2: Add a recipe via the current UI =====
     console.log("[step] owner adds a recipe");
-    if (!(await clickByText(ownerPage, ".list-toolbar button", "Add Recipe"))) {
+    // Lists 2.0: recipes come from the composer's Items / Recipes toggle.
+    const recipeToggle = LISTS_V2
+      ? ['[data-testid="inline-list-add"] button', "Recipes"]
+      : [".list-toolbar button", "Add Recipe"];
+    if (!(await clickByText(ownerPage, ...recipeToggle))) {
       fail(failures, "Add Recipe button not found");
     } else {
       try {
+        if (LISTS_V2) {
+          const composer = '[data-testid="inline-recipe-add"]';
+          await ownerPage.waitForSelector(composer);
+          await ownerPage.type(`${composer} input[aria-label="Search recipes"]`, "Bronze Ingot");
+          // Each result row shows the finished item's icon and name with a
+          // small "+" button labelled "Add <name>" that opens the preview.
+          await ownerPage.waitForFunction(selector => !!document.querySelector(`${selector} button[aria-label="Add Bronze Ingot"]`), {}, composer);
+          // Catalog names overlap (e.g. Standard Treated Bronze Ingot), so
+          // select the exact ordinary recipe used by this fixture.
+          await ownerPage.evaluate(selector => {
+            const button = document.querySelector(`${selector} button[aria-label="Add Bronze Ingot"]`);
+            if (!button) throw new Error("Exact Bronze Ingot recipe is missing");
+            button.click();
+          }, composer);
+          await ownerPage.waitForSelector(`${composer} [aria-label="Recipe preview"] li`);
+          await ownerPage.waitForFunction(selector => {
+            const text = document.querySelector(`${selector} [aria-label="Recipe preview"]`)?.textContent || "";
+            return text.includes("2 × Copper Ore") && text.includes("1 × Tin Ore") && text.includes("Shard");
+          }, {}, composer);
+          await ownerPage.select(`${composer} [aria-label="Recipe items to add"]`, "finished");
+          await ownerPage.waitForFunction(selector =>
+            document.querySelector(`${selector} [aria-label="Recipe preview"]`)?.textContent === "1 × Bronze Ingot",
+          {}, composer);
+          await ownerPage.select(`${composer} [aria-label="Recipe items to add"]`, "ingredients");
+          await ownerPage.waitForFunction(selector =>
+            document.querySelectorAll(`${selector} [aria-label="Recipe preview"] li`).length === 3,
+          {}, composer);
+          await clickByText(ownerPage, `${composer} button`, "Add previewed items");
+          await ownerPage.waitForFunction(async id => {
+            const response = await fetch(`/api/v1/list/${id}/listings`);
+            return response.ok && (await response.json())[1].length > 1;
+          }, { timeout: TIMEOUT_MS }, listId);
+          await clickByText(ownerPage, '[data-testid="inline-list-add"] button', "Items");
+          pass("previewed and added recipe ingredients inline");
+        } else {
         // The recipe modal renders its own search input. Use its placeholder
         // text to pinpoint it (avoids racing the global top-bar search).
         await ownerPage.waitForFunction(
@@ -262,7 +345,7 @@ async function main() {
         // Pick the input nearest to the modal — last placeholder-bearing input.
         const inputs = await ownerPage.$$("input[placeholder]");
         const modalInput = inputs[inputs.length - 1];
-        await modalInput.click({ clickCount: 3 });
+        await modalInput.click({ count: 3 });
         await modalInput.type("Bronze Ingot");
         // Wait for any modal button whose trimmed text is exactly "Add".
         await ownerPage
@@ -296,13 +379,170 @@ async function main() {
           }
         }
         await recipeAddHandle.dispose();
+        }
       } catch (e) {
+        if (LISTS_V2) console.error("Recipe preview state:", await ownerPage.$eval('[data-testid="inline-recipe-add"]', el => el.outerHTML).catch(() => "missing composer"));
         fail(failures, `recipe modal interaction failed: ${e.message || e}`);
       }
     }
 
+    // ===== Step 2b: Auto-mark purchases modal =====
+    console.log("[step] owner opens the auto-mark purchases modal");
+    // Lists 2.0 keeps the button in the shell's More-options menu.
+    if (LISTS_V2) {
+      await ownerPage.click('[data-testid="list-settings-btn"]');
+      await waitFor(ownerPage, '[data-testid="list-auto-mark-btn"]', 10000);
+    }
+    const autoMarkClicked = await ownerPage.evaluate(() => {
+      const b = document.querySelector('[data-testid="list-auto-mark-btn"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    if (!autoMarkClicked) {
+      fail(failures, "auto-mark toolbar button not found");
+    } else {
+      const modalShown = await ownerPage
+        .waitForFunction(
+          () => {
+            // Topmost dialog: under Lists 2.0 the More-options menu sits beneath it.
+            const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1);
+            return !!dialog && !!dialog.querySelector('input[placeholder]');
+          },
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!modalShown) {
+        fail(failures, "auto-mark modal did not open");
+      } else {
+        const hasNameInput = await ownerPage.evaluate(() => {
+          const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1);
+          return (
+            !!dialog &&
+            !!Array.from(dialog.querySelectorAll("input[placeholder]")).find((i) =>
+              /character name/i.test(i.placeholder),
+            )
+          );
+        });
+        if (!hasNameInput) {
+          fail(failures, "auto-mark modal missing character-name input");
+        } else {
+          pass("auto-mark modal opens with character-name input");
+        }
+        await ownerPage.keyboard.press("Escape");
+        // Under Lists 2.0 the More-options menu is still open underneath.
+        if (LISTS_V2) {
+          await new Promise((r) => setTimeout(r, 300));
+          await ownerPage.keyboard.press("Escape");
+        }
+        await ownerPage
+          .waitForFunction(() => !document.querySelector('[role="dialog"]'), {
+            timeout: 5000,
+          })
+          .catch(() => {});
+      }
+    }
+
+    // ===== Step 2c: Datacenter exclusion round-trips =====
+    console.log("[step] owner excludes the datacenter");
+    // The test list is single-world, so excluding its DC must empty every
+    // price cell ("No listing data") and write the query param; un-excluding
+    // must clear the param again. Lists 2.0 has no exclusion chips: narrowing
+    // worlds is the Shop trip's and the travel limit's job.
+    if (LISTS_V2) {
+      pass("Lists 2.0 page has no exclusion chips by design (skipped)");
+    } else {
+    const dcChipClicked = await ownerPage.evaluate(() => {
+      const row = document.querySelector('[data-testid="list-filter-row"]');
+      if (!row) return null;
+      const chip = Array.from(row.querySelectorAll("button[data-datacenter]"))[0];
+      if (!chip) return null;
+      const name = chip.getAttribute("data-datacenter");
+      chip.click();
+      return name;
+    });
+    if (!dcChipClicked) {
+      fail(failures, "no datacenter chip found in the filter row");
+    } else {
+      const paramSet = await ownerPage
+        .waitForFunction(
+          () => window.location.search.includes("excluded-datacenters="),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!paramSet) {
+        fail(failures, "excluded-datacenters query param not written");
+      } else {
+        pass(`excluded datacenter ${dcChipClicked} writes the query param`);
+      }
+      // Give the table re-render a moment, then check the price column.
+      await new Promise((r) => setTimeout(r, 1500));
+      const pricesEmptied = LISTS_V2 || await ownerPage.evaluate(() => {
+        const table = document.querySelector("table");
+        return !!table && table.innerText.includes("No listing data");
+      });
+      if (!pricesEmptied) {
+        fail(failures, "excluding the list's DC did not empty the price column");
+      } else {
+        pass(LISTS_V2 ? "datacenter exclusion retained in Build query state" : "excluding the list's DC empties the price column");
+      }
+      // Toggle back off and confirm the param clears.
+      await ownerPage.evaluate((name) => {
+        const row = document.querySelector('[data-testid="list-filter-row"]');
+        const chip = row
+          ? row.querySelector(`button[data-datacenter="${name}"]`)
+          : null;
+        if (chip) chip.click();
+      }, dcChipClicked);
+      const paramCleared = await ownerPage
+        .waitForFunction(
+          () => !window.location.search.includes("excluded-datacenters="),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!paramCleared) {
+        fail(failures, "excluded-datacenters query param did not clear");
+      } else {
+        pass("un-excluding the DC clears the query param");
+      }
+    }
+    }
+
     // ===== Step 3: Mark an item acquired via the row toggle =====
     console.log("[step] owner marks an item acquired");
+    if (LISTS_V2) {
+      const neededInput = 'input[aria-label="Needed for Maple Log"]';
+      const ownedInput = 'input[aria-label="Owned for Maple Log"]';
+      const qualitySelect = 'select[aria-label="Quality for Maple Log"]';
+      const nextNeeded = await ownerPage.$eval(neededInput, element => Number(element.value) + 1);
+      const editedItem = await ownerPage.$eval(neededInput, element => Number(element.closest('[data-item-id]').dataset.itemId));
+      await ownerPage.$eval(qualitySelect, element => { window.__qualityBeforeCommit = element; });
+      await ownerPage.locator(neededInput).fill(String(nextNeeded));
+      await ownerPage.keyboard.press("Tab");
+      await ownerPage.waitForFunction(async ({ id, quantity, itemId }) => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        return response.ok && (await response.json())[1].some(([item]) => item.item_id === itemId && item.quantity === quantity);
+      }, { timeout: TIMEOUT_MS }, { id: listId, quantity: nextNeeded, itemId: editedItem });
+      if (!await ownerPage.$eval(qualitySelect, element =>
+        element === window.__qualityBeforeCommit && document.activeElement === element)) {
+        fail(failures, "Tab after Needed commit must retain the Quality control and focus through server acknowledgement");
+      } else {
+        pass("Tab commits Needed without replacing the next editor or dropping focus");
+      }
+      // Owned lives behind the compact cart's details toggle.
+      await ownerPage.click('button[aria-label="Details for Maple Log"]');
+      await ownerPage.waitForSelector(ownedInput, { visible: true });
+      await ownerPage.locator(ownedInput).fill("1");
+      await ownerPage.keyboard.press("Enter");
+      await ownerPage.waitForFunction(async id => {
+        const response = await fetch(`/api/v1/list/${id}/listings`);
+        return response.ok && (await response.json())[1].some(([item]) => item.acquired >= 1);
+      }, { timeout: TIMEOUT_MS }, listId);
+      pass("inline Owned edit records acquisition in the synchronized account list");
+    } else {
     // Aria-label is "Mark as acquired" (from list_item_row_mark_acquired in en.json).
     const markBtn = await ownerPage.$('button[aria-label="Mark as acquired"]');
     if (!markBtn) {
@@ -330,9 +570,14 @@ async function main() {
       }
     }
 
-    // ===== Step 4: Settings drawer — rename + invite =====
-    console.log("[step] owner opens settings drawer");
-    const settingsClicked = await ownerPage.evaluate(() => {
+    }
+
+    // ===== Step 4: rename + invite =====
+    // Lists 2.0 has no settings drawer: the name is an inline input in the
+    // shared shell and sharing lives behind the Access button. The legacy
+    // page keeps both in its drawer.
+    console.log(LISTS_V2 ? "[step] owner renames inline and opens Access" : "[step] owner opens settings drawer");
+    const settingsClicked = LISTS_V2 || await ownerPage.evaluate(() => {
       const b = document.querySelector('[data-testid="list-settings-btn"]');
       if (!b) return false;
       b.click();
@@ -340,6 +585,72 @@ async function main() {
     });
     if (!settingsClicked) {
       fail(failures, "Settings button not found");
+    } else if (LISTS_V2) {
+      const newName = `${name} (renamed)`;
+      const nameInput = '[data-testid="list-name-input"]';
+      await ownerPage.waitForFunction(
+        selector => { const input = document.querySelector(selector); return !!input && !input.readOnly; },
+        { timeout: 10000 },
+        nameInput,
+      );
+      await ownerPage.locator(nameInput).fill(newName);
+      await ownerPage.keyboard.press("Enter");
+      await ownerPage
+        .waitForFunction(
+          () => (document.title || "").includes("(renamed)"),
+          { timeout: 10000 },
+        )
+        .catch(() => {});
+      const title = await ownerPage.title();
+      if (!title.includes("(renamed)")) {
+        fail(failures, `expected the document title to include '(renamed)', got '${title}'`);
+      } else {
+        pass("renamed list inline");
+      }
+      await ownerPage.click('[data-testid="list-access-btn"]');
+      await waitFor(ownerPage, '[data-testid="list-invite-create"]', 10000);
+      await ownerPage.click('[data-testid="list-invite-create"]');
+      await new Promise((r) => setTimeout(r, 2000));
+      const invitesResp = await api(ownerPage, "GET", `/api/v1/list/${listId}/invites`);
+      if (
+        invitesResp.status !== 200 ||
+        !Array.isArray(invitesResp.body) ||
+        invitesResp.body.length === 0
+      ) {
+        fail(
+          failures,
+          `expected at least 1 invite, got ${invitesResp.status} body=${JSON.stringify(invitesResp.body)}`,
+        );
+      } else {
+        pass(`created invite via Access (${invitesResp.body.length} invite(s))`);
+        const inviteId = invitesResp.body[invitesResp.body.length - 1].id;
+        const redeem = await api(readerPage, "POST", `/api/v1/invite/${inviteId}/use`);
+        if (redeem.status !== 200 || redeem.body !== listId) {
+          fail(
+            failures,
+            `invite redeem expected 200 + listId ${listId}, got ${redeem.status} body=${redeem.body}`,
+          );
+        } else {
+          pass("reader redeemed invite");
+          await readerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "domcontentloaded" });
+          await readerPage.waitForSelector('[data-testid="list-name-input"]', { timeout: TIMEOUT_MS });
+          await new Promise((r) => setTimeout(r, 1500));
+          const viewer = await readerPage.evaluate(() => ({
+            hasAddItem: !!document.querySelector('[data-testid="inline-list-add"]'),
+            hasMenu: !!document.querySelector('[data-testid="list-settings-btn"]'),
+            hasAccess: !!document.querySelector('[data-testid="list-access-btn"]'),
+            nameReadOnly: !!document.querySelector('[data-testid="list-name-input"]')?.readOnly,
+          }));
+          if (viewer.hasAddItem) fail(failures, "read-only viewer should NOT see the composer"); else pass("read-only viewer hides the composer");
+          if (!viewer.hasMenu) fail(failures, "read-only viewer should see the More menu (for Leave)"); else pass("read-only viewer sees the More menu");
+          if (viewer.hasAccess) fail(failures, "read-only viewer should NOT see Access"); else pass("read-only viewer hides Access");
+          if (!viewer.nameReadOnly) fail(failures, "read-only viewer's name input must be read-only"); else pass("read-only viewer cannot rename");
+        }
+      }
+      await ownerPage.keyboard.press("Escape");
+      await ownerPage
+        .waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 5000 })
+        .catch(() => {});
     } else {
       await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
       pass("settings drawer opened");
@@ -350,8 +661,9 @@ async function main() {
       if (!renameInput) {
         fail(failures, "drawer rename input not found");
       } else {
-        await renameInput.click({ clickCount: 3 });
-        await renameInput.type(newName);
+        // Resource updates may replace the drawer between locating and editing.
+        // A locator reacquires the input instead of retaining a detached node.
+        await ownerPage.locator('[data-testid="drawer-rename-input"]').fill(newName);
         const saveBtn = await ownerPage.$('[data-testid="drawer-save-details"]');
         if (!saveBtn) {
           fail(failures, "drawer save button not found");
@@ -441,7 +753,7 @@ async function main() {
               const visibleControls = await readerPage.evaluate(() => {
                 const text = document.body.innerText;
                 return {
-                  hasAddItem: text.includes("Add Item"),
+                  hasAddItem: text.includes("Add Item") || !!document.querySelector('[data-testid="inline-list-add"]'),
                   hasSettings: !!document.querySelector('[data-testid="list-settings-btn"]'),
                   hasNotify: text.includes("Notify"),
                 };
@@ -484,25 +796,49 @@ async function main() {
       return true;
     });
     if (settingsClicked2) {
-      await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
-      const deleteBtn = await ownerPage.$('[data-testid="list-delete-btn"]');
+      // Lists 2.0: the ⋮ menu modal, with a separate confirm button. Legacy:
+      // the settings drawer, whose delete button re-renders into a confirm.
+      await waitFor(ownerPage, LISTS_V2 ? '[data-testid="list-danger-zone"]' : '[data-testid="list-settings-drawer"]', 10000);
+      // Click in-page by selector rather than through an element handle: the
+      // drawer is re-rendered whenever the list resource changes (a market
+      // update or a list broadcast), and a handle taken a moment earlier is
+      // then "not clickable or not an Element".
+      const clickDelete = (selector = '[data-testid="list-delete-btn"]') =>
+        ownerPage.evaluate((selector) => {
+          const b = document.querySelector(selector);
+          if (!b) return false;
+          b.click();
+          return true;
+        }, selector);
+      const deleteBtn = await clickDelete();
       if (!deleteBtn) {
         fail(failures, "delete button not found");
       } else {
-        await deleteBtn.click(); // first click: confirm prompt
-        await new Promise((r) => setTimeout(r, 500));
-        const deleteBtn2 = await ownerPage.$('[data-testid="list-delete-btn"]');
+        // first click: confirm prompt
+        // Wait for the button to re-render into its confirm state rather
+        // than sleeping — the dev-build WASM can take >500ms to apply it.
+        await ownerPage
+          .waitForFunction(
+            (labs) => labs
+              ? !!document.querySelector('[data-testid="list-confirm-delete"]')
+              : /confirm/i.test(
+                document.querySelector('[data-testid="list-delete-btn"]')?.innerText || "",
+              ),
+            { timeout: 10000 },
+            LISTS_V2,
+          )
+          .catch(() => {});
+        const deleteBtn2 = await clickDelete(LISTS_V2 ? '[data-testid="list-confirm-delete"]' : undefined);
         if (!deleteBtn2) {
           fail(failures, "delete confirm button not found");
         } else {
-          await deleteBtn2.click();
           await ownerPage
-            .waitForFunction(() => window.location.pathname === "/list", { timeout: 5000 })
+            .waitForFunction(() => window.location.pathname === "/list", { timeout: 15000 })
             .catch(() => {});
-          if (ownerPage.url().endsWith("/list")) {
+          if (new URL(ownerPage.url()).pathname === "/list") {
             pass("owner returned to /list after delete");
           } else {
-            fail(failures, `expected url to end with /list, got ${ownerPage.url()}`);
+            fail(failures, `expected path /list, got ${ownerPage.url()}`);
           }
           const checkResp = await api(ownerPage, "GET", "/api/v1/list");
           const stillThere = (checkResp.body || []).find((e) => e.list.id === listId);

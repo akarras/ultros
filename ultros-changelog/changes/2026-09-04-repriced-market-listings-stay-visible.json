@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Repriced market listings stay visible",
+  "blurb": "A listing that has just been repriced is no longer removed by an older update arriving at the same time. Failed listing updates also stop marking incomplete market data as fresh.",
+  "link": "/items",
+  "importance": "medium"
+}

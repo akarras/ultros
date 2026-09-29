@@ -1,0 +1,15 @@
+[package]
+name = "ultros-character"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Lodestone character lookup and the character-claim verification flow."
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Reading the character name/home world off a Lodestone profile page, see
+# `lodestone_profile`. This is the same HTML parser the `lodestone` crate uses.
+select = "0.6"
+thiserror = { workspace = true }
+ultros-db = { path = "../ultros-db" }

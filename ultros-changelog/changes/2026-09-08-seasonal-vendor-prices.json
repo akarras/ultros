@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable vendor prices",
+  "blurb": "Vendor Resale and crafting costs no longer assume you can buy items sold only during seasonal events or unlocked by past events. Item pages now label vendors that require an event, quest, or achievement.",
+  "link": "/vendor-resale"
+}

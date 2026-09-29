@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Compare markets with clearer analyzer controls",
+  "blurb": "Choose world, datacenter or region pricing in Venture, Leve, FC Crafting, Scrip Sources and Vendor Sell. Search the column picker to find the statistic and time window you need, with consistent sorting from headers and column menus.",
+  "link": "/venture-analyzer"
+}

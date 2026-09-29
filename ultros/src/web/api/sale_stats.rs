@@ -1,0 +1,210 @@
+//! `GET /api/v1/sale_stats/{worldDcOrRegion}` — bulk sale-history statistics.
+//!
+//! Returns min / median / mean per-unit sale price plus sample count for
+//! every `(item_id, hq)` with sales in the trailing window, aggregated
+//! across all worlds in the selector's scope (world, datacenter, or
+//! region — same name resolution as `/api/v1/cheapest/{world}`).
+//!
+//! Consumed by the recipe analyzer's selectable cost basis (#1202): sale
+//! statistics are a far more robust ingredient/revenue estimate than the
+//! single cheapest current listing. Also carries the stats-column fields
+//! (last sold, unit volume, vwap, sales/day) and — for single-world scopes
+//! only — the per-world confidence band. The response is cached in-process
+//! with single-flight refresh and stale fallback, then shared-cacheable for 5
+//! minutes. Request volume therefore does not multiply ClickHouse work.
+
+use std::{collections::HashMap, sync::Arc};
+
+use axum::{
+    body::Bytes,
+    extract::{Path, Query, State},
+    response::IntoResponse,
+};
+use serde::Deserialize;
+use ultros_api_types::sale_stats::{BulkSaleStats, BulkSaleStatsColumnar, ItemSaleStats};
+use ultros_api_types::trends::ConfidenceBand;
+use ultros_clickhouse::ClickHouseClient;
+use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
+
+use super::is_columnar;
+use crate::web::{
+    error::{ClickHouseQueryError, WebError},
+    stats_cache::{CacheKey, SaleStatsCache, cached_response},
+};
+
+const DEFAULT_WINDOW_DAYS: u16 = 7;
+const SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SaleStatsQuery {
+    /// Trailing rollup window in days. Supported: 1, 7, 30, 90; defaults to 7.
+    window: Option<u16>,
+    /// `columnar` selects [`BulkSaleStatsColumnar`]; see [`is_columnar`].
+    format: Option<String>,
+}
+
+pub(crate) async fn get_sale_stats(
+    State(ch): State<ClickHouseClient>,
+    State(world_cache): State<Arc<WorldCache>>,
+    State(cache): State<SaleStatsCache>,
+    Path(world): Path<String>,
+    Query(query): Query<SaleStatsQuery>,
+) -> Result<impl IntoResponse, WebError> {
+    let value = world_cache.lookup_value_by_name(&world)?;
+    let selector = AnySelector::from(&value);
+    let world_ids = world_cache
+        .get_all_worlds_in(&value)
+        .ok_or(WebError::NotFound)?;
+    let window_days = query.window.unwrap_or(DEFAULT_WINDOW_DAYS);
+    if !SUPPORTED_WINDOWS.contains(&window_days) {
+        return Err(WebError::BadRequest);
+    }
+    let columnar = is_columnar(query.format.as_deref());
+
+    let cached = cache
+        .get_or_load(
+            CacheKey {
+                selector,
+                window_days,
+                columnar,
+            },
+            move || async move { load_sale_stats(&ch, world_ids, window_days, columnar).await },
+        )
+        .await?;
+    let disposition = cached.disposition.as_str();
+    metrics::counter!(
+        "ultros_sale_stats_cache_total",
+        "disposition" => disposition
+    )
+    .increment(1);
+    Ok(cached_response(cached.body, disposition))
+}
+
+async fn load_sale_stats(
+    ch: &ClickHouseClient,
+    world_ids: Vec<i32>,
+    window_days: u16,
+    columnar: bool,
+) -> Result<Bytes, WebError> {
+    let rows = ultros_clickhouse::queries::bulk_sale_stats(ch, &world_ids, window_days)
+        .await
+        .map_err(|e| ClickHouseQueryError::new("bulk_sale_stats", e))?;
+    // A new deployment creates the table before the elected scheduler has
+    // finished its first seed. Signal a transient failure so the analyzer can
+    // use its recent-sales failover instead of caching an empty market.
+    if rows.is_empty() {
+        return Err(WebError::TemporarilyUnavailable);
+    }
+
+    // Confidence bands are stored per world and don't compose across
+    // worlds, so only a single-world scope carries them; datacenter and
+    // region scopes report `Unknown`.
+    let confidence: HashMap<(i32, bool), ConfidenceBand> = match world_ids.as_slice() {
+        [only] => ultros_clickhouse::queries::bulk_confidence(ch, *only)
+            .await
+            .map_err(|e| ClickHouseQueryError::new("bulk_confidence", e))?
+            .into_iter()
+            .map(|r| ((r.item_id, r.hq != 0), r.confidence_band()))
+            .collect(),
+        _ => HashMap::new(),
+    };
+
+    let mut stats: Vec<ItemSaleStats> = rows
+        .into_iter()
+        .map(|r| ItemSaleStats {
+            item_id: r.item_id,
+            hq: r.hq != 0,
+            min_price: r.min_price,
+            median_price: r.median_price,
+            avg_price: r.avg_price,
+            num_sold: r.num_sold,
+            last_sold_unix: r.last_sold_unix,
+            units_sold: r.units_sold,
+            vwap: r.vwap,
+            gil_volume: r.gil_volume,
+            sales_per_day: r.num_sold as f32 / window_days as f32,
+            confidence: confidence
+                .get(&(r.item_id, r.hq != 0))
+                .copied()
+                .unwrap_or_default(),
+        })
+        .collect();
+    sort_rows(&mut stats);
+
+    serialize_body(stats, columnar)
+}
+
+/// ClickHouse returns rows in arbitrary order. Sorting by `(item_id, hq)`
+/// makes the payload deterministic across loads and, for the columnar
+/// shape, noticeably more compressible (adjacent rows share more prefix
+/// bytes once grouped by item).
+fn sort_rows(stats: &mut [ItemSaleStats]) {
+    stats.sort_unstable_by_key(|s| (s.item_id, s.hq));
+}
+
+/// Either wire shape, pre-serialized for the cache.
+fn serialize_body(stats: Vec<ItemSaleStats>, columnar: bool) -> Result<Bytes, WebError> {
+    let body = BulkSaleStats { stats };
+    let json = if columnar {
+        serde_json::to_vec(&BulkSaleStatsColumnar::from(body))
+    } else {
+        serde_json::to_vec(&body)
+    };
+    json.map(Bytes::from)
+        .map_err(anyhow::Error::from)
+        .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stats() -> Vec<ItemSaleStats> {
+        vec![
+            ItemSaleStats {
+                item_id: 2,
+                hq: false,
+                median_price: 100,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 5,
+                hq: true,
+                median_price: 7,
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn serialize_body_rows_by_default_columnar_on_request() {
+        let rows = serialize_body(stats(), false).unwrap();
+        assert!(rows.starts_with(br#"{"stats":[{"item_id":2"#));
+        let columnar = serialize_body(stats(), true).unwrap();
+        assert!(columnar.starts_with(br#"{"item_id":[2,5],"hq":[false,true]"#));
+    }
+
+    #[test]
+    fn sort_rows_orders_by_item_id_then_hq() {
+        let mut out_of_order = vec![
+            ItemSaleStats {
+                item_id: 5,
+                hq: false,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 2,
+                hq: true,
+                ..Default::default()
+            },
+            ItemSaleStats {
+                item_id: 2,
+                hq: false,
+                ..Default::default()
+            },
+        ];
+        sort_rows(&mut out_of_order);
+        let sorted = serialize_body(out_of_order, true).unwrap();
+        assert!(sorted.starts_with(br#"{"item_id":[2,2,5],"hq":[false,true,false]"#));
+    }
+}

@@ -11,7 +11,7 @@ git config core.hooksPath scripts/hooks
 
 echo "Hooks installed: core.hooksPath=scripts/hooks"
 echo "  pre-commit  -> cargo fmt --all -- --check"
-echo "  pre-push    -> ./check_ci.sh (fmt + clippy)"
+echo "  pre-push    -> ./check_ci.sh (fmt + clippy + Rust regression tests)"
 echo
 echo "To bypass once: git commit --no-verify  /  git push --no-verify"
 echo "To uninstall:   git config --unset core.hooksPath"

@@ -14,5 +14,7 @@ Disallow: /logout
 Disallow: /api/
 Disallow: /invitebot
 Disallow: /redirect
+Disallow: /*?*sort=
+Disallow: /*?*per_page=
 
 Sitemap: https://ultros.app/sitemap.xml

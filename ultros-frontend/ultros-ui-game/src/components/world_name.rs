@@ -1,0 +1,28 @@
+use leptos::{either::Either, prelude::*};
+use ultros_api_types::world_helper::AnySelector;
+
+use crate::global_state::use_world_helper;
+use crate::i18n::t;
+use crate::i18n_fallback::use_i18n_or_default;
+
+#[component]
+pub fn WorldName(id: AnySelector) -> impl IntoView {
+    // The i18n context goes missing under the same dead owner as the world data
+    // below, and for the same reason. See `crate::i18n_fallback`.
+    let i18n = use_i18n_or_default();
+    // An absent context is as recoverable as a failed world-data fetch, and both land in the
+    // `none_label` arm below. Panicking on the former aborted the SSR stream mid-response
+    // (GlitchTip #7120/#7187).
+    match use_world_helper() {
+        Ok(data) => Either::Left(view! {
+            <span>
+                {data
+                    .lookup_selector(id)
+                    .map(|value| value.get_name().to_string())
+                    .unwrap_or_default()}
+            </span>
+        }),
+        _ => Either::Right(view! { <span>{t!(i18n, none_label)}</span> }),
+    }
+    .into_any()
+}

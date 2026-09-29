@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Gear sets without the Ornate outliers",
+  "blurb": "Ornate crafted pieces cost many times more than the regular version of the same gear, so they no longer get averaged into a job's gear set. They are still listed, just on their own.",
+  "link": "/items",
+  "importance": "medium"
+}

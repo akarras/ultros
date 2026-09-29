@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Get told when your retainer sells something",
+  "blurb": "Add a retainer sale alert from the Retainers page, the Alerts page, or /ffxiv retainer add_sale_alert in Discord. Ultros pairs a vanished listing with a matching sale and only notifies you when nobody else was listed at that price.",
+  "link": "/retainers/listings"
+}

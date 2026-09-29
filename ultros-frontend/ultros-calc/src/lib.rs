@@ -1,0 +1,19 @@
+//! Calculation models shared by Ultros's server and browser.
+//!
+//! Keep this crate independent of Leptos, UI state, and game-data loading so
+//! calculations can be compiled and tested without building application views.
+
+pub mod analysis;
+pub mod bulk_basket;
+pub mod formula;
+pub mod list_estimate;
+pub mod list_travel;
+pub mod math;
+pub mod recipe_planner;
+pub mod verdict;
+
+pub mod needed;
+pub mod pricing;
+
+#[cfg(test)]
+mod price_basis;

@@ -66,9 +66,14 @@ pub(crate) async fn profit(
         .get_best_resale(world_id, region_id, resale, &ctx.data().world_cache)
         .await
         .ok_or(anyhow::anyhow!("Unable to get resale results"))?;
-    sales.sort_by_key(|s| std::cmp::Reverse(s.profit));
     let total_results = sales.len();
-    let sales = sales.into_iter().take(15);
+    // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+    if sales.len() > 15 {
+        sales.select_nth_unstable_by_key(15, |s| std::cmp::Reverse(s.profit));
+        sales.truncate(15);
+    }
+    sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.profit));
+    let sales = sales.into_iter();
     ctx.send(poise::CreateReply::default().embed(
         poise::serenity_prelude::CreateEmbed::new()
             .title("Flip Finder")
@@ -78,10 +83,14 @@ pub(crate) async fn profit(
                 for sale in sales {
                     let item_name = localized_item_name(sale.item_id, user_lang);
                     let item_name: String = item_name.chars().take(30).collect();
+                    // Beyond this the exact figure carries no decision value
+                    // and just blows out the column. Mirrors
+                    // ROI_DISPLAY_CEILING on the frontend.
+                    let roi = sale.return_on_investment.min(100_000.0);
                     writeln!(
                         &mut content,
                         "`{item_name:<30} | {:7.2}% | {:<10}` [url](https://universalis.app/market/{})",
-                        sale.return_on_investment, sale.profit, sale.item_id
+                        roi, sale.profit, sale.item_id
                     )
                     .unwrap();
                 }

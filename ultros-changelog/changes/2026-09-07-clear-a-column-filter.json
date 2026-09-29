@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Turn a column filter off in one click",
+  "blurb": "Filtered columns now show a funnel in the header and a dedicated clear button beside it, so you can see at a glance which columns are narrowing your results and switch one off without opening its menu. Columns that carry several filters at once, like Cost / unit, clear all of them together.",
+  "link": "/flip-finder"
+}

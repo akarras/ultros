@@ -1,18 +1,64 @@
+use std::sync::Arc;
+
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
+use serde::Deserialize;
 use ultros_api_types::alert::{
-    Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, CreateAlertRequest,
-    ResendResult, UpdateAlertRequest,
+    Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, BELOW_MEDIAN_PERCENT_RANGE,
+    ClearAlertEventsRequest, ClearAlertEventsResponse, CreateAlertRequest,
+    MarkAlertEventsReadRequest, MarkAlertEventsReadResponse, ResendResult, UnreadAlertEventCount,
+    UpdateAlertRequest,
 };
 use ultros_api_types::list::ListPermission;
-use ultros_db::UltrosDb;
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
+use ultros_db::{NewMarketTriggerAlert, UltrosDb};
 
+use crate::alerts::inbox;
 use crate::event::{EventSenders, EventType};
 use crate::web::api::endpoint_validation::validate_discord_webhook_url;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
+
+/// Default number of alert events returned by `GET /api/v1/alerts/events`
+/// when the caller doesn't supply `limit`.
+const DEFAULT_ALERT_EVENTS_LIMIT: u64 = 50;
+/// Smallest `limit` accepted for `GET /api/v1/alerts/events`.
+const MIN_ALERT_EVENTS_LIMIT: u64 = 1;
+/// Largest `limit` accepted for `GET /api/v1/alerts/events` — caps a single
+/// page so a client can't force an unbounded scan.
+const MAX_ALERT_EVENTS_LIMIT: u64 = 200;
+/// Largest number of ids `POST /api/v1/alerts/events/read` accepts in one
+/// request.
+const MAX_MARK_READ_IDS: usize = 500;
+
+/// Resolve a user-supplied `limit` query param into the actual page size used
+/// for `GET /api/v1/alerts/events`. Missing → default (50). Out-of-range →
+/// clamped to `[1, 200]`.
+pub(crate) fn resolve_events_limit(requested: Option<u64>) -> u64 {
+    requested
+        .unwrap_or(DEFAULT_ALERT_EVENTS_LIMIT)
+        .clamp(MIN_ALERT_EVENTS_LIMIT, MAX_ALERT_EVENTS_LIMIT)
+}
+
+/// Reject an oversized `ids` list for `POST /api/v1/alerts/events/read`.
+#[allow(clippy::result_large_err)]
+pub(crate) fn validate_mark_read_ids_len(len: usize) -> Result<(), ApiError> {
+    if len > MAX_MARK_READ_IDS {
+        Err(ApiError::BadRequest(
+            "too many ids: at most 500 per request",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AlertEventsQuery {
+    limit: Option<u64>,
+    before_id: Option<i64>,
+}
 
 /// Default cooldown when the user doesn't supply one (1 hour).
 pub(crate) const DEFAULT_COOLDOWN_SECONDS: i32 = 3600;
@@ -52,9 +98,24 @@ pub(crate) fn validate_margin_percent(margin_percent: i32) -> Result<(), ApiErro
     }
 }
 
+/// Reject a below-median percentage outside [`BELOW_MEDIAN_PERCENT_RANGE`].
+#[allow(clippy::result_large_err)]
+pub(crate) fn validate_percent_below(percent_below: i32) -> Result<(), ApiError> {
+    if BELOW_MEDIAN_PERCENT_RANGE.contains(&percent_below) {
+        Ok(())
+    } else {
+        Err(ApiError::from(anyhow::anyhow!(
+            "percent_below must be between {} and {}",
+            BELOW_MEDIAN_PERCENT_RANGE.start(),
+            BELOW_MEDIAN_PERCENT_RANGE.end()
+        )))
+    }
+}
+
 pub(crate) async fn create_alert(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
+    State(world_helper): State<Arc<WorldHelper>>,
     user: AuthDiscordUser,
     Json(req): Json<CreateAlertRequest>,
 ) -> Result<Json<Alert>, ApiError> {
@@ -85,9 +146,23 @@ pub(crate) async fn create_alert(
             )
             .await;
         }
+        AlertTrigger::RetainerSold {} => {
+            return create_retainer_sold_alert_handler(&db, &senders, owner, cooldown, &req).await;
+        }
         AlertTrigger::ListUpdate { list_id } => {
             return create_list_update_alert_handler(&db, &senders, owner, list_id, cooldown, &req)
                 .await;
+        }
+        AlertTrigger::BelowMedian { .. } | AlertTrigger::BackInStock { .. } => {
+            return create_market_trigger_alert_handler(
+                &db,
+                &senders,
+                &world_helper,
+                owner,
+                cooldown,
+                &req,
+            )
+            .await;
         }
     };
 
@@ -294,6 +369,35 @@ async fn create_retainer_undercut_alert_handler(
     }))
 }
 
+async fn create_retainer_sold_alert_handler(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "retainer sale alerts require endpoint_ids"
+        )));
+    }
+    let (alert, _sale) = db
+        .create_retainer_sale_alert(owner, cooldown, &req.endpoint_ids)
+        .await
+        .map_err(ApiError::from)?;
+    // The sale listener rebuilds its rules on every `alerts` bus event.
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: AlertTrigger::RetainerSold {},
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
 async fn create_list_update_alert_handler(
     db: &UltrosDb,
     senders: &EventSenders,
@@ -333,6 +437,95 @@ async fn create_list_update_alert_handler(
         cooldown_seconds: alert.cooldown_seconds,
         last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
     }))
+}
+
+/// Handle `create_alert` for the item-scoped market triggers (`BelowMedian`,
+/// `BackInStock`). Both require `endpoint_ids` and a world selector that
+/// resolves: an unresolvable scope would be saved but could never fire.
+async fn create_market_trigger_alert_handler(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    world_helper: &WorldHelper,
+    owner: i64,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    let (item_id, world_selector, hq_only, percent_below) = match req.trigger {
+        AlertTrigger::BelowMedian {
+            item_id,
+            world_selector,
+            percent_below,
+            hq_only,
+        } => {
+            validate_percent_below(percent_below)?;
+            (item_id, world_selector, hq_only, Some(percent_below))
+        }
+        AlertTrigger::BackInStock {
+            item_id,
+            world_selector,
+            hq_only,
+        } => (item_id, world_selector, hq_only, None),
+        _ => {
+            return Err(ApiError::from(anyhow::anyhow!(
+                "not a market-trigger alert"
+            )));
+        }
+    };
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "market alerts require endpoint_ids"
+        )));
+    }
+    validate_world_selector(world_helper, world_selector)?;
+    let world_selector_json = serde_json::to_value(world_selector)
+        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
+    let new = NewMarketTriggerAlert {
+        owner,
+        item_id,
+        world_selector_json,
+        hq_only,
+        cooldown_seconds: cooldown,
+        endpoint_ids: &req.endpoint_ids,
+    };
+    let alert = match percent_below {
+        Some(percent_below) => {
+            db.create_below_median_alert(new, percent_below)
+                .await
+                .map_err(ApiError::from)?
+                .0
+        }
+        None => {
+            db.create_back_in_stock_alert(new)
+                .await
+                .map_err(ApiError::from)?
+                .0
+        }
+    };
+    // The market-trigger listener rebuilds its rules on every `alerts` event.
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: req.trigger.clone(),
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_world_selector(
+    world_helper: &WorldHelper,
+    world_selector: AnySelector,
+) -> Result<(), ApiError> {
+    if world_helper.lookup_selector(world_selector).is_some() {
+        Ok(())
+    } else {
+        Err(ApiError::from(anyhow::anyhow!(
+            "world_selector does not name a known world, datacenter or region"
+        )))
+    }
 }
 
 pub(crate) async fn list_alerts(
@@ -428,6 +621,26 @@ pub(crate) async fn list_alerts(
         });
     }
 
+    let sale_rows = db
+        .get_user_retainer_sale_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, _) in sale_rows {
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::RetainerSold {},
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
     let update_rows = db
         .get_user_list_update_alerts(user.id as i64)
         .await
@@ -440,6 +653,59 @@ pub(crate) async fn list_alerts(
         out.push(Alert {
             id: a.id,
             trigger: AlertTrigger::ListUpdate { list_id: t.list_id },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    let median_rows = db
+        .get_user_below_median_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in median_rows {
+        let world_selector = serde_json::from_value(t.world_selector.clone())
+            .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::BelowMedian {
+                item_id: t.item_id,
+                world_selector,
+                percent_below: t.percent_below,
+                hq_only: t.hq_only,
+            },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    let stock_rows = db
+        .get_user_back_in_stock_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in stock_rows {
+        let world_selector = serde_json::from_value(t.world_selector.clone())
+            .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::BackInStock {
+                item_id: t.item_id,
+                world_selector,
+                hq_only: t.hq_only,
+            },
             delivery: AlertDelivery::DiscordDm,
             endpoint_ids,
             enabled: a.enabled,
@@ -520,25 +786,72 @@ pub(crate) async fn delete_alert(
 pub(crate) async fn list_alert_events(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
+    Query(query): Query<AlertEventsQuery>,
 ) -> Result<Json<Vec<ApiAlertEvent>>, ApiError> {
+    let limit = resolve_events_limit(query.limit);
     let rows = db
-        .get_recent_alert_events_for_user(user.id as i64, 50)
+        .get_recent_alert_events_for_user(user.id as i64, limit, query.before_id)
         .await
         .map_err(ApiError::from)?;
     Ok(Json(
-        rows.into_iter()
-            .map(|r| ApiAlertEvent {
-                id: r.id,
-                alert_id: r.alert_id,
-                fired_at: r.fired_at.with_timezone(&chrono::Utc),
-                item_id: r.item_id,
-                matched_listing_id: r.matched_listing_id,
-                matched_price: r.matched_price,
-                delivered: r.delivered,
-                delivery_error: r.delivery_error,
-            })
-            .collect(),
+        rows.into_iter().map(inbox::alert_event_to_api).collect(),
     ))
+}
+
+/// Mark alert events read, either by explicit id list or `up_to_id`. Returns
+/// the number of rows actually flipped plus the caller's new unread count, so
+/// the frontend can update its badge from the response without a second
+/// round trip.
+///
+/// Path: `POST /api/v1/alerts/events/read`.
+pub(crate) async fn mark_alert_events_read(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(req): Json<MarkAlertEventsReadRequest>,
+) -> Result<Json<MarkAlertEventsReadResponse>, ApiError> {
+    validate_mark_read_ids_len(req.ids.len())?;
+    let owner = user.id as i64;
+    let updated = db
+        .mark_alert_events_read_for_user(owner, &req.ids, req.up_to_id)
+        .await
+        .map_err(ApiError::from)?;
+    let unread_count = db
+        .count_unread_alert_events_for_user(owner)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(MarkAlertEventsReadResponse {
+        updated,
+        unread_count,
+    }))
+}
+
+/// Delete the caller's alert events (all of them, or only those with
+/// `id <= up_to_id`). Backs the inbox's "Clear" action; the rows are gone
+/// from the alert history too, not just hidden.
+///
+/// Path: `POST /api/v1/alerts/events/clear`.
+pub(crate) async fn clear_alert_events(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(req): Json<ClearAlertEventsRequest>,
+) -> Result<Json<ClearAlertEventsResponse>, ApiError> {
+    let deleted = db
+        .delete_alert_events_for_user(user.id as i64, req.up_to_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(ClearAlertEventsResponse { deleted }))
+}
+
+/// Path: `GET /api/v1/alerts/events/unread_count`.
+pub(crate) async fn unread_alert_event_count(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<Json<UnreadAlertEventCount>, ApiError> {
+    let unread = db
+        .count_unread_alert_events_for_user(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(UnreadAlertEventCount { unread }))
 }
 
 /// Resend an alert event through every endpoint linked to its alert. Returns
@@ -572,6 +885,7 @@ pub(crate) async fn resend_alert_event(
         "Resending alert for item {} (matched price: {:?})",
         event.item_id, event.matched_price
     );
+    let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
     let mut last_err: Option<String> = None;
     let mut any_ok = false;
     let owner = user.id as i64;
@@ -591,14 +905,18 @@ pub(crate) async fn resend_alert_event(
         let result = if needs_ctx {
             match serenity_ctx.as_ref() {
                 Some(ctx) => {
-                    crate::alerts::delivery::deliver_to_endpoint(&endpoint, title, &body, &db, ctx)
-                        .await
+                    crate::alerts::delivery::deliver_to_endpoint(
+                        &endpoint, title, &body, &push, &db, ctx,
+                    )
+                    .await
                 }
                 None => Err(anyhow::anyhow!("Discord client not ready")),
             }
         } else {
-            crate::alerts::delivery::deliver_non_discord_endpoint(&endpoint, title, &body, &db)
-                .await
+            crate::alerts::delivery::deliver_non_discord_endpoint(
+                &endpoint, title, &body, &push, &db,
+            )
+            .await
         };
         match result {
             Ok(()) => any_ok = true,
@@ -659,5 +977,44 @@ mod tests {
         assert!(validate_price_threshold(0).is_err());
         assert!(validate_price_threshold(-1).is_err());
         assert!(validate_price_threshold(i32::MIN).is_err());
+    }
+
+    // ---------- resolve_events_limit ----------
+
+    #[test]
+    fn events_limit_defaults_to_50_when_unset() {
+        assert_eq!(resolve_events_limit(None), 50);
+    }
+
+    #[test]
+    fn events_limit_clamps_zero_up_to_1() {
+        assert_eq!(resolve_events_limit(Some(0)), 1);
+    }
+
+    #[test]
+    fn events_limit_clamps_above_200_down_to_200() {
+        assert_eq!(resolve_events_limit(Some(500)), 200);
+        assert_eq!(resolve_events_limit(Some(u64::MAX)), 200);
+    }
+
+    #[test]
+    fn events_limit_passes_in_range_values_through() {
+        assert_eq!(resolve_events_limit(Some(1)), 1);
+        assert_eq!(resolve_events_limit(Some(100)), 100);
+        assert_eq!(resolve_events_limit(Some(200)), 200);
+    }
+
+    // ---------- validate_mark_read_ids_len ----------
+
+    #[test]
+    fn mark_read_ids_guard_allows_up_to_500() {
+        assert!(validate_mark_read_ids_len(0).is_ok());
+        assert!(validate_mark_read_ids_len(500).is_ok());
+    }
+
+    #[test]
+    fn mark_read_ids_guard_rejects_over_500() {
+        assert!(validate_mark_read_ids_len(501).is_err());
+        assert!(validate_mark_read_ids_len(10_000).is_err());
     }
 }

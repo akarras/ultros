@@ -19,6 +19,18 @@ pub struct Theme {
     pub volume: Color,
     pub market_average: Color,
     pub trend: Color,
+    /// Candle direction pair. Deliberately NOT red/green: the pair separates
+    /// on lightness as well as hue so direction survives greyscale and the
+    /// common forms of color blindness (see `candle_pair_survives_greyscale`).
+    pub candle_up: Color,
+    pub candle_down: Color,
+    /// Sequential ramp for the density mode, darkest (fewest sales) to
+    /// lightest, quantised to 8 steps so cells batch into <= 8 Path nodes.
+    pub density_ramp: Vec<Color>,
+    /// One muted hue per expansion (ARR..DT) for the patch milestone bands.
+    /// Deliberately distinct from `palette`: bands are background context,
+    /// drawn at low alpha, and must not read as a data series.
+    pub expansion_hues: Vec<Color>,
     pub font_family: String,
 }
 
@@ -33,6 +45,21 @@ impl Theme {
             volume: Color::hex("#22c55e"),
             market_average: Color::hex("#facc15"),
             trend: Color::hex("#94a3b8"),
+            candle_up: Color::hex("#5eead4"),
+            candle_down: Color::hex("#c2410c"),
+            density_ramp: [
+                "#1e1b4b", "#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#818cf8",
+                "#c7d2fe",
+            ]
+            .iter()
+            .map(|c| Color::hex(c))
+            .collect(),
+            expansion_hues: [
+                "#94a3b8", "#38bdf8", "#f472b6", "#a78bfa", "#fbbf24", "#34d399",
+            ]
+            .iter()
+            .map(|c| Color::hex(c))
+            .collect(),
             font_family: "Jaldi, sans-serif".to_string(),
         }
     }
@@ -60,6 +87,42 @@ mod tests {
             Some(Color::hex("#202124")),
             "Dark card theme should have the specific dark gray background color"
         );
+    }
+
+    /// WCAG relative luminance — good enough to prove a greyscale render
+    /// keeps the up/down distinction (the spec's colorblind-safety bar).
+    fn luminance(c: Color) -> f64 {
+        fn lin(u: u8) -> f64 {
+            let x = u as f64 / 255.0;
+            if x <= 0.04045 {
+                x / 12.92
+            } else {
+                ((x + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+    }
+
+    #[test]
+    fn candle_pair_survives_greyscale() {
+        let theme = Theme::dark_card();
+        let delta = (luminance(theme.candle_up) - luminance(theme.candle_down)).abs();
+        assert!(
+            delta >= 0.30,
+            "candle up/down must differ in luminance by >= 0.30, got {delta:.3}"
+        );
+    }
+
+    #[test]
+    fn density_ramp_holds_lightness_order() {
+        let theme = Theme::dark_card();
+        assert_eq!(theme.density_ramp.len(), 8, "quantised to 8 opacity steps");
+        for pair in theme.density_ramp.windows(2) {
+            assert!(
+                luminance(pair[0]) < luminance(pair[1]),
+                "ramp must be strictly increasing in luminance"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Retainers gets a visual refresh",
+  "blurb": "The Retainers pages now have a proper heading and an about-this-tool panel, and their listing tables use the same styled table as the rest of the app instead of unstyled HTML. Loading spinners were replaced with skeletons shaped like the tables and cards they load into.",
+  "link": "/retainers",
+  "importance": "medium"
+}

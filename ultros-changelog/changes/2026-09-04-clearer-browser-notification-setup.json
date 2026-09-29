@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Clearer browser notification setup",
+  "blurb": "Browser notification setup now explains when a push service is unsupported, so you can tell why a subscription could not be saved.",
+  "link": "/items"
+}

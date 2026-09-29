@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Game data downloads 40% smaller, and only when it actually changes",
+  "blurb": "The game-data file the site fetches on a first visit (items, recipes, vendors and the rest) is now compressed with brotli instead of zlib, shrinking it from about 4.5 MB to about 2.7 MB per language. It is also versioned by its own contents rather than by the site release, so a site update that did not touch game data no longer makes your browser download the whole file again."
+}

@@ -15,3 +15,21 @@
 ## 2024-07-23 - Add explicit input associations
 **Learning:** In Leptos, when defining `for` and `id` attributes that need dynamic values within `move ||` closures, ensure you do not inadvertently move an entire struct (like `group`) multiple times, which causes E0382. Instead, extract the required value (e.g. `let group_id = group.id;`) beforehand so it can be copied into the closures.
 **Action:** Always extract and copy small values before using them inside Leptos closures to avoid ownership issues.
+## 2026-08-12 - Confirm Action Aria-Live
+**Learning:** Adding `aria-live="polite"` to a button that changes text to confirm an action (e.g. from "Clear All" to "Confirm Clear") is an easy accessibility win to notify screen reader users of the new state. However, putting `aria-live` directly on the button can sometimes be flaky across different screen readers, but it's an acceptable micro-UX improvement for an inline confirmation pattern.
+**Action:** Use `aria-live` regions or visually hidden elements for more complex state changes, but inline `aria-live="polite"` on a changing button is a quick enhancement for simple confirm interactions.
+## 2026-08-28 - Clear-filter controls must be real buttons
+**Learning:** The analyzer's world/datacenter clear-filter controls were `div`s with `on:click`, so they were unfocusable and did not respond to Space/Enter. Replaced with `<button type="button">` plus the existing `aria_remove_filter` label, matching `vendor_resale.rs`. Note that Tailwind v4's preflight sets `button { cursor: default }`, so a `div` converted to a `button` must keep its `cursor-pointer` class or it silently loses the pointer affordance.
+**Action:** Prefer `<button type="button">` over `div` + `on:click`, give icon-only buttons an `aria-label`, and keep `cursor-pointer` when converting a `div` to a `button` under Tailwind v4.
+## 2026-08-30 - Always specify type="button" for JS interactive buttons
+**Learning:** By default, HTML `<button>` elements act as `type="submit"`. If a generic interactive component (like a modal close button or a search clear button) is placed inside a form, it will unintentionally trigger a form submission and page reload.
+**Action:** Always add `type="button"` to buttons that are solely meant to trigger client-side JavaScript actions (via `on:click`), ensuring they don't cause side-effects if nested in a form.
+## 2026-09-10 - Missing ARIA Labels in Inline Edit Forms
+**Learning:** Icon-only buttons used in inline editing forms (like renaming a role) often miss `aria-label`s, which can make the UI inaccessible to screen reader users who can't see the visual context of the form.
+**Action:** Always check inline edit forms (like rename inputs) for icon-only buttons (e.g. save or cancel icons) and ensure they have descriptive `aria-label`s.
+## 2026-09-11 - Adding button hover styling and button type
+**Learning:** Dismiss buttons on item comparison cards were missing proper hover states, `text-muted` styling and `type="button"`, leading to worse UX and potential form submission if placed within a form.
+**Action:** Consistently use the `.btn-ghost` class with `p-1`, `text-[color:var(--color-text-muted)]`, and `hover:text-[color:var(--color-text)]` for icon-only dismiss buttons to provide keyboard focusability, proper padding, and intuitive interactive styling, and always add `type="button"`.
+## 2026-09-12 - Add type="button" and disabled prop to MakePlaceImporter button
+**Learning:** Some buttons handling component state logic (like adding items from a textarea list) missed a reactive disabled state, letting the user accidentally click them repeatedly or when there is an invalid input string.
+**Action:** Always add `type="button"` for interactive buttons that execute JS and provide a `prop:disabled` state for better user feedback and interaction blocking.

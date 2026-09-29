@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use sea_orm::{
     ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::OnConflict,
@@ -30,6 +30,41 @@ impl UltrosDb {
             .exec(&self.db)
             .await?;
         Ok(())
+    }
+
+    /// Newest `listing_last_updated` row per world, i.e. the last time anything
+    /// at all was ingested for that world.
+    ///
+    /// Worlds we have never ingested for are simply absent from the result.
+    pub async fn get_last_ingest_per_world(
+        &self,
+    ) -> Result<Vec<(i32, NaiveDateTime)>, anyhow::Error> {
+        Ok(listing_last_updated::Entity::find()
+            .select_only()
+            .column(listing_last_updated::Column::WorldId)
+            .column_as(listing_last_updated::Column::DateTime.max(), "last_ingest")
+            .group_by(listing_last_updated::Column::WorldId)
+            .into_tuple::<(i32, NaiveDateTime)>()
+            .all(&self.db)
+            .await?)
+    }
+
+    /// Returns the ingest markers for one item across the given worlds — i.e.
+    /// when Ultros last stored market data for the item on each world. Worlds
+    /// that have never been ingested simply have no row.
+    pub async fn get_listing_last_updated_for_worlds(
+        &self,
+        item_id: ItemId,
+        world_ids: &[i32],
+    ) -> Result<Vec<listing_last_updated::Model>, anyhow::Error> {
+        if world_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        Ok(listing_last_updated::Entity::find()
+            .filter(listing_last_updated::Column::ItemId.eq(item_id.0))
+            .filter(listing_last_updated::Column::WorldId.is_in(world_ids.iter().copied()))
+            .all(&self.db)
+            .await?)
     }
 
     pub async fn get_recently_updated_listings_for_world(

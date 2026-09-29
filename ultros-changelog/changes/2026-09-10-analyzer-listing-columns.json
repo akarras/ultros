@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Current-listing columns on every analyzer",
+  "blurb": "The Columns picker now offers a Listings group on every analyzer grid: active listings, listed units, sellers, median listing age, and the age of the oldest listing. Ages count from when a retainer last touched a listing, and the data loads only when you turn one of these columns on."
+}

@@ -7,46 +7,23 @@ Run `./check_ci.sh` from the repo root. It runs `cargo fmt --all -- --check` and
 - Formatting failures: `cargo fmt --all` to autofix.
 - Clippy failures: read the warning, fix the code. Do not `#[allow]` to silence unless it's a genuine false-positive worth a comment.
 
-## When the submodule isn't initialized
+## Game data comes from LFS packs
 
-`./check_ci.sh` runs clippy which compiles the whole workspace, and the `xiv-gen-db` build script reads from `xiv-gen/ffxiv-datamining/` — a git submodule. The csv data for `cn`, `ko`, `tc` lives in *nested* submodules of `ffxiv-datamining` (separate xivapi-adjacent repos), so a non-recursive init only gets you en/ja/de/fr and the build still panics on `cn/Item.csv`.
+There are **no git submodules** in this repo anymore. FFXIV game data (item/recipe tables, icons, etc.) lives in pre-generated packs committed under `data/` (`data/xiv-db`, `data/icons`, `data/manifest.toml`) and tracked via Git LFS. `xiv-gen-db` and `ultros-xiv-icons` read these packs directly at compile time — there's no build-time network fetch and no submodule to initialize.
 
-### Use `--reference`, not `--init --recursive`
+- **Fresh clone**: run `git lfs install && git lfs pull` once. Without it, the `data/` files are LFS pointer text, not real content, and the build fails with an actionable error message rather than a cryptic panic.
+- **Worktrees**: no setup needed — `git worktree add` checks out LFS content the same as a normal clone as long as `git lfs install` has been run once on the machine.
+- **Regenerating packs**: `cargo run --release -p game-data-pack -- --pinned` rebuilds the packs from the pins already recorded in `data/manifest.toml` (reproducible for the CSV packs, no version bump). Pass `--latest` instead to bump the pins to the newest upstream data and regenerate against that.
+- **Icons, maps and NPC placements need a local FFXIV install**: the icon pack (`data/icons`), the map pack (`data/maps`) and the NPC placements are extracted straight out of the game's SqPack files (via the `icon-extract` crate), not fetched from a repo. Placements come from the client's `.lgb` layout files, are folded into the rkyv packs (`Data::npc_placements`) and recorded in `data/npc-placements.json` so a CSV-only rebuild keeps them. The generator searches the standard install locations (`--game-path <install root>` to override) and hard-requires the install; pass `--skip-icons` to rebuild only the CSV packs (using the committed placements JSON) on a machine without the game. **Patch the game before regenerating** — the run reports how many named items have no icon in the install, and a triple-digit count means the client is older than the pinned CSVs.
+- **Changing the pack schema counts as regenerating**: the committed `.rkyv` files are the exact archived layout of `xiv_gen::Data`. Touch a field, a row type or a container in `xiv-gen/src/lib.rs` and the committed packs stop decoding (`rkyv::from_bytes` fails validation at startup). Rebuild both `data/xiv-db` and the browser startup packs in `data/xiv-startup` in the same change with `cargo run --release -p game-data-pack -- --pinned --skip-icons` — the pins are untouched, so the CSV packs are reproducible and no icon/map work is needed.
+- **`data/manifest.toml`**: records exactly which upstream commit/release each pack was generated from, plus (under `[icons]`) the FFXIV client version the icon pack was extracted from — this is the source of truth for "what version of game data is this."
+- **Updating game data**: done by hand (in practice, by an agent), not on a schedule. A game-data
+  bump can break consumers — a renamed sheet or column shifts `xiv-gen`'s generated types — so the
+  regeneration and the fallout need fixing in the same change. Run
+  `cargo run --release -p game-data-pack -- --latest`, then `cargo check -p xiv-gen-db --features embed`
+  and `cargo test -p game-data-pack`, and resolve whatever the bump broke before opening the PR.
 
-A plain `git submodule update --init --recursive` does **not** work reliably here, and `--depth=1` makes it worse. Three failure modes, all observed:
-
-- **`universalis-assets` + `--depth=1`** — the shallow fetch doesn't contain the pinned commit, so git aborts with `fatal: Unable to find current revision in submodule path ...` and leaves the directory **empty**. `git submodule status` still shows it initialized, so it only surfaces later as `ultros-xiv-icons/build.rs` panicking with `No such file or directory` on `universalis-assets/icon2x`. A failed shallow attempt also leaves a broken per-worktree gitdir that makes retries fail until it's removed.
-- **`ffxiv-datamining`** — a full clone from GitHub often dies partway with `RPC failed; curl 56 Recv failure: Connection reset by peer` / `fatal: early EOF`. Git retries once, then aborts the whole command.
-- **Anything after the first failure** — because the abort is command-wide, later submodules in the same invocation get registered but never populated. `classjob-icons` checked out "successfully" at the right SHA with **zero files**, showing up in `git status` as wholesale deleted content.
-
-Instead, initialize each submodule against the main clone's already-populated module dir. This is fast and mostly offline:
-
-```bash
-MAIN=/path/to/your/main/ffxiv-playground   # NOT the worktree
-
-git submodule update --init --reference $MAIN/.git/modules/ultros-frontend/universalis-assets ultros-frontend/ultros-xiv-icons/universalis-assets
-git submodule update --init --reference $MAIN/.git/modules/xiv-gen/ffxiv-datamining xiv-gen/ffxiv-datamining
-git submodule update --init --force ultros/static/classjob-icons
-
-# cn/ko/tc are NESTED submodules of ffxiv-datamining, also cached in main:
-M=$MAIN/.git/modules/xiv-gen/ffxiv-datamining/modules/csv
-for s in cn ko tc; do
-  git -C xiv-gen/ffxiv-datamining submodule update --init --reference "$M/$s" "csv/$s"
-done
-```
-
-Then **verify** rather than trusting exit codes — several of these fail silently:
-
-```bash
-ls xiv-gen/ffxiv-datamining/csv/{en,cn,tc}/Item.csv xiv-gen/ffxiv-datamining/csv/ko/csv/Item.csv
-ls ultros-frontend/ultros-xiv-icons/universalis-assets/icon2x | head -1
-ls ultros/static/classjob-icons | wc -l   # must be non-zero
-git status --short                        # no submodule should show as modified
-```
-
-`csv/ko` genuinely nests one level deeper than its siblings (`csv/ko/csv/Item.csv`) — that's the ko repo's own layout, not a broken checkout.
-
-If submodule init is blocked entirely, **at least run `cargo fmt --all -- --check`** — it doesn't need the submodule and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
+If you genuinely can't get LFS content (e.g. fully offline), **at least run `cargo fmt --all -- --check`** — it doesn't need the packs and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
 
 Either way, *do not commit and push without running fmt-check* — every formatting mistake will fail CI and waste a round trip.
 
@@ -62,7 +39,7 @@ Clippy can also be **OOM-killed** on a memory-constrained machine (exit `137`, `
 
 ## Windows: OpenSSL via vendored build
 
-`web-push` (Tier 3 of the notification work) pulls in `openssl` transitively via the `ece` crate. The `ultros` crate pins `openssl = { features = ["vendored"] }` so cargo compiles OpenSSL from source via `openssl-src` instead of needing a system library. This means **no `libssl-dev` / OpenSSL-dev-headers required** on Linux or Windows for `cargo build`.
+`web-push` (Tier 3 of the notification work) pulls in `openssl` transitively via the `ece` crate. The `ultros-alerts` crate (home of the web-push delivery) pins `openssl = { features = ["vendored"] }` so cargo compiles OpenSSL from source via `openssl-src` instead of needing a system library. This means **no `libssl-dev` / OpenSSL-dev-headers required** on Linux or Windows for `cargo build`.
 
 Vendored builds need **Perl + a C compiler** to configure and build OpenSSL from source:
 
@@ -73,6 +50,14 @@ Vendored builds need **Perl + a C compiler** to configure and build OpenSSL from
   cargo build  # or ./check_ci.sh from Git Bash with the same PATH
   ```
   In Git Bash, prepend `/c/Strawberry/perl/bin:/c/Strawberry/c/bin:` to `$PATH`.
+
+  **Also set `OPENSSL_RUST_USE_NASM=0`.** `C:\Strawberry\c\bin` ships `nasm.exe`, and once
+  `openssl-src` can find it, it enables OpenSSL's x86_64 assembly — whose `sm4` perlasm generator
+  fails under Strawberry's Perl 5.42 (`Number found where operator expected ... near "$-144"`,
+  then `NMAKE : fatal error U1077`). The override forces the `no-asm` build that works. Like the
+  Perl trap, this only bites when `openssl-sys` actually rebuilds (a profile change such as
+  `CARGO_PROFILE_*_DEBUG=0`, a cold `target/`, a `cargo clean`), so a box that built fine for
+  weeks fails "out of nowhere".
 
 The first build takes ~10 minutes (compiling OpenSSL from source); subsequent builds reuse the cached artifact.
 
@@ -90,7 +75,7 @@ Every user-facing string in `ultros-frontend/ultros-app/` must go through `lepto
 
 When you introduce a new string:
 
-1. Add the key to **every** locale file in `ultros-frontend/ultros-app/locales/` (`en`, `fr`, `de`, `ja`, `cn`, `ko`, `tc`). Adding only `en.json` is not acceptable — the build warns on missing keys per locale and `leptos-i18n` won't compile without the key in every file.
+1. Add the key to **every** locale file in `ultros-frontend/ultros-i18n/locales/` (`en`, `fr`, `de`, `ja`, `cn`, `ko`, `tc`). Adding only `en.json` is not acceptable — the build warns on missing keys per locale and `leptos-i18n` won't compile without the key in every file.
 2. Provide a real translation for each locale, not an English stub. If you genuinely can't translate, copy the English value and flag it in the PR so a native speaker can fix it — but the default is to translate.
 3. Use `snake_case` keys; group related strings by feature prefix (`venture_analyzer_*`, `welcome_*`) when there are several.
 

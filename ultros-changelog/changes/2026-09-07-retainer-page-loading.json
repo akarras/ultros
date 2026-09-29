@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable retainer pages",
+  "blurb": "Fixed an intermittent server error when opening your retainer listings or undercuts.",
+  "link": "/retainers/listings"
+}

@@ -4,8 +4,8 @@ use axum::{
 };
 use serde_json::Value as JsonValue;
 use ultros_api_types::alert::{
-    CreateEndpointRequest, DiscordWritableGuild, Endpoint, EndpointMethod, ResendResult,
-    UpdateEndpointRequest,
+    CreateEndpointRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint, EndpointMethod,
+    ResendResult, UpdateEndpointRequest,
 };
 use ultros_db::UltrosDb;
 
@@ -46,6 +46,11 @@ pub(crate) fn method_to_db(m: &EndpointMethod) -> (&'static str, JsonValue) {
             "WebPush",
             serde_json::json!({ "subscription_id": subscription_id }),
         ),
+        // Not created through this generic CRUD — see `validate_endpoint_method`
+        // below. The row itself comes from `get_or_create_inapp_endpoint`, but
+        // this arm still needs to exist for `update_endpoint`'s rename path and
+        // for `db_to_method` round-tripping in tests.
+        EndpointMethod::InApp {} => ("InApp", serde_json::json!({})),
     }
 }
 
@@ -86,18 +91,26 @@ pub(crate) fn db_to_method(method: &str, config: &JsonValue) -> anyhow::Result<E
                 .and_then(|v| i32::try_from(v).ok())
                 .ok_or_else(|| anyhow::anyhow!("WebPush missing subscription_id"))?,
         }),
+        "InApp" => Ok(EndpointMethod::InApp {}),
         other => Err(anyhow::anyhow!("unknown method {other}")),
     }
 }
 
 #[allow(clippy::result_large_err)]
-pub(crate) fn validate_endpoint_method(m: &EndpointMethod) -> Result<(), ApiError> {
+pub(crate) fn validate_endpoint_method(m: &EndpointMethod, owner_id: i64) -> Result<(), ApiError> {
     match m {
         EndpointMethod::Webhook { url } => validate_discord_webhook_url(url),
         EndpointMethod::DiscordChannel { channel_id, .. } => {
             validate_discord_channel_id(*channel_id)
         }
-        EndpointMethod::DiscordDm { .. } => Ok(()),
+        EndpointMethod::DiscordDm { user_id } => {
+            if *user_id != owner_id {
+                return Err(ApiError::AnyhowError(anyhow::anyhow!(
+                    "DiscordDm user_id must match the authenticated user"
+                )));
+            }
+            Ok(())
+        }
         EndpointMethod::WebPush { subscription_id } => {
             // WebPush endpoints are created via POST /api/v1/push/subscribe, never
             // through the generic CRUD — the row is meaningless without a real
@@ -113,6 +126,9 @@ pub(crate) fn validate_endpoint_method(m: &EndpointMethod) -> Result<(), ApiErro
                 "WebPush endpoints must be created via /api/v1/push/subscribe"
             )))
         }
+        EndpointMethod::InApp {} => Err(ApiError::AnyhowError(anyhow::anyhow!(
+            "InApp endpoints are auto-created for every user and cannot be created via this endpoint"
+        ))),
     }
 }
 
@@ -120,6 +136,12 @@ pub(crate) async fn list_endpoints(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<Endpoint>>, ApiError> {
+    // Every user has an inbox, even one that has never touched /api/v1/endpoints
+    // before — create it lazily on first list rather than at signup so there is
+    // one place that guarantees its existence.
+    db.get_or_create_inapp_endpoint(user.id as i64, "This site")
+        .await
+        .map_err(ApiError::from)?;
     let rows = db
         .list_endpoints(user.id as i64)
         .await
@@ -127,25 +149,37 @@ pub(crate) async fn list_endpoints(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let method = db_to_method(&r.method, &r.config).map_err(ApiError::from)?;
+        // Only surface the reason while the endpoint is actually disabled.
+        // Recovery clears both columns together, so this is belt-and-braces: a
+        // stray `last_error` can never make a working endpoint look broken.
+        let disabled_reason = r.disabled_at.and(r.last_error);
         out.push(Endpoint {
             id: r.id,
             name: r.name,
             method,
+            disabled_reason,
         });
     }
     Ok(Json(out))
 }
 
 pub(crate) async fn list_discord_writable_guilds(
+    State(cache): State<crate::web::oauth::AuthUserCache>,
     user: AuthDiscordUser,
+    cookies: axum_extra::extract::PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordWritableGuild>>, ApiError> {
     let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
         ApiError::from(anyhow::anyhow!(
             "Discord bot is not connected; cannot load shared servers right now"
         ))
     })?;
-    let guilds =
-        crate::web::api::discord_lookup::writable_guilds_for_user(&ctx, user.id as i64).await?;
+    let guilds = crate::web::api::discord_lookup::writable_guilds_for_user(
+        &ctx,
+        user.id as i64,
+        &cookies,
+        &cache,
+    )
+    .await?;
     Ok(Json(guilds))
 }
 
@@ -161,7 +195,7 @@ pub(crate) async fn create_endpoint(
         },
         other => other,
     };
-    validate_endpoint_method(&method)?;
+    validate_endpoint_method(&method, user.id as i64)?;
 
     // The display name we will store. Defaults to whatever the client sent; for a
     // freshly resolved DiscordChannel we replace it with the real channel name so
@@ -205,18 +239,55 @@ pub(crate) async fn create_endpoint(
         .create_endpoint(user.id as i64, &name, method_str, config)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(Endpoint { id, name, method }))
+    Ok(Json(Endpoint {
+        id,
+        name,
+        method,
+        disabled_reason: None,
+    }))
+}
+
+/// InApp ("This site") is auto-created and has exactly one row per user —
+/// letting a caller retarget it at a different delivery method would leave
+/// that row's `config`/`method` no longer matching what `list_endpoints`
+/// expects to find, and `get_or_create_inapp_endpoint` would then create a
+/// *second* InApp row on the caller's next `GET`. Renaming is still fine:
+/// only a method change is rejected.
+#[allow(clippy::result_large_err)]
+fn reject_inapp_method_change(
+    existing_method: &str,
+    requested_method: &Option<EndpointMethod>,
+) -> Result<(), ApiError> {
+    if existing_method == "InApp" && requested_method.is_some() {
+        return Err(ApiError::BadRequest(
+            "the in-app inbox endpoint cannot change delivery method",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) async fn update_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-    Json(req): Json<UpdateEndpointRequest>,
+    Json(mut req): Json<UpdateEndpointRequest>,
 ) -> Result<Json<()>, ApiError> {
+    // Frontend hack: DiscordDm with user_id=0 means "use the authenticated user's id".
+    if let Some(EndpointMethod::DiscordDm { user_id: 0 }) = req.method {
+        req.method = Some(EndpointMethod::DiscordDm {
+            user_id: user.id as i64,
+        });
+    }
+
+    let existing = db
+        .get_endpoint_owned_by(user.id as i64, id)
+        .await
+        .map_err(ApiError::from)?;
+    reject_inapp_method_change(&existing.method, &req.method)?;
+
     let method_and_config = match &req.method {
         Some(m) => {
-            validate_endpoint_method(m)?;
+            validate_endpoint_method(m, user.id as i64)?;
             let (method, config) = method_to_db(m);
             Some((method.to_string(), config))
         }
@@ -232,11 +303,52 @@ pub(crate) async fn delete_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-) -> Result<Json<()>, ApiError> {
+) -> Result<Json<DeleteEndpointResponse>, ApiError> {
+    // Look the endpoint up before deleting it: a WebPush endpoint references
+    // its push_subscription row only through the JSON config (there's no FK),
+    // so the subscription has to be cleaned up here or it's orphaned forever.
+    let endpoint = db
+        .get_endpoint_owned_by(user.id as i64, id)
+        .await
+        .map_err(ApiError::from)?;
+    // The inbox endpoint is auto-created and re-created by `list_endpoints` on
+    // every fetch — deleting it would just resurrect an identical row on the
+    // caller's next GET, so reject the delete outright instead of silently
+    // no-op-ing.
+    if endpoint.method == "InApp" {
+        return Err(ApiError::BadRequest(
+            "the in-app inbox endpoint cannot be deleted",
+        ));
+    }
     db.delete_endpoint(user.id as i64, id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(()))
+
+    let mut push_endpoint = None;
+    if let Ok(EndpointMethod::WebPush { subscription_id }) =
+        db_to_method(&endpoint.method, &endpoint.config)
+    {
+        // The lookup can miss legitimately: delivery deletes the subscription
+        // row itself when the push service reports it revoked, leaving the
+        // endpoint row behind. Nothing to clean up in that case.
+        if let Ok(sub) = db.get_push_subscription_by_id(subscription_id).await
+            && sub.user_id == user.id as i64
+        {
+            match db
+                .delete_push_subscription_by_id(user.id as i64, subscription_id)
+                .await
+            {
+                Ok(()) => push_endpoint = Some(sub.endpoint),
+                Err(e) => tracing::warn!(
+                    error = ?e,
+                    endpoint_id = id,
+                    subscription_id,
+                    "endpoint deleted but linked push subscription was not"
+                ),
+            }
+        }
+    }
+    Ok(Json(DeleteEndpointResponse { push_endpoint }))
 }
 
 pub(crate) async fn test_endpoint(
@@ -278,11 +390,13 @@ pub(crate) async fn test_endpoint(
         crate::alerts::delivery::get_serenity_ctx()
     };
 
+    let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
     let result = if let Some(ctx) = serenity_ctx.as_ref() {
         crate::alerts::delivery::deliver_to_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            &push,
             &db,
             ctx,
         )
@@ -293,16 +407,25 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            &push,
             &db,
         )
         .await
     };
 
     match result {
-        Ok(()) => Ok(Json(ResendResult {
-            delivered: true,
-            error: None,
-        })),
+        Ok(()) => {
+            // Testing successfully is how a user un-breaks an endpoint that the
+            // delivery path disabled: fix the channel (or re-invite the bot),
+            // hit Test, and it re-enters the alert rotation.
+            if let Err(e) = db.clear_endpoint_delivery_failure(id).await {
+                tracing::error!("failed to clear delivery failure for endpoint {id}: {e}");
+            }
+            Ok(Json(ResendResult {
+                delivered: true,
+                error: None,
+            }))
+        }
         Err(e) => Ok(Json(ResendResult {
             delivered: false,
             error: Some(format!("{e}")),
@@ -425,11 +548,40 @@ mod tests {
     }
 
     #[test]
+    fn method_to_db_round_trip_web_push() {
+        // delete_endpoint relies on this parse to find the push_subscription
+        // row linked through the JSON config — there is no FK.
+        let m = EndpointMethod::WebPush { subscription_id: 7 };
+        let (method, config) = method_to_db(&m);
+        assert_eq!(method, "WebPush");
+        assert_eq!(config, json!({"subscription_id": 7}));
+        assert_eq!(db_to_method(method, &config).unwrap(), m);
+    }
+
+    #[test]
+    fn method_to_db_round_trip_in_app() {
+        let m = EndpointMethod::InApp {};
+        let (method, config) = method_to_db(&m);
+        assert_eq!(method, "InApp");
+        assert_eq!(config, json!({}));
+        assert_eq!(db_to_method(method, &config).unwrap(), m);
+    }
+
+    #[test]
+    fn validate_method_rejects_in_app_via_generic_crud() {
+        // InApp endpoints are auto-created by `list_endpoints`; the generic CRUD
+        // must refuse to create or retarget one, or a caller could duplicate /
+        // hijack the inbox row.
+        let m = EndpointMethod::InApp {};
+        assert!(validate_endpoint_method(&m, 1).is_err());
+    }
+
+    #[test]
     fn validate_method_rejects_bad_webhook_url() {
         let m = EndpointMethod::Webhook {
             url: "http://evil.example/api/webhooks/1/x".into(),
         };
-        assert!(validate_endpoint_method(&m).is_err());
+        assert!(validate_endpoint_method(&m, 1).is_err());
     }
 
     #[test]
@@ -440,6 +592,33 @@ mod tests {
             guild_id: None,
             guild_name: None,
         };
-        assert!(validate_endpoint_method(&m).is_err());
+        assert!(validate_endpoint_method(&m, 1).is_err());
+    }
+
+    #[test]
+    fn reject_inapp_method_change_blocks_method_but_allows_rename() {
+        // A method change on the InApp row is rejected...
+        assert!(reject_inapp_method_change("InApp", &Some(EndpointMethod::InApp {})).is_err());
+        assert!(
+            reject_inapp_method_change(
+                "InApp",
+                &Some(EndpointMethod::Webhook {
+                    url: "https://discord.com/api/webhooks/1/abc".into(),
+                })
+            )
+            .is_err()
+        );
+        // ...but a rename-only request (method: None) is still allowed.
+        assert!(reject_inapp_method_change("InApp", &None).is_ok());
+        // Non-InApp endpoints are never touched by this guard.
+        assert!(reject_inapp_method_change("Webhook", &Some(EndpointMethod::InApp {})).is_ok());
+    }
+
+    #[test]
+    fn validate_method_rejects_mismatched_discord_dm_user_id() {
+        let m = EndpointMethod::DiscordDm { user_id: 2 };
+        assert!(validate_endpoint_method(&m, 1).is_err());
+        let m_valid = EndpointMethod::DiscordDm { user_id: 1 };
+        assert!(validate_endpoint_method(&m_valid, 1).is_ok());
     }
 }

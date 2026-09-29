@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Lists gets a visual refresh",
+  "blurb": "The Lists and list-detail pages now have a proper heading and an about-this-page panel, and the item table uses the same styled table as the rest of the app instead of unstyled HTML. The action toolbar switched to the same sticky bar the other tools use. Loading spinners were replaced with skeletons shaped like the cards and tables they load into.",
+  "link": "/list",
+  "importance": "medium"
+}

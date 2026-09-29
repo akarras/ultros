@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Tidier item details",
+  "blurb": "Related items, vendors, exchanges, and leve rewards now share space in compact sections when there is only one entry. Single recipes take less room, and shorter recipe cards no longer stretch to match their neighbors."
+}

@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Every page uses the same width and margins",
+  "blurb": "Pages that had their own container width - settings, history, retainers, the item explorer, trends, lists, and the legal pages - now share the same full-width shell as the rest of the app, with margins that tighten on phones so tables get the screen back.",
+  "importance": "medium"
+}

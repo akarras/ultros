@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Pages that failed to load are fixed",
+  "blurb": "Some pages would occasionally come back blank or half-rendered because a link on them could crash the page while it was being built. Links no longer depend on the piece that was failing, so those pages load every time.",
+  "importance": "medium"
+}

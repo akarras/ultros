@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Retainer tables no longer flash on live updates",
+  "blurb": "The retainer listings and undercuts pages kept swapping every table for a loading skeleton whenever a live listing change came in, and reconnected their live feed each time too. Now only the changed rows update and the feed stays connected.",
+  "link": "/retainers/undercuts"
+}

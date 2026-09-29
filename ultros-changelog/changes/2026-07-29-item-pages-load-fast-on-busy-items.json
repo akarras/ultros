@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Item pages load fast on busy items",
+  "blurb": "Sales are summarized on the server and the chart only draws the detail you are zoomed into, so items with years of history open quickly.",
+  "importance": "medium"
+}

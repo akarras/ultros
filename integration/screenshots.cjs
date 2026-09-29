@@ -17,6 +17,7 @@
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
+const { capture } = require("./capture.cjs");
 
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:60703";
 const OUT = path.resolve(__dirname, "artifacts");
@@ -55,7 +56,9 @@ async function api(page, method, path_, body) {
 
 async function snap(page, name) {
   const file = path.join(OUT, `list-refresh-${name}.png`);
-  await page.screenshot({ path: file, fullPage: true });
+  // Owner and reader pages are both open here; see capture.cjs for why a bare
+  // page.screenshot() on the backgrounded one hangs the run.
+  await capture(page, { path: file, fullPage: true });
   console.log("[ok]", file);
 }
 
@@ -78,7 +81,7 @@ async function waitForHydration(page) {
 
 (async () => {
   const browser = await puppeteer.launch({
-    headless: "new",
+    headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   try {

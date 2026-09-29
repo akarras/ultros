@@ -1,0 +1,475 @@
+//! URL persistence shared by all analyzer tables. Existing `cols` and JSON
+//! `layout` links remain readable; new layouts use a small `l` delta.
+pub use super::filter::MetricSortHeader;
+use super::metrics::{GridMetric, parse_filters, query_rows_with_tiebreak};
+use super::row_source::RowSource;
+use super::{GridChange, GridColumn, VirtualGrid};
+use crate::components::app_link::use_location_or_default;
+use crate::i18n::*;
+use leptos::prelude::*;
+use leptos_router::params::ParamsMap;
+use std::hash::Hash;
+use ultros_grid_core::columns::COLUMN_KEYS;
+
+/// Where a grid's column layout lives in the URL: `col-order` (the moved
+/// columns, `.`-separated) and `col-widths` (`id.px` pairs), both readable as
+/// they stand. `l`/`layout` hold the packed form older links carry.
+const COL_ORDER: &str = "col-order";
+const COL_WIDTHS: &str = "col-widths";
+const LAYOUT_KEYS: [&str; 4] = [COL_ORDER, COL_WIDTHS, "l", "layout"];
+
+/// The grid's packed layout string (see `GridLayout::parse`) from the URL.
+fn layout_from_query(query: &ParamsMap) -> Option<String> {
+    let (order, widths) = (query.get_str(COL_ORDER), query.get_str(COL_WIDTHS));
+    if order.is_some() || widths.is_some() {
+        return Some(format!(
+            "3~{}~{}",
+            order.unwrap_or_default(),
+            widths.unwrap_or_default()
+        ));
+    }
+    query.get("l").or_else(|| query.get("layout"))
+}
+
+/// Replace the URL's layout keys with `layout`, a packed layout string, split
+/// into its readable keys.
+fn write_layout(query: &mut ParamsMap, layout: Option<String>) {
+    for key in LAYOUT_KEYS {
+        query.remove(key);
+    }
+    let Some(layout) = layout else {
+        return;
+    };
+    match layout
+        .strip_prefix("3~")
+        .and_then(|body| body.split_once('~'))
+    {
+        Some((order, widths)) => {
+            for (key, value) in [(COL_ORDER, order), (COL_WIDTHS, widths)] {
+                if !value.is_empty() {
+                    query.insert(key, value.to_string());
+                }
+            }
+        }
+        None => query.insert("l", layout),
+    }
+}
+
+/// `layout` with `new` in `old`'s place: the slot the user dragged `old` to
+/// and the width they gave it. Only an explicitly placed `old` moves `new`;
+/// otherwise `new` takes its definition position, which writes nothing — a
+/// forced position would spell out every column before it in `col-order`.
+fn swap_in_layout(layout: Option<String>, old: &str, new: &str) -> Option<String> {
+    let raw = layout?;
+    let Some((order, widths)) = raw.strip_prefix("3~").and_then(|b| b.split_once('~')) else {
+        return Some(raw);
+    };
+    let mut order: Vec<&str> = order.split('.').filter(|s| !s.is_empty()).collect();
+    if order.contains(&old) {
+        order.retain(|id| *id != new);
+        for id in &mut order {
+            if *id == old {
+                *id = new;
+            }
+        }
+    }
+    let tokens: Vec<&str> = widths.split('.').filter(|s| !s.is_empty()).collect();
+    let mut widths: std::collections::BTreeMap<&str, &str> = tokens
+        .chunks(2)
+        .filter_map(|pair| Some((*pair.first()?, *pair.get(1)?)))
+        .collect();
+    if let Some(width) = widths.remove(old) {
+        widths.entry(new).or_insert(width);
+    }
+    let widths: Vec<String> = widths
+        .into_iter()
+        .map(|(id, width)| format!("{id}.{width}"))
+        .collect();
+    Some(format!("3~{}~{}", order.join("."), widths.join(".")))
+}
+
+#[component]
+pub fn QueryGrid<T, K, KF, H, F, M>(
+    #[prop(into)] each: Signal<Vec<T>>,
+    #[prop(into)] columns: Signal<Vec<GridColumn>>,
+    key: KF,
+    header: H,
+    view: F,
+    measure: M,
+    /// Invalidate sizing when a cell provider changes without replacing rows.
+    #[prop(default = Signal::derive(|| 0), into)]
+    measure_version: Signal<u64>,
+    #[prop(optional)] metrics: Vec<GridMetric<T>>,
+    #[prop(optional)] on_rows: Option<Callback<Vec<T>>>,
+    #[prop(default = true)] show_saved_views: bool,
+    /// Opt in for analyzer result cards; editable grids retain their table interaction.
+    #[prop(optional)]
+    mobile_cards: bool,
+    #[prop(default = 40.0)] row_height: f64,
+    #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
+    /// Forwarded to [`VirtualGrid`]: data-row index to scroll into view.
+    // `optional_no_strip`: forwarded as an `Option` from the layer above.
+    #[prop(optional_no_strip)]
+    reveal_index: Option<Signal<Option<usize>>>,
+    #[prop(into)] id: String,
+    #[prop(into)] label: String,
+) -> impl IntoView
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    K: Clone + Ord + Hash + Send + Sync + 'static,
+    KF: Fn(&T) -> K + Send + Sync + 'static,
+    H: Fn(&'static str) -> AnyView + Send + Sync + 'static,
+    F: Fn(T, &'static str) -> AnyView + Send + Sync + 'static,
+    M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
+{
+    let location = use_location_or_default();
+    let query = location.query;
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
+    let metrics = StoredValue::new(metrics);
+    let key = StoredValue::new(key);
+    let registry = use_context::<super::registry::FilterRegistry>();
+    if let Some(registry) = registry {
+        registry.register_sort_columns(
+            columns,
+            metrics.with_value(|metrics| {
+                metrics
+                    .iter()
+                    .filter(|metric| !metric.partial)
+                    .map(|metric| metric.id)
+                    .collect()
+            }),
+        );
+    }
+    let sort_ascending = move |q: &leptos_router::params::ParamsMap| {
+        registry
+            .map(|registry| registry.sort_ascending(q))
+            .unwrap_or_else(|| q.get("dir").as_deref() == Some("asc"))
+    };
+    let read_filters = move |q: &leptos_router::params::ParamsMap| {
+        registry
+            .map(|r| r.filters(q))
+            .unwrap_or_else(|| parse_filters(q.get("gf").as_deref()))
+    };
+    // "Within the last 7 days" must pick the same rows on the server and in
+    // the hydrating browser, so the render's clock travels with the page.
+    // Only a URL with a relative bound pays for it; both sides read the same
+    // URL, so both create (or skip) the shared value together.
+    let initial = query.with_untracked(read_filters);
+    let rendered_at = initial
+        .values()
+        .any(|f| f.has_relative())
+        .then(|| SharedValue::new(now_unix).into_inner());
+    let filters = Memo::new(move |_| {
+        let raw = query.with(read_filters);
+        let unchanged = raw == initial;
+        let mut filters = raw;
+        metrics.with_value(|metrics| {
+            filters.retain(|id, f| metrics.iter().any(|m| m.id == id && f.valid(m.kind)))
+        });
+        if filters.values().any(|f| f.has_relative()) {
+            // Keep the render's clock until the filters change, then use the
+            // moment of the edit.
+            let now = rendered_at.filter(|_| unchanged).unwrap_or_else(now_unix);
+            for filter in filters.values_mut() {
+                *filter = filter.resolved(now);
+            }
+        }
+        filters
+    });
+    // Registered hosts read retired native tokens as metric sorts (issue
+    // #1344); an unregistered grid only recognizes `grid:<id>`.
+    let sort_column = move |q: &leptos_router::params::ParamsMap| {
+        let sort = q.get("sort");
+        match registry {
+            Some(registry) => registry.sort_column(sort.as_deref()),
+            None => super::registry::resolve_sort(sort.as_deref(), &[]),
+        }
+    };
+    let result = Memo::new(move |_| {
+        let sort = query.with(sort_column);
+        let ascending = query.with(sort_ascending);
+        each.with(|rows| {
+            metrics.with_value(|metrics| {
+                query_rows_with_tiebreak(
+                    rows,
+                    metrics,
+                    &filters.get(),
+                    sort.as_deref(),
+                    ascending,
+                    |a, b| key.with_value(|key| key(a).cmp(&key(b))),
+                )
+            })
+        })
+    });
+    // Borrow the original rows when no query is active. Queried rows are cached
+    // in `result`, so each visible-row read never clones the full collection.
+    let queried = RowSource::new(each, result);
+    if let Some(on_rows) = on_rows {
+        Effect::new(move |_| on_rows.run(queried.with(Clone::clone)));
+    }
+    let layout = Signal::derive(move || query.with(layout_from_query));
+    let resolved = Memo::new(move |_| {
+        let mut defs = columns.get();
+        let sort = query.with(sort_column);
+        let sort = sort.as_deref();
+        for col in &mut defs {
+            let alias_choices: Vec<_> = col
+                .filters
+                .iter()
+                .filter(|f| f.metric.is_none() && registry.is_some_and(|r| r.is_alias(f.key)))
+                .flat_map(|f| {
+                    f.choices.iter().cloned().chain(
+                        f.options
+                            .iter()
+                            .map(|(key, label)| (key.to_string(), label.clone())),
+                    )
+                })
+                .collect();
+            if let Some(registry) = registry {
+                col.filters
+                    .retain(|f| f.metric.is_some() || !registry.is_alias(f.key));
+            }
+            if sort.is_some() {
+                col.aria_sort = "none";
+            }
+            metrics.with_value(|metrics| {
+                if let Some(metric) = metrics.iter().find(|m| m.id == col.id) {
+                    if !col
+                        .filters
+                        .iter()
+                        .any(|filter| filter.key == col.id && filter.metric.is_some())
+                    {
+                        let mut filter =
+                            super::ColumnFilter::metric(col.id, col.label.clone(), metric.kind);
+                        filter.unit = metric.unit;
+                        filter.choices = alias_choices.clone();
+                        col.filters.push(filter);
+                    }
+                    col.query_sort = !metric.partial;
+                    if sort == Some(col.id) && !metric.partial {
+                        col.aria_sort = if query.with(sort_ascending) {
+                            "ascending"
+                        } else {
+                            "descending"
+                        };
+                    }
+                }
+            });
+        }
+        query.with(|q| {
+            let columns = super::registry::column_query(q);
+            if !columns.is_empty() {
+                for col in defs.iter_mut().filter(|col| col.optional) {
+                    col.visible = columns.visible(col.id, col.default_visible);
+                }
+            }
+        });
+        defs
+    });
+    let reset = Memo::new(move |_| {
+        let mut q = query.get();
+        for key in LAYOUT_KEYS.iter().chain(&COLUMN_KEYS) {
+            q.remove(key);
+        }
+        q.to_query_string()
+    });
+    #[cfg(feature = "hydrate")]
+    let navigate = leptos_router::hooks::use_navigate();
+    // Every column change is one URL replacement of the keys it owns; the
+    // rest of the query (filters, sort, window, world) rides along untouched.
+    // A `Callback` so the three writers below can each hold a copy: the
+    // navigator it captures is not `Copy`.
+    let commit_query = Callback::new(move |q: leptos_router::params::ParamsMap| {
+        #[cfg(not(feature = "hydrate"))]
+        let _ = q;
+        #[cfg(feature = "hydrate")]
+        navigate(
+            &format!(
+                "{}{}",
+                location.pathname.get_untracked(),
+                q.to_query_string()
+            ),
+            leptos_router::NavigateOptions {
+                scroll: false,
+                ..Default::default()
+            },
+        );
+    });
+    // The column keys with one optional column flipped, from the resolved
+    // defs so every other departure already in the URL is kept.
+    let write_visibility = move |q: &mut leptos_router::params::ParamsMap, id, visible| {
+        let mut defs = resolved.get_untracked();
+        if let Some(col) = defs.iter_mut().find(|c| c.id == id) {
+            col.visible = visible;
+        }
+        super::registry::write_columns(q, &defs);
+    };
+    let on_change = Callback::new(move |change: GridChange| {
+        let mut q = query.get_untracked();
+        write_layout(&mut q, change.layout);
+        if change.reset {
+            for key in COLUMN_KEYS {
+                q.remove(key);
+            }
+        }
+        if let Some((id, visible)) = change.visibility {
+            write_visibility(&mut q, id, visible);
+        }
+        commit_query.run(q);
+    });
+    if let Some(registry) = registry {
+        registry.register(resolved.into());
+        registry.register_layout(layout);
+        registry.register_count(Signal::derive(move || queried.with(Vec::len)));
+        // The toolbar picker shares these with the header menu, so a tick
+        // there and "Hide column" here write the same `?cols=`. Neither
+        // touches the layout delta: a picker toggle must not undo a drag.
+        registry.register_visibility(super::registry::ColumnVisibility {
+            set_visible: Callback::new(move |(id, visible)| {
+                let mut q = query.get_untracked();
+                write_visibility(&mut q, id, visible);
+                commit_query.run(q);
+            }),
+            swap: Callback::new(move |(old, new): (&'static str, &'static str)| {
+                let mut q = query.get_untracked();
+                let layout = swap_in_layout(layout_from_query(&q), old, new);
+                write_layout(&mut q, layout);
+                let mut defs = resolved.get_untracked();
+                for col in &mut defs {
+                    if col.id == old {
+                        col.visible = false;
+                    } else if col.id == new {
+                        col.visible = true;
+                    }
+                }
+                super::registry::write_columns(&mut q, &defs);
+                commit_query.run(q);
+            }),
+            reset: Callback::new(move |_| {
+                let mut q = query.get_untracked();
+                for key in COLUMN_KEYS {
+                    q.remove(key);
+                }
+                commit_query.run(q);
+            }),
+        });
+    }
+    let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
+    let saved_views_id = id.clone();
+    // Active filters are shown and edited by the `ControlBar` sharing this
+    // grid's `FilterRegistry` (issue #1351). The grid itself renders none, so
+    // a host has exactly one filter surface.
+    view! {
+        {show_saved_views.then(||view! {<div class="flex justify-end px-3 py-2"><super::saved_views::GridSavedViews id=saved_views_id/></div>})}
+        {move || (result.with(|r|r.lacking_data)>0).then(||view! {
+            <div class="px-3 py-2 text-xs text-[color:var(--color-text-muted)]" role="status" data-grid-query-coverage>
+                <span>{t!(i18n, analyzer_rows_lacking_data, count = move || result.with(|r| r.lacking_data))}</span>
+                " "{t!(i18n,grid_query_partial)}
+            </div>
+        })}
+        {move || result.with(|r|r.sort_pending).then(||view! {<div class="px-3 py-2 text-xs" role="status">{t!(i18n,grid_query_pending)}</div>})}
+        <VirtualGrid mobile_cards each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
+            reveal_index key=move |row: &T| key.with_value(|key| key(row)) header view measure measure_version row_height id label/>
+    }
+}
+
+/// Unix seconds now, from the browser clock when hydrated.
+pub(crate) fn now_unix() -> f64 {
+    #[cfg(feature = "hydrate")]
+    {
+        js_sys::Date::now() / 1000.0
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(pairs: &[(&str, &str)]) -> ParamsMap {
+        let mut query = ParamsMap::new();
+        for (key, value) in pairs {
+            query.insert(key.to_string(), value.to_string());
+        }
+        query
+    }
+
+    #[test]
+    fn a_layout_is_written_as_readable_keys_and_read_back() {
+        let mut query = params(&[("l", "2~~profit.3a"), ("sort", "grid:profit")]);
+        write_layout(&mut query, Some("3~trend~profit.118".into()));
+        assert_eq!(query.get("l"), None);
+        assert_eq!(query.get(COL_ORDER).as_deref(), Some("trend"));
+        assert_eq!(query.get(COL_WIDTHS).as_deref(), Some("profit.118"));
+        assert_eq!(query.get("sort").as_deref(), Some("grid:profit"));
+        assert_eq!(
+            layout_from_query(&query).as_deref(),
+            Some("3~trend~profit.118")
+        );
+
+        // Widths alone leave no empty `col-order=` behind.
+        write_layout(&mut query, Some("3~~profit.118".into()));
+        assert_eq!(query.get(COL_ORDER), None);
+        assert_eq!(layout_from_query(&query).as_deref(), Some("3~~profit.118"));
+
+        write_layout(&mut query, None);
+        assert_eq!(layout_from_query(&query), None);
+        assert_eq!(query, params(&[("sort", "grid:profit")]));
+    }
+
+    #[test]
+    fn a_swap_takes_over_the_old_columns_place_and_width() {
+        // A dragged column hands its slot and its width to its replacement,
+        // and a stale position of the replacement is dropped.
+        assert_eq!(
+            swap_in_layout(
+                Some("3~trend.units-7.units-30~units-7.140.profit.90".into()),
+                "units-7",
+                "units-30"
+            )
+            .as_deref(),
+            Some("3~trend.units-30~profit.90.units-30.140")
+        );
+        // A column the layout never mentions keeps the layout as it is: its
+        // replacement takes its definition position instead.
+        let layout = Some("3~trend~profit.90".to_string());
+        assert_eq!(
+            swap_in_layout(layout.clone(), "units-7", "units-30"),
+            layout
+        );
+        // The replacement keeps a width of its own.
+        assert_eq!(
+            swap_in_layout(
+                Some("3~~units-7.140.units-30.200".into()),
+                "units-7",
+                "units-30"
+            )
+            .as_deref(),
+            Some("3~~units-30.200")
+        );
+        assert_eq!(swap_in_layout(None, "units-7", "units-30"), None);
+        // Older packed layouts are left alone rather than half-rewritten.
+        let packed = Some("2~~units-7.3a".to_string());
+        assert_eq!(
+            swap_in_layout(packed.clone(), "units-7", "units-30"),
+            packed
+        );
+    }
+
+    #[test]
+    fn older_layout_keys_are_still_read() {
+        for key in ["l", "layout"] {
+            assert_eq!(
+                layout_from_query(&params(&[(key, "2~~profit.3a")])).as_deref(),
+                Some("2~~profit.3a"),
+                "{key}"
+            );
+        }
+    }
+}

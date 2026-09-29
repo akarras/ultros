@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "labs": true,
+  "title": "Keep incompatible list backups safe",
+  "blurb": "Lists now reject unsupported or damaged document data before it changes your saved list. If an account list's saved copy cannot be opened, you can export the original for recovery instead of losing it.",
+  "link": "/list"
+}

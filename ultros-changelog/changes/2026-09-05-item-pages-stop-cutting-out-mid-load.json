@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Item pages stop cutting out mid-load",
+  "blurb": "When the market data was slow to arrive, an item page could stop halfway and leave you with a broken half-rendered page. The listings and sale history tables now finish rendering either way.",
+  "importance": "medium"
+}

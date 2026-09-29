@@ -14,13 +14,3 @@ tar = "0.4.45"
 # never into the WASM client, so the zstd-sys C dep is safe.
 zstd = "0.13"
 once_cell = "1.21"
-
-[build-dependencies]
-ultros-api-types = {path = "../../ultros-api-types"}
-image = {workspace = true, features = ["webp", "png"]}
-tokio = {version = "^1", features = ["rt-multi-thread", "macros", "fs"]}
-indicatif = {version = "*"}
-futures = "0.3.26"
-tempfile = "3"
-tar = "0.4.45"
-zstd = "0.13"

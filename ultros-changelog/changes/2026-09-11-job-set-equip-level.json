@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Gear set cards show the equip level",
+  "blurb": "Each job gear set in the Item Explorer now shows the character level needed to wear it next to the item level, so you can tell at a glance whether a set is for you before opening it.",
+  "link": "/items/jobset/RDM",
+  "importance": "low"
+}

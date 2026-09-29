@@ -1,10 +1,11 @@
+use crate::components::app_link::AppLink;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 use crate::components::icon::Icon;
 use crate::components::language_picker::LanguagePicker;
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::theme_picker::PalettePicker;
 use crate::components::world_picker::{WorldOnlyPicker, WorldPicker};
 use crate::global_state::home_world::{
     get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
@@ -25,7 +26,7 @@ pub fn Welcome() -> impl IntoView {
     let has_homeworld = Signal::derive(move || homeworld.with(|w| w.is_some()));
 
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, welcome_page_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, welcome_page_desc).to_string() />
 
@@ -35,7 +36,7 @@ pub fn Welcome() -> impl IntoView {
                     <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                         <div class="flex-1 space-y-3 z-10">
                             <h1 class="text-5xl sm:text-6xl font-extrabold leading-none tracking-tighter">
-                                <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-300 via-purple-400 to-pink-500">
+                                <span class="bg-clip-text text-transparent" style="background-image:linear-gradient(135deg,var(--accent),var(--accent-decor))">
                                     {t!(i18n, welcome_heading)}
                                 </span>
                             </h1>
@@ -48,7 +49,7 @@ pub fn Welcome() -> impl IntoView {
                                 icon=i::FaMapLocationDotSolid
                                 width="4em"
                                 height="4em"
-                                attr:class="text-brand-300"
+                                attr:class="text-[color:var(--accent-decor)]"
                             />
                         </div>
                     </div>
@@ -77,6 +78,7 @@ pub fn Welcome() -> impl IntoView {
                     </div>
                     <div class="max-w-md">
                         <WorldOnlyPicker
+                            label=Signal::derive(move || t_string!(i18n, home_world).to_string())
                             current_world=homeworld
                             set_current_world=set_homeworld
                         />
@@ -113,6 +115,7 @@ pub fn Welcome() -> impl IntoView {
                     </div>
                     <div class="max-w-md">
                         <WorldPicker
+                            label=Signal::derive(move || t_string!(i18n, default_price_zone).to_string())
                             current_world=price_region
                             set_current_world=set_price_region
                         />
@@ -134,14 +137,27 @@ pub fn Welcome() -> impl IntoView {
                     </div>
                 </div>
 
+                // Step 4: color palette
+                <div class="panel p-6 rounded-xl space-y-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, welcome_step_palette_label)}
+                        </h2>
+                        <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
+                            {t!(i18n, welcome_step_palette_help)}
+                        </p>
+                    </div>
+                    <PalettePicker show_label=false />
+                </div>
+
                 // CTA
                 <div class="flex flex-wrap items-center justify-between gap-4 pt-2">
-                    <A
+                    <AppLink
                         href="/"
                         attr:class="btn-ghost py-3 px-6"
                     >
                         {t!(i18n, welcome_skip_for_now)}
-                    </A>
+                    </AppLink>
                     {move || {
                         let enabled = has_homeworld.get();
                         let class = if enabled {
@@ -150,10 +166,10 @@ pub fn Welcome() -> impl IntoView {
                             "btn-primary py-3 px-6 text-lg opacity-50 pointer-events-none"
                         };
                         view! {
-                            <A href="/" attr:class=class attr:aria-disabled=move || (!enabled).then_some("true")>
+                            <AppLink href="/" attr:class=class attr:aria-disabled=move || (!enabled).then_some("true")>
                                 <span>{t!(i18n, welcome_continue_cta)}</span>
                                 <Icon icon=i::FaArrowRightSolid width="1em" height="1em" />
-                            </A>
+                            </AppLink>
                         }
                     }}
                 </div>

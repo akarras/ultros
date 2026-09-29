@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Smoother scrolling in Flip Finder and the analyzers",
+  "blurb": "Scrolling the big market tables no longer flashes empty rows before they fill in, and Flip Finder no longer freezes for a moment after you stop scrolling while it resizes its columns.",
+  "link": "/flip-finder",
+  "importance": "medium"
+}

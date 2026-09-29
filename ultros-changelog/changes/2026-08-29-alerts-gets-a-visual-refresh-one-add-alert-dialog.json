@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Alerts gets a visual refresh, one add-alert dialog",
+  "blurb": "The Alerts page now has a proper heading and an about-this-tool panel, and its rules table uses the same styled table as the rest of the app instead of unstyled HTML. Loading spinners were replaced with skeletons shaped like the panels they load into. The two near-identical \"add alert\" dialogs used across the app are now one dialog.",
+  "link": "/alerts",
+  "importance": "medium"
+}

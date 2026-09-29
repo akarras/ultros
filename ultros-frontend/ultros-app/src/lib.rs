@@ -1,41 +1,63 @@
-#![recursion_limit = "256"]
-pub(crate) mod analysis;
-pub(crate) mod api;
+#![recursion_limit = "512"]
+pub use ultros_ui_market::analysis;
+pub(crate) mod analyzer_kit;
+pub use ultros_frontend_core::api;
+pub use ultros_frontend_core::columnar_wire;
 pub(crate) mod components;
-pub(crate) mod error;
-pub(crate) mod freshness;
+pub(crate) use ultros_api_client::error;
+pub use ultros_ui_market::freshness;
 pub(crate) mod global_state;
-pub(crate) mod math;
+pub(crate) mod list_doc;
+pub(crate) use ultros_calc::math;
+pub(crate) use ultros_i18n::fallback as i18n_fallback;
+pub use ultros_ui_query::last_view;
+pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
+pub(crate) use ultros_calc::recipe_planner;
+pub use ultros_game_sources as game_sources;
 pub(crate) mod routes;
-pub(crate) mod sales_cadence;
-pub(crate) mod ws;
+pub use ultros_ui_market::sales_cadence;
+pub mod social_card;
+pub(crate) mod social_meta;
+#[cfg(feature = "ssr")]
+pub use ultros_api_client::ssr_api;
+pub use ultros_frontend_core::ws;
 
-include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
+// Keep existing imports stable while the generated translations compile separately.
+pub use ultros_i18n::i18n;
+
+use crate::components::app_link::AppLink;
 use i18n::*;
 
 use crate::components::icon::Icon;
 use crate::components::recently_viewed::RecentItems;
-pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
+pub use crate::global_state::{
+    BootstrapUser, LocalWorldData, home_world::GuessedRegion, xiv_data::LoadedGameDataLocale,
+};
 use crate::global_state::{
-    cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
+    app_update::provide_app_update_context, cheapest_prices::CheapestPrices,
+    clipboard_text::GlobalLastCopiedText, cookies::Cookies, guest_alerts::provide_guest_alerts,
+    notifications::provide_inbox, platform::provide_platform_hotkeys,
     side_nav::provide_side_nav_settings, theme::provide_theme_settings,
     toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
-        app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
-        tooltip::*,
+        app_shell::AppShell, guest_alert_evaluator::GuestAlertEvaluator, inbox_live::InboxLive,
+        on_hand_input::provide_on_hand_context, patreon::*, toast::*, update_banner::UpdateBanner,
     },
     routes::{
         about::*,
         alerts::Alerts,
         analyzer::*,
         bot::BotGuide,
+        changelog::Changelog,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        group_detail::GroupDetail,
         groups::*,
+        guest_lists::GuestListRoute,
         help::*,
         history::*,
         home_page::*,
@@ -44,15 +66,18 @@ use crate::{
         job_set_detail::JobSetDetail,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
         leve_analyzer::*,
-        list_view::*,
+        list_view_sync::ListRoute,
         lists::*,
         not_found::NotFound,
+        npc_view::NpcView,
         recipe_analyzer::*,
+        recipe_view::RecipeView,
         retainers::*,
         scrip_sources::*,
         settings::*,
         trends::*,
         vendor_resale::*,
+        vendor_sell::*,
         venture_analyzer::*,
         welcome::*,
     },
@@ -63,7 +88,7 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_meta::*;
-use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
+use leptos_router::components::{ParentRoute, Route, Router, Routes};
 use leptos_router::{SsrMode, path};
 use log::info;
 
@@ -75,6 +100,9 @@ use log::info;
 /// can never drift apart. See the sentinel in `shell()` and the guard in
 /// `ultros-client`'s `hydrate()` for the full story (GlitchTip #6831).
 pub const SSR_END_SENTINEL_ID: &str = "ultros-ssr-end";
+
+/// Shared Discord server invite link used across side navigation, footer, and about page.
+pub const DISCORD_INVITE: &str = "https://discord.gg/pgdq9nGUP2";
 
 #[cfg(feature = "hydrate")]
 mod sentry_tags {
@@ -154,13 +182,15 @@ fn error_reporting_script() -> Option<String> {
     // The beforeSend noise filter, injected verbatim via the {filter_js}
     // placeholder below. Lives in its own file so Node can unit-test it.
     let filter_js = include_str!("error_filter.js");
+    // The wasm frame symbolicator, likewise its own Node-tested file.
+    let symbolicate_js = include_str!("wasm_symbolicate.js");
 
     Some(format!(
         r#"(function(){{
     var config = {config};
     var sdkUrl = {sdk_url};
 
-    window.__ultrosReportRustPanic = function(message, location) {{
+    window.__ultrosReportRustPanic = function(message, location, stack) {{
         var Sentry = window.Sentry;
         if (!Sentry || !Sentry.captureException) {{
             return;
@@ -168,6 +198,19 @@ fn error_reporting_script() -> Option<String> {
 
         var error = new Error(message || "Rust WASM panic");
         error.name = "RustWasmPanic";
+        // The panic hook captured `stack` on the panicking call stack; this
+        // reporter runs from a timer, so the Error created here would only
+        // show the timer trampoline. Sentry parses `error.stack`, so swap
+        // in the real one (minus its own "Error" header line).
+        if (typeof stack === "string" && stack) {{
+            try {{
+                var lines = stack.split("\n");
+                if (lines.length && /^(Error|RustWasmPanic)\b/.test(lines[0])) {{
+                    lines.shift();
+                }}
+                error.stack = "RustWasmPanic: " + error.message + "\n" + lines.join("\n");
+            }} catch (_) {{}}
+        }}
         Sentry.withScope(function(scope) {{
             scope.setTag("runtime", "wasm");
             if (location) {{
@@ -197,6 +240,13 @@ fn error_reporting_script() -> Option<String> {
     // format! argument value, not part of the format string literal.
 {filter_js}
 
+    // Wasm frame symbolicator. Defines window.__ultrosSymbolicateEvent,
+    // which resolves `wasm-function[N]` frames to Rust function names from
+    // the release's /pkg/<hash>/ultros.symbols map (see wasm_symbolicate.js
+    // and the wasm-symbols crate). Also injected verbatim; tested by
+    // integration/wasm-symbolicate.test.cjs.
+{symbolicate_js}
+
     var existingBeforeSend = config && config.beforeSend;
     config = config || {{}};
     config.beforeSend = function(event, hint) {{
@@ -207,6 +257,32 @@ fn error_reporting_script() -> Option<String> {
             window.__ultrosAnnotateEvent(event);
         }}
         if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
+            return null;
+        }}
+        // Rule 3 for the bare `RuntimeError: unreachable` trap. Under
+        // panic=immediate-abort EVERY prod panic has that shape, so a trap
+        // from an injecting population (translation overlay, stale Chrome)
+        // is only dropped once its frames resolve to tachys hydration code.
+        // Read before symbolicating: that rewrites the value.
+        var trapCandidate = !!(window.__ultrosIsInjectedTrapCandidate &&
+            window.__ultrosIsInjectedTrapCandidate(event));
+        // After the drop check on purpose: a dropped event never costs a
+        // symbols download — except a trap candidate, which needs its frames
+        // to be classified (one memoized map fetch per session).
+        if (window.__ultrosSymbolicateEvent) {{
+            return window.__ultrosSymbolicateEvent(event).then(function(ev) {{
+                if (trapCandidate && window.__ultrosShouldDropSymbolicatedTrap &&
+                    window.__ultrosShouldDropSymbolicatedTrap(ev)) {{
+                    return null;
+                }}
+                if (typeof existingBeforeSend === "function") {{
+                    return existingBeforeSend(ev, hint);
+                }}
+                return ev;
+            }});
+        }}
+        // No symbolicator, so no frames: keep the old suppression.
+        if (trapCandidate) {{
             return null;
         }}
         if (typeof existingBeforeSend === "function") {{
@@ -258,6 +334,37 @@ fn error_reporting_script() -> Option<String> {
     ))
 }
 
+/// The boot-progress bar and its status label, shown from first paint until
+/// hydration. This runs before the wasm loads, so `t!` is unreachable: every
+/// locale's strings ship as one small JSON map and the script picks the entry
+/// matching `<html lang>`. leptos_meta holds `<head>` back until the app has
+/// resolved its locale and injected `lang` into `<html>`, so the attribute is
+/// already the page's language when this runs. The strings are only ever
+/// assigned through `textContent`, never parsed as HTML.
+fn boot_progress_script() -> String {
+    use leptos_i18n::Locale as _;
+    let strings: serde_json::Map<String, serde_json::Value> = Locale::get_all()
+        .iter()
+        .map(|&locale| {
+            let entry = serde_json::json!({
+                "loading": td_string!(locale, boot_loading).to_string(),
+                "failed": td_string!(locale, boot_failed).to_string(),
+                "crashed": td_string!(locale, boot_crashed).to_string(),
+                "slow": td_string!(locale, boot_slow).to_string(),
+                "reload": td_string!(locale, boot_reload).to_string(),
+            });
+            (locale.as_str().to_string(), entry)
+        })
+        .collect();
+    let strings = serde_json::to_string(&strings).expect("boot strings should serialize");
+    [
+        "(function(){try{var L=",
+        &script_escape::escape_for_script_tag(&strings),
+        r#";var root=document.documentElement;var S=L[root.getAttribute('lang')]||L.en;var bar=document.createElement('div');bar.id='boot-progress';var inner=document.createElement('div');inner.id='boot-progress-bar';bar.appendChild(inner);var status=document.createElement('span');status.id='boot-progress-status';status.textContent=S.loading;root.appendChild(bar);root.appendChild(status);var done=false;var finish=function(){if(done)return;done=true;clearTimeout(wd);bar.classList.add('done');setTimeout(function(){if(bar.parentNode)bar.parentNode.removeChild(bar);if(status.parentNode)status.parentNode.removeChild(status);},450)};var fail=function(msg){if(done)return;done=true;clearTimeout(wd);bar.classList.add('error');status.textContent=msg+' — ';var a=document.createElement('a');a.href='';a.textContent=S.reload;a.style.cssText='color:inherit;text-decoration:underline';a.onclick=function(){location.reload();return false};status.appendChild(a)};window.addEventListener('ultros:wasm-loaded',function(){bar.classList.add('mid')});window.addEventListener('ultros:hydrated',finish);window.addEventListener('error',function(e){var f=(e&&e.filename)||'';if(f.indexOf('.wasm')!==-1||f.indexOf('/pkg/')!==-1)fail(S.failed)});window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;var msg=(r&&(r.message||(''+r)))||'';if(msg.indexOf('wasm')!==-1||msg.indexOf('WebAssembly')!==-1)fail(S.crashed)});var wd=setTimeout(function(){fail(S.slow)},30000)}catch(_){}})();"#,
+    ]
+    .concat()
+}
+
 pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
     let error_reporting_script = error_reporting_script();
@@ -275,7 +382,7 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
         // page-level translate prompt). The class is repeated on `<body>` because
         // Translate walks the ancestor chain per text node. App has its own
         // locale switcher, so we never want the browser translating our markup.
-        <html lang="en" translate="no" class="notranslate" data-theme="dark" data-palette="violet">
+        <html lang="en" translate="no" class="notranslate" data-theme="dark" data-palette="ultros">
             <head>
                 <meta charset="utf-8" />
                 <meta name="google" content="notranslate" />
@@ -287,15 +394,11 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 // hydrate() lets us skip the /world_data, /detectregion, and
                 // /current_user round-trips on every cold load.
                 <script inner_html=bootstrap_script />
-                <script>
-    "(function(){try{var d=document.documentElement;var ls=localStorage;var g=function(k){try{return ls.getItem(k)}catch(_){return null}};var gc=function(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};var mode=g('theme.mode')||gc('theme_mode')||'system';if(mode==='system'){mode=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'};d.setAttribute('data-theme',mode==='light'?'light':'dark');var palette=g('theme.palette')||gc('theme_palette')||'violet';d.setAttribute('data-palette',palette)}catch(_){}})();"
-                </script>
+                <script inner_html=include_str!("theme-bootstrap.js") />
                 <style>
-    "#boot-progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:99999;pointer-events:none;transition:opacity .4s ease}#boot-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,#a78bfa,#f0abfc);box-shadow:0 0 8px rgba(167,139,250,.55);animation:boot-progress-grow 12s cubic-bezier(.05,.7,.1,1) forwards}#boot-progress.mid #boot-progress-bar{animation:boot-progress-mid 3s cubic-bezier(.2,.6,.2,1) forwards}#boot-progress.done{opacity:0}#boot-progress.done #boot-progress-bar{width:100%!important;transition:width .25s ease;animation:none}#boot-progress.error #boot-progress-bar{background:#ef4444;width:100%;animation:none;box-shadow:0 0 8px rgba(239,68,68,.55)}#boot-progress-status{position:fixed;top:8px;right:12px;z-index:99999;font:12px/1.2 system-ui,-apple-system,sans-serif;color:rgba(255,255,255,.55);pointer-events:none;letter-spacing:.02em}#boot-progress.error~#boot-progress-status,#boot-progress.error+#boot-progress-status{color:#fca5a5;pointer-events:auto}@keyframes boot-progress-grow{0%{width:0%}30%{width:25%}60%{width:50%}100%{width:75%}}@keyframes boot-progress-mid{0%{width:75%}100%{width:92%}}@media (prefers-reduced-motion:reduce){#boot-progress-bar{animation-duration:1s!important}#boot-progress{transition:none}}"
+    "#boot-progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:99999;pointer-events:none;transition:opacity .4s ease}#boot-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent,#a78bfa),var(--accent-decor,#e3a0ca));box-shadow:0 0 8px rgba(167,139,250,.55);animation:boot-progress-grow 12s cubic-bezier(.05,.7,.1,1) forwards}#boot-progress.mid #boot-progress-bar{animation:boot-progress-mid 3s cubic-bezier(.2,.6,.2,1) forwards}#boot-progress.done{opacity:0}#boot-progress.done #boot-progress-bar{width:100%!important;transition:width .25s ease;animation:none}#boot-progress.error #boot-progress-bar{background:#ef4444;width:100%;animation:none;box-shadow:0 0 8px rgba(239,68,68,.55)}#boot-progress-status{position:fixed;top:8px;right:12px;z-index:99999;font:12px/1.2 system-ui,-apple-system,sans-serif;color:rgba(255,255,255,.55);pointer-events:none;letter-spacing:.02em}#boot-progress.error~#boot-progress-status,#boot-progress.error+#boot-progress-status{color:#fca5a5;pointer-events:auto}@keyframes boot-progress-grow{0%{width:0%}30%{width:25%}60%{width:50%}100%{width:75%}}@keyframes boot-progress-mid{0%{width:75%}100%{width:92%}}@media (prefers-reduced-motion:reduce){#boot-progress-bar{animation-duration:1s!important}#boot-progress{transition:none}}"
                 </style>
-                <script>
-    "(function(){try{var root=document.documentElement;var bar=document.createElement('div');bar.id='boot-progress';var inner=document.createElement('div');inner.id='boot-progress-bar';bar.appendChild(inner);var status=document.createElement('span');status.id='boot-progress-status';status.textContent='Loading\\u2026';root.appendChild(bar);root.appendChild(status);var done=false;var finish=function(){if(done)return;done=true;clearTimeout(wd);bar.classList.add('done');setTimeout(function(){if(bar.parentNode)bar.parentNode.removeChild(bar);if(status.parentNode)status.parentNode.removeChild(status);},450)};var fail=function(msg){if(done)return;done=true;clearTimeout(wd);bar.classList.add('error');status.innerHTML=msg+' \\u2014 <a href=\"\" onclick=\"location.reload();return false\" style=\"color:inherit;text-decoration:underline\">reload</a>'};window.addEventListener('ultros:wasm-loaded',function(){bar.classList.add('mid')});window.addEventListener('ultros:hydrated',finish);window.addEventListener('error',function(e){var f=(e&&e.filename)||'';if(f.indexOf('.wasm')!==-1||f.indexOf('/pkg/')!==-1)fail('Failed to load app')});window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;var msg=(r&&(r.message||(''+r)))||'';if(msg.indexOf('wasm')!==-1||msg.indexOf('WebAssembly')!==-1)fail('App crashed during load')});var wd=setTimeout(function(){fail('Loading is taking longer than expected')},30000)}catch(_){}})();"
-                </script>
+                <script inner_html=boot_progress_script() />
                 <link
                     id="xiv-icons"
                     rel="stylesheet"
@@ -304,17 +407,13 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 <link id="leptos" rel="stylesheet" href=sheet_url />
                 <meta name="twitter:card" content="summary_large_image" />
                 <meta name="twitter:site" content="@ultros_app" />
-                <meta name="viewport" content="initial-scale=1.0,width=device-width" />
+                <meta
+                    name="viewport"
+                    content="initial-scale=1.0,width=device-width,viewport-fit=cover"
+                />
                 <meta name="theme-color" content="#0f0710" />
                 <meta name="application-name" content="Ultros" />
                 <meta property="og:type" content="website" />
-                <meta property="og:locale" content="en_US" />
-                <meta property="og:locale:alternate" content="ja_JP" />
-                <meta property="og:locale:alternate" content="fr_FR" />
-                <meta property="og:locale:alternate" content="de_DE" />
-                <meta property="og:locale:alternate" content="ko_KR" />
-                <meta property="og:locale:alternate" content="zh_CN" />
-                <meta property="og:locale:alternate" content="zh_TW" />
                 <meta property="og:site_name" content="Ultros" />
                 {error_reporting_script
                     .map(|script| {
@@ -358,11 +457,11 @@ pub fn Footer() -> impl IntoView {
     let git_hash = env!("GIT_HASH");
     let i18n = use_i18n();
     view! {
-        <footer class="bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
+        <footer class="site-footer bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-4">
                     <a
-                        href="https://discord.gg/pgdq9nGUP2"
+                        href=DISCORD_INVITE
                         class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsDiscord width="1.2em" height="1.2em" /><span>{t!(i18n, discord)}</span>
@@ -379,18 +478,18 @@ pub fn Footer() -> impl IntoView {
                             <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
-                    <A
+                    <AppLink
                         href="/help"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, help_label)}</span>
-                    </A>
-                    <A
+                    </AppLink>
+                    <AppLink
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsInfoCircle width="1.2em" height="1.2em" /><span>{t!(i18n, about)}</span>
-                    </A>
+                    </AppLink>
                 </div>
                 <div class="divider opacity-50"></div>
                 <div class="text-center space-y-3 muted text-sm max-w-3xl mx-auto opacity-75 hover:opacity-100 transition-opacity">
@@ -432,45 +531,117 @@ pub fn App() -> impl IntoView {
     let cookies = Cookies::new();
     provide_meta_context();
     view! {
-        <I18nContextProvider>
+        <I18nContextProvider cookie_options=leptos_use::UseCookieOptions::default().path("/")>
             <AppInner cookies />
         </I18nContextProvider>
+    }
+}
+
+/// Name of the cookie `leptos_i18n` stores an explicit language choice in.
+const I18N_PREF_COOKIE: &str = "i18n_pref_locale";
+
+/// The UI locale to start a first-time visitor in, from the region their IP
+/// resolved to. `None` means "leave the locale alone".
+///
+/// This is only an initial guess for visitors who never picked a language:
+/// an explicit `?lang=` on the URL or a stored preference cookie always wins,
+/// and it only ever moves *off* English (the default), so a visitor whose
+/// browser language already resolved to e.g. `ja` is untouched.
+pub(crate) fn region_locale_guess(
+    region: Option<&str>,
+    explicit_locale: Option<Locale>,
+    has_pref_cookie: bool,
+    current_locale: Locale,
+) -> Option<Locale> {
+    if explicit_locale.is_some() || has_pref_cookie || current_locale != Locale::en {
+        return None;
+    }
+    match region? {
+        "Japan" => Some(Locale::ja),
+        "中国" => Some(Locale::cn),
+        "한국" => Some(Locale::ko),
+        _ => None,
     }
 }
 
 #[component]
 pub fn AppInner(cookies: Cookies) -> impl IntoView {
     let i18n = use_i18n();
+    let explicit_locale = social_meta::request_locale();
+    if let Some(locale) = explicit_locale {
+        i18n.set_locale(locale);
+    }
     let region = use_context::<GuessedRegion>();
     #[cfg(feature = "hydrate")]
     let region_for_tags = region.clone();
-    Effect::new(move |_| {
-        if let Some(region) = region.as_ref() {
-            let current_locale = i18n.get_locale();
-            if current_locale == Locale::en {
-                let new_locale = match region.0.as_str() {
-                    "Japan" => Some(Locale::ja),
-                    "中国" => Some(Locale::cn),
-                    "한국" => Some(Locale::ko),
-                    _ => None,
-                };
-                if let Some(new_locale) = new_locale {
-                    i18n.set_locale(new_locale);
-                }
+    // The region guess is applied synchronously, on both sides, exactly like
+    // the explicit `?lang=` above. `GuessedRegion` comes from the same request
+    // (server: the resolved IP region; client: the SSR bootstrap payload), so
+    // the server renders ja/cn/ko HTML with a matching `<html lang>`, the
+    // client loads that locale's game-data pack before hydrating, and the
+    // hydration walk meets a DOM built from the very same locale.
+    //
+    // This used to run in an `Effect`, i.e. only on the client: the server
+    // rendered English, and the client's switch rewrote every translated text
+    // node while tachys was still hydrating across `Suspense` boundaries. The
+    // cursor then landed on a node the view tree did not expect and panicked
+    // (`Element::cast_from(cursor.current()).unwrap()`, tachys `svg/mod.rs:306`)
+    // — GlitchTip #7309, still firing from CN clients after deferring the
+    // switch by an animation frame (#1405), because the item page's boundaries
+    // hydrate several frames later than that.
+    let has_pref_cookie = cookies
+        .get_cookie(I18N_PREF_COOKIE)
+        .0
+        .get_untracked()
+        .is_some();
+    if let Some(new_locale) = region_locale_guess(
+        region.as_ref().map(|r| r.0.as_str()),
+        explicit_locale,
+        has_pref_cookie,
+        i18n.get_locale_untracked(),
+    ) {
+        i18n.set_locale(new_locale);
+        #[cfg(feature = "hydrate")]
+        {
+            // The client picked its game-data pack from the SSR `<html lang>`,
+            // so after a server-side guess the right pack is already loaded and
+            // there is nothing to swap. Only a page whose HTML was not rendered
+            // with this guess (a mount without SSR, a cached English page)
+            // needs the pack reloaded — and that must not touch `DataRevision`
+            // until hydration is over, for the same reason as above.
+            let loaded = use_context::<LoadedGameDataLocale>();
+            if loaded.as_ref().map(|l| l.0.as_str()) != Some(new_locale.as_str()) {
+                // `reload_locale_data` reads `DataRevision` out of context, and
+                // a raw animation-frame callback runs with no reactive owner,
+                // so carry this one across.
+                let owner = Owner::current();
+                let apply = move || components::language_picker::reload_locale_data(new_locale);
+                leptos::leptos_dom::helpers::request_animation_frame(move || match owner {
+                    Some(owner) => owner.with(apply),
+                    None => apply(),
+                });
             }
         }
-    });
-    provide_context(ActiveTooltip(RwSignal::new(None)));
+    }
+    ultros_ui::components::hover_card::provide_hover_card_context();
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
     provide_theme_settings();
     provide_side_nav_settings();
+    provide_platform_hotkeys();
     provide_toast_context();
+    provide_app_update_context();
     provide_xiv_data_revision();
     provide_on_hand_context();
     ws::realtime::provide_realtime_context();
+    provide_inbox();
+    provide_guest_alerts();
+    // The device-list runtime only exists in a browser tab; without it the
+    // add-to-list modals offer account lists only.
+    #[cfg(feature = "hydrate")]
+    list_doc::bridge::provide_local_lists();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
@@ -493,16 +664,35 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
 
     view! {
         <Title text="Ultros" />
+        // Start the hydration data download while WASM is loading. Resolve
+        // this after query/cookie/region locale selection so the preload and
+        // the client's fetch use the same content-addressed language pack.
+        // Fetch preloads need CORS mode even for same-origin URLs to be reused.
+        <Link
+            id="game-data-preload"
+            rel="preload"
+            as_="fetch"
+            crossorigin="anonymous"
+            fetchpriority="low"
+            href=xiv_gen_db::startup_url(i18n.get_locale_untracked().as_str())
+        />
         // Background gradient
         <div class="fixed inset-0 -z-10" style="background-color: var(--color-background);">
             <div class="absolute inset-0" style="background-image: radial-gradient(80% 60% at 50% 30%, var(--decor-spot), transparent 60%);" />
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
+            <InboxLive />
+            <GuestAlertEvaluator />
+            <UpdateBanner />
             <Router>
                 <SentryRouteTag />
+                <ReloadWhenStale />
+                <social_meta::ShareLocale />
+                <social_meta::SocialMetadata />
                 <AppShell>
                     <Routes fallback=NotFound>
+                        <components::virtual_grid::fixture::GridFixtureRoutes/>
                         <Route path=path!("") view=HomePage />
                         <ParentRoute path=path!("retainers") view=Retainers>
                             <Route path=path!("edit") view=EditRetainers />
@@ -513,9 +703,12 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         </ParentRoute>
                         <Route path=path!("alerts") view=Alerts />
                         <Route path=path!("groups") view=Groups />
+                        <Route path=path!("groups/:id") view=GroupDetail />
+                        <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />
-                            <Route path=path!(":id") view=ListView />
+                            <Route path=path!("device/:device_id") view=GuestListRoute />
+                            <Route path=path!(":id") view=ListRoute />
                             <Route path=path!("") view=EditLists />
                         </ParentRoute>
                         <ParentRoute path=path!("items") view=ItemExplorer>
@@ -550,12 +743,15 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                         <Route path=path!("vendor-resale") view=VendorResale />
                         <Route path=path!("vendor-resale/:world") view=VendorWorldView />
-                        <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                        <Route path=path!("recipe-analyzer/:world?") view=RecipeAnalyzer />
+                        <Route path=path!("recipe/:id") view=RecipeView />
+                        <Route path=path!("npc/:id") view=NpcView />
                         <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
                         <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
-                        <Route path=path!("leve-analyzer") view=LeveAnalyzer />
-                        <Route path=path!("scrip-sources") view=ScripSources />
-                        <Route path=path!("venture-analyzer") view=VentureAnalyzer />
+                        <Route path=path!("leve-analyzer/:world?") view=LeveAnalyzer />
+                        <Route path=path!("scrip-sources/:world?") view=ScripSources />
+                        <Route path=path!("venture-analyzer/:world?") view=VentureAnalyzer />
+                        <Route path=path!("vendor-sell/:world?") view=VendorSell />
                         <Route path=path!("analyzer/:world") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
                             let params = leptos_router::hooks::use_params_map();
@@ -572,6 +768,17 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("welcome") view=Welcome />
                         <Route path=path!("help") view=HelpIndex />
                         <Route path=path!("help/:topic") view=HelpArticle />
+                        // The history is fetched from `/api/v1/changelog` rather
+                        // than compiled into the bundle, so the page's content
+                        // sits behind a `Suspense`. `InOrder` keeps that content
+                        // in the initial HTML, in document order, the way it was
+                        // when the entries were a static array — out-of-order
+                        // streaming would hand crawlers the skeleton instead.
+                        <Route
+                            path=path!("changelog")
+                            view=Changelog
+                            ssr=SsrMode::InOrder
+                        />
                         <Route path=path!("profile") view=Profile />
                         <Route path=path!("privacy") view=PrivacyPolicy />
                         <Route path=path!("cookie-policy") view=CookiePolicy />
@@ -601,6 +808,47 @@ fn SentryRouteTag() -> impl IntoView {
         Effect::new(move |_| {
             let path = location.pathname.get();
             set_sentry_tag("route", &path);
+        });
+    }
+}
+
+/// Once an update is pending, the next client-side route change becomes a
+/// full page load, so the user lands on the requested page with the current
+/// wasm bundle. Only `pathname` is watched: query-string changes (filters,
+/// sort, world pickers) keep the user on the page and never reload. Must be
+/// mounted inside `<Router>` because `use_location()` needs router context.
+#[component]
+fn ReloadWhenStale() -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        use crate::global_state::app_update::use_app_update;
+        let location = leptos_router::hooks::use_location();
+        let update = use_app_update();
+        Effect::new(move |previous: Option<String>| {
+            let path = location.pathname.get();
+            // Skip the first run: the path the page loaded on is not a navigation.
+            let navigated = previous.as_deref().is_some_and(|p| p != path);
+            // Untracked on purpose: fire on navigation, not on detection.
+            let stale = update.is_some_and(|u| u.pending.get_untracked().is_some());
+            if navigated && stale {
+                // The router publishes its destination before suspended routes
+                // finish and pushState updates the address bar. Reloading the
+                // browser's current URL here can send the user back to the page
+                // they are leaving; load the router's destination explicitly.
+                let search = location.search.get_untracked();
+                let hash = location.hash.get_untracked();
+                let mut destination = path.clone();
+                if !search.is_empty() {
+                    destination.push('?');
+                    destination.push_str(&search);
+                }
+                destination.push_str(&hash);
+                let browser_location = window().location();
+                if let Ok(origin) = browser_location.origin() {
+                    let _ = browser_location.set_href(&format!("{origin}{destination}"));
+                }
+            }
+            path
         });
     }
 }
@@ -644,6 +892,14 @@ mod error_filter_wiring {
         // value. Deleting either silently re-opens the #6661/#4908/#6570 flood.
         assert!(FILTER_JS.contains("ULTROS_JSSYS_EXECUTOR_RE"));
         assert!(FILTER_JS.contains("\"unreachable\""));
+        // Under panic=immediate-abort every prod panic is that bare trap, so
+        // the trap is dropped only AFTER symbolication, and only when its top
+        // frames are tachys hydration code. beforeSend calls both hooks;
+        // losing the second would drop every candidate trap, losing the first
+        // would re-open the flood.
+        assert!(FILTER_JS.contains("window.__ultrosIsInjectedTrapCandidate ="));
+        assert!(FILTER_JS.contains("window.__ultrosShouldDropSymbolicatedTrap ="));
+        assert!(FILTER_JS.contains("tachys::hydration::"));
         // Category 3 (modern-Chrome translation population): the injected
         // <font> DOM fingerprint that catches the flood the stale-UA check
         // misses. Removing it silently re-opens the #3005/#4911/#6406 flood.
@@ -654,11 +910,12 @@ mod error_filter_wiring {
         // Category 5: leptos hydration-bootstrap ReferenceErrors stripped by a
         // proxy/crawler. Removing it re-opens the #6620/#6667/#6760/#6761 flood.
         assert!(FILTER_JS.contains("isStrippedHydrationBootstrap"));
-        // Category 6: the redundant onerror wasm `unreachable` trap dedup —
-        // drops the per-deploy duplicate of every Rust panic (the #6781–#6828
-        // rotation) via a pkg-bundle stack frame. Removing it re-opens it.
-        assert!(FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
-        assert!(FILTER_JS.contains("ULTROS_PKG_FRAME_RE"));
+        // Category 6 is retired on purpose: production wasm is built with
+        // `panic = "immediate-abort"`, so the onerror `RuntimeError:
+        // unreachable` IS the panic report (symbolicated by
+        // wasm_symbolicate.js) and must never be dropped on frame shape.
+        // Guard against the dedup being reintroduced.
+        assert!(!FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
         // Category 7: the redundant `RefCell already borrowed` executor cascade,
         // dropped unconditionally when its rust_panic.location is the js-sys
         // futures executor. Deleting it silently re-opens the #6758 flood (the
@@ -672,5 +929,127 @@ mod error_filter_wiring {
         // ultros.app / the pkg bundle, or a real Ultros bug could be swept up.
         assert!(FILTER_JS.contains("isThirdPartyScriptError"));
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
+    }
+
+    /// Same contract for the wasm symbolicator: beforeSend calls
+    /// `window.__ultrosSymbolicateEvent`, production traps rely on its
+    /// `rust-wasm-trap` fingerprint to group across deploys, and every map
+    /// URL is a module URL with `.wasm` swapped for `.symbols` — which is
+    /// what lets a `--split` chunk's frames resolve against that chunk's own
+    /// map. The JS logic is exercised by
+    /// `integration/wasm-symbolicate.test.cjs`.
+    const SYMBOLICATE_JS: &str = include_str!("wasm_symbolicate.js");
+
+    #[test]
+    fn symbolicator_defines_the_hook_called_by_before_send() {
+        assert!(SYMBOLICATE_JS.contains("window.__ultrosSymbolicateEvent ="));
+        assert!(SYMBOLICATE_JS.contains("\"rust-wasm-trap\""));
+        assert!(SYMBOLICATE_JS.contains("\".symbols\""));
+    }
+}
+pub mod script_escape;
+
+#[cfg(test)]
+mod region_locale_guess_tests {
+    use super::region_locale_guess;
+    use crate::i18n::Locale;
+
+    #[test]
+    fn first_visit_from_a_guessed_region_starts_in_that_language() {
+        assert_eq!(
+            region_locale_guess(Some("Japan"), None, false, Locale::en),
+            Some(Locale::ja)
+        );
+        assert_eq!(
+            region_locale_guess(Some("中国"), None, false, Locale::en),
+            Some(Locale::cn)
+        );
+        assert_eq!(
+            region_locale_guess(Some("한국"), None, false, Locale::en),
+            Some(Locale::ko)
+        );
+    }
+
+    #[test]
+    fn other_regions_and_no_region_leave_the_locale_alone() {
+        assert_eq!(
+            region_locale_guess(Some("North-America"), None, false, Locale::en),
+            None
+        );
+        assert_eq!(region_locale_guess(None, None, false, Locale::en), None);
+    }
+
+    #[test]
+    fn an_explicit_choice_always_wins() {
+        // `?lang=en` from Japan stays English.
+        assert_eq!(
+            region_locale_guess(Some("Japan"), Some(Locale::en), false, Locale::en),
+            None
+        );
+        // A stored preference (including one for English) is never overridden,
+        // otherwise switching back to English would undo itself on reload.
+        assert_eq!(
+            region_locale_guess(Some("中国"), None, true, Locale::en),
+            None
+        );
+    }
+
+    #[test]
+    fn a_browser_language_that_already_resolved_is_kept() {
+        assert_eq!(
+            region_locale_guess(Some("中国"), None, false, Locale::ja),
+            None
+        );
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod boot_progress_tests {
+    /// The pre-wasm boot script embeds every locale's strings, so a locale
+    /// missing from the map would silently fall back to English.
+    #[test]
+    fn boot_script_carries_every_locale() {
+        let script = super::boot_progress_script();
+        for locale in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            assert!(script.contains(&format!("\"{locale}\":{{")), "{locale}");
+        }
+        assert!(script.contains("Loading is taking longer than expected"));
+        assert!(script.contains("読み込み中…"));
+        // Nothing in the payload may close the inline <script> element.
+        assert!(!script.contains("</"));
+        // Translations reach the DOM only as text, never as markup.
+        assert!(!script.contains("innerHTML"));
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod translation_boundary_tests {
+    use crate::i18n::*;
+    use leptos::prelude::*;
+
+    #[test]
+    fn shared_context_translates_and_renders_across_the_crate_boundary() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let context = leptos_i18n::context::init_i18n_context::<ultros_i18n::i18n::Locale>();
+            provide_context(context);
+            let i18n = crate::i18n_fallback::use_i18n_or_default();
+
+            i18n.set_locale(Locale::fr);
+            assert_eq!(context.get_locale_untracked(), Locale::fr);
+            assert_eq!(
+                t_string!(i18n, market_ingredient_label, item = "Bronze").to_string(),
+                "Ingrédient : Bronze"
+            );
+            let html = view! { <span>{t!(i18n, npc_location_unknown)}</span> }.to_html();
+            assert!(html.contains("Emplacement indisponible"));
+
+            context.set_locale(Locale::en);
+            assert_eq!(
+                t_string!(i18n, npc_location_unknown).to_string(),
+                "Location unavailable"
+            );
+        });
     }
 }

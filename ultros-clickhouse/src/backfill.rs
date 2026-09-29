@@ -5,9 +5,12 @@
 //! in the `_backfill_state` table and skipped.
 //!
 //! Idempotent: the `sales` table is a `ReplacingMergeTree` keyed on
-//! `(item_id, hq, world_id, sold_date, buying_character_id)`, so re-streaming
-//! the same rows just merges into no-ops. That means dual-writes overlapping
-//! the backfill window are safe too.
+//! `(item_id, hq, world_id, sold_date, pg_id)`, so re-streaming the same rows
+//! just merges into no-ops. Dual-writes overlapping the backfill window are
+//! safe *because* both paths key on the same Postgres `sale_history.id` — see
+//! [`SaleRow::from_db_model`] (this path) and [`SaleRow::from_api_sale`] (the
+//! live path). If either ever writes a placeholder id, the two paths stop
+//! agreeing on row identity and the overlap double-counts instead of merging.
 
 use std::time::Instant;
 

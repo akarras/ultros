@@ -16,10 +16,15 @@
 #                  wait out the analyzer service's cold-start warmup; set to
 #                  empty to skip)
 #   ANALYZER_READY_TIMEOUT  default 180       (seconds to wait for analyzer)
-#   DEVICE         desktop | mobile | both (default both)
+#   DEVICE         desktop | mobile | wide | both (default both; "both" runs
+#                  all three passes — desktop, mobile, and the 2560px wide
+#                  pass that guards ad-rail-width layouts)
 #   SKIP_BUILD     1 to skip `cargo leptos build` before serve
+#   E2E_RELEASE    1 to build and serve the release profile, including routes
+#                  gated by debug_assertions (default 0)
 #   LEPTOS_FEATURES extra leptos-bin-features (space-separated). Set to an
 #                  explicit empty string to override metadata bin-features.
+#   RUN_LISTS_V2   default 1; guest creation, offline reload and companion
 #
 # Exit code is the npm test exit code (0 on success).
 
@@ -35,6 +40,10 @@ ANALYZER_READY_PATH="${ANALYZER_READY_PATH-/api/v1/cheapest/North-America}"
 ANALYZER_READY_TIMEOUT="${ANALYZER_READY_TIMEOUT:-180}"
 DEVICE="${DEVICE:-both}"
 bin_feature_args=()
+profile_args=()
+if [ "${E2E_RELEASE:-0}" = "1" ]; then
+    profile_args=(--release)
+fi
 if [ "${LEPTOS_FEATURES+x}" = "x" ]; then
     bin_feature_args=(--bin-features "$LEPTOS_FEATURES")
 fi
@@ -102,7 +111,7 @@ else
     # bash 3.2 — the `+` expansion guard is the portable idiom.
     if [ "${SKIP_BUILD:-0}" != "1" ]; then
         log "cargo leptos build (set SKIP_BUILD=1 to skip)"
-        cargo leptos build ${bin_feature_args[@]+"${bin_feature_args[@]}"}
+        cargo leptos build ${profile_args[@]+"${profile_args[@]}"} ${bin_feature_args[@]+"${bin_feature_args[@]}"}
     fi
 
     set -m
@@ -110,6 +119,7 @@ else
         HOSTNAME="$BASE_URL" \
         LEPTOS_SITE_ADDR="127.0.0.1:$port" \
         cargo leptos serve \
+        ${profile_args[@]+"${profile_args[@]}"} \
         ${bin_feature_args[@]+"${bin_feature_args[@]}"} \
         >/tmp/ultros-e2e-server.log 2>&1 &
     server_pid=$!
@@ -148,6 +158,7 @@ fi
 case "$DEVICE" in
     desktop) test_script="test:desktop" ;;
     mobile)  test_script="test:mobile" ;;
+    wide)    test_script="test:wide" ;;
     both|*)  test_script="test" ;;
 esac
 
@@ -158,6 +169,23 @@ else
     log "running npm run $test_script in integration/ against $BASE_URL"
     # `|| test_exit=$?` captures the npm exit code without triggering set -e.
     ( cd integration && BASE_URL="$BASE_URL" npm run "$test_script" ) || test_exit=$?
+    log "running eager search and stale-response E2E"
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:search-responsiveness ) || test_exit=$?
+fi
+
+log "running projected game-data startup and deferred detail E2E"
+( cd integration && BASE_URL="$BASE_URL" npm run test:game-data-startup ) || test_exit=$?
+
+log "running NPC map-preview geometry and keyboard E2E"
+( cd integration && BASE_URL="$BASE_URL" npm run test:npc-map-preview ) || test_exit=$?
+
+if [ "${RUN_ITEM_VIEW_LAYOUT:-1}" != "0" ]; then
+    log "running item-view wide-layout E2E (issue #1234)"
+    item_view_layout_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:item-view-layout ) || item_view_layout_exit=$?
+    if [ "$item_view_layout_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$item_view_layout_exit"
+    fi
 fi
 
 if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then
@@ -169,11 +197,146 @@ if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then
     fi
 fi
 
+if [ "${RUN_FC_CRAFTING_WORLD:-1}" != "0" ]; then
+    log "running FC crafting world consistency E2E"
+    fc_world_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:fc-crafting-world ) || fc_world_exit=$?
+    if [ "$fc_world_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$fc_world_exit"
+    fi
+fi
+
+if [ "${RUN_ANALYZER_WORLD_URLS:-1}" != "0" ]; then
+    log "running analyzer world URL compatibility E2E"
+    world_urls_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-world-urls ) || world_urls_exit=$?
+    if [ "$world_urls_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$world_urls_exit"
+    fi
+fi
+
+if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
+    log "running analyzer grid and last-view E2E"
+    analyzer_grids_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-grids ) || analyzer_grids_exit=$?
+    if [ "$analyzer_grids_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$analyzer_grids_exit"
+    fi
+fi
+
+# This fixture is deliberately absent from release builds. Its query assertions
+# do not require populated market data; enable CHECK_ANALYZER_ROUTES separately
+# to exercise the same shared columns on all seven market-backed tools.
+if [ "${E2E_RELEASE:-0}" != "1" ] && [ "${RUN_SHARED_ANALYZER_DATA:-1}" != "0" ]; then
+    log "running deterministic shared analyzer data E2E"
+    shared_analyzer_data_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-analyzer-data ) || shared_analyzer_data_exit=$?
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:market-window ) || shared_analyzer_data_exit=$?
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-consistency ) || shared_analyzer_data_exit=$?
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-actions ) || shared_analyzer_data_exit=$?
+    if [ "$shared_analyzer_data_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$shared_analyzer_data_exit"
+    fi
+fi
+
+if [ "${RUN_UNDERCUT_PRESSURE:-1}" != "0" ]; then
+    log "running undercut pressure E2E"
+    undercut_pressure_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:undercut-pressure ) || undercut_pressure_exit=$?
+    if [ "$undercut_pressure_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$undercut_pressure_exit"
+    fi
+fi
+
+if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
+    log "running recipe planner E2E"
+    recipe_planner_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:recipe-planner ) || recipe_planner_exit=$?
+    if [ "$recipe_planner_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$recipe_planner_exit"
+    fi
+fi
+
+if [ "${RUN_LISTS_V2:-1}" != "0" ]; then
+    log "running account storage locking and recovery module E2E"
+    account_storage_exit=0
+    ( cd integration && npm run test:account-list-storage ) || account_storage_exit=$?
+    if [ "$account_storage_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$account_storage_exit"
+    fi
+
+    log "running anonymous Lists 2.0, offline reload and companion E2E"
+    lists_v2_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-v2 ) || lists_v2_exit=$?
+    if [ "$lists_v2_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$lists_v2_exit"
+    fi
+
+    # Device-list keyboard undo/redo and the editor-focus contract (#1429,
+    # #1430). Needs only the catalog, like lists-v2.
+    log "running device-list keyboard undo E2E"
+    list_undo_keyboard_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:list-undo-keyboard ) || list_undo_keyboard_exit=$?
+    if [ "$list_undo_keyboard_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$list_undo_keyboard_exit"
+    fi
+
+    # Rename/delete a local list from its /list card without opening it.
+    # Needs only the catalog, like lists-v2.
+    log "running device-list card edit E2E"
+    device_list_card_edit_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:device-list-card-edit ) || device_list_card_edit_exit=$?
+    if [ "$device_list_card_edit_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$device_list_card_edit_exit"
+    fi
+
+    # The shopping companion module against its own loopback fixture; it
+    # does not talk to $BASE_URL.
+    log "running shopping companion module E2E"
+    list_companion_exit=0
+    ( cd integration && npm run test:list-companion ) || list_companion_exit=$?
+    if [ "$list_companion_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$list_companion_exit"
+    fi
+fi
+
 # If we built with test-auth, also exercise the login flow even when the
 # screenshot suite failed — failures may be unrelated and the login signal
 # is independently valuable.
 case " ${LEPTOS_FEATURES:-} " in
     *" test-auth "*)
+        if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
+            log "running recipe root Buy/Craft flow (test-auth feature detected)"
+            recipe_root_exit=0
+            ( cd integration && BASE_URL="$BASE_URL" npm run test:recipe-root-source ) || recipe_root_exit=$?
+            if [ "$recipe_root_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+                test_exit="$recipe_root_exit"
+            fi
+        fi
+        log "running device-list account adoption (test-auth feature detected)"
+        list_adoption_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-adoption ) || list_adoption_exit=$?
+        if [ "$list_adoption_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_adoption_exit"
+        fi
+        log "running live list access draft preservation (test-auth feature detected)"
+        list_access_drafts_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-access-drafts ) || list_access_drafts_exit=$?
+        if [ "$list_access_drafts_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_access_drafts_exit"
+        fi
+        log "running account Build/Shop handoff (test-auth feature detected)"
+        list_shop_handoff_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-shop-handoff ) || list_shop_handoff_exit=$?
+        if [ "$list_shop_handoff_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_shop_handoff_exit"
+        fi
+        log "running account/device Shop keyboard state (test-auth feature detected)"
+        list_shop_focus_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-shop-focus ) || list_shop_focus_exit=$?
+        if [ "$list_shop_focus_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_shop_focus_exit"
+        fi
         log "running login flow (test-auth feature detected)"
         login_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:login ) || login_exit=$?
@@ -181,28 +344,109 @@ case " ${LEPTOS_FEATURES:-} " in
             test_exit="$login_exit"
         fi
         log "running shared-list flow (test-auth feature detected)"
+        socket_revocation_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-socket-revocation ) || socket_revocation_exit=$?
+        if [ "$socket_revocation_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$socket_revocation_exit"
+        fi
         shared_list_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-list ) || shared_list_exit=$?
         if [ "$shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$shared_list_exit"
         fi
         log "running group-shared-list flow (test-auth feature detected)"
+        groups_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:groups ) || groups_exit=$?
+        if [ "$groups_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$groups_exit"
+        fi
         group_shared_list_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:group-shared-list ) || group_shared_list_exit=$?
         if [ "$group_shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$group_shared_list_exit"
         fi
+        log "running group detail page states (test-auth feature detected)"
+        group_detail_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:group-detail ) || group_detail_exit=$?
+        if [ "$group_detail_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$group_detail_exit"
+        fi
         log "running list-flow E2E (test-auth feature detected)"
+        labs_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:labs ) || labs_exit=$?
+        if [ "$labs_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$labs_exit"
+        fi
         list_flow_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-flow ) || list_flow_exit=$?
         if [ "$list_flow_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_flow_exit"
+        fi
+        log "running list-sync E2E (test-auth feature detected)"
+        list_sync_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-sync ) || list_sync_exit=$?
+        if [ "$list_sync_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_sync_exit"
+        fi
+        log "running deterministic Build estimate allocation E2E"
+        list_allocation_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-estimate-allocation ) || list_allocation_exit=$?
+        if [ "$list_allocation_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_allocation_exit"
+        fi
+        log "running device Build price coverage and Shop parity E2E"
+        device_prices_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:device-build-prices ) || device_prices_exit=$?
+        if [ "$device_prices_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$device_prices_exit"
+        fi
+        log "running cart sorting and accessibility E2E"
+        list_sort_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-sort-accessibility ) || list_sort_exit=$?
+        if [ "$list_sort_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_sort_exit"
+        fi
+        log "running partial Build subtotal E2E"
+        list_subtotal_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-partial-subtotal ) || list_subtotal_exit=$?
+        if [ "$list_subtotal_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_subtotal_exit"
+        fi
+        log "running realtime callback retirement E2E"
+        realtime_retirement_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:realtime-retirement ) || realtime_retirement_exit=$?
+        if [ "$realtime_retirement_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$realtime_retirement_exit"
+        fi
+        log "running list compaction recovery E2E"
+        list_recovery_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-compaction-recovery ) || list_recovery_exit=$?
+        if [ "$list_recovery_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_recovery_exit"
+        fi
+        log "running account offline storage and recovery E2E"
+        account_ui_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:account-list-ui ) || account_ui_exit=$?
+        if [ "$account_ui_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$account_ui_exit"
+        fi
+        log "running list-flow E2E under Labs lists-sync"
+        list_flow_labs_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" LABS_COOKIE=lists-sync npm run test:list-flow ) || list_flow_labs_exit=$?
+        if [ "$list_flow_labs_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_flow_labs_exit"
         fi
         log "running browser-push smoke (test-auth feature detected)"
         push_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:push ) || push_exit=$?
         if [ "$push_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$push_exit"
+        fi
+        log "running notification inbox (test-auth feature detected)"
+        notification_inbox_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:notification-inbox ) || notification_inbox_exit=$?
+        if [ "$notification_inbox_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$notification_inbox_exit"
         fi
         ;;
 esac
@@ -218,6 +462,24 @@ if [ "${RUN_DASHBOARD:-1}" != "0" ]; then
     if [ "$dashboard_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$dashboard_exit"
     fi
+fi
+
+# This gate is opt-in and independent of the route screenshot smoke. It
+# requires real empty-database fixtures and all merged Lists prerequisites.
+if [ "${LISTS_ACCEPTANCE:-0}" = "1" ]; then
+    log "running required priced Lists acceptance against ${LISTS_ACCEPTANCE_BUILD:-UNNAMED BUILD}"
+    lists_acceptance_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-acceptance ) || lists_acceptance_exit=$?
+    if [ "$lists_acceptance_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$lists_acceptance_exit"
+    fi
+fi
+
+if [ "${E2E_RELEASE:-0}" != "1" ]; then
+    log "running shared accessibility E2E"
+    accessibility_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:accessibility ) || accessibility_exit=$?
+    if [ "$accessibility_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$accessibility_exit"; fi
 fi
 
 log "screenshots in integration/artifacts/ (exit=$test_exit)"

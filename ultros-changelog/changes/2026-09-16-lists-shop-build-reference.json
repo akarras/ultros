@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Matching estimates when you start shopping",
+  "blurb": "Shop now shows the same Build estimate for mixed-quality items and limited stock, with missing prices clearly identified.",
+  "link": "/list",
+  "labs": true
+}

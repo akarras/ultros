@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "A shorter Columns menu with a window choice",
+  "blurb": "The Columns menu on the analyzers now lists the columns you're showing, each with an × to remove it, followed by one row per statistic to add: pick Sales/day, choose Selected, 1d, 7d, 30d or 90d, and press +. That replaces about 45 checkboxes with 9 rows. Click the window on a column you're already showing to switch it to another window without moving it. Existing links and saved views keep the same columns."
+}

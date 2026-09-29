@@ -15,8 +15,6 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::ffxiv_character_verification::Entity")]
-    FfxivCharacterVerification,
     #[sea_orm(has_many = "super::owned_ffxiv_character::Entity")]
     OwnedFfxivCharacter,
     #[sea_orm(has_many = "super::owned_retainers::Entity")]
@@ -29,12 +27,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     World,
-}
-
-impl Related<super::ffxiv_character_verification::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::FfxivCharacterVerification.def()
-    }
 }
 
 impl Related<super::owned_ffxiv_character::Entity> for Entity {

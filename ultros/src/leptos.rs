@@ -7,7 +7,7 @@ use axum::http::{HeaderValue, header};
 /// you should be able to build and serve leptos with one install step.
 ///
 use axum::{
-    Router,
+    Extension, Router,
     body::Body,
     extract::State,
     http::Request,
@@ -16,39 +16,18 @@ use axum::{
 use leptos::prelude::*;
 use leptos_axum::{LeptosRoutes, generate_route_list};
 use leptos_router::SsrMode;
-#[cfg(not(debug_assertions))]
+use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeader;
 use tracing::{info, instrument};
 use ultros_api_types::user::UserData;
 use ultros_api_types::world_helper::WorldHelper;
+use ultros_app::ssr_api::SsrApi;
 use ultros_app::*;
 
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 use crate::web::{WebState, country_code_decoder::Region};
-
-/// Escape a JSON string for safe embedding inside a `<script>` element.
-///
-/// JSON allows literal `<` characters inside strings; if any of them happen to
-/// be followed by `/script>`, the parser would close the tag and start
-/// executing arbitrary content as HTML. Replacing the handful of characters
-/// below with their `\uXXXX` escapes keeps the payload as valid JSON and
-/// inert to the HTML parser. U+2028 / U+2029 also need escaping because they
-/// are JS line terminators (legal in JSON strings but break script parsing).
-fn escape_for_script_tag(json: &str) -> String {
-    let mut out = String::with_capacity(json.len());
-    for c in json.chars() {
-        match c {
-            '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u003e"),
-            '&' => out.push_str("\\u0026"),
-            '\u{2028}' => out.push_str("\\u2028"),
-            '\u{2029}' => out.push_str("\\u2029"),
-            other => out.push(other),
-        }
-    }
-    out
-}
+use ultros_app::script_escape::escape_for_script_tag;
 
 /// Which streaming strategy to render a route with.
 ///
@@ -68,6 +47,7 @@ async fn render_leptos(
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
     mode: StreamMode,
+    api: SsrApi,
 ) -> Response {
     info!("Custom handler");
     // The HTML now carries per-user data (region + current_user), so it must
@@ -104,6 +84,7 @@ async fn render_leptos(
         provide_context(LocalWorldData(Ok(worlds.clone())));
         provide_context(GuessedRegion(region_for_ctx.clone()));
         provide_context(BootstrapUser(current_user_for_ctx.clone()));
+        provide_context(api.clone());
     };
     let app_fn = move || shell(options.clone(), bootstrap_script.clone());
     let mut response = match mode {
@@ -128,16 +109,29 @@ async fn render_leptos(
     response
 }
 
-#[instrument(skip(worlds, options, req, user))]
+#[instrument(skip(worlds, options, req, user, api))]
 #[axum::debug_handler(state = WebState)]
 async fn custom_handler(
     State(worlds): State<Arc<WorldHelper>>,
     State(options): State<LeptosOptions>,
+    Extension(api): Extension<SsrApi>,
     region: Option<Region>,
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
 ) -> Response {
-    render_leptos(worlds, options, region, user, req, StreamMode::OutOfOrder).await
+    // Detached so a client that leaves mid-render cannot cancel the render
+    // and tear the reactive owner down under leptos' still-running Suspense
+    // tasks — see `ssr_drain`.
+    crate::ssr_drain::detach_render(render_leptos(
+        worlds,
+        options,
+        region,
+        user,
+        req,
+        StreamMode::OutOfOrder,
+        api,
+    ))
+    .await
 }
 
 /// Handler for routes that declare `SsrMode::InOrder`.
@@ -148,23 +142,72 @@ async fn custom_handler(
 /// panics at `hydration.rs:163` (`failed_to_cast_element`) — GlitchTip #6831.
 /// In-order streaming resolves each boundary before emitting it, so no
 /// relocation script is produced and there is nothing to race.
-#[instrument(skip(worlds, options, req, user))]
+#[instrument(skip(worlds, options, req, user, api))]
 #[axum::debug_handler(state = WebState)]
 async fn in_order_handler(
     State(worlds): State<Arc<WorldHelper>>,
     State(options): State<LeptosOptions>,
+    Extension(api): Extension<SsrApi>,
     region: Option<Region>,
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
 ) -> Response {
-    render_leptos(worlds, options, region, user, req, StreamMode::InOrder).await
+    crate::ssr_drain::detach_render(render_leptos(
+        worlds,
+        options,
+        region,
+        user,
+        req,
+        StreamMode::InOrder,
+        api,
+    ))
+    .await
+}
+
+/// The file service behind `/pkg/<git hash>/`: cargo-leptos's JS, wasm and CSS.
+type PkgService = SetResponseHeader<SetResponseHeader<ServeDir, HeaderValue>, HeaderValue>;
+
+/// Serves the cargo-leptos output directory.
+///
+/// Release builds run `cargo leptos build --precompress` (see the Dockerfile),
+/// which writes a brotli `-q 11` `.br` and a gzip `-9` `.gz` sibling next to
+/// every file. `ServeDir` picks the best of those the client accepts and sets
+/// `Content-Encoding` itself; the outer `CompressionLayer` leaves responses that
+/// already carry that header alone. Before this, the layer compressed the wasm
+/// on every cold request at tower-http's default quality — 7.2 MB on the wire
+/// where `-q 11` of the same file is 4.9 MB. Without siblings on disk (dev
+/// builds) the plain file is served and the layer compresses it as before.
+///
+/// `Vary: accept-encoding` is appended because `ServeDir` does not add it for
+/// precompressed responses, and the `/pkg/` URLs are cached for a year.
+fn pkg_service(dir: impl AsRef<std::path::Path>) -> PkgService {
+    let files = ServeDir::new(dir).precompressed_br().precompressed_gzip();
+    let files = SetResponseHeader::appending(
+        files,
+        header::VARY,
+        HeaderValue::from_static("accept-encoding"),
+    );
+    // The pkg dir is namespaced by GIT_HASH, so these URLs change on every
+    // deploy and their contents never do — a one-day max-age just forced
+    // needless revalidation. One year is the `immutable` ceiling. Dev builds
+    // ask for revalidation instead so `cargo leptos watch` never serves stale
+    // output.
+    let cache_control = if cfg!(debug_assertions) {
+        "no-cache"
+    } else {
+        "public, max-age=31536000, immutable"
+    };
+    SetResponseHeader::appending(
+        files,
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    )
 }
 
 pub(crate) async fn create_leptos_app(
     worlds: Arc<WorldHelper>,
+    api: SsrApi,
 ) -> Result<Router<WebState>, Box<dyn Error>> {
-    use tower_http::services::ServeDir;
-
     let conf = get_configuration(None)?;
     let mut leptos_options = conf.leptos_options;
     let site_root = &leptos_options.site_root;
@@ -186,14 +229,7 @@ pub(crate) async fn create_leptos_app(
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let git_hash = env!("GIT_HASH");
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
-    // let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
-    let cargo_leptos_service = ServeDir::new(&bundle_filepath);
-    #[cfg(not(debug_assertions))]
-    let cargo_leptos_service = SetResponseHeader::appending(
-        cargo_leptos_service,
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=86400, immutable"),
-    );
+    let cargo_leptos_service = pkg_service(&bundle_filepath);
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     let worlds = Ok(worlds);
     let routes = generate_route_list(move || {
@@ -232,14 +268,93 @@ pub(crate) async fn create_leptos_app(
     if !in_order_routes.is_empty() {
         router = router.leptos_routes_with_handler(in_order_routes, in_order_handler);
     }
-    Ok(router.leptos_routes_with_handler(streaming_routes, custom_handler))
+    Ok(router
+        .leptos_routes_with_handler(streaming_routes, custom_handler)
+        .layer(Extension(api)))
     // .with_state(state)
     // .layer(Extension(Arc::new(leptos_options))))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::escape_for_script_tag;
+    use super::{escape_for_script_tag, pkg_service};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    /// A pkg dir the way `cargo leptos build --precompress` leaves it: the
+    /// wasm plus a `.br` and a `.gz` sibling with distinguishable contents.
+    fn precompressed_pkg_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("ultros.wasm"), b"plain-wasm").unwrap();
+        std::fs::write(dir.path().join("ultros.wasm.br"), b"brotli-bytes").unwrap();
+        std::fs::write(dir.path().join("ultros.wasm.gz"), b"gzip-bytes").unwrap();
+        dir
+    }
+
+    async fn get_wasm(
+        dir: &tempfile::TempDir,
+        accept_encoding: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+        let mut request = Request::builder().uri("/ultros.wasm");
+        if let Some(accept_encoding) = accept_encoding {
+            request = request.header(header::ACCEPT_ENCODING, accept_encoding);
+        }
+        let response = pkg_service(dir.path())
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let (parts, body) = response.into_parts();
+        let body = body.collect().await.unwrap().to_bytes().to_vec();
+        (parts.status, parts.headers, body)
+    }
+
+    #[tokio::test]
+    async fn pkg_serves_the_precompressed_brotli_sibling() {
+        let dir = precompressed_pkg_dir();
+        let (status, headers, body) = get_wasm(&dir, Some("gzip, deflate, br")).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"brotli-bytes");
+        assert_eq!(headers[header::CONTENT_ENCODING], "br");
+        // The encoding must not change the advertised type of the file.
+        assert_eq!(headers[header::CONTENT_TYPE], "application/wasm");
+        assert!(
+            headers
+                .get_all(header::VARY)
+                .iter()
+                .any(|v| v.to_str().unwrap().eq_ignore_ascii_case("accept-encoding")),
+            "a precompressed response cached for a year must vary on Accept-Encoding"
+        );
+        assert!(headers.contains_key(header::CACHE_CONTROL));
+    }
+
+    #[tokio::test]
+    async fn pkg_falls_back_to_gzip_then_plain() {
+        let dir = precompressed_pkg_dir();
+
+        let (_, headers, body) = get_wasm(&dir, Some("gzip")).await;
+        assert_eq!(body, b"gzip-bytes");
+        assert_eq!(headers[header::CONTENT_ENCODING], "gzip");
+
+        let (_, headers, body) = get_wasm(&dir, None).await;
+        assert_eq!(body, b"plain-wasm");
+        assert!(!headers.contains_key(header::CONTENT_ENCODING));
+    }
+
+    #[tokio::test]
+    async fn pkg_without_siblings_serves_the_plain_file() {
+        // Dev builds never run --precompress; the plain file must still serve
+        // so the outer CompressionLayer can compress it on the fly.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("ultros.wasm"), b"plain-wasm").unwrap();
+
+        let (status, headers, body) = get_wasm(&dir, Some("br")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"plain-wasm");
+        assert!(!headers.contains_key(header::CONTENT_ENCODING));
+    }
 
     #[test]
     fn script_bootstrap_json_cannot_close_script_tag() {

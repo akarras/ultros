@@ -25,12 +25,18 @@ xiv-gen = { path = "../../xiv-gen" }
 futures = "0.3"
 serde = { workspace = true }
 serde-wasm-bindgen = "0.6.5"
-serde_bytes = "0.11"
 anyhow.workspace = true
-rexie = "0.6"
 any_spawner = "0.3"
 console_log = { version = "1.0.0", features = ["color"] }
-web-sys = { version = "0.3", features = ["HtmlDocument", "Document", "Window", "Event", "EventTarget"] }
+web-sys = { version = "0.3", features = [
+    "HtmlDocument",
+    "Document",
+    "Window",
+    "Event",
+    "EventTarget",
+    "IdbFactory",
+    "IdbOpenDbRequest",
+] }
 
 [features]
 default = ["hydrate"]

@@ -1,0 +1,32 @@
+[package]
+name = "ultros-analyzer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The in-memory market analyzer: resale opportunities, trends and recent sale history."
+
+[dependencies]
+anyhow = { workspace = true }
+arrayvec = "0.7.6"
+chrono = { workspace = true }
+flate2 = "1.1.9"
+futures = { workspace = true }
+itertools = { workspace = true }
+metrics = "0.24.5"
+rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_32"], default-features = false }
+serde = { workspace = true }
+smallvec = { version = "1.10.0", features = ["const_generics", "const_new", "union"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7.18" }
+tracing = { workspace = true }
+ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
+ultros-clickhouse = { path = "../ultros-clickhouse" }
+ultros-db = { path = "../ultros-db", features = ["rkyv"] }
+ultros-server-core = { path = "../ultros-server-core" }
+xiv-gen = { workspace = true }
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
+
+[dev-dependencies]
+tempfile = "3.6.0"
+tokio = { workspace = true, features = ["test-util"] }

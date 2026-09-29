@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "high",
+  "title": "Analyzers start with more useful views",
+  "blurb": "Start with recommended filters that hide suspicious listing prices and focus each tool on useful results. Switch to an unrestricted view, save your own default, or reset to the recommendations whenever you want.",
+  "link": "/recipe-analyzer"
+}

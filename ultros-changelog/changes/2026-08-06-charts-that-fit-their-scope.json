@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Charts that fit their scope",
+  "blurb": "A datacenter or region chart now groups lines to match instead of drawing every world. Quick range buttons, clearer time labels, and the chart's settings live in the address bar so a pasted link shows the same view. The crosshair works by touch, too.",
+  "importance": "medium"
+}

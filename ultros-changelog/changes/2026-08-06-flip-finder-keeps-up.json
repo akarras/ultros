@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Flip Finder keeps up",
+  "blurb": "The table updates in place as live market data arrives, profit per day no longer flattens fast sellers, and opening the page with no filters lands on a sensible default view.",
+  "link": "/flip-finder",
+  "importance": "medium"
+}

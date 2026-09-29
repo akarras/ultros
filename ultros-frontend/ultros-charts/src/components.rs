@@ -29,20 +29,34 @@ fn dash_attr(stroke: &Stroke) -> Option<String> {
 
 /// Render the scene's nodes (plus its background) as SVG children. Embed
 /// inside an `<svg viewBox="0 0 {scene.width} {scene.height}">`.
-pub fn scene_view(scene: &Scene) -> impl IntoView {
+///
+/// `use<>`: the body clones everything it needs, so the returned view is
+/// `'static` — without the bound, edition-2024 RPIT capture ties it to the
+/// `&Scene` borrow and callers can't return it past a local scene.
+pub fn scene_view(scene: &Scene) -> impl IntoView + use<> {
+    scene_view_with_colors(scene, color_attr)
+}
+
+/// Render with a browser-only color resolver, allowing semantic CSS tokens to
+/// follow live theme changes while PNG exports retain concrete scene colors.
+pub fn scene_view_with_colors(scene: &Scene, color: fn(&Color) -> String) -> impl IntoView + use<> {
     let background = scene.background.as_ref().map(|bg| {
         view! {
-            <rect x="0" y="0" width=px(scene.width) height=px(scene.height) fill=color_attr(bg) />
+            <rect x="0" y="0" width=px(scene.width) height=px(scene.height) fill=color(bg) />
         }
     });
-    let nodes = scene.nodes.iter().map(node_view).collect_view();
+    let nodes = scene
+        .nodes
+        .iter()
+        .map(|node| node_view(node, color))
+        .collect_view();
     view! {
         {background}
         <g font-family=scene.font_family.clone()>{nodes}</g>
     }
 }
 
-fn node_view(node: &Node) -> AnyView {
+fn node_view(node: &Node, resolve_color: fn(&Color) -> String) -> AnyView {
     match node {
         Node::Rect {
             x,
@@ -58,7 +72,7 @@ fn node_view(node: &Node) -> AnyView {
                 width=px(*width)
                 height=px(*height)
                 rx=(*rx > 0.0).then(|| px(*rx))
-                fill=color_attr(fill)
+                fill=resolve_color(fill)
             />
         }
         .into_any(),
@@ -74,7 +88,7 @@ fn node_view(node: &Node) -> AnyView {
                 y1=px(*y1)
                 x2=px(*x2)
                 y2=px(*y2)
-                stroke=color_attr(&stroke.color)
+                stroke=resolve_color(&stroke.color)
                 stroke-width=px(stroke.width)
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -86,7 +100,7 @@ fn node_view(node: &Node) -> AnyView {
             <polyline
                 points=points_attr(points)
                 fill="none"
-                stroke=color_attr(&stroke.color)
+                stroke=resolve_color(&stroke.color)
                 stroke-width=px(stroke.width)
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -99,7 +113,7 @@ fn node_view(node: &Node) -> AnyView {
             baseline_y,
             fill,
         } => match area_path_d(points, *baseline_y) {
-            Some(d) => view! { <path d=d fill=color_attr(fill) /> }.into_any(),
+            Some(d) => view! { <path d=d fill=resolve_color(fill) /> }.into_any(),
             None => ().into_any(),
         },
         Node::Path { d, fill, stroke } => view! {
@@ -107,9 +121,9 @@ fn node_view(node: &Node) -> AnyView {
                 d=d.clone()
                 fill=fill
                     .as_ref()
-                    .map(color_attr)
+                    .map(resolve_color)
                     .unwrap_or_else(|| "none".to_string())
-                stroke=stroke.as_ref().map(|s| color_attr(&s.color))
+                stroke=stroke.as_ref().map(|s| resolve_color(&s.color))
                 stroke-width=stroke.as_ref().map(|s| px(s.width))
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -118,7 +132,7 @@ fn node_view(node: &Node) -> AnyView {
         }
         .into_any(),
         Node::Circle { cx, cy, r, fill } => view! {
-            <circle cx=px(*cx) cy=px(*cy) r=px(*r) fill=color_attr(fill) />
+            <circle cx=px(*cx) cy=px(*cy) r=px(*r) fill=resolve_color(fill) />
         }
         .into_any(),
         Node::Text {
@@ -142,7 +156,7 @@ fn node_view(node: &Node) -> AnyView {
                     font-size=px(*size)
                     text-anchor=anchor
                     font-weight=bold.then_some("bold")
-                    fill=color_attr(color)
+                    fill=resolve_color(color)
                 >
                     {content.clone()}
                 </text>
@@ -254,6 +268,12 @@ mod tests {
         assert!(html.contains("stroke-dasharray=\"2.0 4.0\""));
         assert!(html.contains("<path"));
         assert!(html.contains("text-anchor=\"middle\""));
-        assert!(html.contains(">hi</text>"));
+        // Type-erased components (`--cfg=erase_components`, on for every
+        // build via .cargo/config.toml) end each `AnyView` child with a `<!>`
+        // hydration marker, so the text renders as `>hi<!></text>`. Assert on
+        // the text node and the closing tag separately rather than on the
+        // exact byte sequence between them.
+        assert!(html.contains(">hi<"), "text markup: {html}");
+        assert!(html.contains("</text>"), "text markup: {html}");
     }
 }

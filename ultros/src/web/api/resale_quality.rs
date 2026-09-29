@@ -70,7 +70,7 @@ pub(crate) async fn post_resale_quality(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, world_id, "resale_quality deep_scan_batch failed");
-            anyhow::anyhow!("ClickHouse deep_scan failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("deep_scan", e)
         })?;
 
     let window_f32 = (window_days as f32).max(1.0);

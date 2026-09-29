@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use crate::components::{
     icon::Icon,
     meta::{MetaDescription, MetaTitle},
@@ -5,7 +6,20 @@ use crate::components::{
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_router::{components::A, hooks::use_params_map};
+use leptos_i18n::I18nContext;
+use leptos_router::hooks::use_params_map;
+
+/// A screenshot illustrating a help topic, served from `ultros/static/help/`.
+///
+/// Width and height are the intrinsic pixel dimensions of the image file and
+/// are rendered as explicit `width`/`height` attributes so the browser can
+/// reserve the layout box before the lazy-loaded image arrives (no CLS).
+#[derive(Clone, Copy, PartialEq)]
+pub struct HelpImage {
+    pub src: &'static str,
+    pub width: u32,
+    pub height: u32,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct HelpTopic {
@@ -18,6 +32,7 @@ pub struct HelpTopic {
     pub assumptions: &'static [&'static str],
     pub results: &'static [&'static str],
     pub next_actions: &'static [&'static str],
+    pub image: Option<HelpImage>,
 }
 
 pub const HELP_TOPICS: &[HelpTopic] = &[
@@ -39,6 +54,11 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Open Settings to adjust your home world.",
             "Use global search to jump to an item or tool.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/settings-home-world.webp",
+            width: 2333,
+            height: 208,
+        }),
     },
     HelpTopic {
         slug: "flip-finder",
@@ -50,7 +70,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Selected sell world",
             "Recent sales",
             "Cheapest listings",
-            "Cross-region setting",
+            "Connected regions setting",
             "Tax setting",
         ],
         assumptions: &[
@@ -68,6 +88,11 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Add candidates to a list.",
             "Tighten filters for sales speed or purchase budget.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/flip-finder.webp",
+            width: 1160,
+            height: 844,
+        }),
     },
     HelpTopic {
         slug: "vendor-resale",
@@ -95,6 +120,34 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Favor items with recent sales.",
             "Check the item page before buying in bulk.",
         ],
+        image: None,
+    },
+    HelpTopic {
+        slug: "vendor-sell",
+        title: "Vendor Sell",
+        category: "Market analysis",
+        summary: "Find market board listings that an NPC vendor will buy for more than they cost.",
+        purpose: "Use this for zero-risk gil: buy the listing, walk to any vendor, sell it.",
+        inputs: &[
+            "Selected world's region",
+            "Cheapest listing per item and quality",
+            "NPC vendor sell-back price",
+        ],
+        assumptions: &[
+            "A flat 5% purchase tax, rounded up; your retainer city may charge less.",
+            "HQ listings are valued at the NQ vendor price.",
+            "Each row is one unit; stack size is not shown.",
+        ],
+        results: &[
+            "Profit is vendor price minus listing minus tax.",
+            "Margin is profit over what you paid.",
+            "Only profitable rows are listed.",
+        ],
+        next_actions: &[
+            "Travel to the listing's world before it sells.",
+            "Sort by margin for the best return on small budgets.",
+        ],
+        image: None,
     },
     HelpTopic {
         slug: "recipe-analyzer",
@@ -123,6 +176,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Open item details.",
             "Add profitable recipes to a list.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "leve-analyzer",
@@ -150,6 +204,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Filter by job.",
             "Check item supply before relying on expected rewards.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "fc-crafting",
@@ -176,6 +231,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Review material breakdowns.",
             "Prefer projects with both profit and sales activity.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "scrip-sources",
@@ -203,6 +259,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Filter to the scrip color you need.",
             "Open the item before buying ingredients.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "venture-analyzer",
@@ -229,6 +286,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Filter by retainer job.",
             "Check item history for slow-moving drops.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "market-trends",
@@ -248,6 +306,11 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Add watched items to a list.",
             "Compare with sale history.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/market-trends.webp",
+            width: 1160,
+            height: 844,
+        }),
     },
     HelpTopic {
         slug: "lists-alerts-retainers",
@@ -275,11 +338,30 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Add item alerts from list rows.",
             "Claim characters in Settings.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/discord-undercut-alert.webp",
+            width: 1128,
+            height: 266,
+        }),
     },
 ];
 
 pub fn help_topic(slug: &str) -> Option<HelpTopic> {
     HELP_TOPICS.iter().copied().find(|topic| topic.slug == slug)
+}
+
+/// Localized alt text for a topic's screenshot. Falls back to the topic title
+/// for any topic without a dedicated key (should not happen for shipped images).
+fn help_image_alt(i18n: I18nContext<Locale, I18nKeys>, topic: &HelpTopic) -> String {
+    match topic.slug {
+        "getting-started" => t_string!(i18n, help_img_alt_getting_started).to_string(),
+        "flip-finder" => t_string!(i18n, help_img_alt_flip_finder).to_string(),
+        "market-trends" => t_string!(i18n, help_img_alt_market_trends).to_string(),
+        "lists-alerts-retainers" => {
+            t_string!(i18n, help_img_alt_lists_alerts_retainers).to_string()
+        }
+        _ => topic.title.to_string(),
+    }
 }
 
 #[component]
@@ -315,11 +397,11 @@ pub fn HelpIndex() -> impl IntoView {
                 </section>
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {HELP_TOPICS.iter().map(|topic| view! {
-                        <A href=format!("/help/{}", topic.slug) attr:class="panel p-5 rounded-xl hover:border-brand-300 transition-colors flex flex-col gap-2">
+                        <AppLink href=format!("/help/{}", topic.slug) attr:class="panel p-5 rounded-xl hover:border-brand-300 transition-colors flex flex-col gap-2">
                             <span class="text-xs uppercase tracking-wide text-brand-300 font-bold">{topic.category}</span>
                             <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{topic.title}</h2>
                             <p class="text-sm text-[color:var(--color-text-muted)]">{topic.summary}</p>
-                        </A>
+                        </AppLink>
                     }).collect_view()}
                 </div>
             </div>
@@ -344,16 +426,29 @@ pub fn HelpArticle() -> impl IntoView {
                     Some(topic) => view! {
                         <MetaTitle title=format!("{} - Ultros Help", topic.title) />
                         <MetaDescription text=topic.summary />
-                        <A href="/help" attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-2">
+                        <AppLink href="/help" attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-2">
                             <Icon icon=i::FaArrowLeftSolid width="0.85em" height="0.85em" />
                             {t!(i18n, help_all_topics_link)}
-                        </A>
+                        </AppLink>
                         <section class="panel p-6 sm:p-8 rounded-2xl">
                             <span class="text-xs uppercase tracking-wide text-brand-300 font-bold">{topic.category}</span>
                             <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mt-2 mb-3">{topic.title}</h1>
                             <p class="text-lg text-[color:var(--color-text)]">{topic.summary}</p>
                             <p class="mt-4 text-sm text-[color:var(--color-text-muted)]">{topic.purpose}</p>
                         </section>
+                        {topic.image.map(|image| view! {
+                            <section class="panel p-3 sm:p-4 rounded-2xl">
+                                <img
+                                    src=image.src
+                                    alt=help_image_alt(i18n, &topic)
+                                    width=image.width
+                                    height=image.height
+                                    loading="lazy"
+                                    decoding="async"
+                                    class="w-full h-auto rounded-lg"
+                                />
+                            </section>
+                        })}
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <TopicSection title=t_string!(i18n, help_section_inputs).to_string() items=topic.inputs />
                             <TopicSection title=t_string!(i18n, help_section_assumptions).to_string() items=topic.assumptions />
@@ -366,7 +461,7 @@ pub fn HelpArticle() -> impl IntoView {
                         <section class="panel p-6 rounded-2xl text-center">
                             <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, help_not_found_heading)}</h1>
                             <p class="mt-2 text-[color:var(--color-text-muted)]">{t!(i18n, help_not_found_body)}</p>
-                            <A href="/help" attr:class="btn-primary mt-4">{t!(i18n, help_browse_link)}</A>
+                            <AppLink href="/help" attr:class="btn-primary mt-4">{t!(i18n, help_browse_link)}</AppLink>
                         </section>
                     }.into_any(),
                 }}

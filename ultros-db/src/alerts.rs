@@ -5,6 +5,24 @@ use futures::future::try_join_all;
 use sea_orm::sea_query::Expr;
 use sea_orm::*;
 
+/// Parameters for [`UltrosDb::record_alert_event`]. A struct rather than a
+/// long argument list (9 positional args would trip clippy's
+/// `too_many_arguments`).
+pub struct NewAlertEvent {
+    pub alert_id: i32,
+    pub item_id: i32,
+    pub matched_listing_id: Option<i64>,
+    pub matched_price: Option<i32>,
+    pub delivered: bool,
+    pub delivery_error: Option<String>,
+    /// Notification title, rendered in the inbox list.
+    pub title: String,
+    /// Notification body text.
+    pub body: String,
+    /// Relative or absolute URL the inbox entry links to when clicked.
+    pub click_url: String,
+}
+
 impl UltrosDb {
     pub async fn get_alert(&self, alert_id: i32) -> Result<Option<alert::Model>> {
         Ok(alert::Entity::find_by_id(alert_id).one(&self.db).await?)
@@ -97,29 +115,34 @@ impl UltrosDb {
         channel_id: i64,
         discord_user: i64,
     ) -> Result<(alert::Model, Vec<alert_retainer_undercut::Model>)> {
-        let (discord, alert) = alert_discord_destination::Entity::find()
+        let destinations = alert_discord_destination::Entity::find()
             .find_also_related(alert::Entity)
             .filter(
                 alert_discord_destination::Column::ChannelId
                     .eq(channel_id)
                     .and(alert::Column::Owner.eq(discord_user)),
             )
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow::Error::msg(
-                "Alert not found for this discord channel",
-            ))?;
-        let alert =
-            alert.expect("Since we're querying based on FK we shoudln't ever panic here...");
-        // now query to ensure this alert has a retainer undercut associated
-        let undercut = alert_retainer_undercut::Entity::find()
-            .filter(alert_retainer_undercut::Column::AlertId.eq(alert.id))
             .all(&self.db)
             .await?;
-        discord.delete(&self.db).await?;
-        let _ = try_join_all(undercut.clone().into_iter().map(|u| u.delete(&self.db))).await?;
-        alert.clone().delete(&self.db).await?;
-        Ok((alert, undercut))
+        // Only an alert that actually carries an undercut row qualifies: a
+        // sale alert registered in the same channel must be left alone.
+        for (discord, alert) in destinations {
+            let Some(alert) = alert else { continue };
+            let undercut = alert_retainer_undercut::Entity::find()
+                .filter(alert_retainer_undercut::Column::AlertId.eq(alert.id))
+                .all(&self.db)
+                .await?;
+            if undercut.is_empty() {
+                continue;
+            }
+            discord.delete(&self.db).await?;
+            let _ = try_join_all(undercut.clone().into_iter().map(|u| u.delete(&self.db))).await?;
+            alert.clone().delete(&self.db).await?;
+            return Ok((alert, undercut));
+        }
+        Err(anyhow::Error::msg(
+            "Alert not found for this discord channel",
+        ))
     }
 
     /// Create an alert + alert_item_threshold + alert_notification_rule + (if needed) notification_endpoint
@@ -182,6 +205,8 @@ impl UltrosDb {
                     config: Set(notification_config),
                     // created_at is DateTimeUtc = DateTime<Utc>
                     created_at: Set(chrono::Utc::now()),
+                    disabled_at: Set(None),
+                    last_error: Set(None),
                 })
                 .exec_with_returning(&txn)
                 .await?
@@ -291,32 +316,33 @@ impl UltrosDb {
         Ok(())
     }
 
-    pub async fn record_alert_event(
-        &self,
-        alert_id: i32,
-        item_id: i32,
-        matched_listing_id: Option<i64>,
-        matched_price: Option<i32>,
-        delivered: bool,
-        delivery_error: Option<String>,
-    ) -> Result<()> {
-        alert_event::Entity::insert(alert_event::ActiveModel {
+    pub async fn record_alert_event(&self, new: NewAlertEvent) -> Result<alert_event::Model> {
+        Ok(alert_event::Entity::insert(alert_event::ActiveModel {
             id: ActiveValue::default(),
-            alert_id: Set(alert_id),
+            alert_id: Set(new.alert_id),
             // fired_at is DateTimeWithTimeZone
             fired_at: Set(chrono::Utc::now().into()),
-            item_id: Set(item_id),
-            matched_listing_id: Set(matched_listing_id),
-            matched_price: Set(matched_price),
-            delivered: Set(delivered),
-            delivery_error: Set(delivery_error),
+            item_id: Set(new.item_id),
+            matched_listing_id: Set(new.matched_listing_id),
+            matched_price: Set(new.matched_price),
+            delivered: Set(new.delivered),
+            delivery_error: Set(new.delivery_error),
+            read_at: Set(None),
+            title: Set(Some(new.title)),
+            body: Set(Some(new.body)),
+            click_url: Set(Some(new.click_url)),
         })
-        .exec(&self.db)
-        .await?;
-        Ok(())
+        .exec_with_returning(&self.db)
+        .await?)
     }
 
-    /// Return all notification endpoints linked to an alert via alert_notification_rule.
+    /// Return the *deliverable* notification endpoints linked to an alert via
+    /// alert_notification_rule.
+    ///
+    /// Endpoints that hit a permanent delivery failure (`disabled_at` set — the
+    /// Discord channel was deleted or the bot was removed) are excluded. They
+    /// stay linked to the alert so the endpoints UI can show why they stopped
+    /// and the user can repair them; they just aren't retried every fire.
     pub async fn get_notification_endpoints_for_alert(
         &self,
         alert_id: i32,
@@ -333,8 +359,58 @@ impl UltrosDb {
 
         Ok(notification_endpoint::Entity::find()
             .filter(notification_endpoint::Column::Id.is_in(endpoint_ids))
+            .filter(notification_endpoint::Column::DisabledAt.is_null())
             .all(&self.db)
             .await?)
+    }
+
+    /// Mark an endpoint as permanently broken so delivery stops retrying it.
+    ///
+    /// Called from the alert delivery path when Discord reports an
+    /// unrecoverable condition (`Unknown Channel`, `Missing Access`). Idempotent
+    /// on `disabled_at` — re-disabling an already-disabled endpoint keeps the
+    /// original timestamp so "broken since" stays truthful — but always
+    /// refreshes `last_error`.
+    pub async fn disable_endpoint_for_delivery_failure(
+        &self,
+        endpoint_id: i32,
+        reason: &str,
+    ) -> Result<()> {
+        let Some(existing) = notification_endpoint::Entity::find_by_id(endpoint_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(());
+        };
+        let already_disabled = existing.disabled_at;
+        let mut active: notification_endpoint::ActiveModel = existing.into();
+        active.disabled_at = Set(Some(already_disabled.unwrap_or_else(chrono::Utc::now)));
+        active.last_error = Set(Some(reason.to_string()));
+        active.update(&self.db).await?;
+        Ok(())
+    }
+
+    /// Clear an endpoint's failure state after a delivery (or an explicit
+    /// "test") succeeds. This is how a repaired endpoint comes back: the user
+    /// fixes the channel, hits Test, and the endpoint re-enters the rotation.
+    ///
+    /// Skips the write when the endpoint is already healthy so the common
+    /// success path doesn't issue an UPDATE per alert fire.
+    pub async fn clear_endpoint_delivery_failure(&self, endpoint_id: i32) -> Result<()> {
+        let Some(existing) = notification_endpoint::Entity::find_by_id(endpoint_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(());
+        };
+        if existing.disabled_at.is_none() && existing.last_error.is_none() {
+            return Ok(());
+        }
+        let mut active: notification_endpoint::ActiveModel = existing.into();
+        active.disabled_at = Set(None);
+        active.last_error = Set(None);
+        active.update(&self.db).await?;
+        Ok(())
     }
 
     pub async fn get_first_endpoint_for_alert(
@@ -387,18 +463,115 @@ impl UltrosDb {
         Ok(event)
     }
 
+    /// Cursor-paginate a user's alert events, newest first. `before_id`, when
+    /// given, restricts the page to events strictly older than that id (i.e.
+    /// the last id seen on the previous page), so pages never overlap or skip
+    /// a row even if new events are inserted between requests.
     pub async fn get_recent_alert_events_for_user(
         &self,
         owner: i64,
         limit: u64,
+        before_id: Option<i64>,
     ) -> Result<Vec<alert_event::Model>> {
-        Ok(alert_event::Entity::find()
+        let mut query = alert_event::Entity::find()
             .inner_join(alert::Entity)
-            .filter(alert::Column::Owner.eq(owner))
-            .order_by_desc(alert_event::Column::FiredAt)
+            .filter(alert::Column::Owner.eq(owner));
+        if let Some(before_id) = before_id {
+            query = query.filter(alert_event::Column::Id.lt(before_id));
+        }
+        Ok(query
+            .order_by_desc(alert_event::Column::Id)
             .limit(limit)
             .all(&self.db)
             .await?)
+    }
+
+    /// Count of a user's alert events that have not yet been marked read.
+    pub async fn count_unread_alert_events_for_user(&self, owner: i64) -> Result<u64> {
+        Ok(alert_event::Entity::find()
+            .inner_join(alert::Entity)
+            .filter(alert::Column::Owner.eq(owner))
+            .filter(alert_event::Column::ReadAt.is_null())
+            .count(&self.db)
+            .await?)
+    }
+
+    /// Mark alert events read, scoped to events belonging to alerts `owner`
+    /// owns. An event is matched if its id is in `ids`, or if `up_to_id` is
+    /// given and the event's id is `<= up_to_id`. Ids that don't belong to the
+    /// caller (foreign or nonexistent) silently no-op, the same opacity as
+    /// [`Self::get_alert_event_by_id_owned_by`]. Returns the number of rows
+    /// actually flipped from unread to read.
+    ///
+    /// Guards against issuing an unbounded UPDATE: with an empty `ids` and no
+    /// `up_to_id`, there is nothing to match, so this returns `Ok(0)` without
+    /// touching the database — an empty `Condition::any()` would otherwise add
+    /// no restriction to the query and mark every unread event for the user.
+    pub async fn mark_alert_events_read_for_user(
+        &self,
+        owner: i64,
+        ids: &[i64],
+        up_to_id: Option<i64>,
+    ) -> Result<u64> {
+        if ids.is_empty() && up_to_id.is_none() {
+            return Ok(0);
+        }
+        let alert_ids: Vec<i32> = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .select_only()
+            .column(alert::Column::Id)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        if alert_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut matched = Condition::any();
+        if !ids.is_empty() {
+            matched = matched.add(alert_event::Column::Id.is_in(ids.to_vec()));
+        }
+        if let Some(up_to_id) = up_to_id {
+            matched = matched.add(alert_event::Column::Id.lte(up_to_id));
+        }
+        let result = alert_event::Entity::update_many()
+            .col_expr(
+                alert_event::Column::ReadAt,
+                Expr::value(chrono::Utc::now().fixed_offset()),
+            )
+            .filter(alert_event::Column::AlertId.is_in(alert_ids))
+            .filter(alert_event::Column::ReadAt.is_null())
+            .filter(matched)
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected)
+    }
+
+    /// Delete alert events belonging to alerts `owner` owns: every event with
+    /// `id <= up_to_id` when given, otherwise all of them. Rows belonging to
+    /// other users are never touched, whatever `up_to_id` says. Returns the
+    /// number of rows deleted.
+    pub async fn delete_alert_events_for_user(
+        &self,
+        owner: i64,
+        up_to_id: Option<i64>,
+    ) -> Result<u64> {
+        let alert_ids: Vec<i32> = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .select_only()
+            .column(alert::Column::Id)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        if alert_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut query = alert_event::Entity::delete_many()
+            .filter(alert_event::Column::AlertId.is_in(alert_ids));
+        if let Some(up_to_id) = up_to_id {
+            query = query.filter(alert_event::Column::Id.lte(up_to_id));
+        }
+        let result = query.exec(&self.db).await?;
+        Ok(result.rows_affected)
     }
 
     pub async fn list_endpoints(&self, owner: i64) -> Result<Vec<notification_endpoint::Model>> {
@@ -423,6 +596,8 @@ impl UltrosDb {
             method: Set(method.to_string()),
             config: Set(config),
             created_at: Set(chrono::Utc::now()),
+            disabled_at: Set(None),
+            last_error: Set(None),
         })
         .exec_with_returning(&self.db)
         .await?;
@@ -448,6 +623,11 @@ impl UltrosDb {
         if let Some((m, c)) = method_and_config {
             active.method = Set(m);
             active.config = Set(c);
+            // Repointing an endpoint at a different destination invalidates any
+            // previous permanent failure — give the new target a fresh chance
+            // instead of leaving it silently disabled.
+            active.disabled_at = Set(None);
+            active.last_error = Set(None);
         }
         active.update(&self.db).await?;
         Ok(())
@@ -649,6 +829,160 @@ impl UltrosDb {
         Ok((alert, undercut))
     }
 
+    /// Create an alert + alert_retainer_sale in one transaction and bind the
+    /// supplied notification endpoints. A sold alert has no parameters.
+    pub async fn create_retainer_sale_alert(
+        &self,
+        owner: i64,
+        cooldown_seconds: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<(alert::Model, alert_retainer_sale::Model)> {
+        use sea_orm::TransactionTrait;
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        let sale = alert_retainer_sale::Entity::insert(alert_retainer_sale::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert.id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok((alert, sale))
+    }
+
+    pub async fn get_user_retainer_sale_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_retainer_sale::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_retainer_sale::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_retainer_sale_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_retainer_sale::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_retainer_sale::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Discord-command path: alert + legacy channel destination + sale row,
+    /// then a channel endpoint bound through the shared delivery pipeline.
+    pub async fn add_discord_retainer_sale_alert(
+        &self,
+        channel_id: i64,
+        discord_user: i64,
+    ) -> Result<alert::Model> {
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(discord_user),
+            enabled: ActiveValue::default(),
+            last_fired_at: ActiveValue::default(),
+            cooldown_seconds: ActiveValue::default(),
+        })
+        .exec_with_returning(&self.db)
+        .await?;
+        alert_discord_destination::Entity::insert(alert_discord_destination::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            channel_id: Set(channel_id),
+        })
+        .exec(&self.db)
+        .await?;
+        alert_retainer_sale::Entity::insert(alert_retainer_sale::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+        })
+        .exec(&self.db)
+        .await?;
+        let endpoint_id = self
+            .get_or_create_channel_endpoint(
+                discord_user,
+                channel_id,
+                &format!("Discord channel {channel_id}"),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        self.set_alert_rules(discord_user, alert.id, &[endpoint_id])
+            .await?;
+        Ok(alert)
+    }
+
+    /// Delete the sold alert this user registered in this channel. Only alerts
+    /// that carry an `alert_retainer_sale` row qualify, so an undercut alert in
+    /// the same channel is left alone.
+    pub async fn delete_discord_sale_alert(
+        &self,
+        channel_id: i64,
+        discord_user: i64,
+    ) -> Result<alert::Model> {
+        let destinations = alert_discord_destination::Entity::find()
+            .find_also_related(alert::Entity)
+            .filter(
+                alert_discord_destination::Column::ChannelId
+                    .eq(channel_id)
+                    .and(alert::Column::Owner.eq(discord_user)),
+            )
+            .all(&self.db)
+            .await?;
+        for (destination, alert) in destinations {
+            let Some(alert) = alert else { continue };
+            let has_sale_row = alert_retainer_sale::Entity::find()
+                .filter(alert_retainer_sale::Column::AlertId.eq(alert.id))
+                .one(&self.db)
+                .await?
+                .is_some();
+            if !has_sale_row {
+                continue;
+            }
+            destination.delete(&self.db).await?;
+            // alert_retainer_sale and alert_notification_rule cascade.
+            alert.clone().delete(&self.db).await?;
+            return Ok(alert);
+        }
+        Err(anyhow::Error::msg(
+            "No sale alert found for this discord channel",
+        ))
+    }
+
     /// Create an alert that fires whenever the referenced list or one of its
     /// rows changes. Caller MUST have already checked Read permission.
     pub async fn create_list_update_alert(
@@ -829,6 +1163,59 @@ impl UltrosDb {
         self.create_endpoint(owner, name, "DiscordDm", cfg).await
     }
 
+    /// Find or create the user's InApp (notification inbox) endpoint. Unlike
+    /// `get_or_create_dm_endpoint`/`get_or_create_webpush_endpoint`, dedupe is
+    /// on `UserId` + `Method` alone — a user has at most one inbox, so there is
+    /// no config payload to distinguish between rows.
+    ///
+    /// The select-then-insert below is still a race: two concurrent
+    /// first-time callers can both pass the select and both attempt the
+    /// insert. `notification_endpoint` carries a partial unique index on
+    /// `(user_id) WHERE method = 'InApp'` (migration
+    /// `m20260915_000001_alert_event_inbox`) to make the loser's insert fail
+    /// instead of creating a permanent duplicate (`delete_endpoint` refuses
+    /// to delete InApp rows) — on a unique-constraint violation we re-select
+    /// and return the winner's id.
+    pub async fn get_or_create_inapp_endpoint(&self, owner: i64, name: &str) -> Result<i32> {
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("InApp"))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        let inserted = notification_endpoint::Entity::insert(notification_endpoint::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            name: Set(name.to_string()),
+            method: Set("InApp".to_string()),
+            config: Set(serde_json::json!({})),
+            created_at: Set(chrono::Utc::now()),
+            disabled_at: Set(None),
+            last_error: Set(None),
+        })
+        .exec_with_returning(&self.db)
+        .await;
+        match inserted {
+            Ok(model) => Ok(model.id),
+            Err(error) if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => {
+                notification_endpoint::Entity::find()
+                    .filter(notification_endpoint::Column::UserId.eq(owner))
+                    .filter(notification_endpoint::Column::Method.eq("InApp"))
+                    .one(&self.db)
+                    .await?
+                    .map(|existing| existing.id)
+                    .ok_or_else(|| {
+                        anyhow::Error::msg(
+                            "InApp endpoint insert hit a unique violation but no row was found on re-select",
+                        )
+                    })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Same as `get_or_create_dm_endpoint` but for a DiscordChannel pointed at `channel_id`.
     /// Optional `channel_name`/`guild_id`/`guild_name` are persisted alongside the id so
     /// the web UI can render a friendly label later instead of raw "Channel <id>".
@@ -981,6 +1368,200 @@ impl UltrosDb {
     }
 }
 
+/// Parameters for [`UltrosDb::create_below_median_alert`] and
+/// [`UltrosDb::create_back_in_stock_alert`]. `percent_below` is ignored by the
+/// back-in-stock variant.
+pub struct NewMarketTriggerAlert<'a> {
+    pub owner: i64,
+    pub item_id: i32,
+    pub world_selector_json: JsonValue,
+    pub hq_only: bool,
+    pub cooldown_seconds: i32,
+    pub endpoint_ids: &'a [i32],
+}
+
+impl UltrosDb {
+    /// Reject any endpoint id `owner` doesn't own, before a transaction opens.
+    async fn check_endpoints_owned(&self, owner: i64, endpoint_ids: &[i32]) -> Result<()> {
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        Ok(())
+    }
+
+    /// Insert the parent `alert` row for a new market-trigger alert.
+    async fn insert_market_trigger_parent(
+        txn: &DatabaseTransaction,
+        owner: i64,
+        cooldown_seconds: i32,
+    ) -> Result<alert::Model> {
+        Ok(alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(txn)
+        .await?)
+    }
+
+    async fn bind_rules_in(
+        txn: &DatabaseTransaction,
+        alert_id: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<()> {
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert_id),
+                endpoint_id: Set(eid),
+            })
+            .exec(txn)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Create an alert + alert_below_median in one transaction and bind the
+    /// supplied notification endpoints.
+    pub async fn create_below_median_alert(
+        &self,
+        new: NewMarketTriggerAlert<'_>,
+        percent_below: i32,
+    ) -> Result<(alert::Model, alert_below_median::Model)> {
+        self.check_endpoints_owned(new.owner, new.endpoint_ids)
+            .await?;
+        let txn = self.db.begin().await?;
+        let alert =
+            Self::insert_market_trigger_parent(&txn, new.owner, new.cooldown_seconds).await?;
+        let row = alert_below_median::Entity::insert(alert_below_median::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            item_id: Set(new.item_id),
+            world_selector: Set(new.world_selector_json),
+            percent_below: Set(percent_below),
+            hq_only: Set(new.hq_only),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        Self::bind_rules_in(&txn, alert.id, new.endpoint_ids).await?;
+        txn.commit().await?;
+        Ok((alert, row))
+    }
+
+    /// Create an alert + alert_back_in_stock in one transaction and bind the
+    /// supplied notification endpoints.
+    pub async fn create_back_in_stock_alert(
+        &self,
+        new: NewMarketTriggerAlert<'_>,
+    ) -> Result<(alert::Model, alert_back_in_stock::Model)> {
+        self.check_endpoints_owned(new.owner, new.endpoint_ids)
+            .await?;
+        let txn = self.db.begin().await?;
+        let alert =
+            Self::insert_market_trigger_parent(&txn, new.owner, new.cooldown_seconds).await?;
+        let row = alert_back_in_stock::Entity::insert(alert_back_in_stock::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            item_id: Set(new.item_id),
+            world_selector: Set(new.world_selector_json),
+            hq_only: Set(new.hq_only),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        Self::bind_rules_in(&txn, alert.id, new.endpoint_ids).await?;
+        txn.commit().await?;
+        Ok((alert, row))
+    }
+
+    pub async fn get_user_below_median_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_below_median::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_below_median::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_user_back_in_stock_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_back_in_stock::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_back_in_stock::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_below_median_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_below_median::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_below_median::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_back_in_stock_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_back_in_stock::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_back_in_stock::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Active listing counts per `(item_id, world_id, hq)` for every item in
+    /// `item_ids`, in one grouped query. Back-in-stock alerts sum these over
+    /// their own world set, so one call serves every rule on those items.
+    pub async fn count_active_listings_by_world_quality(
+        &self,
+        item_ids: &[i32],
+    ) -> Result<Vec<(i32, i32, bool, i64)>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.is_in(item_ids.to_vec()))
+            .select_only()
+            .column(active_listing::Column::ItemId)
+            .column(active_listing::Column::WorldId)
+            .column(active_listing::Column::Hq)
+            .column_as(Expr::col(active_listing::Column::Id).count(), "count")
+            .group_by(active_listing::Column::ItemId)
+            .group_by(active_listing::Column::WorldId)
+            .group_by(active_listing::Column::Hq)
+            .into_tuple()
+            .all(&self.db)
+            .await?)
+    }
+}
+
 #[cfg(test)]
 mod endpoint_tests {
     use super::*;
@@ -1084,5 +1665,577 @@ mod endpoint_tests {
             .unwrap();
         assert_eq!(endpoints.len(), 1);
         assert_eq!(endpoints[0].id, e1);
+    }
+}
+
+#[cfg(test)]
+mod inbox_tests {
+    use super::*;
+
+    /// Connect to a scratch PostgreSQL database whose migrations are already
+    /// applied (same convention as `guest_list_adoption.rs`/`list_doc.rs`).
+    /// These tests are `#[ignore]`d and only run when a developer points
+    /// `MIGRATION_TEST_DATABASE_URL` at a disposable database:
+    ///
+    /// ```bash
+    /// MIGRATION_TEST_DATABASE_URL=... cargo test -p ultros-db inbox_tests -- --ignored --test-threads=1
+    /// ```
+    async fn test_db() -> UltrosDb {
+        let conn = Database::connect(std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        UltrosDb::from_connection(conn)
+    }
+
+    /// A discord user id that is unlikely to collide with another test run
+    /// (or another test in this module), so repeated/parallel runs against
+    /// the same scratch database never see each other's leftover rows.
+    fn unique_owner(salt: i64) -> i64 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        (nanos % 1_000_000_000_000) + salt
+    }
+
+    async fn owned_alert(db: &UltrosDb, owner: i64) -> alert::Model {
+        db.get_or_create_discord_user(owner as u64, format!("InboxUser{owner}"))
+            .await
+            .unwrap();
+        db.create_threshold_alert_without_endpoint(
+            owner,
+            1,
+            serde_json::json!({}),
+            100,
+            false,
+            3600,
+        )
+        .await
+        .unwrap()
+    }
+
+    fn new_event(alert_id: i32) -> NewAlertEvent {
+        NewAlertEvent {
+            alert_id,
+            item_id: 1,
+            matched_listing_id: None,
+            matched_price: None,
+            delivered: true,
+            delivery_error: None,
+            title: "Test alert".to_string(),
+            body: "Test alert body".to_string(),
+            click_url: "/item/1".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn mark_read_only_touches_owners_events() {
+        let db = test_db().await;
+        let owner_a = unique_owner(1);
+        let owner_b = unique_owner(2);
+        let alert_a = owned_alert(&db, owner_a).await;
+        let alert_b = owned_alert(&db, owner_b).await;
+        let event_a = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        let event_b = db.record_alert_event(new_event(alert_b.id)).await.unwrap();
+
+        // Ask to mark both events read as owner_a; only the one owner_a
+        // actually owns should be touched.
+        let affected = db
+            .mark_alert_events_read_for_user(owner_a, &[event_a.id, event_b.id], None)
+            .await
+            .unwrap();
+        assert_eq!(affected, 1);
+
+        let a = db
+            .get_alert_event_by_id_owned_by(owner_a, event_a.id)
+            .await
+            .unwrap();
+        assert!(a.read_at.is_some());
+        let b = db
+            .get_alert_event_by_id_owned_by(owner_b, event_b.id)
+            .await
+            .unwrap();
+        assert!(b.read_at.is_none());
+
+        // Same scoping, but via `up_to_id` alone (empty `ids`): owner_a's
+        // `up_to_id` is at least owner_b's event id, yet owner_b's row must
+        // still come back unread — `up_to_id` is scoped by the caller's own
+        // alerts, not a global "every event with id <= N".
+        let up_to = std::cmp::max(event_a.id, event_b.id);
+        let affected_up_to = db
+            .mark_alert_events_read_for_user(owner_a, &[], Some(up_to))
+            .await
+            .unwrap();
+        assert_eq!(affected_up_to, 0, "event_a was already marked read above");
+        let b_after_up_to = db
+            .get_alert_event_by_id_owned_by(owner_b, event_b.id)
+            .await
+            .unwrap();
+        assert!(b_after_up_to.read_at.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn mark_read_up_to_id_leaves_newer_unread() {
+        let db = test_db().await;
+        let owner = unique_owner(3);
+        let alert = owned_alert(&db, owner).await;
+        let e1 = db.record_alert_event(new_event(alert.id)).await.unwrap();
+        let e2 = db.record_alert_event(new_event(alert.id)).await.unwrap();
+        let e3 = db.record_alert_event(new_event(alert.id)).await.unwrap();
+
+        let affected = db
+            .mark_alert_events_read_for_user(owner, &[], Some(e2.id))
+            .await
+            .unwrap();
+        assert_eq!(affected, 2);
+
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner, e1.id)
+                .await
+                .unwrap()
+                .read_at
+                .is_some()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner, e2.id)
+                .await
+                .unwrap()
+                .read_at
+                .is_some()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner, e3.id)
+                .await
+                .unwrap()
+                .read_at
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn clear_only_deletes_owners_events_up_to_id() {
+        let db = test_db().await;
+        let owner_a = unique_owner(11);
+        let owner_b = unique_owner(12);
+        let alert_a = owned_alert(&db, owner_a).await;
+        let alert_b = owned_alert(&db, owner_b).await;
+
+        let a1 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        let a2 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        let b1 = db.record_alert_event(new_event(alert_b.id)).await.unwrap();
+        let a3 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+
+        // `up_to_id` covers b1 too, but only owner_a's rows may go.
+        let deleted = db
+            .delete_alert_events_for_user(owner_a, Some(a2.id))
+            .await
+            .unwrap();
+        assert_eq!(deleted, 2);
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a1.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a2.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a3.id)
+                .await
+                .is_ok()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_b, b1.id)
+                .await
+                .is_ok()
+        );
+
+        // No bound: everything left that owner_a owns goes, owner_b's stays.
+        let deleted_all = db
+            .delete_alert_events_for_user(owner_a, None)
+            .await
+            .unwrap();
+        assert_eq!(deleted_all, 1);
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_a, a3.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            db.get_alert_event_by_id_owned_by(owner_b, b1.id)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn unread_count_excludes_read_and_foreign_events() {
+        let db = test_db().await;
+        let owner_a = unique_owner(4);
+        let owner_b = unique_owner(5);
+        let alert_a = owned_alert(&db, owner_a).await;
+        let alert_b = owned_alert(&db, owner_b).await;
+
+        let e1 = db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        db.record_alert_event(new_event(alert_a.id)).await.unwrap();
+        db.record_alert_event(new_event(alert_b.id)).await.unwrap();
+        db.record_alert_event(new_event(alert_b.id)).await.unwrap();
+
+        db.mark_alert_events_read_for_user(owner_a, &[e1.id], None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.count_unread_alert_events_for_user(owner_a)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.count_unread_alert_events_for_user(owner_b)
+                .await
+                .unwrap(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn recent_events_cursor_pages_by_id_desc() {
+        let db = test_db().await;
+        let owner = unique_owner(6);
+        let alert = owned_alert(&db, owner).await;
+        let mut ids = Vec::new();
+        for _ in 0..5 {
+            ids.push(db.record_alert_event(new_event(alert.id)).await.unwrap().id);
+        }
+        ids.sort_unstable();
+
+        let page1 = db
+            .get_recent_alert_events_for_user(owner, 2, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            page1.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![ids[4], ids[3]]
+        );
+
+        let page2 = db
+            .get_recent_alert_events_for_user(owner, 2, Some(page1.last().unwrap().id))
+            .await
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![ids[2], ids[1]]
+        );
+
+        let page3 = db
+            .get_recent_alert_events_for_user(owner, 2, Some(page2.last().unwrap().id))
+            .await
+            .unwrap();
+        assert_eq!(page3.iter().map(|e| e.id).collect::<Vec<_>>(), vec![ids[0]]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn inapp_endpoint_is_created_once_per_user() {
+        let db = test_db().await;
+        let owner = unique_owner(7);
+        db.get_or_create_discord_user(owner as u64, "InboxEndpointOwner".into())
+            .await
+            .unwrap();
+
+        let first = db
+            .get_or_create_inapp_endpoint(owner, "Inbox")
+            .await
+            .unwrap();
+        let second = db
+            .get_or_create_inapp_endpoint(owner, "Inbox")
+            .await
+            .unwrap();
+        assert_eq!(first, second);
+
+        let endpoints = db.list_endpoints(owner).await.unwrap();
+        assert_eq!(endpoints.iter().filter(|e| e.method == "InApp").count(), 1);
+    }
+
+    /// Proves `uq_notification_endpoint_inapp` (migration
+    /// `m20260915_000001_alert_event_inbox`) actually exists and rejects a
+    /// second `InApp` row for the same user — this is what makes
+    /// `get_or_create_inapp_endpoint`'s race-loser re-select path reachable
+    /// rather than dead code. Inserts directly through the entity API
+    /// (bypassing `get_or_create_inapp_endpoint`'s own select-first check) to
+    /// isolate the database constraint from the application-level guard.
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn duplicate_inapp_endpoint_insert_is_rejected_by_unique_index() {
+        let db = test_db().await;
+        let owner = unique_owner(8);
+        db.get_or_create_discord_user(owner as u64, "InboxUniqueOwner".into())
+            .await
+            .unwrap();
+
+        db.create_endpoint(owner, "Inbox", "InApp", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let second = notification_endpoint::Entity::insert(notification_endpoint::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            name: Set("Inbox (duplicate)".to_string()),
+            method: Set("InApp".to_string()),
+            config: Set(serde_json::json!({})),
+            created_at: Set(chrono::Utc::now()),
+            disabled_at: Set(None),
+            last_error: Set(None),
+        })
+        .exec_with_returning(&db.db)
+        .await;
+
+        match second {
+            Err(error) => assert!(
+                matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))),
+                "expected a unique-constraint violation, got {error:?}"
+            ),
+            Ok(model) => panic!(
+                "second InApp row for the same user should have been rejected by \
+                 uq_notification_endpoint_inapp, but inserted as id {}",
+                model.id
+            ),
+        }
+
+        let endpoints = db.list_endpoints(owner).await.unwrap();
+        assert_eq!(endpoints.iter().filter(|e| e.method == "InApp").count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod market_trigger_tests {
+    use super::*;
+
+    /// Same convention as `inbox_tests`: `#[ignore]`d, run against a
+    /// disposable, already-migrated database:
+    ///
+    /// ```bash
+    /// MIGRATION_TEST_DATABASE_URL=... cargo test -p ultros-db market_trigger_tests -- --ignored --test-threads=1
+    /// ```
+    async fn test_db() -> UltrosDb {
+        let conn = Database::connect(std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        UltrosDb::from_connection(conn)
+    }
+
+    fn unique(salt: i64) -> i64 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        (nanos % 1_000_000_000) + salt
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn market_trigger_alerts_round_trip_and_cascade() {
+        let db = test_db().await;
+        let owner = unique(7);
+        db.get_or_create_discord_user(owner as u64, format!("MarketUser{owner}"))
+            .await
+            .unwrap();
+        let endpoint = db
+            .get_or_create_inapp_endpoint(owner, "Inbox")
+            .await
+            .unwrap();
+        let endpoints = [endpoint];
+        let new = |item_id| NewMarketTriggerAlert {
+            owner,
+            item_id,
+            world_selector_json: serde_json::json!({"Datacenter": 5}),
+            hq_only: true,
+            cooldown_seconds: 600,
+            endpoint_ids: &endpoints,
+        };
+        let (median_alert, median_row) = db.create_below_median_alert(new(11), 30).await.unwrap();
+        let (stock_alert, stock_row) = db.create_back_in_stock_alert(new(12)).await.unwrap();
+        assert_eq!(median_row.percent_below, 30);
+        assert!(stock_row.hq_only);
+        assert_eq!(median_alert.cooldown_seconds, 600);
+
+        let mine = db.get_user_below_median_alerts(owner).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].1.item_id, 11);
+        let mine = db.get_user_back_in_stock_alerts(owner).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(
+            mine[0].1.world_selector,
+            serde_json::json!({"Datacenter": 5})
+        );
+        assert_eq!(
+            db.list_endpoint_ids_for_alert(stock_alert.id)
+                .await
+                .unwrap(),
+            vec![endpoint]
+        );
+        assert!(
+            db.get_all_active_below_median_alerts()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(a, _)| a.id == median_alert.id)
+        );
+
+        // Disabled alerts drop out of the listener's view.
+        db.set_alert_enabled(owner, stock_alert.id, false)
+            .await
+            .unwrap();
+        assert!(
+            !db.get_all_active_back_in_stock_alerts()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(a, _)| a.id == stock_alert.id)
+        );
+
+        // Deleting the parent cascades the child row.
+        db.delete_alert_owned_by(owner, median_alert.id)
+            .await
+            .unwrap();
+        assert!(
+            db.get_user_below_median_alerts(owner)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            alert_below_median::Entity::find_by_id(median_row.id)
+                .one(&db.db)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn endpoint_of_another_user_is_rejected() {
+        let db = test_db().await;
+        let owner = unique(11);
+        let other = unique(13);
+        for id in [owner, other] {
+            db.get_or_create_discord_user(id as u64, format!("MarketUser{id}"))
+                .await
+                .unwrap();
+        }
+        let foreign = db
+            .get_or_create_inapp_endpoint(other, "Inbox")
+            .await
+            .unwrap();
+        let endpoints = [foreign];
+        let result = db
+            .create_back_in_stock_alert(NewMarketTriggerAlert {
+                owner,
+                item_id: 1,
+                world_selector_json: serde_json::json!({"World": 79}),
+                hq_only: false,
+                cooldown_seconds: 3600,
+                endpoint_ids: &endpoints,
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(
+            db.get_user_back_in_stock_alerts(owner)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn listing_counts_group_by_item_world_and_quality() {
+        let db = test_db().await;
+        // The scratch database has no world data (the app seeds it at
+        // startup), so seed a private region/datacenter/two worlds.
+        for sql in [
+            "INSERT INTO region (id, name) VALUES (9901, 'MarketTestRegion') ON CONFLICT DO NOTHING",
+            "INSERT INTO datacenter (id, name, region_id) VALUES (9902, 'MarketTestDc', 9901) ON CONFLICT DO NOTHING",
+            "INSERT INTO world (id, name, datacenter_id) VALUES (9903, 'MarketTestA', 9902), (9904, 'MarketTestB', 9902) ON CONFLICT DO NOTHING",
+            "INSERT INTO retainer_city (id, name) VALUES (1, 'Limsa Lominsa') ON CONFLICT DO NOTHING",
+        ] {
+            db.db.execute_unprepared(sql).await.unwrap();
+        }
+        let retainer_id = unique(0) as i32;
+        retainer::Entity::insert(retainer::ActiveModel {
+            id: Set(retainer_id),
+            world_id: Set(9903),
+            name: Set(format!("R{retainer_id}")),
+            retainer_city_id: Set(1),
+        })
+        .exec(&db.db)
+        .await
+        .unwrap();
+        let item_x = 2_000_000_000 + (unique(0) % 1_000_000) as i32;
+        let item_y = item_x + 1;
+        for (item_id, world_id, hq) in [
+            (item_x, 9903, false),
+            (item_x, 9903, false),
+            (item_x, 9904, true),
+            (item_y, 9903, false),
+        ] {
+            active_listing::Entity::insert(active_listing::ActiveModel {
+                id: ActiveValue::default(),
+                world_id: Set(world_id),
+                item_id: Set(item_id),
+                retainer_id: Set(retainer_id),
+                price_per_unit: Set(100),
+                quantity: Set(1),
+                hq: Set(hq),
+                timestamp: Set(chrono::Utc::now().naive_utc()),
+                listing_id: Set(None),
+                materia: Set(None),
+                stain_id: Set(None),
+                creator_name: Set(None),
+                is_crafted: Set(false),
+                on_mannequin: Set(false),
+            })
+            .exec(&db.db)
+            .await
+            .unwrap();
+        }
+        let mut counts = db
+            .count_active_listings_by_world_quality(&[item_x, item_y, item_y + 1])
+            .await
+            .unwrap();
+        counts.sort();
+        assert_eq!(
+            counts,
+            vec![
+                (item_x, 9903, false, 2),
+                (item_x, 9904, true, 1),
+                (item_y, 9903, false, 1),
+            ]
+        );
+        assert!(
+            db.count_active_listings_by_world_quality(&[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        active_listing::Entity::delete_many()
+            .filter(active_listing::Column::RetainerId.eq(retainer_id))
+            .exec(&db.db)
+            .await
+            .unwrap();
+        retainer::Entity::delete_by_id(retainer_id)
+            .exec(&db.db)
+            .await
+            .unwrap();
     }
 }

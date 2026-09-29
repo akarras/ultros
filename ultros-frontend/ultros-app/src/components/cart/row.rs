@@ -1,0 +1,327 @@
+//! One compact cart row: identity, quantity, quality, estimated line cost,
+//! a details toggle and an icon-only delete button. Commit-on-change:
+//! typing never writes or reorders the document; Enter blurs to commit,
+//! Escape restores the committed value. Owned quantity, target price and
+//! listing detail live in the row's details panel (`details.rs`).
+
+use std::collections::HashSet;
+
+use icondata as i;
+use leptos::prelude::*;
+use thousands::Separable;
+use ultros_api_types::list::ListItem;
+use xiv_gen::ItemId;
+
+use super::details::CartRowDetails;
+use super::estimate::{LineEstimate, LineStatus};
+use crate::components::icon::Icon;
+use crate::components::item_icon::*;
+use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
+
+/// Shared by the header row and every item row so the columns line up.
+pub const ROW_GRID: &str = "grid items-center gap-x-2 gap-y-1 px-2 py-1.5 grid-cols-[auto_minmax(0,1fr)_auto] sm:grid-cols-[2rem_minmax(0,1fr)_5.5rem_6.5rem_8rem_2.5rem_2.5rem]";
+
+/// Which numeric field an editor commits to, and how it is rendered.
+pub struct NumericField {
+    /// Quantity (0), owned (1) or target price (2).
+    pub field: u8,
+    /// The accessible label's field name ("Needed", "Owned", ...).
+    pub label: String,
+    pub class: &'static str,
+    /// Element id, when something needs to focus this editor.
+    pub id: Option<String>,
+}
+
+/// The commit-on-change numeric editor the row and its details share.
+pub fn numeric_editor(
+    row: Signal<ListItem>,
+    name: String,
+    spec: NumericField,
+    can_write: Signal<bool>,
+    on_edit: Callback<ListItem>,
+) -> impl IntoView {
+    let NumericField {
+        field,
+        label,
+        class,
+        id,
+    } = spec;
+    let i18n = use_i18n();
+    let invalid = RwSignal::new(false);
+    let too_large = RwSignal::new(false);
+    let error_id = format!("cart-number-error-{}-{field}", row.get_untracked().id);
+    let described_by = error_id.clone();
+    let value = Memo::new(move |_| {
+        let item = row.get();
+        match field {
+            0 => item.quantity.unwrap_or(1).to_string(),
+            1 => item.acquired.unwrap_or(0).to_string(),
+            _ => item.target_price.map(|v| v.to_string()).unwrap_or_default(),
+        }
+    });
+    // The committed-value binding below already replaces the displayed draft
+    // when a collaborator updates this field. Clear validation at that same
+    // boundary; an error must never describe a now-valid committed value.
+    // Updates to other fields do not change this memo or discard its error.
+    Effect::new(move |_| {
+        value.track();
+        invalid.set(false);
+        too_large.set(false);
+    });
+    view! {
+        <div class="min-w-0">
+        <input id=id class=class type="number" inputmode="numeric" min=if field == 0 { "1" } else { "0" } max=if field == 2 { i64::MAX.to_string() } else { i32::MAX.to_string() } aria-label=t_string!(i18n, lists_workspace_field_named, label = label, name = name) aria-invalid=move || invalid.get().to_string() aria-describedby=move || invalid.get().then(|| described_by.clone()) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
+            on:input=move |ev| {
+                if invalid.get_untracked() {
+                    let entered = event_target_value(&ev);
+                    too_large.set(numeric_value_too_large(field, &entered));
+                    invalid.set(!valid_numeric_value(field, &entered));
+                }
+            }
+            on:keydown=move |ev| {
+                // Only the keys this cell handles stop here; Ctrl+Z must
+                // reach the window listener, which decides between native
+                // text undo (a draft) and document undo (a clean cell) from
+                // `data-committed` (#1430).
+                if ev.key() == "Enter" { ev.stop_propagation(); let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
+                // Escape discards a draft and stops there; on a clean cell it
+                // bubbles so the details panel (#1435) can close on it.
+                if ev.key() == "Escape" {
+                    let input = event_target::<web_sys::HtmlInputElement>(&ev);
+                    let committed = value.get_untracked();
+                    if input.value().trim() != committed.trim() { ev.stop_propagation(); input.set_value(&committed); }
+                    invalid.set(false);
+                }
+            }
+            on:change=move |ev| {
+                let entered = event_target_value(&ev);
+                let mut updated = row.get_untracked();
+                let valid = if field == 2 && entered.is_empty() { updated.target_price = None; true }
+                else if field == 2 { entered.parse::<i64>().ok().filter(|v| *v >= 0).map(|v| updated.target_price = Some(v)).is_some() }
+                else { entered.parse::<i32>().ok().filter(|v| *v >= if field == 0 {1} else {0}).map(|v| if field == 0 { updated.quantity = Some(v); } else { updated.acquired = Some(v); }).is_some() };
+                if !can_write.get_untracked() {
+                    event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked());
+                    invalid.set(false);
+                } else if valid {
+                    invalid.set(false);
+                    on_edit.run(updated);
+                } else {
+                    // Keep the draft so the player can correct it. The document
+                    // keeps its committed value until a valid change is made.
+                    too_large.set(numeric_value_too_large(field, &entered));
+                    invalid.set(true);
+                }
+            } />
+        <Show when=move || invalid.get()>
+            <p id=error_id.clone() role="alert" class="mt-1 text-xs text-negative">{move || if too_large.get() {
+                t_string!(i18n, cart_number_too_large).to_string()
+            } else { match field {
+                0 => t_string!(i18n, cart_quantity_invalid).to_string(),
+                1 => t_string!(i18n, cart_owned_invalid).to_string(),
+                _ => t_string!(i18n, cart_price_invalid).to_string(),
+            } }}</p>
+        </Show>
+        </div>
+    }
+}
+
+/// Reject fractions, overflow and missing required values before committing.
+pub fn valid_numeric_value(field: u8, value: &str) -> bool {
+    if field == 2 {
+        value.is_empty() || value.parse::<i64>().is_ok_and(|value| value >= 0)
+    } else {
+        value
+            .parse::<i32>()
+            .is_ok_and(|value| value >= if field == 0 { 1 } else { 0 })
+    }
+}
+
+/// Overflow needs a distinct correction from fractional or negative input.
+pub fn numeric_value_too_large(field: u8, value: &str) -> bool {
+    let error = if field == 2 {
+        value.parse::<i64>().err()
+    } else {
+        value.parse::<i32>().err()
+    };
+    error.is_some_and(|error| *error.kind() == std::num::IntErrorKind::PosOverflow)
+}
+
+/// Gil with thousands separators through the locale's gil template.
+pub fn gil_text(i18n: leptos_i18n::I18nContext<Locale, I18nKeys>, amount: i64) -> String {
+    t_string!(
+        i18n,
+        lists_workspace_gil,
+        price = amount.separate_with_commas()
+    )
+    .to_string()
+}
+
+/// Move keyboard focus to the element with this id, if it is in the DOM.
+pub fn focus_element(id: &str) {
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::JsCast;
+        let find = |id: &str| {
+            leptos::prelude::document()
+                .get_element_by_id(id)
+                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+        };
+        if let Some(element) = find(id) {
+            let _ = element.focus();
+        } else {
+            // The row that should take focus may not be in the DOM yet: the
+            // effect asking for it and the `<For>` rendering it react to the
+            // same document change. Try once more after the next paint.
+            let id = id.to_string();
+            leptos::leptos_dom::helpers::request_animation_frame(move || {
+                if let Some(element) = find(&id) {
+                    let _ = element.focus();
+                }
+            });
+        }
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = id;
+    }
+}
+
+pub fn details_toggle_id(row_id: i32) -> String {
+    format!("cart-details-toggle-{row_id}")
+}
+
+pub fn remove_button_id(row_id: i32) -> String {
+    format!("cart-remove-{row_id}")
+}
+
+pub fn quantity_input_id(row_id: i32) -> String {
+    format!("cart-qty-{row_id}")
+}
+
+#[component]
+pub fn CartRow(
+    item: Signal<ListItem>,
+    line: Signal<Option<LineEstimate>>,
+    selected_items: RwSignal<HashSet<i32>>,
+    /// Row ids whose details panel is open; keyed by id so a reactive
+    /// update or re-sort never moves the open panel to another row.
+    expanded: RwSignal<HashSet<i32>>,
+    /// Rows whose removal is in flight; their delete button is disabled.
+    #[prop(default = Signal::derive(HashSet::new))]
+    removing: Signal<HashSet<i32>>,
+    on_edit: Callback<ListItem>,
+    on_delete: Callback<i32>,
+    can_write: Signal<bool>,
+    #[prop(default = Signal::derive(|| false))] highlighted: Signal<bool>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let initial = item.get_untracked();
+    let name = tracked_data()
+        .items
+        .get(&ItemId(initial.item_id))
+        .map(|i| i.name.to_string())
+        .unwrap_or_else(|| {
+            t_string!(i18n, lists_workspace_item_fallback, id = initial.item_id).to_string()
+        });
+    let can_hq = tracked_data()
+        .items
+        .get(&ItemId(initial.item_id))
+        .is_some_and(|i| i.can_be_hq);
+    let row = item;
+    let id = initial.id;
+    let is_open = Memo::new(move |_| expanded.with(|open| open.contains(&id)));
+    let details_id = format!("cart-details-{id}");
+    let toggle_id = details_toggle_id(id);
+    let close_details = Callback::new(move |()| {
+        expanded.update(|open| {
+            open.remove(&id);
+        });
+        focus_element(&details_toggle_id(id));
+    });
+    let quantity = numeric_editor(
+        row,
+        name.clone(),
+        NumericField {
+            field: 0,
+            label: t_string!(i18n, lists_workspace_needed).to_string(),
+            class: "input w-full min-w-0 px-2 text-right tabular-nums",
+            id: Some(quantity_input_id(id)),
+        },
+        can_write,
+        on_edit,
+    );
+    let estimate_text = move || {
+        let Some(line) = line.get() else {
+            return view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }
+                .into_any();
+        };
+        match line.status {
+            LineStatus::NotRequested => view! {
+                <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_not_requested)}</span>
+            }
+            .into_any(),
+            LineStatus::NoSupply => view! {
+                <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_no_listings)}</span>
+            }
+            .into_any(),
+            LineStatus::PartialSupply => view! {
+                <span class="flex flex-col items-end leading-tight">
+                    <span>{"≥"}{gil_text(i18n, line.total)}</span>
+                    <span class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, cart_line_partial, covered = line.priced_units, requested = line.remaining)}</span>
+                </span>
+            }
+            .into_any(),
+            LineStatus::Acquired => view! {
+                <span class="text-[color:var(--color-text-muted)]">{gil_text(i18n, line.total)}</span>
+            }
+            .into_any(),
+            LineStatus::Priced => view! { <span>{gil_text(i18n, line.total)}</span> }.into_any(),
+        }
+    };
+    let select_name = name.clone();
+    let quality_name = name.clone();
+    let details_name = name.clone();
+    let remove_name = name.clone();
+    let panel_name = name.clone();
+    let copy_name = name.clone();
+    let panel_controls = details_id.clone();
+    view! {
+        <li class=format!("{ROW_GRID} border-b border-[color:var(--color-outline)] last:border-b-0 hover:bg-[color:var(--color-background-panel)] transition-colors") class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=initial.item_id data-row-id=id>
+            <input class="order-1 h-5 w-5 sm:justify-self-center" type="checkbox" aria-label=t_string!(i18n, lists_workspace_select_named, name = select_name) disabled=move || !can_write.get() prop:checked=move || selected_items.with(|s| s.contains(&id)) on:change=move |_| selected_items.update(|s| { if !s.remove(&id) {s.insert(id);} }) />
+            <div class="order-2 flex min-w-0 items-center gap-2">
+                <ItemIcon item_id=initial.item_id icon_size=IconSize::Small />
+                <span class="truncate font-semibold" title=name.clone()>{name.clone()}</span>
+                // Copy the name for the in-game market board search.
+                <span class="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] [&_button]:flex [&_button]:h-7 [&_button]:w-7 [&_button]:items-center [&_button]:justify-center" data-testid="cart-copy-name"><crate::components::clipboard::Clipboard clipboard_text=Signal::derive(move || copy_name.clone()) /></span>
+            </div>
+            <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate" data-price-state=move || line.with(|line| match line.as_ref().map(|line|line.status) {
+                Some(LineStatus::NotRequested) | None => "not-requested",
+                Some(LineStatus::NoSupply) => "no-supply",
+                Some(LineStatus::PartialSupply) => "partial",
+                Some(LineStatus::Acquired) => "acquired",
+                Some(LineStatus::Priced) => "priced",
+            })>
+                <span class="sr-only">{t!(i18n, cart_est_cost)}</span>
+                {estimate_text}
+            </div>
+            <div class="order-4 col-span-2 col-start-2 flex items-center gap-2 sm:contents">
+                <div class="w-20 shrink-0 sm:order-3 sm:w-auto">{quantity}</div>
+                <select class="input w-auto min-w-0 flex-1 sm:order-4" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
+                    <option value="any">{t!(i18n, lists_workspace_any)}</option>
+                    <option value="nq">{t!(i18n, lists_workspace_nq)}</option>
+                    {can_hq.then(|| view! { <option value="hq">{t!(i18n, lists_workspace_hq)}</option> })}
+                </select>
+                <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
+                    <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
+                </button>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-negative sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
+                    <Icon icon=i::BiTrashRegular />
+                </button>
+            </div>
+            <Show when=move || is_open.get()>
+                <CartRowDetails id=panel_controls.clone() item=row line name=panel_name.clone() can_write on_edit on_close=close_details />
+            </Show>
+        </li>
+    }
+}

@@ -8,7 +8,7 @@ use leptos::prelude::*;
 pub fn About() -> impl IntoView {
     let i18n = use_i18n();
     view! {
-        <div class="container mx-auto space-y-6">
+        <div class="main-content container mx-auto p-2 sm:p-6 space-y-6">
             <MetaTitle title=move || t_string!(i18n, about_ultros_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, about_ultros_desc).to_string() />
 
@@ -20,7 +20,7 @@ pub fn About() -> impl IntoView {
                 </p>
                 <div class="flex flex-wrap justify-center gap-4 mt-4">
                     <a
-                        href="https://discord.gg/pgdq9nGUP2"
+                        href=crate::DISCORD_INVITE
                         class="btn btn-primary gap-2"
                         target="_blank"
                         rel="noopener noreferrer"

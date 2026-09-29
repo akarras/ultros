@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "The Item Explorer has its own icon",
+  "blurb": "The Item Explorer used the same jellyfish glyph as the Ultros logo, so the sidebar showed the logo twice. It now has a compass, sitting next to Search as the two ways to find an item."
+}

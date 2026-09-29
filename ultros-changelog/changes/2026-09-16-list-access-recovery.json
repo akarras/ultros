@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Shared lists recover safely when access changes",
+  "blurb": "The shopping companion now closes when access to its list is removed. Temporary connection problems keep your saved edits and retry syncing automatically.",
+  "link": "/list",
+  "labs": true
+}

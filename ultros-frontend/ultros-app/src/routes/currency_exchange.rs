@@ -1,44 +1,56 @@
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
+use crate::columnar_wire::columnar_resource;
+use crate::components::app_link::AppLink;
+use crate::components::term_badge::TermRole;
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::Arc;
 
-use crate::Tooltip;
+use crate::analyzer_kit::filters::register_filters;
+use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
-use crate::components::add_to_list::AddToList;
-use crate::components::clipboard::Clipboard;
-use crate::components::filter_card::FilterCard;
+use crate::components::control_bar::ControlBar;
 use crate::components::icon::Icon;
+use crate::components::item_actions::ItemActions;
 use crate::components::item_icon::ItemIcon;
-use crate::components::loading::Loading;
 use crate::components::meta::MetaDescription;
 use crate::components::meta::MetaTitle;
-use crate::components::modal::Modal;
-use crate::components::number_input::ParseableInputBox;
-use crate::components::query_button::QueryButton;
+use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
+use crate::components::sort_header::{SortColumn, SortDir, SortHeader};
+use crate::components::tool_help::ToolHeader;
+use crate::components::virtual_grid::GridColumn;
+use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
+use crate::components::virtual_grid::registry::FilterAlias;
+use crate::components::virtual_grid::saved_views::{GridSavedViews, provide_grid_saved_views};
+use crate::components::world_picker::WorldOnlyPicker;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
-use crate::global_state::xiv_data::tracked_data;
+use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::*;
+use crate::query_defaults::{filter_query_signal, seed_analyzer_default_view};
+use crate::routes::not_found::NotFound;
 use chrono::TimeDelta;
 use chrono::Utc;
-use field_iterator::FieldLabels;
-use field_iterator::SortableVec;
 use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos::reactive::wrappers::write::SignalSetter;
-use leptos_router::components::A;
+use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
 
+use crate::query_defaults::query_signal;
+#[cfg(test)]
 use leptos_router::params::ParamsMap;
-use log::info;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::recent_sales::SaleData;
+use ultros_api_types::world::World;
+use ultros_api_types::world_helper::WorldHelper;
 use xiv_gen::Item;
 use xiv_gen::{ItemId, ItemUiCategoryId, SpecialShop};
 
@@ -78,21 +90,16 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
     item_amount
         .map(|item_amount| {
             view! {
-                <div class="flex flex-row gap-1">
-                    <A
+                <div class="flex flex-row items-center gap-1 min-w-0">
+                    <AppLink
                         attr:class="flex flex-row gap-1 min-w-0"
                         href=format!("/item/{}", item_amount.item.key_id.0)
                     >
                         <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small />
                         <span class="truncate" title=item_amount.item.name.as_str()>{item_amount.item.name.as_str()}</span>
-                    </A>
+                    </AppLink>
                     <div>{t!(i18n, currency_exchange_quantity_x)} {item_amount.amount}</div>
-                    <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
-                        <AddToList item_id=item_amount.item.key_id.0 />
-                    </span>
-                    <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
-                        <Clipboard clipboard_text=item_amount.item.name.as_str() />
-                    </span>
+                    <ItemActions item_id=item_amount.item.key_id.0 item_name=item_amount.item.name.as_str() quantity=i32::try_from(item_amount.amount).unwrap_or(i32::MAX) />
                 </div>
             }
         })
@@ -160,78 +167,206 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
         })
 }
 
-#[component]
-fn FilterModal(filter_name: &'static str) -> impl IntoView {
-    let i18n = use_i18n();
-    let (is_open, set_open) = signal(false);
-
-    // highlight the filter icon when an active min/max is set for this column
-    let query = use_query_map();
-    let is_active = Signal::derive(move || {
-        let q = query.get();
-        let has_min = q
-            .get(&format!("{filter_name}_min"))
-            .and_then(|p| p.parse::<i32>().ok())
-            .is_some();
-        let has_max = q
-            .get(&format!("{filter_name}_max"))
-            .and_then(|p| p.parse::<i32>().ok())
-            .is_some();
-        has_min || has_max
-    });
-
-    view! {
-        <div on:click=move |_| set_open(true)>
-            <div class=move || {
-                if is_active() {
-                    "cursor-pointer inline-flex items-center justify-center w-8 h-8 rounded-md border border-[color:var(--brand-fg)] text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]".to_string()
-                } else {
-                    "cursor-pointer inline-flex items-center justify-center w-8 h-8 rounded-md border border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]".to_string()
+/// Keep native exchange revenue and recent-sale cadence independent of the
+/// selectable market-history window.
+fn compute_prices(
+    shops_with_item: &[(ShopItems, &SpecialShop)],
+    sales: Option<&ultros_api_types::recent_sales::RecentSales>,
+    listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
+    quantity: i32,
+    now: chrono::NaiveDateTime,
+) -> Option<Vec<CurrencyTrade>> {
+    let sales: HashMap<(bool, i32), SaleData> = sales?
+        .sales
+        .iter()
+        .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
+        .collect();
+    let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
+        .cheapest_listings
+        .iter()
+        .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
+        .collect();
+    let rows = shops_with_item
+        .iter()
+        .filter_map(|(item, shop)| {
+            let cost = item.cost[0];
+            let recv = item.recv.iter().find(|i| i.item.item_search_category > 0)?;
+            let item_key = (false, recv.item.key_id.0);
+            let sales = &sales.get(&item_key)?.sales;
+            let recent = sales.first()?;
+            let most_recent = recent.sale_date;
+            let stale_threshold = now - TimeDelta::days(60);
+            if most_recent < stale_threshold {
+                return None;
+            }
+            let sale = recent.price_per_unit;
+            let current_listing_price = world_listings
+                .get(&item_key)
+                .map(|listing| listing.cheapest_price - 1);
+            let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
+            let input_amount = quantity;
+            let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
+            let sales_len = sales.len();
+            let hours_between_sales = sales
+                .last()
+                .map(|last| {
+                    let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
+                    time_between.num_hours() as i16
+                })
+                .unwrap_or(i16::MAX);
+            Some((
+                (
+                    cost,
+                    *recv,
+                    guessed_price_per_item,
+                    number_received,
+                    guessed_price_per_item as i64 * number_received as i64,
+                    hours_between_sales,
+                ),
+                shop.name.to_string(),
+            ))
+        })
+        .into_group_map()
+        .into_iter()
+        .map(
+            |(
+                (
+                    cost,
+                    recv,
+                    guessed_price_per_item,
+                    number_received,
+                    total_profit,
+                    hours_between_sales,
+                ),
+                shop_names,
+            )| {
+                CurrencyTrade {
+                    shop_names: ShopNames {
+                        shops: shop_names.into_iter().unique().collect(),
+                    },
+                    cost_item: Some(cost),
+                    receive_item: Some(recv),
+                    listing_price: world_listings
+                        .get(&(false, recv.item.key_id.0))
+                        .map(|l| l.cheapest_price),
+                    price_per_item: guessed_price_per_item,
+                    number_received,
+                    total_profit,
+                    hours_between_sales,
                 }
-            }>
-                <Icon icon=icondata::AiFilterFilled />
-            </div>
-            {move || {
-                is_open()
-                    .then(|| {
-                        let (min, set_min) = query_signal::<i32>(format!("{filter_name}_min"));
-                        let (max, set_max) = query_signal::<i32>(format!("{filter_name}_max"));
-                        view! {
-                            <Modal set_visible=set_open>
-                                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, currency_exchange_edit_filter)}</h3>
-                                <div class="text-sm text-[color:var(--color-text-muted)] mb-2">
-                                    {filter_name.replace("_", " ")}
-                                </div>
-                                <div class="flex flex-col gap-3">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_max_field_aria, name = filter_name.replace("_", " ")).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_min_field_aria, name = filter_name.replace("_", " ")).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            </Modal>
-                        }
-                    })
-            }}
-
-        </div>
-    }
-    .into_any()
+            },
+        )
+        .collect::<Vec<_>>();
+    Some(rows)
 }
 
+/// Existing optional-column IDs are part of saved exchange links.
+const COL_PRICE_PER_ITEM: &str = "price_per_item";
+const COL_SHOPS: &str = "shops";
+const COL_COST: &str = "cost";
+const COL_HOURS: &str = "hours_between_sales";
+
+fn exchange_filter_aliases() -> Vec<FilterAlias> {
+    [
+        ("price_per_item_min", COL_PRICE_PER_ITEM, FilterOp::Gte),
+        ("price_per_item_max", COL_PRICE_PER_ITEM, FilterOp::Lte),
+        ("number_received_min", "number_received", FilterOp::Gte),
+        ("number_received_max", "number_received", FilterOp::Lte),
+        ("total_profit_min", "total_profit", FilterOp::Gte),
+        ("total_profit_max", "total_profit", FilterOp::Lte),
+        ("hours_between_sales_min", COL_HOURS, FilterOp::Gte),
+        ("hours_between_sales_max", COL_HOURS, FilterOp::Lte),
+    ]
+    .into_iter()
+    .map(|(key, column, op)| FilterAlias::integer(key, column, op))
+    .collect()
+}
+
+fn exchange_metrics() -> Vec<GridMetric<CurrencyTrade>> {
+    vec![
+        GridMetric::number(COL_PRICE_PER_ITEM, |t: &CurrencyTrade| {
+            GridValue::Number(t.price_per_item as f64)
+        }),
+        GridMetric::number("number_received", |t: &CurrencyTrade| {
+            GridValue::Number(t.number_received as f64)
+        }),
+        GridMetric::number("total_profit", |t: &CurrencyTrade| {
+            GridValue::Number(t.total_profit as f64)
+        }),
+        GridMetric::number(COL_HOURS, |t: &CurrencyTrade| {
+            GridValue::Number(t.hours_between_sales as f64)
+        }),
+    ]
+}
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum SortMode {
+    Profit,
+    PricePerItem,
+    QtyReceived,
+    HoursBetweenSales,
+}
+
+impl std::fmt::Display for SortMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.token())
+    }
+}
+
+impl SortMode {
+    fn token(self) -> &'static str {
+        match self {
+            SortMode::Profit => "profit",
+            SortMode::PricePerItem => "price",
+            SortMode::QtyReceived => "qty",
+            SortMode::HoursBetweenSales => "hours",
+        }
+    }
+}
+
+impl std::str::FromStr for SortMode {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "profit" => Ok(SortMode::Profit),
+            "price" => Ok(SortMode::PricePerItem),
+            "qty" => Ok(SortMode::QtyReceived),
+            "hours" => Ok(SortMode::HoursBetweenSales),
+            _ => Err(()),
+        }
+    }
+}
+
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+    /// Hours-between-sales reads best-first ascending — descending would
+    /// put the slowest sellers on top. Everything else is best-first
+    /// descending, the kit default.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::HoursBetweenSales => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+fn sort_trades(rows: &mut [CurrencyTrade], mode: SortMode, dir: SortDir) {
+    let key = |t: &CurrencyTrade| -> i64 {
+        match mode {
+            SortMode::Profit => t.total_profit,
+            SortMode::PricePerItem => t.price_per_item as i64,
+            SortMode::QtyReceived => t.number_received as i64,
+            SortMode::HoursBetweenSales => t.hours_between_sales as i64,
+        }
+    };
+    match dir {
+        SortDir::Desc => rows.sort_by_key(|t| std::cmp::Reverse(key(t))),
+        SortDir::Asc => rows.sort_by_key(key),
+    }
+}
+
+#[cfg(test)]
 fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
     let max = query_map
         .get(&format!("{field_label}_max"))
@@ -240,30 +375,87 @@ fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
         .get(&format!("{field_label}_min"))
         .and_then(|p| p.parse::<i32>().ok());
 
+    // Inclusive on both ends: the chips read "Profit ≥ 5000" / "Profit ≤ 5000",
+    // and every other tool in the app (analyzer, recipe/fc analyzers) filters
+    // with `>= min` / `<= max`. The pre-kit exclusive bounds silently dropped
+    // the row sitting exactly on the number the user typed.
     match (min, max) {
         (None, None) => true,
-        (None, Some(max)) => value < max,
-        (Some(min), None) => value > min,
-        (Some(min), Some(max)) => (min..max).contains(&value),
+        (None, Some(max)) => value <= max,
+        (Some(min), None) => value >= min,
+        (Some(min), Some(max)) => (min..=max).contains(&value),
+    }
+}
+
+/// A local URL choice wins over the home-world preference. Broader scopes must
+/// not reach the recent-sales API, which only keeps samples for single worlds.
+fn exchange_world(
+    worlds: Option<&WorldHelper>,
+    requested: Option<&str>,
+    home: Option<World>,
+) -> Option<World> {
+    requested
+        .and_then(|name| worlds?.lookup_world_by_name(name)?.as_world().cloned())
+        .or(home)
+}
+
+/// Gates the exchange-item page on the `:id` route param naming a real item —
+/// same "fake item 0 page at 200" bug as `ItemView`, see
+/// `crate::routes::item_view::ItemView`.
+#[component]
+pub fn ExchangeItem() -> impl IntoView {
+    let params = use_params_map();
+    let item_id_valid =
+        Memo::new(move |_| params.with(|p| resolve_item_id(p.get_str("id"))).is_some());
+
+    view! {
+        <Show when=move || item_id_valid.get() fallback=|| view! { <NotFound /> }.into_any()>
+            <ExchangeItemContent />
+        </Show>
     }
 }
 
 #[component]
-pub fn ExchangeItem() -> impl IntoView {
+fn ExchangeItemContent() -> impl IntoView {
     let i18n = use_i18n();
+    seed_analyzer_default_view("currency-exchange");
     let params = use_params_map();
-    let query = use_query_map();
     let (home_world, _) = use_home_world();
-    let (currency_quantity, set_currency_quantity) = query_signal::<i32>("currency_amount");
-    let sales = ArcResource::new(home_world, move |world| async move {
-        let world = world.ok_or(AppError::NoHomeWorld)?;
-        get_recent_sales_for_world(&world.name).await
+    // Recent-sale cadence is backed by the world's bounded recent-sale sample;
+    // that API cannot aggregate DCs/regions. Pick locally without changing home.
+    let (world_query, set_world_query) = query_signal::<String>("world");
+    let worlds = crate::global_state::use_world_helper().ok();
+    let selected_world = Memo::new(move |_| {
+        exchange_world(
+            worlds.as_deref(),
+            world_query.get().as_deref(),
+            home_world.get(),
+        )
     });
+    let set_selected_world = (move |world: Option<World>| {
+        set_world_query.set(world.map(|world| world.name));
+    })
+    .into_signal_setter();
+    // `filter_query_signal`, not a plain `query_signal`: this box is typed into
+    // a digit at a time, and the router default (replace: false, scroll: true)
+    // would push a history entry and yank the window to the top per keystroke —
+    // the same bug this rebuild fixed for the filter chips.
+    let (currency_quantity, set_currency_quantity) = filter_query_signal::<i32>("currency_amount");
+    let sales = columnar_resource(
+        move || selected_world.get(),
+        move |world| async move {
+            let world = world.ok_or(AppError::ParamMissing)?;
+            get_recent_sales_for_world(&world.name).await
+        },
+    );
 
-    let world_cheapest_listings = ArcResource::new(home_world, move |world| async move {
-        let world = world.ok_or(AppError::NoHomeWorld)?;
-        get_cheapest_listings(&world.name).await
-    });
+    let world_cheapest_listings = columnar_resource(
+        move || selected_world.get(),
+        move |world| async move {
+            let world = world.ok_or(AppError::ParamMissing)?;
+            get_cheapest_listings(&world.name).await
+        },
+    );
     let data = tracked_data();
     let item_id = move || {
         ItemId(
@@ -303,539 +495,215 @@ pub fn ExchangeItem() -> impl IntoView {
             .collect::<Vec<_>>()
     };
 
-    let (sorted_by, _set_sorted_by) = query_signal::<String>("sorted-by");
+    let (sort_param, _) = query_signal::<String>("sort");
+    let (dir_param, _) = query_signal::<String>("dir");
+    let sort_mode = Memo::new(move |_| sort_param().and_then(|s| s.parse::<SortMode>().ok()));
+    let sort_dir = Memo::new(move |_| dir_param().and_then(|s| s.parse::<SortDir>().ok()));
+    let market = use_market_data(Signal::derive(move || {
+        selected_world.get().map(|w| w.name).unwrap_or_default()
+    }));
+    let filters = register_filters(exchange_filter_aliases(), Signal::derive(Vec::new));
+    provide_grid_saved_views("currency-exchange-grid");
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, calculation_currency_return).to_string(),
+                Some("total_profit"),
+            ),
+            CalculationTerm::fixed(
+                TermRole::Value,
+                t_string!(i18n, calculation_price_per_item).to_string(),
+                Some(COL_PRICE_PER_ITEM),
+            ),
+            CalculationTerm::fixed(
+                TermRole::Multiply,
+                t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
+                Some("number_received"),
+            ),
+        ],
+        None,
+    );
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
-
-    // Define the computation logic as a separate closure that takes data as arguments.
-    // This avoids capturing the ArcResources directly, preventing move/FnOnce issues.
-    let compute_prices =
-        move |sales: Option<&ultros_api_types::recent_sales::RecentSales>,
-              listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
-              quantity: i32| {
-            let sales: HashMap<(bool, i32), SaleData> = sales?
-                .sales
-                .iter()
-                .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
-                .collect();
-            let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
-                .cheapest_listings
-                .iter()
-                .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
-                .collect();
-            let shops_with_item = shop_data();
-            let now = Utc::now().naive_utc();
-            let rows = shops_with_item
-                .iter()
-                .filter_map(|(item, shop)| {
-                    let cost = item.cost[0];
-                    let recv = item.recv.iter().find(|i| i.item.item_search_category > 0)?;
-                    let item_key = (false, recv.item.key_id.0);
-                    let sales = &sales.get(&item_key)?.sales;
-                    let recent = sales.first()?;
-                    let most_recent = recent.sale_date;
-                    let stale_threshold = now - TimeDelta::days(60);
-                    if most_recent < stale_threshold {
-                        return None;
-                    }
-                    let sale = recent.price_per_unit;
-                    let current_listing_price = world_listings
-                        .get(&item_key)
-                        .map(|listing| listing.cheapest_price - 1);
-                    let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
-                    let input_amount = quantity;
-                    let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
-                    let sales_len = sales.len();
-                    let hours_between_sales = sales
-                        .last()
-                        .map(|last| {
-                            let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
-                            time_between.num_hours() as i16
-                        })
-                        .unwrap_or(i16::MAX);
-                    Some((
-                        (
-                            cost,
-                            *recv,
-                            guessed_price_per_item,
-                            number_received,
-                            guessed_price_per_item as i64 * number_received as i64,
-                            hours_between_sales,
-                        ),
-                        shop.name.to_string(),
-                    ))
-                })
-                .into_group_map()
-                .into_iter()
-                .map(
-                    |(
-                        (
-                            cost,
-                            recv,
-                            guessed_price_per_item,
-                            number_received,
-                            total_profit,
-                            hours_between_sales,
-                        ),
-                        shop_names,
-                    )| {
-                        CurrencyTrade {
-                            shop_names: ShopNames {
-                                shops: shop_names.into_iter().unique().collect(),
-                            },
-                            cost_item: Some(cost),
-                            receive_item: Some(recv),
-                            price_per_item: guessed_price_per_item,
-                            number_received,
-                            total_profit,
-                            hours_between_sales,
-                        }
-                    },
-                )
-                .collect::<Vec<_>>();
-            Some(rows)
-        };
-
+    let column_label = move |id| -> String {
+        match id {
+            "item" => t_string!(i18n, currency_exchange_table_item).to_string(),
+            "number_received" => t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
+            "total_profit" => t_string!(i18n, currency_exchange_table_profit).to_string(),
+            COL_PRICE_PER_ITEM => {
+                t_string!(i18n, currency_exchange_table_price_per_item).to_string()
+            }
+            COL_SHOPS => t_string!(i18n, currency_exchange_table_shops).to_string(),
+            COL_COST => t_string!(i18n, currency_exchange_table_cost).to_string(),
+            COL_HOURS => t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
+            _ => String::new(),
+        }
+    };
+    let column_sort = |id| match id {
+        "number_received" => Some(SortMode::QtyReceived),
+        "total_profit" => Some(SortMode::Profit),
+        COL_PRICE_PER_ITEM => Some(SortMode::PricePerItem),
+        COL_HOURS => Some(SortMode::HoursBetweenSales),
+        _ => None,
+    };
+    let columns = Signal::derive(move || {
+        [
+            ("item", 320.0, false),
+            ("number_received", 130.0, false),
+            ("total_profit", 130.0, false),
+            (COL_PRICE_PER_ITEM, 150.0, true),
+            (COL_SHOPS, 240.0, true),
+            (COL_COST, 320.0, true),
+            (COL_HOURS, 180.0, true),
+        ]
+        .into_iter()
+        .map(|(id, width, optional)| {
+            let column = GridColumn::new(id, column_label(id), width, optional, true);
+            let column = if matches!(id, "item" | COL_COST) {
+                column.fixed_width()
+            } else {
+                column
+            };
+            if let Some(mode) = column_sort(id) {
+                column
+                    .native_sort(mode.token(), mode.default_dir() == SortDir::Asc)
+                    .sorted(
+                        sort_mode.get().unwrap_or_else(SortMode::fallback) == mode,
+                        sort_dir.get().unwrap_or_else(|| mode.default_dir()) == SortDir::Asc,
+                    )
+            } else {
+                column
+            }
+        })
+        .collect::<Vec<_>>()
+    });
     // Create derived signals to access resources, avoiding ownership issues in view closures.
-    let sales_1 = sales.clone();
-    let s_getter_1 = Signal::derive(move || sales_1.get());
-
-    let listings_1 = world_cheapest_listings.clone();
-    let l_getter_1 = Signal::derive(move || listings_1.get());
-
     let sales_2 = sales.clone();
     let s_getter_2 = Signal::derive(move || sales_2.get());
 
     let listings_2 = world_cheapest_listings.clone();
     let l_getter_2 = Signal::derive(move || listings_2.get());
 
+    // Keep the grid mounted when quantity or market resources change so the
+    // shared filter registry never points at a disposed grid owner.
+    let rows = Memo::new(move |_| {
+        let sales = s_getter_2.get();
+        let listings = l_getter_2.get();
+        let mut rows = compute_prices(
+            &shop_data(),
+            sales.as_ref().and_then(|r| r.as_ref().ok()),
+            listings.as_ref().and_then(|r| r.as_ref().ok()),
+            currency_quantity.get(),
+            Utc::now().naive_utc(),
+        )
+        .unwrap_or_default();
+        let mode = sort_mode.get().unwrap_or_else(SortMode::fallback);
+        sort_trades(
+            &mut rows,
+            mode,
+            sort_dir.get().unwrap_or_else(|| mode.default_dir()),
+        );
+        rows
+    });
     view! {
-        <div class="container mx-auto p-4">
+        <div class="flex flex-col gap-4">
             <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", item_name()) />
             <MetaDescription text=move || {
                 t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
             } />
-            <div class="panel p-6 rounded-xl mb-6">
-                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">
-                    {move || item().map(|i| i.name.as_str())} " - " {t!(i18n, currency_exchange_title)}
-                </h2>
-                <div class="flex items-center gap-4 mb-4">
-                    <label class="text-[color:var(--color-text-muted)]">{t!(i18n, currency_exchange_how_many)}</label>
-                    <input
-                        class="input w-24"
-                        prop:value=currency_quantity
-                        on:input=move |e| {
-                            let event = event_target_value(&e);
-                            if let Ok(p) = event.parse() {
-                                set_currency_quantity.set(Some(p));
-                            }
+            <ToolHeader
+                title=format!("{} — {}", item_name(), t_string!(i18n, currency_exchange_title))
+                summary=t_string!(i18n, currency_exchange_tool_summary).to_string()
+                context=t_string!(i18n, currency_exchange_tool_context).to_string()
+                help_href="/help"
+                help_body=t_string!(i18n, currency_exchange_tool_help).to_string()
+            >
+                <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, world)}</label>
+                <WorldOnlyPicker current_world=selected_world.into() set_current_world=set_selected_world />
+                <label for="currency-quantity" class="text-sm text-[color:var(--color-text-muted)]">
+                    {t!(i18n, currency_exchange_how_many)}
+                </label>
+                <input
+                    id="currency-quantity"
+                    class="input w-24"
+                    inputmode="numeric"
+                    prop:value=currency_quantity
+                    on:input=move |e| {
+                        if let Ok(p) = event_target_value(&e).parse() {
+                            set_currency_quantity.set(Some(p));
                         }
-                    />
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_price_per_item_title)
-                        description=t_string!(i18n, currency_exchange_price_per_item_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("price_per_item_min");
-                            let (max, set_max) = query_signal::<i32>("price_per_item_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_price).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_price).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_qty_received_title)
-                        description=t_string!(i18n, currency_exchange_qty_received_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("number_received_min");
-                            let (max, set_max) = query_signal::<i32>("number_received_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_qty).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_qty).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_profit_title)
-                        description=t_string!(i18n, currency_exchange_profit_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("total_profit_min");
-                            let (max, set_max) = query_signal::<i32>("total_profit_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_profit).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_profit).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_sales_velocity_title)
-                        description=t_string!(i18n, currency_exchange_sales_velocity_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("hours_between_sales_min");
-                            let (max, set_max) = query_signal::<i32>("hours_between_sales_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_hours).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_hours).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-                </div>
-
-                <div class="flex flex-wrap gap-2 mt-2">
-                    {move || {
-                        let q = query();
-                        let mut chips: Vec<AnyView> = Vec::new();
-
-                        let get_i = |k: &str| q.get(k).and_then(|v| v.parse::<i32>().ok());
-
-                        let mut push_chip = |label: &str, key: &'static str, val: Option<i32>| {
-                            if let Some(v) = val {
-                                let key_owned = key.to_string();
-                                chips.push(view! {
-                                    <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
-                                                  text-[color:var(--color-text)]
-                                                  bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]
-                                                  border-[color:var(--color-outline)]">
-                                        {format!("{label}: {v}")}
-                                        <QueryButton
-                                            key=key_owned.clone()
-                                            value=""
-                                            class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                                            active_classes=""
-                                        >
-                                            <Icon icon=icondata::MdiClose />
-                                        </QueryButton>
-                                    </span>
-                                }.into_any());
-                            }
-                        };
-
-                        push_chip(t_string!(i18n, currency_exchange_chip_price_min), "price_per_item_min", get_i("price_per_item_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_price_max), "price_per_item_max", get_i("price_per_item_max"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_qty_min), "number_received_min", get_i("number_received_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_qty_max), "number_received_max", get_i("number_received_max"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_profit_min), "total_profit_min", get_i("total_profit_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_profit_max), "total_profit_max", get_i("total_profit_max"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_hours_min), "hours_between_sales_min", get_i("hours_between_sales_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_hours_max), "hours_between_sales_max", get_i("hours_between_sales_max"));
-
-                        if !chips.is_empty() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
-                                              text-[color:var(--color-text)]
-                                              bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]
-                                              border-[color:var(--color-outline)]">
-                                    <QueryButton
-                                        key="sorted-by"
-                                        value=Signal::derive(move || sorted_by().unwrap_or_else(|| "total_profit".into()))
-                                        class="inline-flex items-center gap-1 text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]"
-                                        active_classes=""
-                                        remove_queries=&[
-                                            "price_per_item_min",
-                                            "price_per_item_max",
-                                            "number_received_min",
-                                            "number_received_max",
-                                            "total_profit_min",
-                                            "total_profit_max",
-                                            "hours_between_sales_min",
-                                            "hours_between_sales_max",
-                                        ]
-                                    >
-                                        <span class="inline-flex items-center gap-1">
-                                            <Icon icon=icondata::MdiClose />
-                                            {t!(i18n, currency_exchange_clear_all)}
-                                        </span>
-                                    </QueryButton>
-                                </span>
-                            }.into_any());
-                        }
-                        view! { <>{chips}</> }
-                    }}
-                </div>
-            </div>
-            <div class="overflow-x-auto">
-                {move || {
-                    if home_world().is_none() {
-                        let left = view! {
-                            <div class="bg-red-900/50 p-4 rounded-lg text-white">
-                                {t!(i18n, currency_exchange_home_world_not_set_prefix)}
-                                <A
-                                    href="/settings"
-                                    attr:class="underline"
-                                >
-                                    {t!(i18n, currency_exchange_settings)}
-                                </A> {t!(i18n, currency_exchange_home_world_not_set_suffix)}
-                            </div>
-                        };
-                        Either::Left(left)
-                    } else {
-                        let right = view! {
-                            <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
-                                {move || home_world().map(|w| t!(i18n, currency_exchange_assuming_sales_on, world = w.name))}
-                            </div>
-                            {move || {
-                                let s_res = s_getter_1.get();
-                                let l_res = l_getter_1.get();
-                                let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
-                                let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
-                                let q = currency_quantity.get();
-                                compute_prices(s, l, q).map(|mut rows: Vec<CurrencyTrade>| {
-                                    rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
-                                    rows.truncate(5);
-                                    let top = rows;
+                    }
+                />
+            </ToolHeader>
+            <CalculationStrip calculation window=market.window />
+            <ControlBar
+                sticky=false
+                actions=move || view! { <GridSavedViews id="currency-exchange-grid" /> }.into_any()
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, currency_exchange_trade_count, n = move || filters.row_count())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, currency_exchange_no_filters_hint).to_string()
+                })
+            />
+            <div>
+                <Show when=move || selected_world.get().is_none()>
+                    <p role="status" class="p-4 text-[color:var(--color-text-muted)]">
+                        {t!(i18n, analyzer_columns_exchange_choose_world)}
+                    </p>
+                </Show>
+                // The toolbar registry keeps signals owned by this grid. Keep
+                // the grid mounted as the home world changes; disposing it
+                // would leave the toolbar reading a previous owner's signals.
+                <div class:hidden=move || selected_world.get().is_none()>
+                                <Suspense fallback=move || {
                                     view! {
-                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
-                                            {top.into_iter().map(|t| view! {
-                                                <div
-                                                    class="card p-4 rounded-lg transition-colors cursor-pointer"
-                                                    on:click=move |_| {
-                                                        let url = t
-                                                            .receive_item
-                                                            .as_ref()
-                                                            .map(|ri| format!("/item/{}", ri.item.key_id.0))
-                                                            .unwrap_or_default();
-                                                        if let Some(w) = web_sys::window() {
-                                                            let _ = w.location().set_href(&url);
-                                                        }
-                                                    }
-                                                >
-                                                    <div class="text-sm text-[color:var(--color-text-muted)] mb-1">
-                                                        <ShopNames shop_names=t.shop_names.clone() />
-                                                    </div>
-                                                    <div class="flex items-center justify-between">
-                                                        <div class="flex items-center gap-2 min-w-0">
-                                                            <ItemAmount item_amount=t.receive_item />
-                                                        </div>
-                                                        <div class="text-right">
-                                                            <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, currency_exchange_profit_label)}</div>
-                                                            {t.total_profit}
-                                                        </div>
-                                                    </div>
-                                                    <div class="mt-2 flex items-center justify-between gap-2 min-w-0 text-xs text-[color:var(--color-text-muted)]">
-                                            <span class="truncate">{t!(i18n, currency_exchange_items_count, count = t.number_received)}</span>
-                                            <span class="truncate">{t!(i18n, currency_exchange_hours_per_sale, hours = t.hours_between_sales)}</span>
-                                                    </div>
-                                                </div>
-                                            }).collect_view()}
-                                        </div>
+                                        <TableSkeleton
+                                            columns=vec![SkeletonColumn::new("flex-1", SkeletonCell::IconText), SkeletonColumn::new("w-24", SkeletonCell::Number)]
+                                            rows=10
+                                        />
                                     }
-                                })
-                            }}
-                            <div class="panel p-6 rounded-xl mb-6">
-                                <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, currency_exchange_full_results)}</h3>
-                                <Suspense fallback=Loading>
-                                    {move || {
-                                        let sort_label = sorted_by();
-                                    let s_res = s_getter_2.get();
-                                    let l_res = l_getter_2.get();
-                                    let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
-                                    let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
-                                    let q = currency_quantity.get();
-                                    compute_prices(s, l, q)
-                                        .map(|p: Vec<CurrencyTrade>| {
-                                            let trades = p.len();
-                                            let sorted_and_filtered_rows = move || {
-                                                let query = query();
-                                                let mut p = p
-                                                    .clone()
-                                                    .into_iter()
-                                                    .filter(|currency| {
-                                                        let query = &query;
-                                                        is_in_range(
-                                                            currency.price_per_item,
-                                                            "price_per_item",
-                                                            query,
-                                                        )
-                                                            && is_in_range(
-                                                                currency.number_received,
-                                                                "number_received",
-                                                                query,
-                                                            )
-                                                            && is_in_range(
-                                                                currency.total_profit as i32,
-                                                                "total_profit",
-                                                                query,
-                                                            )
-                                                            && is_in_range(
-                                                                currency.hours_between_sales as i32,
-                                                                "hours_between_sales",
-                                                                query,
-                                                            )
-                                                    })
-                                                    .collect::<Vec<_>>();
-                                                // surface best option at top by default (total_profit desc)
-                                                match sort_label.as_deref() {
-                                                    None => {
-                                                        p.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
-                                                    }
-                                                    Some("total_profit") => {
-                                                        p.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
-                                                    }
-                                                    Some(label) => {
-                                                        CurrencyTrade::sort_vec_by_label(&mut p, label, None);
-                                                    }
-                                                }
-                                                p.into_iter()
-                                                    .map(|p| {
-                                                        view! {
-                                                            <tr class="transition-colors">
-                                                                <td class="px-6 py-4">
-                                                                    <ShopNames shop_names=p.shop_names />
-                                                                </td>
-                                                                <td class="px-6 py-4">
-                                                                    <ItemAmount item_amount=p.cost_item />
-                                                                </td>
-                                                                <td class="px-6 py-4">
-                                                                    <ItemAmount item_amount=p.receive_item />
-                                                                </td>
-                                                                <td class="px-6 py-4">{p.price_per_item}</td>
-                                                                <td class="px-6 py-4">{p.number_received}</td>
-                                                                <td class="px-6 py-4">{p.total_profit}</td>
-                                                                <td class="px-6 py-4">{p.hours_between_sales}</td>
-                                                            </tr>
-                                                        }
-                                                    })
-                                                    .collect_view()
-                                            };
-                                            let count = sorted_and_filtered_rows().len();
-                                            let s = s_getter_2.get();
-                                            let sales = s
-                                                .as_ref()
-                                                .map(|sales| sales.as_ref().map(|sales| sales.sales.len()));
-                                            info!("{sales:?} items: {count} p: {trades}");
-                                            let labels = CurrencyTrade::field_labels();
-                                            view! {
-                                                <table class="w-full text-sm text-left">
-                                                    <thead class="text-xs uppercase">
-                                                        <tr>
-                                                            {labels
-                                                                .iter()
-                                                                .enumerate()
-                                                                .filter(|(i, _)| *i <= 6)
-                                                                .map(|(i, l)| {
-                                                                    view! {
-                                                                        <th scope="col" class="px-6 py-3">
-                                                                            <div class="flex flex-row items-center gap-2">
-                                                                                <QueryButton
-                                                                                    key="sorted-by"
-                                                                                    value=*l
-                                                                                    class="underline decoration-transparent hover:text-[color:var(--brand-fg)] transition-colors"
-                                                                                    active_classes="text-[color:var(--brand-fg)] underline underline-offset-4 decoration-2"
-                                                                                    default="total_profit" == *l
-                                                                                >
-                                                                                    {match *l {
-                                                                                        "shop_names" => t_string!(i18n, currency_exchange_table_shops).to_string(),
-                                                                                        "cost_item" => t_string!(i18n, currency_exchange_table_cost).to_string(),
-                                                                                        "receive_item" => t_string!(i18n, currency_exchange_table_item).to_string(),
-                                                                                        "price_per_item" => t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
-                                                                                        "number_received" => t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
-                                                                                        "total_profit" => t_string!(i18n, currency_exchange_table_profit).to_string(),
-                                                                                        "hours_between_sales" => t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
-                                                                                        _ => l.replace("_", " "),
-                                                                                    }}
-                                                                                </QueryButton>
-                                                                                {(i > 2)
-                                                                                    .then(|| {
-                                                                                        view! {
-                                                                                            <Tooltip tooltip_text=t_string!(i18n, currency_exchange_filter_tooltip).to_string().replace("%column%", &l.replace("_", " "))>
-                                                                                                <FilterModal filter_name=l />
-                                                                                            </Tooltip>
-                                                                                        }
-                                                                                    })}
-                                                                            </div>
-                                                                        </th>
-                                                                    }
-                                                                })
-                                                                .collect_view()}
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody class="divide-y divide-[color:var(--color-outline)]">
-                                                        {sorted_and_filtered_rows}
-                                                    </tbody>
-                                                </table>
-                                            }
-                                        })
-                                }}
+                                }>
+                                    <MarketGrid
+                                        show_saved_views=false
+                                        id="currency-exchange-grid"
+                                        label=t_string!(i18n, currency_exchange_full_results).to_string()
+                                        each=rows columns market
+                                        row_height=72.0
+                                        key=|t: &CurrencyTrade| (
+                                            t.cost_item.map(|item| (item.item.key_id.0, item.amount)),
+                                            t.receive_item.map(|item| (item.item.key_id.0, item.amount)),
+                                        )
+                                        metrics=with_units(exchange_metrics(), &[("total_profit", Unit::Gil), (COL_HOURS, Unit::Hours)])
+                                        subject=Arc::new(move |t: &CurrencyTrade| t.market_subject(selected_world.get().map(|w| w.id).unwrap_or_default()))
+                                        header=move |id| {
+                                            let label = column_label(id);
+                                            if let Some(mode) = column_sort(id) {
+                                                view! { <SortHeader mode label sort_mode sort_dir /> }.into_any()
+                                            } else { label.into_any() }
+                                        }
+                                        view=move |trade: CurrencyTrade, id| {
+                                            let content = match id {
+                                            "item" => view! { <ItemAmount item_amount=trade.receive_item /> }.into_any(),
+                                            COL_COST => view! { <ItemAmount item_amount=trade.cost_item /> }.into_any(),
+                                            COL_SHOPS => view! { <div class="max-h-full overflow-y-auto"><ShopNames shop_names=trade.shop_names /></div> }.into_any(),
+                                            _ => view! { <div class="text-right tabular-nums w-full">{trade.cell_text(id)}</div> }.into_any(),
+                                        };
+                                        view! { <div class="px-3 flex h-full items-center min-w-0">{content}</div> }.into_any()
+                                        }
+                                        measure=|trade: &CurrencyTrade, id| (trade.cell_text(id), if matches!(id, "item" | COL_COST) { 120.0 } else { 24.0 })
+                                    />
+                                    <Show when=move || filters.row_count() == 0>
+                                        <p role="status" class="px-3 py-8 text-center text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, currency_exchange_no_matches)}
+                                        </p>
+                                    </Show>
                                 {move || {
                                     s_getter_2
                                         .with(|sales| {
@@ -854,11 +722,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                         })
                                 }}
                                 </Suspense>
-                            </div>
-                        };
-                        Either::Right(right)
-                    }
-                }}
+                </div>
             </div>
         </div>
     }.into_any()
@@ -875,23 +739,62 @@ fn item_cost_iter(shop: &SpecialShop) -> impl Iterator<Item = ItemId> + '_ {
         .map(|item_id| ItemId(item_id as i32))
 }
 
-// #[derive(TableRow, Clone, Default, Debug)]
-// #[table(
-//     impl_vec_data_provider,
-//     sortable,
-//     classes_provider = "TailwindClassesPreset"
-// )]
-#[derive(SortableVec, FieldLabels, Clone)]
+#[derive(Clone, PartialEq)]
 pub struct CurrencyTrade {
     shop_names: ShopNames,
     cost_item: Option<ItemAmount>,
     receive_item: Option<ItemAmount>,
+    /// Actual NQ listing; the native revenue estimate may be lower.
+    listing_price: Option<i32>,
     price_per_item: i32,
     number_received: i32,
     total_profit: i64,
     hours_between_sales: i16,
 }
 
+impl CurrencyTrade {
+    fn market_subject(&self, world_id: i32) -> MarketSubject {
+        MarketSubject {
+            item_id: self
+                .receive_item
+                .map(|i| i.item.key_id.0)
+                .unwrap_or_default(),
+            hq: false,
+            world_id,
+            label: self
+                .receive_item
+                .map(|i| i.item.name.clone())
+                .unwrap_or_default(),
+            listing_price: self.listing_price,
+        }
+    }
+
+    fn cell_text(&self, id: &str) -> String {
+        match id {
+            "item" | COL_COST => {
+                let item = if id == "item" {
+                    self.receive_item
+                } else {
+                    self.cost_item
+                };
+                item.map(|i| format!("{} ×{}", i.item.name, i.amount))
+                    .unwrap_or_default()
+            }
+            COL_SHOPS => self
+                .shop_names
+                .shops
+                .iter()
+                .max_by_key(|s| s.len())
+                .cloned()
+                .unwrap_or_default(),
+            COL_PRICE_PER_ITEM => self.price_per_item.to_string(),
+            "number_received" => self.number_received.to_string(),
+            "total_profit" => self.total_profit.to_string(),
+            COL_HOURS => self.hours_between_sales.to_string(),
+            _ => String::new(),
+        }
+    }
+}
 #[derive(PartialEq, Eq, Clone, PartialOrd, Ord, Debug)]
 pub struct ShopNames {
     shops: Vec<String>,
@@ -918,43 +821,12 @@ pub fn CurrencySelection() -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
     let ui_categories = &data.item_ui_categorys;
-    let disallowed_items = &["Gil", "MGP"];
-    // `ItemUICategory` row IDs are stable across game locales; only the `name`
-    // column is translated. Matching by the English name panicked on every
-    // non-English dataset (e.g. `cn` names these "货币"/"杂货"/"其他"), which
-    // crashed `/currency-exchange` for all localized users — GlitchTip #6849.
-    // Match by the stable IDs instead: Currency = 100, Miscellany = 61, Other = 63.
-    let allowed_item_ui_categories = [
-        ItemUiCategoryId(100),
-        ItemUiCategoryId(61),
-        ItemUiCategoryId(63),
-    ];
-    let currencies = data
-        .special_shops
-        .iter()
-        .flat_map(|(_shops, special_shop)| {
-            shop_items(special_shop)
-                .filter(|items| items.recv.iter().any(|i| i.item.item_search_category != 0))
-                .flat_map(|f| f.cost.into_iter().map(|i| i.item.key_id))
-        })
-        .filter(|f| {
-            let Some(item) = data.items.get(f) else {
-                return false;
-            };
-            allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category))
-        })
-        .unique_by(|i| i.0)
-        .collect::<Vec<_>>();
     let items = &data.items;
-    let currencies = currencies
+    let currencies = crate::game_sources::exchange_currencies(data)
         .into_iter()
-        .sorted_by_key(|item| item.0)
         .filter_map(|c| {
             let item = items.get(&c)?;
-            if disallowed_items.contains(&item.name.as_str()) {
-                return None;
-            }
-            let ui_category = ItemUiCategoryId(item.item_ui_category as i32);
+            let ui_category = ItemUiCategoryId(item.item_ui_category);
             let category = ui_categories.get(&ui_category)?;
             Some((item.key_id.0, item.name.as_str(), category.name.as_str()))
         })
@@ -974,59 +846,75 @@ pub fn CurrencySelection() -> impl IntoView {
     });
 
     view! {
-        <div class="container mx-auto space-y-6">
-            // Description Card
-            <div class="panel p-6 rounded-xl">
-                <p class="text-[color:var(--color-text)] leading-relaxed">
-                    {t!(i18n, currency_exchange_hero_desc)}
-                </p>
-            </div>
-
+        <div class="space-y-4">
             <MetaTitle title=t_string!(i18n, currency_exchange_meta_title_ultros) />
             <MetaDescription text=t_string!(i18n, currency_exchange_meta_desc_default) />
 
-            // Search Section
-            <div class="panel p-6 rounded-xl">
-                <div class="flex items-center gap-4">
-                    <div class="relative flex-1 max-w-xl">
-                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Icon
-                                icon=icondata::BiSearchAlt2Regular
-                                attr:class="w-5 h-5 text-[color:var(--color-text-muted)]"
-                            />
-                        </div>
-                        <input
-                            type="text"
-                            placeholder=t_string!(i18n, currency_exchange_search_placeholder)
-                            class="input w-full pl-10"
-                            on:input=move |ev| set_search_text(event_target_value(&ev))
+            // The route wrapper no longer renders a shared heading (the
+            // exchange-item page brings its own ToolHeader), so the landing
+            // page names itself.
+            <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                {t!(i18n, currency_exchange_title)}
+            </h1>
+
+            // One panel for the blurb and the search box. The blurb is a single
+            // sentence — the long marketing paragraph pushed the currency grid
+            // below the fold on every viewport.
+            <div class="panel p-4 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3">
+                <p class="flex-1 text-sm text-[color:var(--color-text-muted)]">
+                    {t!(i18n, currency_exchange_hero_desc)}
+                </p>
+                <div class="relative w-full sm:w-72">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Icon
+                            icon=icondata::BiSearchAlt2Regular
+                            attr:class="w-4 h-4 text-[color:var(--color-text-muted)]"
                         />
                     </div>
+                    <input
+                        type="text"
+                        placeholder=t_string!(i18n, currency_exchange_search_placeholder)
+                        aria-label=t_string!(i18n, currency_exchange_search_placeholder)
+                        class="input w-full pl-9"
+                        on:input=move |ev| set_search_text(event_target_value(&ev))
+                    />
                 </div>
             </div>
 
-            // Currency List
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            // Currency grid: icon + name + category on one dense row per
+            // currency, the same shape the item explorer's result rows use.
+            // `card-link` opts the anchor out of the global `a:not(...)` rule
+            // in tailwind.css, which otherwise forces a transparent background
+            // and underlines every text node inside the tile on hover.
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                 <For
                     each=filtered_currencies
                     key=|(item_id, _, _)| *item_id
                     children=|(item_id, item_name, category_name)| {
                         view! {
-                            <A
-                                href=item_id.to_string()
-                                attr:class="card p-4 rounded-lg transition-colors duration-200 group"
+                            <AppLink
+                                // Absolute: `AppLink` is a plain anchor and
+                                // does not resolve hrefs against the matched
+                                // route. See `components::app_link`.
+                                href=format!("/currency-exchange/{item_id}")
+                                attr:class="card-link group flex items-center gap-2 px-3 py-2 rounded-lg border \
+                                           border-white/5 bg-[color:var(--color-background-elevated)] \
+                                           hover:bg-white/5 hover:border-brand-500/40 transition-colors"
                             >
-                                <div class="flex flex-col gap-2">
-                                    <span class="text-lg font-medium text-[color:var(--color-text)]
-                                    group-hover:text-[color:var(--brand-fg)] transition-colors">
+                                <ItemIcon item_id=item_id icon_size=IconSize::Small />
+                                <div class="flex flex-col min-w-0">
+                                    <span
+                                        class="truncate text-sm font-medium text-[color:var(--color-text)]
+                                        group-hover:text-brand-300 transition-colors"
+                                        title=item_name
+                                    >
                                         {item_name}
                                     </span>
-                                    <span class="text-sm text-[color:var(--color-text)] italic
-                                    group-hover:text-[color:var(--brand-fg)] transition-colors">
+                                    <span class="truncate text-xs text-[color:var(--color-text-muted)]">
                                         {category_name}
                                     </span>
                                 </div>
-                            </A>
+                            </AppLink>
                         }
                     }
                 />
@@ -1052,25 +940,325 @@ pub fn CurrencySelection() -> impl IntoView {
 
 #[component]
 pub fn CurrencyExchange() -> impl IntoView {
-    let i18n = use_i18n();
     view! {
         <div class="app-inline-ad">
             <Ad class="w-full h-[100px]" />
         </div>
-        <div class="main-content">
-            <A href="/currency-exchange">
-                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] hover:opacity-90 transition-all ease-in-out duration-500">
-                    {t!(i18n, currency_exchange_title)}
-                </h3>
-            </A>
+        <div class="main-content p-2 sm:p-6">
             <Outlet />
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn trade(value: i32) -> CurrencyTrade {
+        CurrencyTrade {
+            shop_names: ShopNames { shops: vec![] },
+            cost_item: None,
+            receive_item: None,
+            listing_price: Some(200),
+            price_per_item: value,
+            number_received: value,
+            total_profit: value as i64,
+            hours_between_sales: value as i16,
+        }
+    }
+
+    #[test]
+    fn pricing_quantity_grouping_and_recent_cadence_stay_independent_of_market_stats() {
+        use ultros_api_types::cheapest_listings::CheapestListings;
+        use ultros_api_types::recent_sales::{RecentSales, Sales};
+        let data = xiv_gen_db::data();
+        let shop = data.special_shops.values().next().unwrap();
+        let received = data
+            .items
+            .values()
+            .find(|i| i.item_search_category > 0)
+            .unwrap();
+        let shop_items = || ShopItems {
+            recv: vec![ItemAmount {
+                item: received,
+                amount: 3,
+            }],
+            cost: vec![ItemAmount {
+                item: &data.items[&ItemId(1)],
+                amount: 5,
+            }],
+        };
+        let shops = vec![(shop_items(), shop), (shop_items(), shop)];
+        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let mut sales = RecentSales {
+            sales: vec![SaleData {
+                item_id: received.key_id.0,
+                hq: false,
+                sales: vec![
+                    Sales {
+                        price_per_unit: 100,
+                        sale_date: now,
+                    },
+                    Sales {
+                        price_per_unit: 90,
+                        sale_date: now - TimeDelta::hours(12),
+                    },
+                ],
+            }],
+        };
+        let mut listings = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: received.key_id.0,
+                hq: false,
+                cheapest_price: 80,
+                world_id: 21,
+            }],
+        };
+        for (listing, expected) in [(80, 79), (200, 100)] {
+            listings.cheapest_listings[0].cheapest_price = listing;
+            let rows = compute_prices(&shops, Some(&sales), Some(&listings), 12, now).unwrap();
+            assert_eq!(rows.len(), 1, "identical shop offers stay grouped");
+            assert_eq!(rows[0].shop_names.shops.len(), 1);
+            assert_eq!(rows[0].price_per_item, expected);
+            assert_eq!(rows[0].listing_price, Some(listing));
+            assert_eq!(rows[0].number_received, 6, "only complete trades count");
+            assert_eq!(rows[0].total_profit, i64::from(expected) * 6);
+            assert_eq!(rows[0].hours_between_sales, 6);
+        }
+        listings.cheapest_listings.clear();
+        let rows = compute_prices(&shops, Some(&sales), Some(&listings), 12, now).unwrap();
+        assert_eq!(
+            rows[0].price_per_item, 100,
+            "missing listings fall back to latest sale"
+        );
+        assert_eq!(rows[0].listing_price, None);
+        sales.sales[0].sales[0].sale_date = now - TimeDelta::days(60);
+        assert_eq!(
+            compute_prices(&shops, Some(&sales), Some(&listings), 12, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        sales.sales[0].sales[0].sale_date -= TimeDelta::seconds(1);
+        assert!(
+            compute_prices(&shops, Some(&sales), Some(&listings), 12, now)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn legacy_ranges_match_shared_filters_and_survive_canonical_links() {
+        use crate::components::virtual_grid::metrics::query_rows;
+        use crate::components::virtual_grid::registry::{canonical_query, resolve_filters};
+        let aliases = exchange_filter_aliases();
+        let rows = vec![trade(-1), trade(0), trade(9), trade(10), trade(11)];
+        for field in [
+            COL_PRICE_PER_ITEM,
+            "number_received",
+            "total_profit",
+            COL_HOURS,
+        ] {
+            for (low, high) in [
+                (None, None),
+                (Some("10"), None),
+                (None, Some("10")),
+                (Some("10"), Some("10")),
+                (Some("11"), Some("9")),
+                (Some("invalid"), Some("10")),
+            ] {
+                let mut query = ParamsMap::new();
+                if let Some(low) = low {
+                    query.insert(format!("{field}_min"), low.to_string());
+                }
+                if let Some(high) = high {
+                    query.insert(format!("{field}_max"), high.to_string());
+                }
+                let filters = resolve_filters(&query, &aliases);
+                let expected: Vec<_> = rows
+                    .iter()
+                    .filter(|r| is_in_range(r.price_per_item, field, &query))
+                    .map(|r| r.price_per_item)
+                    .collect();
+                let result = query_rows(&rows, &exchange_metrics(), &filters, None, false);
+                assert_eq!(
+                    result
+                        .rows
+                        .as_ref()
+                        .unwrap_or(&rows)
+                        .iter()
+                        .map(|r| r.price_per_item)
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert_eq!(
+                    resolve_filters(&canonical_query(&query, &aliases), &aliases),
+                    filters
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn market_subject_uses_received_nq_item_and_raw_listing_on_home_world() {
+        let data = xiv_gen_db::data();
+        let mut row = trade(100);
+        row.cost_item = Some(ItemAmount {
+            item: &data.items[&ItemId(1)],
+            amount: 5,
+        });
+        row.receive_item = Some(ItemAmount {
+            item: &data.items[&ItemId(2)],
+            amount: 1,
+        });
+        for world_id in [21, 74] {
+            let subject = row.market_subject(world_id);
+            assert_eq!(subject.item_id, 2);
+            assert!(!subject.hq);
+            assert_eq!(subject.world_id, world_id);
+            assert_eq!(subject.listing_price, Some(200));
+            assert_ne!(subject.listing_price, Some(row.price_per_item));
+        }
+        row.listing_price = None;
+        assert_eq!(row.market_subject(21).listing_price, None);
+    }
+
+    /// `Display` must produce exactly the token `FromStr` parses back out of
+    /// `?sort=` — that round trip is `SortHeader`'s whole mechanism. And
+    /// hours-between-sales must default ascending: descending hours puts the
+    /// slowest sellers on top, which is never why the column was clicked.
+    #[test]
+    fn sort_tokens_round_trip_and_hours_defaults_ascending() {
+        for mode in [
+            SortMode::Profit,
+            SortMode::PricePerItem,
+            SortMode::QtyReceived,
+            SortMode::HoursBetweenSales,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert_eq!(SortMode::fallback(), SortMode::Profit);
+        assert_eq!(SortMode::HoursBetweenSales.default_dir(), SortDir::Asc);
+        assert_eq!(SortMode::Profit.default_dir(), SortDir::Desc);
+    }
+
+    #[test]
+    fn local_world_choice_needs_no_home_and_rejects_broader_scopes() {
+        use ultros_api_types::world::{Datacenter, Region, WorldData};
+        let home = World {
+            id: 1,
+            name: "Home".into(),
+            datacenter_id: 10,
+        };
+        let chosen = World {
+            id: 2,
+            name: "Chosen".into(),
+            datacenter_id: 10,
+        };
+        let worlds = WorldHelper::from(WorldData {
+            regions: vec![Region {
+                id: 100,
+                name: "Region".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Datacenter".into(),
+                    region_id: 100,
+                    worlds: vec![home.clone(), chosen.clone()],
+                }],
+            }],
+        });
+        assert_eq!(
+            exchange_world(Some(&worlds), Some("Chosen"), None),
+            Some(chosen.clone())
+        );
+        assert_eq!(
+            exchange_world(Some(&worlds), Some("Chosen"), Some(home.clone())),
+            Some(chosen)
+        );
+        assert_eq!(
+            exchange_world(Some(&worlds), None, Some(home.clone())),
+            Some(home.clone())
+        );
+        for invalid in ["Region", "Datacenter", "Typo"] {
+            assert_eq!(exchange_world(Some(&worlds), Some(invalid), None), None);
+            assert_eq!(
+                exchange_world(Some(&worlds), Some(invalid), Some(home.clone())),
+                Some(home.clone())
+            );
+        }
+        assert_eq!(exchange_world(None, None, None), None);
+    }
+
+    /// The chips read "Profit ≥ 5000" / "Profit ≤ 5000", so the row sitting
+    /// exactly on the typed number has to survive the filter. The pre-kit
+    /// bounds were exclusive on both ends, which quietly dropped it and
+    /// disagreed with every other tool in the app (`analyzer.rs`,
+    /// `recipe_analyzer.rs`, `fc_crafting_analyzer.rs` all use `>=`/`<=`).
+    #[test]
+    fn range_filter_bounds_are_inclusive() {
+        let params = |pairs: &[(&str, &str)]| {
+            let mut q = ParamsMap::new();
+            for (k, v) in pairs {
+                q.insert(k.to_string(), v.to_string());
+            }
+            q
+        };
+
+        let min_only = params(&[("total_profit_min", "5000")]);
+        assert!(
+            is_in_range(5000, "total_profit", &min_only),
+            "≥ includes 5000"
+        );
+        assert!(is_in_range(5001, "total_profit", &min_only));
+        assert!(!is_in_range(4999, "total_profit", &min_only));
+
+        let max_only = params(&[("total_profit_max", "5000")]);
+        assert!(
+            is_in_range(5000, "total_profit", &max_only),
+            "≤ includes 5000"
+        );
+        assert!(is_in_range(4999, "total_profit", &max_only));
+        assert!(!is_in_range(5001, "total_profit", &max_only));
+
+        // A both-ends range on a single value must keep that value.
+        let exact = params(&[("total_profit_min", "5000"), ("total_profit_max", "5000")]);
+        assert!(is_in_range(5000, "total_profit", &exact));
+        assert!(!is_in_range(4999, "total_profit", &exact));
+        assert!(!is_in_range(5001, "total_profit", &exact));
+
+        // No bounds at all still means "everything".
+        assert!(is_in_range(0, "total_profit", &params(&[])));
+    }
+
+    #[test]
+    fn sort_trades_orders_by_the_requested_column() {
+        let trade = |profit: i64, hours: i16| CurrencyTrade {
+            shop_names: ShopNames { shops: vec![] },
+            cost_item: None,
+            receive_item: None,
+            listing_price: None,
+            price_per_item: 0,
+            number_received: 0,
+            total_profit: profit,
+            hours_between_sales: hours,
+        };
+        let mut rows = vec![trade(10, 5), trade(30, 1), trade(20, 9)];
+        sort_trades(&mut rows, SortMode::Profit, SortDir::Desc);
+        assert_eq!(
+            rows.iter().map(|t| t.total_profit).collect::<Vec<_>>(),
+            [30, 20, 10]
+        );
+        sort_trades(&mut rows, SortMode::HoursBetweenSales, SortDir::Asc);
+        assert_eq!(
+            rows.iter()
+                .map(|t| t.hours_between_sales)
+                .collect::<Vec<_>>(),
+            [1, 5, 9]
+        );
+    }
 
     /// `CurrencySelection` builds its category whitelist from the stable
     /// `ItemUICategory` row IDs (Currency = 100, Miscellany = 61, Other = 63)

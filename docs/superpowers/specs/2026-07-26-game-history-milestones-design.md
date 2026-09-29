@@ -232,3 +232,24 @@ i18n:
 - Is there value in marking the *current* patch's start distinctly, since "since
   the last patch" is a common window a user would want to select? Possibly a
   shortcut on the timeline slicer rather than a band treatment.
+
+## As shipped (#1047)
+
+Deviations pinned in the implementation plan, recorded here when the plan was
+deleted:
+
+- **No expansion-name labels in v1.** Game data became prebuilt LFS rkyv packs
+  (#1033) after this spec was written, so `ex_version` needs a `game-data-pack`
+  sheet addition plus regenerated packs. Bands are hue-coded per expansion and
+  labelled with patch numbers ("7.2"). The `PatchMark` cross-check test is
+  deferred for the same reason.
+- **Coverage-start milestone deferred.** "Earliest sale we hold for the scope's
+  worlds" is an unfiltered `min(sold_date)` over `sales`, off the primary-key
+  prefix, which is the query shape the ClickHouse rules forbid; it needs its own
+  design (probably a tiny rollup).
+- **CN/KR tracks ship empty.** The seed may be incomplete but never wrong; Global
+  is seeded with majors 2.0–7.3 plus the Dawntrail-era point patches
+  (`GAME_PATCHES` in `ultros-api-types/src/game_history.rs`).
+- **Grid cells don't render bands** (cells are ~150px tall); overlay and density
+  only.
+

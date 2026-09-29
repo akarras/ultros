@@ -4,10 +4,10 @@
 //! by-side totals for the user's current price zone and their home
 //! world.
 
+use crate::components::app_link::AppLink;
 use std::collections::{BTreeMap, HashSet};
 
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 use xiv_gen::{ClassJobCategoryId, ItemId};
@@ -16,15 +16,18 @@ use crate::CheapestPrices;
 use crate::api::get_cheapest_listings;
 use crate::components::add_set_to_list::AddSetToList;
 use crate::components::cheapest_price::CheapestPrice;
-use crate::components::crafting_cost::IngredientsIter;
+use crate::components::clipboard::Clipboard;
+use crate::components::crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter};
 use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::tool_help::ToolHeader;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::routes::item_explorer::job_category_lookup;
+use crate::routes::item_explorer::{job_category_lookup, resolve_jobset_param};
+use crate::routes::item_explorer_toolbar::jobset_display_label;
 
 /// Sum the cheapest-of-(NQ,HQ) price across every item in the set
 /// using the given listings map. Mirrors the helper in `JobSetCard`
@@ -261,6 +264,7 @@ where
             id: item.key_id,
             name: item.name.clone(),
             ilvl: item.level_item,
+            level_equip: item.level_equip,
         })
         .collect();
     projections.sort_by(|a, b| {
@@ -283,7 +287,7 @@ pub(crate) struct MaterialEntry {
     pub id: ItemId,
     pub name: String,
     pub amount: i32,
-    /// True for crystal/shard/cluster (item_search_category == 59) —
+    /// True for crystal/shard/cluster (see `CRYSTAL_SEARCH_CATEGORY`) —
     /// the UI groups these visually since they're cheap and not really
     /// part of the "ingredient shopping list" most users care about.
     pub is_shard: bool,
@@ -295,8 +299,8 @@ pub(crate) struct MaterialEntry {
 /// material rises to the top.
 pub(crate) fn aggregate_materials(
     set: &JobSetGroup,
-    recipes: &std::collections::HashMap<xiv_gen::RecipeId, xiv_gen::Recipe>,
-    items: &std::collections::HashMap<ItemId, xiv_gen::Item>,
+    recipes: &xiv_gen::IdMap<xiv_gen::RecipeId, xiv_gen::Recipe>,
+    items: &xiv_gen::IdMap<ItemId, xiv_gen::Item>,
 ) -> Vec<MaterialEntry> {
     let set_ids: HashSet<i32> = set.items.iter().map(|i| i.id.0).collect();
     let mut totals: BTreeMap<i32, i32> = BTreeMap::new();
@@ -316,7 +320,7 @@ pub(crate) fn aggregate_materials(
                 id: ItemId(id),
                 name: item.name.clone(),
                 amount,
-                is_shard: item.item_search_category == 59,
+                is_shard: item.item_search_category == CRYSTAL_SEARCH_CATEGORY,
             })
         })
         .collect();
@@ -333,29 +337,39 @@ pub(crate) fn aggregate_materials(
 /// section. Inlines an icon, name, quantity, and cheapest NQ price so
 /// the user can eyeball "how much will this set cost in ingredients?"
 fn material_row(m: MaterialEntry) -> impl IntoView {
+    let i18n = use_i18n();
     let id = m.id.0;
     let name = m.name.clone();
+    let copy_name = m.name.clone();
     let amount = m.amount;
     view! {
-        <A
-            href=format!("/item/{}", id)
-            attr:class="group flex flex-row items-center gap-2 p-2 rounded-lg panel \
-                       border border-white/5 hover:border-brand-500/30 transition-colors"
-        >
-            <div class="shrink-0 flex items-center justify-center w-8 h-8">
-                <ItemIcon item_id=id icon_size=IconSize::Small />
-            </div>
-            <div class="flex flex-col min-w-0 flex-1">
-                <span class="font-medium text-xs leading-snug line-clamp-1 group-hover:text-brand-300 transition-colors">
-                    {name}
-                </span>
-                <div class="flex flex-row items-center gap-1.5 text-[10px] text-[color:var(--color-text-muted)]">
-                    <span>"× "{amount}</span>
-                    <span>"•"</span>
-                    <CheapestPrice item_id=xiv_gen::ItemId(id) show_hq=false />
+        <div class="flex flex-row items-center gap-1 p-2 rounded-lg panel \
+                    border border-white/5 hover:border-brand-500/30 transition-colors">
+            <AppLink
+                href=format!("/item/{}", id)
+                attr:class="group flex flex-row items-center gap-2 min-w-0 flex-1"
+            >
+                <div class="shrink-0 flex items-center justify-center w-8 h-8">
+                    <ItemIcon item_id=id icon_size=IconSize::Small />
                 </div>
+                <div class="flex flex-col min-w-0 flex-1">
+                    <span class="font-medium text-xs leading-snug line-clamp-1 group-hover:text-brand-300 transition-colors">
+                        {name}
+                    </span>
+                    <div class="flex flex-row items-center gap-1.5 text-[10px] text-[color:var(--color-text-muted)]">
+                        <span>"× "{amount}</span>
+                        <span>"•"</span>
+                        <CheapestPrice item_id=xiv_gen::ItemId(id) show_hq=false />
+                    </div>
+                </div>
+            </AppLink>
+            <div
+                class="shrink-0 p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                title=t_string!(i18n, item_explorer_copy_name).to_string()
+            >
+                <Clipboard clipboard_text=copy_name />
             </div>
-        </A>
+        </div>
     }
     .into_any()
 }
@@ -370,25 +384,7 @@ pub fn JobSetDetail() -> impl IntoView {
     // Resolve the job acronym from the route, same as `JobItems` does.
     let canonical_abbr = Memo::new(move |_| {
         let raw = params().get("jobset").map(|s| s.to_string())?;
-        let decoded = percent_encoding::percent_decode_str(&raw)
-            .decode_utf8()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|_| raw.clone());
-        let lower = decoded.to_lowercase();
-        Some(
-            data.class_jobs
-                .iter()
-                .find_map(|(_id, job)| {
-                    let abbr = job.abbreviation.as_str();
-                    let name = job.name.as_str();
-                    if abbr.eq_ignore_ascii_case(&lower) || name.eq_ignore_ascii_case(&lower) {
-                        Some(abbr.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(decoded),
-        )
+        resolve_jobset_param(data, &raw)
     });
 
     let target_ilvl = Memo::new(move |_| {
@@ -438,12 +434,18 @@ pub fn JobSetDetail() -> impl IntoView {
 
     // Default-zone listings already live in app context — reuse them.
     let cheapest_prices = use_context::<CheapestPrices>();
-    let default_zone_listings = cheapest_prices.map(|p| p.read_listings);
+    let default_zone_listings = cheapest_prices.map(|p| p.demand());
 
     let set_stem = Signal::derive(move || group.get().map(|g| g.stem).unwrap_or_default());
+    // Show the visitor's localized abbreviation, not the canonical English
+    // acronym the route is keyed on — a German player browsing Krieger gear
+    // should not see the heading read "WAR".
     let job_name = Memo::new(move |_| {
-        canonical_abbr
-            .get()
+        params()
+            .get("jobset")
+            .as_ref()
+            .and_then(|raw| jobset_display_label(data, raw))
+            .or_else(|| canonical_abbr.get())
             .unwrap_or_else(|| t_string!(i18n, job_set_default).to_string())
     });
     let back_href = Memo::new(move |_| {
@@ -476,7 +478,7 @@ pub fn JobSetDetail() -> impl IntoView {
 
     // Defer the price-resource-driven materials totals until after the first
     // client render. The default-zone column reads the shared `CheapestPrices`
-    // `read_listings` resource and the home-world column reads
+    // resource (via `demand()`) and the home-world column reads
     // `home_world_listings`, both via `.with()`/`.get()` — which (same gotcha
     // as #740/#742) do NOT subscribe-and-suspend the wrapping `<Suspense>`. So
     // SSR renders the body with the resource pending (`total`/`shard_total`
@@ -503,41 +505,56 @@ pub fn JobSetDetail() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, job_set_detail_desc).to_string().replace("%set%", &set_stem()) />
 
         <div class="flex flex-col gap-4">
-            <div class="flex flex-row items-center gap-3 flex-wrap">
-                <A
-                    href=back_href
-                    attr:class="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg \
-                               bg-white/5 hover:bg-white/10 text-[color:var(--color-text-muted)] \
-                               border border-white/5 transition-colors"
-                >
+            <div>
+                <AppLink href=back_href attr:class="btn-ghost inline-flex text-sm">
                     {move || t_string!(i18n, job_set_detail_back).to_string().replace("%job%", &job_name())}
-                </A>
-                <Show when=move || !set_entries.get().is_empty()>
-                    <AddSetToList
-                        button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
-                        tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_tooltip).to_string())
-                        modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_modal_title).to_string())
-                        subject=Signal::derive(move || set_stem.get())
-                        entries=set_entries
-                    />
-                </Show>
-                <Show when=move || has_materials.get()>
-                    <AddSetToList
-                        button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_button).to_string())
-                        tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_tooltip).to_string())
-                        modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_modal_title).to_string())
-                        subject=Signal::derive(move || set_stem.get())
-                        entries=material_entries
-                    />
-                </Show>
+                </AppLink>
             </div>
-
-            <div class="flex flex-row items-baseline gap-3 flex-wrap">
-                <h3 class="text-2xl font-bold">{set_stem}</h3>
-                <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                    {t!(i18n, item_explorer_ilvl_prefix)} " " {move || target_ilvl.get()}
-                </span>
-            </div>
+            // Keep the header outside price boundaries, and refresh its static
+            // text props when client navigation changes the set or locale.
+            {move || {
+                let stem = set_stem.get();
+                let mut title = format!(
+                    "{} · {} {}",
+                    if stem.is_empty() { t_string!(i18n, job_set_default).to_string() } else { stem },
+                    t_string!(i18n, item_explorer_ilvl_prefix),
+                    target_ilvl.get(),
+                );
+                if let Some(level) = group.with(|g| g.as_ref().and_then(|g| g.level_equip)) {
+                    title.push_str(" · ");
+                    title.push_str(
+                        &t_string!(i18n, job_set_card_equip_level)
+                            .to_string()
+                            .replace("%level%", &level.to_string()),
+                    );
+                }
+                view! {
+                    <ToolHeader
+                        title=title
+                        summary=t_string!(i18n, job_set_detail_tool_summary).to_string()
+                        context=t_string!(i18n, job_set_detail_tool_context).to_string()
+                    >
+                        <Show when=move || !set_entries.get().is_empty()>
+                            <AddSetToList
+                                button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
+                                tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_tooltip).to_string())
+                                modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_modal_title).to_string())
+                                subject=Signal::derive(move || set_stem.get())
+                                entries=set_entries
+                            />
+                        </Show>
+                        <Show when=move || has_materials.get()>
+                            <AddSetToList
+                                button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_button).to_string())
+                                tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_tooltip).to_string())
+                                modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_modal_title).to_string())
+                                subject=Signal::derive(move || set_stem.get())
+                                entries=material_entries
+                            />
+                        </Show>
+                    </ToolHeader>
+                }
+            }}
 
             // Per-slot grid, every piece in the set with its NQ/HQ
             // cheapest from the user's active price zone.
@@ -549,16 +566,17 @@ pub fn JobSetDetail() -> impl IntoView {
                             {g.items.into_iter().map(|item| {
                                 let item_id = item.id.0;
                                 let item_name = item.name.clone();
+                                let copy_name = item.name.clone();
                                 let slot = slot_label_from_name(&item_name);
                                 view! {
                                     <div class="flex flex-col p-3 rounded-lg panel border border-white/5">
                                         <div class="flex flex-row items-center gap-3 mb-2">
-                                            <A
+                                            <AppLink
                                                 href=format!("/item/{}", item_id)
                                                 attr:class="shrink-0 flex items-center justify-center w-12 h-12"
                                             >
                                                 <ItemIcon item_id=item_id icon_size=IconSize::Medium />
-                                            </A>
+                                            </AppLink>
                                             <div class="flex flex-col min-w-0">
                                                 {if let Some(label) = slot {
                                                     view! {
@@ -569,13 +587,21 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 } else {
                                                     ().into_any()
                                                 }}
-                                                <A
-                                                    href=format!("/item/{}", item_id)
-                                                    attr:class="font-medium text-sm leading-snug \
-                                                               hover:text-brand-300 transition-colors line-clamp-2"
-                                                >
-                                                    {item_name}
-                                                </A>
+                                                <div class="flex flex-row items-start gap-1 min-w-0">
+                                                    <AppLink
+                                                        href=format!("/item/{}", item_id)
+                                                        attr:class="font-medium text-sm leading-snug \
+                                                                   hover:text-brand-300 transition-colors line-clamp-2"
+                                                    >
+                                                        {item_name}
+                                                    </AppLink>
+                                                    <div
+                                                        class="shrink-0 p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                                                        title=t_string!(i18n, item_explorer_copy_name).to_string()
+                                                    >
+                                                        <Clipboard clipboard_text=copy_name />
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                         <div class="flex flex-col gap-1.5 mt-1 pt-2 border-t border-white/5 text-sm">
@@ -642,7 +668,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 {match (shard_total, total) {
                                                     (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
                                                         <div class="text-[11px] text-[color:var(--color-text-muted)]">
-                                                            {t!(i18n, job_set_detail_materials_total_with_shards)} " "
+                                                            {t!(i18n, job_set_detail_materials_total_with_crystals)} " "
                                                             <Gil amount=with_shards as i32 />
                                                         </div>
                                                     }.into_any(),
@@ -682,7 +708,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 {match (shard_total, total) {
                                                     (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
                                                         <div class="text-[11px] text-[color:var(--color-text-muted)]">
-                                                            {t!(i18n, job_set_detail_materials_total_with_shards)} " "
+                                                            {t!(i18n, job_set_detail_materials_total_with_crystals)} " "
                                                             <Gil amount=with_shards as i32 />
                                                         </div>
                                                     }.into_any(),
@@ -702,7 +728,7 @@ pub fn JobSetDetail() -> impl IntoView {
                             view! {
                                 <div class="mt-3 pt-3 border-t border-white/5">
                                     <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)] mb-2">
-                                        {t!(i18n, job_set_detail_materials_shards)}
+                                        {t!(i18n, job_set_detail_materials_crystals)}
                                     </div>
                                     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-2">
                                         {shards.into_iter().map(material_row).collect::<Vec<_>>()}
@@ -778,6 +804,7 @@ mod tests {
             id: ItemId(id),
             name: name.to_string(),
             ilvl: 770,
+            level_equip: 100,
         }
     }
 
@@ -837,6 +864,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a"), item(2, "b")],
         };
         let prices = map_with(&[(1, false, 100), (1, true, 200), (2, true, 50)]);
@@ -848,6 +876,7 @@ mod tests {
         let group = JobSetGroup {
             stem: "x".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "a")],
         };
         assert_eq!(set_total(&group, &map_with(&[]), false), None);
@@ -983,10 +1012,10 @@ mod tests {
 
     #[test]
     fn find_set_returns_stable_item_order_for_hydration() {
-        // The real route feeds `find_set_for_job` from a HashMap. SSR
-        // and WASM can observe different HashMap iteration orders; if
-        // the detail grid order changes during hydration, Leptos can
-        // pair an item's icon/link href with a neighboring item's name.
+        // If the detail grid order changes between the SSR render and
+        // hydration, Leptos can pair an item's icon/link href with a
+        // neighboring item's name — so the order must not depend on how the
+        // caller happened to enumerate the items.
         const SAM_CAT: i32 = 65;
         let items = [
             make_item(5, "Courtly Lover's Boots of Striking", 770, SAM_CAT, 9824),
@@ -1021,6 +1050,42 @@ mod tests {
                 "Courtly Lover's Temple Chain of Striking",
             ]
         );
+    }
+
+    #[test]
+    fn find_set_excludes_ornate_variant_from_set_and_total() {
+        // Regression for /items/jobset/samurai/set/770: the set carried
+        // both "Courtly Lover's Cloak of Striking" AND "Ornate Courtly
+        // Lover's Cloak of Striking" — two chest pieces, with the Ornate
+        // one legitimately listed around 16M gil — so the set total read
+        // ~16.7M instead of the ~760k a wearable set actually costs.
+        const SAM_CAT: i32 = 65;
+        let items = [
+            make_item(1, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(2, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+            make_item(
+                3,
+                "Ornate Courtly Lover's Cloak of Striking",
+                770,
+                SAM_CAT,
+                9821,
+            ),
+        ];
+
+        let group = find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 770)
+            .expect("770 set must resolve");
+        assert_eq!(group.stem, "Courtly Lover's");
+        let mut got_ids: Vec<i32> = group.items.iter().map(|i| i.id.0).collect();
+        got_ids.sort();
+        assert_eq!(got_ids, vec![1, 2], "ornate variant must not join the set");
+
+        // And the total only counts the wearable pieces.
+        let prices = map_with(&[
+            (1, true, 100_000),
+            (2, true, 100_000),
+            (3, true, 16_000_000),
+        ]);
+        assert_eq!(set_total(&group, &prices, false), Some(200_000));
     }
 
     #[test]
@@ -1096,20 +1161,24 @@ mod tests {
         let set = JobSetGroup {
             stem: "Courtly Lover's".to_string(),
             ilvl: 770,
+            level_equip: Some(100),
             items: vec![item(1, "Cloak"), item(2, "Brais")],
         };
         // Item 1 needs 2 fiber + 3 shards; item 2 needs 1 fiber + 5 shards.
         // Item 99 is a different set's recipe — must NOT contribute.
-        let recipes: HashMap<RecipeId, Recipe> = [
+        let recipes: xiv_gen::IdMap<RecipeId, Recipe> = [
             (RecipeId(10), make_recipe(10, 1, &[(100, 2), (59, 3)])),
             (RecipeId(11), make_recipe(11, 2, &[(100, 1), (59, 5)])),
             (RecipeId(12), make_recipe(12, 99, &[(100, 1000)])),
         ]
         .into_iter()
         .collect();
-        let items: HashMap<ItemId, Item> = [
+        let items: xiv_gen::IdMap<ItemId, Item> = [
             (ItemId(100), make_item(100, "Garlean Fiber", 0, 0, 51)),
-            (ItemId(59), make_item(59, "Wind Shard", 0, 0, 59)),
+            (
+                ItemId(59),
+                make_item(59, "Wind Shard", 0, 0, CRYSTAL_SEARCH_CATEGORY),
+            ),
         ]
         .into_iter()
         .collect();
@@ -1130,10 +1199,11 @@ mod tests {
         let set = JobSetGroup {
             stem: "Vendor".to_string(),
             ilvl: 100,
+            level_equip: Some(100),
             items: vec![item(500, "Vendor Sword")],
         };
-        let recipes: HashMap<RecipeId, Recipe> = HashMap::new();
-        let items: HashMap<ItemId, Item> = HashMap::new();
+        let recipes: xiv_gen::IdMap<RecipeId, Recipe> = xiv_gen::IdMap::new();
+        let items: xiv_gen::IdMap<ItemId, Item> = xiv_gen::IdMap::new();
         assert!(aggregate_materials(&set, &recipes, &items).is_empty());
     }
 

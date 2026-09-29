@@ -4,13 +4,19 @@ pub mod common_type_conversions;
 mod discord;
 pub mod entity;
 mod ffxiv_character;
+pub mod group_roles;
+pub mod guest_list_adoption;
+pub mod list_doc;
+pub mod list_projection_check;
 pub mod listings;
 pub mod lists;
+pub mod market_sweep;
 pub mod recently_updated;
 pub mod retainers;
 pub mod sales;
 pub mod world_data;
 
+pub use alerts::{NewAlertEvent, NewMarketTriggerAlert};
 pub use sea_orm::ActiveValue;
 pub use sea_orm::error::DbErr as SeaDbErr;
 
@@ -29,6 +35,54 @@ use ultros_api_types::Retainer;
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
+
+/// Pool ceiling when `POSTGRES_MAX_CONNECTIONS` is unset.
+///
+/// Was 300, which exceeds a stock Postgres `max_connections = 200` on its own:
+/// one instance could claim the whole server, and two were enough to hand the
+/// third `pool timed out while waiting for an open connection` at startup. A
+/// default that cannot be run twice on one database is a footgun, so this now
+/// matches the value `.env.example` has always suggested. Deployments that
+/// genuinely need a larger pool set the variable explicitly.
+const DEFAULT_MAX_CONNECTIONS: u32 = 50;
+
+/// A default above a stock Postgres `max_connections = 200` lets one instance
+/// claim the whole server. Whatever this value becomes, four instances against
+/// a stock server have to stay inside it — enforced at compile time so raising
+/// the default is a deliberate act rather than an accident.
+const _: () = assert!(DEFAULT_MAX_CONNECTIONS * 4 <= 200);
+
+/// Connections the pool opens eagerly and holds, when the ceiling allows it.
+const DEFAULT_MIN_CONNECTIONS: u32 = 10;
+
+/// Read a `u32` from `name`, logging and ignoring a value that will not parse.
+fn env_u32(name: &str) -> Option<u32> {
+    std::env::var(name).ok().and_then(|raw| {
+        raw.parse::<u32>()
+            .map_err(|e| error!(error = %e, variable = name, "Unable to read env variable"))
+            .ok()
+    })
+}
+
+/// Decide how many connections the pool opens eagerly and holds.
+///
+/// The floor used to be a hard-coded 10, which made a small pool impossible to
+/// ask for: `POSTGRES_MAX_CONNECTIONS=2` still opened ten connections eagerly,
+/// five times the ceiling it was given.
+///
+/// Clamping to the ceiling is necessary but not sufficient. A floor of 10 under
+/// a ceiling of 15 leaves only five connections of headroom, and `Migrator::up`
+/// needs some of that to run — which is why a server would not start at
+/// `POSTGRES_MAX_CONNECTIONS=15` even with 21 connections free on the box. So
+/// the floor is also settable outright via `POSTGRES_MIN_CONNECTIONS`, for
+/// exactly the case this knob exists for: several instances sharing one
+/// Postgres, where eagerly holding connections you are not using is the
+/// problem.
+fn min_connections_for(max_connections: u32, requested: Option<u32>) -> u32 {
+    requested
+        .unwrap_or(DEFAULT_MIN_CONNECTIONS)
+        .min(max_connections)
+}
 
 #[derive(Clone, Debug)]
 pub struct UltrosDb {
@@ -50,23 +104,27 @@ impl UltrosDb {
         let _ = dotenv();
         let url = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL environment variable");
         let mut opt = ConnectOptions::new(url);
-        let max_connections = std::env::var("POSTGRES_MAX_CONNECTIONS")
-            .ok()
-            .and_then(|connections| {
-                connections
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        error!(error = %e, "Unable to read POSTGRES_MAX_CONNECTIONS env variable");
-                        e
-                    })
-                    .ok()
-            })
-            .unwrap_or(300);
-        opt.max_connections(max_connections).min_connections(10);
+        let max_connections =
+            env_u32("POSTGRES_MAX_CONNECTIONS").unwrap_or(DEFAULT_MAX_CONNECTIONS);
+        let min_connections =
+            min_connections_for(max_connections, env_u32("POSTGRES_MIN_CONNECTIONS"));
+        info!(max_connections, min_connections, "sizing the database pool");
+        opt.max_connections(max_connections)
+            .min_connections(min_connections);
         let db: DatabaseConnection = Database::connect(opt).await?;
         Migrator::up(&db, None).await?;
 
         Ok(Self { db })
+    }
+
+    /// Wrap an already-open connection **without** running migrations.
+    ///
+    /// For one-shot tools and integration tests that read a database owned by
+    /// something else — `connect()` refuses a database that has migrations this
+    /// build doesn't know about (a shared dev Postgres that a newer branch has
+    /// migrated), and a tool that only reads must not be blocked by that.
+    pub fn from_connection(db: DatabaseConnection) -> Self {
+        Self { db }
     }
 
     #[instrument(skip(self))]
@@ -149,7 +207,10 @@ impl UltrosDb {
             .collect();
 
         let val = retainer::Entity::find()
-            .filter(retainer::Column::Name.like(format!("{retainer_name}%")))
+            .filter(
+                retainer::Column::Name
+                    .like(format!("{}%", group_roles::escape_like(&retainer_name))),
+            )
             .limit(10)
             .all(&self.db)
             .await?;
@@ -216,30 +277,6 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or_else(|| anyhow::Error::msg("Region not found"))
-    }
-
-    #[instrument(skip(self, world_id, item))]
-    pub async fn get_multiple_listings_for_worlds_hq_sensitive(
-        &self,
-        world_id: impl Iterator<Item = WorldId>,
-        item: impl Iterator<Item = ItemId> + Clone,
-        hq: bool,
-        limit: u64,
-    ) -> Result<Vec<active_listing::Model>> {
-        use active_listing::*;
-        let join = futures::future::try_join_all(world_id.flat_map(|world| {
-            item.clone().map(move |i| {
-                Entity::find()
-                    .filter(Column::ItemId.eq(i.0))
-                    .filter(Column::WorldId.eq(world.0))
-                    .filter(Column::Hq.eq(hq))
-                    .order_by_asc(Column::PricePerUnit)
-                    .limit(limit)
-                    .all(&self.db)
-            })
-        }))
-        .await?;
-        Ok(join.into_iter().flat_map(|l| l.into_iter()).collect())
     }
 
     #[instrument(skip(self))]
@@ -347,6 +384,20 @@ impl UltrosDb {
                 .await?;
             retainer.id
         };
+        use active_listing::{Column, Entity};
+        use sea_orm::ExprTrait;
+        let materia = (!listing.materia.is_empty()).then(|| {
+            active_listing::MateriaList(
+                listing
+                    .materia
+                    .iter()
+                    .map(|m| active_listing::Materia {
+                        slot_id: m.slot_id.map(|s| s as i32),
+                        materia_id: m.materia_id as i32,
+                    })
+                    .collect(),
+            )
+        });
         let m = active_listing::ActiveModel {
             world_id: Set(world_id.0),
             item_id: Set(item_id.0),
@@ -355,10 +406,46 @@ impl UltrosDb {
             quantity: Set(quantity),
             hq: Set(listing.hq),
             timestamp: Set(listing.last_review_time.naive_utc()),
+            listing_id: Set(listing.listing_id.clone()),
+            materia: Set(materia),
+            stain_id: Set(listing.stain_id.map(|s| s as i32)),
+            creator_name: Set(listing.creator_name.clone().filter(|n| !n.is_empty())),
+            is_crafted: Set(listing.is_crafted),
+            on_mannequin: Set(listing.on_mannequin),
             ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
+        };
+        // Upsert on the listing's Universalis identity. This is what makes
+        // concurrent writers safe: any two tasks racing to store the same
+        // listing — duplicate websocket events, catch-up vs. socket, the manual
+        // refresh route — collapse into one row at the database instead of each
+        // trusting its own pre-insert read. The `WHERE` mirrors the partial
+        // unique index `idx_active_listing_identity`; a listing with no
+        // `listing_id` can't conflict and inserts plainly (legacy diff paths
+        // are responsible for not calling us with duplicates of those).
+        let m = Entity::insert(m)
+            .on_conflict(
+                sea_query::OnConflict::columns([
+                    Column::WorldId,
+                    Column::ItemId,
+                    Column::ListingId,
+                ])
+                .target_and_where(sea_query::Expr::col(Column::ListingId).is_not_null())
+                .update_columns([
+                    Column::RetainerId,
+                    Column::PricePerUnit,
+                    Column::Quantity,
+                    Column::Hq,
+                    Column::Timestamp,
+                    Column::Materia,
+                    Column::StainId,
+                    Column::CreatorName,
+                    Column::IsCrafted,
+                    Column::OnMannequin,
+                ])
+                .to_owned(),
+            )
+            .exec_with_returning(&self.db)
+            .await?;
         Ok(m)
     }
 
@@ -500,4 +587,42 @@ impl UltrosDb {
 #[derive(Debug, FromQueryResult)]
 pub struct UniqueItemId {
     pub item: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_MIN_CONNECTIONS, min_connections_for};
+
+    #[test]
+    fn a_roomy_ceiling_keeps_the_usual_floor() {
+        assert_eq!(min_connections_for(300, None), DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(min_connections_for(50, None), DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(min_connections_for(10, None), DEFAULT_MIN_CONNECTIONS);
+    }
+
+    #[test]
+    fn a_small_ceiling_lowers_the_floor_to_match() {
+        // THE BUG: the floor was a hard-coded 10, so `POSTGRES_MAX_CONNECTIONS=2`
+        // eagerly opened five times the pool it asked for. Several instances
+        // sharing one Postgres is precisely when someone sets it that low.
+        assert_eq!(min_connections_for(2, None), 2);
+        assert_eq!(min_connections_for(1, None), 1);
+    }
+
+    #[test]
+    fn an_explicit_floor_wins_under_a_roomy_ceiling() {
+        // Clamping alone does not cover this: a ceiling of 15 leaves the default
+        // floor of 10 untouched, and the five connections of headroom left over
+        // were not enough for `Migrator::up` to start a server. Being able to
+        // say "hold two" is what makes the ceiling usable at that size.
+        assert_eq!(min_connections_for(15, Some(2)), 2);
+        assert_eq!(min_connections_for(300, Some(0)), 0);
+    }
+
+    #[test]
+    fn an_explicit_floor_is_still_clamped_to_the_ceiling() {
+        // A floor above the ceiling is not a pool, it is a deadlock waiting to
+        // happen, so the ceiling wins regardless of what was asked for.
+        assert_eq!(min_connections_for(5, Some(50)), 5);
+    }
 }

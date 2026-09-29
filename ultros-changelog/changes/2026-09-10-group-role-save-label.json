@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Clearer group role controls",
+  "blurb": "Screen readers now identify the button that saves a renamed group role."
+}

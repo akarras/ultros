@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "You can now leave a group you've joined",
+  "blurb": "Members can leave a group from its member list instead of asking the owner to remove them. The owner still manages the group itself.",
+  "link": "/groups",
+  "importance": "medium"
+}

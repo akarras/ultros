@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Vendor resale drops the fantasy prices",
+  "blurb": "Listings priced far above what an item actually sells for are hidden from vendor resale, and the sort headers no longer get stuck.",
+  "link": "/vendor-resale",
+  "importance": "medium"
+}

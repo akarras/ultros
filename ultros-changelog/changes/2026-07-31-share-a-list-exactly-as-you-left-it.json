@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "Share a list exactly as you left it",
+  "blurb": "Sorting and filters on a list are kept in the address bar, so a link you paste shows what you were looking at. Deleting a list now asks first.",
+  "link": "/list",
+  "importance": "medium"
+}

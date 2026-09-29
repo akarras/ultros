@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Fewer server errors right as a page finishes loading",
+  "blurb": "The server could crash in the last moments of building a page, when a background step was still running as the page was being torn down. It now waits for that step to finish first."
+}

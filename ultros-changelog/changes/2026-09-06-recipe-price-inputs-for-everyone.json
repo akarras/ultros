@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Recipe price inputs are ready for everyone",
+  "blurb": "Choose the prices and markets behind recipe profits without enabling Labs. Formula column headers now leave room for their labels, and price comparisons and travel columns are available to everyone.",
+  "link": "/recipe-analyzer"
+}

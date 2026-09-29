@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Correct iOS notification device labels",
+  "blurb": "New browser notification subscriptions that identify as an iPhone or iPad are now labeled iOS instead of macOS.",
+  "link": "/settings",
+  "importance": "medium"
+}

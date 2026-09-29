@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Analyzer menus close each other again",
+  "blurb": "In the flip finder and the other analyzers, opening Views or Market left the Columns or Filter menu open underneath, stacking two panels over the table. Opening any one of the control bar's menus now closes the rest.",
+  "link": "/flip-finder"
+}

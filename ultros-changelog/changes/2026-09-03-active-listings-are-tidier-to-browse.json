@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Active listings are tidier to browse",
+  "blurb": "The listings table's Show more control now matches sale history and stays outside the table's scroll area. Datacenter exclusions use one clear, theme-aware toggle per datacenter, show how many listings remain, and offer a reset instead of leaving an empty table behind. They also stay scoped to the listings table, so filtering it no longer blanks the price summary or other item-page sections.",
+  "link": "/items",
+  "importance": "medium"
+}

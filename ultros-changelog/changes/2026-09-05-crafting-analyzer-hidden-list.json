@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Keep crafting results responsive",
+  "blurb": "Fixed a crash that could stop the FC crafting analyzer from responding.",
+  "link": "/fc-crafting-analyzer"
+}

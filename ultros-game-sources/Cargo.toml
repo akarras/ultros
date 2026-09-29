@@ -1,0 +1,13 @@
+[package]
+name = "ultros-game-sources"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Game-data record sets (currencies, ventures, scrip turn-ins, shop NPCs) shared by the pages and the server's search index."
+
+[dependencies]
+xiv-gen.workspace = true
+
+[dev-dependencies]
+# The tests run against the real pinned game data.
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }

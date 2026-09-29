@@ -1,0 +1,17 @@
+[package]
+name = "ultros-server-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Foundation shared by the Ultros server's service crates: the in-process event buses and process-wide switches."
+
+[dependencies]
+metrics = "0.24.5"
+tokio = { workspace = true }
+tracing = { workspace = true }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-db = { path = "../ultros-db" }
+
+[features]
+# Exposes the E2E market-fixture isolation switch; see `test_market_isolation`.
+test-auth = []

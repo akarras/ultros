@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Lists 2.0: prices load on their own, plus a tidier toolbar",
+  "blurb": "Device lists now price themselves as soon as they have items, using your price zone when the list has no scope of its own. Online lists get an inline \"Prices from\" picker beside the travel limit, Make Place import opens in a modal, and the Shop tab picks routes from the per-trip cards alone — the old Quick picks row is gone. Firefox no longer shows permanent spin buttons on quantity fields."
+}

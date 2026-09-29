@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Pick the market right on the price chip",
+  "blurb": "Vendor Sell, Leve Analyzer, Scrip Sources, Venture Analyzer and FC Crafting no longer put a separate Price scope control in the corner of the page. The market now sits on the price it changes, like the Recipe Analyzer: Listing · North-America, with each option named after the actual world, datacenter or region. Flip Finder gets the same picker on Buy price, which switches between your region and your region plus the connected regions."
+}

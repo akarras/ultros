@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "The app downloads in about half the size",
+  "blurb": "The browser bundle that powers the site is now built with type-erased components, link-time optimisation and pre-compressed assets, cutting the download on a fresh visit from roughly 7 MB to roughly 3 MB. Pages, navigation and features are unchanged; the site just starts sooner on a cold cache."
+}

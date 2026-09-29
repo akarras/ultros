@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Disabled undercut alerts stay disabled",
+  "blurb": "An undercut alert you had switched off quietly came back to life whenever the server restarted, so if you had also set up a new one you got every undercut twice — identical inbox rows, Discord and push messages a fraction of a second apart. Disabled undercut alerts now stay off across restarts.",
+  "importance": "medium"
+}

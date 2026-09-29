@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "More detail in historical market statistics",
+  "blurb": "Listing statistics now include observed turnover, floor ranges, matched sale times, and stock estimates for 1, 7, 30, or 90 days, with gaps in available history made explicit."
+}

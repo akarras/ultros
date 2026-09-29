@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "See why a craft costs what it does",
+  "blurb": "Tap the receipt next to any recipe in the Recipe Analyzer to open its cost breakdown: every ingredient with its quantity, unit price and where it came from (market, vendor, sub-craft or your own stock), the crystals left out of the cost, and the sale price, tax and profit behind the ranking. Add to craft list sends the ingredients to one of your lists, with HQ already on when you asked for HQ ingredients.",
+  "link": "/recipe-analyzer"
+}

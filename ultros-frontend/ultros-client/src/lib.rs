@@ -6,8 +6,6 @@ use gloo_net::http::Request;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::{prelude::*, task::spawn_local};
 use log::{Level, error, info};
-use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ultros_api_types::{
     bootstrap::Bootstrap, user::UserData, world::WorldData, world_helper::WorldHelper,
@@ -15,13 +13,6 @@ use ultros_api_types::{
 use ultros_app::*;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-
-#[derive(Serialize, Deserialize)]
-struct Data {
-    version: String,
-    #[serde(with = "serde_bytes")]
-    data: Vec<u8>,
-}
 
 async fn retry<F, Fut, O, E>(fut: F, max_retries: i32) -> Result<O, E>
 where
@@ -39,16 +30,6 @@ where
     Err(last_error.unwrap())
 }
 
-async fn open_transaction(rexie: &Rexie) -> Result<(Transaction, Store)> {
-    let transaction = rexie
-        .transaction(&["game_data"], TransactionMode::ReadWrite)
-        .map_err(|e| anyhow!("failed to open db {e}"))?;
-    let game_data = transaction
-        .store("game_data")
-        .map_err(|e| anyhow!("failed to open store {e}"))?;
-    Ok((transaction, game_data))
-}
-
 fn get_i18n_lang() -> String {
     #[allow(unused_mut)]
     let mut default_lang = "en".to_string();
@@ -57,6 +38,20 @@ fn get_i18n_lang() -> String {
         use wasm_bindgen::JsCast;
         let window = leptos::prelude::window();
         if let Some(document) = window.document() {
+            // SSR resolves explicit ?lang before cookies and browser language.
+            // Load that exact game-data pack before hydration walks the DOM.
+            if let Some(lang) = document
+                .document_element()
+                .and_then(|html| html.get_attribute("lang"))
+                .filter(|lang| {
+                    matches!(
+                        lang.as_str(),
+                        "en" | "ja" | "de" | "fr" | "cn" | "ko" | "tc"
+                    )
+                })
+            {
+                return lang;
+            }
             if let Some(html_doc) = document.dyn_ref::<web_sys::HtmlDocument>() {
                 if let Ok(cookie) = html_doc.cookie() {
                     for part in cookie.split(';') {
@@ -75,97 +70,20 @@ fn get_i18n_lang() -> String {
     }
 }
 
-async fn init_data() -> anyhow::Result<Vec<u8>> {
-    let version = xiv_gen::data_version();
-    let lang = get_i18n_lang();
-    let response = Request::get(&format!("/static/data/{}/{}.rkyv", version, lang))
-        .send()
-        .await?
-        .binary()
-        .await?;
-    xiv_gen_db::try_init(&response)?;
-    Ok(response)
-}
-
-async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()> {
-    // load local storage data for the current game version, if we don't have it get it from the server, store it, and init db
-    let version = format!("{}-{}", xiv_gen::data_version(), get_i18n_lang());
-    {
-        let (transaction, game_data) = open_transaction(rexie).await?;
-        #[allow(clippy::collapsible_if)]
-        if let Ok(Some(value)) = game_data.get(version.clone().into()).await {
-            if !value.is_null() && !value.is_undefined() {
-                match serde_wasm_bindgen::from_value::<Data>(value) {
-                    Ok(value) => match xiv_gen_db::try_init(&value.data) {
-                        Ok(()) => return Ok(()),
-                        Err(e) => error!("Error initializing using data {e}"),
-                    },
-                    Err(e) => error!("Error converting indexdb to data {e}"),
-                };
-
-                error!("failed to deserialize data. removing {version}");
-                game_data
-                    .delete(version.clone().into())
-                    .await
-                    .map_err(|_| anyhow!("error deleting?"))?;
-                transaction
-                    .done()
-                    .await
-                    .map_err(|e| anyhow!("error closing first transaction {e}"))?;
-            }
-        }
-    }
-    let response = init_data().await?;
-    let data = serde_wasm_bindgen::to_value(&Data {
-        version: version.to_string(),
-        data: response.clone(),
-    })
-    .map_err(|e| anyhow!("error serializing data {e}"))?;
-    let (transaction, game_data) = open_transaction(rexie).await?;
-    // allow the app to run if we can init
-    // soft fail if we can't store
-    game_data
-        .clear()
-        .await
-        .map_err(|e| anyhow!("error clearing store {e}"))?;
-    if let Err(e) = game_data
-        .add(&data, None)
-        .await
-        .map_err(|e| anyhow!("Error adding game data {e}"))
-    {
-        error!("Failed to store data {e}");
-    }
-    if let Err(e) = transaction
-        .done()
-        .await
-        .map_err(|_| anyhow!("error waiting for tranasction to finish"))
-    {
-        error!("failed to finish transaction {e}");
-    }
-    Ok(())
-}
-
-async fn try_build_db() -> Result<Rexie> {
-    Rexie::builder("ultros")
-        .version(1)
-        .add_object_store(ObjectStore::new("game_data").key_path("version"))
-        .build()
-        .await
-        .map_err(|e| anyhow!("failed to build db {e}"))
-}
-
 pub async fn try_populate_xiv_gen_data() -> anyhow::Result<()> {
-    if let Ok(rexie) = try_build_db().await {
-        if let Err(_e) = retry(|| try_populate_xiv_gen_data_internal(&rexie), 3).await {
-            let _ = init_data().await?;
-        }
-    } else {
-        let _ = init_data().await?;
-    }
-    // Need to trigger a reactive update here if data() changed
-    // In practice try_init already updates the atomic XIV_DATA state
-    // We should trigger a UI update.
-    Ok(())
+    retry(
+        || async {
+            let response = Request::get(&xiv_gen_db::startup_url(&get_i18n_lang()))
+                .send()
+                .await?;
+            if !response.ok() {
+                return Err(anyhow!("game data request failed: {}", response.status()));
+            }
+            xiv_gen_db::try_init(&response.binary().await?)
+        },
+        3,
+    )
+    .await
 }
 
 async fn populate_xiv_gen_data() -> anyhow::Result<()> {
@@ -233,7 +151,21 @@ async fn fetch_current_user_fallback() -> Option<UserData> {
     }
 }
 
+/// `js_sys::Error` exposes no `stack` getter; it is a plain (non-standard
+/// but universal) property, so read it reflectively.
+fn error_stack(error: &js_sys::Error) -> String {
+    js_sys::Reflect::get(error, &JsValue::from_str("stack"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
 fn set_panic_hook() {
+    // V8 keeps only 10 frames by default. A Rust panic spends that many on
+    // its own machinery (`begin_panic_handler`, `rust_panic_with_hook`, this
+    // hook, `console_error_panic_hook`, the `Error()` import...) before the
+    // panicking site appears, so the captured stack would never reach it.
+    js_sys::Error::set_stack_trace_limit(&JsValue::from_f64(50.0));
     std::panic::set_hook(Box::new(|panic_info| {
         console_error_panic_hook::hook(panic_info);
         report_rust_panic(panic_info);
@@ -241,6 +173,14 @@ fn set_panic_hook() {
 }
 
 fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
+    // Capture the stack NOW, on the panicking call stack. The reporter call
+    // below is deferred to a timer, and a stack taken there is the timer
+    // trampoline (`__wbg_call -> closure -> reporter`), not the panic site —
+    // which is what every GlitchTip RustWasmPanic event carried until this
+    // capture was added. The browser lists wasm frames as
+    // `ultros.wasm:wasm-function[N]:0x...`; the Sentry `beforeSend` hook
+    // resolves `N` to a Rust function name from `/pkg/<hash>/ultros.symbols`.
+    let stack = error_stack(&js_sys::Error::new(""));
     let message = panic_info
         .payload()
         .downcast_ref::<&str>()
@@ -277,10 +217,11 @@ fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
             let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
                 return;
             };
-            let _ = reporter.call2(
+            let _ = reporter.call3(
                 &JsValue::NULL,
                 &JsValue::from_str(&message),
                 &JsValue::from_str(&location),
+                &JsValue::from_str(&stack),
             );
         },
         std::time::Duration::from_millis(0),
@@ -317,6 +258,44 @@ fn dispatch_boot_event(name: &str) {
     }
 }
 
+// The service worker supplies only a generated anonymous shell on guest-list
+// routes. There is no SSR tree in that document, so it must mount rather than
+// hydrate. Keep the ordinary SSR truncation guard intact everywhere else.
+fn is_offline_guest_shell() -> bool {
+    js_sys::Reflect::get(
+        &js_sys::global(),
+        &JsValue::from_str("__ULTROS_OFFLINE_GUEST__"),
+    )
+    .ok()
+    .and_then(|value| value.as_bool())
+    .unwrap_or(false)
+}
+
+#[wasm_bindgen(module = "/../../ultros/static/guest-offline.mjs")]
+extern "C" {
+    fn prepare_guest_offline(catalog_url: &str, lang: &str);
+}
+
+/// Name of the IndexedDB database game data used to be cached in (via rexie).
+/// Since the browser startup packs (#1575) game data comes from the HTTP cache
+/// and nothing opens it, but browsers that visited before still hold the old
+/// multi-megabyte packs there. Not to be confused with the device-list store,
+/// which is its own database (`ultros-device-lists-v1`).
+const LEGACY_GAME_DATA_DB: &str = "ultros";
+
+/// Drop the orphaned [`LEGACY_GAME_DATA_DB`]. Deleting a database that does
+/// not exist is a no-op, so this is cheap to run on every load; fire and
+/// forget, since nothing waits on the space being reclaimed.
+fn delete_legacy_game_data_db() {
+    let Some(factory) = web_sys::window().and_then(|window| window.indexed_db().ok().flatten())
+    else {
+        return;
+    };
+    if let Err(e) = factory.delete_database(LEGACY_GAME_DATA_DB) {
+        log::warn!("failed to delete legacy game-data IndexedDB: {e:?}");
+    }
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     set_panic_hook();
@@ -327,6 +306,7 @@ pub fn hydrate() {
     log::info!("hydrate mode - hydrating");
     dispatch_boot_event("ultros:wasm-loaded");
     spawn_local(async move {
+        let offline_guest = is_offline_guest_shell();
         info!("fetching..");
         // Use the SSR-injected bootstrap when available; only fall back to
         // network requests if it's missing (e.g. stale cached HTML).
@@ -401,7 +381,7 @@ pub fn hydrate() {
         // `<body>`, so its absence means the document we were handed is
         // incomplete. There is nothing coherent to hydrate against; keep the
         // partial server-rendered markup rather than panicking on it.
-        if document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
+        if !offline_guest && document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
             error!(
                 "SSR document truncated (missing #{SSR_END_SENTINEL_ID}); \
                  skipping hydration to avoid a tachys hydration panic"
@@ -422,17 +402,29 @@ pub fn hydrate() {
                 LocalWorldData::failed(e.to_string())
             }
         };
-        hydrate_body(move || {
+        let app = move || {
             let world_data = world_data.clone();
             let region = region.clone();
             let current_user = current_user.clone();
             provide_context(GuessedRegion(region));
+            provide_context(LoadedGameDataLocale(get_i18n_lang()));
             provide_context(world_data);
             if let Some(current_user) = current_user {
                 provide_context(BootstrapUser(current_user));
             }
             view! { <App /> }
-        });
+        };
+        if offline_guest {
+            if let Some(status) = document().get_element_by_id("offline-boot-status") {
+                status.remove();
+            }
+            leptos::mount::mount_to_body(app);
+        } else {
+            hydrate_body(app);
+        }
         dispatch_boot_event("ultros:hydrated");
+        delete_legacy_game_data_db();
+        let lang = get_i18n_lang();
+        prepare_guest_offline(&xiv_gen_db::startup_url(&lang), &lang);
     });
 }

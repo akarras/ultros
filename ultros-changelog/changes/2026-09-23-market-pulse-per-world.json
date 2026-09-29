@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Home page market totals now match your world",
+  "blurb": "The sales, gil volume and units figures on the home page were showing the total across every world instead of your home world's. They now count your world only, so expect much smaller (and correct) numbers."
+}

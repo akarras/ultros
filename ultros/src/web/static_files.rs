@@ -10,7 +10,7 @@ use axum_extra::headers::ContentType;
 use hyper::header;
 use serde::Deserialize;
 use ultros_api_types::icon_size::IconSize;
-use ultros_xiv_icons::get_item_image;
+use ultros_xiv_icons::{get_item_image, get_map_image};
 
 use crate::web::error::WebError;
 
@@ -112,6 +112,22 @@ pub(crate) struct IconQuery {
 pub(crate) async fn fallback_item_icon() -> impl IntoResponse {
     let fallback_image = include_bytes!("../../static/fallback-image.png");
     (TypedHeader(ContentType::png()), fallback_image)
+}
+
+/// `/static/map/{id}.webp`: the packed image of one in-game map.
+pub(crate) async fn get_map(Path(file): Path<String>) -> Result<Response<body::Body>, WebError> {
+    let bytes = file
+        .strip_suffix(".webp")
+        .and_then(|stem| stem.parse::<i32>().ok())
+        .and_then(get_map_image)
+        .ok_or(WebError::NotFound)?;
+    Ok(Response::builder()
+        .header(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=604800"),
+        )
+        .header(header::CONTENT_TYPE, "image/webp")
+        .body(body::Body::new(http_body_util::Full::from(bytes)))?)
 }
 
 pub(crate) async fn get_item_icon(

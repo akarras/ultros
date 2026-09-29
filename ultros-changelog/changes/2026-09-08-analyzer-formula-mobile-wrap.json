@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Keep analyzer price controls within narrow screens",
+  "blurb": "Price and market selectors now wrap on narrow screens so you can reach every control.",
+  "link": "/recipe-analyzer"
+}

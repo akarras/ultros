@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Listing history columns and a 30-day floor sparkline",
+  "blurb": "Every analyzer's column picker gains more Listings columns: the lowest and highest floor over the selected window, listings added and removed, time to sell, and days of stock. Floor trend (30d) draws the cheapest listing's daily path as a sparkline. While Ultros's history is younger than the window, the column's tooltip says how many days it covers."
+}

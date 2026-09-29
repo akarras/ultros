@@ -1,26 +1,32 @@
 mod alerts_websocket;
 pub(crate) mod api;
-pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
+pub(crate) mod home_feed_cache;
 pub(crate) mod item_card;
+#[cfg(feature = "test-auth")]
+mod list_market_fixture;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
+pub(crate) mod shutdown;
 pub(crate) mod sitemap;
+pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
+pub(crate) mod stats_cache;
+#[cfg(feature = "test-auth")]
+pub(crate) mod test_fixtures;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router, middleware};
-use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::Cookie;
+use axum_extra::extract::PrivateCookieJar;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
-use futures::future::{try_join, try_join_all};
+use futures::future::{try_join_all, try_join3};
 use hyper::header;
 use itertools::Itertools;
 use leptos::prelude::provide_context;
@@ -40,41 +46,53 @@ use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, warn};
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListActivity, ListActivityKind, ListInvite, ListItem,
-    ListSharedGroup, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
+    ListPermission, ListSharedGroup, ListSharedRole, ListSharedUser, ListWithPermission,
+    ShareListGroup, ShareListRole, ShareListUser,
 };
 use ultros_api_types::price_series::{
     HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup,
 };
 use ultros_api_types::retainer::RetainerListings;
-use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
+use ultros_api_types::user::group::{
+    AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
+    DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
+    GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
+    UserGroupDetail, UserGroupMember, UserGroupSummary,
+};
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
 };
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
-    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification, Retainer,
+    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter, Retainer,
+    WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
-use ultros_charts::data::buckets::{bucket_seconds_for_span, snap_bucket_seconds, widen_bucket};
+use ultros_charts::data::buckets::{
+    bucket_seconds_for_span, narrow_bucket_for_actual_span, snap_bucket_seconds, widen_bucket,
+};
 use ultros_clickhouse::ClickHouseClient;
 use ultros_clickhouse::queries::PriceSeriesRow;
 use ultros_db::ActiveValue;
+use ultros_db::common_type_conversions::GroupRoleReturn;
 use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
+use ultros_list_doc::{Quality, RowKey};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
-use self::character_verifier_service::CharacterVerifierService;
+use crate::character_claim::CharacterClaimService;
+use crate::lists::{ListSync, Origin, apply_list_item_edit};
+
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
-use crate::alerts::price_alert_tracker::resolve_item_name;
 use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
 use crate::web::api::alerts::{
-    create_alert, delete_alert, list_alert_events, list_alerts, resend_alert_event, update_alert,
+    clear_alert_events, create_alert, delete_alert, list_alert_events, list_alerts,
+    mark_alert_events_read, resend_alert_event, unread_alert_event_count, update_alert,
 };
 use crate::web::api::endpoints::{
     create_endpoint, delete_endpoint, list_discord_writable_guilds, list_endpoints, test_endpoint,
@@ -82,10 +100,11 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
-    get_movers, get_trends, post_resale_quality, post_sparklines, recent_sales,
+    cheapest_per_world, get_best_deals, get_changelog, get_item_stats, get_listing_stats,
+    get_market_heat, get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality,
+    post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, npc_sitemap, sitemap_index};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -158,33 +177,74 @@ async fn record_list_activity(
     Ok(activity)
 }
 
-fn item_change_payload(
-    before: &ultros_db::entity::list_item::Model,
-    after: &ultros_db::entity::list_item::Model,
-) -> serde_json::Value {
-    let mut changes = serde_json::Map::new();
-    if before.hq != after.hq {
-        changes.insert("hq".to_string(), serde_json::json!([before.hq, after.hq]));
-    }
-    if before.quantity != after.quantity {
-        changes.insert(
-            "quantity".to_string(),
-            serde_json::json!([before.quantity, after.quantity]),
+async fn restore_analyzer_view(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    if req.method() == axum::http::Method::GET
+        && let Some(cookies) = req
+            .headers()
+            .get(header::COOKIE)
+            .and_then(|h| h.to_str().ok())
+        && let Some(target) = ultros_app::last_view::cookie_redirect(
+            req.uri().path(),
+            req.uri().query().unwrap_or_default(),
+            cookies,
+        )
+    {
+        let mut response = Redirect::temporary(&target).into_response();
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
         );
+        response
+            .headers_mut()
+            .insert(header::VARY, axum::http::HeaderValue::from_static("Cookie"));
+        return response;
     }
-    if before.acquired != after.acquired {
-        changes.insert(
-            "acquired".to_string(),
-            serde_json::json!([before.acquired, after.acquired]),
-        );
-    }
-    if before.target_price != after.target_price {
-        changes.insert(
-            "target_price".to_string(),
-            serde_json::json!([before.target_price, after.target_price]),
-        );
-    }
-    serde_json::Value::Object(changes)
+    next.run(req).await
+}
+
+/// The transaction name error events are reported under.
+///
+/// GlitchTip decides which issue an event joins by hashing its title together
+/// with its *culprit*, and an event with no `transaction` falls back to the raw
+/// request URL for that culprit. `sentry-tower`'s `enable_transaction()` only
+/// starts a performance transaction — it never sets the scope's transaction
+/// name — so every error event carried a culprit like
+/// `/api/v1/item_stats/Moogle/35424`, unique per item *and* per world. A
+/// five-second ClickHouse outage on 2026-09-22 minted 50+ single-event issues
+/// out of four distinct failures, which is exactly what stabilising the titles
+/// in `report_title` was meant to prevent.
+///
+/// The matched route is the stable stand-in: `/api/v1/item_stats/{world}/{itemid}`
+/// is the same string for every item, so the burst collapses back into one
+/// issue per `query × kind`. The offending URL is still on the event, in the
+/// request context.
+fn sentry_transaction_name(method: &axum::http::Method, matched: Option<&str>) -> String {
+    // Requests that never matched a route (the static-file/404 fallback) have
+    // no stable name to use. Deliberately *not* falling back to the raw path:
+    // that is the splintering this exists to avoid.
+    format!("{method} {}", matched.unwrap_or("<fallback>"))
+}
+
+/// Names the Sentry scope's transaction after the matched route.
+///
+/// Must sit inside `NewSentryLayer` (so a per-request hub exists to configure)
+/// and inside the router (so `MatchedPath` has been inserted). See
+/// [`sentry_transaction_name`] for why this matters.
+async fn name_sentry_transaction(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let name = sentry_transaction_name(
+        req.method(),
+        req.extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map(|m| m.as_str()),
+    );
+    sentry::configure_scope(|scope| scope.set_transaction(Some(&name)));
+    next.run(req).await
 }
 
 async fn redirect_legacy_book_host(
@@ -239,10 +299,12 @@ async fn world_item_listings(
         .get_all_worlds_in(&selected_value)
         .ok_or_else(|| Error::msg("Unable to get worlds"))?;
     let db_clone = db.clone();
+    let db_clone_2 = db.clone();
     let world_iter = worlds.iter().copied();
-    let (listings, sales) = try_join(
+    let (listings, sales, last_updated) = try_join3(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
         db.get_sale_history_from_multiple_worlds(world_iter, item_id, 200),
+        db_clone_2.get_listing_last_updated_for_worlds(ItemId(item_id), &worlds),
     )
     .await
     .inspect_err(|e| tracing::error!(error = ?e, "Error getting listings"))?;
@@ -252,6 +314,13 @@ async fn world_item_listings(
             .flat_map(|(l, r)| r.map(|r| (l.into(), r.into())))
             .collect(),
         sales: sales.into_iter().map(|s| s.into()).collect(),
+        last_updated: last_updated
+            .into_iter()
+            .map(|updated| WorldItemLastUpdated {
+                world_id: updated.world_id,
+                updated_at: updated.date_time,
+            })
+            .collect(),
     };
     Ok(axum::Json(currently_shown))
 }
@@ -305,6 +374,15 @@ struct PriceSeriesQuery {
     bucket: Option<i64>,
     group: Option<String>,
     hq: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct PriceDensityQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+    bucket: Option<i64>,
+    hq: Option<String>,
+    price_bins: Option<u16>,
 }
 
 /// Above this many sales in the window we stop shipping raw rows and the
@@ -417,6 +495,49 @@ fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
     }
 }
 
+/// How long a cached response stays servable, and — for an open-ended window
+/// — the grain [`open_window_cache_stamp`] quantizes its cache key onto.
+/// Deriving both from one place means exactly one entry per item/scope is live
+/// at a time: the key rolls over on the same schedule the entry expires on.
+///
+/// Capped at an hour so an open window is never served staler than that, and
+/// floored at a minute so a hypothetical sub-minute bucket couldn't turn the
+/// cache into a no-op. A closed window is immutable, so it just takes the cap.
+fn cache_ttl_secs(closed: bool, bucket_seconds: i64) -> u64 {
+    if closed {
+        3_600
+    } else {
+        (bucket_seconds as u64).clamp(60, 3_600)
+    }
+}
+
+/// Quantize an open-ended window's end onto a `grain`-second grid, for use in
+/// the **cache key only** — never for the window actually queried.
+///
+/// An open-ended request ends at "now", so feeding that raw timestamp into the
+/// cache key mints a fresh entry every second and the cache never hits.
+/// Rounding it onto the same grid as the entry's TTL keeps one live entry per
+/// item/scope, which is all the quantization was ever for.
+///
+/// This deliberately moves the *key* and not the queried window. Flooring the
+/// window itself — which both handlers used to do, at `bucket_seconds`
+/// granularity — drags the query's exclusive upper bound backwards, excluding
+/// every sale after the boundary. An open-ended "full history" request
+/// resolves to a 12-year span, the ladder duly picks its widest step (30
+/// days), and so the newest 0–30 days of sales silently vanished from every
+/// chart. Serving a slightly stale snapshot is the cache's job and is bounded
+/// by the TTL; narrowing the window is data loss and is not.
+fn open_window_cache_stamp(to_ts: i64, grain: i64) -> i64 {
+    let grain = grain.max(1);
+    to_ts - to_ts.rem_euclid(grain)
+}
+
+/// Uniform bin height covering `[lo, hi]` inclusive in `bins` steps, floored
+/// at 1 gil so degenerate windows (every sale at one price) still bin sanely.
+fn density_bin_width(lo: u32, hi: u32, bins: u16) -> f64 {
+    (((hi - lo) as f64 + 1.0) / bins as f64).max(1.0)
+}
+
 /// Request shape for [`build_price_series`], bundled into one struct so the
 /// function stays under clippy's argument-count lint — `ch`/`world_cache`
 /// stay separate since they're handles, not request data.
@@ -472,32 +593,59 @@ pub(crate) async fn build_price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let mut bucket_seconds = resolve_bucket_seconds(bucket, span_secs);
 
+    // The starting width is derived from the *requested* span, which for an
+    // open-ended "full history" request is years — while the data may only
+    // cover months. At that mismatch the ladder picks 30-day buckets and the
+    // whole history collapses into one or two points. So after the first
+    // pass, re-derive the width from the span the rows actually cover and
+    // re-query once if the ladder picks a narrower step (`may_narrow` keeps
+    // this to a single extra query; the inner loop still widens whenever a
+    // response would exceed MAX_BUCKETS).
+    let mut may_narrow = true;
     let rows = loop {
-        let rows = ultros_clickhouse::queries::price_series(
-            ch,
-            item_id,
-            &world_to_group,
-            group,
-            hq,
-            from,
-            to,
-            bucket_seconds,
-        )
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = ?e, item_id, "price_series CH query failed");
-            anyhow::anyhow!("ClickHouse price_series query failed: {e}")
-        })?;
+        let rows = loop {
+            let rows = ultros_clickhouse::queries::price_series(
+                ch,
+                item_id,
+                &world_to_group,
+                group,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_series CH query failed");
+                crate::web::error::ClickHouseQueryError::new("price_series", e)
+            })?;
 
-        if rows.len() <= MAX_BUCKETS {
-            break rows;
+            if rows.len() <= MAX_BUCKETS {
+                break rows;
+            }
+            match widen_bucket(bucket_seconds) {
+                Some(wider) => bucket_seconds = wider,
+                // Already at the top of the ladder: ship what we have rather
+                // than looping forever.
+                None => break rows,
+            }
+        };
+
+        if may_narrow {
+            may_narrow = false;
+            let first = rows.iter().map(|r| r.bucket).min();
+            let last = rows.iter().map(|r| r.bucket).max();
+            if let (Some(first), Some(last)) = (first, last) {
+                // Bucket timestamps are starts, so the last bucket extends
+                // one width past its own ts.
+                let actual_span = (last - first).num_seconds() + bucket_seconds;
+                if let Some(narrower) = narrow_bucket_for_actual_span(actual_span, bucket_seconds) {
+                    bucket_seconds = narrower;
+                    continue;
+                }
+            }
         }
-        match widen_bucket(bucket_seconds) {
-            Some(wider) => bucket_seconds = wider,
-            // Already at the top of the ladder: ship what we have rather
-            // than looping forever.
-            None => break rows,
-        }
+        break rows;
     };
 
     let total_sales: u64 = rows.iter().map(|r| r.sales).sum();
@@ -526,7 +674,7 @@ pub(crate) async fn build_price_series(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, item_id, "price_series raw_sales CH query failed");
-            anyhow::anyhow!("ClickHouse raw_sales query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("raw_sales", e)
         })?;
         Some(
             sales
@@ -613,19 +761,24 @@ async fn price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
 
-    // Snap an open-ended `to` down to the current bucket boundary so live
-    // views share a cache entry instead of minting a unique key per second.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    // A closed window is immutable; an open one is a snapshot of "now" and
+    // stays servable until its TTL expires.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+
+    // `to` itself is left at `now`: only the cache key is quantized, so live
+    // views still share an entry without the query window losing its newest
+    // sales. See [`open_window_cache_stamp`] for why flooring `to` is a bug.
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
     } else {
-        to
+        to.timestamp()
     };
 
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
-    // internal loop potentially widens it in response to how much data comes
-    // back. This is deliberate: checking the cache has to happen before
+    // internal loop potentially widens (or narrows) it in response to how
+    // much data comes back. This is deliberate: checking the cache has to happen before
     // running the query at all (that's the entire point — skip the CH scan
     // on a hit), and the widened bucket is only known *after* the query
     // runs. Building the key post-query would mean always querying first,
@@ -645,17 +798,11 @@ async fn price_series(
         item_id,
         scope: world.clone(),
         from: from.timestamp(),
-        to: to.timestamp(),
+        to: cache_to,
         bucket: bucket_seconds,
         group: group.as_str(),
         hq: hq.as_str(),
-    };
-    // A closed window is immutable; an open one only changes when the current
-    // bucket rolls over.
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
+        bins: 0,
     };
     if let Some(hit) = cache.get(&cache_key) {
         return Ok(cached_json(hit, ttl));
@@ -681,6 +828,251 @@ async fn price_series(
     Ok(cached_json(body, ttl))
 }
 
+/// Last-observed cheapest listing, sampled across every world in scope.
+async fn floor_history(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+) -> Result<axum::response::Response, WebError> {
+    let now = chrono::Utc::now().timestamp();
+    let to = query.to.unwrap_or(now).min(now);
+    let from = query.from.unwrap_or(0);
+    // ClickHouse DateTime uses unsigned 32-bit seconds.
+    if from < 0 || from >= to || to > i64::from(u32::MAX) {
+        return Err(WebError::BadRequest);
+    }
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let ttl = std::time::Duration::from_secs(60);
+    let key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from,
+        to: if query.to.is_some() {
+            to
+        } else {
+            open_window_cache_stamp(to, 60)
+        },
+        bucket: 0,
+        group: "floor",
+        hq: hq.as_str(),
+        bins: 0,
+    };
+    if let Some(hit) = cache.get(&key) {
+        return Ok(cached_json(hit, ttl));
+    }
+    let selected = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+    let payload = ultros_clickhouse::floor_history::history(&ch, item_id, &worlds, hq, from, to)
+        .await
+        .map_err(|e| crate::web::error::ClickHouseQueryError::new("floor_history", e))?;
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct PressureQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+    bucket: Option<i64>,
+    hq: Option<String>,
+}
+
+/// Most buckets one pressure response may carry.
+const PRESSURE_MAX_BUCKETS: i64 = 2000;
+
+/// Snap to the chart's bucket ladder, then widen until the window fits the
+/// cap. The client asks for the price chart's bucket so bars line up; only a
+/// window the chart itself would not draw at that width gets widened.
+fn fit_pressure_bucket(from: i64, to: i64, requested: i64) -> i64 {
+    let mut bucket = snap_bucket_seconds(requested.max(1));
+    while (to - from) / bucket > PRESSURE_MAX_BUCKETS {
+        match widen_bucket(bucket) {
+            Some(wider) => bucket = wider,
+            None => break,
+        }
+    }
+    bucket
+}
+
+/// Undercut pressure for one item on one world. Undercuts only compete
+/// within a world, so datacenter and region scopes are rejected.
+async fn undercut_pressure(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PressureQuery>,
+) -> Result<axum::response::Response, WebError> {
+    static QUERIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let now = chrono::Utc::now().timestamp();
+    let to = query.to.unwrap_or(now).min(now);
+    let from = query.from.unwrap_or(0);
+    if from < 0 || from >= to || to > i64::from(u32::MAX) {
+        return Err(WebError::BadRequest);
+    }
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let selected = world_cache.lookup_value_by_name(&world)?;
+    let AnySelector::World(world_id) = AnySelector::from(&selected) else {
+        return Err(WebError::BadRequest);
+    };
+    let requested_bucket = query.bucket.unwrap_or(3600);
+    let ttl = std::time::Duration::from_secs(60);
+    let key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from,
+        to: if query.to.is_some() {
+            to
+        } else {
+            open_window_cache_stamp(to, 60)
+        },
+        bucket: requested_bucket,
+        group: "pressure",
+        hq: hq.as_str(),
+        bins: 0,
+    };
+    if let Some(hit) = cache.get(&key) {
+        return Ok(cached_json(hit, ttl));
+    }
+    // One 15 s budget covers queueing for a slot and the load itself: a burst
+    // waits its turn rather than failing fast. The permit is held until the
+    // response is built.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let _permit = tokio::time::timeout_at(deadline, QUERIES.acquire())
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?
+        .map_err(|_| WebError::TemporarilyUnavailable)?;
+    let work = async {
+        let anchor = ultros_clickhouse::floor_history::anchors(&ch, &[world_id])
+            .await?
+            .get(&world_id)
+            .copied();
+        // Nothing before the anchor is known; start the buckets there.
+        let from = anchor.map_or(from, |a| from.max(a)).min(to - 1);
+        let bucket_seconds = fit_pressure_bucket(from, to, requested_bucket);
+        ultros_clickhouse::undercut_pressure::load(
+            &ch,
+            item_id,
+            world_id,
+            hq,
+            ultros_clickhouse::undercut_pressure::PressureParams {
+                world_id,
+                from,
+                to,
+                bucket_seconds,
+                now,
+                anchor,
+            },
+        )
+        .await
+    };
+    let payload = tokio::time::timeout_at(deadline, work)
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?
+        .map_err(|e| crate::web::error::ClickHouseQueryError::new("undercut_pressure", e))?;
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
+/// Bounded multi-item extension of the chart history API, with exact floor
+/// bounds and explicit unknown samples. Cache namespace includes cadence/quality.
+async fn floor_history_batch(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path(world): Path<String>,
+    axum::Json(request): axum::Json<ultros_api_types::floor_history::FloorHistoryRequest>,
+) -> Result<axum::response::Response, WebError> {
+    use ultros_api_types::floor_history::{FloorHistoryBatch, ItemFloorHistory};
+    if !request.valid() || request.to > chrono::Utc::now().timestamp() {
+        return Err(WebError::BadRequest);
+    }
+    let selected = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected)
+        .ok_or(WebError::NotFound)?;
+    let ttl = std::time::Duration::from_secs(60);
+    let key = |item_id, hq| crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: request.from,
+        to: request.to,
+        bucket: request.interval.seconds(),
+        group: "floor_window",
+        hq: if hq { "hq" } else { "nq" },
+        bins: 0,
+    };
+    let mut hits = Vec::new();
+    let mut complete = true;
+    for item_id in request
+        .item_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        for hq in [false, true]
+            .into_iter()
+            .filter(|q| request.hq.is_none_or(|wanted| *q == wanted))
+        {
+            match cache
+                .get(&key(item_id, hq))
+                .and_then(|body| serde_json::from_str::<ItemFloorHistory>(&body).ok())
+            {
+                Some(hit) => hits.push(hit),
+                None => complete = false,
+            }
+        }
+    }
+    let payload = if complete {
+        FloorHistoryBatch { series: hits }
+    } else {
+        static QUERIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let _permit = QUERIES
+            .try_acquire()
+            .map_err(|_| WebError::TemporarilyUnavailable)?;
+        let batch = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            ultros_clickhouse::floor_history::batch(&ch, &worlds, &request),
+        )
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?
+        .map_err(|e| crate::web::error::ClickHouseQueryError::new("floor_history_batch", e))?;
+        for series in &batch.series {
+            cache.insert(
+                key(series.item_id, series.hq),
+                serde_json::to_string(series).map_err(anyhow::Error::from)?,
+                ttl,
+            );
+        }
+        batch
+    };
+    let mut response = cached_json(
+        serde_json::to_string(&payload).map_err(anyhow::Error::from)?,
+        ttl,
+    );
+    // HTTP caches key by URL, not by this POST's items/range. Only the
+    // explicit body-aware in-process cache above may reuse batch responses.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
 /// JSON response carrying a `Cache-Control` matching the in-process TTL, so
 /// the browser and any CDN absorb repeats too.
 fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Response {
@@ -700,9 +1092,337 @@ fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Respon
         .into_response()
 }
 
+#[derive(serde::Deserialize, Debug)]
+struct GameHistoryQuery {
+    track: Option<String>,
+}
+
+/// `GET /api/v1/game-history` — the patch/expansion release calendar
+/// backing the chart's milestone bands. The WASM chart reads the seed table
+/// directly from `ultros_api_types::game_history` (no round trip); this
+/// endpoint exists for external consumers and as the future seam where a
+/// Postgres-backed table could override the seed. A few KB, changes ~4
+/// times a year, hence the day-long `Cache-Control`.
+async fn game_history(
+    axum::extract::Query(query): axum::extract::Query<GameHistoryQuery>,
+) -> Result<axum::response::Response, WebError> {
+    use ultros_api_types::game_history::{GAME_PATCHES, PatchTrack};
+    let track = match query.track.as_deref() {
+        Some("global") => Some(PatchTrack::Global),
+        Some("china") => Some(PatchTrack::China),
+        Some("korea") => Some(PatchTrack::Korea),
+        Some(_) => return Err(WebError::BadRequest),
+        None => None,
+    };
+    let patches: Vec<_> = GAME_PATCHES
+        .iter()
+        .filter(|p| track.is_none_or(|t| p.track == t))
+        .collect();
+    let body = serde_json::to_string(&patches).map_err(anyhow::Error::from)?;
+    Ok(cached_json(body, std::time::Duration::from_secs(86_400)))
+}
+
+/// `GET /api/v1/price_density/{world}/{itemid}` — sale counts on a
+/// time × price grid for the chart's density mode. Same window/HQ semantics,
+/// bucket ladder, cache, and `Cache-Control` plumbing as [`price_series`];
+/// the payload is bounded by `buckets × price_bins` regardless of volume.
+///
+/// Named `price_density` like the query function it wraps; calls into
+/// `ultros_clickhouse::queries` are fully qualified to disambiguate.
+async fn price_density(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceDensityQuery>,
+) -> Result<axum::response::Response, WebError> {
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let bins = query.price_bins.unwrap_or(32).clamp(8, 96);
+
+    let now = chrono::Utc::now();
+    let to = query
+        .to
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or(now);
+    let from = query
+        .from
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    if from >= to {
+        return Err(WebError::BadRequest);
+    }
+
+    let span_secs = (to - from).num_seconds().max(1);
+    let mut bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
+    // Unlike price_series there is no post-query widening loop: the grid's
+    // time-axis bucket count is exactly span / width, known up front, so
+    // widen arithmetically until it fits under MAX_BUCKETS.
+    while span_secs / bucket_seconds > MAX_BUCKETS as i64 {
+        match widen_bucket(bucket_seconds) {
+            Some(wider) => bucket_seconds = wider,
+            None => break,
+        }
+    }
+
+    // Quantize an open-ended `to` for the cache key only — same rationale, and
+    // same data-loss trap, as price_series.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
+    } else {
+        to.timestamp()
+    };
+
+    let cache_key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: from.timestamp(),
+        to: cache_to,
+        bucket: bucket_seconds,
+        group: "density",
+        hq: hq.as_str(),
+        bins,
+    };
+    if let Some(hit) = cache.get(&cache_key) {
+        return Ok(cached_json(hit, ttl));
+    }
+
+    let selected_value = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+
+    let extent = ultros_clickhouse::queries::price_min_max(&ch, item_id, &worlds, hq, from, to)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
+            crate::web::error::ClickHouseQueryError::new("price_min_max", e)
+        })?;
+
+    let payload = match extent {
+        None => ultros_api_types::price_density::PriceDensity {
+            bucket_seconds,
+            from: from.naive_utc(),
+            to: to.naive_utc(),
+            price_lo: 0,
+            bin_width: 1.0,
+            price_bins: bins,
+            cells: Vec::new(),
+        },
+        Some((lo, hi)) => {
+            let bin_width = density_bin_width(lo, hi, bins);
+            let rows = ultros_clickhouse::queries::price_density(
+                &ch,
+                item_id,
+                &worlds,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+                lo,
+                bin_width,
+                bins,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_density CH query failed");
+                crate::web::error::ClickHouseQueryError::new("price_density", e)
+            })?;
+            ultros_api_types::price_density::PriceDensity {
+                bucket_seconds,
+                from: from.naive_utc(),
+                to: to.naive_utc(),
+                price_lo: lo as i32,
+                bin_width,
+                price_bins: bins,
+                cells: rows
+                    .into_iter()
+                    .map(|r| ultros_api_types::price_density::DensityCell {
+                        ts: r.bucket.naive_utc(),
+                        bin: r.price_bin,
+                        n: u32::try_from(r.n).unwrap_or(u32::MAX),
+                    })
+                    .collect(),
+            }
+        }
+    };
+
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(cache_key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
+/// How loudly `TraceLayer`'s `on_failure` should report a failed response.
+///
+/// `Error` is what the `sentry_tracing` layer turns into a GlitchTip issue, so
+/// this decides what lands in the backlog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureReportLevel {
+    Debug,
+    Warn,
+    Error,
+}
+
+/// `on_failure` fires *in addition to* whatever produced the response, so a
+/// 5xx that came from a [`WebError`]/[`ApiError`] has already been reported —
+/// with its error type, its typed title, and its breadcrumbs
+/// ([`error::report_title`]). This layer only sees a bare status code and a
+/// latency, so re-reporting it at `error!` buys nothing and costs double:
+/// every incident lands in the backlog twice, once as an actionable issue and
+/// once as a content-free `"response failed"`.
+///
+/// The 2026-08-23 ClickHouse outage is the worked example — each failing item
+/// card produced a `"Returning web error"` *and* a `"response failed"` under
+/// the same trace id, and because the reporter groups by request URL, one
+/// outage splintered into dozens of count-1 issues of both kinds.
+///
+/// So:
+/// - **503** stays at `debug` — the analyzer's warm-up window is a transient
+///   startup state, not a bug (issues 5033/5034).
+/// - Any other **status code** drops to `warn`: still in the logs, no longer a
+///   duplicate issue.
+/// - A [`ServerErrorsFailureClass::Error`] stays at `error`. That class is a
+///   transport- or body-level failure with no response behind it, so *nothing
+///   else reports it* — this layer is the only witness.
+fn failure_report_level(class: &ServerErrorsFailureClass) -> FailureReportLevel {
+    match class {
+        ServerErrorsFailureClass::StatusCode(status)
+            if *status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
+        {
+            FailureReportLevel::Debug
+        }
+        ServerErrorsFailureClass::StatusCode(_) => FailureReportLevel::Warn,
+        ServerErrorsFailureClass::Error(_) => FailureReportLevel::Error,
+    }
+}
+
+#[cfg(test)]
+mod failure_report_level_tests {
+    use super::*;
+
+    /// Warm-up 503s never reach the backlog.
+    #[test]
+    fn service_unavailable_stays_quiet() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::StatusCode(
+                hyper::StatusCode::SERVICE_UNAVAILABLE
+            )),
+            FailureReportLevel::Debug
+        );
+    }
+
+    /// Regression test for the duplicate reporting the 2026-08-23 ClickHouse
+    /// outage exposed: the 500 is already reported by `WebError`, so this
+    /// layer must not report it a second time.
+    #[test]
+    fn internal_server_error_is_not_reported_twice() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::StatusCode(
+                hyper::StatusCode::INTERNAL_SERVER_ERROR
+            )),
+            FailureReportLevel::Warn,
+            "the error type already reported this one with a typed title"
+        );
+    }
+
+    /// A transport/body failure has no response behind it, so no error type
+    /// reported it — this layer is the only place it can surface.
+    #[test]
+    fn transport_failures_are_still_reported() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::Error(
+                "connection reset".to_string()
+            )),
+            FailureReportLevel::Error
+        );
+    }
+}
+
 #[cfg(test)]
 mod price_series_tests {
     use super::*;
+
+    #[test]
+    fn density_bin_width_covers_the_inclusive_range() {
+        // [100, 400] over 4 bins -> width 75.25 (301 distinct prices).
+        assert_eq!(density_bin_width(100, 400, 4), 301.0 / 4.0);
+        // Degenerate flat price: floor at 1.0 so floor((p-lo)/w) stays 0.
+        assert_eq!(density_bin_width(100, 100, 32), 1.0);
+    }
+
+    /// 2026-08-01T12:00:00Z — an arbitrary but fixed "now" so these tests
+    /// don't depend on when they run.
+    const NOW: i64 = 1_785_585_600;
+
+    /// The whole point of quantizing: requests seconds apart must land on one
+    /// cache entry rather than minting a key each.
+    #[test]
+    fn cache_stamp_is_stable_across_the_grain() {
+        let grain = cache_ttl_secs(false, 30 * 86_400) as i64;
+        let base = open_window_cache_stamp(NOW, grain);
+        for offset in [0, 1, 59, 600, grain - 1] {
+            assert_eq!(
+                open_window_cache_stamp(NOW + offset, grain),
+                base,
+                "+{offset}s should still hit the same cache entry"
+            );
+        }
+        assert_ne!(
+            open_window_cache_stamp(NOW + grain, grain),
+            base,
+            "the key must roll over once the entry expires"
+        );
+    }
+
+    /// Regression, and the reason this function exists at all.
+    ///
+    /// An open-ended "full history" request (the item page's default — no
+    /// `from`, no `to`) resolves `from` to 12 years back, which puts the
+    /// bucket ladder at its widest step. Both handlers used to floor the
+    /// *queried* window's exclusive upper bound onto that step, so every sale
+    /// in the current bucket — up to a month of the newest data — was
+    /// excluded from the response. Pin that the quantization applied now is
+    /// bounded by the TTL instead of the bucket width, at every ladder step.
+    #[test]
+    fn cache_stamp_never_discards_more_than_the_ttl() {
+        let span_secs = 365 * 12 * 86_400;
+        assert_eq!(
+            resolve_bucket_seconds(None, span_secs),
+            30 * 86_400,
+            "full history sits on the widest rung — the old floor's grain"
+        );
+
+        // What the old code did to the window itself, at that rung.
+        let floored = NOW - NOW.rem_euclid(30 * 86_400);
+        assert!(
+            NOW - floored > 26 * 86_400,
+            "the old floor dropped {} days of the newest sales",
+            (NOW - floored) / 86_400
+        );
+
+        // What the fix does: bounded by the TTL, whatever the bucket width.
+        for step in ultros_charts::data::buckets::BUCKET_LADDER {
+            let grain = cache_ttl_secs(false, step) as i64;
+            let stamp = open_window_cache_stamp(NOW, grain);
+            assert!(
+                grain <= 3_600 && NOW - stamp < 3_600,
+                "at a {step}s bucket the stamp discarded {}s",
+                NOW - stamp
+            );
+        }
+    }
+
+    /// A grain of zero (or negative) must not panic on `rem_euclid`.
+    #[test]
+    fn cache_stamp_tolerates_a_degenerate_grain() {
+        assert_eq!(open_window_cache_stamp(NOW, 0), NOW);
+        assert_eq!(open_window_cache_stamp(NOW, -5), NOW);
+    }
 
     // `world_group_map` at `SeriesGroup::World` is intentionally not tested
     // here: it short-circuits before touching `world_cache` (see the
@@ -794,7 +1514,18 @@ async fn refresh_world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
     State(universalis): State<UniversalisClient>,
-) -> Result<Redirect, WebError> {
+    State(listing_events): State<
+        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    >,
+) -> Result<axum::response::Response, WebError> {
+    #[cfg(feature = "test-auth")]
+    if crate::test_market_isolation::enabled() {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            crate::test_market_isolation::BLOCKED,
+        )
+            .into_response());
+    }
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
@@ -837,9 +1568,18 @@ async fn refresh_world_item_listings(
             });
         debug!("manually refreshed worlds: {listings_by_world:?}");
         for (world_id, listings) in listings_by_world {
-            let (added, removed) = db
+            let ultros_db::listings::ListingWrite {
+                added,
+                removed,
+                changes,
+            } = db
                 .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
                 .await?;
+            crate::record_listing_changes(
+                &listing_events,
+                &changes,
+                ultros_clickhouse::rows::ListingEventSource::Manual,
+            );
             senders
                 .listings
                 .send(EventType::Add(Arc::new(ListingEventData {
@@ -858,12 +1598,12 @@ async fn refresh_world_item_listings(
         Ok(())
     });
     let _ = timeout(Duration::from_secs(1), future).await?;
-    Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
+    Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
 }
 
 pub(crate) use self::state::WebState;
 use self::static_files::{
-    fallback_item_icon, favicon, get_item_icon, robots, service_worker_js, static_path,
+    fallback_item_icon, favicon, get_item_icon, get_map, robots, service_worker_js, static_path,
 };
 
 pub(crate) async fn invite() -> Redirect {
@@ -961,17 +1701,6 @@ pub(crate) async fn user_retainer_listings(
         retainers: listings,
     };
     Ok(Json(retainers))
-}
-
-pub(crate) async fn verify_character(
-    State(character): State<CharacterVerifierService>,
-    Path(verification_id): Path<i32>,
-    user: AuthDiscordUser,
-) -> Result<Json<bool>, ApiError> {
-    character
-        .check_verification(verification_id, user.id as i64)
-        .await?;
-    Ok(Json(true))
 }
 
 pub(crate) async fn retainer_search(
@@ -1159,196 +1888,189 @@ pub(crate) async fn create_list(
     Ok(Json(()))
 }
 
-pub(crate) async fn edit_list(
+pub(crate) async fn adopt_guest_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
     user: AuthDiscordUser,
+    Json(request): Json<ultros_api_types::list::AdoptGuestList>,
+) -> Result<Json<ultros_api_types::list::AdoptGuestListResponse>, ApiError> {
+    if request.items.iter().any(|row| {
+        !xiv_gen_db::data()
+            .items
+            .contains_key(&xiv_gen::ItemId(row.item_id))
+    }) {
+        return Err(ApiError::BadRequest("guest list contains an unknown item"));
+    }
+    let owner = db
+        .get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
+    let outcome = db.adopt_guest_list_with_outcome(owner.id, request).await?;
+    if let Some((list, items, activity)) = outcome.created {
+        // A new list has no document subscribers yet. Publish the same creation,
+        // projection and activity events as ordinary list mutations, only once.
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::List(List::try_from(list)?)),
+        );
+        for item in items {
+            send_list_event(
+                &senders,
+                EventType::added(ListEventData::ListItem(item.into())),
+            );
+        }
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::Activity(activity.into())),
+        );
+    }
+    Ok(Json(outcome.response))
+}
+
+pub(crate) async fn make_list_online(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
+    user: AuthDiscordUser,
+    Json(request): Json<ultros_api_types::list::MakeListOnline>,
+) -> Result<Json<ultros_api_types::list::AdoptGuestListResponse>, ApiError> {
+    if request.snapshot.len() > 512 * 1024 {
+        return Err(ApiError::BadRequest("list document exceeds the size limit"));
+    }
+    let doc = ultros_list_doc::ListDocument::from_snapshot(&request.snapshot)
+        .map_err(|_| ApiError::BadRequest("unsupported or damaged list document"))?;
+    if doc.rows().iter().any(|row| {
+        !xiv_gen_db::data()
+            .items
+            .contains_key(&xiv_gen::ItemId(row.key.item_id))
+    }) {
+        return Err(ApiError::BadRequest("list contains an unknown item"));
+    }
+    let owner = db
+        .get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
+    let outcome = db.make_list_online(owner.id, &request).await?;
+    if let Some((list, items, activity)) = outcome.created {
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::List(List::try_from(list)?)),
+        );
+        for item in items {
+            send_list_event(
+                &senders,
+                EventType::added(ListEventData::ListItem(item.into())),
+            );
+        }
+        send_list_event(
+            &senders,
+            EventType::added(ListEventData::Activity(activity.into())),
+        );
+    }
+    // One canonical write path publishes projection, activity and realtime events.
+    // A lost response can safely repeat this merge: CRDT operations are idempotent.
+    list_sync
+        .apply_update(
+            outcome.response.list_id,
+            &user.actor(Origin::Rest),
+            &request.snapshot,
+        )
+        .await?;
+    Ok(Json(outcome.response))
+}
+
+pub(crate) async fn edit_list(
+    State(list_sync): State<ListSync>,
+    user: AuthDiscordUser,
     Json(list): Json<List>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db
-        .update_list(list.id, user.id as i64, |ulist| {
-            use ultros_api_types::world_helper::AnySelector;
-            let (datacenter_id, region_id, world_id) = match list.wdr_filter {
-                AnySelector::Datacenter(dc) => (Some(dc), None, None),
-                AnySelector::Region(region) => (None, Some(region), None),
-                AnySelector::World(world) => (None, None, Some(world)),
-            };
-            ulist.datacenter_id = ActiveValue::Set(datacenter_id);
-            ulist.region_id = ActiveValue::Set(region_id);
-            ulist.world_id = ActiveValue::Set(world_id);
-            ulist.name = ActiveValue::Set(list.name);
+    let actor = user.actor(Origin::Rest);
+    let name = list.name.clone();
+    let scope = list.wdr_filter;
+    list_sync
+        .edit_as_server(list.id, &actor, move |doc| {
+            doc.rename(&name)?;
+            doc.set_scope(scope)
         })
         .await?;
-    send_list_event(
-        &senders,
-        EventType::updated(ListEventData::List(List::try_from(list.clone())?)),
-    );
-    record_list_activity(
-        &db,
-        &senders,
-        list.id,
-        &user,
-        ListActivityKind::ListUpdated,
-        None,
-        None,
-        serde_json::json!({ "name": list.name.clone() }),
-        format!("{} updated list {}", user.name, list.name),
-    )
-    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn post_item_to_list(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     perm: crate::web::list_permission::RequireListPermission<
         { crate::web::list_permission::WRITE },
     >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
-    let ListItem {
-        item_id,
-        hq,
-        quantity,
-        acquired,
-        ..
-    } = item;
-    let item = db
-        .add_item_to_list(&list, perm.user_id, item_id, hq, quantity, acquired)
+    let actor = user.actor(Origin::Rest);
+    let key = RowKey::new(item.item_id, item.hq);
+    let need = item.quantity.unwrap_or(1) as i64;
+    let acquired = item.acquired.unwrap_or(0) as i64;
+    let target = item.target_price;
+    list_sync
+        .edit_as_server(perm.list_id, &actor, move |doc| {
+            doc.add_row(key, need, target)?;
+            if acquired != 0 {
+                doc.add_acquired(&key, acquired)?;
+            }
+            Ok(())
+        })
         .await?;
-    send_list_event(
-        &senders,
-        EventType::added(ListEventData::ListItem(item.clone().into())),
-    );
-    let item_name = resolve_item_name(item.item_id);
-    record_list_activity(
-        &db,
-        &senders,
-        item.list_id,
-        &user,
-        ListActivityKind::ItemAdded,
-        Some(item.id),
-        Some(item.item_id),
-        serde_json::json!({
-            "quantity": item.quantity,
-            "acquired": item.acquired,
-            "hq": item.hq,
-            "target_price": item.target_price,
-        }),
-        format!("{} added {}", user.name.clone(), item_name),
-    )
-    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn post_items_to_list(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
 ) -> Result<Json<()>, ApiError> {
-    let (list, _) = db.get_list(id, user.id as i64).await?;
-
-    let _list = db
-        .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
+    let actor = user.actor(Origin::Rest);
+    list_sync
+        .edit_as_server(id, &actor, move |doc| {
+            for item in items {
+                let key = RowKey::new(item.item_id, item.hq);
+                doc.add_row(key, item.quantity.unwrap_or(1) as i64, item.target_price)?;
+                let acquired = item.acquired.unwrap_or(0) as i64;
+                if acquired != 0 {
+                    doc.add_acquired(&key, acquired)?;
+                }
+            }
+            Ok(())
+        })
         .await?;
-    // For bulk add, we might want to send a "refresh" event or all items.
-    // Given the current structure, maybe just sending a list update is enough if we want to be simple,
-    // but the task says synchronize buying.
-    // For now, let's just trigger a refetch by sending the List update.
-    send_list_event(
-        &senders,
-        EventType::updated(ListEventData::List(List::try_from(list.clone())?)),
-    );
-    record_list_activity(
-        &db,
-        &senders,
-        list.id,
-        &user,
-        ListActivityKind::ItemAdded,
-        None,
-        None,
-        serde_json::json!({ "bulk": true }),
-        format!("{} imported items into {}", user.name, list.name),
-    )
-    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn edit_list_item(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
     let before = db.get_list_item(item.id, user.id as i64).await?;
-    let item = item.into();
-    let item = db.update_list_item(item, user.id as i64).await?;
-    send_list_event(
-        &senders,
-        EventType::updated(ListEventData::ListItem(item.clone().into())),
-    );
-    let item_name = resolve_item_name(item.item_id);
-    let before_acquired = before.acquired.unwrap_or(0);
-    let after_acquired = item.acquired.unwrap_or(0);
-    let quantity = item.quantity.unwrap_or(1);
-    let kind = if after_acquired >= quantity && before_acquired < quantity {
-        ListActivityKind::ItemAcquired
-    } else {
-        ListActivityKind::ItemUpdated
-    };
-    let message = if kind == ListActivityKind::ItemAcquired {
-        format!("{} got {}", user.name, item_name)
-    } else {
-        format!("{} updated {}", user.name, item_name)
-    };
-    record_list_activity(
-        &db,
-        &senders,
-        item.list_id,
-        &user,
-        kind,
-        Some(item.id),
-        Some(item.item_id),
-        item_change_payload(&before, &item),
-        message,
-    )
-    .await?;
+    let actor = user.actor(Origin::Rest);
+    let list_id = before.list_id;
+    list_sync
+        .edit_as_server(list_id, &actor, move |doc| {
+            apply_list_item_edit(doc, &before, &item)
+        })
+        .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_list_item(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
-    let item = db.remove_item_from_list(user.id as i64, id).await?;
-    send_list_event(
-        &senders,
-        EventType::removed(ListEventData::ListItem(item.clone().into())),
-    );
-    let item_name = resolve_item_name(item.item_id);
-    record_list_activity(
-        &db,
-        &senders,
-        item.list_id,
-        &user,
-        ListActivityKind::ItemRemoved,
-        Some(item.id),
-        Some(item.item_id),
-        serde_json::json!({
-            "quantity": item.quantity,
-            "acquired": item.acquired,
-            "hq": item.hq,
-            "target_price": item.target_price,
-        }),
-        format!("{} removed {}", user.name, item_name),
-    )
-    .await?;
+    let item = db.get_list_item(id, user.id as i64).await?;
+    let actor = user.actor(Origin::Rest);
+    let key = RowKey::new(item.item_id, item.hq);
+    list_sync
+        .edit_as_server(item.list_id, &actor, move |doc| doc.remove_row(&key))
+        .await?;
     Ok(Json(()))
 }
 
@@ -1358,72 +2080,113 @@ pub(crate) struct BulkHqUpdate {
     pub(crate) hq: Option<bool>,
 }
 
+/// True for the `ListError` variants that mean "this id doesn't resolve to a
+/// list item any more" (deleted since the client last saw it), as opposed to
+/// a real permission problem.
+fn is_stale_list_item(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<ultros_db::lists::ListError>(),
+        Some(ultros_db::lists::ListError::NotFound | ultros_db::lists::ListError::BadRequest(_))
+    )
+}
+
+/// Resolves a batch of list-item ids to their `RowKey`s, grouped by list.
+///
+/// ultros-db has no reader that resolves many item ids at once (and this
+/// fixwave is scoped to not add one), so this still costs one
+/// `get_list_item` call per id — that call is also the only way to learn
+/// which list an id belongs to, which the per-list permission check right
+/// after this needs. What it removes is the *redundant* per-id permission
+/// check `get_list_item` would otherwise leave as the only gate: permission
+/// is now checked once per distinct list (see `require_write_permission`)
+/// instead of once per id.
+///
+/// When `tolerate_stale` is set, an id that no longer resolves to a list item
+/// is silently skipped (mirrors the legacy `set_list_items_hq`, which is what
+/// `bulk_edit_list_items_hq` restores here); otherwise the first unresolvable
+/// id fails the whole request, matching `delete_multiple_list_items`'s
+/// existing (and intentionally unchanged) behavior.
+async fn resolve_bulk_row_keys(
+    db: &UltrosDb,
+    user_id: i64,
+    ids: &[i32],
+    tolerate_stale: bool,
+) -> Result<HashMap<i32, Vec<RowKey>>, ApiError> {
+    let mut by_list: HashMap<i32, Vec<RowKey>> = HashMap::new();
+    for &id in ids {
+        match db.get_list_item(id, user_id).await {
+            Ok(item) => by_list
+                .entry(item.list_id)
+                .or_default()
+                .push(RowKey::new(item.item_id, item.hq)),
+            Err(e) if tolerate_stale && is_stale_list_item(&e) => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(by_list)
+}
+
+/// Checks Write permission on every list before any edit lands, so a bulk
+/// request spanning several lists either applies to all of them or none.
+async fn require_write_permission_on_all(
+    db: &UltrosDb,
+    user_id: i64,
+    list_ids: impl Iterator<Item = i32>,
+) -> Result<(), ApiError> {
+    for list_id in list_ids {
+        let permission = db.get_permission(list_id, user_id).await?;
+        if permission < ListPermission::Write {
+            return Err(ApiError::Forbidden(
+                "Insufficient permissions to update list items",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn bulk_edit_list_items_hq(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(data): Json<BulkHqUpdate>,
 ) -> Result<Json<()>, ApiError> {
-    let list_ids = db
-        .set_list_items_hq(user.id as i64, &data.ids, data.hq)
-        .await?;
-
-    for list_id in list_ids {
-        if let Ok((list, _)) = db.get_list(list_id, user.id as i64).await {
-            send_list_event(
-                &senders,
-                EventType::updated(ListEventData::List(List::try_from(list)?)),
-            );
-            let _ = record_list_activity(
-                &db,
-                &senders,
-                list_id,
-                &user,
-                ListActivityKind::ItemUpdated,
-                None,
-                None,
-                serde_json::json!({ "bulk_hq": data.hq, "count": data.ids.len() }),
-                format!("{} bulk updated HQ for {} items", user.name, data.ids.len()),
-            )
-            .await;
-        }
+    let actor = user.actor(Origin::Rest);
+    let quality = Quality::from(data.hq);
+    let by_list = resolve_bulk_row_keys(&db, user.id as i64, &data.ids, true).await?;
+    require_write_permission_on_all(&db, user.id as i64, by_list.keys().copied()).await?;
+    for (list_id, keys) in by_list {
+        list_sync
+            .edit_as_server(list_id, &actor, move |doc| {
+                for key in keys {
+                    if key.quality != quality {
+                        doc.set_quality(&key, quality)?;
+                    }
+                }
+                Ok(())
+            })
+            .await?;
     }
-
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_multiple_list_items(
     State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
+    State(list_sync): State<ListSync>,
     user: AuthDiscordUser,
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<()>, ApiError> {
-    let deleted_items = try_join_all(
-        ids.into_iter()
-            .map(|id| db.remove_item_from_list(user.id as i64, id)),
-    )
-    .await?;
-    let deleted_count = deleted_items.len();
-    let list_id = deleted_items.first().map(|item| item.list_id);
-    for item in deleted_items {
-        send_list_event(
-            &senders,
-            EventType::removed(ListEventData::ListItem(item.into())),
-        );
-    }
-    if let Some(list_id) = list_id {
-        record_list_activity(
-            &db,
-            &senders,
-            list_id,
-            &user,
-            ListActivityKind::ItemsRemoved,
-            None,
-            None,
-            serde_json::json!({ "count": deleted_count }),
-            format!("{} removed {deleted_count} items", user.name),
-        )
-        .await?;
+    let actor = user.actor(Origin::Rest);
+    let by_list = resolve_bulk_row_keys(&db, user.id as i64, &ids, false).await?;
+    require_write_permission_on_all(&db, user.id as i64, by_list.keys().copied()).await?;
+    for (list_id, keys) in by_list {
+        list_sync
+            .edit_as_server(list_id, &actor, move |doc| {
+                for key in keys {
+                    doc.remove_row(&key)?;
+                }
+                Ok(())
+            })
+            .await?;
     }
     Ok(Json(()))
 }
@@ -1480,27 +2243,6 @@ async fn user_characters(
     ))
 }
 
-async fn pending_verifications(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-) -> Result<Json<Vec<FfxivCharacterVerification>>, ApiError> {
-    let verifications = db
-        .get_all_pending_verification_challenges(user.id as i64)
-        .await?;
-    Ok(Json(
-        verifications
-            .into_iter()
-            .flat_map(|(verification, character)| {
-                character.map(|character| FfxivCharacterVerification {
-                    id: verification.id,
-                    character: character.into(),
-                    verification_string: verification.challenge,
-                })
-            })
-            .collect::<Vec<_>>(),
-    ))
-}
-
 async fn character_search(
     _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
     Path(name): Path<String>,
@@ -1536,16 +2278,18 @@ async fn character_search(
     Ok(Json(characters))
 }
 
+/// Claims a character for the logged-in user.
+///
+/// There's no verification step: the Discord login already says who the user
+/// is, and a claim only groups their retainers. Several users may hold the same
+/// character.
 async fn claim_character(
     user: AuthDiscordUser,
     Path(character_id): Path<u32>,
-    State(verifier): State<CharacterVerifierService>,
-) -> Result<Json<(i32, String)>, ApiError> {
-    let result = verifier
-        .start_verification(character_id, user.id as i64)
-        .await?;
-    // db.create_character_challenge(character_id, user.id as i64, challenge)
-    Ok(Json(result))
+    State(claim): State<CharacterClaimService>,
+) -> Result<Json<FfxivCharacter>, ApiError> {
+    let character = claim.claim_character(character_id, user.id as i64).await?;
+    Ok(Json(character.into()))
 }
 
 #[derive(Deserialize)]
@@ -1573,12 +2317,17 @@ async fn unclaim_character(
 
 // --- Group management ---
 
+/// Every group the user belongs to, each with the member and role counts its
+/// card shows. The counts ride along so the groups grid is one request rather
+/// than a `get_group_detail` per card.
 pub(crate) async fn get_groups(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<Vec<UserGroup>>, ApiError> {
-    let groups = db.get_groups_for_user(user.id as i64).await?;
-    Ok(Json(groups.into_iter().map(UserGroup::from).collect()))
+) -> Result<Json<Vec<UserGroupSummary>>, ApiError> {
+    let groups = db.get_group_summaries_for_user(user.id as i64).await?;
+    Ok(Json(
+        groups.into_iter().map(UserGroupSummary::from).collect(),
+    ))
 }
 
 pub(crate) async fn create_group(
@@ -1587,6 +2336,73 @@ pub(crate) async fn create_group(
     Json(group): Json<CreateGroup>,
 ) -> Result<Json<UserGroup>, ApiError> {
     let group = db.create_group(group.name, user.id as i64).await?;
+    Ok(Json(UserGroup::from(group)))
+}
+
+/// Discord servers the user could turn into a group, annotated with whether a
+/// group already exists for each.
+pub(crate) async fn get_group_discord_guilds(
+    State(db): State<UltrosDb>,
+    State(cache): State<AuthUserCache>,
+    user: AuthDiscordUser,
+    cookies: PrivateCookieJar,
+) -> Result<Json<Vec<DiscordManageableGuild>>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot load your servers right now"
+        ))
+    })?;
+    let guilds = crate::web::api::discord_lookup::manageable_guilds_for_user(
+        &ctx,
+        user.id as i64,
+        &cookies,
+        &cache,
+    )
+    .await?;
+
+    let guild_ids: Vec<i64> = guilds.iter().map(|(id, _, _)| *id).collect();
+    let existing = db.group_ids_for_guilds(&guild_ids).await?;
+
+    Ok(Json(
+        guilds
+            .into_iter()
+            .map(|(id, name, icon_url)| DiscordManageableGuild {
+                id,
+                name,
+                icon_url,
+                existing_group_id: existing.get(&id).copied(),
+            })
+            .collect(),
+    ))
+}
+
+pub(crate) async fn create_group_from_guild(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(CreateGroupFromGuild { guild_id }): Json<CreateGroupFromGuild>,
+) -> Result<Json<UserGroup>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot create a group from a server right now"
+        ))
+    })?;
+
+    // Re-check against Discord rather than trusting the picker: the guild id
+    // arrives from the client, and the user's roles may have changed since the
+    // list was rendered. This also proves the bot is in the guild, and hands
+    // back the name and icon so a group can't claim to be a server it isn't.
+    let guild =
+        crate::web::api::discord_lookup::require_manageable_guild(&ctx, guild_id, user.id as i64)
+            .await?;
+
+    let group = db
+        .create_group_from_guild(
+            guild.name.clone(),
+            user.id as i64,
+            guild_id,
+            guild.icon_url(),
+        )
+        .await?;
     Ok(Json(UserGroup::from(group)))
 }
 
@@ -1614,10 +2430,122 @@ pub(crate) async fn add_group_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path((group_id, member_id)): Path<(i32, i64)>,
+    // `Option<Json<T>>` only produces `None` when the request has no JSON
+    // content type at all (axum 0.8's `OptionalFromRequest`); a request that
+    // *does* carry `Content-Type: application/json` still gets deserialized,
+    // and the existing frontend call sends that content type with body
+    // `null` (`serde_json` of `()`), which fails to deserialize into
+    // `AddGroupMember` directly. Wrapping the payload in an extra `Option`
+    // lets `null` and `{}` both deserialize to `None` while leaving "no body
+    // at all" handled by the outer `Option`.
+    body: Option<Json<Option<AddGroupMember>>>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_member(group_id, user.id as i64, member_id)
+    let display_name = body.and_then(|Json(b)| b).and_then(|b| b.display_name);
+    db.add_group_member(group_id, user.id as i64, member_id, display_name)
         .await?;
     Ok(Json(()))
+}
+
+/// Pins the `Option<Json<Option<AddGroupMember>>>` extractor behaviour that
+/// `add_group_member` relies on: axum 0.8's `Option<Json<T>>` only yields
+/// `None` when the request has no JSON content type at all, so a `null` or
+/// `{}` body sent *with* `Content-Type: application/json` (as the frontend
+/// does) must still deserialize successfully into the inner `Option`.
+#[cfg(test)]
+mod add_group_member_body_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn stub_handler(body: Option<Json<Option<AddGroupMember>>>) -> String {
+        match body.and_then(|Json(b)| b).and_then(|b| b.display_name) {
+            Some(name) => format!("some:{name}"),
+            None => "none".to_string(),
+        }
+    }
+
+    fn router() -> Router {
+        Router::new().route("/", post(stub_handler))
+    }
+
+    async fn body_text(response: axum::response::Response) -> String {
+        String::from_utf8(
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn no_body_and_no_content_type_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn json_null_body_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("null"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn empty_json_object_body_is_none() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "none");
+    }
+
+    #[tokio::test]
+    async fn display_name_body_is_some() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"display_name":"Bob"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "some:Bob");
+    }
 }
 
 pub(crate) async fn remove_group_member(
@@ -1630,21 +2558,684 @@ pub(crate) async fn remove_group_member(
     Ok(Json(()))
 }
 
+// --- Group roles ---
+
+/// What every group endpoint that talks to Discord says when the gateway is
+/// down, so an offline bot reads the same way everywhere instead of surfacing
+/// as an opaque 500.
+///
+/// A shared constant rather than a `fn` returning `Result<_, ApiError>`:
+/// `ApiError` is a large error type, and a *non-async* function handing one
+/// back beside a pointer-sized `Ok` trips `clippy::result_large_err`.
+const DISCORD_BOT_OFFLINE: &str =
+    "The Ultros Discord bot is not connected right now; try again in a moment";
+
+/// Owner-only access to a group's *live* Discord guild: proves the caller owns
+/// the group, that it is still linked (a frozen group has no guild to ask),
+/// and that the bot is connected.
+async fn owned_guild(
+    db: &UltrosDb,
+    group_id: i32,
+    user_id: i64,
+) -> Result<(i64, Arc<poise::serenity_prelude::Context>), ApiError> {
+    let group = db.get_owned_group(group_id, user_id).await?;
+    let guild_id = group
+        .guild_id
+        .filter(|_| group.frozen_reason.is_none())
+        .ok_or(ApiError::BadRequest(
+            "That group is not linked to a Discord server",
+        ))?;
+    let ctx = crate::alerts::delivery::get_serenity_ctx()
+        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
+    Ok((guild_id, ctx))
+}
+
+/// Re-read one role together with its member count.
+///
+/// The DB's mutating role calls hand back the bare row, which has no count on
+/// it; returning a `member_count` of zero would blank the number in the UI
+/// after a rename, so the count is fetched rather than invented.
+async fn role_with_member_count(
+    db: &UltrosDb,
+    group_id: i32,
+    user_id: i64,
+    role_id: i32,
+) -> Result<GroupRole, ApiError> {
+    db.get_group_roles(group_id, user_id)
+        .await?
+        .into_iter()
+        .map(GroupRole::from)
+        .find(|role| role.id == role_id)
+        .ok_or_else(|| anyhow::Error::from(ultros_db::group_roles::GroupError::RoleNotFound).into())
+}
+
+/// Everything the group detail page needs in one round trip. Members only.
+pub(crate) async fn get_group_detail(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<UserGroupDetail>, ApiError> {
+    let (group, roles, member_count) = db.get_group_detail(id, user.id as i64).await?;
+    Ok(Json(UserGroupDetail {
+        group: UserGroup::from(group),
+        roles: roles.into_iter().map(GroupRole::from).collect(),
+        member_count,
+    }))
+}
+
+/// The linked guild's roles, for the import picker. Already-imported roles
+/// carry `existing_role_id` so the picker shows them as taken instead of
+/// letting the owner walk into a 400.
+pub(crate) async fn get_group_discord_roles(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<DiscordGuildRole>>, ApiError> {
+    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let imported: HashMap<i64, i32> = db
+        .get_group_roles(id, user.id as i64)
+        .await?
+        .into_iter()
+        .map(GroupRole::from)
+        .filter_map(|role| role.discord_role_id.map(|discord| (discord, role.id)))
+        .collect();
+    let roles = crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id).await?;
+    Ok(Json(
+        roles
+            .into_iter()
+            .map(
+                |(discord_role_id, name, position, color)| DiscordGuildRole {
+                    id: discord_role_id,
+                    name,
+                    position,
+                    color,
+                    existing_role_id: imported.get(&discord_role_id).copied(),
+                },
+            )
+            .collect(),
+    ))
+}
+
+pub(crate) async fn create_group_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(CreateGroupRole { name }): Json<CreateGroupRole>,
+) -> Result<Json<GroupRole>, ApiError> {
+    let role = db.create_group_role(id, user.id as i64, name).await?;
+    // A role created a statement ago has no members, so this count is exact
+    // rather than a placeholder.
+    Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
+}
+
+/// Import a Discord role into the group. Membership arrives from
+/// reconciliation: this returns as soon as the role row exists, with
+/// `last_synced_at` still null for the page to poll on, and kicks off a
+/// reconcile for the guild in the background. Waiting for that here would put
+/// a whole-guild member walk on a request path, which for `@everyone` on a
+/// large server is not a request anybody would sit through.
+pub(crate) async fn import_group_discord_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(ImportDiscordRole { discord_role_id }): Json<ImportDiscordRole>,
+) -> Result<Json<GroupRole>, ApiError> {
+    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    // Re-read from Discord rather than trusting the picker's payload: the name
+    // and position are Discord's to supply, and going through the same
+    // importable filter is what refuses a managed or bot role here too.
+    let (_, name, position, _) =
+        crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id)
+            .await?
+            .into_iter()
+            .find(|(role_id, ..)| *role_id == discord_role_id)
+            .ok_or(ApiError::BadRequest(
+                "That role no longer exists in the Discord server, or cannot be imported",
+            ))?;
+    let role = db
+        .import_discord_role(id, user.id as i64, discord_role_id, name, position)
+        .await?;
+    // The role exists but has nobody in it until a reconcile runs, which
+    // without this would be up to six hours of the feature looking broken.
+    // Recorded against the rate limiter too, so pressing "Sync now" on the
+    // page that just imported does not walk the same guild a second time.
+    // `spawn_reconcile` gives the window back if that reconcile does not
+    // actually run, so a bot that is offline does not leave the owner told
+    // "recently synced" over a `last_synced_at` that never moved.
+    crate::group_sync::sync_rate_limiter().record(guild_id, std::time::Instant::now());
+    crate::group_sync::spawn_reconcile(db, guild_id);
+    Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
+}
+
+/// Reconcile this group's Discord membership now.
+///
+/// `Ran` means "started": the walk happens off the request path, and the page
+/// polls `last_synced_at` to see it finish. Rate limited per guild, because
+/// the work is a full member listing and the trigger is a button.
+///
+/// The window has to be claimed here, before the walk is spawned, so this
+/// request can answer. `spawn_reconcile` releases it again whenever the walk
+/// did not actually sync anything — the bot is offline, Discord refused, a
+/// reconcile of the guild was already running — because otherwise a failed
+/// press would answer `RecentlySynced` for five minutes over a
+/// `last_synced_at` that is null or days old.
+pub(crate) async fn sync_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<GroupSyncResponse>, ApiError> {
+    // Also proves ownership, that the group is still linked to a guild, and
+    // that the bot is connected to answer for it.
+    let (guild_id, _ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let last_synced_at = db
+        .get_group_roles(id, user.id as i64)
+        .await?
+        .into_iter()
+        .filter_map(|GroupRoleReturn(role, _)| role.last_synced_at)
+        .max();
+    if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, std::time::Instant::now()) {
+        return Ok(Json(GroupSyncResponse {
+            status: GroupSyncStatus::RecentlySynced,
+            last_synced_at,
+        }));
+    }
+    crate::group_sync::spawn_reconcile(db, guild_id);
+    Ok(Json(GroupSyncResponse {
+        status: GroupSyncStatus::Ran,
+        last_synced_at,
+    }))
+}
+
+pub(crate) async fn rename_group_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id)): Path<(i32, i32)>,
+    Json(RenameGroupRole { name }): Json<RenameGroupRole>,
+) -> Result<Json<GroupRole>, ApiError> {
+    db.rename_group_role(group_id, user.id as i64, role_id, name)
+        .await?;
+    Ok(Json(
+        role_with_member_count(&db, group_id, user.id as i64, role_id).await?,
+    ))
+}
+
+/// Delete a role. Group members are untouched — only the role goes.
+pub(crate) async fn delete_group_role(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id)): Path<(i32, i32)>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_group_role(group_id, user.id as i64, role_id)
+        .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn get_group_role_members(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id)): Path<(i32, i32)>,
+) -> Result<Json<Vec<UserGroupMember>>, ApiError> {
+    let members = db
+        .get_group_role_members(group_id, user.id as i64, role_id)
+        .await?;
+    Ok(Json(
+        members.into_iter().map(UserGroupMember::from).collect(),
+    ))
+}
+
+/// Manual roles only. A synced role's membership belongs to Discord, so this
+/// answers 400 rather than making a change reconciliation would undo.
+pub(crate) async fn add_group_role_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+    body: Option<Json<Option<AddGroupMember>>>,
+) -> Result<Json<()>, ApiError> {
+    let display_name = body
+        .and_then(|Json(body)| body)
+        .and_then(|body| body.display_name);
+    db.add_group_role_member_with_name(group_id, user.id as i64, role_id, member_id, display_name)
+        .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn remove_group_role_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+) -> Result<Json<()>, ApiError> {
+    db.remove_group_role_member(group_id, user.id as i64, role_id, member_id)
+        .await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MemberSearchQuery {
+    /// Defaulted rather than required: the picker fires on every keystroke and
+    /// an empty box is an empty result, not a 400.
+    #[serde(default)]
+    q: String,
+}
+
+/// Owner's search-as-you-type picker. A guild-linked group searches Discord
+/// (prefix match on username and nickname); a manual or frozen group searches
+/// the people who have logged into Ultros.
+pub(crate) async fn search_group_member_candidates(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Query(MemberSearchQuery { q }): Query<MemberSearchQuery>,
+) -> Result<Json<Vec<GroupMemberSearchResult>>, ApiError> {
+    let group = db.get_owned_group(id, user.id as i64).await?;
+    let query = q.trim();
+    if query.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    let Some(guild_id) = group.guild_id.filter(|_| group.frozen_reason.is_none()) else {
+        // Everyone this path can offer is by definition already on Ultros —
+        // they are rows in `discord_user`.
+        return Ok(Json(
+            db.search_group_member_candidates(id, user.id as i64, query)
+                .await?
+                .into_iter()
+                .map(|candidate| GroupMemberSearchResult {
+                    user_id: candidate.id,
+                    display_name: candidate.username,
+                    avatar_url: None,
+                    on_ultros: true,
+                })
+                .collect(),
+        ));
+    };
+    let ctx = crate::alerts::delivery::get_serenity_ctx()
+        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
+    let members = crate::web::api::discord_lookup::search_guild_members(
+        &ctx,
+        guild_id,
+        query,
+        ultros_db::group_roles::MEMBER_SEARCH_LIMIT,
+    )
+    .await?;
+    let ids: Vec<i64> = members.iter().map(|m| m.user.id.get() as i64).collect();
+    let on_ultros = db.discord_users_present(&ids).await?;
+    Ok(Json(
+        members
+            .iter()
+            .map(|member| {
+                let user_id = member.user.id.get() as i64;
+                GroupMemberSearchResult {
+                    user_id,
+                    // Discord matched on nickname *and* username, but the name
+                    // shown here is the one the picker posts back to
+                    // `add_group_member`, which upserts it into the global
+                    // `discord_user` row. A nickname must never get that far:
+                    // it would rename the person everywhere on Ultros. See
+                    // `group_sync::global_display_name`.
+                    display_name: crate::group_sync::global_display_name(&member.user),
+                    avatar_url: Some(member.face()),
+                    on_ultros: on_ultros.contains(&user_id),
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// Router-level tests for the group-role and role-share endpoints: what the
+/// path table resolves to, and what each handler's extractors accept.
+///
+/// The handlers here are stubs carrying the *same* extractor signatures as the
+/// real ones, because the real ones need a `UltrosDb` and this repo has no
+/// database in test. Authorization itself lives in `ultros-db` and is covered
+/// by the live-DB tests there; what these pin is the layer above it — that a
+/// request even reaches the right handler with the right ids parsed out.
+#[cfg(test)]
+mod group_role_route_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn create_stub(
+        Path(id): Path<i32>,
+        Json(CreateGroupRole { name }): Json<CreateGroupRole>,
+    ) -> String {
+        format!("create:{id}:{name}")
+    }
+
+    async fn import_stub(
+        Path(id): Path<i32>,
+        Json(ImportDiscordRole { discord_role_id }): Json<ImportDiscordRole>,
+    ) -> String {
+        format!("import:{id}:{discord_role_id}")
+    }
+
+    async fn rename_stub(
+        Path((group_id, role_id)): Path<(i32, i32)>,
+        Json(RenameGroupRole { name }): Json<RenameGroupRole>,
+    ) -> String {
+        format!("rename:{group_id}:{role_id}:{name}")
+    }
+
+    async fn delete_role_stub(Path((group_id, role_id)): Path<(i32, i32)>) -> String {
+        format!("delete:{group_id}:{role_id}")
+    }
+
+    async fn role_members_stub(Path((group_id, role_id)): Path<(i32, i32)>) -> String {
+        format!("members:{group_id}:{role_id}")
+    }
+
+    async fn add_role_member_stub(
+        Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+        body: Option<Json<Option<AddGroupMember>>>,
+    ) -> String {
+        let name = body
+            .and_then(|Json(body)| body)
+            .and_then(|body| body.display_name);
+        format!(
+            "add:{group_id}:{role_id}:{member_id}{}",
+            name.map(|name| format!(":{name}")).unwrap_or_default()
+        )
+    }
+
+    async fn remove_role_member_stub(
+        Path((group_id, role_id, member_id)): Path<(i32, i32, i64)>,
+    ) -> String {
+        format!("remove:{group_id}:{role_id}:{member_id}")
+    }
+
+    async fn member_search_stub(
+        Path(id): Path<i32>,
+        Query(MemberSearchQuery { q }): Query<MemberSearchQuery>,
+    ) -> String {
+        format!("search:{id}:[{q}]")
+    }
+
+    async fn sync_stub(Path(id): Path<i32>) -> Json<GroupSyncResponse> {
+        Json(GroupSyncResponse {
+            status: if id == 7 {
+                GroupSyncStatus::Ran
+            } else {
+                GroupSyncStatus::RecentlySynced
+            },
+            last_synced_at: None,
+        })
+    }
+
+    async fn share_role_stub(Path(id): Path<i32>, Json(share): Json<ShareListRole>) -> String {
+        format!("share:{id}:{}:{}", share.role_id, share.permission as i16)
+    }
+
+    async fn unshare_role_stub(Path((id, role_id)): Path<(i32, i32)>) -> String {
+        format!("unshare:{id}:{role_id}")
+    }
+
+    /// The path strings mirror `api_router` exactly; if one moves there it has
+    /// to move here, which is the point.
+    fn router() -> Router {
+        Router::new()
+            .route("/api/v1/group/{id}/roles", post(create_stub))
+            .route("/api/v1/group/{id}/roles/import", post(import_stub))
+            .route(
+                "/api/v1/group/{group_id}/roles/{role_id}",
+                patch(rename_stub).delete(delete_role_stub),
+            )
+            .route(
+                "/api/v1/group/{group_id}/roles/{role_id}/members",
+                get(role_members_stub),
+            )
+            .route(
+                "/api/v1/group/{group_id}/roles/{role_id}/members/{member_id}",
+                post(add_role_member_stub).delete(remove_role_member_stub),
+            )
+            .route("/api/v1/group/{id}/member-search", get(member_search_stub))
+            .route("/api/v1/group/{id}/sync", post(sync_stub))
+            .route("/api/v1/list/{id}/share/role", post(share_role_stub))
+            .route(
+                "/api/v1/list/{id}/share/role/{role_id}",
+                delete(unshare_role_stub),
+            )
+    }
+
+    async fn call(method: &str, uri: &str, body: Option<&str>) -> (StatusCode, String) {
+        let builder = Request::builder().method(method).uri(uri);
+        let request = match body {
+            Some(json) => builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        };
+        let response = router().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    /// `roles/import` sits beside `roles/{role_id}`, where `{role_id}` is an
+    /// `i32`. A router that preferred the parameter would answer 400 on every
+    /// import instead of importing anything.
+    #[tokio::test]
+    async fn import_wins_over_the_role_id_parameter() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/import",
+            Some(r#"{"discord_role_id":1234567890123456789}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "import:7:1234567890123456789");
+    }
+
+    /// Discord snowflakes exceed `i32`, so the role id has to survive as an
+    /// `i64` all the way through the body.
+    #[tokio::test]
+    async fn creating_a_role_takes_a_name_body() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles",
+            Some(r#"{"name":"Officers"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "create:7:Officers");
+    }
+
+    #[tokio::test]
+    async fn patch_renames_and_delete_removes_the_same_path() {
+        let (status, body) = call(
+            "PATCH",
+            "/api/v1/group/7/roles/12",
+            Some(r#"{"name":"Raiders"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "rename:7:12:Raiders");
+
+        let (status, body) = call("DELETE", "/api/v1/group/7/roles/12", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "delete:7:12");
+    }
+
+    /// A role has no `POST` handler at the collection path, and answering 405
+    /// rather than 404 is what tells a client it used the wrong verb.
+    #[tokio::test]
+    async fn a_role_path_without_that_method_is_method_not_allowed() {
+        let (status, _) = call("GET", "/api/v1/group/7/roles", None).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn role_member_paths_carry_group_role_and_a_snowflake_member() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "add:7:12:1234567890123456789");
+
+        let (status, body) = call(
+            "POST",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            Some(r#"{"display_name":"New Discord member"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "add:7:12:1234567890123456789:New Discord member");
+
+        let (status, body) = call(
+            "DELETE",
+            "/api/v1/group/7/roles/12/members/1234567890123456789",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "remove:7:12:1234567890123456789");
+
+        let (status, body) = call("GET", "/api/v1/group/7/roles/12/members", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "members:7:12");
+    }
+
+    /// The picker fires on every keystroke, including the one that empties the
+    /// box, so a missing `q` must be an empty search and not a 400.
+    #[tokio::test]
+    async fn member_search_tolerates_a_missing_query() {
+        let (status, body) = call("GET", "/api/v1/group/7/member-search", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "search:7:[]");
+
+        let (status, body) = call("GET", "/api/v1/group/7/member-search?q=bo%20b", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "search:7:[bo b]");
+    }
+
+    /// `sync` is a static segment on the same prefix as `{id}/invites` and
+    /// `{id}/roles`, and its response is the shape the page polls on.
+    #[tokio::test]
+    async fn sync_answers_on_the_group_prefix_with_a_status_and_a_timestamp() {
+        let (status, body) = call("POST", "/api/v1/group/7/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"status":"Ran","last_synced_at":null}"#);
+
+        let (status, body) = call("POST", "/api/v1/group/8/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"status":"RecentlySynced","last_synced_at":null}"#);
+
+        // It is a POST: a GET must not silently do nothing and look fine.
+        let (status, _) = call("GET", "/api/v1/group/7/sync", None).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn role_shares_take_a_role_id_and_permission() {
+        let (status, body) = call(
+            "POST",
+            "/api/v1/list/3/share/role",
+            Some(r#"{"role_id":12,"permission":"Write"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "share:3:12:2");
+
+        let (status, body) = call("DELETE", "/api/v1/list/3/share/role/12", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "unshare:3:12");
+    }
+
+    /// The activity feed is prose a person reads, so a role appears by name.
+    /// It used to render as "Bob shared this list with role 12", which names
+    /// a database id at someone who has never seen one.
+    #[test]
+    fn the_activity_feed_names_a_role_rather_than_numbering_it() {
+        assert_eq!(super::role_label(Some("Officers"), 12), "Officers");
+        assert_eq!(
+            format!(
+                "Bob removed role {} from this list",
+                super::role_label(Some("Officers"), 12)
+            ),
+            "Bob removed role Officers from this list"
+        );
+        // A role deleted out from under a dangling share has no name left to
+        // print; the id is the fallback, not the default.
+        assert_eq!(super::role_label(None, 12), "#12");
+    }
+
+    /// The real table, not the stub: `Router::route` panics on a conflicting
+    /// path or a duplicated method, so simply building it is the assertion.
+    #[test]
+    fn the_real_api_router_registers_every_group_role_path() {
+        let _ = api_router();
+    }
+}
+
+pub(crate) async fn get_group_invites(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<GroupInvite>>, ApiError> {
+    let invites = db.get_group_invites(id, user.id as i64).await?;
+    Ok(Json(invites.into_iter().map(GroupInvite::from).collect()))
+}
+
+pub(crate) async fn create_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(CreateGroupInvite { max_uses }): Json<CreateGroupInvite>,
+) -> Result<Json<GroupInvite>, ApiError> {
+    let invite = db.create_group_invite(id, user.id as i64, max_uses).await?;
+    Ok(Json(GroupInvite::from(invite)))
+}
+
+/// Redeem an invite and return the group joined, so the client can navigate
+/// straight to it. Redeeming an invite you've already used is a success.
+pub(crate) async fn use_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<i32>, ApiError> {
+    let group_id = db.use_group_invite(id, user.id as i64).await?;
+    Ok(Json(group_id))
+}
+
+pub(crate) async fn delete_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_group_invite(id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
 // --- List sharing ---
 
 pub(crate) async fn get_list_shares(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-) -> Result<Json<(Vec<ListSharedUser>, Vec<ListSharedGroup>)>, ApiError> {
-    let (users, groups) = futures::future::try_join(
+) -> Result<
+    Json<(
+        Vec<ListSharedUser>,
+        Vec<ListSharedGroup>,
+        Vec<ListSharedRole>,
+    )>,
+    ApiError,
+> {
+    let (users, groups, roles) = try_join3(
         db.get_list_shared_users(id, user.id as i64),
         db.get_list_shared_groups(id, user.id as i64),
+        db.get_list_shared_roles(id, user.id as i64),
     )
     .await?;
     Ok(Json((
         users.into_iter().map(ListSharedUser::from).collect(),
         groups.into_iter().map(ListSharedGroup::from).collect(),
+        roles.into_iter().map(ListSharedRole::from).collect(),
     )))
 }
 
@@ -1716,6 +3307,83 @@ pub(crate) async fn share_list_with_group(
         format!(
             "{} shared this list with group {}",
             user.name, share.group_id
+        ),
+    )
+    .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+/// How a role is named in an activity-feed line.
+///
+/// The feed is read by people, so it uses the role's name. The id is still the
+/// identifier in the structured payload; it only appears in the prose when the
+/// role row is gone (deleted role, dangling share), where the alternative is
+/// naming nothing at all.
+fn role_label(name: Option<&str>, role_id: i32) -> String {
+    match name {
+        Some(name) => name.to_string(),
+        None => format!("#{role_id}"),
+    }
+}
+
+/// Share a list with one role of a group the caller owns.
+///
+/// The activity feed records this as `SharedGroup`: the feed's kinds are a
+/// frozen wire enum and a role share is the same event to a narrower audience,
+/// so the role id rides in the structured payload while the human-readable
+/// message names the role.
+pub(crate) async fn share_list_with_role(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(share): Json<ShareListRole>,
+) -> Result<Json<()>, ApiError> {
+    let role_name = db
+        .share_list_with_role(id, user.id as i64, share.role_id, share.permission)
+        .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::SharedGroup,
+        None,
+        None,
+        serde_json::json!({
+            "role_id": share.role_id,
+            "permission": share.permission as i16,
+        }),
+        format!("{} shared this list with role {}", user.name, role_name),
+    )
+    .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn unshare_list_from_role(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path((id, role_id)): Path<(i32, i32)>,
+) -> Result<Json<()>, ApiError> {
+    let role_name = db
+        .unshare_list_from_role(id, user.id as i64, role_id)
+        .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::UnsharedGroup,
+        None,
+        None,
+        serde_json::json!({ "role_id": role_id }),
+        format!(
+            "{} removed role {} from this list",
+            user.name,
+            role_label(role_name.as_deref(), role_id)
         ),
     )
     .await?;
@@ -1892,26 +3560,28 @@ async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
     State(db): State<UltrosDb>,
-    cookie_jar: CookieJar,
-) -> Result<(CookieJar, Redirect), ApiError> {
+    cookie_jar: PrivateCookieJar,
+) -> Result<(PrivateCookieJar, Redirect), ApiError> {
     let id = user.id;
     db.delete_discord_user(id as i64).await?;
-    let token = cookie_jar
-        .get("discord_auth")
-        .ok_or(anyhow::anyhow!("Failed to get icon"))?
-        .value()
-        .to_owned();
-    cache.remove_token(&token).await;
-    let cookie_jar = cookie_jar.remove(Cookie::from("discord_auth"));
-    // remove the token from the cache
-    // remove the auth cookie from the cache
+    cache.remove_user(id).await;
+    let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
     Ok((cookie_jar, Redirect::to("/")))
 }
 
+/// Serves the game-data pack the client decodes with `xiv_gen_db::try_init`.
+///
+/// `version` is the pack's content hash (`xiv_gen_db::pack_version`), so a
+/// URL that names the current pack is immutable and cached for a year, at the
+/// edge and in the browser. A URL naming any other version (a tab still
+/// running an older build after a game-data bump) gets the current bytes too,
+/// since that is all this binary has, but marked `no-store` so neither cache
+/// files the wrong pack under that key.
 async fn get_xiv_data_bytes(
-    Path((_version, lang)): Path<(String, String)>,
-) -> Result<&'static [u8], WebError> {
-    let lang = match lang.strip_suffix(".rkyv").unwrap_or(&lang) {
+    Path((version, lang)): Path<(String, String)>,
+) -> Result<axum::response::Response, WebError> {
+    let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
+    let lang = match lang_code {
         "en" => xiv_gen::Language::En,
         "ja" => xiv_gen::Language::Ja,
         "de" => xiv_gen::Language::De,
@@ -1921,7 +3591,104 @@ async fn get_xiv_data_bytes(
         "tc" => xiv_gen::Language::Tc,
         _ => return Err(anyhow::anyhow!("Unsupported language").into()),
     };
-    Ok(xiv_gen_db::embedded_bytes(lang))
+    let cache_control = if version == xiv_gen_db::pack_version(lang_code) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    let mut response = xiv_gen_db::embedded_bytes(lang).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    Ok(response)
+}
+
+async fn get_xiv_startup_bytes(
+    Path((version, lang)): Path<(String, String)>,
+) -> Result<axum::response::Response, WebError> {
+    let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
+    let lang = match lang_code {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => return Err(anyhow::anyhow!("Unsupported language").into()),
+    };
+    let cache_control = if version == xiv_gen_db::startup_version(lang_code) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    let mut response = xiv_gen_db::startup_bytes(lang).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    Ok(response)
+}
+
+/// Small public details, keyed by the full source pack so description-only
+/// updates also invalidate their URLs. Never cache a response under a stale key.
+async fn get_xiv_detail(
+    Path((version, lang, kind, id)): Path<(String, String, String, i32)>,
+) -> axum::response::Response {
+    let language = match lang.as_str() {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    if version != xiv_gen_db::pack_version(&lang) {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response();
+    }
+    let data = xiv_gen_db::data_for(language);
+    let mut response = match kind.as_str() {
+        "description" => Json(
+            data.items
+                .get(&xiv_gen::ItemId(id))
+                .map(|row| &row.description),
+        )
+        .into_response(),
+        "npc" => Json(data.e_npc_residents.get(&xiv_gen::ENpcResidentId(id))).into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    response
 }
 
 /// Returns a region- attempts to guess it from the CF Region header
@@ -1946,7 +3713,11 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
 /// an empty router otherwise. Compile-time gated so prod binaries are clean.
 #[cfg(feature = "test-auth")]
 fn test_auth_routes() -> Router<WebState> {
-    Router::new().route("/test/login", get(self::oauth::test_auth::test_login))
+    Router::new()
+        .route("/test/login", get(self::oauth::test_auth::test_login))
+        // Group states that only Discord can otherwise produce, so the E2E
+        // harness can drive `/groups/:id` in all three of them.
+        .merge(self::test_fixtures::routes())
 }
 
 #[cfg(not(feature = "test-auth"))]
@@ -1954,13 +3725,12 @@ fn test_auth_routes() -> Router<WebState> {
     Router::new()
 }
 
-pub(crate) async fn start_web(state: WebState) {
-    // build our application with a route
-    let worlds = state.world_helper.clone();
-    let token = state.token.clone();
-    let app = Router::new()
-        .route("/alerts/websocket", get(connect_websocket))
+/// Shared API routes for public HTTP and in-process SSR dispatch.
+/// Application middleware belongs here; connection/page middleware stays outside.
+fn api_router() -> Router<WebState> {
+    Router::new()
         .route("/api/v1/search", get(search))
+        .route("/api/v1/changelog", get(get_changelog))
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
         .route("/api/v1/trends/{world}", get(get_trends))
@@ -1972,10 +3742,18 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/resale_quality/{world}", post(post_resale_quality))
         .route("/api/v1/market_heat/{world}", get(get_market_heat))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
+        .route("/api/v1/sale_stats/{world}", get(get_sale_stats))
+        .route("/api/v1/listing_stats/{world}", get(get_listing_stats))
         .route("/api/v1/alerts/events", get(list_alert_events))
         .route(
             "/api/v1/alerts/events/{id}/resend",
             post(resend_alert_event),
+        )
+        .route("/api/v1/alerts/events/read", post(mark_alert_events_read))
+        .route("/api/v1/alerts/events/clear", post(clear_alert_events))
+        .route(
+            "/api/v1/alerts/events/unread_count",
+            get(unread_alert_event_count),
         )
         .route("/api/v1/alerts", get(list_alerts).post(create_alert))
         .route(
@@ -2012,12 +3790,25 @@ pub(crate) async fn start_web(state: WebState) {
             get(extended_sale_history),
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
+        .route("/api/v1/floor_history/{world}/{itemid}", get(floor_history))
+        .route(
+            "/api/v1/undercut_pressure/{world}/{itemid}",
+            get(undercut_pressure),
+        )
+        .route(
+            "/api/v1/floor_history/{world}",
+            post(floor_history_batch).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
+        .route("/api/v1/game-history", get(game_history))
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),
         )
         .route("/api/v1/list", get(get_lists))
         .route("/api/v1/list/create", post(create_list))
+        .route("/api/v1/list/adopt", post(adopt_guest_list))
+        .route("/api/v1/list/online", post(make_list_online))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
         .route("/api/v1/list/{id}", get(get_list))
@@ -2031,8 +3822,47 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/item/hq", post(bulk_edit_list_items_hq))
         .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
-        .route("/api/v1/group/{id}", delete(delete_group))
+        .route(
+            "/api/v1/group/discord-guilds",
+            get(get_group_discord_guilds),
+        )
+        .route(
+            "/api/v1/group/create-from-guild",
+            post(create_group_from_guild),
+        )
+        .route(
+            "/api/v1/group/{id}",
+            get(get_group_detail).delete(delete_group),
+        )
         .route("/api/v1/group/{id}/members", get(get_group_members))
+        .route(
+            "/api/v1/group/{id}/member-search",
+            get(search_group_member_candidates),
+        )
+        .route(
+            "/api/v1/group/{id}/discord-roles",
+            get(get_group_discord_roles),
+        )
+        // `roles/import` is static and `roles/{role_id}` takes an i32, so
+        // matchit resolves the static segment first — the same shape as
+        // `/api/v1/list/create` sitting beside `/api/v1/list/{id}`.
+        .route("/api/v1/group/{id}/roles", post(create_group_role))
+        .route(
+            "/api/v1/group/{id}/roles/import",
+            post(import_group_discord_role),
+        )
+        .route(
+            "/api/v1/group/{group_id}/roles/{role_id}",
+            patch(rename_group_role).delete(delete_group_role),
+        )
+        .route(
+            "/api/v1/group/{group_id}/roles/{role_id}/members",
+            get(get_group_role_members),
+        )
+        .route(
+            "/api/v1/group/{group_id}/roles/{role_id}/members/{member_id}",
+            post(add_group_role_member).delete(remove_group_role_member),
+        )
         .route(
             "/api/v1/group/{group_id}/member/add/{member_id}",
             post(add_group_member),
@@ -2041,9 +3871,21 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/group/{id}/sync", post(sync_group))
+        .route("/api/v1/group/{id}/invites", get(get_group_invites))
+        .route(
+            "/api/v1/group/{id}/invite/create",
+            post(create_group_invite),
+        )
+        // Kept off the `/api/v1/group/{id}/...` prefix: the invite id is a
+        // string where that prefix takes an i32, and a sibling path can't hold
+        // both without the router treating one as a malformed group id.
+        .route("/api/v1/group-invite/{id}/use", post(use_group_invite))
+        .route("/api/v1/group-invite/{id}", delete(delete_group_invite))
         .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
+        .route("/api/v1/list/{id}/share/role", post(share_list_with_role))
         .route(
             "/api/v1/list/{id}/share/user/{user_id}",
             delete(unshare_list_from_user),
@@ -2051,6 +3893,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route(
             "/api/v1/list/{id}/share/group/{group_id}",
             delete(unshare_list_from_group),
+        )
+        .route(
+            "/api/v1/list/{id}/share/role/{role_id}",
+            delete(unshare_list_from_role),
         )
         .route("/api/v1/list/{id}/invites", get(get_list_invites))
         .route("/api/v1/list/{id}/invite/create", post(create_invite))
@@ -2071,82 +3917,127 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/retainer/search/{query}", get(retainer_search))
         .route("/api/v1/retainer/claim/{id}", get(claim_retainer))
         .route("/api/v1/retainer/unclaim/{id}", get(unclaim_retainer))
-        .route(
-            "/item/refresh/{worldid}/{itemid}",
-            get(refresh_world_item_listings),
-        )
         .route("/api/v1/retainer/listings/{id}", get(retainer_listings))
         .route("/api/v1/characters/search/{name}", get(character_search))
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
-        .route("/api/v1/characters/verify/{id}", get(verify_character))
         .route("/api/v1/characters", get(user_characters))
-        .route(
-            "/api/v1/characters/verifications",
-            get(pending_verifications),
-        )
         .route("/api/v1/detectregion", get(detect_region))
+        .route("/api/v1/current_user", delete(delete_user))
+}
+
+/// Stamps every response with the commit this binary was built from so a
+/// stale wasm bundle can notice the server moved on. Outermost layer, so it
+/// covers SSR HTML, the JSON API, static files, `/pkg/`, and error responses.
+/// The client side lives in `ultros_app::global_state::app_update`.
+fn app_commit_header_layer() -> SetResponseHeaderLayer<HeaderValue> {
+    SetResponseHeaderLayer::overriding(
+        axum::http::HeaderName::from_static(ultros_api_types::app_version::APP_COMMIT_HEADER),
+        HeaderValue::from_static(env!("GIT_HASH")),
+    )
+}
+
+pub(crate) async fn start_web(
+    state: WebState,
+    prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
+) {
+    // build our application with a route
+    let worlds = state.world_helper.clone();
+    let token = state.token.clone();
+    let api = api_router();
+    let ssr_api = ultros_app::ssr_api::SsrApi::new(api.clone().with_state(state.clone()));
+    let app = api
+        .route("/alerts/websocket", get(connect_websocket))
+        .route(
+            "/item/refresh/{worldid}/{itemid}",
+            get(refresh_world_item_listings),
+        )
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))
         .route("/static/{*path}", get(static_path))
         .route("/static/itemicon/fallback", get(fallback_item_icon))
         .route("/static/itemicon/{path}", get(get_item_icon))
+        .route("/static/map/{file}", get(get_map))
         .route("/static/data/{version}/{lang}", get(get_xiv_data_bytes))
+        .route(
+            "/static/startup/{version}/{lang}",
+            get(get_xiv_startup_bytes),
+        )
+        .route(
+            "/static/game-detail/{version}/{lang}/{kind}/{id}",
+            get(get_xiv_detail),
+        )
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
-        .route("/api/v1/current_user", delete(delete_user))
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
-        .route("/sitemap/world/{s}", get(world_sitemap))
+        .route(
+            "/social/v2/{locale}/{kind}/{key}",
+            get(social_card::social_card),
+        )
         .route("/sitemap/items.xml", get(item_sitemap))
+        .route("/sitemap/npcs.xml", get(npc_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))
         .merge(test_auth_routes())
-        .merge(create_leptos_app(state.world_helper.clone()).await.unwrap())
-        .fallback(leptos_axum::file_and_error_handler_with_context::<
-            WebState,
-            _,
-        >(
-            move || {
-                provide_context(LocalWorldData(Ok(worlds.clone())));
-            },
-            // The file/404 fallback doesn't have per-request bootstrap data; an
-            // empty script tag is harmless and the client falls back to HTTP.
-            |options| shell(options, String::new()),
+        .merge(
+            create_leptos_app(state.world_helper.clone(), ssr_api.clone())
+                .await
+                .unwrap(),
+        )
+        // Detached like the leptos route handlers: the 404 page renders the
+        // whole app, and a scanner that gives up on an unknown path would
+        // otherwise cancel the render and tear the owner down under it
+        // (GlitchTip #7382, #7383) — see `ssr_drain`.
+        .fallback(crate::ssr_drain::detach_fallback(
+            leptos_axum::file_and_error_handler_with_context::<WebState, _>(
+                move || {
+                    provide_context(LocalWorldData(Ok(worlds.clone())));
+                    provide_context(ssr_api.clone());
+                },
+                // The file/404 fallback doesn't have per-request bootstrap data; an
+                // empty script tag is harmless and the client falls back to HTTP.
+                |options| shell(options, String::new()),
+            ),
         ))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
+        .layer(middleware::from_fn(restore_analyzer_view))
         // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
-        // which the `sentry_tracing` layer turns into a GlitchTip issue. The
-        // analyzer service returns 503 during its warm-up window — those aren't
-        // bugs, just a transient startup state (see WebError::as_status_code and
-        // issues 5033/5034). Drop 503 to debug so it stays out of error logs.
+        // which the `sentry_tracing` layer turns into a GlitchTip issue.
+        // See `failure_report_level` for which failures still warrant one.
         .layer(TraceLayer::new_for_http().on_failure(
-            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| match class {
-                ServerErrorsFailureClass::StatusCode(status)
-                    if status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
-                {
-                    tracing::debug!(
-                        %status,
+            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| {
+                match failure_report_level(&class) {
+                    FailureReportLevel::Debug => tracing::debug!(
+                        classification = %class,
                         ?latency,
                         "response failed (likely warm-up)",
-                    );
-                }
-                _ => {
-                    tracing::error!(
+                    ),
+                    FailureReportLevel::Warn => tracing::warn!(
                         classification = %class,
                         ?latency,
                         "response failed",
-                    );
+                    ),
+                    FailureReportLevel::Error => tracing::error!(
+                        classification = %class,
+                        ?latency,
+                        "response failed",
+                    ),
                 }
             },
         ))
+        // Declared before the sentry layers below, so it is *inner* to them:
+        // the per-request hub is already bound by the time it configures the
+        // scope. See `sentry_transaction_name` for why the transaction has to
+        // be named at all.
+        .layer(middleware::from_fn(name_sentry_transaction))
         // Sentry/Glitchtip: bind a fresh Hub per request and decorate captured
         // events with HTTP context (method, URL, status). NewSentryLayer must
         // come before SentryHttpLayer; ServiceBuilder applies in declared
@@ -2160,7 +4051,12 @@ pub(crate) async fn start_web(state: WebState) {
             CompressionLayer::new().compress_when(
                 SizeAbove::new(256)
                     // don't compress images
-                    .and(NotForContentType::IMAGES),
+                    .and(NotForContentType::IMAGES)
+                    // The game-data pack (`get_xiv_data_bytes`) is the only
+                    // octet-stream and is already a brotli container: on prod
+                    // this layer spent CPU re-compressing 4.5 MB of it per
+                    // origin request for a 0.03% gain. Serve it as-is.
+                    .and(NotForContentType::const_new("application/octet-stream")),
             ),
         )
         .layer(SetResponseHeaderLayer::overriding(
@@ -2174,7 +4070,31 @@ pub(crate) async fn start_web(state: WebState) {
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-        ));
+        ))
+        // `same-origin` would strip the Referer from every cross-origin
+        // request, AdSense and Sentry included. `strict-origin-when-cross-origin`
+        // is the modern browser default: full URL same-origin, bare origin
+        // cross-origin, nothing on an HTTPS->HTTP downgrade. Stating it
+        // explicitly pins the behaviour for older clients without changing
+        // what third parties already receive.
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        // The standards-track spelling of the `X-Frame-Options: DENY` above,
+        // not additional protection — every browser we serve honours one or
+        // the other. It is here so scanners stop flagging its absence.
+        //
+        // CAREFUL: this claims the CSP header, and the layer is `overriding`.
+        // Adding a directive here is not free — the app loads Google
+        // Analytics, AdSense and Sentry from other origins, so a `script-src`
+        // or `connect-src` added to this string silently kills all three.
+        // Ship any new directive in report-only first.
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("frame-ancestors 'none'"),
+        ))
+        .layer(app_commit_header_layer());
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
@@ -2183,6 +4103,7 @@ pub(crate) async fn start_web(state: WebState) {
         .ok()
         .flatten()
         .unwrap_or(8080);
+    let metrics_token = token.clone();
     let (_main_app, _metrics_app) = futures::future::join(
         async move {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -2195,7 +4116,213 @@ pub(crate) async fn start_web(state: WebState) {
                 .await
                 .unwrap();
         },
-        start_metrics_server(),
+        start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
+}
+
+#[cfg(test)]
+mod sentry_transaction_tests {
+    use super::name_sentry_transaction;
+    use axum::{Router, body::Body, http::Request, middleware, routing::get};
+    use tower::ServiceExt;
+
+    async fn failing_handler() -> &'static str {
+        sentry::capture_message(
+            "ClickHouse item_stats query failed (unavailable)",
+            sentry::Level::Error,
+        );
+        "ok"
+    }
+
+    fn router() -> Router {
+        Router::new()
+            .route("/api/v1/item_stats/{world}/{itemid}", get(failing_handler))
+            // Inner to the hub layer, mirroring how `start_web` wires them.
+            .layer(middleware::from_fn(name_sentry_transaction))
+            .layer(sentry_tower::NewSentryLayer::new_from_top())
+    }
+
+    /// Driven synchronously on purpose: `with_captured_events` binds its hub to
+    /// the *current thread*, so the request has to run on that same thread for
+    /// `NewSentryLayer` to inherit the test client. Nothing here touches IO.
+    fn transaction_for(uri: &str) -> Option<String> {
+        let events = sentry::test::with_captured_events(|| {
+            futures::executor::block_on(async {
+                router()
+                    .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+            });
+        });
+        events.into_iter().next().and_then(|e| e.transaction)
+    }
+
+    /// The regression: two requests to the same route must land on the same
+    /// issue. Before this middleware existed the event carried no transaction
+    /// at all, so GlitchTip fell back to the raw URL as the culprit and minted
+    /// a fresh issue per item id — 50+ of them from one ClickHouse blip.
+    #[test]
+    fn same_route_different_params_share_one_transaction() {
+        let moogle = transaction_for("/api/v1/item_stats/Moogle/35424");
+        let gilgamesh = transaction_for("/api/v1/item_stats/Gilgamesh/12");
+
+        assert_eq!(
+            moogle.as_deref(),
+            Some("GET /api/v1/item_stats/{world}/{itemid}")
+        );
+        assert_eq!(moogle, gilgamesh);
+    }
+
+    #[test]
+    fn unmatched_requests_do_not_splinter_on_the_raw_path() {
+        let name = super::sentry_transaction_name(&axum::http::Method::GET, None);
+        assert_eq!(name, "GET <fallback>");
+    }
+}
+
+#[cfg(test)]
+mod app_commit_header_tests {
+    use super::app_commit_header_layer;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use ultros_api_types::app_version::APP_COMMIT_HEADER;
+
+    fn router() -> Router {
+        Router::new()
+            .route("/ok", get(|| async { "ok" }))
+            .layer(app_commit_header_layer())
+    }
+
+    async fn header_for(uri: &str) -> (StatusCode, Option<String>) {
+        let response = router()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let header = response
+            .headers()
+            .get(APP_COMMIT_HEADER)
+            .map(|v| v.to_str().unwrap().to_string());
+        (response.status(), header)
+    }
+
+    #[tokio::test]
+    async fn stamps_success_responses() {
+        let (status, header) = header_for("/ok").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+
+    #[tokio::test]
+    async fn stamps_not_found_responses() {
+        let (status, header) = header_for("/missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(header.as_deref(), Some(env!("GIT_HASH")));
+    }
+}
+
+#[cfg(test)]
+mod game_detail_tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn startup_and_details_are_versioned_and_locale_specific() {
+        for lang in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            let response = get_xiv_startup_bytes(Path((
+                xiv_gen_db::startup_version(lang).into(),
+                format!("{lang}.rkyv"),
+            )))
+            .await
+            .unwrap();
+            assert_eq!(
+                response.headers()["cache-control"],
+                "public, max-age=31536000, immutable"
+            );
+            let bytes = to_bytes(response.into_body(), 10_000_000).await.unwrap();
+            let startup = xiv_gen_db::decompress_data(&bytes).unwrap();
+            assert!(startup.items.values().all(|row| row.description.is_empty()));
+            let response = get_xiv_detail(Path((
+                xiv_gen_db::pack_version(lang).into(),
+                lang.into(),
+                "description".into(),
+                5333,
+            )))
+            .await;
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(
+                response.headers()["cache-control"],
+                "public, max-age=31536000, immutable"
+            );
+            let text: Option<String> =
+                serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                    .unwrap();
+            assert!(text.is_some_and(|text| !text.is_empty()));
+        }
+        let stale = get_xiv_detail(Path(("stale".into(), "en".into(), "npc".into(), 1))).await;
+        assert_eq!(stale.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(stale.headers()["cache-control"], "no-store");
+        let unknown = get_xiv_detail(Path((
+            xiv_gen_db::pack_version("en").into(),
+            "en".into(),
+            "npc".into(),
+            -1,
+        )))
+        .await;
+        assert_eq!(
+            to_bytes(unknown.into_body(), 1000).await.unwrap().as_ref(),
+            b"null"
+        );
+    }
+
+    #[tokio::test]
+    async fn omitted_npc_is_available_from_detail_endpoint() {
+        let full = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let startup =
+            xiv_gen_db::decompress_data(xiv_gen_db::startup_bytes(xiv_gen::Language::En)).unwrap();
+        let (id, npc) = full
+            .e_npc_residents
+            .iter()
+            .find(|(id, npc)| !startup.e_npc_residents.contains_key(id) && !npc.singular.is_empty())
+            .unwrap();
+        let response = get_xiv_detail(Path((
+            xiv_gen_db::pack_version("en").into(),
+            "en".into(),
+            "npc".into(),
+            id.0,
+        )))
+        .await;
+        let fetched: Option<xiv_gen::ENpcResident> =
+            serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                .unwrap();
+        assert_eq!(fetched.unwrap().singular, npc.singular);
+    }
+}
+
+#[cfg(test)]
+mod pressure_route_tests {
+    use super::fit_pressure_bucket;
+
+    #[test]
+    fn fit_pressure_bucket_snaps_to_the_ladder() {
+        assert_eq!(fit_pressure_bucket(0, 86_400, 3600), 3600);
+        assert_eq!(
+            fit_pressure_bucket(0, 86_400, 5000),
+            super::snap_bucket_seconds(5000)
+        );
+    }
+
+    #[test]
+    fn fit_pressure_bucket_widens_past_cap() {
+        let year = 365 * 86_400;
+        let bucket = fit_pressure_bucket(0, year, 3600);
+        assert!(year / bucket <= 2000, "{bucket}");
+        // 1 h → 8760 buckets (too many); 6 h → 1460 fits.
+        assert_eq!(bucket, 6 * 3600);
+    }
 }

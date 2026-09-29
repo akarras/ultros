@@ -50,7 +50,7 @@ async fn refresh_then_query_market_pulse() {
         .await
         .expect("top world");
 
-    let pulse = queries::market_pulse(&ch, top.world_id)
+    let pulse = queries::market_pulse(&ch, top.world_id, &[top.world_id])
         .await
         .expect("query");
 

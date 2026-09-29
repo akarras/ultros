@@ -9,7 +9,7 @@ use crate::discord::ffxiv::helpers::{
     discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
     name_matches_lowered, top_n_cheapest_listings,
 };
-use crate::web::item_card::generate_image;
+use crate::web::item_card::generate_price_history_chart;
 
 use super::{Context, Error};
 
@@ -124,7 +124,7 @@ async fn history(
         .world_helper
         .lookup_world_by_name(&world)
         .ok_or(anyhow!("Unable to find world"))?;
-    let png = generate_image(
+    let png = generate_price_history_chart(
         &data.ch_client,
         &data.world_cache,
         &data.world_helper,

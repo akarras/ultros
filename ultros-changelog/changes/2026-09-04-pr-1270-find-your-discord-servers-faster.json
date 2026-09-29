@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Find your Discord servers faster",
+  "blurb": "After a new Discord sign-in, the server pickers for groups and notifications look through your servers directly, making them faster as Ultros joins more communities. Existing sign-ins keep working, and expired Discord access asks you to sign in again."
+}

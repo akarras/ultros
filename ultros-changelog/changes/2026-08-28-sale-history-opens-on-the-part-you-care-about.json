@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Sale history opens on the part you care about",
+  "blurb": "An item that has sold in the last week now opens its price chart on the week view instead of years of history. Quiet items still open on full history, and the All button pins it whenever you want the long view.",
+  "importance": "medium"
+}

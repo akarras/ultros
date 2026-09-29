@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Flip Finder: clearer sales rate, plus a tax column",
+  "blurb": "The Velocity column is gone — the Sales/day badge shows the same rate more readably and is now on by default. A new optional, sortable Tax column shows the gil the 5% market board tax takes off each estimated sale; profit stays post-tax as before.",
+  "link": "/flip-finder",
+  "importance": "medium"
+}

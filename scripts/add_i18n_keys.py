@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-LOCALES_DIR = Path("ultros-frontend/ultros-app/locales")
+LOCALES_DIR = Path("ultros-frontend/ultros-i18n/locales")
 
 # Each entry is (key, {locale: value}). All 7 locales must be present.
 ENTRIES: list[tuple[str, dict[str, str]]] = [

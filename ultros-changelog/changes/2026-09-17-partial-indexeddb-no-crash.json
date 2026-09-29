@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Browsers with a partial IndexedDB no longer crash on load",
+  "blurb": "Ultros caches game data in your browser's IndexedDB. Browsers and crawlers whose IndexedDB only half works could crash the app the moment it opened that cache. The app now sets the cache up defensively and simply loads without it when the browser can't provide one.",
+  "importance": "low"
+}

@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Shopping trips respect a travel limit and start at home",
+  "blurb": "Lists have a Travel control that keeps Build estimates and Shop routes to your home world, your datacenter, or the full price scope. Trips visit your home world first when you have something to buy there, and route cards only compare savings between complete routes.",
+  "link": "/list",
+  "labs": true
+}

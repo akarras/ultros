@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::recently_viewed::RecentItems;
@@ -6,7 +7,6 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
@@ -22,12 +22,12 @@ pub fn History() -> impl IntoView {
     // tachys's hydrator surfaces as an unrecoverable panic.
     let local_items = LocalResource::new(move || async move { items() });
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, history_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, history_meta_desc).to_string() />
             <MetaRobotsNoIndex />
 
-            <div class="container mx-auto max-w-7xl space-y-6">
+            <div class="space-y-6">
                 <div class="flex items-center justify-between">
                     <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, history_title)}</h1>
                     <button
@@ -76,7 +76,7 @@ pub fn History() -> impl IntoView {
                                                                 .get(&ItemId(item_id));
 
                                                             view! {
-                                                                <A href=format!("/item/{item_id}")>
+                                                                <AppLink href=format!("/item/{item_id}")>
                                                                     <div class="flex items-center gap-4 p-3 card transition-colors duration-200 hover:translate-x-1">
                                                                         <ItemIcon item_id icon_size=IconSize::Medium />
 
@@ -88,7 +88,7 @@ pub fn History() -> impl IntoView {
                                                                             </div>
                                                                         </div>
                                                                     </div>
-                                                                </A>
+                                                                </AppLink>
                                                             }
                                                         })
                                                         .collect_view()}

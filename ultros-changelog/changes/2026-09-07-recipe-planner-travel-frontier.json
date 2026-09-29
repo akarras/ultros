@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Recipe planner routes read left to right: stay home, or travel?",
+  "blurb": "The recipe planner's route cards now line up by trip length: Stay home is always first, every card to the right is a real saving over the one before it, and the cheapest plan found is always last, even if it takes a dozen hops for a big bulk order. Each travel card says how much it saves over staying home, the gil-plus-travel pick is badged Best value, the last card Cheapest, and if nothing beats your own market board the planner just tells you to stay home.",
+  "link": "/recipe/5057"
+}

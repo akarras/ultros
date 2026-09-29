@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Sort and filter the Item Explorer",
+  "blurb": "Every Item Explorer column now sorts, including equip level, HQ price, vendor price and world, and rows with no listing or no vendor sink to the bottom instead of jumping to the top. Eight new filters — name, item level, equip level, price ceiling, and switches for vendor-sold, has-HQ and on-the-market-board — sit in the same control bar the analyzer tools use, and every one of them lives in the URL, so a filtered view is a link you can share. Categories that cannot fill a column, like minions with no item level, drop it instead of showing a column of dashes.",
+  "link": "/items"
+}

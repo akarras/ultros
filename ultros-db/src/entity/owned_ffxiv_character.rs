@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub ffxiv_character_id: i32,
+    /// Part of the primary key: a character can be claimed by any number of
+    /// users, since a claim only groups that user's own retainers.
+    #[sea_orm(primary_key, auto_increment = false)]
     pub discord_user_id: i64,
 }
 

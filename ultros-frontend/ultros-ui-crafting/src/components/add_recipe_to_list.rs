@@ -1,0 +1,294 @@
+use crate::api::{bulk_add_item_to_list, get_lists};
+use crate::components::crafting_cost::IngredientsIter;
+use crate::components::icon::Icon;
+use crate::components::{
+    item_icon::*, loading::Loading, modal::Modal, small_item_display::SmallItemDisplay,
+    toggle::Toggle, tooltip::Tooltip,
+};
+use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
+use icondata::RiPlayListAddMediaLine;
+use leptos::either::Either;
+use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
+use ultros_api_types::list::ListItem;
+use ultros_frontend_core::components::account_lists_failure::AccountListsFailure;
+use ultros_frontend_core::components::local_list_targets::LocalListTargets;
+use xiv_gen::{Item, ItemId, Recipe};
+
+#[derive(Clone)]
+struct IngredientState {
+    item_id: ItemId,
+    item: &'static Item,
+    amount: i32,
+    is_crystal: bool,
+    quantity: RwSignal<i32>,
+    overridden: RwSignal<bool>,
+}
+
+/// `initial_hq` seeds the modal's HQ-ingredients toggle, e.g. from a page
+/// that already asked for HQ ingredients.
+#[component]
+pub fn AddRecipeToList(
+    recipe: &'static Recipe,
+    #[prop(optional)] initial_hq: bool,
+    #[prop(optional)] show_label: bool,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let (modal_visible, set_modal_visible) = signal(false);
+    let items = &tracked_data().items;
+    let result_item = items.get(&ItemId(recipe.item_result));
+    view! {
+        <Tooltip tooltip_text=Signal::derive(move || if modal_visible() { String::new() } else { t_string!(i18n, add_recipe_tooltip).to_string() })>
+            <button
+                type="button"
+                class=if show_label { "inline-flex items-center gap-1 text-xs rounded hover:underline focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)]" } else { "btn-primary" }
+                aria-label=move || {
+                    result_item
+                        .map(|i| format!("{}: {}", t_string!(i18n, add_recipe_tooltip), i.name.as_str()))
+                        .unwrap_or_else(|| t_string!(i18n, add_recipe_tooltip).to_string())
+                }
+                on:click=move |event| {
+                    event.prevent_default();
+                    event.stop_propagation();
+                    set_modal_visible(!modal_visible());
+                }
+            >
+                <Icon icon=RiPlayListAddMediaLine aria_hidden=true />
+                <span class=if show_label { "" } else { "sr-only" }>{t!(i18n, analyzer_add_ingredients)}</span>
+            </button>
+        </Tooltip>
+        <Show when=modal_visible>
+            <AddRecipeToListModal recipe initial_hq set_visible=set_modal_visible />
+        </Show>
+    }
+}
+
+/// The modal behind [`AddRecipeToList`], for callers that bring their own
+/// trigger. `initial_hq` seeds the HQ-ingredients toggle.
+#[component]
+pub fn AddRecipeToListModal(
+    recipe: &'static Recipe,
+    #[prop(optional)] initial_hq: bool,
+    #[prop(into)] set_visible: SignalSetter<bool>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let data = tracked_data();
+    let items = &data.items;
+    let result_item = move || items.get(&ItemId(recipe.item_result));
+    let lists = Resource::new(move || {}, move |_| get_lists());
+    let (hq, set_hq) = signal(initial_hq);
+    let (craft_quantity, set_craft_quantity) = signal(1);
+    let (ignore_crystals, set_ignore_crystals) = signal(false);
+
+    let ingredients = StoredValue::new(
+        IngredientsIter::new(recipe)
+            .flat_map(|(item_id, amount)| {
+                items.get(&item_id).map(|item| {
+                    let is_crystal = item.item_search_category
+                        == crate::components::crafting_cost::CRYSTAL_SEARCH_CATEGORY;
+                    IngredientState {
+                        item_id,
+                        item,
+                        amount,
+                        is_crystal,
+                        quantity: RwSignal::new(amount),
+                        overridden: RwSignal::new(false),
+                    }
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let add_bulk_action = Action::new(move |(list_id, items): &(i32, Vec<ListItem>)| {
+        let items = items.clone();
+        bulk_add_item_to_list(*list_id, items)
+    });
+
+    // The rows to add at click time: every ingredient with a non-zero
+    // quantity, HQ only where the item can be. Shared by the account-list
+    // buttons and the device-list section (which ignores `list_id`).
+    let items_to_add = move |list_id: i32| {
+        let hq_only = hq.get_untracked();
+        ingredients
+            .get_value()
+            .iter()
+            .filter_map(|i| {
+                let quantity = i.quantity.get_untracked();
+                if quantity == 0 {
+                    return None;
+                }
+                let can_be_hq = i.item.can_be_hq;
+                Some(ListItem {
+                    id: 0,
+                    item_id: i.item_id.0,
+                    list_id,
+                    hq: Some(hq_only && can_be_hq),
+                    quantity: Some(quantity),
+                    acquired: None,
+                    target_price: None,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let local_items = Callback::new(move |()| items_to_add(0));
+    let close_on_added = Callback::new(move |()| set_visible(false));
+
+    Effect::new(move |_| {
+        if let Some(Ok(_)) = add_bulk_action.value().get() {
+            set_visible(false);
+        }
+    });
+
+    Effect::new(move |_| {
+        let quantity = craft_quantity();
+        let ignore = ignore_crystals();
+        ingredients.update_value(|i| {
+            for ingredient in i {
+                if !ingredient.overridden.get_untracked() {
+                    let amount = if ingredient.is_crystal && ignore {
+                        0
+                    } else {
+                        ingredient.amount * quantity
+                    };
+                    ingredient.quantity.set(amount);
+                }
+            }
+        });
+    });
+
+    view! {
+        <Modal set_visible>
+            <div class="panel p-6 rounded-xl space-y-4">
+                <div class="flex items-start gap-3">
+                    <div class="shrink-0">
+                        <ItemIcon item_id={recipe.item_result} icon_size=IconSize::Medium />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div data-dialog-title="" class="text-xl font-extrabold text-[color:var(--brand-fg)]">
+                            {t!(i18n, add_recipe_title)}
+                        </div>
+                        <div class="text-[color:var(--color-text-muted)] truncate">
+                            {move || result_item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, add_recipe_unknown_item).to_string())}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <label class="text-sm text-[color:var(--color-text-muted)]" for=format!("craft-qty-{}", recipe.key_id.0)>{t!(i18n, add_recipe_number_of_crafts)}</label>
+                    <input
+                        id=format!("craft-qty-{}", recipe.key_id.0)
+                        type="number"
+                        min="1"
+                        class="input w-24"
+                        prop:value=craft_quantity
+                        on:input=move |e| {
+                            let Ok(q) = event_target_value(&e).parse::<i32>() else { return; };
+                            set_craft_quantity(q.max(1));
+                        }
+                    />
+                    <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
+                    <Toggle
+                        checked=hq
+                        set_checked=set_hq
+                        checked_label=t_string!(i18n, add_recipe_hq_ingredients).to_string()
+                        unchecked_label=t_string!(i18n, add_recipe_normal_quality).to_string()
+                    />
+                    <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
+                    <Toggle
+                        checked=ignore_crystals
+                        set_checked=set_ignore_crystals
+                        checked_label=t_string!(i18n, add_recipe_ignore_crystals).to_string()
+                        unchecked_label=t_string!(i18n, add_recipe_include_crystals).to_string()
+                    />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <For
+                        each=move || ingredients.get_value()
+                        key=|i| i.item_id
+                        children=move |ingredient| {
+                            view! {
+                                <div class="flex items-center gap-2">
+                                    <label for=format!("ingredient-qty-{}", ingredient.item_id.0) class="flex-1">
+                                        <SmallItemDisplay item=ingredient.item />
+                                    </label>
+                                    <input
+                                        id=format!("ingredient-qty-{}", ingredient.item_id.0)
+                                        type="number"
+                                        min="0"
+                                        class="input w-24 ml-auto"
+                                        prop:value=move || ingredient.quantity.get()
+                                        on:input=move |e| {
+                                            let Ok(q) = event_target_value(&e).parse::<i32>() else {
+                                                return;
+                                            };
+                                            ingredient.quantity.set(q.max(0));
+                                            ingredient.overridden.set(true);
+                                        }
+                                    />
+                                </div>
+                            }
+                        }
+                    />
+                </div>
+
+                <div class="rounded p-1">
+                    <Suspense fallback=Loading>
+                        {move || {
+                            let lists = match lists.get()? {
+                                Ok(lists) => lists,
+                                Err(error) => return Some(Either::Right(view! { <AccountListsFailure error /> })),
+                            };
+
+                            Some(Either::Left(
+                                lists
+                                    .into_iter()
+                                    .map(|list| {
+                                        let (error, set_error) = signal(Option::<String>::None);
+                                        Effect::new(move |_| {
+                                            if let Some(Err(e)) = add_bulk_action.value().get() {
+                                                set_error(Some(e.to_string()));
+                                            }
+                                        });
+                                        view! {
+                                            <div class="space-y-1">
+                                                <div class="flex items-center justify-between card p-2">
+                                                    <div class="font-semibold truncate">{list.name}</div>
+                                                    <button
+                                                        class="btn-primary"
+                                                        disabled=add_bulk_action.pending()
+                                                        on:click=move |_| {
+                                                            let list_id = list.id;
+                                                            let items_to_add = items_to_add(list_id);
+                                                            if !items_to_add.is_empty() {
+                                                                add_bulk_action.dispatch((list_id, items_to_add));
+                                                            }
+                                                        }
+                                                    >
+                                                        <Show
+                                                            when=add_bulk_action.pending()
+                                                            fallback=move || view! { <span>{t!(i18n, add_recipe_add_button)}</span> }
+                                                        >
+                                                            <span>{t!(i18n, add_recipe_adding_button)}</span>
+                                                        </Show>
+                                                    </button>
+                                                </div>
+                                                <Show when=Signal::derive(move || error().is_some())>
+                                                    <div class="text-xs text-negative px-2">
+                                                        {move || error().unwrap_or_default()}
+                                                    </div>
+                                                </Show>
+                                            </div>
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_view(),
+                            ))
+                        }}
+                    </Suspense>
+                    <LocalListTargets build_items=local_items on_added=close_on_added />
+                </div>
+            </div>
+        </Modal>
+    }
+}

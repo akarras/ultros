@@ -21,9 +21,46 @@ use migration::{
 use sea_orm::{
     ActiveModelTrait, ActiveValue, DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
 };
-use tracing::instrument;
+use tracing::{instrument, warn};
 use ultros_api_types::{SaleHistory, UnknownCharacter};
 use universalis::{ItemId, SaleView, WorldId};
+
+/// Ceiling on how many per-world sale-history queries one request may have in
+/// flight at once.
+///
+/// The per-world queries below used to run under `try_join_all`, which polls
+/// *every* future immediately: a region item page fans out one query per world
+/// in the region (~30 for North America, more for Europe), so a single page
+/// render tried to hold that many pooled connections simultaneously. With
+/// `POSTGRES_MAX_CONNECTIONS` at 300 and ingest writing continuously, a handful
+/// of concurrent region renders is enough to exhaust the pool — prod events
+/// carry `acquired connection, but time to acquire exceeded slow threshold`
+/// breadcrumbs at `acquired_after_secs: 2.2` (threshold 2) sitting right next
+/// to the 10s SSR loopback timeouts that GlitchTip files as #2209/#2210, and
+/// the same starvation shows up as #6868/#6869 (`catch-up … update failed`).
+///
+/// Buffering caps the peak connection demand per call while keeping the exact
+/// same queries and the same results — the callers sort and truncate the merged
+/// rows anyway, so nothing downstream depends on the fan-out width. The cost is
+/// a little latency on wide scopes (worlds are answered in batches rather than
+/// all at once); each query is index-served on
+/// `sale_history_lookup_index (sold_item_id, world_id, sold_date DESC)`, so the
+/// batches are individually fast.
+const MAX_CONCURRENT_WORLD_QUERIES: usize = 8;
+
+/// Run per-world queries with at most [`MAX_CONCURRENT_WORLD_QUERIES`] in
+/// flight, collecting results in the order the worlds were supplied.
+async fn fan_out_per_world<F, T>(queries: impl Iterator<Item = F>) -> Result<Vec<T>, anyhow::Error>
+where
+    F: std::future::Future<Output = Result<T, anyhow::Error>>,
+{
+    use futures::stream::{StreamExt, TryStreamExt};
+
+    futures::stream::iter(queries)
+        .buffered(MAX_CONCURRENT_WORLD_QUERIES)
+        .try_collect()
+        .await
+}
 
 impl UltrosDb {
     /// Stores a sale from a given sale view.
@@ -81,8 +118,14 @@ impl UltrosDb {
         if sales.is_empty() {
             return Ok(vec![]);
         }
-        let mut recorded_sales = vec![];
-        let _ = Entity::insert_many(sales.into_iter().map(|sale| {
+        // Insert with RETURNING so the rows we hand back carry their real
+        // Postgres ids. The ClickHouse dual-write uses `sale_history.id` as the
+        // discriminator in the `sales` ORDER BY key, so returning `id: 0` here
+        // would (a) collapse distinct same-second sales of the same
+        // item/hq/world into one ClickHouse row and (b) make the backfill --
+        // which reads real ids straight out of Postgres -- write a *second*,
+        // never-merging copy of every sale the live path already wrote.
+        let inserted = Entity::insert_many(sales.into_iter().map(|sale| {
             let buyer = buyers
                 .get(&sale.buyer_name)
                 .expect("Should always have a buyer model");
@@ -92,21 +135,6 @@ impl UltrosDb {
                 quantity,
                 ..
             } = sale;
-            let record: SaleHistory = SaleHistoryReturn(
-                Model {
-                    id: 0,
-                    quantity,
-                    price_per_item: price_per_unit,
-                    buying_character_id: buyer.id,
-                    hq,
-                    sold_item_id: item_id.0,
-                    sold_date: sale.timestamp.naive_utc(),
-                    world_id: world_id.0,
-                },
-                Some(buyer.clone()),
-            )
-            .into();
-            recorded_sales.push((record, buyer.into()));
             ActiveModel {
                 id: Default::default(),
                 quantity: Set(quantity),
@@ -118,9 +146,10 @@ impl UltrosDb {
                 world_id: Set(world_id.0),
             }
         }))
-        .exec_without_returning(&self.db)
+        .exec_with_returning(&self.db)
         .await?;
-        Ok(recorded_sales)
+        let buyers_by_id: HashMap<i32, _> = buyers.into_values().map(|b| (b.id, b)).collect();
+        Ok(attach_buyers(inserted, &buyers_by_id))
     }
 
     pub async fn get_sale_history_from_multiple_worlds(
@@ -129,14 +158,20 @@ impl UltrosDb {
         item_id: i32,
         limit: u64,
     ) -> Result<Vec<SaleHistoryReturn>, anyhow::Error> {
-        let all = futures::future::try_join_all(
+        let all: Vec<Vec<sale_history::Model>> = fan_out_per_world(
             world_ids.map(|world_id| self.get_sale_history_for_item(world_id, item_id, limit)),
         )
-        .await;
+        .await?;
 
-        let mut sales: Vec<_> = all?.into_iter().flat_map(|w| w.into_iter()).collect();
-        sales.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-        sales.truncate(limit as usize);
+        let mut sales: Vec<_> = all.into_iter().flat_map(|w| w.into_iter()).collect();
+
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        let limit_usize = limit as usize;
+        if sales.len() > limit_usize {
+            sales.select_nth_unstable_by_key(limit_usize, |sale| std::cmp::Reverse(sale.sold_date));
+            sales.truncate(limit_usize);
+        }
+        sales.sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
 
         let buyers = unknown_final_fantasy_character::Entity::find()
             .filter(
@@ -224,13 +259,19 @@ impl UltrosDb {
         item_id: i32,
         limit: u64,
     ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
-        let per_world = futures::future::try_join_all(
+        let per_world: Vec<Vec<sale_history::Model>> = fan_out_per_world(
             world_ids.map(|world_id| self.get_sale_history_for_item(world_id, item_id, limit)),
         )
         .await?;
         let mut sales: Vec<sale_history::Model> = per_world.into_iter().flatten().collect();
-        sales.sort_by_key(|s| std::cmp::Reverse(s.sold_date));
-        sales.truncate(limit as usize);
+
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        let limit_usize = limit as usize;
+        if limit_usize > 0 && sales.len() > limit_usize {
+            sales.select_nth_unstable_by_key(limit_usize, |s| std::cmp::Reverse(s.sold_date));
+            sales.truncate(limit_usize);
+        }
+        sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.sold_date));
         Ok(sales)
     }
 
@@ -283,6 +324,38 @@ impl UltrosDb {
     }
 }
 
+/// Pair freshly inserted `sale_history` rows back up with their buyers to form
+/// the event payload.
+///
+/// The rows come straight out of `INSERT ... RETURNING`, so `model.id` is the
+/// real Postgres id — that id is what the ClickHouse dual-write puts in
+/// `SaleRow::pg_id`, and it is the discriminator in the `sales` ORDER BY key.
+/// Anything that loses it here silently corrupts ClickHouse dedup.
+///
+/// Postgres doesn't promise RETURNING row order matches the VALUES order, so
+/// buyers are re-attached by id rather than zipped positionally.
+fn attach_buyers(
+    inserted: Vec<sale_history::Model>,
+    buyers_by_id: &HashMap<i32, unknown_final_fantasy_character::Model>,
+) -> Vec<(SaleHistory, UnknownCharacter)> {
+    inserted
+        .into_iter()
+        .filter_map(|model| {
+            let Some(buyer) = buyers_by_id.get(&model.buying_character_id) else {
+                // Unreachable: every id here came from a buyer we just looked
+                // up or created. Skip rather than panic on the ingest path.
+                warn!(
+                    buying_character_id = model.buying_character_id,
+                    "recorded sale references an unknown buyer; dropping from event payload"
+                );
+                return None;
+            };
+            let record: SaleHistory = SaleHistoryReturn(model, Some(buyer.clone())).into();
+            Some((record, buyer.into()))
+        })
+        .collect()
+}
+
 #[derive(Debug, FromQueryResult)]
 pub struct AbbreviatedSaleData {
     pub sold_item_id: i32,
@@ -290,4 +363,157 @@ pub struct AbbreviatedSaleData {
     pub price_per_item: i32,
     pub sold_date: NaiveDateTime,
     pub world_id: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The whole point of `fan_out_per_world` is that it never has more than
+    /// `MAX_CONCURRENT_WORLD_QUERIES` queries holding a pooled connection at
+    /// once. Each task bumps a counter on entry and yields before dropping it,
+    /// so the observed peak is a real concurrency reading rather than a
+    /// scheduling artifact.
+    #[tokio::test]
+    async fn fan_out_caps_in_flight_queries() {
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let queries = (0..64).map(|world_id| {
+            let in_flight = in_flight.clone();
+            let peak = peak.clone();
+            async move {
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                // Force the runtime to interleave the buffered futures.
+                tokio::task::yield_now().await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(world_id)
+            }
+        });
+
+        let results = fan_out_per_world(queries).await.unwrap();
+
+        assert_eq!(results.len(), 64);
+        assert!(
+            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_WORLD_QUERIES,
+            "peak in-flight {} exceeded the cap {}",
+            peak.load(Ordering::SeqCst),
+            MAX_CONCURRENT_WORLD_QUERIES
+        );
+    }
+
+    /// Callers flatten these results per world, so buffering must not reorder
+    /// them relative to the world list it was handed.
+    #[tokio::test]
+    async fn fan_out_preserves_input_order() {
+        let queries = (0..32).map(|world_id| async move {
+            // Later worlds finish sooner, so an unordered buffer would scramble
+            // the output.
+            for _ in 0..(32 - world_id) {
+                tokio::task::yield_now().await;
+            }
+            Ok::<_, anyhow::Error>(world_id)
+        });
+
+        let results = fan_out_per_world(queries).await.unwrap();
+
+        assert_eq!(results, (0..32).collect::<Vec<_>>());
+    }
+
+    /// `try_join_all` short-circuited on the first failure; the replacement has
+    /// to keep surfacing errors rather than silently dropping a world.
+    #[tokio::test]
+    async fn fan_out_propagates_errors() {
+        let queries = (0..16).map(|world_id| async move {
+            if world_id == 9 {
+                Err(anyhow::anyhow!("world {world_id} blew up"))
+            } else {
+                Ok(world_id)
+            }
+        });
+
+        let err = fan_out_per_world(queries).await.unwrap_err();
+
+        assert!(err.to_string().contains("world 9 blew up"), "got: {err}");
+    }
+
+    fn buyer(id: i32, name: &str) -> unknown_final_fantasy_character::Model {
+        unknown_final_fantasy_character::Model {
+            id,
+            name: name.to_string(),
+        }
+    }
+
+    fn inserted_row(id: i32, buyer_id: i32, second: u32) -> sale_history::Model {
+        sale_history::Model {
+            id,
+            quantity: 1,
+            price_per_item: 1000,
+            buying_character_id: buyer_id,
+            hq: false,
+            sold_item_id: 5,
+            sold_date: NaiveDate::from_ymd_opt(2026, 5, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, second)
+                .unwrap(),
+            world_id: 40,
+        }
+    }
+
+    #[test]
+    fn attach_buyers_preserves_the_postgres_ids() {
+        // Regression guard: this used to hand back `id: 0` for every sale,
+        // which made the ClickHouse `sales` ORDER BY key non-unique.
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One"))]);
+        let rows = vec![inserted_row(101, 7, 0), inserted_row(102, 7, 1)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        let ids: Vec<i32> = attached.iter().map(|(sale, _)| sale.id).collect();
+        assert_eq!(ids, vec![101, 102]);
+        assert!(ids.iter().all(|id| *id != 0));
+    }
+
+    #[test]
+    fn attach_buyers_keeps_same_second_sales_distinct() {
+        // Two sales of the same item/hq/world in the same second: `id` is the
+        // only thing telling them apart, both in PG and in the CH sort key.
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One"))]);
+        let rows = vec![inserted_row(101, 7, 30), inserted_row(102, 7, 30)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        assert_eq!(attached.len(), 2);
+        assert_ne!(attached[0].0.id, attached[1].0.id);
+        assert_eq!(attached[0].0.sold_date, attached[1].0.sold_date);
+    }
+
+    #[test]
+    fn attach_buyers_matches_by_id_not_position() {
+        // RETURNING order isn't guaranteed to match the VALUES order.
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One")), (9, buyer(9, "Buyer Two"))]);
+        let rows = vec![inserted_row(101, 9, 0), inserted_row(102, 7, 1)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        assert_eq!(attached[0].0.buyer_name.as_deref(), Some("Buyer Two"));
+        assert_eq!(attached[1].0.buyer_name.as_deref(), Some("Buyer One"));
+        assert_eq!(attached[0].1.name, "Buyer Two");
+        assert_eq!(attached[1].1.name, "Buyer One");
+    }
+
+    #[test]
+    fn attach_buyers_drops_rows_with_no_known_buyer() {
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One"))]);
+        let rows = vec![inserted_row(101, 7, 0), inserted_row(102, 999, 1)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        assert_eq!(attached.len(), 1);
+        assert_eq!(attached[0].0.id, 101);
+    }
 }

@@ -273,6 +273,7 @@ mod tests {
             quantity: 1,
             hq,
             timestamp: NaiveDateTime::default(),
+            ..Default::default()
         }
     }
 

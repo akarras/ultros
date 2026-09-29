@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Pages that were left mid-load no longer trip the server",
+  "blurb": "Navigating away while a page was still loading could crash the server's rendering task behind the scenes. Abandoned renders are now allowed to finish quietly."
+}

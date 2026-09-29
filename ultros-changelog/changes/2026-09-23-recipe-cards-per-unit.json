@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Recipe cards price multi-yield crafts per unit",
+  "blurb": "The recipe cards on item pages compared the cost of a whole craft against the price of a single item, so recipes that make several at once looked far less profitable than they are. Cost and profit are now shown per unit, with a note when a craft makes more than one."
+}

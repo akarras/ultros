@@ -1,22 +1,58 @@
 [workspace]
 members = [
     "ultros",
+    "ultros-changelog",
+    "ultros-item-card",
     "ultros-db",
     "ultros-api-types",
+    "ultros-list-doc",
+    "ultros-game-sources",
+    "ultros-server-core",
+    "ultros-search",
+    "ultros-analyzer",
+    "ultros-ingest",
+    "ultros-alerts",
+    "ultros-lists",
+    "ultros-group-sync",
+    "ultros-character",
     "ultros-clickhouse",
     "migration",
     "universalis",
     "xiv-gen",
     "xiv-gen-db",
     "ultros-frontend/ultros-client",
+    "ultros-frontend/ultros-api-client",
     "ultros-frontend/ultros-app",
+    "ultros-frontend/ultros-calc",
+    "ultros-frontend/ultros-grid-core",
+    "ultros-frontend/ultros-ui",
+    "ultros-frontend/ultros-frontend-core",
+    "ultros-frontend/ultros-ui-grid",
+    "ultros-frontend/ultros-ui-query",
+    "ultros-frontend/ultros-ui-game",
+    "ultros-frontend/ultros-ui-charts",
+    "ultros-frontend/ultros-ui-market",
+    "ultros-frontend/ultros-ui-alerts",
+    "ultros-frontend/ultros-ui-lists",
+    "ultros-frontend/ultros-ui-crafting",
+    "ultros-frontend/ultros-ui-shell",
+    "ultros-frontend/ultros-i18n",
     "ultros-frontend/ultros-xiv-icons",
+    "ultros-frontend/ultros-crafting",
     "proc-macros/dumb-csv-macros",
     "proc-macros/field-iterator-macros",
     "proc-macros/xiv-gen-macros",
     "dumb-csv",
     "field-iterator",
+    "game-data-pack",
+    "game-data-audit",
+    "icon-extract",
+    "wasm-symbols",
 ]
+# Vendored, patched copy of `reactive_graph` (see `[patch.crates-io]` and
+# vendor/reactive_graph/ULTROS_PATCH.md). Not a workspace member: it keeps
+# upstream's own lint/test configuration and is only built through the patch.
+exclude = ["vendor/reactive_graph"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -121,6 +157,11 @@ dashmap = "6.1"
 web-push = { version = "0.11.0", default-features = false }
 
 [patch.crates-io]
+ironworks = { git = "https://github.com/ackwell/ironworks", rev = "3d5db8ff" }
+# reactive_graph 0.2.14 + a fix for a cross-thread memo recompute race that
+# panics SSR renders (`arc_memo.rs:334: called Option::unwrap() on a None
+# value`). Details and the upstream-shaped diff: vendor/reactive_graph/ULTROS_PATCH.md
+reactive_graph = { path = "vendor/reactive_graph" }
 #leptos = { path = "../leptos/leptos" }
 # leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
 #leptos_reactive = {path = "../leptos/leptos_reactive"}
@@ -132,6 +173,33 @@ web-push = { version = "0.11.0", default-features = false }
 # The server binary uses [profile.server-release] below; see workspace.metadata.leptos.
 opt-level = "z"
 strip = "debuginfo"
+
+# Keep browser-only size tuning out of the native server profile.
+#
+# Whole-program LTO with a single codegen unit is the Leptos book's wasm
+# profile. Unlike the native server (where LTO grew the binary, see
+# [profile.server-release]), it shrinks the client: measured on 7fe53c70 with
+# `--cfg=erase_components` already on (see .cargo/config.toml), the bundle went
+# 17.17 MB -> 16.45 MB raw and 3.48 MB -> 3.34 MB brotli, for about two extra
+# minutes of frontend build. The final LTO link is one rustc at ~3 GB RSS, well
+# inside the 16 GiB CI runner. `panic = "abort"` is deliberately NOT set: the
+# wasm32-unknown-unknown target already aborts on panic (its target spec says
+# so) and the flag measured as a no-op (+15 KB). The production build goes one
+# step further and sets `panic = "immediate-abort"` (plus `-Zbuild-std`) via
+# environment in the Dockerfile only: that removes the panic hook and message
+# formatting from the bundle, so a prod panic is a bare wasm `unreachable`
+# trap whose stack wasm_symbolicate.js resolves in the browser. It is not set
+# here because local builds — including `cargo leptos watch` — rely on the
+# panic message and hook (`file:line` in the console) for debugging.
+#
+# This supersedes the per-package `loro-internal` codegen-units = 1 override
+# from the Lists bundle experiment (docs/qa/lists-bundle-budget.md); the
+# profile-wide setting covers it. Loro's counter feature is still required for
+# acquired quantities and undo.
+[profile.wasm-release]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
 
 # Server binary profile. cargo-leptos builds the bin with this when set as
 # bin-profile-release in workspace.metadata.leptos.
@@ -184,16 +252,27 @@ opt-level = 1
 [[workspace.metadata.leptos]]
 name = "ultros"
 bin-package = "ultros"
-# Disambiguate when the bin-package contains multiple [[bin]] targets — the
-# ultros crate now ships `clickhouse_backfill`, `clickhouse_parity_check`,
-# and `clickhouse_inspect` as one-shot maintenance binaries alongside the
-# main server. Leptos only builds the server.
+# Leptos only builds the server. (The ClickHouse maintenance binaries that
+# once shared this package now live in `ultros-clickhouse`.)
 bin-target = "ultros"
 lib-package = "ultros-client"
 output-name = "ultros"
-# Server binary built with the speed-optimized server-release profile;
-# WASM client keeps the size-optimized default release profile.
+# Separate profiles keep browser size tuning out of the server build.
 bin-profile-release = "server-release"
+lib-profile-release = "wasm-release"
+# Release wasm-opt flags. These replace cargo-leptos's defaults wholesale, so
+# the first three are its defaults repeated. `-g` keeps the `name` section in
+# the optimized module so the Docker build can extract a function-index ->
+# name map (`wasm-symbols`, run right after `cargo leptos build`) that the
+# browser fetches to symbolicate `wasm-function[N]` frames in GlitchTip
+# panic reports; the tool then strips the section before the wasm ships.
+# It has to be `-g` and not `--symbolmap=...`: cargo-leptos holds this list
+# in a HashSet, so order is not preserved, and `--symbolmap` is a positional
+# pass that dumps pre-optimization indices if it lands before `-Oz`.
+# `-g` only affects output (names are emitted); the input carries no DWARF
+# (`strip = "debuginfo"` above, wasm-bindgen without `--keep-debug`), so
+# optimization is unchanged.
+wasm-opt-features = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "-g"]
 # Enable the jemalloc global allocator in release builds — better throughput
 # and lower RSS fragmentation under sustained tokio/axum load.
 bin-features = ["jemalloc"]

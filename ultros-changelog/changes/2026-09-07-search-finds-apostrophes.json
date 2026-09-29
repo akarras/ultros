@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Search finds names with apostrophes",
+  "blurb": "Typing an item's full name, like Courtly Lover's Scepter, came back with no results because the apostrophe was read as search syntax. Apostrophes, quotes, and brackets are now treated as plain text."
+}

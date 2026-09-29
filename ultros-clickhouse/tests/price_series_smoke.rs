@@ -265,3 +265,64 @@ async fn raw_sales_respects_the_requested_window() {
         "the offset-0 and offset-7_200 rows are excluded"
     );
 }
+
+/// An ambiguous insert acknowledgement can cause an identical PG sale to be
+/// retried. Charts must deduplicate before summing even before background merges.
+#[tokio::test]
+async fn retried_sales_do_not_double_chart_totals_or_raw_rows() {
+    if !integration_enabled() {
+        eprintln!("skipped: set ULTROS_CH_INTEGRATION=1 to run");
+        return;
+    }
+    load_env();
+    let ch = ClickHouseClient::from_env();
+    ch.migrate().await.expect("migrate");
+    let item = 999_000_006;
+    ch.client()
+        .query("ALTER TABLE sales DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
+        .bind(item)
+        .execute()
+        .await
+        .expect("cleanup");
+    let sale = SaleRow {
+        pg_id: 6,
+        sold_date: ts(T0),
+        item_id: item,
+        hq: 0,
+        world_id: 1,
+        price_per_item: 100,
+        quantity: 2,
+        buying_character_id: 0,
+        buyer_name: String::new(),
+    };
+    // Seed both copies together so the fixture does not depend on the timing
+    // between an original request and its simulated retry.
+    let mut insert = ch
+        .client()
+        .insert::<SaleRow>("sales")
+        .await
+        .expect("insert");
+    insert.write(&sale).await.expect("first copy");
+    insert.write(&sale).await.expect("retry copy");
+    insert.end().await.expect("acknowledge");
+    let series = queries::price_series(
+        &ch,
+        item,
+        &[(1, 10)],
+        SeriesGroup::World,
+        HqFilter::Any,
+        ts(T0),
+        ts(T0 + 86_400),
+        86_400,
+    )
+    .await
+    .expect("series");
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].sales, 1);
+    assert_eq!(series[0].units, 2);
+    assert_eq!(series[0].gil, 200);
+    let raw = queries::raw_sales(&ch, item, &[1], HqFilter::Any, ts(T0), ts(T0 + 86_400), 100)
+        .await
+        .expect("raw sales");
+    assert_eq!(raw.len(), 1);
+}

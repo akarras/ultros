@@ -1,38 +1,75 @@
+use super::world_nav::world_nav_url;
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
+use crate::analyzer_kit::calculation::{Calculation, CalculationStrip, CalculationTerm};
+use crate::analyzer_kit::filters::{price_control, register_filters, toggle_control};
+use crate::analyzer_kit::{
+    connected_regions::widened_listings,
+    scope::{MarketScope, use_buy_market_scope},
+};
+use crate::analyzer_kit::{
+    formula::PriceSignal,
+    market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
+    signals::{PriceLookup, SignalView},
+};
+use crate::columnar_wire::columnar_resource;
+use crate::components::app_link::use_query_map_or_default;
 use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
-    compute_ingredient_cost,
+    compute_ingredient_cost, vendor_price_map,
 };
+use crate::components::item_actions::ItemActions;
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
+use crate::components::term_badge::TermRole;
+use crate::components::virtual_grid::metrics::FilterOp;
+use crate::components::virtual_grid::registry::FilterAlias;
+use crate::components::virtual_grid::saved_views::{
+    GridPresetView, GridSavedViews, provide_grid_saved_views,
+};
+use crate::components::virtual_grid::{metrics::with_units, units::Unit};
 use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
+use crate::global_state::use_world_helper;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
+use crate::query_defaults::filter_query_signal;
+use crate::query_defaults::query_signal;
 use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
+        control_bar::ControlBar,
         gil::*,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
-        skeleton::BoxSkeleton,
+        skeleton::{BoxSkeleton, InlineStatusSkeleton},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
-        virtual_scroller::*,
+        virtual_grid::{
+            GridColumn,
+            metrics::{GridMetric, GridValue},
+        },
         world_picker::WorldOnlyPicker,
     },
-    global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
+    global_state::home_world::use_home_world,
 };
 use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
+use leptos_i18n::I18nContext;
 use leptos_meta::{Meta, Title};
-use leptos_router::hooks::{query_signal, use_params_map};
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use leptos_router::{
+    NavigateOptions,
+    hooks::{use_location, use_navigate, use_params_map},
+    location::Url,
+};
+use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
+    world::World,
+    world_helper::WorldHelper,
 };
+use ultros_ui_crafting::components::add_set_to_list::AddSetToList;
 use xiv_gen::{
     CompanyCraftPartId, CompanyCraftProcessId, CompanyCraftSequence, CompanyCraftSupplyItemId,
     ItemId,
@@ -42,7 +79,9 @@ use xiv_gen::{
 struct MaterialInfo {
     item_id: ItemId,
     total_quantity: i32,
+    purchase_quantity: i32,
     unit_cost: i32,
+    unpriced: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,12 +92,41 @@ struct FCCraftProfitData {
     cost: i32,
     market_price: i32,
     cheapest_world_id: i32,
+    market_hq: bool,
+    listing_price: Option<i32>,
+    pricing_fallback: bool,
+    pricing_pending: bool,
     materials: Vec<MaterialInfo>,
     daily_sales: f32,
     avg_price: i32,
     total_sales: usize,
+    sales_available: bool,
     shard_cost: i32,
     on_hand_savings: i32,
+}
+
+impl FCCraftProfitData {
+    fn complete_prices(&self) -> bool {
+        complete_material_prices(&self.materials)
+    }
+
+    fn financial_value(&self, value: i32) -> GridValue {
+        if self.pricing_pending {
+            GridValue::Pending
+        } else if !self.complete_prices() {
+            GridValue::Unavailable
+        } else {
+            GridValue::Number(value as f64)
+        }
+    }
+}
+
+fn complete_material_prices(materials: &[MaterialInfo]) -> bool {
+    !materials.is_empty() && materials.iter().all(|material| !material.unpriced)
+}
+
+fn unpriced_material(market_quantity: i32, unit_price: i32, excluded: bool) -> bool {
+    market_quantity > 0 && unit_price == 0 && !excluded
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -66,6 +134,8 @@ enum SortMode {
     Roi,
     Profit,
     Velocity,
+    TotalCost,
+    MarketPrice,
 }
 
 impl FromStr for SortMode {
@@ -76,6 +146,8 @@ impl FromStr for SortMode {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
             "velocity" => Ok(SortMode::Velocity),
+            "cost" => Ok(SortMode::TotalCost),
+            "price" => Ok(SortMode::MarketPrice),
             _ => Err(()),
         }
     }
@@ -87,14 +159,92 @@ impl Display for SortMode {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
             SortMode::Velocity => "velocity",
+            SortMode::TotalCost => "cost",
+            SortMode::MarketPrice => "price",
         };
         f.write_str(val)
     }
 }
 
-fn calculate_fc_project_cost(
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+
+    /// Total cost reads best-first ascending — the cheapest project is the
+    /// interesting one. Everything else is a biggest-first metric.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::TotalCost => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_ROI: &str = "roi";
+const FILTER_MIN_SALES: &str = "min-sales";
+const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
+const FILTER_USE_ON_HAND: &str = "on-hand";
+const FILTER_COMPLETE_PRICES: &str = "complete-prices";
+
+/// The page's built-in views, offered above the reader's own saved ones.
+///
+/// Queries only: the labels live in [`fc_crafting_presets`] because `t_string!`
+/// needs a literal key. Every key used here is pinned by a test below.
+const PRESET_QUERIES: [&str; 3] = [
+    "?min-sales=1&roi=30&sort=profit",
+    "?min-sales=0.5&profit=100000&sort=profit",
+    "?min-sales=1&shards-exclude=true&sort=profit",
+];
+
+fn fc_crafting_presets(i18n: I18nContext<Locale, I18nKeys>) -> Vec<GridPresetView> {
+    [
+        t_string!(i18n, fc_crafting_preset_realistic).to_string(),
+        t_string!(i18n, fc_crafting_preset_big_ticket).to_string(),
+        t_string!(i18n, fc_crafting_preset_no_crystals).to_string(),
+    ]
+    .into_iter()
+    .zip(PRESET_QUERIES)
+    .map(|(label, query)| GridPresetView {
+        label,
+        query: query.to_string(),
+    })
+    .collect()
+}
+
+/// Historical preset keys: these must remain readable after migration.
+#[cfg(test)]
+const LEGACY_PRESET_FILTER_KEYS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_ROI,
+    FILTER_MIN_SALES,
+    FILTER_EXCLUDE_SHARDS,
+    FILTER_USE_ON_HAND,
+    FILTER_COMPLETE_PRICES,
+];
+
+const FC_TABLE_CLASS: &str = "fc-craft-table";
+
+fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitData) -> Ordering {
+    match mode {
+        SortMode::Roi => a.return_on_investment.cmp(&b.return_on_investment),
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Velocity => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
+        SortMode::TotalCost => a.cost.cmp(&b.cost),
+        SortMode::MarketPrice => a.market_price.cmp(&b.market_price),
+    }
+}
+
+fn calculate_fc_project_cost<P: PriceLookup + ?Sized>(
     sequence: &'static CompanyCraftSequence,
-    prices: &CheapestListingsMap,
+    prices: &P,
     data: &'static xiv_gen::Data,
     opts: &CraftingCostOptions<'_>,
 ) -> (
@@ -166,10 +316,21 @@ fn calculate_fc_project_cost(
         material_infos.push(MaterialInfo {
             item_id,
             total_quantity: quantity,
+            purchase_quantity: if is_shard && !matches!(opts.shards, ShardsMode::IncludeMarket) {
+                0
+            } else {
+                line.used_from_market
+            },
             unit_cost: line.unit_price,
+            unpriced: unpriced_material(
+                line.used_from_market,
+                line.unit_price,
+                is_shard && !matches!(opts.shards, ShardsMode::IncludeMarket),
+            ),
         });
     }
 
+    material_infos.sort_unstable_by_key(|material| material.item_id.0);
     let clamp = |v: i64| -> i32 {
         if v > i32::MAX as i64 {
             i32::MAX
@@ -190,9 +351,14 @@ fn calculate_fc_project_cost(
 
 #[component]
 fn FCCraftingAnalyzerTable(
+    scope: MarketScope,
     global_cheapest_listings: CheapestListings,
+    /// Where materials are bought, when that reaches past
+    /// `global_cheapest_listings` into the connected regions.
+    buy_listings: Option<CheapestListings>,
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
+    sales_world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
@@ -206,19 +372,24 @@ fn FCCraftingAnalyzerTable(
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let buy_prices = buy_listings.map(CheapestListingsMap::from);
+    let market = use_market_data(world);
+    let (cost_basis, _set_cost_basis) = filter_query_signal::<PriceSignal>("cost-basis");
+    market.require_price_basis(Signal::derive(move || cost_basis.get().unwrap_or_default()));
+    let (revenue_basis, _set_revenue_basis) = filter_query_signal::<PriceSignal>("revenue");
+    market.require_price_basis(Signal::derive(move || {
+        revenue_basis.get().unwrap_or_default()
+    }));
     let data = tracked_data();
     let items = &data.items;
     let sequences = &data.company_craft_sequences;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    // Seeded by FCCraftingAnalyzer so a first-time visitor isn't shown recipes
-    // whose output sells once a month. Same velocity floor as the analyzer's
-    // 1d default.
-    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
-    let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
-    let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+    let (complete_prices, _) = filter_query_signal::<bool>(FILTER_COMPLETE_PRICES);
+    let (exclude_shards_url, _set_exclude_shards) =
+        filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
+    let (use_on_hand_url, _set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
     let cookies = use_context::<Cookies>().unwrap();
     let (craft_options, _) =
         cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
@@ -231,6 +402,17 @@ fn FCCraftingAnalyzerTable(
     };
 
     let computed_data = Memo::new(move |_| {
+        let stats = market.selected_stats();
+        let cost_signal = cost_basis.get().unwrap_or_default();
+        let revenue_signal = revenue_basis.get().unwrap_or_default();
+        let pricing_pending = stats.is_none()
+            && (cost_signal.sale_stat().is_some() || revenue_signal.sale_stat().is_some());
+        let material_prices = buy_prices.as_ref().unwrap_or(&prices);
+        let cost_prices = SignalView {
+            over: None,
+            base: material_prices,
+            stats: stats.as_deref().zip(cost_signal.sale_stat()),
+        };
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
             let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
@@ -270,18 +452,26 @@ fn FCCraftingAnalyzerTable(
                 }
             };
 
-            let market_price_summary = prices.find_matching_listings(sequence.result_item);
-            let market_price = market_price_summary.lowest_gil().unwrap_or(0);
+            let Some(revenue) = resolve_price(
+                &prices,
+                stats.as_deref(),
+                sequence.result_item,
+                None,
+                revenue_signal,
+            ) else {
+                continue;
+            };
+            let market_price = revenue.price;
 
             if market_price == 0 {
                 continue;
             }
 
-            let cheapest_world_id = market_price_summary
-                .lq
-                .map(|d| d.world_id)
-                .or(market_price_summary.hq.map(|d| d.world_id))
-                .unwrap_or(0);
+            let market_hq = revenue.hq;
+            let listings = prices.find_matching_listings(sequence.result_item);
+            let listing = if market_hq { listings.hq } else { listings.lq };
+            let cheapest_world_id = listing.map(|entry| entry.world_id).unwrap_or(0);
+            let listing_price = listing.map(|entry| entry.price);
 
             // Fresh on-hand snapshot per sequence — compute_ingredient_cost consumes
             // from the snapshot, and reusing one across sequences would wrongly deplete
@@ -309,21 +499,30 @@ fn FCCraftingAnalyzerTable(
                 max_subcraft_depth: 0,
                 shards,
                 on_hand: active.as_ref(),
+                vendor_prices: Some(vendor_price_map()),
             };
 
             let (cost, materials, shard_cost, on_hand_savings) =
-                calculate_fc_project_cost(sequence, &prices, data, &opts);
-
-            if cost == 0 {
-                // Cost 0 means probably missing data or no materials required (unlikely for valid projects)
-                continue;
-            }
-
-            if cost >= market_price {
-                continue;
-            }
+                calculate_fc_project_cost(sequence, &cost_prices, data, &opts);
+            let pricing_fallback = revenue.fallback
+                || materials.iter().any(|material| {
+                    resolve_price(
+                        material_prices,
+                        stats.as_deref(),
+                        material.item_id.0,
+                        None,
+                        cost_signal,
+                    )
+                    .is_some_and(|price| price.fallback)
+                });
 
             let profit = market_price - cost;
+            if complete_prices().unwrap_or(false)
+                && !pricing_pending
+                && !complete_material_prices(&materials)
+            {
+                continue;
+            }
             let roi = if cost > 0 {
                 (profit as f64 / cost as f64 * 100.0) as i32
             } else {
@@ -337,57 +536,36 @@ fn FCCraftingAnalyzerTable(
                 cost,
                 market_price,
                 cheapest_world_id,
+                market_hq,
+                listing_price,
+                pricing_fallback,
+                pricing_pending,
                 materials,
                 daily_sales: sales_stats.daily_sales,
                 avg_price: sales_stats.avg_price,
                 total_sales: sales_stats.total_sales,
+                sales_available: recent_sales.is_some(),
                 shard_cost,
                 on_hand_savings,
             });
         }
 
-        // Filter
-        if let Some(min) = minimum_profit() {
-            results.retain(|d| d.profit >= min);
-        }
-        if let Some(min) = minimum_roi() {
-            results.retain(|d| d.return_on_investment >= min);
-        }
-        if let Some(min_sales) = min_daily_sales() {
-            results.retain(|d| d.daily_sales >= min_sales);
-        }
-
         // Sort
-        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Roi => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.return_on_investment));
-                }
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Velocity => {
-                    results.select_nth_unstable_by(limit, |a, b| {
-                        b.daily_sales
-                            .partial_cmp(&a.daily_sales)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        results.sort_unstable_by(|a, b| {
+            let coverage = b.complete_prices().cmp(&a.complete_prices());
+            if coverage != Ordering::Equal {
+                return coverage;
             }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Roi => results.sort_unstable_by_key(|d| Reverse(d.return_on_investment)),
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Velocity => results.sort_unstable_by(|a, b| {
-                b.daily_sales
-                    .partial_cmp(&a.daily_sales)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-        }
+            let metric = compare_fc_crafts(mode, a, b);
+            let metric = if dir == SortDir::Asc {
+                metric
+            } else {
+                metric.reverse()
+            };
+            metric.then_with(|| a.sequence.key_id.0.cmp(&b.sequence.key_id.0))
+        });
 
         results
             .into_iter()
@@ -396,270 +574,360 @@ fn FCCraftingAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, fc_crafting_filter_profit_min_label).to_string(),
+            FILTER_ROI => t_string!(i18n, fc_crafting_filter_roi_min_label).to_string(),
+            FILTER_MIN_SALES => {
+                t_string!(i18n, fc_crafting_filter_daily_sales_min_label).to_string()
+            }
+            FILTER_EXCLUDE_SHARDS => {
+                t_string!(i18n, fc_crafting_filter_exclude_crystals_label).to_string()
+            }
+            FILTER_USE_ON_HAND => t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    let on_off_options = move || {
+        vec![
+            ("true", t_string!(i18n, toolbar_pill_on).to_string()),
+            ("false", t_string!(i18n, toolbar_pill_off).to_string()),
+        ]
+    };
+
+    let filters = register_filters(
+        vec![
+            FilterAlias::integer("profit", "profit", FilterOp::Gte),
+            FilterAlias::integer("roi", "roi", FilterOp::Gte),
+            FilterAlias::decimal("min-sales", "daily-sales", FilterOp::Gte),
+        ],
+        Signal::derive(move || {
+            vec![
+                toggle_control(
+                    FILTER_COMPLETE_PRICES,
+                    t_string!(i18n, scrip_sources_complete_prices).to_string(),
+                ),
+                price_control(
+                    "cost-basis",
+                    t_string!(i18n, market_ingredient_price).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                price_control(
+                    "revenue",
+                    t_string!(i18n, market_completed_price).to_string(),
+                    market.window,
+                    t_string!(i18n, market_listing_basis).to_string(),
+                ),
+                {
+                    let mut f =
+                        toggle_control(FILTER_EXCLUDE_SHARDS, filter_label(FILTER_EXCLUDE_SHARDS));
+                    f.options = on_off_options();
+                    f
+                },
+                {
+                    let mut f =
+                        toggle_control(FILTER_USE_ON_HAND, filter_label(FILTER_USE_ON_HAND));
+                    f.options = on_off_options();
+                    f
+                },
+            ]
+        }),
+    );
+
+    let presets = Signal::derive(move || fc_crafting_presets(i18n));
+
+    let calculation = Calculation::provide(
+        filters,
+        vec![
+            CalculationTerm::fixed(
+                TermRole::Result,
+                t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(),
+                Some("profit"),
+            ),
+            CalculationTerm::input(TermRole::Revenue, "revenue", "market-price")
+                .with_place(scope.name.into()),
+            CalculationTerm::input(TermRole::Cost, "cost-basis", "cost")
+                .with_place_select(scope.place()),
+        ],
+        Some("cost-basis"),
+    );
+
     view! {
-        <div class="flex flex-col gap-6">
-            <ActiveListBanner />
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        step=100000
-                        type="number"
-                        placeholder=t_string!(i18n, placeholder_eg_100000)
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit))
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_roi_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        step=10
-                        type="number"
-                        placeholder=t_string!(i18n, placeholder_eg_50)
-                        prop:value=minimum_roi
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(roi) = value.parse::<i32>() {
-                                set_minimum_roi(Some(roi));
-                            } else if value.is_empty() {
-                                set_minimum_roi(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_daily_sales_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        placeholder=t_string!(i18n, fc_crafting_placeholder_0_1)
-                        prop:value=min_daily_sales
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(s) = value.parse::<f32>() {
-                                set_min_daily_sales(Some(s));
-                            } else if value.is_empty() {
-                                set_min_daily_sales(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if exclude_shards_enabled() { "false" } else { "true" }
-                            title=t_string!(i18n, tooltip_exclude_shards)
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if exclude_shards_enabled() { "true" } else { "false" }
-                            title=t_string!(i18n, tooltip_exclude_shards)
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if use_on_hand_enabled() { "false" } else { "true" }
-                            title=t_string!(i18n, tooltip_use_on_hand)
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if use_on_hand_enabled() { "true" } else { "false" }
-                            title=t_string!(i18n, tooltip_use_on_hand)
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarSpacer />
-                <RealtimeStatus
-                    status=realtime_status
-                    last_update=last_update
-                />
-            </Toolbar>
+                <div class="flex flex-col gap-6">
+                    <ActiveListBanner />
+                    <div class="flex flex-wrap gap-3">
+                        <CalculationStrip calculation window=market.window />
 
-            <div class="rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                 <VirtualScroller
-                    viewport_height=720.0
-                    row_height=60.0
-                    overscan=8
-                    header_height=64.0
-                    variable_height=true
-                     header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="roi"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_roi)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_total_cost)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_market_price)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="velocity"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_daily_sales)}
-                                </QueryButton>
-                             </div>
+                    </div>
+
+                    <ControlBar sticky=false
+                        summary=move || {
+                            view! {
+                                <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                                    {move || t!(i18n, fc_crafting_result_count, n = move || filters.row_count())}
+                                </span>
+                            }
+                            .into_any()
+                        }
+                        actions=move || {
+                            view! {
+                                <RealtimeStatus status=realtime_status last_update=last_update />
+                                <GridSavedViews id="fc-crafting-analyzer-grid" presets=presets />
+                            }
+                                .into_any()
+                        }
+
+                        empty_label=Signal::derive(move || {
+                            t_string!(i18n, fc_crafting_no_filters_hint).to_string()
+                        })
+                    />
+
+                    <div class=FC_TABLE_CLASS>
+                         <MarketGrid show_saved_views=false id="fc-crafting-analyzer-grid" label=t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string()
+         market=market
+         subject=Arc::new(move |(_, row): &(usize, Arc<FCCraftProfitData>)| {
+             let mut subject = MarketSubject::new(row.sequence.result_item, row.market_hq, row.cheapest_world_id);
+             subject.listing_price = row.listing_price;
+             subject
+         })
+         metrics=with_units(vec![
+             GridMetric::text("item", move |(_, row): &(usize, Arc<FCCraftProfitData>)| GridValue::Text(items.get(&ItemId(row.sequence.result_item)).map(|item| item.name.to_string()).unwrap_or_default())),
+             GridMetric::number("profit", |(_, row): &(usize, Arc<FCCraftProfitData>)| row.financial_value(row.profit)),
+             GridMetric::number("roi", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.cost == 0 && !row.pricing_pending && row.complete_prices() { GridValue::Missing } else { row.financial_value(row.return_on_investment) }),
+             GridMetric::number("cost", |(_, row): &(usize, Arc<FCCraftProfitData>)| row.financial_value(row.cost)),
+             GridMetric::number("market-price", |(_, row): &(usize, Arc<FCCraftProfitData>)| if row.pricing_pending { GridValue::Pending } else { GridValue::Number(row.market_price as f64) }),
+             GridMetric::number("daily-sales", |(_, row): &(usize, Arc<FCCraftProfitData>)| crate::analyzer_kit::market::recent_sample_value(row.daily_sales as f64, row.sales_available, row.total_sales)),
+         ], &[("profit", Unit::Gil), ("roi", Unit::Percent), ("cost", Unit::Gil), ("market-price", Unit::Gil), ("daily-sales", Unit::Rate)])
+         row_height=60.0
+         columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, fc_crafting_analyzer_col_project_result).to_string(), 320.0, false, true).fixed_width(),
+        { let mut col = GridColumn::new("profit",t_string!(i18n, fc_crafting_analyzer_col_profit).to_string(), 130.0, true, true).native_sort("profit", SortMode::Profit.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col },
+        { let mut col = GridColumn::new("roi",t_string!(i18n, fc_crafting_analyzer_col_roi).to_string(), 100.0, true, true).native_sort("roi", SortMode::Roi.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col },
+        GridColumn::new("cost",t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string(), 130.0, true, true).native_sort("cost", SortMode::TotalCost.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::TotalCost, sort_dir.get().unwrap_or_else(||SortMode::TotalCost.default_dir()) == SortDir::Asc),
+        GridColumn::new("market-price",t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string(), 130.0, true, true).native_sort("price", SortMode::MarketPrice.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
+        { let mut col = GridColumn::new("daily-sales",format!("{} ({})", t_string!(i18n, fc_crafting_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix)), 130.0, true, true).native_sort("velocity", SortMode::Velocity.default_dir() == SortDir::Asc).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Velocity, sort_dir.get().unwrap_or_else(||SortMode::Velocity.default_dir()) == SortDir::Asc); col }])
+         header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>}.into_any(),
+        "profit" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::Profit
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_profit).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "roi" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::Roi
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_roi).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "cost" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::TotalCost
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "market-price" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::MarketPrice
+                                        label=t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string()
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(),
+        "daily-sales" => view! {<SortableHeaderCell embedded=true
+                                        mode=SortMode::Velocity
+                                        label=format!("{} ({})", t_string!(i18n, fc_crafting_analyzer_col_daily_sales), t_string!(i18n, analyzer_recent_sample_suffix))
+                                        class="w-full min-w-0"
+                                        sort_mode
+                                        sort_dir
+                                     />}.into_any(), _ => ().into_any()}}
+         each=computed_data
+                            key=move |(_, data): &(usize, Arc<FCCraftProfitData>)| data.sequence.key_id.0
+
+         measure=move |(_, data): &(usize, Arc<FCCraftProfitData>), id| {match id {"item" => (items.get(&ItemId(data.sequence.result_item)).map(|i|i.name.as_str()).unwrap_or_default().to_string(), 110.0),
+        "profit" => (data.profit.separate_with_commas(), 42.0),
+        "roi" => (format!("{}%",data.return_on_investment), 30.0),
+        "cost" => (data.cost.separate_with_commas(), 42.0),
+        "market-price" => (data.market_price.separate_with_commas(), 42.0),
+        "daily-sales" => (if data.sales_available && data.total_sales > 0 { format!("{:.1}", data.daily_sales) } else { "—".to_string() }, 42.0), _ => (String::new(), 0.0)}}
+         view=move |(index, data): (usize, Arc<FCCraftProfitData>), id| {
+                                let item_id = ItemId(data.sequence.result_item);
+                                let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
+
+                                 let sales_tooltip = if data.sales_available { t_string!(i18n, analyzer_recent_sample_context).replace("%{world}", &sales_world.get()).replace("%{count}", &data.total_sales.to_string()) } else { t_string!(i18n, analyzer_recent_sample_unavailable).to_string() };
+                                let material_rows = data
+                                    .materials
+                                    .iter()
+                                    .take(6)
+                                    .map(|material| {
+                                        let material_name = items
+                                            .get(&material.item_id)
+                                            .map(|item| item.name.as_str().to_string())
+                                            .unwrap_or_else(|| "Unknown material".to_string());
+                                        (
+                                            material_name,
+                                            material.total_quantity,
+                                            material.unit_cost,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                let material_entries = Signal::stored(data.materials.iter()
+                                    .filter(|material| material.purchase_quantity > 0)
+                                    .map(|material| (material.item_id, material.purchase_quantity))
+                                    .collect::<Vec<_>>());
+                                let material_subject = Signal::stored(item.clone());
+
+         let _ = index;
+         match id {"item" => view! {
+            <div class="flex flex-col gap-1 w-full min-w-0">
+                <div class="flex items-center gap-1 min-w-0">
+                    <a class="flex items-center gap-2 min-w-0 hover:text-brand-300 transition-colors"
+                       href=format!("/item/{}/{}", world(), item_id.0)>
+                        <span class="shrink-0"><ItemIcon item_id=item_id.0 icon_size=IconSize::Small /></span>
+                        <span class="truncate" title=item.clone()>{item.clone()}</span>
+                    </a>
+                    <ItemActions item_id=item_id.0 item_name=item hq=data.market_hq />
+                </div>
+                <div class="flex items-center gap-2 pl-8">
+                    <AddSetToList compact=true
+                        button_label=t_string!(i18n, analyzer_add_ingredients).to_string()
+                        tooltip=t_string!(i18n, analyzer_project_materials).to_string()
+                        modal_title=t_string!(i18n, job_set_detail_add_materials_modal_title).to_string()
+                        subject=material_subject entries=material_entries
+                    />
+                    <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
+                        <div class="flex flex-col gap-1">
+                            {material_rows.clone().into_iter().map(|(name, qty, unit_cost)| view! {
+                                <div class="flex justify-between gap-3">
+                                    <span class="truncate">{qty} "x " {name}</span>
+                                    <Gil amount=unit_cost />
+                                </div>
+                            }).collect_view()}
                         </div>
-                    }.into_any()
-                    each=computed_data.into()
-                    key=move |(index, data): &(usize, Arc<FCCraftProfitData>)| (*index, data.sequence.key_id)
-                    view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
-                        let item_id = ItemId(data.sequence.result_item);
-                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
-                        let classes = if (index % 2) == 0 {
-                            "flex flex-row items-start flex-nowrap min-h-[60px] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                        } else {
-                            "flex flex-row items-start flex-nowrap min-h-[60px] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                        };
-                         let sales_tooltip = format!(
-                            "Based on {} sales over {:.1} days",
-                            data.total_sales,
-                            (data.total_sales as f32 / data.daily_sales.max(0.001))
-                        );
-                        let material_rows = data
-                            .materials
-                            .iter()
-                            .take(6)
-                            .map(|material| {
-                                let material_name = items
-                                    .get(&material.item_id)
-                                    .map(|item| item.name.as_str().to_string())
-                                    .unwrap_or_else(|| "Unknown material".to_string());
-                                (
-                                    material_name,
-                                    material.total_quantity,
-                                    material.unit_cost,
-                                )
-                            })
-                            .collect::<Vec<_>>();
+                    </ResultBreakdownDisclosure>
+                </div>
+            </div>}.into_any(),
+        "profit" => view! {<div  class="text-right w-full min-w-0">
+                                            {if data.complete_prices() { view! { <Gil amount=data.profit /> }.into_any() } else { "—".into_any() }}
+                                        </div>}.into_any(),
+        "roi" => view! {<div  class="text-right w-full min-w-0">
+                                            <span class={roi_badge_class(data.return_on_investment)}>
+                                                {if data.complete_prices() && data.cost > 0 { format!("{}%", data.return_on_investment) } else { "—".to_string() }}
+                                            </span>
+                                        </div>}.into_any(),
+        "cost" => view! {<div  class="text-right w-full min-w-0">
+                                            {if data.complete_prices() { view! { <Gil amount=data.cost /> }.into_any() } else { "—".into_any() }}
+                                            {data.pricing_pending.then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_loading_prices)}</span> })}
+                                            {(!data.pricing_pending && data.pricing_fallback).then(|| view! { <span class="block text-xs text-amber-400">{t!(i18n, market_listing_fallback)}</span> })}
+    {(!data.complete_prices()).then(|| view! { <span class="block text-xs text-amber-400" title=t_string!(i18n, fc_crafting_missing_prices).to_string()>{t!(i18n, scrip_sources_coverage_badge, priced = data.materials.iter().filter(|material| !material.unpriced).count(), total = data.materials.len())}</span> })}
+                                        </div>}.into_any(),
+        "market-price" => view! {<div  class="text-right w-full min-w-0">
+                                            <Gil amount=data.market_price />
+                                        </div>}.into_any(),
+        "daily-sales" => view! {<div title=sales_tooltip.clone() class="text-right w-full min-w-0">
+                                            <div class="flex flex-col items-end gap-1">
+                                                <span class="text-xs text-[color:var(--color-text-muted)]">
+                                                    {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = if data.sales_available && data.total_sales > 0 { format!("{:.1}", data.daily_sales) } else { "—".to_string() })}
+                                                </span>
+                                                {(data.sales_available && data.total_sales > 0).then(|| view! { <ConfidenceBadge total_sales=data.total_sales daily_sales=data.daily_sales /> })}
+                                            </div>
+                                        </div>}.into_any(), _ => ().into_any()}}
+         />
+                    </div>
+                </div>
+            }
+}
 
-                        view! {
-                            <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 shrink-0 items-center gap-2">
-                                    <div class="flex flex-row items-center gap-2 min-w-0 w-full">
-                                        <a
-                                            class="shrink-0 hover:text-brand-300 transition-colors"
-                                            href=format!("/item/{}/{}", world(), item_id.0)
-                                        >
-                                            <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                        </a>
-                                        <div class="flex flex-col min-w-0">
-                                            <a
-                                                class="truncate hover:text-brand-300 transition-colors"
-                                                href=format!("/item/{}/{}", world(), item_id.0)
-                                            >
-                                                {item}
-                                            </a>
-                                            <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
-                                                <div class="flex flex-col gap-1">
-                                                    {material_rows.into_iter().map(|(name, qty, unit_cost)| view! {
-                                                        <div class="flex justify-between gap-3">
-                                                            <span class="truncate">{qty} "x " {name}</span>
-                                                            <Gil amount=unit_cost />
-                                                        </div>
-                                                    }).collect_view()}
-                                                </div>
-                                            </ResultBreakdownDisclosure>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
-                                    <Gil amount=data.profit />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
-                                    <span class={roi_badge_class(data.return_on_investment)}>
-                                        {format!("{}%", data.return_on_investment)}
-                                    </span>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
-                                    <Gil amount=data.cost />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
-                                    <Gil amount=data.market_price />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right hidden md:block">
-                                    <div class="flex flex-col items-end gap-1" title=sales_tooltip>
-                                        <span class="text-xs text-[color:var(--color-text-muted)]">
-                                            {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
-                                        </span>
-                                        <ConfidenceBadge total_sales=data.total_sales daily_sales=data.daily_sales />
-                                    </div>
-                                </div>
-                            </div>
-                        }.into_any()
-                    }
-                 />
-            </div>
-        </div>
-    }
+// Resolve synchronously on both SSR and hydration. A valid route always wins
+// over the cookie, including after browser history navigation.
+fn selected_fc_world(
+    worlds: &WorldHelper,
+    route: Option<&str>,
+    home: Option<World>,
+) -> Option<World> {
+    route
+        .and_then(|name| worlds.lookup_world_by_name(&Url::unescape(name)))
+        .and_then(|world| world.as_world().cloned())
+        .or(home)
 }
 
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
+    provide_grid_saved_views("fc-crafting-analyzer-grid");
+    crate::query_defaults::seed_analyzer_default_view("fc-crafting-analyzer");
     let i18n = use_i18n();
     // Seeded here rather than in FCCraftingAnalyzerTable: that lives inside the
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
-    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
-    let region = use_region_for_world(move || params.with(|p| p.get("world").clone()));
-
-    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
-        get_cheapest_listings(&region).await
+    let worlds = use_world_helper().ok();
+    let selected_world = Memo::new(move |_| {
+        worlds.as_ref().and_then(|worlds| {
+            params.with(|p| selected_fc_world(worlds, p.get_str("world"), home_world.get()))
+        })
     });
-
-    let (selected_world, set_selected_world) = signal(None);
+    let location = use_location();
+    let query = use_query_map_or_default();
+    let navigate = use_navigate();
+    let navigate_to_world = move |world: World, replace: bool| {
+        if let Some(url) = world_nav_url(
+            "/fc-crafting-analyzer",
+            &world.name,
+            &location.pathname.get_untracked(),
+            &query.get_untracked(),
+        ) {
+            navigate(
+                &format!("{url}{}", location.hash.get_untracked()),
+                NavigateOptions {
+                    replace,
+                    scroll: false,
+                    ..Default::default()
+                },
+            );
+        }
+    };
+    let fallback_navigation = navigate_to_world.clone();
     Effect::new(move |_| {
-        if selected_world.get_untracked().is_none()
-            && let Some(home) = home_world.get()
-        {
-            set_selected_world(Some(home));
+        // Canonicalize a cookie fallback without adding a history entry. The
+        // picker itself pushes navigation; selection is always derived from it.
+        if let Some(world) = selected_world.get() {
+            let navigate = fallback_navigation.clone();
+            // The bare and world-qualified paths mount separate route owners.
+            // Let hydration's delayed storage reads finish before replacing the
+            // first owner, and discard a callback if selection changed meanwhile.
+            request_animation_frame(move || {
+                if selected_world.try_get_untracked().flatten().as_ref() == Some(&world) {
+                    navigate(world, true);
+                }
+            });
+        }
+    });
+    let set_selected_world = SignalSetter::map(move |world: Option<World>| {
+        if let Some(world) = world {
+            navigate_to_world(world, false);
         }
     });
 
-    let recent_sales = ArcResource::new(selected_world, move |world| async move {
+    // Ingredients and shared statistics follow the chosen pricing scope.
+    // Only the native recent-sales estimate is scoped to the selected world.
+    // The connected tier widens the ingredients alone: the finished project
+    // still sells at home, so its price stays on `scope.name`.
+    let scope = use_buy_market_scope(Signal::derive(move || {
+        selected_world.get().map(|world| world.name)
+    }));
+    let region = scope.name;
+    let global_cheapest_listings = columnar_resource(region, move |region: String| async move {
+        get_cheapest_listings(&region).await
+    });
+    let connected_listings = scope.connected_listings();
+
+    let recent_sales = columnar_resource(selected_world, move |world| async move {
         if let Some(world) = world {
             get_recent_sales_for_world(&world.name).await
         } else {
@@ -681,68 +949,58 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, fc_crafting_tool_context).to_string()
                     help_href="/help/fc-crafting"
                     help_body=t_string!(i18n, fc_crafting_tool_help).to_string()
-                />
-                 <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, fc_crafting_analyzer_loading_sales)}</div> }>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-
-                <Show when=move || selected_world.get().is_some()>
-                    <div class="flex flex-col md:flex-row items-center gap-2">
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, fc_crafting_calc_title).to_string(),
+                        t_string!(i18n, fc_crafting_calc_formula).to_string(),
+                        t_string!(i18n, fc_crafting_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, fc_crafting_assumption_market_prices).to_string(),
+                        t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string(),
+                        t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string(),
+                    ]
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-negative text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
+                        }}
+                    </Suspense>
+                    <div data-testid="fc-world-picker">
                         <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, fc_crafting_analyzer_select_world)}</label>
-                        <div class="w-full md:w-auto">
-                            <WorldOnlyPicker
-                                current_world=selected_world.into()
-                                set_current_world=set_selected_world.into()
-                            />
-                        </div>
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world
+                        />
                     </div>
-                </Show>
-                <CalculationSummary
-                    title=t_string!(i18n, fc_crafting_calc_title).to_string()
-                    formula=t_string!(i18n, fc_crafting_calc_formula).to_string()
-                    details=t_string!(i18n, fc_crafting_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_market_prices).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string() />
-                </div>
-
+                </ToolHeader>
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
-                        match (listings, sales) {
-                            (Some(Ok(listings)), Some(Ok(sales))) => {
+                        // Held back until the connected regions answer too, so
+                        // a widened chip never renders home-only costs.
+                        let partners = connected_listings.get();
+                        match (listings, partners) {
+                            (Some(Ok(listings)), Some(partners)) => {
+                                let buy_listings =
+                                    widened_listings(&listings, &partners.unwrap_or_default().boards);
                                 view! {
                                     <FCCraftingAnalyzerTable
+                                        scope
                                         global_cheapest_listings=listings
-                                        recent_sales=Some(sales)
-                                        world=Signal::derive(region)
-                                    />
-                                }.into_any()
-                            }
-                             (Some(Ok(listings)), _) => {
-                                view! {
-                                    <FCCraftingAnalyzerTable
-                                        global_cheapest_listings=listings
-                                        recent_sales=None
-                                        world=Signal::derive(region)
+                                        buy_listings
+                                        recent_sales=sales.and_then(Result::ok)
+                                        world=region.into()
+                                        sales_world=Signal::derive(move || selected_world.get().map(|w| w.name).unwrap_or_default())
                                     />
                                 }.into_any()
                             }
                             (Some(Err(e)), _) => {
                                 view! {
-                                    <div class="text-red-400">
+                                    <div class="text-negative">
                                         {t!(i18n, fc_crafting_analyzer_error_listings)} {e.to_string()}
                                     </div>
                                 }.into_any()
@@ -755,5 +1013,224 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                  </Suspense>
              </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn project_shopping_quantities_deduct_owned_materials() {
+        struct OneOfEach;
+        impl OnHand for OneOfEach {
+            fn available(&self, _item: ItemId) -> i32 {
+                1
+            }
+            fn consume(&self, _item: ItemId, _qty: i32) {}
+        }
+        let data = xiv_gen_db::data();
+        let project = data
+            .company_craft_sequences
+            .values()
+            .find(|project| project.result_item == 9462)
+            .expect("Aetherial Wheel Stand fixture");
+        let prices = CheapestListingsMap {
+            map: HashMap::new(),
+        };
+        let options = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &OneOfEach,
+            vendor_prices: None,
+        };
+        let (_, materials, _, _) = calculate_fc_project_cost(project, &prices, data, &options);
+        assert!(!materials.is_empty());
+        for material in materials {
+            let crystal = data
+                .items
+                .get(&material.item_id)
+                .unwrap()
+                .item_search_category
+                == CRYSTAL_SEARCH_CATEGORY;
+            assert_eq!(
+                material.purchase_quantity,
+                if crystal {
+                    0
+                } else {
+                    (material.total_quantity - 1).max(0)
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn missing_purchase_prices_are_not_confused_with_on_hand_or_excluded_materials() {
+        assert!(unpriced_material(3, 0, false));
+        assert!(
+            !unpriced_material(0, 0, false),
+            "fully on-hand needs no market purchase"
+        );
+        assert!(
+            !unpriced_material(3, 0, true),
+            "excluded crystals do not invalidate cost"
+        );
+        assert!(!unpriced_material(3, 5, false));
+        assert!(
+            !complete_material_prices(&[]),
+            "missing recipe data is not a free project"
+        );
+        let material = |unpriced| MaterialInfo {
+            item_id: ItemId(1),
+            total_quantity: 3,
+            purchase_quantity: 3,
+            unit_cost: 0,
+            unpriced,
+        };
+        assert!(complete_material_prices(&[material(false)]));
+        assert!(!complete_material_prices(&[
+            material(false),
+            material(true)
+        ]));
+    }
+
+    fn world_fixture() -> WorldHelper {
+        use ultros_api_types::world::{Datacenter, Region, WorldData};
+        WorldHelper::new(WorldData {
+            regions: [
+                (1, "North-America", vec!["Gilgamesh", "Goblin"]),
+                (2, "Europe", vec!["Cerberus"]),
+                (3, "中国", vec!["陆行鸟"]),
+            ]
+            .into_iter()
+            .map(|(id, name, names)| Region {
+                id,
+                name: name.into(),
+                datacenters: vec![Datacenter {
+                    id,
+                    name: format!("dc-{id}"),
+                    region_id: id,
+                    worlds: names
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, name)| World {
+                            id: id * 10 + index as i32,
+                            name: name.into(),
+                            datacenter_id: id,
+                        })
+                        .collect(),
+                }],
+            })
+            .collect(),
+        })
+    }
+
+    #[test]
+    fn route_wins_over_cookie_and_history_restores_world_and_region() {
+        use ultros_api_types::world_helper::AnyResult;
+        let worlds = world_fixture();
+        let home = worlds
+            .lookup_world_by_name("Cerberus")
+            .unwrap()
+            .as_world()
+            .cloned();
+        // Same-region switch, cross-region switch, Back, Forward.
+        for (route, region) in [
+            ("Gilgamesh", "North-America"),
+            ("Goblin", "North-America"),
+            ("Cerberus", "Europe"),
+            ("Goblin", "North-America"),
+            ("Cerberus", "Europe"),
+        ] {
+            let selected = selected_fc_world(&worlds, Some(route), home.clone()).unwrap();
+            assert_eq!(
+                selected.name, route,
+                "recent sales must follow the route, not the cookie"
+            );
+            assert_eq!(
+                worlds.get_region(AnyResult::World(&selected)).name,
+                region,
+                "listings and shared statistics keep the selected world's regional scope"
+            );
+        }
+    }
+
+    #[test]
+    fn cookie_is_only_a_fallback_and_encoded_worlds_resolve() {
+        let worlds = world_fixture();
+        let home = worlds
+            .lookup_world_by_name("Goblin")
+            .unwrap()
+            .as_world()
+            .cloned();
+        for route in [None, Some("unknown"), Some("Europe")] {
+            assert_eq!(selected_fc_world(&worlds, route, home.clone()), home);
+        }
+        assert_eq!(selected_fc_world(&worlds, None, None), None);
+        assert_eq!(
+            selected_fc_world(&worlds, Some("%E9%99%86%E8%A1%8C%E9%B8%9F"), home)
+                .unwrap()
+                .name,
+            "陆行鸟"
+        );
+        assert_eq!(
+            selected_fc_world(&worlds, Some("Gilgamesh"), None)
+                .unwrap()
+                .name,
+            "Gilgamesh"
+        );
+    }
+
+    /// A preset is applied by rebuilding the URL from its query, so a stray
+    /// separator or an empty pair would ship straight into the address bar.
+    #[test]
+    fn every_preset_query_is_a_clean_query_string() {
+        for query in PRESET_QUERIES {
+            assert!(query.starts_with('?'), "{query}");
+            assert!(!query.ends_with('&'), "{query}");
+            assert!(!query.contains("&&"), "{query}");
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                assert!(!key.is_empty(), "{query}");
+                assert!(!value.is_empty(), "{query}");
+            }
+        }
+    }
+
+    /// Renaming a sort token or retiring a filter would otherwise leave a
+    /// built-in view quietly pointing at nothing.
+    #[test]
+    fn preset_queries_only_use_keys_this_page_still_reads() {
+        for query in PRESET_QUERIES {
+            for pair in query.trim_start_matches('?').split('&') {
+                let (key, value) = pair.split_once('=').expect("key=value");
+                match key {
+                    "sort" => assert!(
+                        std::str::FromStr::from_str(value)
+                            .map(|_: SortMode| ())
+                            .is_ok(),
+                        "{query}"
+                    ),
+                    other => assert!(LEGACY_PRESET_FILTER_KEYS.contains(&other), "{query}"),
+                }
+            }
+        }
+    }
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::Velocity,
+            SortMode::TotalCost,
+            SortMode::MarketPrice,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
     }
 }

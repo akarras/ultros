@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "A faster, sharper price chart",
+  "blurb": "Price history and sparklines are drawn by our own chart engine. Smaller download, smoother zooming, and a crosshair that reads the sale under your cursor.",
+  "importance": "medium"
+}

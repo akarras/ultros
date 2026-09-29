@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Clearer feedback while building a list",
+  "blurb": "Find the row you just added, correct invalid quantities with clear messages, and reset filters when no items match.",
+  "link": "/list",
+  "labs": true
+}

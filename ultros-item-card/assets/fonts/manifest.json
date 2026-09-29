@@ -1,0 +1,93 @@
+{
+  "fonttools": "4.60.1",
+  "files": {
+    "Outfit-Black.ttf": {
+      "source": "https://raw.githubusercontent.com/Outfitio/Outfit-Fonts/902773808eb372f70fb34e8946dd1ffe604efc79/fonts/ttf/Outfit-Black.ttf",
+      "source_sha256": "1c033aa4d2ed288e5a9fb6e379bbe52e2c5b8ce0fd06bcee928c14f9bccbca4c",
+      "bytes": 74712,
+      "sha256": "1c033aa4d2ed288e5a9fb6e379bbe52e2c5b8ce0fd06bcee928c14f9bccbca4c"
+    },
+    "Outfit-Regular.ttf": {
+      "source": "https://raw.githubusercontent.com/Outfitio/Outfit-Fonts/902773808eb372f70fb34e8946dd1ffe604efc79/fonts/ttf/Outfit-Regular.ttf",
+      "source_sha256": "3b64ac4f6ab6a8eebddd4b0bc03c811c43602e11e176382ab0ee6be615ab861b",
+      "bytes": 75132,
+      "sha256": "3b64ac4f6ab6a8eebddd4b0bc03c811c43602e11e176382ab0ee6be615ab861b"
+    },
+    "OFL-Outfit.txt": {
+      "source": "https://raw.githubusercontent.com/Outfitio/Outfit-Fonts/902773808eb372f70fb34e8946dd1ffe604efc79/OFL.txt",
+      "source_sha256": "c676351bf8576b9aba743cd5eaa8c0e7ee0d51f805d720447b4df4ddb6a2e416",
+      "bytes": 4389,
+      "sha256": "c676351bf8576b9aba743cd5eaa8c0e7ee0d51f805d720447b4df4ddb6a2e416"
+    },
+    "OFL-NotoSansCJK.txt": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE",
+      "source_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "bytes": 4301,
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+    },
+    "NotoSansJP-Bold.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
+      "source_sha256": "e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76",
+      "unicode_codepoints": 19852,
+      "codepoint_sha256": "6598b9fa8a82392474f9ab54bb175cdc5759dfd7a2c032e6b6269691df8998cb",
+      "bytes": 2958544,
+      "sha256": "3459063b3c75119b60b68ef1231a33c2b44102b83d2d34018638e6c541877303"
+    },
+    "NotoSansJP-Regular.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
+      "source_sha256": "68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5",
+      "unicode_codepoints": 19852,
+      "codepoint_sha256": "6598b9fa8a82392474f9ab54bb175cdc5759dfd7a2c032e6b6269691df8998cb",
+      "bytes": 2941328,
+      "sha256": "299fc75d639cb1476ae75576a8d6a0215cbd9c0a53bf0c25639484b8a2b9b0c5"
+    },
+    "NotoSansKR-Bold.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Korean/NotoSansCJKkr-Bold.otf",
+      "source_sha256": "26d0c6748500a0444844280b308f5b62c7ae92ac6c6ac88148e502dd211eb52a",
+      "unicode_codepoints": 14342,
+      "codepoint_sha256": "80addbbbc6e1398ba5877baf1edad31a1e0a50f3800506ad035357a0ef036766",
+      "bytes": 1660476,
+      "sha256": "c8be7f96ffd78fb0b5ad483926ecdcf964af4f18cff0608d9fd14aa29393c984"
+    },
+    "NotoSansKR-Regular.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf",
+      "source_sha256": "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a",
+      "unicode_codepoints": 14342,
+      "codepoint_sha256": "80addbbbc6e1398ba5877baf1edad31a1e0a50f3800506ad035357a0ef036766",
+      "bytes": 1639724,
+      "sha256": "d9a2a9b649803264980c21d86a081b90b2b41e4cc6135dd6f900941a71542481"
+    },
+    "NotoSansSC-Bold.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
+      "source_sha256": "b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a",
+      "unicode_codepoints": 6080,
+      "codepoint_sha256": "436821ac653fb004cc03f987f23577a5a6f31ceac3a119e577f1a1c0e914b286",
+      "bytes": 1157652,
+      "sha256": "ca665733ffa903a3a2b0ae792093d4f8d8c340abafb397858791d486e8a3db9c"
+    },
+    "NotoSansSC-Regular.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+      "source_sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+      "unicode_codepoints": 6080,
+      "codepoint_sha256": "436821ac653fb004cc03f987f23577a5a6f31ceac3a119e577f1a1c0e914b286",
+      "bytes": 1162440,
+      "sha256": "406078f9166d41f4ad673fd07ad401320c32f5605a28cfff524ac1bad106d910"
+    },
+    "NotoSansTC-Bold.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf",
+      "source_sha256": "3ee160e5015106e3ec1a394301df54fa9bbbf8a251519984aec5c0abc50840c0",
+      "unicode_codepoints": 5925,
+      "codepoint_sha256": "e4005e36fd6872fc6fb674d2391985f8cdcd3ce1924780937a61ebfc25e4df00",
+      "bytes": 1204556,
+      "sha256": "8c79f2a934adf75939b2bf82c64ac81f1744c3443e8ea3d167bfedd024dc5319"
+    },
+    "NotoSansTC-Regular.otf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf",
+      "source_sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
+      "unicode_codepoints": 5925,
+      "codepoint_sha256": "e4005e36fd6872fc6fb674d2391985f8cdcd3ce1924780937a61ebfc25e4df00",
+      "bytes": 1209616,
+      "sha256": "04f636587e6c6eae8f8a923801dbab56c33c763387f57c2d1c043feadea71aad"
+    }
+  }
+}

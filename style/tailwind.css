@@ -1,4 +1,110 @@
 @import "tailwindcss" source("../ultros-frontend/ultros-app/src");
+@source "../ultros-frontend/ultros-ui/src";
+@source "../ultros-frontend/ultros-frontend-core/src";
+@source "../ultros-frontend/ultros-ui-grid/src";
+@source "../ultros-frontend/ultros-ui-query/src";
+@source "../ultros-frontend/ultros-ui-game/src";
+@source "../ultros-frontend/ultros-ui-charts/src";
+@source "../ultros-frontend/ultros-ui-market/src";
+@source "../ultros-frontend/ultros-ui-alerts/src";
+@source "../ultros-frontend/ultros-ui-lists/src";
+@source "../ultros-frontend/ultros-ui-crafting/src";
+@source "../ultros-frontend/ultros-ui-shell/src";
+
+/* Item reference sections share rows without stretching sparse wells. Keep
+   the Sources wrapper in flow so its fragment link remains a scroll target. */
+.item-details-layout,
+.item-source-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1.5rem;
+    min-width: 0;
+}
+
+.item-detail-section,
+.item-source-group {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* These classes supply display outside Tailwind's layers, so explicitly keep
+   reactive empty sections out of layout, including the Sources wrapper. */
+.item-details-layout > .hidden,
+.item-source-group > .hidden {
+    display: none;
+}
+
+.item-detail-entries {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+    align-items: start;
+    gap: 0.75rem;
+}
+
+.item-recipe-entries {
+    grid-template-columns: repeat(auto-fit, minmax(min(30rem, 100%), 1fr));
+    gap: 1rem;
+}
+
+.item-detail-count {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.item-detail-section h3 {
+    flex-wrap: wrap;
+}
+
+/* A lone entry uses the panel's surface and padding. Interactive entries keep
+   their link and keyboard focus behavior without a second permanent box. */
+.item-detail-section[data-entry-count="1"] .item-detail-entries > :only-child {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+}
+
+@media (min-width: 40rem) {
+    .item-detail-section,
+    .item-source-group {
+        flex: 2 1 44rem;
+    }
+
+    .item-detail-section[data-entry-count="1"],
+    .item-source-group[data-entry-count="1"] {
+        flex: 1 1 22rem;
+        max-width: 26rem;
+    }
+
+    .item-source-group[data-section-count="1"]:not([data-entry-count="1"]) {
+        flex-basis: 32rem;
+        max-width: 46rem;
+    }
+
+    .item-source-group > .item-detail-section:not([data-entry-count="1"]) {
+        flex-basis: 32rem;
+    }
+
+    /* Several populated source lists need the whole row; otherwise their
+       shared wrapper would stack them beside a short Related section. */
+    .item-source-group:not([data-section-count="1"]):has(> .item-detail-section:not(.hidden):not([data-entry-count="1"])) {
+        flex-basis: 100%;
+    }
+
+    .item-recipe-section[data-entry-count="1"] {
+        flex: 1 1 38rem;
+        max-width: 40rem;
+    }
+
+    .item-recipe-section:not([data-entry-count="1"]) {
+        flex-basis: 100%;
+    }
+}
 
 /* Legacy CSS folded into Tailwind build so brand tokens are available */
 @layer base {
@@ -48,6 +154,9 @@
          */
         --accent: var(--color-brand-400);
         --accent-soft: var(--color-brand-500);
+        /* Safe decorative fallbacks before a named palette is applied. */
+        --accent-decor: var(--accent);
+        --accent-decor-glow: var(--accent-glow);
         --accent-glow: color-mix(
             in srgb,
             var(--color-brand-400) 35%,
@@ -55,6 +164,29 @@
         );
         --line: color-mix(in srgb, var(--color-brand-300) 13%, transparent);
         --surface: rgba(255, 255, 255, 0.025);
+
+        /* === Scrollbar tokens ===
+         * Consumed by the themed-scrollbar rule below, which reaches every
+         * scrollport in the app, so every scrollbar picks up the active
+         * palette and theme.
+         *
+         * `--scrollbar-ink` is the solid color the thumb is mixed out of.
+         * On dark it is just the brand ring, which every palette defines as
+         * a rung bright enough to read against the page. Light mode
+         * re-points it (see the `[data-theme="light"]` block) because the
+         * same rung would wash out on a near-white surface.
+         *
+         * There is no hover variant: `scrollbar-color` takes a thumb and a
+         * track and has no hover state, so the resting alpha is the only
+         * one the user ever sees and it carries a little more weight than a
+         * hoverable thumb would need.
+         */
+        --scrollbar-ink: var(--brand-ring);
+        --scrollbar-thumb: color-mix(
+            in srgb,
+            var(--scrollbar-ink) 50%,
+            transparent
+        );
     }
 
     /* Fonts (kept as-is for wide support) */
@@ -106,13 +238,56 @@
 
     html {
         overflow-x: hidden;
-        width: 100vw;
+        /* Deliberately `100%`, not `100vw`. The viewport unit includes the
+           width of a classic (non-overlay) scrollbar, so on desktop the page
+           laid out ~15px wider than the space it actually had — and because
+           the x-axis is hidden, that surplus was not scrollable but simply
+           clipped off the right edge of every page. `100%` resolves against
+           the real content box, so the two agree. */
+        width: 100%;
+    }
+
+    /* ----- Themed scrollbars -----
+       These tint and slim every scrollport on every page. Firefox, Chromium
+       121+ and Safari 18.2+ honour them; anything older ignores them and
+       keeps the platform scrollbar.
+
+       The two properties need different reach: `scrollbar-color` inherits,
+       so the root carries it to every descendant, but `scrollbar-width`
+       does not, so slimming a nested scrollport takes the universal
+       selector. `*` is inert on everything that never scrolls.
+
+       Deliberately *not* `::-webkit-scrollbar` pseudo-elements, which would
+       buy a rounded pill and let us drop the stepper arrows: styling them
+       opts the element out of the platform's overlay scrollbars and into
+       classic ones, which occupy layout width. On macOS — where Chromium
+       and Safari are overlay by default and cost zero width — a universal
+       rule would hand every scrollport in the app a permanent 10px gutter,
+       and this layout has had width regressions before. The standard
+       properties recolor the scrollbar the platform was already going to
+       draw, so they change appearance without moving anything.
+
+       These two are also mutually exclusive, which is worth knowing before
+       reaching for the pseudo-elements on one scrollport later: Chromium
+       and Safari drop *all* `::-webkit-scrollbar` styling on an element
+       whose `scrollbar-color` is set, and a non-`auto` `scrollbar-width`
+       pins the track to the engine's own thin metric and ignores the
+       pseudo-element's `width`/`height`. That is why `.scroll-panel`'s
+       former `::-webkit-scrollbar` rules never rendered in those engines —
+       it declared both — and why `scrollbar-width: none` (hiding the bar
+       outright, as `.filter-chip-row` does) is the one value that composes
+       cleanly with them. */
+    * {
+        scrollbar-width: thin;
+    }
+    html {
+        scrollbar-color: var(--scrollbar-thumb) transparent;
     }
 
     body {
         background-size: 500px;
         background-position: top;
-        max-width: 100vw;
+        max-width: 100%;
         background-color: var(--color-background);
         color: var(--text-color);
         position: relative;
@@ -126,8 +301,11 @@
            propagates to the viewport. */
     }
 
+    /* `--brand-ring` is the rung every palette keeps legible on its own page
+       (brand-400 on dark, brand-600 on light). brand-700 fell under the 3:1
+       non-text minimum on the dark pages. */
     :focus-visible {
-        outline: 2px solid var(--color-brand-700);
+        outline: 2px solid var(--brand-ring);
         outline-offset: 2px;
     }
 
@@ -153,10 +331,17 @@
     --color-text: #0b0b0c;
     --color-text-muted: #475569;
 
+    /* Gain/loss ink: the dark rungs (emerald-300, red-400) wash out on a
+       near-white page, so light mode drops to the 700 rungs. */
+    --color-positive: oklch(50.8% 0.118 165.612);
+    --color-negative: oklch(50.5% 0.213 27.518);
+
     /* Outlines and grid */
     --color-outline: rgba(0, 0, 0, 0.12);
     --color-outline-strong: rgba(0, 0, 0, 0.2);
     --chart-grid: rgba(0, 0, 0, 0.06);
+    --chart-line: var(--color-brand-600);
+    --chart-fill: color-mix(in srgb, var(--chart-line) 20%, transparent);
 
     /* Flip brand semantics for light */
     --brand-bg: var(--color-brand-200);
@@ -180,18 +365,18 @@
     /* Decorative spot for gradients in light */
     --decor-spot: rgba(0, 0, 0, 0.06);
 
-    /* Flip brand scale (violet) for better contrast on light backgrounds) */
-    --color-brand-50: #2e1065;
-    --color-brand-100: #4c1d95;
-    --color-brand-200: #5b21b6;
-    --color-brand-300: #6d28d9;
-    --color-brand-400: #7c3aed;
-    --color-brand-500: #8b5cf6;
-    --color-brand-600: #a78bfa;
-    --color-brand-700: #c4b5fd;
-    --color-brand-800: #ddd6fe;
-    --color-brand-900: #ede9fe;
-    --color-brand-950: #f5f3ff;
+    /* Scrollbar ink is mixed toward the page's ink color before the alpha
+     * band is applied. Which rung `--brand-ring` lands on differs between
+     * the default light scale (inverted) and an explicitly picked palette
+     * (not inverted), so keying off a rung directly would give a thumb that
+     * is legible under some palettes and invisible under others. Blending
+     * toward `--color-text` keeps the palette's hue while guaranteeing the
+     * thumb stays darker than the near-white surface it sits on. */
+    --scrollbar-ink: color-mix(in srgb, var(--brand-ring) 65%, var(--color-text));
+    /* A tinted thumb carries less contrast against near-white than against
+       the dark page, so light mode leans on the alpha band harder. */
+    --scrollbar-thumb: color-mix(in srgb, var(--scrollbar-ink) 62%, transparent);
+
 }
 
 /* Contrast guards: ensure readable field/dropdown surfaces in light mode */
@@ -224,9 +409,11 @@
 }
 
 
-/* Runtime-swappable brand palettes */
-:root[data-palette="violet"],
-[data-theme="light"][data-palette="violet"] {
+/* Named palettes share their tokens with the picker previews. Legacy names
+ * remain CSS aliases for cached documents and saved preferences. Primary colors
+ * signal interaction; the secondary hue is decorative, never profit/loss ink. */
+[data-palette="ultros"],
+[data-palette="violet"] {
     --color-brand-50: #f5f3ff;
     --color-brand-100: #ede9fe;
     --color-brand-200: #ddd6fe;
@@ -238,130 +425,198 @@
     --color-brand-800: #5b21b6;
     --color-brand-900: #4c1d95;
     --color-brand-950: #2e1065;
-}
-:root[data-palette="teal"],
-[data-theme="light"][data-palette="teal"] {
-    --color-brand-50: #f0fdfa;
-    --color-brand-100: #ccfbf1;
-    --color-brand-200: #99f6e4;
-    --color-brand-300: #5eead4;
-    --color-brand-400: #2dd4bf;
-    --color-brand-500: #14b8a6;
-    --color-brand-600: #0d9488;
-    --color-brand-700: #0f766e;
-    --color-brand-800: #115e59;
-    --color-brand-900: #134e4a;
-    --color-brand-950: #042f2e;
-}
-:root[data-palette="emerald"],
-[data-theme="light"][data-palette="emerald"] {
-    --color-brand-50: #ecfdf5;
-    --color-brand-100: #d1fae5;
-    --color-brand-200: #a7f3d0;
-    --color-brand-300: #6ee7b7;
-    --color-brand-400: #34d399;
-    --color-brand-500: #10b981;
-    --color-brand-600: #059669;
-    --color-brand-700: #047857;
-    --color-brand-800: #065f46;
-    --color-brand-900: #064e3b;
-    --color-brand-950: #022c22;
-}
-:root[data-palette="amber"],
-[data-theme="light"][data-palette="amber"] {
-    --color-brand-50: #fffbeb;
-    --color-brand-100: #fef3c7;
-    --color-brand-200: #fde68a;
-    --color-brand-300: #fcd34d;
-    --color-brand-400: #fbbf24;
-    --color-brand-500: #f59e0b;
-    --color-brand-600: #d97706;
-    --color-brand-700: #b45309;
-    --color-brand-800: #92400e;
-    --color-brand-900: #78350f;
-    --color-brand-950: #451a03;
-}
-:root[data-palette="rose"],
-[data-theme="light"][data-palette="rose"] {
-    --color-brand-50: #fff1f2;
-    --color-brand-100: #ffe4e6;
-    --color-brand-200: #fecdd3;
-    --color-brand-300: #fda4af;
-    --color-brand-400: #fb7185;
-    --color-brand-500: #f43f5e;
-    --color-brand-600: #e11d48;
-    --color-brand-700: #be123c;
-    --color-brand-800: #9f1239;
-    --color-brand-900: #881337;
-    --color-brand-950: #4c0519;
-}
-:root[data-palette="sky"],
-[data-theme="light"][data-palette="sky"] {
-    --color-brand-50: #f0f9ff;
-    --color-brand-100: #e0f2fe;
-    --color-brand-200: #bae6fd;
-    --color-brand-300: #7dd3fc;
-    --color-brand-400: #38bdf8;
-    --color-brand-500: #0ea5e9;
-    --color-brand-600: #0284c7;
-    --color-brand-700: #0369a1;
-    --color-brand-800: #075985;
-    --color-brand-900: #0c4a6e;
-    --color-brand-950: #082f49;
+    --palette-secondary-dark: #e3a0ca;
+    --palette-secondary-light: #963f79;
+    --palette-page-dark: #100c19;
+    --palette-page-light: #f7f5fb;
 }
 
-/* FFXIV-themed palettes */
-:root[data-palette="immortal-flames"],
-[data-theme="light"][data-palette="immortal-flames"] {
-    /* copper and ember (distinct from tuliyollal's orange) */
+[data-palette="maelstrom"] {
+    --color-brand-50: #fff2f2;
+    --color-brand-100: #ffe1e1;
+    --color-brand-200: #ffc8cb;
+    --color-brand-300: #f3a1a7;
+    --color-brand-400: #e87883;
+    --color-brand-500: #d34758;
+    --color-brand-600: #b7273e;
+    --color-brand-700: #991e34;
+    --color-brand-800: #7d1d30;
+    --color-brand-900: #651c2b;
+    --color-brand-950: #360d16;
+    --palette-secondary-dark: #c7aa70;
+    --palette-secondary-light: #806124;
+    --palette-page-dark: #10151c;
+    --palette-page-light: #f5f6f8;
+}
+
+[data-palette="twin-adder"],
+[data-palette="emerald"] {
+    --color-brand-50: #f0f8f0;
+    --color-brand-100: #dcf0de;
+    --color-brand-200: #bbe0c0;
+    --color-brand-300: #8ecb9c;
+    --color-brand-400: #65b47c;
+    --color-brand-500: #3f945b;
+    --color-brand-600: #277345;
+    --color-brand-700: #205c39;
+    --color-brand-800: #1e4a30;
+    --color-brand-900: #193e29;
+    --color-brand-950: #0b2317;
+    --palette-secondary-dark: #d6be76;
+    --palette-secondary-light: #79601e;
+    --palette-page-dark: #0d1813;
+    --palette-page-light: #f8f7ee;
+}
+
+[data-palette="ascian"],
+[data-palette="rose"] {
+    --color-brand-50: #fcf1f5;
+    --color-brand-100: #f8e0e9;
+    --color-brand-200: #efc3d4;
+    --color-brand-300: #e69eb9;
+    --color-brand-400: #d77d9c;
+    --color-brand-500: #b74b73;
+    --color-brand-600: #972e58;
+    --color-brand-700: #7c2247;
+    --color-brand-800: #671f3d;
+    --color-brand-900: #571d35;
+    --color-brand-950: #310e1d;
+    --palette-secondary-dark: #d6cdb9;
+    --palette-secondary-light: #71654c;
+    --palette-page-dark: #130d13;
+    --palette-page-light: #f8f4f4;
+}
+
+[data-palette="ishgard"],
+[data-palette="sky"] {
+    --color-brand-50: #f2f7fb;
+    --color-brand-100: #e1edf5;
+    --color-brand-200: #c4ddec;
+    --color-brand-300: #a0c5dc;
+    --color-brand-400: #80adc9;
+    --color-brand-500: #588eaf;
+    --color-brand-600: #3b6b8e;
+    --color-brand-700: #315674;
+    --color-brand-800: #2b475f;
+    --color-brand-900: #273d50;
+    --color-brand-950: #152430;
+    --palette-secondary-dark: #cad5e2;
+    --palette-secondary-light: #586a7d;
+    --palette-page-dark: #0d151f;
+    --palette-page-light: #f4f7fa;
+}
+
+[data-palette="crystarium"] {
+    --color-brand-50: #faf3ff;
+    --color-brand-100: #f1e4fc;
+    --color-brand-200: #e1caf3;
+    --color-brand-300: #cea8e8;
+    --color-brand-400: #bb89dd;
+    --color-brand-500: #9c5dc3;
+    --color-brand-600: #8141a6;
+    --color-brand-700: #6b348a;
+    --color-brand-800: #592d71;
+    --color-brand-900: #48275b;
+    --color-brand-950: #2a1437;
+    --palette-secondary-dark: #87cee3;
+    --palette-secondary-light: #28718a;
+    --palette-page-dark: #131024;
+    --palette-page-light: #f7f4fb;
+}
+
+[data-palette="sharlayan"] {
+    --color-brand-50: #f1f5fc;
+    --color-brand-100: #e0e8f7;
+    --color-brand-200: #c3d3ee;
+    --color-brand-300: #9bb6df;
+    --color-brand-400: #7b9dce;
+    --color-brand-500: #517db8;
+    --color-brand-600: #375e98;
+    --color-brand-700: #2d4b7d;
+    --color-brand-800: #293f66;
+    --color-brand-900: #253653;
+    --color-brand-950: #142037;
+    --palette-secondary-dark: #d0ba82;
+    --palette-secondary-light: #7c632d;
+    --palette-page-dark: #0e1522;
+    --palette-page-light: #faf8f0;
+}
+
+[data-palette="tuliyollal"] {
+    --color-brand-50: #fff4ed;
+    --color-brand-100: #fde4d4;
+    --color-brand-200: #f8c7ab;
+    --color-brand-300: #eea07e;
+    --color-brand-400: #e48260;
+    --color-brand-500: #ce5e3e;
+    --color-brand-600: #ac432b;
+    --color-brand-700: #8c3525;
+    --color-brand-800: #712e23;
+    --color-brand-900: #5e2920;
+    --color-brand-950: #34130e;
+    --palette-secondary-dark: #78c4ab;
+    --palette-secondary-light: #276e59;
+    --palette-page-dark: #1c1311;
+    --palette-page-light: #fbf4e9;
+}
+
+[data-palette="immortal-flames"] {
     --color-brand-50: #fff3e6;
     --color-brand-100: #ffe0c2;
     --color-brand-200: #ffc896;
     --color-brand-300: #ffab63;
     --color-brand-400: #f68a2f;
     --color-brand-500: #d96a16;
-    --color-brand-600: #b74f12;
+    --color-brand-600: #ad4910;
     --color-brand-700: #8f3d12;
     --color-brand-800: #6d3012;
     --color-brand-900: #4c230f;
     --color-brand-950: #251108;
+    --palette-secondary-dark: #bd9e79;
+    --palette-secondary-light: #7c5e3e;
+    --palette-page-dark: #171411;
+    --palette-page-light: #f7f3ed;
 }
 
-:root[data-palette="uldah"],
-[data-theme="light"][data-palette="uldah"] {
-    /* opulent gold and desert sand */
-    --color-brand-50: #fefce8;
-    --color-brand-100: #fef9c3;
-    --color-brand-200: #fef08a;
-    --color-brand-300: #fde047;
-    --color-brand-400: #facc15;
-    --color-brand-500: #eab308;
-    --color-brand-600: #ca8a04;
-    --color-brand-700: #a16207;
-    --color-brand-800: #854d0e;
-    --color-brand-900: #713f12;
-    --color-brand-950: #422006;
+[data-palette="uldah"],
+[data-palette="amber"] {
+    --color-brand-50: #fcf8eb;
+    --color-brand-100: #f5edcb;
+    --color-brand-200: #eada9f;
+    --color-brand-300: #dac477;
+    --color-brand-400: #c9ac57;
+    --color-brand-500: #ae8b34;
+    --color-brand-600: #80601d;
+    --color-brand-700: #70531c;
+    --color-brand-800: #5b431c;
+    --color-brand-900: #4c381b;
+    --color-brand-950: #2b1e0c;
+    --palette-secondary-dark: #bf93c5;
+    --palette-secondary-light: #794582;
+    --palette-page-dark: #1b151b;
+    --palette-page-light: #faf5eb;
 }
 
-:root[data-palette="limsa"],
-[data-theme="light"][data-palette="limsa"] {
-    /* nautical indigo */
-    --color-brand-50: #eef2ff;
-    --color-brand-100: #e0e7ff;
-    --color-brand-200: #c7d2fe;
-    --color-brand-300: #a5b4fc;
-    --color-brand-400: #818cf8;
-    --color-brand-500: #6366f1;
-    --color-brand-600: #4f46e5;
-    --color-brand-700: #4338ca;
-    --color-brand-800: #3730a3;
-    --color-brand-900: #312e81;
-    --color-brand-950: #1e1b4b;
+[data-palette="limsa"],
+[data-palette="teal"] {
+    --color-brand-50: #eef8fd;
+    --color-brand-100: #d7eef8;
+    --color-brand-200: #b1dcef;
+    --color-brand-300: #83c4e3;
+    --color-brand-400: #58aed1;
+    --color-brand-500: #338eb6;
+    --color-brand-600: #1f6d94;
+    --color-brand-700: #205777;
+    --color-brand-800: #204861;
+    --color-brand-900: #1f3c50;
+    --color-brand-950: #102431;
+    --palette-secondary-dark: #81d1bd;
+    --palette-secondary-light: #287260;
+    --palette-page-dark: #0c1921;
+    --palette-page-light: #f3f9fa;
 }
 
-:root[data-palette="garlemald"],
-[data-theme="light"][data-palette="garlemald"] {
-    /* industrial slate */
+[data-palette="garlemald"] {
     --color-brand-50: #f8fafc;
     --color-brand-100: #f1f5f9;
     --color-brand-200: #e2e8f0;
@@ -373,133 +628,75 @@
     --color-brand-800: #1f2937;
     --color-brand-900: #0f172a;
     --color-brand-950: #020617;
-}
-:root[data-palette="ultros"],
-[data-theme="light"][data-palette="ultros"] {
-    /* signature voidsent purple */
-    --color-brand-50: #f5f3ff;
-    --color-brand-100: #ede9fe;
-    --color-brand-200: #ddd6fe;
-    --color-brand-300: #c4b5fd;
-    --color-brand-400: #a78bfa;
-    --color-brand-500: #8b5cf6;
-    --color-brand-600: #7c3aed;
-    --color-brand-700: #6d28d9;
-    --color-brand-800: #5b21b6;
-    --color-brand-900: #4c1d95;
-    --color-brand-950: #2e1065;
+    --palette-secondary-dark: #d8898d;
+    --palette-secondary-light: #a03d46;
+    --palette-page-dark: #14171b;
+    --palette-page-light: #f3f4f5;
 }
 
-:root[data-palette="maelstrom"],
-[data-theme="light"][data-palette="maelstrom"] {
-    /* naval crimson + brass */
-    --color-brand-50: #fef2f2;
-    --color-brand-100: #fee2e2;
-    --color-brand-200: #fecaca;
-    --color-brand-300: #fca5a5;
-    --color-brand-400: #f87171;
-    --color-brand-500: #ef4444;
-    --color-brand-600: #dc2626;
-    --color-brand-700: #b91c1c;
-    --color-brand-800: #991b1b;
-    --color-brand-900: #7f1d1d;
-    --color-brand-950: #450a0a;
+/* Resolve surface and decorative tokens on the root in each mode. */
+:root[data-palette] {
+    --color-background: var(--palette-page-dark);
+    --color-background-muted: color-mix(in srgb, var(--palette-page-dark) 94%, white);
+    --color-background-elevated: color-mix(in srgb, var(--palette-page-dark) 91%, white);
+    --color-background-panel: color-mix(in srgb, var(--palette-page-dark) 96%, white);
+    --accent-decor: var(--palette-secondary-dark);
+    --accent-decor-glow: color-mix(in srgb, var(--accent-decor) 24%, transparent);
+}
+:root[data-theme="light"][data-palette] {
+    --color-background: var(--palette-page-light);
+    --color-background-muted: color-mix(in srgb, var(--palette-page-light) 96%, black);
+    --color-background-elevated: color-mix(in srgb, var(--palette-page-light) 25%, white);
+    --color-background-panel: color-mix(in srgb, var(--palette-page-light) 50%, white);
+    --accent-decor: var(--palette-secondary-light);
 }
 
-:root[data-palette="twin-adder"],
-[data-theme="light"][data-palette="twin-adder"] {
-    /* woodland emerald with serpent amber accents */
-    --color-brand-50: #ecfdf5;
-    --color-brand-100: #d1fae5;
-    --color-brand-200: #a7f3d0;
-    --color-brand-300: #6ee7b7;
-    --color-brand-400: #34d399;
-    --color-brand-500: #10b981;
-    --color-brand-600: #059669;
-    --color-brand-700: #047857;
-    --color-brand-800: #065f46;
-    --color-brand-900: #064e3b;
-    --color-brand-950: #022c22;
+.palette-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+    gap: 0.625rem;
 }
-
-:root[data-palette="ascian"],
-[data-theme="light"][data-palette="ascian"] {
-    /* void black + amaranth */
-    --color-brand-50: #fff1f2;
-    --color-brand-100: #ffe4e6;
-    --color-brand-200: #fecdd3;
-    --color-brand-300: #fda4af;
-    --color-brand-400: #fb7185;
-    --color-brand-500: #f43f5e;
-    --color-brand-600: #e11d48;
-    --color-brand-700: #be123c;
-    --color-brand-800: #9f1239;
-    --color-brand-900: #881337;
-    --color-brand-950: #4c0519;
+.palette-option { position: relative; cursor: pointer; min-width: 0; }
+.palette-option input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
 }
-
-:root[data-palette="ishgard"],
-[data-theme="light"][data-palette="ishgard"] {
-    /* frost + silver (sky blues) */
-    --color-brand-50: #f0f9ff;
-    --color-brand-100: #e0f2fe;
-    --color-brand-200: #bae6fd;
-    --color-brand-300: #7dd3fc;
-    --color-brand-400: #38bdf8;
-    --color-brand-500: #0ea5e9;
-    --color-brand-600: #0284c7;
-    --color-brand-700: #0369a1;
-    --color-brand-800: #075985;
-    --color-brand-900: #0c4a6e;
-    --color-brand-950: #082f49;
+.palette-card {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 3rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--color-outline-strong);
+    border-radius: 0.625rem;
+    background: var(--color-background-panel);
+    color: var(--color-text);
+    font-size: 0.875rem;
 }
-
-:root[data-palette="crystarium"],
-[data-theme="light"][data-palette="crystarium"] {
-    /* aurora violet with crystalline glow (fuchsia) */
-    --color-brand-50: #fdf4ff;
-    --color-brand-100: #fae8ff;
-    --color-brand-200: #f5d0fe;
-    --color-brand-300: #f0abfc;
-    --color-brand-400: #e879f9;
-    --color-brand-500: #d946ef;
-    --color-brand-600: #c026d3;
-    --color-brand-700: #a21caf;
-    --color-brand-800: #86198f;
-    --color-brand-900: #701a75;
-    --color-brand-950: #4a044e;
+.palette-option:hover .palette-card { background: var(--color-background-elevated); }
+.palette-option input:checked + .palette-card { border-color: var(--accent); }
+.palette-option input:focus-visible + .palette-card {
+    outline: 2px solid var(--brand-ring);
+    outline-offset: 3px;
 }
-
-:root[data-palette="sharlayan"],
-[data-theme="light"][data-palette="sharlayan"] {
-    /* deep academy blue + parchment */
-    --color-brand-50: #eff6ff;
-    --color-brand-100: #dbeafe;
-    --color-brand-200: #bfdbfe;
-    --color-brand-300: #93c5fd;
-    --color-brand-400: #60a5fa;
-    --color-brand-500: #3b82f6;
-    --color-brand-600: #2563eb;
-    --color-brand-700: #1d4ed8;
-    --color-brand-800: #1e40af;
-    --color-brand-900: #1e3a8a;
-    --color-brand-950: #172554;
+.palette-check { margin-left: auto; color: var(--accent); visibility: hidden; }
+.palette-option input:checked + .palette-card .palette-check { visibility: visible; }
+.palette-swatch {
+    flex: 0 0 1.625rem;
+    width: 1.625rem;
+    height: 1.625rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-brand-400) 50%, var(--palette-secondary-dark) 50%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
-
-:root[data-palette="tuliyollal"],
-[data-theme="light"][data-palette="tuliyollal"] {
-    /* terracotta heat + jungle warmth (orange) */
-    --color-brand-50: #fff7ed;
-    --color-brand-100: #ffedd5;
-    --color-brand-200: #fed7aa;
-    --color-brand-300: #fdba74;
-    --color-brand-400: #fb923c;
-    --color-brand-500: #f97316;
-    --color-brand-600: #ea580c;
-    --color-brand-700: #c2410c;
-    --color-brand-800: #9a3412;
-    --color-brand-900: #7c2d12;
-    --color-brand-950: #431407;
+[data-theme="light"] .palette-swatch {
+    background: linear-gradient(135deg, var(--color-brand-600) 50%, var(--palette-secondary-light) 50%);
+}
+@media (forced-colors: active) {
+    .palette-option input:checked + .palette-card { border-color: Highlight; }
+    .palette-option input:focus-visible + .palette-card { outline-color: Highlight; }
 }
 
 @layer components {
@@ -771,6 +968,65 @@
     }
 }
 
+/* === Loading skeletons ===
+ *
+ * Two classes that compose:
+ *
+ *   `.skeleton-block`   paints a placeholder surface (the grey bar that
+ *                       stands in for a word, a number, an icon).
+ *   `.skeleton-shimmer` sweeps a highlight across whatever it is put on,
+ *                       left to right.
+ *
+ * The sweep is a translated pseudo-element rather than an animated
+ * `background-position`, so the highlight keeps a constant width and speed
+ * no matter how wide the host element is — a full-width table row and a
+ * 40px cell shimmer identically. (The previous `.background-animate`
+ * approach scaled the gradient to the element, and it lived in
+ * `style/legacy.css`, which is not part of the stylesheet build at all, so
+ * nothing was animating in the shipped bundle.)
+ *
+ * Put `.skeleton-shimmer` on a single bar for a per-bar sweep, or on a
+ * container for one highlight that travels across every bar inside it.
+ * The container form is what the table skeletons use — dozens of bars each
+ * pulsing on their own reads as noise. */
+.skeleton-block {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+
+.skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--color-text) 9%, transparent) 50%,
+        transparent 100%
+    );
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* Motion is decoration here — the placeholders still communicate "content
+   is loading" while completely still. */
+@media (prefers-reduced-motion: reduce) {
+    .skeleton-shimmer::after {
+        animation: none;
+    }
+}
+
 @theme {
     /* Custom violet scale tuned for dark UI */
     --color-brand-50: #f6f2ff;
@@ -805,6 +1061,12 @@
     --color-background-muted: #0a0c14;
     --color-background-elevated: #0e1119;
     --color-background-panel: #0b0e16;
+
+    /* Gain/loss ink (`text-positive`, `text-negative`): profit, deltas,
+     * errors. Dark values; `[data-theme="light"]` re-points both. Never the
+     * only signal -- pair with a sign, arrow or word. */
+    --color-positive: oklch(84.5% 0.143 164.978);
+    --color-negative: oklch(70.4% 0.191 22.216);
 }
 
 .btn {
@@ -818,33 +1080,86 @@
     cursor: pointer;
 }
 
-a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ) {
+/* `.side-nav-item`, `.menu-item` and `.mobile-bar-slot` opt out like
+   `.nav-link` does: this selector's stack of `:not()` classes outweighs their
+   own hover and active-page styles, which need to win. Each is used on both
+   `<a>` and `<button>` elements, so without the opt-out the two variants
+   render differently inside the same menu or bar.
+
+   `.card-link` opts out: on a card-sized anchor the blanket hover:underline
+   underlines every text node inside it at once (label, price, badge, …),
+   which reads as broken rather than interactive. Those links style their own
+   hover — a background tint plus an underline on the title only.
+   Item section shortcuts also own their colors, including source accents. */
+a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a) {
     @apply hover:underline rounded-md;
     color: var(--brand-fg);
     background-color: transparent;
 }
-a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):hover {
+a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a):hover {
     color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
     background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
 }
 
 /* Light-mode link tuning for higher contrast */
 [data-theme="light"]
-    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ) {
+    a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a) {
     color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
 }
 [data-theme="light"]
-    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):hover {
+    a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a):hover {
     color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
+}
+
+/* Source accents need darker shades on the light page surface. */
+[data-theme="light"] [data-item-section-nav] a[href="#crafting-recipes"] {
+    @apply text-orange-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#exchange-sources"] {
+    @apply text-purple-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#leve-sources"] {
+    @apply text-pink-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#vendor-sources"] {
+    @apply text-amber-800;
+}
+[data-theme="light"] .vendor-gate-seasonal {
+    @apply text-amber-800;
+}
+
+/* Zone map (NPC pages): a pin is centred on its coordinate, so the dot marks
+   the exact spot however far the map is zoomed. */
+.zone-map-pin {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+.zone-map-pin-dot {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: #f59e0b;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35), 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 
 /* Light-mode text utility fixes for contrast */
@@ -870,24 +1185,6 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     color: var(--color-text);
 }
 
-.btn-secondary {
-    @apply p-2 m-1 flex flex-row text-center rounded-2xl transition-all duration-300 ease-in-out justify-center gap-3;
-    color: var(--color-text);
-    cursor: pointer;
-    background-color: color-mix(
-        in srgb,
-        var(--brand-bg) 10%,
-        var(--color-background-elevated)
-    );
-    border: 1px solid var(--color-outline);
-    backdrop-filter: blur(6px);
-}
-
-.btn-secondary > * {
-    @apply text-xl font-extrabold rounded-xl;
-    color: var(--color-text);
-}
-
 [aria-current="page"].btn-secondary {
     background-color: color-mix(
         in srgb,
@@ -906,29 +1203,75 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @utility panel {
     @apply rounded-xl border;
     border-color: var(--color-outline);
-    /* base panel surface */
+    /* Flat opaque surface. The radial/linear gradients this used to carry
+       were blended with `overlay`, which on a sub-50% backdrop collapses to
+       2*backdrop*source: the 6% white spot came out within 2/255 of the flat
+       fill, so it cost a raster pass and drew nothing (#1334). */
     background-color: var(--color-background-elevated);
-    /* subtle dark-mode gradient shading like settings world panel */
-    background-image:
-        radial-gradient(
-            1200px 600px at 50% -20%,
-            var(--decor-spot),
-            transparent 60%
-        ),
-        linear-gradient(
-            135deg,
-            color-mix(in srgb, var(--brand-bg) 6%, transparent),
-            color-mix(in srgb, var(--color-background) 4%, transparent)
-        );
-    background-blend-mode: overlay, normal;
-    backdrop-filter: blur(4px);
+    /* Opaque surface: no backdrop-filter (see .btn-secondary, #1334). */
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+}
+
+/* Item-page content wells share a flat surface in every theme. */
+@utility item-surface {
+    @apply rounded-lg border;
+    border-color: var(--color-outline);
+    background-color: var(--color-background-panel);
+    color: var(--color-text);
 }
 
 /* Light mode panels: keep clean, high-contrast surfaces */
 [data-theme="light"] .panel {
     background-image: none;
     background-color: var(--color-background-elevated);
+}
+
+/* Hover affordance for panels that are genuinely interactive -- a link, a
+   button, a clickable tile. Kept as an opt-in beside `.panel` so static
+   surfaces stop advertising a lift they never had: `.card` bakes the lift
+   into every consumer, which is why the feature tiles and read-only detail
+   tiles all appeared clickable.
+
+   Unlike `.card`, the ring rides on `box-shadow` rather than `outline`.
+   `.card` claims `outline` for its hover ring and then has to zero it with
+   `focus-visible:outline-none`, which also erases the global
+   `:focus-visible` ring -- so a focusable `.card` (the vendor anchor in
+   Related Items) had no keyboard focus indicator at all. Leaving `outline`
+   untouched here keeps that ring intact. */
+@utility panel-interactive {
+    @apply transition-all duration-300;
+}
+.panel-interactive:hover {
+    transform: translateY(-0.125rem);
+    box-shadow:
+        0 16px 28px -12px rgba(0, 0, 0, 0.34),
+        0 6px 12px -8px rgba(0, 0, 0, 0.2),
+        0 0 0 1px color-mix(in srgb, var(--brand-ring) 35%, transparent);
+}
+.panel-interactive:active {
+    transform: translateY(0);
+}
+[data-theme="light"] .panel-interactive:hover {
+    box-shadow:
+        0 14px 22px -14px rgba(0, 0, 0, 0.16),
+        0 6px 10px -8px rgba(0, 0, 0, 0.1),
+        0 0 0 1px color-mix(in srgb, var(--brand-ring) 40%, transparent);
+}
+
+/* Recipe-planner route cards whose plan cannot finish the recipe: a faint
+   diagonal hatch and a dashed border mark the card as partial, so its lower
+   gil total is not read as a saving (#1334). A single gradient with no
+   blend mode keeps it cheap on software rasterisation. Listed with the
+   light-theme selector too so the `[data-theme="light"] .panel`
+   `background-image: none` override does not erase the hatch. */
+.panel-incomplete,
+[data-theme="light"] .panel-incomplete {
+    border-style: dashed;
+    background-image: repeating-linear-gradient(
+        135deg,
+        transparent 0 10px,
+        color-mix(in srgb, var(--color-text) 6%, transparent) 10px 12px
+    );
 }
 
 @utility card {
@@ -938,24 +1281,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         var(--brand-ring) 18%,
         var(--color-outline)
     );
+    /* Flat surface: same gradient+overlay removal as `.panel` (#1334). */
     background-color: var(--color-background-elevated);
-    background-image:
-        radial-gradient(
-            1000px 500px at 50% -20%,
-            var(--decor-spot),
-            transparent 60%
-        ),
-        linear-gradient(
-            135deg,
-            color-mix(in srgb, var(--brand-bg) 6%, transparent),
-            color-mix(in srgb, var(--color-background) 4%, transparent)
-        );
-    background-blend-mode: overlay, normal;
     box-shadow:
         0 12px 24px -12px rgba(0, 0, 0, 0.28),
         0 4px 8px -6px rgba(0, 0, 0, 0.16);
     outline: 1px solid transparent;
-    @apply bg-blend-overlay;
     @apply hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none;
 }
 .card:hover {
@@ -977,11 +1308,14 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         0 4px 6px -6px rgba(0, 0, 0, 0.08);
 }
 
-@utility input {
-    @apply rounded-lg px-3 py-2 border transition-colors duration-150;
-    background-color: var(--color-background-elevated);
-    color: var(--color-text);
-    border-color: var(--color-outline);
+/* Firefox paints a number input's spin buttons permanently (Chromium only
+   shows them on hover/focus), which crowds the narrow quantity cells in the
+   list cart. Hide them there; the value is still typed or arrow-keyed. */
+@supports (-moz-appearance: textfield) {
+    .input[type="number"] {
+        -moz-appearance: textfield;
+        appearance: textfield;
+    }
 }
 
 /* Placeholder contrast */
@@ -1016,19 +1350,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         var(--color-outline)
     );
     @apply aspect-square overflow-hidden p-5;
+    /* Flat surface: same gradient+overlay removal as `.panel` (#1334). */
     background-color: var(--color-background-elevated);
-    background-image:
-        radial-gradient(
-            1200px 600px at 50% -20%,
-            var(--decor-spot),
-            transparent 60%
-        ),
-        linear-gradient(
-            135deg,
-            color-mix(in srgb, var(--brand-bg) 6%, transparent),
-            color-mix(in srgb, var(--color-background) 4%, transparent)
-        );
-    @apply bg-blend-overlay;
     @apply transition-all duration-300 ease-out transform-gpu will-change-[transform];
     @apply sm:hover:-translate-y-1 sm:hover:scale-[1.02] active:translate-y-0 focus-visible:outline-none;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
@@ -1303,44 +1626,19 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     @apply inline-flex items-center justify-center gap-2
     px-4 py-2 rounded-lg
     bg-red-600/20 hover:bg-red-600/30
-    border border-red-400/10 hover:border-red-400/20
-    transition-all duration-200
-    text-red-100;
+    transition-all duration-200;
+    border: 1px solid color-mix(in srgb, var(--color-negative) 10%, transparent);
+    /* Tinted toward the page ink: a pale rose on dark, a deep red on light.
+       A fixed red-100 was near-invisible on the light theme. */
+    color: color-mix(in srgb, var(--color-negative) 40%, var(--color-text));
 }
-
-/* Scoped button consistency for the list-view toolbar.
-   The legacy `.btn-secondary` plain CSS at line 865 makes secondary buttons
-   render as oversized rounded pills. We don't touch the global rule (it
-   affects every secondary button in the app and warrants its own audit);
-   instead we override only inside this wrapper. */
-.list-toolbar .btn-primary,
-.list-toolbar .btn-secondary,
-.list-toolbar .btn-ghost {
-    padding: 0.5rem 0.75rem;
-    margin: 0;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    height: 2.25rem;
-    min-height: 2.25rem;
-    line-height: 1;
-}
-.list-toolbar .btn-primary > *,
-.list-toolbar .btn-secondary > *,
-.list-toolbar .btn-ghost > * {
-    font-size: 0.875rem;
-    font-weight: 600;
-}
-.list-toolbar .btn-primary > svg,
-.list-toolbar .btn-secondary > svg,
-.list-toolbar .btn-ghost > svg {
-    width: 1rem;
-    height: 1rem;
+.btn-danger:hover {
+    border-color: color-mix(in srgb, var(--color-negative) 20%, transparent);
 }
 
 /* Inputs */
 @utility input-base {
-    @apply w-full px-3 py-2 rounded-lg transition-all duration-200;
+    @apply w-full px-3 py-2 rounded-lg border transition-all duration-200;
     background-color: var(--color-background-panel);
     border: 1px solid var(--color-outline);
     color: var(--color-text);
@@ -1369,8 +1667,10 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 /* KBD */
 @utility kbd {
     @apply inline-block px-2 py-0.5 rounded-md
-    border border-white/10 bg-black/40
-    text-gray-300 text-xs font-mono shadow-inner;
+    border text-xs font-mono shadow-inner;
+    border-color: var(--color-outline);
+    background-color: color-mix(in srgb, var(--color-background) 60%, transparent);
+    color: var(--color-text-muted);
 }
 
 /* Utilities */
@@ -1383,11 +1683,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility divider {
-    @apply w-full h-px bg-white/10;
+    @apply w-full h-px;
+    background-color: var(--color-outline);
 }
 
 @utility muted {
-    @apply text-gray-400;
+    color: var(--color-text-muted);
 }
 
 @utility gradient-ring {
@@ -1395,35 +1696,19 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     --tw-ring-color: color-mix(in srgb, var(--brand-ring) 20%, transparent);
 }
 
+/* No scrollbar declarations here: a slim, themed scrollbar is what every
+   scrollport inherits by default now (see `@layer base`).
+
+   This panel is a frame, not a scrollport: the `VirtualScroller` inside it
+   owns the only scrollbar. Giving the frame `max-height` + `overflow-y: auto`
+   nested a 500px scrollport around the scroller's 528px one, so Chrome drew
+   two scrollbars side by side and wheel input hopped between them. */
 @utility scroll-panel {
-    @apply max-h-[500px] overflow-y-auto overflow-x-hidden rounded-lg border;
-    /* Firefox */
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--color-brand-600) 50%, transparent)
-        transparent;
+    @apply overflow-hidden rounded-lg border;
 }
 
 [data-theme="dark"] .scroll-panel {
     @apply border-white/10 bg-gradient-to-br from-brand-950/90 to-brand-900/85 backdrop-blur-md shadow-lg shadow-black/50;
-}
-/* WebKit */
-.scroll-panel::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-.scroll-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-.scroll-panel::-webkit-scrollbar-thumb {
-    background-color: color-mix(
-        in srgb,
-        var(--color-brand-600) 50%,
-        transparent
-    );
-    border-radius: 9999px;
-}
-.scroll-panel::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-brand-600);
 }
 
 /* Performance utilities for virtualization and large lists */
@@ -1524,8 +1809,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     width: 6px;
     height: 6px;
     border-radius: 9999px;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: var(--accent-decor);
+    box-shadow: 0 0 8px var(--accent-decor-glow);
 }
 
 /* Inline divider between metric columns. Thin vertical line, fades at
@@ -1542,7 +1827,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     );
 }
 
-/* Command-center greeting block: heading text plus a soft purple glow
+/* Command-center greeting block: heading text plus a soft secondary glow
  * behind the right-hand decorative icon. */
 @utility command-greeting {
     position: relative;
@@ -1559,7 +1844,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     border-radius: 9999px;
     background: radial-gradient(
         circle at center,
-        var(--accent-glow) 0%,
+        var(--accent-decor-glow) 0%,
         transparent 60%
     );
     pointer-events: none;
@@ -1595,8 +1880,35 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     display: block;
 }
 
+/* Fill the rail's grid track instead of naming a width. A fixed 18.75rem here
+   used to exceed the rail track (minus the rail's own padding) and gave the
+   whole document a 16px horizontal scrollbar. */
 .ad-rail-slot {
-    width: 10rem;
+    width: 100%;
+}
+
+/* The rail's <ins> is a fixed-size AdSense slot (no data-ad-format), so
+   Google fills it with the largest standard creative that FITS the CSS box.
+   The box therefore has to be exactly a standard size, or the next size
+   down gets served into it: a 268px-wide box got a 160x600 skyscraper, not
+   the 300x600 half-page it looked like it was for. The rail track is sized
+   so this is a true 300px (see .app-shell below).
+
+   Height snaps between the two standard 300-wide tall creatives instead of
+   tracking the viewport continuously — a 760px box would still only get a
+   300x600, plus 160px of dead space under it. The 1050px "portrait" needs
+   the sticky offset (6rem) + rail padding + the two caption lines above and
+   below it (~5.5rem) on top of its own height, so it kicks in at 1240px of
+   viewport height: 1440p@100% and 4K@150% get it, 1080p and 1440p@125%
+   physically can't fit it and stay at 600. */
+.ad-rail-ins {
+    width: 100%;
+    height: 600px;
+}
+@media (min-height: 1240px) {
+    .ad-rail-ins {
+        height: 1050px;
+    }
 }
 
 @media (min-width: 1536px) {
@@ -1614,21 +1926,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 
-@media (min-width: 1660px) {
-    .ad-rail-slot {
-        width: 18.75rem;
-    }
-}
-
-/* New application shell — grid that owns sidebar + topbar + content + ad rail. */
+/* New application shell — grid that owns sidebar + content + ad rail. */
 .app-shell {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
-    grid-template-rows: 56px minmax(0, 1fr);
-    grid-template-areas:
-        "side  top"
-        "side  main";
-    min-height: 100vh;
+    grid-template-areas: "side  main";
+    min-height: 100dvh;
     width: 100%;
 }
 
@@ -1641,13 +1944,38 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     width: 240px;
     z-index: 30;
 }
-.app-shell > .top-bar {
-    grid-area: top;
-}
 .app-shell > .app-shell-content {
     grid-area: main;
     min-width: 0;
     padding: 1rem;
+}
+
+/* Phone: content runs edge to edge.
+   Two paddings stack on a phone — 1rem from the shell above, plus whatever
+   the route spells on its own `.main-content` (`p-2`, `p-6`, `px-0 sm:px-4`;
+   there are seventeen of them and they do not agree). That cost 48px of a
+   375px screen before a single character of content. Zeroing both here beats
+   editing every route, and keeps the horizontal padding decision in one
+   place.
+
+   Only the horizontal axis: vertical padding still separates the content
+   from the top bar and the fixed mobile nav. Panels keep their own inner
+   padding, so text is not flush against the glass — only the panel edges
+   move out to the screen edge.
+
+   The breakpoint is Tailwind's `sm` complement on purpose: below 640px is
+   exactly where the routes apply their tight mobile padding, so this is
+   "wherever the app already thinks it is on a phone, take it to zero".
+   `!important` is required to beat the utility classes on `.main-content`. */
+@media (max-width: 639.98px) {
+    .app-shell > .app-shell-content {
+        padding-left: 0;
+        padding-right: 0;
+    }
+    .main-content {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
 }
 .app-shell > .app-shell-ad-rail {
     display: none;
@@ -1672,9 +2000,20 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @media (max-width: 1023px) {
     .app-shell {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-areas:
-            "top"
-            "main";
+        grid-template-areas: "main";
+    }
+    /* Clear the fixed bottom bar so it never covers the last table row. */
+    .app-shell > .app-shell-content {
+        padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
+    }
+    .app-shell-content .virtual-grid {
+        --grid-bottom-clearance: calc(4.25rem + env(safe-area-inset-bottom));
+    }
+    /* <Footer/> renders outside <AppShell> (see lib.rs), so it doesn't
+       inherit .app-shell-content's clearance above — give it the same
+       offset directly or its last lines sit under the fixed mobile bar. */
+    .site-footer {
+        padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
     }
     .app-shell > .side-nav {
         position: fixed;
@@ -1699,16 +2038,17 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 
-/* Wide viewport: ad rail appears in the third column. */
+/* Wide viewport: ad rail appears in the third column.
+   The track is 300px of ad + the rail's own 2 x 1rem padding, so the
+   <ins> inside is a true 300px and AdSense can serve 300x600 / 300x1050
+   (see .ad-rail-ins). A narrower track only ever earns a 160x600. */
 @media (min-width: 1536px) {
     .app-shell {
-        grid-template-columns: 240px minmax(0, 1fr) 240px;
-        grid-template-areas:
-            "side  top   top"
-            "side  main  ads";
+        grid-template-columns: 240px minmax(0, 1fr) 332px;
+        grid-template-areas: "side  main  ads";
     }
     .app-shell.app-shell-collapsed {
-        grid-template-columns: 56px minmax(0, 1fr) 240px;
+        grid-template-columns: 56px minmax(0, 1fr) 332px;
     }
     .app-shell > .app-shell-ad-rail {
         display: block;
@@ -1724,18 +2064,6 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 
-@media (min-width: 1660px) {
-    .app-shell {
-        grid-template-columns: 240px minmax(0, 1fr) 300px;
-        grid-template-areas:
-            "side  top   top"
-            "side  main  ads";
-    }
-    .app-shell.app-shell-collapsed {
-        grid-template-columns: 56px minmax(0, 1fr) 300px;
-    }
-}
-
 /* ----- Sidebar component styles ----- */
 @utility side-nav {
     display: flex;
@@ -1743,6 +2071,11 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     border-right: 1px solid var(--color-outline);
     background-color: var(--color-background-panel);
     overflow-y: auto;
+    /* Never a horizontal scrollport: a single stray pixel of row content
+       (the collapsed rail is only 56px) would otherwise make the whole
+       sidebar pannable sideways — focusing a row then scrolls its trailing
+       edge into view and the rail visibly shifts. */
+    overflow-x: hidden;
 }
 .side-nav-brand {
     display: flex;
@@ -1810,8 +2143,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .side-nav-item:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
 }
+/* Current page. The left accent bar carries the highlight when the sidebar is
+   collapsed to icons and the label is hidden. */
 .side-nav-item[aria-current="page"] {
     background-color: color-mix(in srgb, var(--brand-ring) 24%, transparent);
+    color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 0 var(--brand-ring);
+}
+.side-nav-item[aria-current="page"]:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 32%, transparent);
 }
 .side-nav-item > svg {
     width: 1.1em;
@@ -1822,6 +2163,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+/* Informational links (Discord bot, help, changelog) pinned to the bottom
+   cluster, above the footer. Same row styling as the main nav, but grouped
+   with the other chrome instead of the tool list. */
+.side-nav-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.5rem;
+    border-top: 1px solid var(--color-outline);
 }
 .side-nav-footer {
     display: flex;
@@ -1847,10 +2198,20 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 
 /* Collapsed sidebar: hide labels and section headers (desktop only). */
 @media (min-width: 1024px) {
-    .app-shell-collapsed .side-nav-label,
-    .app-shell-collapsed .side-nav-section-header,
-    .app-shell-collapsed .side-nav-brand-text,
-    .app-shell-collapsed .side-nav-version {
+    .app-shell-collapsed .side-nav-section-header {
+        display: none;
+    }
+    /* The whole footer goes, not just the version hash: 56px minus the row's
+       0.75rem side padding leaves 32px, which the Discord + GitHub pair
+       overflows — GitHub was clipped by the sidebar's right edge. Both links
+       are reachable again the moment the sidebar is expanded. */
+    .app-shell-collapsed .side-nav-footer {
+        display: none;
+    }
+    /* Informational links are reference material; in the 56px rail they'd be
+       three unlabeled icons competing with the tools, so they only exist in
+       the expanded sidebar. */
+    .app-shell-collapsed .side-nav-info {
         display: none;
     }
     .app-shell-collapsed .side-nav-item {
@@ -1859,61 +2220,452 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     .app-shell-collapsed .side-nav-brand-link {
         justify-content: center;
     }
-}
-
-/* ----- Topbar component styles ----- */
-@utility top-bar {
-    /* 3-column grid so the search box is centered in the bar: the two outer
-       tracks are equal `1fr`, so the middle track lands dead center no matter
-       how wide the hamburger/actions clusters are. A flex row with auto
-       margins can't do this — the left and right clusters have different
-       widths, so the free space splits unevenly.
-       Columns are assigned explicitly because the hamburger is
-       `display: none` on desktop (a hidden element isn't a grid item, so
-       auto-placement would slide the search box into column 1). */
-    display: grid;
-    grid-template-columns: 1fr minmax(0, 480px) 1fr;
-    align-items: center;
-    gap: 0.75rem;
-    height: 56px;
-    padding: 0 1rem;
-    border-bottom: 1px solid var(--color-outline);
-    background-color: color-mix(in srgb, var(--color-background) 70%, transparent);
-    backdrop-filter: blur(20px);
-    z-index: 40;
-}
-.top-bar-hamburger {
-    grid-column: 1;
-    justify-self: start;
-    display: none; /* hidden on desktop; mobile media query below re-shows it */
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 0.5rem;
-    color: var(--color-text);
-    background: transparent;
-    border: 1px solid transparent;
-}
-.top-bar-hamburger:hover {
-    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
-}
-@media (max-width: 1023px) {
-    .top-bar-hamburger {
-        display: inline-flex;
+    /* Side by side, the logo + collapse chevron need ~62px and overflowed the
+       56px rail (the chevron's right edge was clipped). Stack them instead. */
+    .app-shell-collapsed .side-nav-brand {
+        flex-direction: column;
+        justify-content: center;
+        gap: 0.25rem;
+        height: auto;
+        padding: 0.5rem 0;
+    }
+    .app-shell-collapsed .side-nav-collapse {
+        margin-left: 0;
     }
 }
-.top-bar-search {
-    grid-column: 2;
-    width: 100%;
-    min-width: 0;
-}
-.top-bar-actions {
-    grid-column: 3;
-    justify-self: end;
+
+/* ----- Drop-up menu primitives (account menu + language accordion) ----- */
+.menu-item {
     display: flex;
     align-items: center;
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    border-radius: 0.375rem;
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    font-size: 0.85rem;
+    text-align: left;
+    text-decoration: none;
+}
+.menu-item:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    text-decoration: none;
+}
+.menu-item-selected {
+    background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
+}
+.menu-item-trailing {
+    margin-left: auto;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    display: inline-flex;
+    align-items: center;
+}
+.menu-item-code {
+    width: 1.75rem;
+    flex: none;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+.menu-accordion {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    padding-left: 0.85rem;
+    max-height: 15rem;
+    overflow-y: auto;
+}
+.menu-divider {
+    height: 1px;
+    background-color: var(--color-outline);
+    margin: 0.3rem 0.15rem;
+}
+
+/* ----- Sidebar region (price zone) row + drop-up ----- */
+/* Reuses the account trigger/panel classes for geometry; only the wrapper
+   and the accordion-specific bits are new. Each block in the bottom cluster
+   (footer, region, account) carries its own border-top, so adjacent blocks
+   share exactly one hairline and the region row keeps its separator when
+   the footer is hidden in the collapsed rail. */
+.side-nav-region {
+    position: relative;
+    border-top: 1px solid var(--color-outline);
+}
+/* Two-line trigger text for the home-world / price-zone rows (#1235): a
+   tiny purpose overline above the selected value, so the two rows read at
+   a glance. The wrapper also carries `.side-nav-label` so the collapsed
+   rail's existing `display: none` hides both lines and the rows fall back
+   to their purpose icons. Separate lines keep long locale strings from
+   fighting the value for width — each truncates on its own. */
+.side-nav-zone-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.side-nav-zone-overline {
+    font-size: 0.6rem;
+    line-height: 1.2;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.side-nav-zone-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+/* Row wrapper pairing a full-width select button with a square expand
+   chevron. Two sibling buttons — a button nested in a button is invalid
+   HTML and breaks tapping. */
+.menu-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.1rem;
+}
+.menu-row > .menu-item {
+    flex: 1;
+    min-width: 0;
+}
+.menu-expand {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem;
+    border-radius: 0.375rem;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: none;
+}
+.menu-expand:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    color: var(--color-text);
+}
+.menu-expand > svg {
+    transition: transform 0.15s ease;
+}
+.menu-expand[aria-expanded="true"] > svg {
+    transform: rotate(180deg);
+}
+
+/* ----- Sidebar account row + drop-up ----- */
+.side-nav-account {
+    position: relative;
+    border-top: 1px solid var(--color-outline);
+}
+.side-nav-account-trigger {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    font-size: 0.85rem;
+    text-align: left;
+}
+.side-nav-account-trigger:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+.side-nav-account-caret {
+    margin-left: auto;
+    flex: none;
+    color: var(--color-text-muted);
+}
+
+/* Anchored to the bottom so the panel grows UPWARD and is never clipped
+   by the viewport edge — the whole point of a drop-up. */
+.side-nav-account-panel {
+    position: absolute;
+    bottom: calc(100% + 0.35rem);
+    left: 0.35rem;
+    right: 0.35rem;
+    z-index: 70;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    padding: 0.3rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.6rem;
+    background-color: var(--color-background-elevated);
+    box-shadow: 0 -10px 30px color-mix(in srgb, black 45%, transparent);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* Collapsed sidebar is only 56px wide, so the panel cannot stay inset to
+   both edges — it breaks out to a fixed width and overhangs the content. */
+@media (min-width: 1024px) {
+    .app-shell-collapsed .side-nav-account-trigger {
+        justify-content: center;
+        padding-inline: 0;
+    }
+    .app-shell-collapsed .side-nav-account-caret {
+        display: none;
+    }
+    .app-shell-collapsed .side-nav-account-panel {
+        /* `.side-nav` is `overflow-y: auto`, which per the CSS overflow
+           spec makes it a scroll container on BOTH axes (a non-visible
+           value on one axis forces `auto` on the other) — so `position:
+           absolute` here would get clipped to a sliver instead of
+           overhanging the content area. `position: fixed` escapes that
+           scrollport (and `.side-nav`'s z-index:30 stacking context, which
+           made the panel's own z-index:70 inert) by positioning against
+           the viewport instead. `left` is unchanged in value: `.side-nav`
+           is itself pinned to the viewport's left edge, so 0.35rem means
+           the same thing whether measured from the sidebar or the
+           viewport. `bottom` is re-derived from the viewport instead: the
+           account row is the bottom-most thing in the collapsed sidebar
+           (the footer is hidden at this width), so it only has to clear
+           the collapsed trigger row (~3.1rem worst case, sized to the
+           32px avatar) plus the same 0.35rem gap the expanded state uses
+           above the trigger. */
+        position: fixed;
+        left: 0.35rem;
+        right: auto;
+        bottom: 3.5rem;
+        width: 15rem;
+    }
+    /* The region trigger reuses `.side-nav-account-trigger`, so the
+       centering rules above already apply to it. The region panel uses the
+       same fixed-position escape as the account
+       panel above, but sits one row higher: it must clear the account row
+       (~3.1rem) plus its own trigger row (~2.3rem) plus the shared gap. */
+    .app-shell-collapsed .side-nav-region-panel {
+        bottom: 6rem;
+    }
+    /* The home-world row sits one row above the region row again, so its
+       panel clears one more ~2.3rem trigger. Declared after
+       `.side-nav-region-panel` (which it also carries) so this bottom wins. */
+    .app-shell-collapsed .side-nav-home-world-panel {
+        bottom: 8.3rem;
+    }
+    /* The inbox row is mounted directly above the home-world row (the
+       first row of the pinned bottom cluster), so its panel clears one
+       more ~2.3rem trigger again. Declared after `.side-nav-home-world-panel`
+       so this bottom wins. The panel already gets `position: fixed` from
+       `.app-shell-collapsed .side-nav-account-panel` above — only `bottom`
+       and `width` are overridden here. */
+    .app-shell-collapsed .side-nav-inbox-panel {
+        bottom: 10.6rem;
+        width: 18rem;
+    }
+}
+
+/* ----- Sidebar notification inbox row + drop-up ----- */
+/* Same wrapper role as `.side-nav-region`: a hairline border-top separating
+   it from the informational nav above, positioned so its drop-up panel can
+   anchor off it. */
+.side-nav-inbox {
+    position: relative;
+    border-top: 1px solid var(--color-outline);
+}
+/* Capped well below the account panel's 80vh: the panel is a drop-up, so
+   anything at its top edge is as far from the trigger (where the pointer
+   already is) as the panel is tall. The list scrolls inside instead
+   (`.inbox-list` below) so the footer actions stay put right above the
+   trigger. `overflow: hidden` here (not the inherited `auto`) is what lets
+   the list be the scroll container rather than the whole panel. */
+.side-nav-inbox-panel {
+    width: auto;
+    max-height: min(60vh, 26rem);
+    overflow: hidden;
+}
+.inbox-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+/* Footer row pairing "Mark all read" with "Clear": two equal-width buttons
+   so neither reads as the primary action. */
+.inbox-actions {
+    display: flex;
+    gap: 0.1rem;
+}
+.inbox-actions > .inbox-action {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+.inbox-action:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.inbox-action:disabled:hover {
+    background: transparent;
+}
+/* Armed state of the two-tap "Clear": the second click deletes. Same red
+   family as `btn-danger`, expressed as plain CSS since this is a `.menu-item`
+   rather than a utility button. */
+.inbox-action-danger,
+.inbox-action-danger:hover {
+    color: #fecaca;
+    background-color: color-mix(in srgb, #dc2626 25%, transparent);
+}
+/* List rows stack title/body/time vertically instead of the single-line
+   `.menu-item` layout every other drop-up entry uses. */
+.inbox-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+}
+.inbox-item-unread {
+    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent);
+}
+.inbox-item-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+.inbox-item-body,
+.inbox-item-time {
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+}
+
+/* ----- Mobile bottom bar (below 1024px only) ----- */
+.mobile-bar {
+    display: none;
+}
+
+@media (max-width: 1023px) {
+    .mobile-bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 45;
+        display: flex;
+        border-top: 1px solid var(--color-outline);
+        background-color: color-mix(in srgb, var(--color-background) 92%, transparent);
+        backdrop-filter: blur(20px);
+        /* env() keeps the bar clear of the iPhone home indicator. */
+        padding: 0.3rem 0.15rem calc(0.3rem + env(safe-area-inset-bottom));
+    }
+    .mobile-bar-slot {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.15rem;
+        padding: 0.35rem 0;
+        border-radius: 0.5rem;
+        /* Items is an `<a>` while Menu/Search are `<button>`s.
+           `.mobile-bar-slot` is in the global `a:not(...)` opt-out list near
+           the top of this file, so all three render identically and the
+           active-page highlight below survives — Items is the only slot that
+           can ever be the current page. */
+        color: var(--color-text-muted);
+        background: transparent;
+        border: none;
+        text-decoration: none;
+    }
+    .mobile-bar-slot[aria-current="page"] {
+        color: var(--color-text);
+        background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+    }
+    .mobile-bar-label {
+        font-size: 0.6rem;
+        line-height: 1;
+    }
+    /* Toasts render fixed to the viewport bottom-right; without this they
+       stack behind (and under-tap-target-block) the fixed mobile bar. */
+    .toast-container {
+        bottom: calc(4.25rem + env(safe-area-inset-bottom));
+    }
+}
+
+/* ----- Search overlay ----- */
+.search-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+}
+.search-overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background-color: color-mix(in srgb, black 55%, transparent);
+}
+.search-overlay-panel {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 560px;
+    margin: 12vh auto 0;
+    padding: 0 1rem;
+}
+.search-overlay-header {
+    display: flex;
+    align-items: flex-start;
     gap: 0.5rem;
+}
+.search-overlay-searchbox {
+    flex: 1;
+    min-width: 0;
+}
+/* Explicit exit for the overlay. Sized to a real tap target (44px) and
+   placed outside the input's own box so it never overlaps the input's
+   internal clear-icon or the results list. */
+.search-overlay-close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 0.5rem;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: 1px solid var(--color-outline);
+}
+.search-overlay-close:hover {
+    color: var(--color-text);
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+
+/* Mobile: full-screen sheet, input pinned to the top so the virtual
+   keyboard pushes content the way the browser expects. */
+@media (max-width: 1023px) {
+    .search-overlay-panel {
+        max-width: none;
+        margin: 0;
+        padding: 0.75rem;
+        height: 100dvh;
+        background-color: var(--color-background);
+        /* The results list is a fixed-height virtual scroller; with the
+           on-screen keyboard open it can outgrow 100dvh, so the sheet
+           itself has to scroll or the tail becomes unreachable. */
+        overflow-y: auto;
+        /* Tapping the sheet's empty space closes it (#1067). iOS Safari only
+           bubbles taps on non-interactive elements up to the document — where
+           Leptos's delegated click listener lives — when they look clickable,
+           and `cursor: pointer` is what satisfies that heuristic. No visual
+           cost: this rule is phone-only and phones have no cursor. */
+        cursor: pointer;
+    }
+    /* Keep the close button reachable even when the sheet above has
+       scrolled the input out of view. */
+    .search-overlay-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background-color: var(--color-background);
+        padding-bottom: 0.5rem;
+        /* The header is a normal control row — don't inherit the sheet's
+           tap-to-close pointer cursor. */
+        cursor: auto;
+    }
 }
 
 /* ----- Toolbar primitive (consumed by Track 3) ----- */
@@ -1958,18 +2710,46 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     flex: 1;
 }
 
-/* ----- Flip Finder sticky control bar -----
-   The bar is the only filter surface on the page, so it must not grow: the
-   table header sticks at `top: STICKY_BAR_HEIGHT` (76px, components/filter_chip.rs)
-   and a taller bar would cover it. The chip row scrolls horizontally instead
-   of wrapping. Deliberately no `overflow` here — an overflow on an ancestor
-   of the table header would re-parent its scrollport away from the viewport. */
+/* The filter controls remain outside the grid scrollport so their popovers
+   are not clipped. Grid headings freeze inside VirtualGrid independently. */
 @utility sticky-bar {
     position: sticky;
     top: 0;
     z-index: 20;
     background-color: var(--color-background-panel);
     border-bottom: 1px solid var(--color-outline);
+}
+/* components/term_badge.rs — the formula operators (`=` `+` `−`).
+   Role is encoded by fill weight, never by hue: the app ships 18 brand
+   palettes across two themes, so a fixed green/red pair would clash with most
+   of them. Solid brand = the result, brand tint = adds, neutral = subtracts.
+   The glyph colour is --color-text (or knocked out of the solid chip) rather
+   than --brand-fg on a tint, and an inset ring rather than a border leaves the
+   full 18px box to the operator. */
+.term-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    flex: none;
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--color-outline);
+}
+.term-badge svg { width: 12px; height: 12px; }
+.term-badge-result {
+    background: var(--brand-ring);
+    color: var(--color-background-panel);
+    box-shadow: none;
+}
+.term-badge-add {
+    background: color-mix(in srgb, var(--brand-ring) 26%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-ring) 55%, transparent);
+}
+.term-badge-sub {
+    background: color-mix(in srgb, var(--color-text) 8%, transparent);
+    box-shadow: inset 0 0 0 1px var(--color-outline-strong);
 }
 .filter-chip {
     display: inline-flex;
@@ -2002,6 +2782,32 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .filter-chip-static {
     color: inherit;
 }
+/* A connected region on a price chip: pressed = bought from, unpressed =
+   left out. Also the unpressed "+ Connected regions" shortcut. */
+.connected-region-toggle {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 9999px;
+    padding: 0 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: 1px solid var(--color-outline);
+    cursor: pointer;
+}
+.connected-region-toggle:hover {
+    color: var(--color-text);
+    border-color: var(--brand-ring);
+}
+.connected-region-toggle[aria-pressed="true"] {
+    color: var(--brand-fg);
+    border-color: var(--brand-ring);
+    background: color-mix(in srgb, var(--brand-ring) 25%, transparent);
+}
+.connected-region-toggle:disabled {
+    cursor: default;
+}
 .filter-chip-x {
     display: inline-flex;
     color: var(--color-text-muted);
@@ -2022,52 +2828,232 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     flex: 1;
     /* The bar is height-locked, so a reserved scrollbar gutter would eat
        into the chips themselves. Scrolling still works via trackpad,
-       shift+wheel and focus. */
+       shift+wheel, touch and focus. */
     scrollbar-width: none;
+
+    /* ...which leaves nothing on screen to say the strip scrolls at all. At
+       375px with eight filters set, the chips run 1002px inside a 237px
+       viewport and the five past the fold are simply invisible (#1057). These
+       two variables drive an edge fade; analyzer.rs sets them from the row's
+       own scroll geometry, so the fade appears on the side that has more
+       chips and nowhere else. Both default to 0, which collapses each
+       gradient stop pair onto the same position — a zero-width fade, i.e. no
+       visual change at all when everything fits. */
+    --chip-fade-start: 0px;
+    --chip-fade-end: 0px;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--chip-fade-start),
+        #000 calc(100% - var(--chip-fade-end)),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--chip-fade-start),
+        #000 calc(100% - var(--chip-fade-end)),
+        transparent 100%
+    );
 }
 .filter-chip-row::-webkit-scrollbar {
     display: none;
 }
-/* ----- Flip Finder grid: horizontal scrollports -----
-   The grid is wider than the viewport at every breakpoint, and `html`/`body`
-   are `overflow-x: hidden`, so something has to scroll or the right-hand
-   columns are simply unreachable. It cannot be a wrapper around the list: in
-   window-scroll mode that wrapper becomes the nearest scrollport for the
-   sticky table header (an `overflow-x` forces `overflow-y` to compute to
-   `auto`), and since it never scrolls vertically the header would never
-   stick. So the header and the row area are two *sibling* scrollports of
-   equal width whose scrollLeft is synchronized in analyzer.rs. */
-.analyzer-hscroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    /* Rows scroll underneath the sticky header, so it cannot be
-       semi-transparent. */
-    background-color: var(--color-background-panel);
-    scrollbar-width: thin;
+/* Generic horizontal-scroll affordance for a table scrollport: same edge-fade
+   technique as .filter-chip-row above, on its own variable pair so the two
+   never fight when nested. The component sets the variables from the
+   element's scroll geometry (currency_exchange.rs); both default to 0px,
+   which collapses each gradient stop pair — no visual change when the
+   content fits or before hydration measures it. */
+.hscroll-fade {
+    --hfade-start: 0px;
+    --hfade-end: 0px;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--hfade-start),
+        #000 calc(100% - var(--hfade-end)),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--hfade-start),
+        #000 calc(100% - var(--hfade-end)),
+        transparent 100%
+    );
 }
-/* One width for the header row, every data row, and the spacer that holds the
-   rows, so the two scrollports scroll through the same range and the row
-   striping covers it.
+/* VirtualGrid owns both scroll axes. Its frozen header and virtual cells
+   occupy the same full-width canvas, without a second scroll container. */
+.virtual-grid-shell { min-width: 0; }
+.virtual-grid {
+    position: relative;
+    overflow: auto;
+    height: min(var(--grid-content-height, 600px), max(240px, calc(var(--grid-available-height, max(240px, calc(100dvh - 180px))) - var(--grid-bottom-clearance, 0px))));
+    border: 1px solid var(--color-outline);
+    background: var(--color-background-panel);
+    scrollbar-gutter: stable;
+    outline-offset: 2px;
+    font-size: 14px;
+}
+.virtual-grid-canvas { position: relative; }
+.virtual-grid-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    width: 100%;
+    background: var(--color-background-panel);
+    border-bottom: 1px solid var(--color-outline);
+}
+.virtual-grid-heading, .virtual-grid-cell { position: absolute; top: 0; height: 100%; box-sizing: border-box; }
+.virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); border-right: 1px solid var(--color-outline-strong); }
+.grid-heading-content { flex: 1; min-width: 0; overflow: clip; }
+.grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
+/* A price signal has two actions in the 56px header: sort and Use. Keep both
+   targets inside that band instead of stacking a 44px sort target above Use. */
+.grid-heading-content:has([data-use-price-signal]) [data-metric-sort] { min-height: 24px; }
+/* A column that feeds Profit (SortableHeaderCell's `emphasized`) tints its
+   whole heading cell. This was an inset bottom hairline, which landed on the
+   10px sub-label's descenders once headings grew a second line; a rounded
+   well inside the cell fixed that but read as a floating chip. Filling the
+   cell edge to edge keeps the header a grid of cells, which is what everyone
+   already knows from a spreadsheet. `.grid-heading-marked` stays a marker
+   class on the inner heading and draws nothing itself. */
+.grid-heading-marked { background: none; }
+.virtual-grid-heading:has(.grid-heading-marked) {
+    background: color-mix(in srgb, var(--brand-ring) 20%, var(--color-background-panel));
+}
+[data-theme="light"] .virtual-grid-heading:has(.grid-heading-marked) {
+    background: color-mix(in srgb, var(--brand-ring) 15%, var(--color-background-panel));
+}
+/* A filtered column is tinted a step further, so which columns are narrowing
+   the results reads from the header band alone, before the clear button.
+   Both themes are spelled out, and after the marked rules: a filtered column
+   that is also marked has to land on this tint, and the `[data-theme]` prefix
+   above would otherwise outrank a bare class here. */
+.virtual-grid-heading.grid-filter-active {
+    background: color-mix(in srgb, var(--brand-ring) 34%, var(--color-background-panel));
+}
+[data-theme="light"] .virtual-grid-heading.grid-filter-active {
+    background: color-mix(in srgb, var(--brand-ring) 28%, var(--color-background-panel));
+}
+.grid-drag-handle { flex: 0 0 20px; padding: 4px 0; color: var(--color-text); }
+/* Shown only while the column has a live filter, so it costs width only when
+   it has something to do. Same icon the Flip Finder's World/Datacenter columns
+   used to carry on their own, and now the heading's only button. */
+.grid-filter-clear { flex: 0 0 20px; padding: 4px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--color-text); }
+.grid-filter-clear:hover, .grid-filter-clear:focus-visible { color: var(--brand-fg); }
+.grid-drag-handle { cursor: grab; touch-action: none; user-select: none; }
+.grid-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 3; }
+.grid-resize-handle:hover { background: var(--brand-ring); }
+/* `contain: layout paint` keeps a hovered row's restyle and repaint local
+   to that row; overlays (hover cards, menus) render through a Portal, so
+   nothing inside a row needs to paint outside it. */
+.virtual-grid-row { position: absolute; left: 0; width: 100%; contain: layout paint; background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.virtual-grid-row[data-even="false"] { background: color-mix(in srgb, var(--color-text) 3%, transparent); }
+.virtual-grid-row:hover { background: color-mix(in srgb, var(--brand-ring) 12%, transparent); }
+/* `clip`, not `hidden`: `hidden` makes every cell a scroll container (Gecko
+   builds a scroll frame per cell, hundreds per screen); `clip` only clips. */
+.virtual-grid-cell { overflow: clip; border-right: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent); }
+.virtual-grid-cell > div { width: 100%; min-width: 0; height: 100%; }
+.virtual-grid-cell a { min-width: 0; }
+.virtual-grid-cell a, .virtual-grid-cell button { max-width: 100%; }
+.virtual-grid:focus-within .grid-active { box-shadow: inset 0 0 0 2px var(--brand-ring); }
+.grid-insert-before { border-left: 3px solid var(--brand-ring); }
+.grid-insert-after { border-right: 3px solid var(--brand-ring); }
+.grid-menu-backdrop { position: fixed; inset: 0; z-index: 80; }
+/* Native dialogs have their own default text color, while preflight resets
+   their auto margins. Restore the panel theme and modal centering. */
+dialog.panel { color: var(--color-text); margin: auto; }
+.grid-menu-panel { position: fixed; z-index: 81; width: 300px; max-width: calc(100vw - 16px); max-height: min(460px, calc(100dvh - 16px)); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--color-outline); border-radius: 10px; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 8px 32px #0008; font-size: 14px; }
+.grid-menu-panel > * { flex-shrink: 0; }
+/* Column menu and filter popover share one vocabulary: a header with the
+   column name and icon actions, a filter card, then layout tools. */
+.grid-menu-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.grid-menu-header > strong { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid-menu-icons { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.grid-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 6px; color: var(--color-text-muted); font-size: 18px; transition: background-color 120ms, color 120ms; }
+.grid-icon-btn:hover, .grid-icon-btn:focus-visible { color: var(--color-text); background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+.grid-icon-btn:focus-visible, .grid-chip:focus-visible, .grid-filter-apply:focus-visible, .grid-menu-reset:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+.grid-icon-btn[data-active="true"] { color: var(--brand-fg); background: color-mix(in srgb, var(--brand-ring) 30%, transparent); }
+.grid-menu-toolbar { display: flex; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--color-outline); }
+.grid-menu-width { display: flex; align-items: center; gap: 6px; }
+.grid-menu-width .grid-field { flex: 1; }
+.grid-menu-panel .grid-menu-reset { align-self: flex-start; padding: 8px 0 2px; font-size: 12px; color: var(--color-text-muted); text-decoration: underline; text-underline-offset: 3px; border-top: 1px solid var(--color-outline); width: 100%; border-radius: 0; }
+.grid-menu-panel .grid-menu-reset:hover { background: none; color: var(--color-text); }
+.grid-insert { display: flex; flex-direction: column; gap: 4px; }
+.grid-insert-options { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; }
+.grid-insert-options button { padding: 6px 8px; text-align: left; border-radius: 4px; }
+.grid-insert-options button:hover, .grid-insert-options button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+/* Fields: one height, one outline, one focus ring, unit inside. */
+.grid-field { position: relative; display: flex; min-width: 0; }
+.grid-menu-panel input, .grid-menu-panel select, .grid-menu-popover input, .grid-menu-popover select { width: 100%; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--color-outline); border-radius: 6px; background: var(--color-background); color: var(--color-text); font-size: 13px; }
+.grid-menu-panel input:focus-visible, .grid-menu-panel select:focus-visible, .grid-menu-popover input:focus-visible, .grid-menu-popover select:focus-visible { outline: none; border-color: var(--brand-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-ring) 35%, transparent); }
+.grid-menu-panel input:disabled, .grid-menu-popover input:disabled, .grid-menu-panel select:disabled, .grid-menu-popover select:disabled { opacity: 0.5; }
+.grid-menu-panel input[aria-invalid="true"], .grid-menu-popover input[aria-invalid="true"] { border-color: #f87171; }
+.grid-menu-panel input[type="checkbox"], .grid-menu-popover input[type="checkbox"] { width: auto; height: auto; }
+.grid-field.has-suffix input { padding-right: 38px; }
+.grid-field-suffix { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--color-text-muted); pointer-events: none; }
+.grid-field-label { display: block; margin-bottom: 3px; font-size: 11px; color: var(--color-text-muted); }
+.grid-field-preview { display: block; min-height: 15px; margin-top: 3px; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.grid-field-preview.is-error, .grid-filter-error { color: #f87171; }
+.grid-filter-error { font-size: 12px; }
+/* The filter card. */
+.grid-filter-card, .grid-column-filter { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 8px; background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.grid-column-filter fieldset { display: flex; flex-direction: column; gap: 6px; }
+.grid-column-filter legend { margin-bottom: 4px; font-size: 11px; color: var(--color-text-muted); }
+.grid-range { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: start; }
+.grid-range-dash { padding-top: 24px; color: var(--color-text-muted); }
+.grid-range-side { display: block; min-width: 0; }
+.grid-filter-text { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 6px; }
+.grid-filter-presence, .grid-filter-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.grid-filter-quick { margin-bottom: 8px; }
+.grid-chip { padding: 4px 10px; border: 1px solid var(--color-outline); border-radius: 999px; font-size: 12px; color: var(--color-text-muted); }
+.grid-chip:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--brand-ring) 60%, transparent); }
+.grid-chip[aria-pressed="true"] { color: var(--brand-fg); border-color: var(--brand-ring); background: color-mix(in srgb, var(--brand-ring) 25%, transparent); }
+.grid-chip:disabled { opacity: 0.5; pointer-events: none; }
+.grid-filter-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: color-mix(in srgb, var(--color-background) 70%, transparent); }
+.grid-filter-tabs button { flex: 1; height: 26px; border-radius: 6px; font-size: 12px; color: var(--color-text-muted); }
+.grid-filter-tabs button[aria-selected="true"] { color: var(--color-text); background: var(--color-background-panel); box-shadow: 0 1px 2px #0004; }
+.grid-filter-dates { display: flex; flex-direction: column; gap: 8px; }
+.grid-filter-dates input { color-scheme: dark light; }
+.grid-filter-actions, .grid-menu-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.grid-filter-apply { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--brand-fg); background: var(--brand-bg); border: 1px solid var(--brand-ring); }
+.grid-filter-apply:hover { background: color-mix(in srgb, var(--brand-ring) 40%, var(--brand-bg)); }
+/* Default widths for the Flip Finder loading skeleton. Live grid geometry
+   is controlled by VirtualGrid column definitions and saved layout state. */
+.tool-table {
+    --tool-row-min-width: calc(30.75rem + var(--tool-optional-cols, 0px));
+}
+.tool-grid-row {
+    min-width: var(--tool-row-min-width, 0px);
+}
 
-   The base value tracks the columns each breakpoint actually reveals (several
-   are `hidden md:flex` / `lg:flex`). `--analyzer-extra-cols` is set inline by
-   the route and carries the optional columns the user has switched on beyond
-   the default set — the stylesheet cannot know those. */
-.analyzer-table {
-    --analyzer-row-min-width: calc(38rem + var(--analyzer-extra-cols, 0px));
-}
-@media (min-width: 768px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(61rem + var(--analyzer-extra-cols, 0px));
-    }
+/* ----- components/data_table.rs: derived grid template -----
+   The header row and every body row of a `DataTableGrid` carry the same
+   derived `grid-template-columns`, written inline as these variables because
+   Tailwind only generates rules for `grid-cols-[…]` candidates it can find by
+   scanning the source — a template assembled at runtime would produce no rule
+   at all and the table would collapse to one column. Same precedent as
+   `--tool-optional-cols` above.
+
+   The breakpoints are Tailwind's `lg` and `xl`, and the fallback chain means a
+   table whose columns all start at `lg` (or `xl`) simply omits the narrower
+   variables rather than computing an empty template. `display` still comes
+   from the utilities on the row (`grid`, `hidden lg:grid`), so a row that is
+   hidden at a breakpoint never consults the template there. */
+.dt-grid-row {
+    grid-template-columns: var(--dt-cols);
 }
 @media (min-width: 1024px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(68rem + var(--analyzer-extra-cols, 0px));
+    .dt-grid-row {
+        grid-template-columns: var(--dt-cols-lg, var(--dt-cols));
     }
 }
-.analyzer-grid-row {
-    min-width: var(--analyzer-row-min-width, 0px);
+@media (min-width: 1280px) {
+    .dt-grid-row {
+        grid-template-columns: var(--dt-cols-xl, var(--dt-cols-lg, var(--dt-cols)));
+    }
 }
 
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the
@@ -2089,6 +3075,28 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .sticky-bar-button:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
 }
+/* Opt-in shrink, for the control bar's own first row.
+   `.sticky-bar-button` is `flex: 0 0 auto` + `white-space: nowrap`, so a row
+   built out of them can only grow. The first row grew past a phone viewport
+   by ~210px, and since `html` is `overflow-x: hidden` that surplus was not
+   scrollable but simply unreachable — the last button sat off-screen (#1055).
+   A breakpoint alone cannot fix it: the side nav claims 240px at `lg`, so the
+   row is barely wider at 1024px than at 768px, and the German labels overflow
+   in that band. These yield instead, in a deliberate order — the row count
+   gives up space first (it is `flex-1`), then labels ellipsize, and the icon
+   never shrinks, so a control is always identifiable. */
+.sticky-bar-button-shrink {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+.sticky-bar-button-shrink > svg {
+    flex: 0 0 auto;
+}
+.sticky-bar-button-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 /* Popovers hung off the bar (columns picker, + Filter menu). The bar is
    `position: sticky`, so it is already the containing block for these. */
 .sticky-bar-popover {
@@ -2105,29 +3113,109 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
-/* ----- Item Explorer chip strip (consumed by ItemExplorerToolbar) ----- */
-@utility item-explorer-chip-row {
+/* Columns picker: the shown columns, then one add row per statistic with
+   its windows as pills. */
+.columns-picker-section {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+}
+.columns-picker-list {
     display: flex;
-    flex-wrap: nowrap;
-    gap: 0.5rem;
-    overflow-x: auto;
-    /* Right padding keeps the last chip clear of the mask gradient's
-       fade zone — otherwise the chip is paint-clipped but still
-       hit-testing, which looks broken on touch. */
-    padding: 0.25rem 2.5rem 0.5rem 0.25rem;
-    scrollbar-width: thin;
-    -webkit-mask-image: linear-gradient(
-        to right,
-        black 0,
-        black calc(100% - 2rem),
-        transparent 100%
-    );
-    mask-image: linear-gradient(
-        to right,
-        black 0,
-        black calc(100% - 2rem),
-        transparent 100%
-    );
+    flex-direction: column;
+}
+.columns-picker-heading {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+.columns-picker-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.5rem;
+    min-height: 2.25rem;
+    padding: 0.125rem 0.25rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-outline) 60%, transparent);
+    color: var(--color-text);
+}
+.columns-picker-row:last-child { border-bottom: none; }
+.columns-picker-name {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* What is on screen, as wrapping chips: a page with sixteen columns still
+   leaves the add list in view. */
+.columns-picker-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+}
+.columns-picker-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    max-width: 100%;
+    min-height: 1.75rem;
+    padding: 0.125rem 0.625rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    color: var(--color-text);
+}
+.columns-picker-chip:has(.columns-picker-icon) { padding-right: 0.125rem; }
+.columns-picker-chip .columns-picker-name { flex: 0 1 auto; }
+.columns-picker-chip .columns-picker-icon { width: 1.375rem; height: 1.375rem; border-radius: 999px; }
+.columns-picker-empty { padding: 0.25rem; color: var(--color-text-muted); }
+.column-windows { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.column-window {
+    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 999px;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+.column-window:hover:not(:disabled) { color: var(--color-text); }
+.column-window[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--brand-ring) 22%, transparent);
+    border-color: color-mix(in srgb, var(--brand-ring) 50%, var(--color-outline));
+    color: var(--color-text);
+}
+.column-window:disabled { opacity: 0.4; cursor: not-allowed; }
+.column-window:focus-visible, .columns-picker-icon:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+.columns-picker-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.375rem;
+    color: var(--color-text-muted);
+}
+.columns-picker-icon:hover:not(:disabled) {
+    color: var(--color-text);
+    background: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+}
+.columns-picker-icon:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Views menus have their own button-relative wrapper on desktop. On phones,
+   right-aligning a wide menu to an icon in the middle of the toolbar can put
+   its left edge offscreen. Use the full ControlBar as the containing block,
+   like Columns and + Filter already do. This covers both grid and Flip menus. */
+@media (max-width: 767.98px) {
+    .sticky-bar > div > .relative:has(> .sticky-bar-popover) {
+        position: static;
+    }
+    .sticky-bar > div > .relative > .sticky-bar-popover {
+        max-width: 100%;
+    }
 }
 
 @utility item-explorer-chip {
@@ -2151,4 +3239,354 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     color: var(--color-text);
     border-color: var(--brand-ring);
     background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+}
+
+/* ----- Item Explorer subcategory accordion (ItemExplorerToolbar) ----- */
+@utility item-explorer-accordion {
+    border: 1px solid var(--color-outline);
+    border-radius: 0.5rem;
+    background-color: var(--color-background-panel);
+    overflow: hidden;
+}
+
+@utility item-explorer-accordion-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.6rem 0.9rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 150ms ease;
+}
+.item-explorer-accordion-header:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 8%, transparent);
+}
+/* The wrapper's `overflow: hidden` clips anything painted outside its
+   padding box, and this header's border box fills that box edge-to-edge.
+   The global `:focus-visible` rule's positive `outline-offset: 2px` would
+   paint the entire ring outside the clip region, so it renders nothing.
+   Pull the ring inward instead. */
+.item-explorer-accordion-header:focus-visible {
+    outline-offset: -2px;
+}
+.item-explorer-accordion-chevron {
+    margin-left: auto;
+    flex-shrink: 0;
+    transition: transform 200ms ease;
+}
+.item-explorer-accordion-header[aria-expanded="true"] .item-explorer-accordion-chevron {
+    transform: rotate(180deg);
+}
+
+/* Expansion animates the grid track rather than mounting/unmounting the
+   panel, so the children are always present and the SSR and hydration view
+   trees keep identical shape. The `min-height: 0` on the inner element is
+   what actually lets the `0fr` track collapse. */
+@utility item-explorer-accordion-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 200ms ease;
+}
+.item-explorer-accordion-panel[data-open="true"] {
+    grid-template-rows: 1fr;
+}
+/* The collapsed `0fr` track only clips the chips visually — every chip's
+   `<A>` stays focusable via Tab and exposed to the accessibility tree,
+   contradicting the header's `aria-expanded="false"`. `display: none`
+   would fix that but can't animate the grid-track collapse. `visibility:
+   hidden` gets both: it drops descendants from the tab order and the a11y
+   tree while the track is still free to transition. */
+.item-explorer-accordion-panel[data-open="true"] .item-explorer-accordion-inner {
+    visibility: visible;
+    padding-bottom: 0.9rem;
+    transition:
+        visibility 0s,
+        padding-bottom 200ms ease;
+}
+.item-explorer-accordion-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 0.9rem 0;
+    /* `min-height: 0` zeroes the content box for the `0fr` collapse, but not
+       the padding box — bottom padding would otherwise survive as a visible
+       gap under the collapsed header. So bottom padding is state-dependent
+       too: 0 here, restored to 0.9rem by the open-state rule above, and
+       transitioned on the same curve as the grid track so it grows and
+       shrinks with the panel instead of popping.
+       Deferred until the collapse animation finishes, so the chips don't
+       vanish mid-slide; the open-state rule above flips this back
+       immediately, with no delay. */
+    visibility: hidden;
+    transition:
+        visibility 0s linear 200ms,
+        padding-bottom 200ms ease;
+}
+/* The global `prefers-reduced-motion: reduce` block zeroes
+   `transition-duration` on everything but doesn't touch
+   `transition-delay`, so the 200ms delay above survives it: the panel
+   snaps shut instantly but the chips stay focusable and in the a11y tree
+   for another 200ms — reappearing, for assistive-tech users specifically,
+   as the exact bug the `visibility` delay exists to prevent. Zero the
+   delay here instead of touching the global rule. */
+@media (prefers-reduced-motion: reduce) {
+    .item-explorer-accordion-inner {
+        transition-delay: 0s;
+    }
+}
+
+.side-nav-item-hero {
+    /* No `!important`: `.side-nav-item` already opts out of the global
+       `a:not(...)` rule, and an important background here would beat
+       `.side-nav-item[aria-current="page"]`, so Item Explorer would show the
+       pairing tint instead of the active-page highlight when you are on
+       /items. */
+    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent);
+    border: 1px solid var(--color-outline);
+    width: 100%;
+}
+.side-nav-kbd {
+    margin-left: auto;
+    /* "Ctrl K"/"Strg K" contain a space the old "⌘K" glyph didn't — never
+       let a squeezed row break the key label onto two lines. */
+    white-space: nowrap;
+    font-size: 0.62rem;
+    font-family: ui-monospace, monospace;
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-outline);
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.25rem;
+}
+/* Unread "what's new" dot on a sidebar row. Sits at the trailing edge like
+   `.side-nav-kbd`, and deliberately survives the collapsed sidebar — the dot
+   is the only thing left saying "there's something here" once the label is
+   gone. Sized to read as a marker rather than compete with the sign-in
+   button. */
+.side-nav-badge {
+    margin-left: auto;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 9999px;
+    background-color: var(--brand-ring);
+    flex-shrink: 0;
+}
+
+/* Unread-count pill for the notification inbox row — a numeric sibling of
+   `.side-nav-badge`'s plain dot, since the inbox needs a count rather than
+   just a presence marker. */
+.side-nav-count {
+    margin-left: auto;
+    min-width: 1.25rem;
+    height: 1.1rem;
+    padding: 0 0.35rem;
+    border-radius: 9999px;
+    background-color: var(--brand-ring);
+    color: var(--color-background);
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.1rem;
+    text-align: center;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.side-nav-rule {
+    height: 1px;
+    background-color: var(--color-outline);
+    margin: 0.5rem 0.5rem 0.25rem;
+}
+
+@media (min-width: 1024px) {
+    .app-shell-collapsed .side-nav-kbd {
+        display: none;
+    }
+    /* Collapsed, the dot leaves the flex flow: kept inline it adds
+       icon + gap + dot ≈ 57px of row content to a 56px rail (making the
+       changelog row overflow and, before `.side-nav` clipped overflow-x,
+       scroll the whole rail sideways on focus), and its `margin-left: auto`
+       defeats the row's centered icon. Overlaid on the row's top-right
+       corner it costs no width and still marks the icon as unread. */
+    .app-shell-collapsed .side-nav-item {
+        position: relative;
+    }
+    .app-shell-collapsed .side-nav-badge {
+        position: absolute;
+        top: 0.3rem;
+        right: 0.35rem;
+        margin-left: 0;
+    }
+    /* Same overlay treatment for the inbox row's unread-count pill: kept
+       inline it would add icon + gap + pill width to the 56px rail, so it
+       overlays the row's top-right corner instead (mirrors `.side-nav-badge`
+       above). The trigger needs its own `position: relative` anchor since
+       `.side-nav-inbox` (the wrapper `.side-nav-item` doesn't cover) isn't
+       already one. */
+    .app-shell-collapsed .side-nav-inbox .side-nav-account-trigger {
+        position: relative;
+    }
+    .app-shell-collapsed .side-nav-count {
+        position: absolute;
+        top: 0.25rem;
+        right: 0.3rem;
+        margin-left: 0;
+    }
+}
+
+/* Market-chart controls use the same semantic colors as the item page.
+   This also covers the original timeline and popovers in light palettes. */
+.market-history button[aria-pressed="true"]:not(.mh-layer) {
+    background: var(--brand-bg);
+    color: var(--color-text);
+}
+.market-chart-toolbar [class~="bg-violet-950/95"] {
+    background: var(--color-background-elevated);
+    color: var(--color-text);
+}
+.market-history [role="group"][style*="touch-action"] {
+    background: var(--color-background-elevated);
+}
+.market-history [role="group"][style*="touch-action"] span {
+    background: color-mix(in srgb, var(--mh-volume) 45%, transparent);
+}
+@media (max-width: 640px) {
+    .item-market-history .market-history .price-history-chart {
+        margin-inline: 0;
+        width: 100%;
+    }
+}
+
+/* Grid toolbars grow with their chips; the grid has its own scrollport. */
+.registered-filter-bar .filter-chip {
+    max-width: 100%;
+    min-width: 0;
+}
+.registered-filter-bar .filter-chip-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    text-align: left;
+}
+.registered-filter-bar .filter-chip-x {
+    flex-shrink: 0;
+}
+
+/* Consistent choices across list modes, composition, access and alerts. */
+.segmented-control {
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.75rem;
+    background: var(--color-background);
+}
+.segmented-control.grid { display: grid; }
+.segmented-option {
+    min-height: 2.75rem;
+    min-width: 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+.segmented-option:hover { color: var(--color-text); }
+.segmented-option[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--brand-ring) 18%, var(--color-background-elevated));
+    border-color: color-mix(in srgb, var(--brand-ring) 40%, var(--color-outline));
+    color: var(--color-text);
+}
+.segmented-option:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
+[data-theme] input.list-title-input:not([type="checkbox"]):not([type="radio"]) { background: transparent; border-color: transparent; }
+[data-theme] input.list-title-input:not([type="checkbox"]):not([type="radio"]):hover:not(:read-only),
+[data-theme] input.list-title-input:not([type="checkbox"]):not([type="radio"]):focus-visible { border-color: var(--color-outline); }
+.list-action-menu { display: flex; flex-direction: column; align-items: stretch; }
+.list-action-menu > button { justify-content: flex-start; text-align: left; min-height: 2.75rem; }
+
+/* Match the list toolbar controls independently of inherited font metrics. */
+.list-price-scope input[role="combobox"] { height: 2.625rem; }
+
+/* Recipe analyzer cost breakdown: the Item cell's toggle and the drawer it
+   opens. A right-hand panel from 1024px up, a bottom sheet below it (above
+   the mobile bar at z 45, under the nav drawer at 50+ and modals at 90).
+   Non-modal: no backdrop, the grid stays scrollable beside it. */
+.recipe-breakdown-toggle { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 6px; color: var(--color-text-muted); transition: background-color 120ms, color 120ms; }
+.recipe-breakdown-toggle:hover, .recipe-breakdown-toggle:focus-visible { color: var(--color-text); background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+.recipe-breakdown-toggle:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+.recipe-breakdown-toggle[aria-pressed="true"] { color: var(--brand-fg); background: color-mix(in srgb, var(--brand-ring) 30%, transparent); }
+.recipe-breakdown { position: fixed; z-index: 47; left: 0; right: 0; bottom: 0; max-height: 70dvh; display: flex; flex-direction: column; border-top: 1px solid var(--color-outline); border-radius: 12px 12px 0 0; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 -8px 32px #0006; }
+@media (min-width: 1024px) {
+    .recipe-breakdown { left: auto; top: 0; width: min(28rem, 100vw); max-height: none; border-top: 0; border-left: 1px solid var(--color-outline); border-radius: 0; box-shadow: -8px 0 32px #0006; }
+}
+.recipe-breakdown-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--color-outline); }
+.recipe-breakdown-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 6px; color: var(--color-text-muted); font-size: 18px; }
+.recipe-breakdown-close:hover, .recipe-breakdown-close:focus-visible { color: var(--color-text); background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+.recipe-breakdown-body { overflow-y: auto; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 18px; }
+.recipe-breakdown-heading { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); margin-bottom: 6px; }
+.recipe-breakdown-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+.recipe-breakdown-table th { font-size: 11px; font-weight: 600; color: var(--color-text-muted); padding: 4px 4px 6px; border-bottom: 1px solid var(--color-outline); }
+.recipe-breakdown-table td { padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--color-outline) 45%, transparent); vertical-align: middle; }
+.recipe-breakdown-table td:first-child { max-width: 0; width: 100%; }
+.recipe-breakdown-muted { opacity: 0.55; }
+.recipe-breakdown-badge { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; background: color-mix(in srgb, var(--brand-ring) 16%, transparent); color: var(--color-text); }
+.recipe-breakdown-badge-vendor { background: color-mix(in srgb, #0ea5e9 22%, transparent); }
+.recipe-breakdown-badge-subcraft { background: color-mix(in srgb, #a855f7 22%, transparent); }
+.recipe-breakdown-badge-on-hand { background: color-mix(in srgb, #10b981 22%, transparent); }
+.recipe-breakdown-badge-warn { background: color-mix(in srgb, #f59e0b 26%, transparent); }
+.recipe-breakdown-badge-muted { background: color-mix(in srgb, var(--color-outline) 60%, transparent); }
+.recipe-breakdown-sum, .recipe-breakdown-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 0; font-size: 13px; }
+.recipe-breakdown-note { color: var(--color-text-muted); }
+.recipe-breakdown-total { font-weight: 600; border-top: 1px solid var(--color-outline); margin-top: 4px; padding-top: 6px; }
+.recipe-breakdown-caveat { font-size: 12px; color: var(--color-text-muted); margin: 4px 0; }
+.recipe-breakdown-subcrafts { padding: 8px 4px 0; font-size: 12px; color: var(--color-text-muted); }
+.recipe-breakdown-subcrafts ul { list-style: disc; padding-left: 20px; margin-top: 2px; }
+
+/* Keep rail names in the accessibility tree even when the text is clipped. */
+@media (min-width: 1024px) {
+  .app-shell-collapsed .side-nav-label,
+  .app-shell-collapsed .side-nav-brand-text {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+.skip-content { position: fixed; left: 1rem; top: 1rem; z-index: 200; transform: translateY(-200%); padding: .75rem 1rem; background: var(--color-background); color: var(--color-text); }
+.skip-content:focus { transform: none; }
+dialog.task-dialog, dialog.search-overlay { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--color-text); }
+dialog::backdrop { background: rgb(0 0 0 / .6); }
+.search-overlay-close { width: auto; min-width: 2.75rem; padding: 0 .5rem; }
+.reorder-actions { display: flex; gap: .5rem; margin-bottom: .5rem; }
+.reorder-actions button { min-height: 2.75rem; padding: .4rem .75rem; }
+:root { --status-success: #86efac; --status-warning: #fde047; --status-error: #fca5a5; }
+[data-theme="light"] { --status-success: #166534; --status-warning: #854d0e; --status-error: #991b1b; }
+.toast-success { color: var(--status-success); }
+.toast-warning { color: var(--status-warning); }
+.toast-error { color: var(--status-error); }
+.toast-success, .toast-warning, .toast-error { background: var(--color-background-elevated); border-color: currentColor; }
+
+.mobile-grid-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: .25rem; margin-bottom: .75rem; overflow-wrap: anywhere; }
+.mobile-grid-field > div { min-width: 0; }
+.chart-data-table { width: 100%; border-collapse: collapse; }
+.chart-data-table th, .chart-data-table td { padding: .5rem; text-align: left; border-bottom: 1px solid var(--color-outline); }
+
+
+/* Mobile navigation uses the same native focus boundary as task dialogs. */
+@media (max-width: 1023px) { .app-shell > .side-nav { display: none; } }
+dialog.nav-dialog { position: fixed; inset: 0 auto 0 0; margin: 0; padding: 0; border: 0; width: min(320px, 95vw); height: 100dvh; max-height: 100dvh; background: var(--color-background); color: var(--color-text); overflow-y: auto; }
+.nav-dialog .side-nav { min-height: 0; }
+/* Reveal the existing label on focus/hover without removing its accessible name. */
+@media (min-width: 1024px) {
+ .app-shell-collapsed .side-nav-item:focus-visible .side-nav-label,
+ .app-shell-collapsed .side-nav-item:hover .side-nav-label {
+  clip-path: none; width: max-content; height: auto; margin: 0; padding: .5rem; overflow: visible;
+  position: fixed; left: 56px; background: var(--color-background); color: var(--color-text); border: 1px solid var(--color-outline); z-index: 100;
+ }
 }

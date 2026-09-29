@@ -11,7 +11,7 @@
  *
  * Env:
  *   BASE_URL              default http://127.0.0.1:8080
- *   HEADLESS              "false" to watch; otherwise puppeteer's "new" mode
+ *   HEADLESS              "false" to watch; otherwise headless
  *   TIMEOUT_MS            default 30000
  *   HYDRATION_WAIT_MS     default 4000 — dev WASM takes a few seconds to wire
  *                         up listeners; without this delay clicks no-op
@@ -95,7 +95,7 @@ async function main() {
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
   const HYDRATION_WAIT_MS = Number(process.env.HYDRATION_WAIT_MS || 4000);
   const SETTLE_MS = Number(process.env.POST_CLICK_SETTLE_MS || 1500);
-  const headless = process.env.HEADLESS === "false" ? false : "new";
+  const headless = process.env.HEADLESS !== "false";
 
   const browser = await puppeteer.launch({
     headless,

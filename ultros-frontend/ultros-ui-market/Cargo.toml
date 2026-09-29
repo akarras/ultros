@@ -1,0 +1,58 @@
+[package]
+name = "ultros-ui-market"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+chrono = { workspace = true }
+codee = { version = "0.3.5", features = [
+    "json_serde",
+] }
+gloo-timers = { version = "0.4.0", features = [
+    "futures",
+] }
+icondata = { workspace = true }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos-use = { workspace = true }
+leptos_i18n = { workspace = true }
+log = "0.4.29"
+thousands = "0.2.0"
+time = "0.3.47"
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-calc = { path = "../ultros-calc" }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+ultros-ui-charts = { path = "../ultros-ui-charts", default-features = false }
+ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
+xiv-gen = { workspace = true }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "leptos-use/ssr",
+    "ultros-frontend-core/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+    "ultros-ui-charts/ssr",
+    "ultros-ui-game/ssr",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-frontend-core/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+    "ultros-ui-charts/hydrate",
+    "ultros-ui-game/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }

@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "\"Ultros has been updated\" no longer keeps coming back",
+  "blurb": "Right after an update, cached responses could make the site think it was still out of date, so the update banner reappeared after every reload. It now only appears when there really is a newer version."
+}

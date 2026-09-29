@@ -1,17 +1,28 @@
 #![feature(trivial_bounds)]
 #![recursion_limit = "256"]
-pub(crate) mod alerts;
-pub(crate) mod analyzer_service;
 mod discord;
-pub(crate) mod event;
-mod item_update_service;
+mod fd_limit;
 pub mod leptos;
 #[cfg(feature = "profiling")]
 pub mod profiling;
-pub(crate) mod search_service;
+mod ssr_drain;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
+
+// The server's services live in their own crates so each one builds and tests
+// without the Leptos SSR app. Aliased here so the web and Discord layers keep
+// addressing them as `crate::alerts::…`, `crate::event::…` and so on.
+pub(crate) use ultros_alerts as alerts;
+pub(crate) use ultros_analyzer::analyzer_service;
+pub(crate) use ultros_character::{character_claim, lodestone_profile};
+pub(crate) use ultros_group_sync as group_sync;
+use ultros_ingest::{ingest_health, item_update_service};
+pub(crate) use ultros_lists as lists;
+pub(crate) use ultros_search as search_service;
+pub(crate) use ultros_server_core::event;
+#[cfg(feature = "test-auth")]
+use ultros_server_core::test_market_isolation;
 
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
@@ -22,6 +33,7 @@ use ::leptos::config::get_configuration;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
+use character_claim::CharacterClaimService;
 use discord::start_discord;
 use dotenvy::dotenv;
 use event::{EventProducer, EventType, create_event_busses};
@@ -39,10 +51,11 @@ use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::UltrosDb;
 use ultros_db::world_data::world_cache::WorldCache;
+use ultros_ingest::record_listing_changes;
+use ultros_server_core::env_flag::env_flag_enabled;
 use universalis::websocket::SocketRx;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
-use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[global_allocator]
@@ -69,10 +82,144 @@ struct Config {
     discord_token: String,
 }
 
+/// Stable Postgres advisory-lock id for the ClickHouse rollup scheduler.
+/// Session locks are released automatically when a process or connection
+/// dies, so another replica takes over without two replicas scanning raw
+/// sales at the same time.
+const ROLLUP_SCHEDULER_LOCK_KEY: i64 = 0x55_4c_54_52_4f_53;
+
+fn spawn_rollup_scheduler(
+    ch: ultros_clickhouse::ClickHouseClient,
+    db: UltrosDb,
+    token: CancellationToken,
+    writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
+) {
+    tokio::spawn(async move {
+        // The writer owns migration retries. Rollups must wait for schema
+        // readiness too, without running a competing migration on startup.
+        tokio::select! {
+            _ = token.cancelled() => return,
+            ready = writer.wait_ready() => {
+                if !ready {
+                    return;
+                }
+            }
+        }
+        loop {
+            let pool = db.get_connection().get_postgres_connection_pool();
+            let mut connection = tokio::select! {
+                _ = token.cancelled() => return,
+                result = pool.acquire() => match result {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        warn!(?error, "could not acquire connection for rollup scheduler lease");
+                        tokio::select! {
+                            _ = token.cancelled() => return,
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                        }
+                        continue;
+                    }
+                }
+            };
+
+            let acquired =
+                sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+                    .bind(ROLLUP_SCHEDULER_LOCK_KEY)
+                    .fetch_one(&mut *connection)
+                    .await;
+            match acquired {
+                Ok(true) => {
+                    info!("acquired ClickHouse rollup scheduler lease");
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(1.0);
+                    let scheduler_token = token.child_token();
+                    // One-time listing_events seed, under the same lease so
+                    // only one replica ever streams the board.
+                    tokio::spawn(ultros_clickhouse::listing_seed::run_until_seeded(
+                        ch.clone(),
+                        db.clone(),
+                        scheduler_token.clone(),
+                    ));
+                    let scheduler = ultros_clickhouse::rollups::run_scheduler(
+                        ch.clone(),
+                        scheduler_token.clone(),
+                    );
+                    tokio::pin!(scheduler);
+                    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
+                    // The lock-acquisition query already proved the connection
+                    // alive; do not immediately issue a redundant heartbeat.
+                    heartbeat.tick().await;
+
+                    let retry = loop {
+                        tokio::select! {
+                            _ = token.cancelled() => {
+                                scheduler_token.cancel();
+                                scheduler.await;
+                                break false;
+                            }
+                            _ = &mut scheduler => {
+                                // `run_scheduler` only returns after its token
+                                // is cancelled. If it ever exits independently,
+                                // release the lease and start a clean election.
+                                break true;
+                            }
+                            _ = heartbeat.tick() => {
+                                let alive = tokio::time::timeout(
+                                    std::time::Duration::from_secs(5),
+                                    sea_orm::sqlx::query_scalar::<_, i32>("SELECT 1")
+                                        .fetch_one(&mut *connection),
+                                )
+                                .await;
+                                match alive {
+                                    Ok(Ok(_)) => continue,
+                                    Ok(Err(error)) => warn!(
+                                        ?error,
+                                        "lost ClickHouse rollup scheduler lease connection"
+                                    ),
+                                    Err(_) => warn!(
+                                        "timed out checking ClickHouse rollup scheduler lease"
+                                    ),
+                                }
+                                scheduler_token.cancel();
+                                scheduler.await;
+                                break true;
+                            }
+                        }
+                    };
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
+                    let _ = sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+                        .bind(ROLLUP_SCHEDULER_LOCK_KEY)
+                        .fetch_one(&mut *connection)
+                        .await;
+                    if !retry {
+                        return;
+                    }
+                }
+                Ok(false) => {
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "could not acquire ClickHouse rollup scheduler lease"
+                    );
+                }
+            }
+
+            drop(connection);
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+            }
+        }
+    });
+}
+
 async fn run_socket_listener(
     db: UltrosDb,
     listings_tx: EventProducer<ListingEventData>,
     sales_tx: EventProducer<SaleEventData>,
+    listing_events: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    sale_receipts: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleReceiptRow>,
     token: CancellationToken,
 ) {
     let mut socket = WebsocketClient::connect(UNIVERSALIS_USER_AGENT).await;
@@ -99,6 +246,11 @@ async fn run_socket_listener(
             // hopefully this is cheap to clone
             let listings_tx = listings_tx.clone();
             let sales_tx = sales_tx.clone();
+            let listing_events = listing_events.clone();
+            let sale_receipts = sale_receipts.clone();
+            // Capture receipt before the spawned task waits on Postgres. Backfill
+            // insertion times cannot reconstruct this matching evidence later.
+            let received_at = chrono::Utc::now();
             if let SocketRx::Event(Ok(e)) = &msg {
                 let world_id = WorldId::from(e);
                 metrics::counter!("ultros_websocket_rx", "WorldId" => world_id.0.to_string())
@@ -111,24 +263,26 @@ async fn run_socket_listener(
                         item,
                         world,
                         listings,
-                    })) => match db.update_listings(listings.clone(), item, world).await {
-                        Ok((listings, removed)) => {
-                            let listings = Arc::new(ListingEventData {
+                    // `listings/add` is a DELTA — only the listings that newly
+                    // appeared, median one per event — so it must be applied
+                    // insert-only. It used to go through `update_listings`, which
+                    // deletes every row absent from its input and so truncated the
+                    // world's board down to the delta on every event. Removals
+                    // arrive on `listings/remove` below.
+                    })) => match db.add_listings(listings.clone(), item, world).await {
+                        Ok(write) => {
+                            record_listing_changes(
+                                &listing_events,
+                                &write.changes,
+                                ultros_clickhouse::rows::ListingEventSource::Websocket,
+                            );
+                            let added = Arc::new(ListingEventData {
                                 item_id: item.0,
                                 world_id: world.0,
-                                listings,
+                                listings: write.added,
                             });
-                            let removed = Arc::new(ListingEventData {
-                                item_id: item.0,
-                                world_id: world.0,
-                                listings: removed,
-                            });
-                            match listings_tx.send(EventType::Remove(removed)) {
-                                Ok(o) => info!(slack_remaining = o, "sent removed listings"),
-                                Err(e) => error!(error = ?e, "Error removing listings"),
-                            }
-                            match listings_tx.send(EventType::Add(listings)) {
-                                Ok(o) => info!(remaining_slack = o, "updated listings"),
+                            match listings_tx.send(EventType::Add(added)) {
+                                Ok(o) => info!(remaining_slack = o, "added listings"),
                                 Err(e) => error!(error = ?e, "Error adding listings"),
                             };
                         }
@@ -139,12 +293,17 @@ async fn run_socket_listener(
                         world,
                         listings,
                     })) => match db.remove_listings(listings.clone(), item, world).await {
-                        Ok(listings) => {
-                            info!(?listings, ?item, ?world, "Removed listings");
+                        Ok(write) => {
+                            record_listing_changes(
+                                &listing_events,
+                                &write.changes,
+                                ultros_clickhouse::rows::ListingEventSource::Websocket,
+                            );
+                            info!(listings = ?write.removed, ?item, ?world, "Removed listings");
                             if let Err(e) = listings_tx.send(EventType::removed(ListingEventData {
                                 item_id: item.0,
                                 world_id: world.0,
-                                listings,
+                                listings: write.removed,
                             })) {
                                 error!(error = ?e, "Error sending remove listings");
                             }
@@ -156,6 +315,11 @@ async fn run_socket_listener(
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
                         match db.update_sales(sales.clone(), item, world).await {
                             Ok(added_sales) => {
+                                for (sale, _) in &added_sales {
+                                    sale_receipts.send(
+                                        ultros_clickhouse::rows::SaleReceiptRow::from_sale(sale, received_at),
+                                    );
+                                }
                                 info!(?added_sales, ?item, ?world, "Stored sale data");
                                 match sales_tx
                                     .send(EventType::added(SaleEventData { sales: added_sales }))
@@ -183,35 +347,180 @@ async fn run_socket_listener(
     }
 }
 
-async fn init_db(
-    db: &UltrosDb,
-    worlds_view: Result<WorldsView, universalis::Error>,
-    datacenters: Result<DataCentersView, universalis::Error>,
-) -> Result<()> {
+/// Refresh startup metadata without making an existing replica's readiness
+/// depend indefinitely on an upstream request. None preserves persisted worlds.
+async fn startup_world_data(
+    worlds: impl std::future::Future<Output = Result<WorldsView, universalis::Error>>,
+    datacenters: impl std::future::Future<Output = Result<DataCentersView, universalis::Error>>,
+) -> Option<(WorldsView, DataCentersView)> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        futures::future::join(worlds, datacenters),
+    )
+    .await
+    {
+        Ok((Ok(worlds), Ok(datacenters))) => Some((worlds, datacenters)),
+        Ok((worlds, datacenters)) => {
+            warn!(
+                ?worlds,
+                ?datacenters,
+                "world metadata refresh failed; using persisted worlds"
+            );
+            None
+        }
+        Err(_) => {
+            warn!("world metadata refresh timed out; using persisted worlds");
+            None
+        }
+    }
+}
+
+async fn init_db(db: &UltrosDb, world_data: Option<(WorldsView, DataCentersView)>) -> Result<()> {
     info!("db starting");
 
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
-        if let (Ok(worlds), Ok(datacenters)) = (worlds_view, datacenters) {
+        if let Some((worlds, datacenters)) = world_data {
             db.update_datacenters(&datacenters, &worlds).await?;
         }
     }
     Ok(())
 }
 
+/// Name of the env var that turns the Universalis websocket ingest off.
+const DISABLE_WEBSOCKET_ENV: &str = "ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET";
+
+/// Whether this process should skip subscribing to the Universalis websocket.
+///
+/// QA/staging deploys generally point at a database shared with other testers,
+/// where nobody is exercising live market data. The websocket fans every
+/// inbound event out into its own `tokio::spawn`ed write (see
+/// [`run_socket_listener`]), so turning it off drops the write churn several
+/// replicas otherwise pile onto that one database.
+///
+/// This is not a fix for connection-pool exhaustion, and must not be sold as
+/// one: the pool is sized by `POSTGRES_MAX_CONNECTIONS` in `ultros-db`, and a
+/// replica with the ingest off still opens connections up to that ceiling
+/// serving ordinary page traffic. Size the pool for the number of replicas
+/// sharing the database; this flag only makes them quieter.
+///
+/// Production leaves this unset and ingests as before.
+fn universalis_websocket_disabled() -> bool {
+    env_flag_enabled(
+        DISABLE_WEBSOCKET_ENV,
+        std::env::var(DISABLE_WEBSOCKET_ENV).ok().as_deref(),
+    )
+}
+
+/// Resolve the environment name Sentry will actually stamp on every event.
+///
+/// This must mirror `sentry::init`'s own defaulting, because that is what
+/// decides the `environment` tag we see in Glitchtip. `apply_defaults`
+/// (sentry-0.49 `defaults.rs:88`) fills an unset `ClientOptions::environment`
+/// from `SENTRY_ENVIRONMENT`, and failing that from the build profile:
+/// `"development"` for a debug build, `"production"` for a release build.
+///
+/// So an unset `GLITCHTIP_ENVIRONMENT` does **not** mean "unknown". A local
+/// `cargo run` with the DSN in `.env` is already reporting as `development` —
+/// it just never told us, which is exactly how the guard below was bypassed.
+fn resolve_environment(
+    glitchtip_environment: Option<&str>,
+    sentry_environment: Option<&str>,
+    debug_build: bool,
+) -> String {
+    glitchtip_environment
+        .or(sentry_environment)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if debug_build {
+                "development"
+            } else {
+                "production"
+            }
+            .to_owned()
+        })
+}
+
 /// Whether Glitchtip/Sentry error reporting should be suppressed for this
-/// process based on the configured environment.
+/// process, given the *resolved* environment from [`resolve_environment`].
 ///
 /// We deliberately *never* ship events from a `development` environment to the
 /// shared production Glitchtip: a local dev box that has `GLITCHTIP_DSN` set
 /// would otherwise pollute prod with cold-start noise (see the init site in
 /// `main`). This is an allow-list-shaped check — only the exact `development`
-/// value is suppressed, so production (`production`) and any unset/other value
-/// still report, which fails safe if `GLITCHTIP_ENVIRONMENT` is ever
-/// misconfigured on the real deployment.
-fn error_reporting_disabled(environment: Option<&str>) -> bool {
-    environment == Some("development")
+/// value is suppressed, so `production` and any other value still report,
+/// which fails safe if the environment is ever misconfigured on the real
+/// deployment.
+///
+/// Takes `&str` rather than `Option<&str>` on purpose: resolving first is what
+/// keeps this decision and Sentry's `environment` tag from disagreeing.
+fn error_reporting_disabled(environment: &str) -> bool {
+    environment == "development"
+}
+
+/// Format a panic's `#[track_caller]` source location as `file:line:column`.
+///
+/// Mirrors the wasm-side reporter in `ultros-client/src/lib.rs`, so a server
+/// panic and a client panic read identically in Glitchtip.
+fn panic_location_string(info: &std::panic::PanicHookInfo<'_>) -> Option<String> {
+    info.location()
+        .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+}
+
+/// Attach the panicking source location to every Sentry panic event.
+///
+/// `sentry-panic` 0.49 builds its event purely from the panic *payload* and a
+/// runtime backtrace — it never reads `PanicHookInfo::location()`
+/// (`sentry_panic::PanicIntegration::event_from_panic_info`). Our release
+/// binary ships without symbols, so every frame Glitchtip receives is an
+/// `<unknown>` at a bare instruction address, and the addresses are ASLR'd,
+/// so they differ between events for the *same* panic. The result is what the
+/// server backlog actually looks like today: `culprit: <unknown>`, no tags,
+/// and a single un-actionable issue per panic *message* — 34k events under
+/// "called `Option::unwrap()` on a `None` value" (Glitchtip #6876) with no way
+/// to tell which of the ~hundreds of `unwrap()`s in the tree produced them.
+///
+/// `location()` needs no symbols at all: `file:line:column` is baked in at
+/// compile time by `#[track_caller]` and is already sitting on the
+/// `PanicHookInfo` we are handed. Wrapping the hook that `sentry::init`
+/// installed (rather than adding a second `PanicIntegration`, which the
+/// upstream docs say is unsupported — extractors are ignored when the
+/// integration is registered twice) records it on:
+///
+/// * tag `panic.location` — searchable/filterable in Glitchtip, and
+/// * context `rust_panic.location` — the exact shape the wasm reporter uses.
+///
+/// It also fingerprints by location, so panics split into one issue per
+/// panic *site* instead of per message. This is the same trick the client-side
+/// reporter uses ("a stable per-location fingerprint, so it collapses to one
+/// issue per panic site" — `ultros-app/src/error_filter.js`). Expect existing
+/// server panic issues to go quiet and be replaced by per-site ones on deploy.
+///
+/// Must be called *after* `sentry::init`, since that is what installs the hook
+/// being wrapped.
+fn attach_panic_location_to_sentry() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let Some(location) = panic_location_string(info) else {
+            previous(info);
+            return;
+        };
+        sentry::with_scope(
+            |scope| {
+                scope.set_tag("panic.location", &location);
+                scope.set_context(
+                    "rust_panic",
+                    sentry::protocol::Context::Other(
+                        std::iter::once(("location".to_string(), location.clone().into()))
+                            .collect(),
+                    ),
+                );
+                scope.set_fingerprint(Some(["panic", location.as_str()].as_slice()));
+            },
+            || previous(info),
+        );
+    }));
 }
 
 // Bolt: Switched to multi-threaded runtime for better performance on multi-core systems
@@ -246,27 +555,52 @@ async fn main() -> Result<()> {
     // GLITCHTIP_TRACES_SAMPLE_RATE controls performance/transaction sampling:
     // 0.0 disables (default — matches prior behavior), 1.0 sends every request.
     // Glitchtip 4.x and Sentry both accept transaction envelopes.
-    let environment = std::env::var("GLITCHTIP_ENVIRONMENT").ok();
+    //
+    // Resolve the environment the same way Sentry would *before* gating on it:
+    // gating on the raw `GLITCHTIP_ENVIRONMENT` alone let an unset value
+    // through, and Sentry then stamped those very events `development` itself
+    // (Glitchtip #6868/#6869 and the whole `ClickHouse … (unavailable)`
+    // cluster — ~22k events from `Bahamut`, a debug build with the prod DSN).
+    let environment = resolve_environment(
+        std::env::var("GLITCHTIP_ENVIRONMENT").ok().as_deref(),
+        std::env::var("SENTRY_ENVIRONMENT").ok().as_deref(),
+        cfg!(debug_assertions),
+    );
     let _sentry_guard = std::env::var("GLITCHTIP_DSN")
         .ok()
-        .filter(|_| !error_reporting_disabled(environment.as_deref()))
+        .filter(|_| !error_reporting_disabled(&environment))
         .map(|dsn| {
+            // Clamped rather than passed through: 0.48 took this as a plain
+            // struct field and tolerated anything, but 0.49's setter *panics*
+            // outside [0.0, 1.0]. Since this is operator-supplied, the natural
+            // typo for a "sample rate" — `=50`, meaning 50% — would otherwise
+            // take the server down at boot, before the DB is even reachable.
+            // `is_finite` first because "NaN"/"inf" parse successfully as f32
+            // and would panic just the same.
             let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
                 .ok()
-                .and_then(|v| v.parse().ok())
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|rate| rate.is_finite())
+                .map(|rate| rate.clamp(0.0, 1.0))
                 .unwrap_or(0.0);
-            sentry::init((
-                dsn,
-                sentry::ClientOptions {
-                    release: sentry::release_name!(),
-                    environment: environment.clone().map(Into::into),
-                    traces_sample_rate,
-                    attach_stacktrace: true,
-                    send_default_pii: false,
-                    ..Default::default()
-                },
-            ))
+            // sentry 0.49 made `ClientOptions` `#[non_exhaustive]` and dropped
+            // `traces_sample_rate` as a public field in favor of a builder
+            // setter, so we can no longer use struct-literal + `..Default`.
+            // The remaining fields are still public and assignable directly.
+            let mut options = sentry::ClientOptions::new().traces_sample_rate(traces_sample_rate);
+            options.release = sentry::release_name!();
+            options.environment = Some(environment.clone().into());
+            options.attach_stacktrace = true;
+            options.send_default_pii = false;
+            sentry::init((dsn, options))
         });
+
+    // Wrap the panic hook `sentry::init` just installed so panic events carry
+    // their source location. Only meaningful when reporting is on, and the
+    // wrap must happen after init — see `attach_panic_location_to_sentry`.
+    if _sentry_guard.is_some() {
+        attach_panic_location_to_sentry();
+    }
 
     // Create the db before we proceed
     let filter: EnvFilter =
@@ -281,6 +615,17 @@ async fn main() -> Result<()> {
         )
         .with(sentry_tracing::layer())
         .init();
+    // Before anything opens a socket. Docker hands the container the daemon's
+    // default RLIMIT_NOFILE soft limit of 1024, which a crawl burst exhausts —
+    // `accept()` then returns EMFILE (GlitchTip #7188) and the renderer's
+    // loopback fetches fail alongside it. See `fd_limit`.
+    fd_limit::raise_open_file_limit();
+    // Install the Prometheus recorder before any service spawns. `metrics::`
+    // macros are no-ops against the default NoopRecorder, so anything emitted
+    // before installation vanishes — and the analyzer records its
+    // snapshot-age / snapshot-rejection samples during startup, well before
+    // `start_web` (which only *serves* the handle on /metrics) ever runs.
+    let prometheus_handle = web_metrics::setup_metrics_recorder();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });
     info!("Ultros starting!");
@@ -291,57 +636,98 @@ async fn main() -> Result<()> {
     let startup_client = universalis_client.clone();
     let init = db.clone();
     let (senders, receivers) = create_event_busses();
+    let list_sync = lists::ListSync::new(db.clone(), senders.clone());
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
+    // Migration retries in the writers so an outage at startup does not disable
+    // analytics for the lifetime of this process. Keep their cancellation
+    // separate so producers can finish sending before the final flush. Four
+    // writers: sales, listing changes, floor moves, and websocket sale receipts.
+    // Receipts cannot be recovered from Postgres. Each migration is idempotent.
+    let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
+    let listing_snapshot_worker = tokio::spawn(ultros_clickhouse::listing_snapshots::run(
+        ch_client.clone(),
+        token.clone(),
+    ));
+    let ch_writer =
+        ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::SaleRow>::spawn_recovering(
+            ch_client.clone(),
+            CancellationToken::new(),
+        );
+    let listing_events_writer = ultros_clickhouse::writer::Writer::<
+        ultros_clickhouse::rows::ListingEventRow,
+    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let floor_writer = ultros_clickhouse::writer::Writer::<
+        ultros_clickhouse::rows::FloorChangeRow,
+    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let sale_receipts = ultros_clickhouse::writer::Writer::<
+        ultros_clickhouse::rows::SaleReceiptRow,
+    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
+    let socket_sale_receipts = sale_receipts.clone();
+    let socket_listing_events = listing_events_writer.clone();
     let socket_token = token.clone();
+    let websocket_disabled = universalis_websocket_disabled();
+    #[cfg(feature = "test-auth")]
+    let websocket_disabled = {
+        let isolated = test_market_isolation::enabled();
+        if isolated {
+            warn!(
+                "test-auth market fixture isolation enabled: upstream market writers are disabled"
+            );
+        }
+        websocket_disabled || isolated
+    };
+    // Populate worlds before constructing the immutable world cache. Otherwise a
+    // first boot can run reconciliation against an empty cache indefinitely.
+    let world_data = startup_world_data(
+        startup_client.get_worlds(),
+        startup_client.get_data_centers(),
+    )
+    .await;
+    info!("Initializing database with worlds/datacenters");
+    init_db(&init, world_data)
+        .await
+        .expect("Unable to populate worlds datacenters- is universalis down?");
     tokio::spawn(async move {
-        let (datacenters, worlds) = futures::future::join(
-            startup_client.get_data_centers(),
-            startup_client.get_worlds(),
+        if websocket_disabled {
+            // World/datacenter data above is still primed — the app needs it to
+            // serve anything at all — we just never open the market feed.
+            warn!("skipping Universalis websocket ingest: disabled by configuration");
+            return;
+        }
+        info!("starting websocket");
+        run_socket_listener(
+            init,
+            listings_sender,
+            history_sender,
+            socket_listing_events,
+            socket_sale_receipts,
+            socket_token,
         )
         .await;
-        info!("Initializing database with worlds/datacenters");
-        init_db(&init, worlds, datacenters)
-            .await
-            .expect("Unable to populate worlds datacenters- is universalis down?");
-        info!("starting websocket");
-        run_socket_listener(init, listings_sender, history_sender, socket_token).await;
     });
-    // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
+    anyhow::ensure!(
+        world_cache.get_all_worlds().next().is_some(),
+        "No worlds available after initialization; cannot start market reconciliation"
+    );
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
-    // ClickHouse: analytical store. Migration is idempotent — re-running it on
-    // every startup is fine. We log-and-continue on failure because PG is the
-    // source of truth and the analyzer's RAM caches keep the snappy tools
-    // alive even if CH is unreachable. When migrate fails we wire a disabled
-    // writer (silently drops rows) and skip the rollup scheduler — otherwise
-    // the flush task would fire `ClickHouse flush failed` every 5s and the
-    // sentry-tracing layer would report each one as a separate issue (see
-    // GlitchTip #5080, ~1k events from a dev box without CH running).
-    let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
-    let ch_writer = match ch_client.migrate().await {
-        Ok(()) => {
-            let writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
-            // Background scheduler that keeps item_stats_window +
-            // item_quality_score fresh. Runs an immediate seed pass on startup,
-            // then on independent cadences (1d every 15min, 7d hourly,
-            // 30d/90d every 6h, quality hourly).
-            ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
-            writer
-        }
-        Err(e) => {
-            warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
-            ultros_clickhouse::writer::Writer::disabled()
-        }
-    };
+    // A Postgres advisory lock elects one web replica to refresh rollups.
+    spawn_rollup_scheduler(
+        ch_client.clone(),
+        db.clone(),
+        token.clone(),
+        ch_writer.clone(),
+    );
 
-    let analyzer_service = AnalyzerService::start_analyzer(
+    let (analyzer_service, analyzer_shutdown) = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
         world_cache.clone(),
-        ch_writer,
+        ch_writer.clone(),
+        floor_writer.clone(),
         ch_client.clone(),
         token.clone(),
     )
@@ -352,9 +738,29 @@ async fn main() -> Result<()> {
         universalis: universalis_client.clone(),
         listings: senders.listings.clone(),
         sales: senders.history.clone(),
+        listing_events: listing_events_writer.clone(),
         full_sweep_cooldowns: Default::default(),
+        uncovered_worlds: Default::default(),
+        sweep_lock: Default::default(),
+        shutdown: token.clone(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
+    // Full-board coverage is independent of the 200-item recency window and
+    // fresh sales markers. Resume first, then cover any startup gap.
+    crate::discord::ffxiv::admin::spawn_market_reconciliation(
+        update_service.clone(),
+        token.clone(),
+    );
+    // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
+    // failure looks like a healthy process serving frozen numbers, so this gauge
+    // is the only thing that makes one visible from outside.
+    ingest_health::spawn_staleness_gauge(db.clone(), world_cache.clone(), token.clone());
+    // Discord group membership. Gateway events keep it fresh minute to minute;
+    // this is the periodic pass that repairs whatever the gateway missed while
+    // the process was down or a shard was reconnecting. It waits for the bot to
+    // come up on its own, so it is spawned here rather than inside the Discord
+    // setup hook — a database it can reach is all it needs to start.
+    group_sync::spawn_reconcile_scheduler(db.clone(), token.clone());
     // begin listening to universalis events
     // load configuration from environment
     let config = envy::from_env::<Config>()?;
@@ -398,6 +804,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(start_discord(
         db.clone(),
+        list_sync.clone(),
         senders.clone(),
         receivers.clone(),
         analyzer_service.clone(),
@@ -409,7 +816,7 @@ async fn main() -> Result<()> {
         ch_client.clone(),
     ));
 
-    let character_verification = CharacterVerifierService {
+    let character_claim = CharacterClaimService {
         client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -426,12 +833,12 @@ async fn main() -> Result<()> {
         analyzer_service,
         db,
         key: Key::from(key.as_bytes()),
-        character_verification,
+        character_claim,
         oauth_config: DiscordAuthConfig::new(
             discord_client_id,
             discord_client_secret,
             format!("{}/redirect", hostname.trim_end_matches('/')),
-            HashSet::from_iter([OAuthScope::Identify]),
+            HashSet::from_iter([OAuthScope::Identify, OAuthScope::Guilds]),
         ),
         user_cache: AuthUserCache::new(),
         event_receivers: receivers,
@@ -442,42 +849,304 @@ async fn main() -> Result<()> {
         search_service,
         token: token.clone(),
         ch_client,
+        listing_events: listing_events_writer.clone(),
         universalis: universalis_client,
         price_series_cache: Default::default(),
+        home_feed_cache: Default::default(),
+        sale_stats_cache: Default::default(),
+        listing_stats_cache: Default::default(),
+        list_sync,
     };
-    let web_task = tokio::spawn(web::start_web(web_state));
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("ctrl-c received");
+    let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
+    let web_finished = tokio::select! {
+        _ = shutdown_signal() => {
+            info!("shutdown signal received");
+            false
         }
-        _ = web_task => {
-            info!("web task finished");
+        result = &mut web_task => {
+            if let Err(e) = result {
+                error!("Web task failed: {e:?}");
+            }
+            true
         }
-    }
+    };
     token.cancel();
+    let shutdown = async {
+        let drain_analytics = async {
+            if let Err(e) = analyzer_shutdown.await {
+                error!("Analyzer shutdown failed: {e:?}");
+            }
+            // Independent tables, independent tasks. Draining them in sequence
+            // spent two drain budgets back to back against the one 30 second
+            // budget below (GlitchTip #7310).
+            tokio::join!(
+                ch_writer.shutdown(),
+                sale_receipts.shutdown(),
+                floor_writer.shutdown()
+            );
+        };
+        let drain_web = async {
+            if !web_finished && let Err(e) = web_task.await {
+                error!("Web shutdown failed: {e:?}");
+            }
+        };
+        let drain_snapshots = async {
+            if let Err(error) = listing_snapshot_worker.await {
+                error!(?error, "Listing snapshot worker shutdown failed");
+            }
+        };
+        tokio::join!(drain_analytics, drain_web, drain_snapshots);
+        // Every listing_events producer (socket task, update service, web) has
+        // been cancelled or drained by now.
+        listing_events_writer.shutdown().await;
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
+        .await
+        .is_err()
+    {
+        error!("Graceful shutdown exceeded 30 seconds; unfinished work may require recovery");
+    }
     info!("Exiting");
     Ok(())
 }
 
+/// Docker and service managers use SIGTERM rather than the interactive Ctrl-C
+/// signal. Both must run the same snapshot/flush shutdown path.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Unable to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(e) = result {
+                error!("Unable to listen for Ctrl-C: {e:?}");
+            }
+        }
+        _ = terminate => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::error_reporting_disabled;
+    #[tokio::test(start_paused = true)]
+    async fn stalled_world_refresh_releases_startup_to_use_persisted_data() {
+        let started = tokio::time::Instant::now();
+        let data = super::startup_world_data(std::future::pending(), async {
+            Ok(universalis::DataCentersView(vec![]))
+        })
+        .await;
+        assert!(
+            data.is_none(),
+            "a partial refresh must not replace persisted data"
+        );
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(15));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_datacenter_refresh_also_has_a_startup_deadline() {
+        let started = tokio::time::Instant::now();
+        let data = super::startup_world_data(
+            async { Ok(universalis::WorldsView(vec![])) },
+            std::future::pending(),
+        )
+        .await;
+        assert!(data.is_none());
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(15));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn successful_world_refresh_is_available_before_the_deadline() {
+        let started = tokio::time::Instant::now();
+        let data =
+            super::startup_world_data(async { Ok(universalis::WorldsView(vec![])) }, async {
+                Ok(universalis::DataCentersView(vec![]))
+            })
+            .await;
+        assert!(data.is_some());
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn failed_world_refresh_preserves_persisted_data() {
+        let data = super::startup_world_data(async { Err(universalis::Error::NoItems) }, async {
+            Ok(universalis::DataCentersView(vec![]))
+        })
+        .await;
+        assert!(data.is_none());
+    }
+
+    #[test]
+    fn automatic_reconciliation_disable_flag_matches_websocket_safety() {
+        let name = "ULTROS_DISABLE_AUTOMATIC_RECONCILIATION";
+        for value in ["true", " TRUE ", "1", "yes", "on", "please"] {
+            assert!(super::env_flag_enabled(name, Some(value)), "{value:?}");
+        }
+        for value in [
+            None,
+            Some(""),
+            Some(" "),
+            Some("false"),
+            Some("0"),
+            Some("off"),
+        ] {
+            assert!(!super::env_flag_enabled(name, value), "{value:?}");
+        }
+    }
+
+    use super::{
+        DISABLE_WEBSOCKET_ENV, env_flag_enabled, error_reporting_disabled, resolve_environment,
+    };
+
+    #[test]
+    fn an_unset_or_empty_flag_leaves_the_ingest_on() {
+        // Production sets nothing, and must be unaffected by this knob.
+        assert!(!env_flag_enabled(DISABLE_WEBSOCKET_ENV, None));
+        assert!(!env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some("")));
+        assert!(!env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some("   ")));
+    }
+
+    #[test]
+    fn truthy_spellings_disable_the_ingest() {
+        for value in ["1", "true", "TRUE", "True", "yes", "on", " true "] {
+            assert!(
+                env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some(value)),
+                "{value:?} should read as enabled"
+            );
+        }
+    }
+
+    #[test]
+    fn falsy_spellings_leave_the_ingest_on() {
+        for value in ["0", "false", "FALSE", "no", "off"] {
+            assert!(
+                !env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some(value)),
+                "{value:?} should read as disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_value_still_disables_the_ingest() {
+        // Setting the variable at all is an explicit act; failing open would
+        // let a typo'd QA deploy keep writing to the shared database.
+        assert!(env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some("please")));
+    }
 
     #[test]
     fn development_environment_suppresses_reporting() {
         // A dev box (GLITCHTIP_ENVIRONMENT=development) must never reach the
         // shared production Glitchtip, even with GLITCHTIP_DSN set. Regression
         // guard for the #2214-#2217 cold-start pool-timeout flood.
-        assert!(error_reporting_disabled(Some("development")));
+        assert!(error_reporting_disabled("development"));
     }
 
     #[test]
     fn production_and_other_environments_still_report() {
         // Fail safe: anything that isn't exactly "development" reports, so a
-        // misconfigured / unset GLITCHTIP_ENVIRONMENT on the real deploy never
-        // silently drops production errors.
-        assert!(!error_reporting_disabled(Some("production")));
-        assert!(!error_reporting_disabled(Some("staging")));
-        assert!(!error_reporting_disabled(None));
+        // misconfigured environment on the real deploy never silently drops
+        // production errors.
+        assert!(!error_reporting_disabled("production"));
+        assert!(!error_reporting_disabled("staging"));
+    }
+
+    #[test]
+    fn an_explicit_glitchtip_environment_always_wins() {
+        assert_eq!(
+            resolve_environment(Some("production"), Some("staging"), true),
+            "production"
+        );
+        assert_eq!(
+            resolve_environment(Some("development"), None, false),
+            "development"
+        );
+    }
+
+    #[test]
+    fn sentry_environment_is_the_next_fallback() {
+        // `sentry::init` honors SENTRY_ENVIRONMENT when its option is unset, so
+        // we have to read it too or we would gate on a different value than the
+        // one that ends up tagged on the event.
+        assert_eq!(resolve_environment(None, Some("staging"), true), "staging");
+    }
+
+    #[test]
+    fn an_unset_environment_on_a_debug_build_is_development() {
+        // THE BUG: `GLITCHTIP_ENVIRONMENT` unset used to read as "not
+        // development" and report, but sentry-0.49's `apply_defaults`
+        // (`defaults.rs:88`) stamps a debug build `development` regardless.
+        // A local `cargo run` with the prod DSN in `.env` therefore flooded
+        // production Glitchtip with `Bahamut` events that were *labelled*
+        // development — ~22k of them across #6868/#6869 and the ClickHouse
+        // "(unavailable)" cluster.
+        assert_eq!(resolve_environment(None, None, true), "development");
+        assert!(error_reporting_disabled(&resolve_environment(
+            None, None, true
+        )));
+    }
+
+    #[test]
+    fn an_unset_environment_on_a_release_build_still_reports() {
+        // The prod container is a release build. Suppressing an unset
+        // environment outright would have silenced real production errors, so
+        // the profile — not merely the presence of the variable — is what
+        // decides.
+        assert_eq!(resolve_environment(None, None, false), "production");
+        assert!(!error_reporting_disabled(&resolve_environment(
+            None, None, false
+        )));
+    }
+
+    /// `panic_location_string` is what makes a server panic attributable at
+    /// all: the release binary is unsymbolicated, so `file:line:column` from
+    /// `#[track_caller]` is the only source information Glitchtip ever gets.
+    /// The panic hook is a `Box<dyn Fn>` we cannot call directly from a test,
+    /// so exercise the formatter through a real panic.
+    #[test]
+    fn panic_location_is_file_line_column() {
+        use std::sync::{Arc, Mutex};
+
+        let captured: Arc<Mutex<Option<String>>> = Arc::default();
+        let sink = captured.clone();
+        let test_thread = std::thread::current().id();
+
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // The hook is process-wide; parallel tests may also catch panics.
+            if std::thread::current().id() == test_thread {
+                *sink.lock().unwrap() = super::panic_location_string(info);
+            }
+        }));
+        let _ = std::panic::catch_unwind(|| panic!("boom"));
+        std::panic::set_hook(previous);
+
+        let location = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("panics carry a location");
+        // `main.rs:<line>:<col>` — the shape the wasm reporter already sends as
+        // `contexts.rust_panic.location`.
+        let (file, line_col) = location
+            .rsplit_once(':')
+            .and_then(|(rest, col)| {
+                rest.rsplit_once(':')
+                    .map(|(file, line)| (file, (line, col)))
+            })
+            .expect("location is file:line:column");
+        assert!(file.ends_with("main.rs"), "unexpected file in {location}");
+        assert!(
+            line_col.0.parse::<u32>().is_ok(),
+            "unexpected line in {location}"
+        );
+        assert!(
+            line_col.1.parse::<u32>().is_ok(),
+            "unexpected column in {location}"
+        );
     }
 }

@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Floor history now covers items whose price never moved",
+  "blurb": "Floor charts and the windowed floor min/max reported an unknown floor for most items because the record of current floors was only ever written for prices that changed. Every restart now anchors the floors ClickHouse is missing, so quiet items get a known floor going forward."
+}

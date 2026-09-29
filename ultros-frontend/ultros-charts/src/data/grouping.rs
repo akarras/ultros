@@ -3,6 +3,7 @@
 //! and bucketed server-side now (see `ultros_api_types::price_series`); this
 //! module only tracks which grouping levels a given scope page may offer.
 
+use std::str::FromStr;
 use ultros_api_types::world_helper::WorldHelper;
 
 /// Which level of the world hierarchy to roll sales up to.
@@ -46,6 +47,33 @@ impl From<ultros_api_types::price_series::SeriesGroup> for GroupLevel {
     }
 }
 
+/// Wire format for the `?group=` URL param. Lowercase and stable — this is
+/// part of every shared chart link, so the strings must not be changed
+/// casually. Distinct from [`GroupLevel::label`], which is a debug/key
+/// identifier.
+impl std::fmt::Display for GroupLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Region => "region",
+            Self::Datacenter => "datacenter",
+            Self::World => "world",
+        })
+    }
+}
+
+impl FromStr for GroupLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "region" => Ok(Self::Region),
+            "datacenter" | "dc" => Ok(Self::Datacenter),
+            "world" => Ok(Self::World),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Which grouping levels make sense for the scope page being viewed —
 /// ported from the web UI (a world page only offers World; a DC page offers
 /// DC + World; a region page or unknown scope offers everything).
@@ -61,6 +89,19 @@ pub fn available_group_levels(world_helper: &WorldHelper, scope_name: &str) -> V
             GroupLevel::World,
         ],
     }
+}
+
+/// The grouping a scope page should open at: the broadest level that scope
+/// can offer. A region page shows regions, a datacenter page datacenters, a
+/// world page worlds.
+///
+/// Previously the item page hardcoded `World` at every scope, so a region
+/// page overlaid ~70 world lines when the user had asked to look at a region.
+pub fn default_group_level(world_helper: &WorldHelper, scope_name: &str) -> GroupLevel {
+    available_group_levels(world_helper, scope_name)
+        .first()
+        .copied()
+        .unwrap_or(GroupLevel::World)
 }
 
 #[cfg(test)]
@@ -123,5 +164,42 @@ mod tests {
             SeriesGroup::Datacenter
         );
         assert_eq!(SeriesGroup::from(GroupLevel::World), SeriesGroup::World);
+    }
+
+    #[test]
+    fn group_level_wire_format_round_trips() {
+        for level in [
+            GroupLevel::Region,
+            GroupLevel::Datacenter,
+            GroupLevel::World,
+        ] {
+            assert_eq!(level.to_string().parse::<GroupLevel>(), Ok(level));
+        }
+        assert_eq!(GroupLevel::Region.to_string(), "region");
+        assert_eq!(GroupLevel::Datacenter.to_string(), "datacenter");
+        assert_eq!(GroupLevel::World.to_string(), "world");
+    }
+
+    // URLs get hand-edited and lowercased by tools, so parsing is
+    // case- and whitespace-insensitive. `dc` is accepted as a convenience
+    // alias for hand-authored links.
+    #[test]
+    fn group_level_parsing_is_forgiving() {
+        assert_eq!("REGION".parse::<GroupLevel>(), Ok(GroupLevel::Region));
+        assert_eq!("  world ".parse::<GroupLevel>(), Ok(GroupLevel::World));
+        assert_eq!("dc".parse::<GroupLevel>(), Ok(GroupLevel::Datacenter));
+        assert_eq!("nonsense".parse::<GroupLevel>(), Err(()));
+    }
+
+    // The fix for the original defect: a scope page opens at the broadest
+    // level it can offer, not always World.
+    #[test]
+    fn default_group_level_follows_the_viewed_scope() {
+        let h = world_helper();
+        assert_eq!(default_group_level(&h, "North-America"), GroupLevel::Region);
+        assert_eq!(default_group_level(&h, "Aether"), GroupLevel::Datacenter);
+        assert_eq!(default_group_level(&h, "Gilgamesh"), GroupLevel::World);
+        // An unknown scope offers everything, so it defaults to the broadest.
+        assert_eq!(default_group_level(&h, "Not A Scope"), GroupLevel::Region);
     }
 }

@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Groups get their own page, roles, and Discord sync",
+  "blurb": "Every group now has a page with its members, its invite links, and roles you can build by hand or import straight from a Discord server. Imported roles fill themselves in and stay up to date as people join, leave, and change roles on Discord, and you can search for someone by name instead of pasting a Discord ID. Lists can be shared with a whole group or with just one role.",
+  "link": "/groups"
+}

@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Notification inbox and browser price alerts",
+  "blurb": "Fired price alerts now arrive in an inbox at the bottom of the sidebar with an unread count, and show live while you're browsing. Anyone can set item price alerts without signing in — they run in your browser while a tab is open — and you can add them to your account later. The alerts history also tracks read state and pages older events.",
+  "link": "/alerts"
+}

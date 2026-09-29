@@ -1,4 +1,8 @@
 pub use sea_orm_migration::prelude::*;
+mod m20260910_000001_guest_list_adoption;
+mod m20260912_000001_active_listing_id_seq_negative_range;
+mod m20260915_000001_alert_event_inbox;
+mod m20260922_000001_alert_market_triggers;
 
 mod m20220101_000001_create_table;
 mod m20220908_111724_create_index;
@@ -30,6 +34,21 @@ mod m20260513_000002_alert_list_threshold;
 mod m20260514_000001_notification_endpoint_created_at_tz;
 mod m20260514_000002_alert_list_update;
 mod m20260514_000003_list_activity;
+mod m20260802_000001_authless_character_claims;
+mod m20260802_000002_user_group_discord_guild;
+mod m20260804_000001_active_listing_cheapest_index;
+mod m20260805_000001_group_invite;
+mod m20260808_000001_active_listing_identity_columns;
+mod m20260809_000001_notification_endpoint_health;
+mod m20260811_000001_drop_unused_sale_history_full_index;
+mod m20260828_000001_active_listing_world_index;
+mod m20260905_000001_list_item_acquired_integer;
+mod m20260907_000001_alert_retainer_sale;
+mod m20260907_000001_group_roles;
+mod m20260907_000001_list_doc;
+mod m20260908_000001_group_role_member_added_at;
+mod m20260908_000002_group_sync_revision;
+mod m20260908_000003_market_sweep;
 
 pub struct Migrator;
 
@@ -69,6 +88,25 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000001_notification_endpoint_created_at_tz::Migration),
             Box::new(m20260514_000002_alert_list_update::Migration),
             Box::new(m20260514_000003_list_activity::Migration),
+            Box::new(m20260802_000001_authless_character_claims::Migration),
+            Box::new(m20260802_000002_user_group_discord_guild::Migration),
+            Box::new(m20260804_000001_active_listing_cheapest_index::Migration),
+            Box::new(m20260805_000001_group_invite::Migration),
+            Box::new(m20260808_000001_active_listing_identity_columns::Migration),
+            Box::new(m20260809_000001_notification_endpoint_health::Migration),
+            Box::new(m20260811_000001_drop_unused_sale_history_full_index::Migration),
+            Box::new(m20260828_000001_active_listing_world_index::Migration),
+            Box::new(m20260905_000001_list_item_acquired_integer::Migration),
+            Box::new(m20260907_000001_group_roles::Migration),
+            Box::new(m20260907_000001_alert_retainer_sale::Migration),
+            Box::new(m20260908_000001_group_role_member_added_at::Migration),
+            Box::new(m20260908_000002_group_sync_revision::Migration),
+            Box::new(m20260907_000001_list_doc::Migration),
+            Box::new(m20260908_000003_market_sweep::Migration),
+            Box::new(m20260910_000001_guest_list_adoption::Migration),
+            Box::new(m20260912_000001_active_listing_id_seq_negative_range::Migration),
+            Box::new(m20260915_000001_alert_event_inbox::Migration),
+            Box::new(m20260922_000001_alert_market_triggers::Migration),
         ]
     }
 }

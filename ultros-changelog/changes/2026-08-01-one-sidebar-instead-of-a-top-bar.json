@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "title": "One sidebar instead of a top bar",
+  "blurb": "Navigation, search, your account and the language picker all moved into a single sidebar, so tools get the full width of the window. The sidebar collapses to icons when you want the space back.",
+  "importance": "medium"
+}

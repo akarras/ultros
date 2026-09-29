@@ -1,83 +1,121 @@
-//! Opinionated defaults for URL-backed filters.
-//!
-//! The analyzer tools land first-time visitors on a sale-velocity-filtered view
-//! instead of a list topped by items that sell once a month. The default lives
-//! in the URL rather than in the filter logic, so chips, Clear All, and shared
-//! links all keep behaving exactly as they do for a hand-typed filter.
-
-use std::str::FromStr;
-
-use leptos::prelude::*;
-use leptos_router::NavigateOptions;
-use leptos_router::hooks::query_signal_with_options;
-
-/// Default ceiling on predicted time to next sale: items that sell at least
-/// once a day. Parsed with `humantime`, same as anything typed into the box.
-pub const DEFAULT_MAX_SALE_TIME: &str = "1d";
-
-/// The same velocity floor, expressed as the crafting analyzers' daily-sales
-/// metric rather than as a duration.
-pub const DEFAULT_MIN_DAILY_SALES: f32 = 1.0;
-
-/// Navigation options for filter query params.
-///
-/// `query_signal`'s defaults (`replace: false`, `scroll: true`) mean every
-/// keystroke in a filter box pushes a history entry and yanks the window back
-/// to the top. Filters are not navigation.
-fn filter_nav_options() -> NavigateOptions {
-    NavigateOptions {
-        replace: true,
-        scroll: false,
-        ..Default::default()
-    }
-}
-
-/// A [`query_signal`](leptos_router::hooks::query_signal) for a filter param,
-/// using [`filter_nav_options`].
-pub fn filter_query_signal<T>(key: &'static str) -> (Memo<Option<T>>, SignalSetter<Option<T>>)
-where
-    T: FromStr + ToString + PartialEq + Send + Sync + 'static,
-{
-    query_signal_with_options::<T>(key, filter_nav_options())
-}
-
-/// Write `default` into the URL if `key` is absent when this mounts.
-///
-/// Seeding fires only when the param is *absent*, so a link that carries the
-/// param is honored verbatim — `?next-sale=` (unparseable) and `?min-sales=0`
-/// both mean "no limit", and both are what the input box produces when a user
-/// empties it.
-///
-/// Call this from the **route** component. Anything rendered inside a
-/// `Suspense`/resource closure remounts whenever its resource changes — a live
-/// market refetch, a world switch — and seeding there would silently reinstate
-/// a filter the user had just cleared. The route component mounts once per
-/// navigation, which is the granularity a default wants.
-pub fn seed_query_default<T>(key: &'static str, default: T)
-where
-    T: FromStr + ToString + PartialEq + Clone + Send + Sync + 'static,
-{
-    let (value, set_value) = filter_query_signal::<T>(key);
-    Effect::new(move |_| {
-        if value.get_untracked().is_none() {
-            set_value.set(Some(default.clone()));
-        }
-    });
-}
+pub use ultros_ui_query::query_defaults::*;
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
-    /// The seeded value goes through the same `humantime` parse as anything
-    /// typed into the box, and an unparseable duration doesn't error — it just
-    /// leaves `predicted_time` as `None`, i.e. no filter at all. A typo in the
-    /// constant would silently undo the default, so pin it.
+    /// The invariant the fix rests on: no app code reaches the router's
+    /// panicking URL hooks, so a new filter cannot quietly reintroduce #7305.
+    /// The same trade `AppLink` made for `<A/>` — the wrapper is only worth
+    /// anything while it is the *only* door.
+    ///
+    /// `query_defaults.rs` itself is the one file allowed to name them; the
+    /// virtual-grid fixture is a dev harness mounted under the real shell.
     #[test]
-    fn default_max_sale_time_parses_to_one_day() {
-        assert_eq!(
-            humantime::parse_duration(DEFAULT_MAX_SALE_TIME).expect("default must parse"),
-            std::time::Duration::from_secs(60 * 60 * 24),
+    fn no_app_code_calls_the_panicking_router_url_hooks() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+                .expect("the crate's src tree is readable")
+                .map(|e| e.expect("a readable directory entry").path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    walk(&path, out);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&path).expect("a readable source file");
+                let full = path.to_string_lossy().replace('\\', "/");
+                let name = match full.rsplit_once("/src/") {
+                    Some((_, rel)) => rel.to_string(),
+                    None => full,
+                };
+                // Only the production half: a test is allowed — required,
+                // even — to call the panicking hook and prove it panics.
+                let production = match src.split_once(&format!("#[cfg({})]", "test")) {
+                    Some((head, rest))
+                        if rest.trim_start().starts_with(&format!("mod {}", "test")) =>
+                    {
+                        head.to_string()
+                    }
+                    _ => src,
+                };
+                out.push((name, production));
+            }
+        }
+        let mut files = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        // The invariant must follow components into their extracted crates.
+        let frontend = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        for entry in std::fs::read_dir(frontend).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if (name.starts_with("ultros-ui") || name == "ultros-frontend-core")
+                && path.join("src").is_dir()
+            {
+                walk(&path.join("src"), &mut files);
+            }
+        }
+
+        assert!(files.len() > 100, "the walk must reach the frontend crates");
+
+        const ALLOWED: [&str; 2] = ["query_defaults.rs", "components/virtual_grid/fixture.rs"];
+        let mut offenders = Vec::new();
+        for (name, src) in &files {
+            if ALLOWED.contains(&name.as_str()) {
+                continue;
+            }
+            for hook in ["use_query_map", "query_signal_with_options"] {
+                // Only real uses: a doc comment naming the hook is how the
+                // fallbacks explain themselves.
+                let used = src.lines().any(|line| {
+                    !line.trim_start().starts_with("//")
+                        && line
+                            .match_indices(hook)
+                            .any(|(at, _)| !line[at + hook.len()..].starts_with("_or_default"))
+                });
+                if used {
+                    offenders.push(format!("{name} uses {hook}"));
+                }
+            }
+            // `query_signal` cannot be matched by name — the app's own
+            // wrapper shares it — so catch the router's copy by the path it
+            // has to be reached through. Both a qualified call and a grouped
+            // `use leptos_router::{hooks::{query_signal, ..}}` import are
+            // whitespace-collapsed first, because rustfmt splits either one
+            // across lines. #1316 arrived with exactly that import and nine
+            // filters behind it, past a green version of this test.
+            let flat = src
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace(" ::", "::")
+                .replace(":: ", "::")
+                .replace("{ ", "{")
+                .replace(" }", "}");
+            if flat.contains("leptos_router::hooks::query_signal") {
+                offenders.push(format!("{name} calls the router's query_signal"));
+            }
+            for statement in flat.split("use leptos_router").skip(1) {
+                let statement = statement.split(';').next().unwrap_or_default();
+                if statement.contains("query_signal") || statement.contains("use_query_map") {
+                    offenders.push(format!("{name} imports a router URL hook: {statement}"));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "route these through query_defaults instead: {offenders:?}"
         );
     }
 }

@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Sort shared market columns from their headers",
+  "blurb": "Click a shared market column heading in an analyzer to sort by it, then click again to reverse the order. Your filters, market window, and saved layout stay in place."
+}

@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "Claim characters without the Lodestone dance",
+  "blurb": "Claiming a character no longer requires pasting a code into your Lodestone bio — your Discord sign-in is enough. The sidebar can then swap your home world to match whichever character you are playing.",
+  "link": "/settings",
+  "importance": "medium"
+}

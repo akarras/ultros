@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "low",
+  "title": "Vendor NPC pages get their own share preview",
+  "blurb": "Sharing a vendor NPC page in Discord or elsewhere now shows a card with the NPC's name, how many items they sell, where they stand, and a mosaic of items from their shop — instead of the generic homepage image."
+}

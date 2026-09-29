@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Edit analyzer filters in one place",
+  "blurb": "Find column filters in + Filter and edit them from the same chip row across Flip Finder, Vendor Resale, Ventures, Leves, Scrip Sources, and FC Crafting. Set both ends of a price range, keep using saved links, and see every active filter on smaller screens.",
+  "link": "/flip-finder"
+}

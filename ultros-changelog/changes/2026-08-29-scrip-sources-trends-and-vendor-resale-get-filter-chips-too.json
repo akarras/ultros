@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Scrip sources, trends, and vendor resale get filter chips too",
+  "blurb": "The last three tools still on the old filter bar now use the same sticky filter bar as the others: only the filters you've set take up space, each shown as an editable chip, with a Clear all button. Vendor resale's filters also stopped jumping the page to the top on every keystroke.",
+  "importance": "medium"
+}

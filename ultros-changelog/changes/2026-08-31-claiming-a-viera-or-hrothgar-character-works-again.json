@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Claiming a Viera or Hrothgar character works again",
+  "blurb": "Claiming a character read its Lodestone profile through a parser that only knew the races the game shipped with in 2013, so claiming any Viera or Hrothgar failed outright with a server error. Claims now read just the name and home world off the profile, so every race works - and a character id the Lodestone doesn't know says so instead of erroring.",
+  "link": "/profile",
+  "importance": "medium"
+}

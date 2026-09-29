@@ -61,6 +61,23 @@ keys.
 
 ## Operational notes
 
+* Subscription URLs are accepted only over HTTPS on port 443, without URL
+  credentials or fragments, at these browser push providers:
+  * `fcm.googleapis.com` ([Chromium's endpoint definition](https://chromium.googlesource.com/chromium/src/+/refs/tags/141.0.7390.94/components/push_messaging/push_messaging_constants.cc)).
+  * `updates.push.services.mozilla.com` ([Mozilla production endpoint](https://mozilla-services.github.io/autopush-rs/)).
+  * Subdomains of `push.apple.com` ([Apple's documented access policy](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)).
+  * Subdomains of `notify.windows.com` ([Microsoft's channel validation policy](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)).
+  The two suffix rules require the separating dot; lookalike domains are not
+  accepted. Paths and queries remain opaque so provider token changes work.
+* The same URL policy is enforced before sending, including for existing saved
+  subscriptions. The delivery client never follows redirects. This prevents
+  users from supplying arbitrary server request destinations. The allowlist
+  deliberately excludes custom/self-hosted push servers and provider staging
+  environments; adding another provider requires reviewing its official
+  endpoint policy and updating the validator and tests. The policy trusts these
+  providers' domains and the deployment's DNS/TLS configuration; it is not a
+  replacement for network egress controls.
+
 * The service worker is served from `/service-worker.js` (not
   `/static/service-worker.js`) so it gets site-wide scope. The
   `Service-Worker-Allowed: /` header is set on that response.
@@ -68,6 +85,15 @@ keys.
   uninstalled the PWA, cleared site data, etc.) come back from the push
   service as `EndpointNotFound`/`EndpointNotValid`. The delivery path
   soft-deletes those `push_subscription` rows automatically.
+* Every push carries a `TTL` and (for tracker-fired alerts) a `Topic` header
+  (RFC 8030), set from `PushOptions` in `ultros-alerts/src/delivery.rs`. The
+  TTL is 1h for undercut rollups and 4h for sold/price/list alerts, so a
+  browser that was closed overnight wakes to nothing rather than a backlog.
+  The topic is one per alert rule (`undercut-<alert_id>` etc.), so within the
+  TTL window the push service keeps only the newest queued message per rule.
+  The same topic is echoed in the JSON payload; the service worker uses it as
+  the notification `tag` so a newer toast for that rule replaces the one on
+  screen. Endpoint tests and inbox resends use a 5-minute TTL and no topic.
 * `notification_endpoint` rows of method `WebPush` cannot be created via
   `POST /api/v1/endpoints` — they must come from
   `POST /api/v1/push/subscribe`, since the row is useless without an

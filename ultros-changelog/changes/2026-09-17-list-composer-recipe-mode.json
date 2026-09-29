@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Recipes are a mode of the list builder",
+  "blurb": "Build your list now has an Items / Recipes switch instead of a second recipe panel stacked under the item search. Recipe results show the finished item's icon and name with a small + button that opens the preview.",
+  "link": "/list",
+  "labs": true
+}

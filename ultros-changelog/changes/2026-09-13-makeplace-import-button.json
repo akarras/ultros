@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Clearer MakePlace imports",
+  "blurb": "The MakePlace import button is disabled while an import is running or the pasted list is empty or invalid, helping prevent accidental repeat imports."
+}

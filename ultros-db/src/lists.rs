@@ -1,10 +1,12 @@
 use crate::{
     UltrosDb,
-    common::try_update_value::ActiveValueCmpSet,
-    common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
+    common_type_conversions::{
+        ListSharedGroupReturn, ListSharedRoleReturn, ListSharedUserReturn, UserGroupMemberReturn,
+    },
     entity::{
-        active_listing, discord_user, list, list_activity, list_invite, list_item,
-        list_shared_group, list_shared_user, retainer, user_group, user_group_member,
+        active_listing, discord_user, group_invite, group_role, group_role_member, list,
+        list_activity, list_invite, list_item, list_shared_group, list_shared_role,
+        list_shared_user, retainer, user_group, user_group_member,
     },
     world_data::world_cache::{AnySelector, WorldCache},
 };
@@ -12,17 +14,15 @@ use anyhow::Result;
 use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ExprTrait, IntoActiveModel,
-    JoinType, ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ExprTrait, JoinType,
+    ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
     sea_query::Expr,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
+use ultros_api_types::user::group::{GroupMemberSource, GroupSource};
 use universalis::ItemId;
 
 #[derive(Debug, Error)]
@@ -150,6 +150,32 @@ impl UltrosDb {
             }
         }
 
+        // Role shares: list -> role -> role member. Same shape as the group
+        // join above; a member holding several shared roles gets the max.
+        let role_perms: Vec<i16> = list_shared_role::Entity::find()
+            .select_only()
+            .column(list_shared_role::Column::Permission)
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::GroupRole.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                group_role::Relation::GroupRoleMember.def(),
+            )
+            .filter(list_shared_role::Column::ListId.eq(list_id))
+            .filter(group_role_member::Column::UserId.eq(user_id))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+
+        for perm in role_perms {
+            let p = ListPermission::from(perm);
+            if p > max_permission {
+                max_permission = p;
+            }
+        }
+
         Ok(max_permission)
     }
 
@@ -183,28 +209,6 @@ impl UltrosDb {
         Ok(list)
     }
 
-    pub async fn update_list<T>(
-        &self,
-        list_id: i32,
-        discord_user: i64,
-        update: T,
-    ) -> Result<list::Model>
-    where
-        T: FnOnce(&mut list::ActiveModel),
-    {
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Owner {
-            return Err(ListError::Forbidden("Only the owner can update list settings").into());
-        }
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::NotFound)?;
-        let mut model = list.into_active_model();
-        update(&mut model);
-        Ok(model.update(&self.db).await?)
-    }
-
     /// Deletes the given list assuming that it is owned by the Discord user
     #[instrument(skip(self))]
     pub async fn delete_list(&self, list_id: i32, discord_user: i64) -> Result<()> {
@@ -230,7 +234,6 @@ impl UltrosDb {
         &self,
         discord_user: i64,
     ) -> Result<Vec<(list::Model, Option<String>)>> {
-        // This should probably also include lists shared with the user
         let owned_lists = list::Entity::find()
             .find_also_related(discord_user::Entity)
             .filter(list::Column::Owner.eq(discord_user))
@@ -259,9 +262,28 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
 
+        let role_lists = list::Entity::find()
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::List.def().rev(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::GroupRole.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                group_role::Relation::GroupRoleMember.def(),
+            )
+            .filter(group_role_member::Column::UserId.eq(discord_user))
+            .find_also_related(discord_user::Entity)
+            .all(&self.db)
+            .await?;
+
         let mut all_lists = owned_lists;
         all_lists.extend(shared_lists);
         all_lists.extend(group_lists);
+        all_lists.extend(role_lists);
         all_lists.sort_by_key(|(l, _)| l.id);
         all_lists.dedup_by_key(|(l, _)| l.id);
 
@@ -310,7 +332,26 @@ impl UltrosDb {
             .one(&self.db)
             .await?;
 
-        Ok(group_list)
+        if group_list.is_some() {
+            return Ok(group_list);
+        }
+        Ok(list::Entity::find()
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::List.def().rev(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                list_shared_role::Relation::GroupRole.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                group_role::Relation::GroupRoleMember.def(),
+            )
+            .filter(group_role_member::Column::UserId.eq(discord_user))
+            .filter(list::Column::Name.eq(list_name))
+            .one(&self.db)
+            .await?)
     }
 
     pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<(list::Model, String)> {
@@ -411,106 +452,6 @@ impl UltrosDb {
         Ok(query.all(&self.db).await?)
     }
 
-    /// Adds an item to the list.
-    #[instrument(skip(self))]
-    pub async fn add_item_to_list(
-        &self,
-        list: &list::Model,
-        discord_user: i64,
-        item_id: i32,
-        hq: Option<bool>,
-        quantity: Option<i32>,
-        acquired: Option<i32>,
-    ) -> Result<list_item::Model> {
-        let permission = self.get_permission(list.id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to add item to list").into(),
-            );
-        }
-        // if the item already exists in the list, just update the existing list
-        let existing = list_item::Entity::find()
-            .filter(list_item::Column::ListId.eq(list.id))
-            .filter(list_item::Column::ItemId.eq(item_id))
-            .filter(list_item::Column::Hq.eq(hq))
-            .one(&self.db)
-            .await?;
-        if let Some(item) = existing {
-            let new_quantity = item.quantity.unwrap_or(1) + quantity.unwrap_or(1);
-            let mut item = item.into_active_model();
-            item.quantity = ActiveValue::Set(Some(new_quantity));
-            Ok(item.update(&self.db).await?)
-        } else {
-            Ok(list_item::ActiveModel {
-                id: Default::default(),
-                item_id: ActiveValue::Set(item_id),
-                list_id: ActiveValue::Set(list.id),
-                hq: ActiveValue::Set(hq),
-                quantity: ActiveValue::Set(quantity),
-                acquired: ActiveValue::Set(acquired),
-                target_price: ActiveValue::Set(None),
-            }
-            .insert(&self.db)
-            .await?)
-        }
-    }
-
-    /// Update list item
-    #[instrument(skip(self))]
-    pub async fn update_list_item(
-        &self,
-        updated_item: list_item::Model,
-        discord_user: i64,
-    ) -> Result<list_item::Model> {
-        let permission = self
-            .get_permission(updated_item.list_id, discord_user)
-            .await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to update list item").into(),
-            );
-        }
-        let mut item = list_item::Entity::find_by_id(updated_item.id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::BadRequest("Item not found"))?
-            .into_active_model();
-        item.hq.cmp_set_value(updated_item.hq);
-        item.quantity.cmp_set_value(updated_item.quantity);
-        item.acquired.cmp_set_value(updated_item.acquired);
-        item.target_price.cmp_set_value(updated_item.target_price);
-        if item.is_changed() {
-            Ok(item.update(&self.db).await?)
-        } else {
-            Ok(updated_item)
-        }
-    }
-
-    /// Update only the `target_price` on a list_item. Requires `Write`
-    /// permission on the owning list. Pass `None` to clear an existing target.
-    #[instrument(skip(self))]
-    pub async fn set_list_item_target_price(
-        &self,
-        owner: i64,
-        list_item_id: i32,
-        target_price: Option<i64>,
-    ) -> Result<()> {
-        let item = list_item::Entity::find_by_id(list_item_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::BadRequest("Item not found"))?;
-        let permission = self.get_permission(item.list_id, owner).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to update list item").into(),
-            );
-        }
-        let mut active: list_item::ActiveModel = item.into_active_model();
-        active.target_price = ActiveValue::Set(target_price);
-        active.update(&self.db).await?;
-        Ok(())
-    }
-
     /// Return all list_items for `list_id` that have a non-null `target_price`.
     /// Used by the price tracker to pre-compute per-list thresholds on refresh.
     pub async fn get_list_items_with_target(&self, list_id: i32) -> Result<Vec<list_item::Model>> {
@@ -526,123 +467,6 @@ impl UltrosDb {
     /// operation via the `alert_list_threshold` row.
     pub async fn get_list_by_id(&self, list_id: i32) -> Result<Option<list::Model>> {
         Ok(list::Entity::find_by_id(list_id).one(&self.db).await?)
-    }
-
-    // #[instrument(skip(self))]
-    pub async fn add_items_to_list(
-        &self,
-        list: &list::Model,
-        discord_user: i64,
-        items: impl Iterator<Item = list_item::Model>,
-    ) -> Result<u64> {
-        let permission = self.get_permission(list.id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to add items to list").into(),
-            );
-        }
-        // for items that are already matching our list, we should update and insert
-        let mut existing_list_items: HashMap<_, _> = list
-            .find_related(list_item::Entity)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|item| ((item.list_id, item.hq, item.item_id), item))
-            .collect();
-
-        let mut insert_queue = vec![];
-        let mut updated_models = vec![];
-        items.into_iter().for_each(|item| {
-            let key = (list.id, item.hq, item.item_id);
-            // removing from the map and assuming that the incoming list won't have duplicates
-            if let Some(existing) = existing_list_items.remove(&key) {
-                let new_quantity = existing.quantity.unwrap_or(1) + item.quantity.unwrap_or(1);
-                let mut existing = existing.into_active_model();
-                existing.quantity = ActiveValue::Set(Some(new_quantity));
-                updated_models.push(existing);
-            } else {
-                insert_queue.push(item);
-            }
-        });
-        try_join_all(
-            updated_models
-                .into_iter()
-                .map(|updated| updated.update(&self.db)),
-        )
-        .await?;
-        let many = list_item::Entity::insert_many(insert_queue.into_iter().map(|item| {
-            let list_item::Model {
-                item_id,
-                hq,
-                quantity,
-                acquired,
-                target_price,
-                ..
-            } = item;
-            let list_id = list.id;
-            list_item::ActiveModel {
-                id: Default::default(),
-                item_id: ActiveValue::Set(item_id),
-                list_id: ActiveValue::Set(list_id),
-                hq: ActiveValue::Set(hq),
-                quantity: ActiveValue::Set(quantity),
-                acquired: ActiveValue::Set(acquired),
-                target_price: ActiveValue::Set(target_price),
-            }
-        }))
-        .exec_without_returning(&self.db)
-        .await?;
-        Ok(many)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn set_list_items_hq(
-        &self,
-        discord_user: i64,
-        list_item_ids: &[i32],
-        hq: Option<bool>,
-    ) -> Result<Vec<i32>> {
-        let items = list_item::Entity::find()
-            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
-            .all(&self.db)
-            .await?;
-        let list_ids: HashSet<i32> = items.iter().map(|i| i.list_id).collect();
-        let list_ids_vec: Vec<i32> = list_ids.iter().copied().collect();
-        for list_id in list_ids {
-            let permission = self.get_permission(list_id, discord_user).await?;
-            if permission < ListPermission::Write {
-                return Err(
-                    ListError::Forbidden("Insufficient permissions to update list items").into(),
-                );
-            }
-        }
-
-        list_item::Entity::update_many()
-            .col_expr(list_item::Column::Hq, Expr::value(hq))
-            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
-            .exec(&self.db)
-            .await?;
-        Ok(list_ids_vec)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn remove_item_from_list(
-        &self,
-        discord_user: i64,
-        list_item_id: i32,
-    ) -> Result<list_item::Model> {
-        let list_item = list_item::Entity::find_by_id(list_item_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::BadRequest("No list item"))?;
-        let permission = self.get_permission(list_item.list_id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(
-                ListError::Forbidden("Insufficient permissions to remove item from list").into(),
-            );
-        }
-        list_item.clone().delete(&self.db).await?;
-        Ok(list_item)
     }
 
     pub async fn get_listings_for_list(
@@ -685,22 +509,90 @@ impl UltrosDb {
     // --- Group Management ---
 
     pub async fn create_group(&self, name: String, owner_id: i64) -> Result<user_group::Model> {
+        self.insert_group(name, owner_id, None, None, GroupSource::Manual)
+            .await
+    }
+
+    /// Create a group backed by a Discord guild. The caller is responsible for
+    /// having verified that `owner_id` may manage `guild_id` and that the bot
+    /// is present there — this layer only enforces one group per guild.
+    pub async fn create_group_from_guild(
+        &self,
+        name: String,
+        owner_id: i64,
+        guild_id: i64,
+        guild_icon_url: Option<String>,
+    ) -> Result<user_group::Model> {
+        // Checked up front so the common case gets a useful message instead of
+        // a unique-constraint violation. The index is still the real guarantee:
+        // two concurrent creates can both pass this check, and the loser gets a
+        // database error rather than a duplicate row.
+        if user_group::Entity::find()
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .one(&self.db)
+            .await?
+            .is_some()
+        {
+            return Err(
+                ListError::BadRequest("A group already exists for that Discord server").into(),
+            );
+        }
+        self.insert_group(
+            name,
+            owner_id,
+            Some(guild_id),
+            guild_icon_url,
+            GroupSource::DiscordGuild,
+        )
+        .await
+    }
+
+    async fn insert_group(
+        &self,
+        name: String,
+        owner_id: i64,
+        guild_id: Option<i64>,
+        guild_icon_url: Option<String>,
+        source: GroupSource,
+    ) -> Result<user_group::Model> {
         let txn = self.db.begin().await?;
         let group = user_group::ActiveModel {
             id: Default::default(),
             name: ActiveValue::Set(name),
             owner_id: ActiveValue::Set(owner_id),
+            guild_id: ActiveValue::Set(guild_id),
+            guild_icon_url: ActiveValue::Set(guild_icon_url),
+            source: ActiveValue::Set(source as i16),
+            frozen_reason: ActiveValue::Set(None),
+            sync_revision: ActiveValue::Set(0),
         }
         .insert(&txn)
         .await?;
         user_group_member::ActiveModel {
             group_id: ActiveValue::Set(group.id),
             user_id: ActiveValue::Set(owner_id),
+            source: ActiveValue::Set(GroupMemberSource::Manual as i16),
         }
         .insert(&txn)
         .await?;
         txn.commit().await?;
         Ok(group)
+    }
+
+    /// Map of `guild_id -> group_id` for the given guilds, so the guild picker
+    /// can mark the ones that are already taken. Scoped to the guilds asked
+    /// about rather than returning every linked guild in the database.
+    pub async fn group_ids_for_guilds(&self, guild_ids: &[i64]) -> Result<HashMap<i64, i32>> {
+        if guild_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        Ok(user_group::Entity::find()
+            .filter(user_group::Column::GuildId.is_in(guild_ids.iter().copied()))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .filter_map(|group| group.guild_id.map(|guild_id| (guild_id, group.id)))
+            .collect())
     }
 
     pub async fn delete_group(&self, group_id: i32, owner_id: i64) -> Result<()> {
@@ -715,7 +607,18 @@ impl UltrosDb {
         Ok(())
     }
 
-    pub async fn add_group_member(&self, group_id: i32, owner_id: i64, user_id: i64) -> Result<()> {
+    /// Owner adds a member by Discord id. When `display_name` is given the
+    /// `discord_user` row is upserted first, so people who have never logged
+    /// into Ultros can be added; without it the foreign key requires that they
+    /// already have a row. Re-adding an existing member marks them `Manual`,
+    /// meaning the owner wants them kept even if Discord sync would drop them.
+    pub async fn add_group_member(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        user_id: i64,
+        display_name: Option<String>,
+    ) -> Result<()> {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
@@ -723,34 +626,64 @@ impl UltrosDb {
         if group.owner_id != owner_id {
             return Err(ListError::Forbidden("Only the owner can add members").into());
         }
-        user_group_member::ActiveModel {
+        if let Some(name) = display_name {
+            self.get_or_create_discord_user(user_id as u64, name)
+                .await?;
+        }
+        user_group_member::Entity::insert(user_group_member::ActiveModel {
             group_id: ActiveValue::Set(group_id),
             user_id: ActiveValue::Set(user_id),
-        }
-        .insert(&self.db)
+            source: ActiveValue::Set(GroupMemberSource::Manual as i16),
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                user_group_member::Column::GroupId,
+                user_group_member::Column::UserId,
+            ])
+            .update_column(user_group_member::Column::Source)
+            .to_owned(),
+        )
+        .exec(&self.db)
         .await?;
         Ok(())
     }
 
+    /// Owner removes a member, or a member leaves. Synced members are refused:
+    /// reconciliation would put them straight back, so the honest answer is
+    /// "change their Discord role". Role memberships go in the same
+    /// transaction so the group-membership invariant holds.
     pub async fn remove_group_member(
         &self,
         group_id: i32,
-        owner_id: i64,
+        requester_id: i64,
         user_id: i64,
     ) -> Result<()> {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
             .ok_or(ListError::BadRequest("Group not found"))?;
-        if group.owner_id != owner_id && user_id != owner_id {
+        if group.owner_id != requester_id && user_id != requester_id {
             return Err(ListError::Forbidden(
                 "Only the owner or the user themselves can remove a member",
             )
             .into());
         }
-        user_group_member::Entity::delete_by_id((group_id, user_id))
-            .exec(&self.db)
+        let Some(member) = user_group_member::Entity::find_by_id((group_id, user_id))
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(());
+        };
+        if GroupMemberSource::from(member.source) == GroupMemberSource::Synced {
+            return Err(crate::group_roles::GroupError::ManagedByDiscord.into());
+        }
+        let txn = self.db.begin().await?;
+        self.remove_user_from_all_roles_in_group(&txn, group_id, user_id)
             .await?;
+        user_group_member::Entity::delete_by_id((group_id, user_id))
+            .exec(&txn)
+            .await?;
+        txn.commit().await?;
         Ok(())
     }
 
@@ -769,6 +702,145 @@ impl UltrosDb {
         all_groups.sort_by_key(|g| g.id);
         all_groups.dedup_by_key(|g| g.id);
         Ok(all_groups)
+    }
+
+    // --- Group Invite Management ---
+    //
+    // Mirrors the list invites below, minus the permission column: group
+    // membership is binary, so there is nothing for an invite to grant beyond
+    // membership itself. Guild-linked groups are deliberately included — in
+    // phase 1 the guild link supplies the group's identity, not its membership,
+    // so an invite is no more privileged there than on a manual group.
+
+    pub async fn create_group_invite(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        max_uses: Option<i32>,
+    ) -> Result<group_invite::Model> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden("Only the owner can create invites").into());
+        }
+        if matches!(max_uses, Some(max_uses) if max_uses <= 0) {
+            return Err(ListError::BadRequest("Invite max uses must be positive").into());
+        }
+        Ok(group_invite::ActiveModel {
+            id: ActiveValue::Set(new_invite_id()?),
+            group_id: ActiveValue::Set(group_id),
+            max_uses: ActiveValue::Set(max_uses),
+            uses: ActiveValue::Set(0),
+        }
+        .insert(&self.db)
+        .await?)
+    }
+
+    /// Redeem an invite, returning the group the user now belongs to.
+    ///
+    /// Redeeming twice is a no-op that does *not* consume a second use — unlike
+    /// a list share there is no permission to re-apply, so burning a use for a
+    /// member who is already in the group would just punish double-clicks.
+    pub async fn use_group_invite(&self, invite_id: String, user_id: i64) -> Result<i32> {
+        let txn = self.db.begin().await?;
+
+        let invite = group_invite::Entity::find_by_id(invite_id.clone())
+            .one(&txn)
+            .await?
+            .ok_or(ListError::InviteNotFound)?;
+
+        let already_member = user_group_member::Entity::find_by_id((invite.group_id, user_id))
+            .one(&txn)
+            .await?
+            .is_some();
+        if already_member {
+            txn.rollback().await?;
+            return Ok(invite.group_id);
+        }
+
+        // Atomic conditional increment: only succeeds if the invite still has
+        // uses left. This closes the TOCTOU window where two concurrent
+        // redemptions could both pass a pre-check and then both increment.
+        let update = group_invite::Entity::update_many()
+            .col_expr(
+                group_invite::Column::Uses,
+                Expr::col(group_invite::Column::Uses).add(1),
+            )
+            .filter(group_invite::Column::Id.eq(invite_id))
+            .filter(
+                Condition::any()
+                    .add(group_invite::Column::MaxUses.is_null())
+                    .add(
+                        Expr::col(group_invite::Column::Uses)
+                            .lt(Expr::col(group_invite::Column::MaxUses)),
+                    ),
+            )
+            .exec(&txn)
+            .await?;
+
+        if update.rows_affected == 0 {
+            txn.rollback().await?;
+            // The invite was read above, so the only way to get here is the
+            // max-uses filter rejecting it.
+            return Err(ListError::InviteExhausted.into());
+        }
+
+        user_group_member::Entity::insert(user_group_member::ActiveModel {
+            group_id: ActiveValue::Set(invite.group_id),
+            user_id: ActiveValue::Set(user_id),
+            source: ActiveValue::Set(GroupMemberSource::Manual as i16),
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                user_group_member::Column::GroupId,
+                user_group_member::Column::UserId,
+            ])
+            // A no-op update rather than `do_nothing`, which would make the
+            // insert report `RecordNotInserted` on the losing side of a race.
+            .update_column(user_group_member::Column::UserId)
+            .to_owned(),
+        )
+        .exec(&txn)
+        .await?;
+
+        txn.commit().await?;
+        Ok(invite.group_id)
+    }
+
+    pub async fn delete_group_invite(&self, invite_id: String, owner_id: i64) -> Result<()> {
+        let invite = group_invite::Entity::find_by_id(invite_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::InviteNotFound)?;
+        let group = user_group::Entity::find_by_id(invite.group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden("Only the owner can delete invites").into());
+        }
+        invite.delete(&self.db).await?;
+        Ok(())
+    }
+
+    pub async fn get_group_invites(
+        &self,
+        group_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<group_invite::Model>> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != user_id {
+            return Err(ListError::Forbidden("Only the owner can view invites").into());
+        }
+        Ok(group_invite::Entity::find()
+            .filter(group_invite::Column::GroupId.eq(group_id))
+            .all(&self.db)
+            .await?)
     }
 
     // --- Sharing Management ---
@@ -873,6 +945,84 @@ impl UltrosDb {
             .exec(&self.db)
             .await?;
         Ok(())
+    }
+
+    /// Share a list with one role of a group the caller owns. Mirrors
+    /// `share_list_with_group`: only the list owner may share, and only into
+    /// a group they also own, so a member cannot fan a list out to a group
+    /// they merely belong to.
+    ///
+    /// Returns the role's name, because the caller writes an activity-feed
+    /// line a person reads and "shared this list with role 12" is not one. The
+    /// row is already loaded here for the ownership check, so it costs nothing.
+    pub async fn share_list_with_role(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        role_id: i32,
+        permission: ListPermission,
+    ) -> Result<String> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner {
+            return Err(ListError::Forbidden("Only the owner can share the list").into());
+        }
+        validate_share_permission(permission)?;
+        let (role, group) = group_role::Entity::find_by_id(role_id)
+            .find_also_related(user_group::Entity)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Role not found"))?;
+        let group = group.ok_or(ListError::BadRequest("Role not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden(
+                "Only the group owner can share a list with that group's roles",
+            )
+            .into());
+        }
+        list_shared_role::Entity::insert(list_shared_role::ActiveModel {
+            list_id: ActiveValue::Set(list_id),
+            role_id: ActiveValue::Set(role.id),
+            permission: ActiveValue::Set(permission as i16),
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                list_shared_role::Column::ListId,
+                list_shared_role::Column::RoleId,
+            ])
+            .update_column(list_shared_role::Column::Permission)
+            .to_owned(),
+        )
+        .exec(&self.db)
+        .await?;
+        Ok(role.name)
+    }
+
+    /// Stop sharing a list with a role, and hand back the role's name for the
+    /// activity feed.
+    ///
+    /// `None` means the role row is gone — the group owner deleted the role
+    /// and left a dangling share. That is not an error worth refusing the
+    /// unshare over, so the caller falls back to the id.
+    pub async fn unshare_list_from_role(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        role_id: i32,
+    ) -> Result<Option<String>> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner {
+            return Err(ListError::Forbidden("Only the owner can unshare the list").into());
+        }
+        // Read the name before the delete: afterwards the share row is gone,
+        // and the role row may be too.
+        let name = group_role::Entity::find_by_id(role_id)
+            .one(&self.db)
+            .await?
+            .map(|role| role.name);
+        list_shared_role::Entity::delete_by_id((list_id, role_id))
+            .exec(&self.db)
+            .await?;
+        Ok(name)
     }
 
     // --- Invite Management ---
@@ -1048,6 +1198,41 @@ impl UltrosDb {
             .collect())
     }
 
+    pub async fn get_list_shared_roles(
+        &self,
+        list_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<ListSharedRoleReturn>> {
+        let permission = self.get_permission(list_id, user_id).await?;
+        if permission < ListPermission::Owner {
+            return Err(ListError::Forbidden("Only the owner can view shares").into());
+        }
+        let shares = list_shared_role::Entity::find()
+            .filter(list_shared_role::Column::ListId.eq(list_id))
+            .find_also_related(group_role::Entity)
+            .all(&self.db)
+            .await?;
+        let group_ids: Vec<i32> = shares
+            .iter()
+            .filter_map(|(_, role)| role.as_ref().map(|r| r.group_id))
+            .collect();
+        let groups: HashMap<i32, user_group::Model> = user_group::Entity::find()
+            .filter(user_group::Column::Id.is_in(group_ids))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|g| (g.id, g))
+            .collect();
+        Ok(shares
+            .into_iter()
+            .filter_map(|(shared, role)| {
+                let role = role?;
+                let group = groups.get(&role.group_id)?.clone();
+                Some(ListSharedRoleReturn(shared, role, group))
+            })
+            .collect())
+    }
+
     pub async fn get_group_members(
         &self,
         group_id: i32,
@@ -1073,13 +1258,40 @@ impl UltrosDb {
             .into());
         }
 
-        Ok(user_group_member::Entity::find()
+        let members = user_group_member::Entity::find()
             .filter(user_group_member::Column::GroupId.eq(group_id))
             .find_also_related(discord_user::Entity)
             .all(&self.db)
-            .await?
+            .await?;
+
+        // One query for every (role, user) pair in the group, then bucket by
+        // user. Avoids a per-member query and keeps ordering by role position
+        // so chips render in the same order everywhere.
+        let role_rows: Vec<(i64, i32)> = group_role_member::Entity::find()
+            .select_only()
+            .column(group_role_member::Column::UserId)
+            .column(group_role_member::Column::RoleId)
+            .join(
+                JoinType::InnerJoin,
+                group_role_member::Relation::GroupRole.def(),
+            )
+            .filter(group_role::Column::GroupId.eq(group_id))
+            .order_by_asc(group_role::Column::Position)
+            .order_by_asc(group_role::Column::Id)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        let mut roles_by_user: HashMap<i64, Vec<i32>> = HashMap::new();
+        for (user_id, role_id) in role_rows {
+            roles_by_user.entry(user_id).or_default().push(role_id);
+        }
+
+        Ok(members
             .into_iter()
-            .filter_map(|(member, user)| user.map(|u| UserGroupMemberReturn(member, u)))
+            .filter_map(|(member, user)| {
+                let roles = roles_by_user.remove(&member.user_id).unwrap_or_default();
+                user.map(|u| UserGroupMemberReturn(member, u, roles))
+            })
             .collect())
     }
 }
@@ -1103,5 +1315,367 @@ mod tests {
         assert_eq!(first.len(), 48);
         assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(first, second);
+    }
+}
+
+/// Covers `remove_group_member`'s self-removal permission: the owner OR the
+/// member themselves may remove a membership row, but no one else may.
+///
+/// Same situation as `alerts.rs`'s `endpoint_tests`: no `test_helpers::test_db`
+/// convention exists in this crate yet, so these are `#[ignore]`d and only
+/// exercised against a disposable database with:
+///
+/// ```bash
+/// cargo test -p ultros-db group_member_tests -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod group_member_tests {
+    use super::*;
+    use crate::group_roles::tests::{fresh_user, test_db};
+
+    /// Checks membership directly against the join table rather than through
+    /// `get_group_members`, which joins on `discord_user` and would silently
+    /// drop these synthetic test user ids (they have no matching row there).
+    async fn is_member(db: &UltrosDb, group_id: i32, user_id: i64) -> bool {
+        user_group_member::Entity::find_by_id((group_id, user_id))
+            .one(&db.db)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn member_can_remove_themselves() {
+        let db = test_db().await;
+        let owner = fresh_user(&db, "owner").await;
+        let member = fresh_user(&db, "member").await;
+        let group = db
+            .create_group("Self-removal test group".to_string(), owner.id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner.id, member.id, None)
+            .await
+            .unwrap();
+
+        // The member removes themselves: `owner_id` param is the requester,
+        // and it's the member's own id here, not the group's actual owner.
+        db.remove_group_member(group.id, member.id, member.id)
+            .await
+            .unwrap();
+
+        assert!(
+            !is_member(&db, group.id, member.id).await,
+            "member should no longer be in the group after leaving"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn owner_can_remove_another_member() {
+        let db = test_db().await;
+        let owner = fresh_user(&db, "owner").await;
+        let member = fresh_user(&db, "member").await;
+        let group = db
+            .create_group("Owner-removal test group".to_string(), owner.id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner.id, member.id, None)
+            .await
+            .unwrap();
+
+        db.remove_group_member(group.id, owner.id, member.id)
+            .await
+            .unwrap();
+
+        assert!(!is_member(&db, group.id, member.id).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn non_owner_cannot_remove_another_member() {
+        let db = test_db().await;
+        let owner = fresh_user(&db, "owner").await;
+        let member = fresh_user(&db, "member").await;
+        let bystander = fresh_user(&db, "bystander").await;
+        let group = db
+            .create_group("Forbidden-removal test group".to_string(), owner.id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner.id, member.id, None)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner.id, bystander.id, None)
+            .await
+            .unwrap();
+
+        let err = db
+            .remove_group_member(group.id, bystander.id, member.id)
+            .await;
+        assert!(
+            err.is_err(),
+            "a non-owner should not be able to remove someone else"
+        );
+
+        assert!(is_member(&db, group.id, member.id).await);
+    }
+}
+
+/// Run with a disposable database:
+///
+/// ```bash
+/// cargo test -p ultros-db role_share_tests -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod role_share_tests {
+    use super::*;
+    use crate::group_roles::tests::{fresh_user, group_with_owner, test_db};
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn a_role_share_grants_permission_to_role_members_only() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let in_role = fresh_user(&db, "in-role").await;
+        let in_group_only = fresh_user(&db, "in-group").await;
+        db.add_group_member(group.id, owner.id, in_group_only.id, None)
+            .await
+            .unwrap();
+        let role = db
+            .create_group_role(group.id, owner.id, "Officers".to_string())
+            .await
+            .unwrap();
+        db.add_group_role_member(group.id, owner.id, role.id, in_role.id)
+            .await
+            .unwrap();
+        let list = db
+            .create_list(owner.clone(), "Officer list".to_string(), None)
+            .await
+            .unwrap();
+
+        db.share_list_with_role(list.id, owner.id, role.id, ListPermission::Write)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.get_permission(list.id, in_role.id).await.unwrap(),
+            ListPermission::Write
+        );
+        assert_eq!(
+            db.get_permission(list.id, in_group_only.id).await.unwrap(),
+            ListPermission::None
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn role_shared_lists_are_discovered_deduplicated_and_revoked() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let member = fresh_user(&db, "role-discovery").await;
+        let outsider = fresh_user(&db, "group-only").await;
+        db.add_group_member(group.id, owner.id, outsider.id, None)
+            .await
+            .unwrap();
+        let first = db
+            .create_group_role(group.id, owner.id, "First".into())
+            .await
+            .unwrap();
+        let second = db
+            .create_group_role(group.id, owner.id, "Second".into())
+            .await
+            .unwrap();
+        for role in [&first, &second] {
+            db.add_group_role_member(group.id, owner.id, role.id, member.id)
+                .await
+                .unwrap();
+        }
+        let name = format!("Role discovery {}", member.id);
+        let list = db
+            .create_list(owner.clone(), name.clone(), None)
+            .await
+            .unwrap();
+        db.share_list_with_role(list.id, owner.id, first.id, ListPermission::Read)
+            .await
+            .unwrap();
+        db.share_list_with_role(list.id, owner.id, second.id, ListPermission::Write)
+            .await
+            .unwrap();
+        let discovered = db.get_lists_for_user(member.id).await.unwrap();
+        let matching: Vec<_> = discovered
+            .iter()
+            .filter(|(row, _)| row.id == list.id)
+            .collect();
+        assert_eq!(matching.len(), 1, "multiple role shares produce one list");
+        assert_eq!(matching[0].1.as_deref(), Some(owner.username.as_str()));
+        assert_eq!(
+            db.get_list_by_name_for_user(member.id, &name)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            list.id
+        );
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::Write
+        );
+        assert!(
+            !db.get_lists_for_user(outsider.id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|(row, _)| row.id == list.id)
+        );
+        assert!(
+            db.get_list_by_name_for_user(outsider.id, &name)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        db.share_list_with_group(list.id, owner.id, group.id, ListPermission::Read)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_lists_for_user(member.id)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|(row, _)| row.id == list.id)
+                .count(),
+            1
+        );
+        db.unshare_list_from_group(list.id, owner.id, group.id)
+            .await
+            .unwrap();
+        db.remove_group_role_member(group.id, owner.id, second.id, member.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::Read
+        );
+        assert!(
+            db.get_lists_for_user(member.id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|(row, _)| row.id == list.id)
+        );
+        db.unshare_list_from_role(list.id, owner.id, first.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::None
+        );
+        assert!(
+            !db.get_lists_for_user(member.id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|(row, _)| row.id == list.id)
+        );
+        assert!(
+            db.get_list_by_name_for_user(member.id, &name)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn role_and_group_shares_take_the_maximum() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let member = fresh_user(&db, "member").await;
+        let role = db
+            .create_group_role(group.id, owner.id, "Officers".to_string())
+            .await
+            .unwrap();
+        db.add_group_role_member(group.id, owner.id, role.id, member.id)
+            .await
+            .unwrap();
+        let list = db
+            .create_list(owner.clone(), "Mixed list".to_string(), None)
+            .await
+            .unwrap();
+        db.share_list_with_group(list.id, owner.id, group.id, ListPermission::Read)
+            .await
+            .unwrap();
+        db.share_list_with_role(list.id, owner.id, role.id, ListPermission::Write)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::Write
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn unsharing_a_role_revokes_and_listing_shares_names_the_group() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let member = fresh_user(&db, "member").await;
+        let role = db
+            .create_group_role(group.id, owner.id, "Officers".to_string())
+            .await
+            .unwrap();
+        db.add_group_role_member(group.id, owner.id, role.id, member.id)
+            .await
+            .unwrap();
+        let list = db
+            .create_list(owner.clone(), "Revoke list".to_string(), None)
+            .await
+            .unwrap();
+        db.share_list_with_role(list.id, owner.id, role.id, ListPermission::Read)
+            .await
+            .unwrap();
+
+        let shares = db.get_list_shared_roles(list.id, owner.id).await.unwrap();
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].1.name, "Officers");
+        assert_eq!(shares[0].2.id, group.id);
+
+        db.unshare_list_from_role(list.id, owner.id, role.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_permission(list.id, member.id).await.unwrap(),
+            ListPermission::None
+        );
+        assert!(
+            db.get_list_shared_roles(list.id, owner.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn only_the_group_owner_can_share_to_its_roles() {
+        let db = test_db().await;
+        let (group, owner) = group_with_owner(&db).await;
+        let stranger = fresh_user(&db, "stranger").await;
+        let role = db
+            .create_group_role(group.id, owner.id, "Officers".to_string())
+            .await
+            .unwrap();
+        let list = db
+            .create_list(stranger.clone(), "Stranger list".to_string(), None)
+            .await
+            .unwrap();
+
+        let result = db
+            .share_list_with_role(list.id, stranger.id, role.id, ListPermission::Read)
+            .await;
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<ListError>(),
+            Some(ListError::Forbidden(_))
+        ));
     }
 }

@@ -7,6 +7,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tokio = { workspace = true }
 sea-orm.workspace = true
 universalis = {path = "../universalis"}
 anyhow = { workspace = true }
@@ -21,6 +22,7 @@ itertools.workspace = true
 yoke.workspace = true
 thiserror = { workspace = true }
 ultros-api-types = {path = "../ultros-api-types"}
+ultros-list-doc = { path = "../ultros-list-doc" }
 metrics = "0.24.5"
 dotenvy = "0.15.7"
 getrandom = "0.4.2"
@@ -31,4 +33,3 @@ rkyv = ["dep:rkyv"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
-tokio = { workspace = true }

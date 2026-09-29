@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Set a price alert straight from the item page",
+  "blurb": "Every item page now has a Price alert button next to Add to list. It opens the alert form already filled in with that item and the world you are viewing, so you only need to enter a price. Guests get an on-device alert; signed-in users get one delivered to their configured endpoints.",
+  "link": "/alerts"
+}

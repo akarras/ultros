@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Recipe Analyzer keeps its market comparisons consistent",
+  "blurb": "The Labs market columns now use the same item quality as the price they describe. Switching worlds quickly no longer lets an older price trend overwrite the current one. Missing HQ ingredient prices now show a warning even when a vendor sells the normal-quality item.",
+  "link": "/recipe-analyzer"
+}

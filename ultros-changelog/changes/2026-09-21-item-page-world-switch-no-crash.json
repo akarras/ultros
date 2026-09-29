@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Switching worlds on an item page no longer crashes the app",
+  "blurb": "Clicking a region, data center or world pill on an item page could freeze the page and force a reload. The pills now switch cleanly and highlight the newly selected world."
+}

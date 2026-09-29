@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Vendor Sell and Vendor Resale item columns stop swallowing the table",
+  "blurb": "The Item column on Vendor Sell and Vendor Resale now keeps the same fixed width as Flip Finder instead of stretching to the longest item name and pushing the price columns off screen. The add-to-list and copy buttons on Vendor Sell, Vendor Resale and Trends now sit right beside the item name rather than at the far edge of the column."
+}

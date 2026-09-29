@@ -1,10 +1,13 @@
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
-use crate::global_state::home_world::use_home_world;
+use crate::global_state::home_world::{GuessedRegion, use_home_world};
+use crate::global_state::local_world_data::use_world_helper;
+use crate::global_state::platform::use_platform_hotkeys;
+use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::i18n::{t, t_string};
 use icondata as i;
 use leptos::prelude::*;
 use leptos_meta::Script;
-use leptos_router::components::A;
 
 use crate::components::{
     ad::Ad,
@@ -12,7 +15,7 @@ use crate::components::{
     market_heat::MarketHeat,
     market_movers::MarketMovers,
     market_pulse::MarketPulse,
-    meta::{MetaCanonical, MetaDescription, MetaImage, MetaTitle},
+    meta::{MetaCanonical, MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
     top_opportunity::TopOpportunities,
 };
@@ -68,22 +71,59 @@ const HOME_JSON_LD: &str = r#"{
 }"#;
 
 #[component]
-fn ToolChip(href: &'static str, label: AnyView, children: ChildrenFn) -> impl IntoView {
-    // Icon rail entry: large icon on top, label beneath, no border or
-    // background by default. Accent glow appears on hover so the rail
-    // stays quiet at rest and signals intent on focus.
+fn ToolChip(
+    href: &'static str,
+    label: AnyView,
+    description: AnyView,
+    children: ChildrenFn,
+) -> impl IntoView {
+    // Tool grid entry: icon beside a label and a one-line description. The
+    // grid wraps instead of scrolling sideways, so every tool is visible
+    // without a hidden overflow; the accent wash appears on hover/focus only.
     view! {
-        <A
+        <AppLink
             href=href
-            attr:class="group flex flex-col items-center justify-center gap-2 px-3 py-3 rounded-lg hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors min-w-[88px] text-center"
+            attr:class="group flex items-start gap-3 p-3 rounded-xl hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors min-w-0"
         >
-            <span class="text-[color:var(--accent)] group-hover:text-[color:var(--color-text)] group-hover:drop-shadow-[0_0_6px_var(--accent-glow)] transition-all" aria-hidden="true">
+            <span class="text-[color:var(--accent)] group-hover:text-[color:var(--color-text)] transition-colors shrink-0 pt-0.5" aria-hidden="true">
                 {children().into_view()}
             </span>
-            <span class="text-xs font-medium text-[color:var(--color-text-muted)] group-hover:text-[color:var(--color-text)] whitespace-nowrap transition-colors">{label}</span>
-        </A>
+            <span class="min-w-0">
+                <span class="block text-sm font-semibold text-[color:var(--color-text)] truncate">{label}</span>
+                <span class="block text-xs text-[color:var(--color-text-muted)] leading-snug line-clamp-2">{description}</span>
+            </span>
+        </AppLink>
     }
     .into_any()
+}
+
+/// One "what you can do" card on the logged-out home page: an outcome, not a
+/// tool name, linking to the page that delivers it.
+#[component]
+fn FeatureCard(
+    href: &'static str,
+    icon: icondata::Icon,
+    title: AnyView,
+    body: AnyView,
+) -> impl IntoView {
+    view! {
+        <AppLink
+            href=href
+            attr:class="panel group flex flex-col gap-2 p-4 rounded-2xl hover:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors"
+        >
+            <span class="text-[color:var(--accent)]" aria-hidden="true">
+                <Icon icon=icon width="1.5em" height="1.5em" />
+            </span>
+            <span class="text-base font-semibold text-[color:var(--color-text)]">{title}</span>
+            <span class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">{body}</span>
+        </AppLink>
+    }
+    .into_any()
+}
+
+/// Region names are stored with a hyphen (`North-America`); show a space.
+fn region_label(name: &str) -> String {
+    name.replace('-', " ")
 }
 
 /// Time-of-day greeting bucket. Computed once on hydration from
@@ -116,11 +156,37 @@ impl Greeting {
 pub fn HomePage() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let (homeworld, _) = use_home_world();
-    let needs_onboarding = Memo::new(move |_| homeworld.with(|w| w.is_none()));
+    let search_overlay = use_search_overlay_state();
+    let apple_hotkeys = use_platform_hotkeys().apple;
     // Market Pulse needs a world name string; track home world reactively so
     // the strip refreshes when the user changes home world.
     let pulse_world: Signal<Option<String>> =
         Signal::derive(move || homeworld.with(|w| w.as_ref().map(|w| w.name.clone())));
+
+    // Visitors without a home world still get live data: the whole region
+    // the server guessed from their connection (`GuessedRegion`, available
+    // during SSR), switchable to any other region. Nothing here writes a
+    // cookie — only picking a home world does.
+    let guessed_region = use_context::<GuessedRegion>().map(|r| r.0);
+    let regions: Vec<String> = use_world_helper()
+        .ok()
+        .map(|helper| {
+            helper
+                .regions_ordered(guessed_region.as_deref())
+                .iter()
+                .map(|r| r.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let initial_region = guessed_region
+        .filter(|g| regions.contains(g))
+        .or_else(|| regions.first().cloned())
+        .unwrap_or_else(|| "North-America".to_string());
+    let (browse_region, set_browse_region) = signal(initial_region);
+    // The scope every live widget follows: the home world when set,
+    // otherwise the region being browsed.
+    let feed_scope: Signal<Option<String>> =
+        Signal::derive(move || pulse_world.get().or_else(|| Some(browse_region.get())));
 
     // Time-of-day greeting. Default to Evening so SSR matches the first
     // client render; an Effect updates it to the real local hour on
@@ -141,52 +207,17 @@ pub fn HomePage() -> impl IntoView {
     view! {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
-        <MetaImage url="https://ultros.app/static/fallback-image.png" />
         <MetaCanonical href="https://ultros.app/" />
         <Script type_="application/ld+json">{HOME_JSON_LD}</Script>
         <div class="main-content p-2 sm:p-6">
-            <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
-                // Right sidebar. Sticky only from `lg`, where it is an actual
-                // side column: below that the layout stacks, so pinning it
-                // parks a transparent panel over the column scrolling behind
-                // it and the two render on top of each other.
-                <div class="flex flex-col w-full lg:w-[424px] gap-6 lg:sticky lg:top-4">
-                    <LiveSaleTicker />
-                    <RecentlyViewed />
-                    <Ad class="w-full aspect-square rounded-2xl overflow-hidden" />
-                </div>
-
+            <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row mx-auto items-start max-w-7xl">
                 // Main content
                 <div class="flex w-full min-w-0 flex-col grow gap-8">
-                    {move || needs_onboarding.get().then(|| view! {
-                        <A
-                            href="/welcome"
-                            attr:class="group focus:outline-none rounded-2xl"
-                            attr:aria-label=move || t_string!(i18n, home_onboarding_banner_cta).to_string()
-                        >
-                            <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-col items-start gap-4 hover:border-brand-300 transition-colors sm:flex-row sm:items-center">
-                                <div class="p-3 rounded-xl bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)] shrink-0">
-                                    <Icon icon=i::FaMapLocationDotSolid width="1.75em" height="1.75em" />
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
-                                        {t!(i18n, home_onboarding_banner_title)}
-                                    </h2>
-                                    <p class="text-sm text-[color:var(--color-text-muted)]">
-                                        {t!(i18n, home_onboarding_banner_body)}
-                                    </p>
-                                </div>
-                                <span class="btn-primary w-full justify-center py-2 px-4 group-hover:translate-x-0.5 transition-transform sm:w-auto">
-                                    <span>{t!(i18n, home_onboarding_banner_cta)}</span>
-                                    <Icon icon=i::FaArrowRightSolid width="0.9em" height="0.9em" />
-                                </span>
-                            </div>
-                        </A>
-                    })}
-                    // Hero: command-center greeting when a home world is set,
-                    // or the marketing pitch for new/anonymous visitors. We
-                    // only show one or the other to keep the dashboard focused
-                    // for returning traders.
+                    // Returning traders (home world set) get the command-center
+                    // greeting and their world's dashboard. Everyone else gets
+                    // a short pitch, a search box, and live data for their
+                    // region — the product working, rather than a description
+                    // of it.
                     {move || if pulse_world.with(|w| w.is_some()) {
                         view! {
                             <section class="command-greeting relative overflow-hidden pt-2 pb-6">
@@ -209,103 +240,183 @@ pub fn HomePage() -> impl IntoView {
                                         </p>
                                     </div>
                                     <div class="hidden md:flex md:w-32 lg:w-40 aspect-square items-center justify-center opacity-30 shrink-0">
-                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" attr:class="text-[color:var(--accent)]" />
+                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" attr:class="text-[color:var(--accent-decor)]" />
                                     </div>
                                 </div>
                             </section>
+                            <MarketPulse world=pulse_world />
+                            <MarketHeat world=pulse_world />
+                            // Two-column on desktop: Top Opportunity (left) + Market
+                            // Movers (right). On mobile they stack vertically.
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <TopOpportunities world=pulse_world />
+                                <MarketMovers world=pulse_world />
+                            </div>
                         }.into_any()
                     } else {
+                        let regions = regions.clone();
                         view! {
-                            <div class="p-4 sm:p-6 overflow-hidden relative">
-                                <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
-                                    <div class="flex-1 space-y-4 z-10">
-                                        <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
-                                            <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-300 via-purple-400 to-pink-500 filter drop-shadow-sm animate-pulse">"Ultros"</span>
-                                            <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">{move || t_string!(i18n, ultros_tagline)}</span>
-                                        </h1>
-                                        <p class="text-lg text-[color:var(--color-text-muted)] max-w-prose leading-relaxed">
-                                            {move || t_string!(i18n, ultros_description)}
+                            <section class="flex flex-col gap-4 pt-2">
+                                <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight text-[color:var(--color-text)] leading-tight">
+                                    {move || t_string!(i18n, ultros_tagline)}
+                                </h1>
+                                <p class="text-base sm:text-lg text-[color:var(--color-text-muted)] max-w-prose">
+                                    {move || t_string!(i18n, ultros_description)}
+                                </p>
+                                // Opens the global search overlay — the same
+                                // one as the sidebar row and Cmd/Ctrl+K — so
+                                // there is one search implementation, styled
+                                // here as a field because looking up an item
+                                // is the most common reason to land here.
+                                <button
+                                    type="button"
+                                    class="flex w-full max-w-xl items-center gap-3 rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] px-4 py-3 text-left text-[color:var(--color-text-muted)] hover:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors"
+                                    on:click=move |_| search_overlay.open.set(true)
+                                >
+                                    <Icon icon=i::AiSearchOutlined width="1.25em" height="1.25em" />
+                                    <span class="flex-1 truncate">
+                                        {move || {
+                                            let hotkey = if apple_hotkeys.get() {
+                                                "⌘K".to_string()
+                                            } else {
+                                                t_string!(i18n, hotkey_ctrl_k).to_string()
+                                            };
+                                            t_string!(i18n, search_box_placeholder).replace("%hotkey%", &hotkey)
+                                        }}
+                                    </span>
+                                </button>
+                            </section>
+
+                            <section class="flex flex-col gap-3 border-t border-[color:var(--line)] pt-6">
+                                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div class="min-w-0 space-y-1">
+                                        <h2 class="text-xl font-semibold text-[color:var(--color-text)]">
+                                            {move || {
+                                                t_string!(i18n, home_region_live_title)
+                                                    .to_string()
+                                                    .replace("%region%", &region_label(&browse_region.get()))
+                                            }}
+                                        </h2>
+                                        <p class="text-sm text-[color:var(--color-text-muted)] max-w-prose">
+                                            {t!(i18n, home_region_live_hint)}
                                         </p>
-                                        <div class="flex flex-wrap items-center gap-3 pt-4">
-                                            <A
-                                                href="/help/getting-started"
-                                                attr:class="btn-primary py-3 px-6 text-lg"
-                                            >
-                                                {move || t_string!(i18n, get_started)}
-                                            </A>
-                                            <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
-                                                <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
-                                                <span>{move || t_string!(i18n, open_flip_finder)}</span>
-                                            </A>
-                                            <a
-                                                rel="external"
-                                                href="/invitebot"
-                                                class="btn-secondary py-3 px-6 text-lg"
-                                            >
-                                                <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
-                                                <span>{move || t_string!(i18n, invite_bot)}</span>
-                                            </a>
-                                        </div>
                                     </div>
-                                    <div class="hidden md:flex md:w-56 lg:w-64 aspect-square items-center justify-center animate-float opacity-60">
-                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="4.5em" height="4.5em" attr:class="text-brand-300" />
-                                    </div>
+                                    <AppLink href="/welcome" attr:class="btn-primary py-2 px-4 shrink-0 self-start">
+                                        <Icon icon=i::FaMapLocationDotSolid width="1em" height="1em" />
+                                        <span>{move || t_string!(i18n, set_home_world)}</span>
+                                    </AppLink>
                                 </div>
-                            </div>
+                                <div
+                                    class="flex flex-wrap gap-2"
+                                    role="group"
+                                    aria-label=move || t_string!(i18n, home_region_picker_label).to_string()
+                                >
+                                    {regions
+                                        .into_iter()
+                                        .map(|region| {
+                                            let label = region_label(&region);
+                                            let this = region.clone();
+                                            let selected = Signal::derive(move || browse_region.with(|r| *r == this));
+                                            view! {
+                                                <button
+                                                    type="button"
+                                                    aria-pressed=move || if selected.get() { "true" } else { "false" }
+                                                    class=move || if selected.get() {
+                                                        "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]"
+                                                    } else {
+                                                        "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-[color:var(--color-outline)]"
+                                                    }
+                                                    on:click=move |_| set_browse_region.set(region.clone())
+                                                >
+                                                    {label}
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </div>
+                            </section>
+                            <MarketPulse world=feed_scope />
+                            <MarketMovers world=feed_scope />
+
+                            <section class="dashboard-section">
+                                <h2 class="dashboard-section-title mb-3">{t!(i18n, home_features_title)}</h2>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <FeatureCard
+                                        href="/flip-finder"
+                                        icon=i::FaMoneyBillTrendUpSolid
+                                        title=t!(i18n, home_feature_flips_title).into_any()
+                                        body=t!(i18n, home_feature_flips_body).into_any()
+                                    />
+                                    <FeatureCard
+                                        href="/recipe-analyzer"
+                                        icon=i::FaHammerSolid
+                                        title=t!(i18n, home_feature_crafts_title).into_any()
+                                        body=t!(i18n, home_feature_crafts_body).into_any()
+                                    />
+                                    <FeatureCard
+                                        href="/retainers"
+                                        icon=i::FaBellSolid
+                                        title=t!(i18n, home_feature_alerts_title).into_any()
+                                        body=t!(i18n, home_feature_alerts_body).into_any()
+                                    />
+                                    <FeatureCard
+                                        href="/bot"
+                                        icon=i::BsDiscord
+                                        title=t!(i18n, home_feature_discord_title).into_any()
+                                        body=t!(i18n, home_feature_discord_body).into_any()
+                                    />
+                                </div>
+                            </section>
                         }.into_any()
                     }}
 
-                    // Market Pulse + Market Movers — only render when we have a
-                    // home world; otherwise the onboarding banner above is the
-                    // right call to action.
-                    {move || pulse_world.with(|w| w.is_some()).then(|| view! {
-                        <MarketPulse world=pulse_world />
-                        <MarketHeat world=pulse_world />
-                        // Two-column on desktop: Top Opportunity (left) + Market
-                        // Movers (right). On mobile they stack vertically.
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            <TopOpportunities world=pulse_world />
-                            <MarketMovers world=pulse_world />
-                        </div>
-                    })}
-
-                    // Tool rail — icon-prominent quick access. The rail
-                    // scrolls horizontally on narrow viewports so the
-                    // dashboard doesn't reflow into a chunky grid.
                     <section class="dashboard-section">
                         <h2 class="dashboard-section-title mb-3">{t!(i18n, side_nav_tools)}</h2>
-                        <div class="flex max-w-full gap-1 overflow-x-auto pb-2 -mx-2 px-2 scroll-snap-x snap-x">
-                            <ToolChip href="/items" label=t!(i18n, item_explorer).into_any()>
-                                <Icon width="2em" height="2em" icon=i::FaScrewdriverWrenchSolid />
+                        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-1">
+                            <ToolChip href="/items" label=t!(i18n, item_explorer).into_any() description=t!(i18n, item_explorer_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaScrewdriverWrenchSolid />
                             </ToolChip>
-                            <ToolChip href="/flip-finder" label=t!(i18n, flip_finder).into_any()>
-                                <Icon width="2em" height="2em" icon=i::FaMoneyBillTrendUpSolid />
+                            <ToolChip href="/flip-finder" label=t!(i18n, flip_finder).into_any() description=t!(i18n, flip_finder_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaMoneyBillTrendUpSolid />
                             </ToolChip>
-                            <ToolChip href="/vendor-resale" label=t!(i18n, vendor_resale).into_any()>
-                                <Icon width="2em" height="2em" icon=i::FaShopSolid />
+                            <ToolChip href="/vendor-resale" label=t!(i18n, vendor_resale).into_any() description=t!(i18n, vendor_resale_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaShopSolid />
                             </ToolChip>
-                            <ToolChip href="/recipe-analyzer" label=t!(i18n, recipe_analyzer).into_any()>
-                                <Icon width="2em" height="2em" icon=i::FaHammerSolid />
+                            <ToolChip href="/vendor-sell" label=t!(i18n, vendor_sell).into_any() description=t!(i18n, vendor_sell_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaCashRegisterSolid />
                             </ToolChip>
-                            <ToolChip href="/leve-analyzer" label=t!(i18n, leve_analyzer).into_any()>
-                                <Icon width="2em" height="2em" icon=i::FaScrollSolid />
+                            <ToolChip href="/recipe-analyzer" label=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaHammerSolid />
                             </ToolChip>
-                            <ToolChip href="/trends" label=t!(i18n, market_trends).into_any()>
-                                <Icon width="2em" height="2em" icon=i::FaChartLineSolid />
+                            <ToolChip href="/leve-analyzer" label=t!(i18n, leve_analyzer).into_any() description=t!(i18n, leve_analyzer_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaScrollSolid />
                             </ToolChip>
-                            <ToolChip href="/retainers" label=t!(i18n, retainers).into_any()>
-                                <Icon width="2em" height="2em" icon=i::BiGroupSolid />
+                            <ToolChip href="/trends" label=t!(i18n, market_trends).into_any() description=t!(i18n, market_trends_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::FaChartLineSolid />
                             </ToolChip>
-                            <ToolChip href="/list" label=t!(i18n, lists).into_any()>
-                                <Icon width="2em" height="2em" icon=i::AiOrderedListOutlined />
+                            <ToolChip href="/retainers" label=t!(i18n, retainers).into_any() description=t!(i18n, retainers_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::BiGroupSolid />
                             </ToolChip>
-                            <ToolChip href="/currency-exchange" label=t!(i18n, currency_exchange).into_any()>
-                                <Icon width="2em" height="2em" icon=i::RiExchangeFinanceLine />
+                            <ToolChip href="/list" label=t!(i18n, lists).into_any() description=t!(i18n, lists_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::AiOrderedListOutlined />
+                            </ToolChip>
+                            <ToolChip href="/currency-exchange" label=t!(i18n, currency_exchange).into_any() description=t!(i18n, currency_exchange_desc).into_any()>
+                                <Icon width="1.5em" height="1.5em" icon=i::RiExchangeFinanceLine />
                             </ToolChip>
                         </div>
                     </section>
 
                     <Ad class="w-full max-w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
+                </div>
+
+                // Right sidebar. Sticky only from `lg`, where it is an actual
+                // side column: below that the layout stacks, so pinning it
+                // parks a transparent panel over the column scrolling behind
+                // it and the two render on top of each other.
+                <div class="flex flex-col w-full lg:w-[424px] gap-6 lg:sticky lg:top-4">
+                    <LiveSaleTicker scope=feed_scope />
+                    <RecentlyViewed />
+                    <Ad class="w-full aspect-square rounded-2xl overflow-hidden" />
                 </div>
             </div>
         </div>

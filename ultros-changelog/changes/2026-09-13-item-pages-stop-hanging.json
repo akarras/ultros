@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "Item pages no longer randomly hang or fail to load",
+  "blurb": "A steady trickle of item page loads (around a thousand a day) either errored out or stalled forever on the loading skeleton because two server threads could collide while recalculating the same cached market data. The recalculation is now coordinated between threads, so pages finish rendering every time."
+}

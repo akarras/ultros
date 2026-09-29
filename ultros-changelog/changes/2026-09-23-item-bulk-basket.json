@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "See what a full order costs on each world",
+  "blurb": "Buying 99 of a crafting material? Set a quantity at the top of any item page and Ultros works out the cheapest listings that fill it on every world: the total, the average per unit, how many retainers you'll visit, and how short a world falls if it can't cover the order. When splitting the order across worlds saves gil, that shows up first. It follows the HQ/NQ filter on the listings table."
+}

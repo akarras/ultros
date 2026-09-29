@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Recipe planner savings always compare against a complete route",
+  "blurb": "Each travel option now shows its gil saving against the shortest trip that completes the recipe, even when your home world is short on materials. Options that cannot finish the craft are marked in yellow with a hatched card instead of being compared."
+}

@@ -1,0 +1,572 @@
+{
+  "measured_date": "2026-09-09",
+  "implementation": "Counted item batches, 500000 target rows/query, at most 128 items and two in-flight batches; all scope worlds retained per item; compact event projection and earliest-receipt hash deduplication. Hot items remain whole and subject to unchanged SQL caps.",
+  "clickhouse_version": "25.4.13.22",
+  "hardware": "AMD Ryzen Threadripper 3970X shared host",
+  "query_threads": 1,
+  "query_limits": {
+    "seconds": 10,
+    "memory_bytes": 536870912,
+    "result_rows": 2000000
+  },
+  "cache_deadline_seconds": 12,
+  "method": "Three serial uncached loader calls per case; pages warmed by insertion; no HTTP serialization, shared-cache flush or concurrent request claim. Test binary uses default allocator rather than web server jemalloc. RSS is cumulative within each fixture process, before the separate cap guard. Query peak is individual-query memory, not the sum of two in-flight queries.",
+  "fixtures": [
+    {
+      "profile": "test",
+      "database": "ultros_t12_workload_1788942358_24000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "768000",
+      "receipt_rows": "232681",
+      "sales": "256000",
+      "floor_rows": "320000",
+      "seed_seconds": "0.594",
+      "to": "1788942240"
+    },
+    {
+      "profile": "test",
+      "database": "ultros_t12_workload_1788942358_240000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "7680000",
+      "receipt_rows": "2326812",
+      "sales": "2560000",
+      "floor_rows": "2624000",
+      "seed_seconds": "3.520",
+      "to": "1788942274"
+    },
+    {
+      "profile": "server-release",
+      "database": "ultros_t12_workload_1788942288_24000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "768000",
+      "receipt_rows": "232681",
+      "sales": "256000",
+      "floor_rows": "320000",
+      "seed_seconds": "0.579",
+      "to": "1788942174"
+    },
+    {
+      "profile": "server-release",
+      "database": "ultros_t12_workload_1788942288_240000",
+      "worlds": "32",
+      "items": "1000",
+      "qualities": "2",
+      "events": "7680000",
+      "receipt_rows": "2326812",
+      "sales": "2560000",
+      "floor_rows": "2624000",
+      "seed_seconds": "3.402",
+      "to": "1788942182"
+    }
+  ],
+  "process_peak_rss_kib": {
+    "test/24000": 56796,
+    "test/240000": 274080,
+    "server-release/24000": 60008,
+    "server-release/240000": 322228
+  },
+  "cases": [
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.216,
+        0.209,
+        0.202
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 4549200,
+      "max_single_query_read_rows": 638113,
+      "max_single_query_result_rows": 2210
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        0.385,
+        0.327,
+        0.332
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 4905285,
+      "max_single_query_read_rows": 1041129,
+      "max_single_query_result_rows": 7248
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        0.625,
+        0.644,
+        0.651
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 7273069,
+      "max_single_query_read_rows": 662689,
+      "max_single_query_result_rows": 17680
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        1.61,
+        1.621,
+        1.607
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 8781918,
+      "max_single_query_read_rows": 1098473,
+      "max_single_query_result_rows": 57984
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        2.157,
+        2.171,
+        2.189
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 13413240,
+      "max_single_query_read_rows": 754561,
+      "max_single_query_result_rows": 70720
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        5.811,
+        5.857,
+        5.787
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 40437927,
+      "max_single_query_read_rows": 1320681,
+      "max_single_query_result_rows": 231936
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.786,
+        0.83,
+        0.834
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 17136973,
+      "max_single_query_read_rows": 5100981,
+      "max_single_query_result_rows": 23947
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        2.127,
+        2.145,
+        2.132
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 42933990,
+      "max_single_query_read_rows": 7469741,
+      "max_single_query_result_rows": 72480
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        4.875,
+        4.867,
+        4.796
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 27057928,
+      "max_single_query_read_rows": 5543349,
+      "max_single_query_result_rows": 191576
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        12.151,
+        12.135,
+        12.175
+      ],
+      "outcomes": [
+        "deadline",
+        "deadline",
+        "deadline"
+      ],
+      "max_query_peak_bytes": 134297200,
+      "max_single_query_read_rows": 8387245,
+      "max_single_query_result_rows": 499200
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        12.006,
+        12.008,
+        12.005
+      ],
+      "outcomes": [
+        "deadline",
+        "deadline",
+        "deadline"
+      ],
+      "max_query_peak_bytes": 97217757,
+      "max_single_query_read_rows": 6970133,
+      "max_single_query_result_rows": 511712
+    },
+    {
+      "profile": "test",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        12.068,
+        12.082,
+        12.147
+      ],
+      "outcomes": [
+        "deadline",
+        "deadline",
+        "deadline"
+      ],
+      "max_query_peak_bytes": 171384916,
+      "max_single_query_read_rows": 12630812,
+      "max_single_query_result_rows": 1536000
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.148,
+        0.119,
+        0.12
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 4545344,
+      "max_single_query_read_rows": 638113,
+      "max_single_query_result_rows": 2210
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        0.213,
+        0.152,
+        0.152
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 4905285,
+      "max_single_query_read_rows": 1041129,
+      "max_single_query_result_rows": 7248
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        0.192,
+        0.184,
+        0.187
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 7272973,
+      "max_single_query_read_rows": 662689,
+      "max_single_query_result_rows": 17680
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        0.344,
+        0.335,
+        0.33
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 8781918,
+      "max_single_query_read_rows": 1098473,
+      "max_single_query_result_rows": 57984
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        0.441,
+        0.443,
+        0.465
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 13413240,
+      "max_single_query_read_rows": 754561,
+      "max_single_query_result_rows": 70720
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 24000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        1.023,
+        1.046,
+        1.028
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 40437927,
+      "max_single_query_read_rows": 1320681,
+      "max_single_query_result_rows": 231936
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 30,
+      "seconds": [
+        0.299,
+        0.282,
+        0.291
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 17136416,
+      "max_single_query_read_rows": 5100885,
+      "max_single_query_result_rows": 23947
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "world",
+      "worlds": 1,
+      "window_days": 90,
+      "seconds": [
+        0.565,
+        0.565,
+        0.533
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 42931533,
+      "max_single_query_read_rows": 7469741,
+      "max_single_query_result_rows": 72480
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 30,
+      "seconds": [
+        0.993,
+        1.039,
+        0.988
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 27057928,
+      "max_single_query_read_rows": 5543253,
+      "max_single_query_result_rows": 191576
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "dc",
+      "worlds": 8,
+      "window_days": 90,
+      "seconds": [
+        2.489,
+        2.439,
+        2.373
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 134297200,
+      "max_single_query_read_rows": 8387245,
+      "max_single_query_result_rows": 499200
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 30,
+      "seconds": [
+        3.064,
+        3.536,
+        3.199
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 97216676,
+      "max_single_query_read_rows": 6970037,
+      "max_single_query_result_rows": 511712
+    },
+    {
+      "profile": "server-release",
+      "events_per_world_90d": 240000,
+      "scope": "region",
+      "worlds": 32,
+      "window_days": 90,
+      "seconds": [
+        9.421,
+        9.326,
+        9.171
+      ],
+      "outcomes": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "max_query_peak_bytes": 183933591,
+      "max_single_query_read_rows": 12630812,
+      "max_single_query_result_rows": 1536000
+    }
+  ],
+  "separate_safety_probes": [
+    {
+      "profile": "test",
+      "item": 900000,
+      "rows": 2000001,
+      "seconds": 8.3,
+      "outcome": "result_limit_396_no_partial_map"
+    },
+    {
+      "profile": "server-release",
+      "item": 900000,
+      "rows": 2000001,
+      "seconds": 1.122,
+      "outcome": "result_limit_396_no_partial_map"
+    }
+  ]
+}

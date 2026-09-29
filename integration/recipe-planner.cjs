@@ -1,0 +1,368 @@
+// Uses a freshly built local server. Market fixtures make this independent of
+// a populated market DB; game data, routes, rendering and WASM are all real.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const puppeteer = require('puppeteer');
+const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
+const OUT = path.join(__dirname, 'artifacts', 'recipe-planner');
+
+async function main() {
+  fs.mkdirSync(OUT, { recursive: true });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  let page;
+  try {
+    page = await browser.newPage();
+    page.setDefaultTimeout(90000);
+    const errors = [];
+    page.on('pageerror', error => {
+      const message = error.stack || String(error);
+      if (!message.includes('pagead2.googlesyndication.com')) errors.push(message);
+    });
+    await page.evaluateOnNewDocument(() => {
+      window.__recipeHydrated = false;
+      window.addEventListener('ultros:hydrated', () => { window.__recipeHydrated = true; });
+    });
+    // Discover a real recipe with a craftable intermediate from the same
+    // bundled-data item fixtures as item-source-nav. Verify the entry point too.
+    await page.setJavaScriptEnabled(false);
+    let href;
+    for (const item of [5364, 13709, 39643, 23892]) {
+      await page.goto(`${BASE}/item/Gilgamesh/${item}`, { waitUntil: 'domcontentloaded' });
+      const links = await page.$$eval('a[href^="/recipe/"]', links => links.map(a => a.getAttribute('href')));
+      for (const link of links.slice(0, 3)) {
+        await page.goto(new URL(link, BASE).href, { waitUntil: 'domcontentloaded' });
+        if (await page.$$eval('select[aria-label^="Source for"]', nodes => nodes.some(n => n.options.length > 1))) {
+          href = link;
+          break;
+        }
+      }
+      if (href) break;
+    }
+    assert.ok(href, 'bundled fixtures must exercise a craftable intermediate');
+    assert.match(href, /^\/recipe\/\d+\?/);
+    const url = new URL(href, BASE);
+    url.searchParams.set('world', 'Gilgamesh');
+    url.searchParams.set('quantity', '2');
+    url.searchParams.set('shards-exclude', 'false');
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+    const ssrTitle = await page.$eval('[data-testid="recipe-planner"] h1', e => e.textContent);
+    assert.ok(ssrTitle.trim());
+    assert.equal(await page.$eval('[aria-label="Items to make"]', e => e.value), '2', 'quantity must be visible before hydration');
+    assert.equal(await page.$eval('[aria-label="Starting world"]', e => e.value), 'Gilgamesh');
+    assert.equal(await page.$eval('[aria-label="Buy from"]', e => e.value), 'datacenter');
+    assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), true, 'NPC purchases remain enabled by default before hydration');
+    await page.setJavaScriptEnabled(true);
+    await page.setRequestInterception(true);
+    let homeUnavailable = false;
+    let denseMarket = false;
+    let vendorMarket = false;
+    let marginalMarket = false;
+    page.on('request', request => {
+      const match = new URL(request.url()).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
+      if (!match) return request.continue();
+      const item = Number(match[1]);
+      const marketRows = marginalMarket
+        ? [
+          { id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 100 },
+          { id: item * 10 + 2, world_id: 79, quantity: 99, price_per_unit: item % 2 ? 100 : 40 },
+          { id: item * 10 + 3, world_id: 40, quantity: 99, price_per_unit: item % 2 ? 20 : 100 },
+        ]
+        : vendorMarket
+        ? [{ id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 1000 }]
+        : denseMarket
+        ? [63, 79].flatMap(world => Array.from({ length: 90 }, (_, n) => ({
+          // Cheap rows have larger IDs: ticking one used to switch from
+          // price order to ID order and move it underneath the pointer.
+          id: item * 10000 + world * 100 + 90 - n,
+          world_id: world, quantity: 99, price_per_unit: 100 + n,
+        })))
+        : [
+        { id: item * 10 + 1, world_id: 63, quantity: 99, price_per_unit: 100 },
+        { id: item * 10 + 2, world_id: 63, quantity: 3, price_per_unit: 150 },
+        { id: item * 10 + 3, world_id: 79, quantity: 12, price_per_unit: 50 },
+      ];
+      const listings = marketRows.filter(l => !homeUnavailable || l.world_id !== 63).map(l => [{ ...l, item_id: item, retainer_id: l.id, hq: false, timestamp: '2026-09-05T12:00:00' },
+        { id: l.id, world_id: l.world_id, name: 'Recipe fixture', retainer_city_id: 1 }]);
+      return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ listings, sales: [], last_updated: [{ world_id: 63, updated_at: '2026-09-05T12:00:00' }, { world_id: 79, updated_at: '2026-09-05T12:00:00' }] }) });
+    });
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated);
+    await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    assert.equal(await page.$eval('body', e => e.textContent.includes('Some ingredient markets could not be loaded.')), false, 'market fixtures must deserialize');
+    assert.equal(await page.$eval('h1', e => e.textContent), ssrTitle);
+    const first = await page.$eval('[data-testid="plan-total"]', e => e.textContent);
+    await page.$eval('[aria-label="Items to make"]', e => { e.value = '5'; e.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('quantity') === '5');
+    const before = await page.$$eval('[data-testid^="material-"]', rows => rows.map(r => r.textContent));
+    const source = await page.$$eval('select[aria-label^="Source for"]', selects => {
+      const s = selects.find(s => s.options.length > 1);
+      return s ? { label: s.getAttribute('aria-label'), value: s.options[1].value } : null;
+    });
+    assert.ok(source, 'the chosen fixture must have a craftable intermediate');
+    {
+      await page.select(`select[aria-label=${JSON.stringify(source.label)}]`, source.value);
+      await page.waitForFunction(() => new URL(location.href).searchParams.has('craft'));
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      const after = await page.$$eval('[data-testid^="material-"]', rows => rows.map(r => r.textContent));
+      assert.notDeepEqual(after, before, 'craft choice should change materials');
+    }
+    await page.$eval('input[aria-label^="Already have"]', e => { e.value = '1'; e.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitForFunction(() => new URL(location.href).searchParams.has('owned'));
+    const shared = await page.evaluate(() => location.href);
+    const ownedLabel = await page.$eval('input[aria-label^="Already have"]', e => e.getAttribute('aria-label'));
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated);
+    await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    assert.equal(await page.evaluate(() => location.href), shared);
+    assert.equal(await page.$eval('[aria-label="Items to make"]', e => e.value), '5');
+    assert.equal(await page.$eval(`select[aria-label=${JSON.stringify(source.label)}]`, e => e.value), source.value);
+    assert.equal(await page.$eval(`input[aria-label=${JSON.stringify(ownedLabel)}]`, e => e.value), '1');
+    assert.equal(await page.$eval('[data-testid="recipe-planner"]', e => e.textContent.includes('Item -1')), false);
+    const shareLabel = await page.$eval('header button[aria-label^="Copy https://ultros.app/recipe/"]', e => e.getAttribute('aria-label'));
+    const shareUrl = new URL(shareLabel.replace(/^Copy /, '').replace(/ to clipboard$/, ''));
+    assert.deepEqual(shareUrl.searchParams.getAll('world'), ['Gilgamesh']);
+    // Route cards: clicking "Stay home" pins route=home and the summary agrees.
+    const cardSelector = 'section[aria-label="World visit comparison"] button';
+    const stayHome = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.textContent.includes('Stay home')));
+    assert.ok(stayHome >= 0, 'a Stay home card must be offered');
+    assert.equal(stayHome, 0, 'Stay home is always the first card');
+    assert.equal(await page.$$eval(`${cardSelector} [data-testid="route-badge"]`, badges => badges.filter(b => b.textContent.includes('Cheapest')).length), 1, 'exactly one card is badged Cheapest');
+    assert.ok(await page.$$eval(cardSelector, buttons => buttons.at(-1).textContent.includes('Cheapest')), 'the cheapest card is the last card');
+    await page.$$eval(cardSelector, (buttons, i) => buttons[i].click(), stayHome);
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('route') === 'home');
+    assert.equal(await page.$$eval(cardSelector, (buttons, i) => buttons[i].getAttribute('aria-pressed'), stayHome), 'true');
+    assert.ok(await page.$eval('aside[aria-label="Plan summary"]', e => e.textContent.includes('Stay home')));
+    assert.equal(await page.$eval('[data-testid="plan-total"]', e => e.textContent), await page.$$eval(cardSelector, (buttons, i) => buttons[i].querySelector('strong').textContent, stayHome), 'the plan total follows the selected card');
+    assert.equal(await page.$$eval(cardSelector, buttons => new Set(buttons.map(b => b.textContent)).size), await page.$$eval(cardSelector, b => b.length), 'route cards are distinct');
+    {
+      // "Not here": tick one line, report another line's world, and the tick
+      // survives the re-plan while the reported pair leaves the itinerary.
+      const routeCard = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.textContent.includes('world hop')));
+      assert.ok(routeCard >= 0, 'fixtures on two worlds must offer a one-hop route');
+      assert.ok(await page.$$eval(cardSelector, (buttons, i) => buttons[i].textContent.includes('saved vs staying home'), routeCard), 'the cheaper hop card shows its saving vs staying home');
+      await page.$$eval(cardSelector, (buttons, i) => buttons[i].click(), routeCard);
+      await page.waitForFunction(() => /^\d+(,\d+)*$/.test(new URL(location.href).searchParams.get('route') || ''));
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid^="stop-"]').length >= 2);
+      const stops = await page.$$eval('[data-testid^="stop-"]', rows => rows.map(r => r.dataset.testid));
+      const [ticked, reported] = [stops[0], stops.find(s => s !== stops[0] && s.split('-')[1] !== stops[0].split('-')[1]) || stops[1]];
+      await page.click(`[data-testid="${ticked}"] input[type="checkbox"]`);
+      assert.equal(await page.$eval(`[data-testid="${ticked}"] button`, b => b.disabled), true, 'a ticked line cannot be reported');
+      await page.click(`[data-testid="${reported}"] button`);
+      const [, item, world] = reported.split('-');
+      await page.waitForFunction(pair => (new URL(location.href).searchParams.get('unavailable') || '').split(',').includes(pair), {}, `${item}:${world}`);
+      await page.waitForFunction(id => !document.querySelector(`[data-testid="${id}"]`), {}, reported);
+      assert.ok(await page.$(`[data-testid="${ticked}"]`), 'the ticked line survives the re-plan');
+      assert.equal(await page.$eval(`[data-testid="${ticked}"] input[type="checkbox"]`, e => e.checked), true, 'the tick itself survives');
+      assert.ok(await page.$('[data-testid="unavailable-reports"]'), 'reports are listed');
+      const withReport = await page.evaluate(() => location.href);
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.equal(await page.evaluate(() => location.href), withReport, 'route and reports survive a reload');
+      assert.equal(await page.$$eval(cardSelector, buttons => buttons.filter(b => b.getAttribute('aria-pressed') === 'true').length), 1, 'exactly one route card is selected after reload');
+      await page.$$eval('[data-testid="unavailable-reports"] button', buttons => buttons.at(-1).click());
+      await page.waitForFunction(() => !new URL(location.href).searchParams.has('unavailable'));
+    }
+    // The fixtures supply every ingredient in full, so "missing" must not be
+    // rendered at all rather than as a meaningless "0 missing".
+    assert.equal(await page.$eval('[data-testid="recipe-planner"]', e => e.textContent.includes('missing')), false, 'a fully supplied plan must not mention missing units');
+    {
+      // Crystals are items 2..19 (ItemSearchCategory 58). Every real recipe
+      // uses at least one, so an excluded plan must render none of them.
+      const crystalRows = () => page.$$eval('[data-testid^="material-"]', rows => rows.map(r => Number(r.dataset.testid.slice('material-'.length))).filter(id => id >= 2 && id <= 19));
+      const included = new URL(page.url());
+      included.searchParams.set('shards-exclude', 'true');
+      await page.goto(included.href, { waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.deepEqual(await crystalRows(), [], 'shards-exclude=true must remove every crystal from Build your recipe');
+      assert.ok((await page.$$('[data-testid^="material-"]')).length > 0, 'non-crystal materials must still render');
+      assert.equal(await page.$$eval('label', labels => labels.find(l => l.textContent.includes('Exclude crystals')).querySelector('input').checked), true, 'the Exclude crystals checkbox reflects the URL');
+      included.searchParams.set('shards-exclude', 'false');
+      await page.goto(included.href, { waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.ok((await crystalRows()).length > 0, 'shards-exclude=false keeps crystals in the plan');
+    }
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: width === 390 ? 844 : 1000 });
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated);
+      await page.waitForFunction(() => document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      await page.screenshot({ path: path.join(OUT, `${width}.png`), fullPage: true });
+      await page.screenshot({ path: path.join(OUT, `${width}-viewport.png`) });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, `page overflows at ${width}: ${overflow}`);
+    }
+    await page.$$eval('button', buttons => buttons.find(b => b.textContent === 'Add remaining materials to a list').click());
+    await page.waitForFunction(() => document.body.textContent.includes('Sign in to save this plan to a list.'));
+    assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('owned')), new URL(shared).searchParams.get('owned'), 'opening Save must preserve the public plan');
+    // Each added route has its own marginal saving, distinct from the
+    // accumulated saving against home. Two ingredients have different cheap
+    // worlds, so the fixture must offer home, one-hop and two-hop alternatives.
+    marginalMarket = true;
+    await page.goto(`${BASE}/recipe/2?world=Gilgamesh&shards-exclude=false&include-vendors=false&route=79`, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    const marginalCards = await page.$$eval(cardSelector, buttons => buttons.map(button => ({
+      cost: Number(button.querySelector('strong').textContent.replace(/\D/g, '')),
+      incomplete: button.dataset.incomplete === 'true',
+      marginal: button.querySelector('[data-testid="route-marginal-saving"]')?.textContent || '',
+      basis: button.querySelector('[data-testid="route-saving"]')?.textContent || '',
+      destinations: button.title,
+      hiddenDestinations: button.querySelector('.sr-only')?.textContent,
+    })));
+    assert.ok(marginalCards.length >= 3, 'fixture supplies at least three travel alternatives');
+    assert.ok(marginalCards.every(card => !card.incomplete), 'every comparison route is complete');
+    assert.equal(marginalCards[0].marginal, '');
+    for (let index = 1; index < marginalCards.length; index++) {
+      const current = marginalCards[index];
+      const difference = marginalCards[index - 1].cost - current.cost;
+      assert.match(current.marginal, /previous route/);
+      if (difference !== 0) {
+        assert.equal(Number(current.marginal.replace(/\D/g, '')), Math.abs(difference), 'marginal comparison subtracts the adjacent route cost');
+        assert.match(current.marginal, difference > 0 ? /saved/ : /more/);
+      } else {
+        assert.match(current.marginal, /Same|same/);
+      }
+      assert.ok(current.destinations.length > 0);
+      assert.equal(current.destinations, current.hiddenDestinations, 'destinations remain available to assistive technology');
+    }
+    const lastCard = marginalCards.at(-1);
+    assert.equal(Number(lastCard.basis.replace(/\D/g, '')), marginalCards[0].cost - lastCard.cost, 'accumulated savings still use the complete home basis');
+    assert.notEqual(Number(lastCard.marginal.replace(/\D/g, '')), Number(lastCard.basis.replace(/\D/g, '')), 'fixture distinguishes marginal from accumulated savings');
+    const itineraryWorlds = await page.$$eval('[data-itinerary-world]', stops => stops.map(stop => Number(stop.dataset.itineraryWorld)));
+    assert.ok(itineraryWorlds.length > 1, 'pinned one-hop fixture includes purchases on home and another world');
+    assert.equal(itineraryWorlds[0], 63, 'starting world precedes alphabetically earlier Cactuar');
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: 1000 });
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+      assert.equal(await page.$eval('[data-itinerary-world]', stop => Number(stop.dataset.itineraryWorld)), 63, 'starting-world order survives hydration/reload');
+      await page.screenshot({ path: path.join(OUT, `marginal-routes-${width}.png`), fullPage: true });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth) <= 1);
+    }
+    marginalMarket = false;
+    // Dense itinerary regression: checking a purchase must preserve stable
+    // listing identity/order, including native input focus. No timing threshold:
+    // DOM retention directly catches the expensive full-itinerary rebuild.
+    denseMarket = true;
+    const denseUrl = new URL('/recipe/37835?world=Gilgamesh&quantity=9999&shards-exclude=false&route=79', BASE);
+    await page.goto(denseUrl.href, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated);
+    await page.waitForFunction(() => document.querySelectorAll('[data-listing-id]').length >= 400);
+    const tickSelector = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('[data-listing-id]'));
+      window.__itineraryRows = rows;
+      window.__itineraryTotal = document.querySelector('[data-testid="plan-total"]').textContent;
+      // A non-home purchase also changes remaining-travel metadata.
+      const row = rows.find(row => row.dataset.testid.endsWith('-79'));
+      if (!row) throw new Error('dense fixture must include a non-home purchase');
+      return `[data-listing-id="${row.dataset.listingId}"] input`;
+    });
+    for (const checked of [true, false]) {
+      await page.click(tickSelector);
+      await page.waitForFunction((selector, checked) => document.querySelector(selector)?.checked === checked, {}, tickSelector, checked);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('[data-listing-id]'));
+        return rows.length === window.__itineraryRows.length && rows.every((row, i) => row === window.__itineraryRows[i]);
+      }), true, 'tick/untick retains the same row DOM nodes in the same order');
+      assert.equal(await page.$eval(tickSelector, e => e === document.activeElement), true, 'checkbox keeps keyboard focus');
+      assert.equal(await page.evaluate(() => document.querySelector('[data-testid="plan-total"]').textContent === window.__itineraryTotal), true, 'ticking an already selected stack preserves spend');
+      assert.equal(new URL(page.url()).searchParams.get('route'), '79', 'the explicit route stays pinned');
+    }
+    denseMarket = false;
+    // An incomplete home baseline still needs its shortage warning even
+    // when the comparison line identifies it as the baseline card.
+    homeUnavailable = true;
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated);
+    await page.waitForFunction(() => {
+      const home = document.querySelector('section[aria-label="World visit comparison"] button');
+      return home?.textContent.includes('Stay home') && home.textContent.includes('units unavailable · partial cost');
+    });
+    // The short home card is marked rather than compared, and the savings
+    // basis moves to the first card that completes the recipe (#1334).
+    assert.ok(await page.$eval(cardSelector, home => home.dataset.incomplete === 'true' && home.textContent.includes('Does not complete the recipe')), 'a short home card carries the incomplete marker');
+    assert.equal(await page.$$eval(cardSelector, buttons => buttons.filter(b => b.textContent.includes('saved vs staying home')).length), 0, 'no card claims a saving against an incomplete home');
+    const firstComplete = await page.$$eval(cardSelector, buttons => buttons.findIndex(b => b.dataset.incomplete === 'false'));
+    assert.notEqual(firstComplete, 0, 'a short home card is never the savings basis');
+    if (firstComplete > 0) {
+      assert.ok(await page.$$eval(cardSelector, (buttons, i) => buttons[i].textContent.includes('Savings basis'), firstComplete), 'the first complete card is labelled as the savings basis');
+    }
+    // Maple Lumber uses NPC-sold Maple Logs. Expensive whole-stack market
+    // fixtures make the NPC choice deterministic without a live market DB.
+    homeUnavailable = false;
+    vendorMarket = true;
+    await page.goto(`${BASE}/item/Gilgamesh/5361`, { waitUntil: 'networkidle2' });
+    const vendorRecipe = await page.$eval('a[href^="/recipe/"]', a => a.getAttribute('href'));
+    const vendorUrl = new URL(vendorRecipe, BASE);
+    vendorUrl.searchParams.set('world', 'Gilgamesh');
+    vendorUrl.searchParams.set('shards-exclude', 'true');
+    vendorUrl.searchParams.set('route', 'home');
+    vendorUrl.searchParams.set('include-vendors', 'false');
+    await page.setJavaScriptEnabled(false);
+    await page.goto(vendorUrl.href, { waitUntil: 'domcontentloaded' });
+    assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), false, 'shared vendor opt-out is rendered by SSR');
+    await page.setJavaScriptEnabled(true);
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    const npcSection = 'section[aria-label="NPC vendor purchases"]';
+    assert.equal(await page.$(npcSection), null, 'market-only plan has no NPC stops');
+    const marketTotal = await page.$eval('[data-testid="plan-total"]', e => Number(e.textContent.replace(/\D/g, '')));
+    await page.click('[aria-label="Include NPC vendors"]');
+    await page.waitForSelector(`${npcSection} a[href$="#vendor-sources"]`);
+    const npcTotal = await page.$eval('[data-testid="plan-total"]', e => Number(e.textContent.replace(/\D/g, '')));
+    assert.ok(npcTotal < marketTotal, 'NPC supply beats the expensive whole market stack');
+    assert.match(await page.$eval(npcSection, e => e.textContent), /Maple Log/);
+    assert.match(await page.$eval(npcSection, e => e.textContent), /gil each/);
+    assert.equal(await page.$$eval('[data-listing-id]', rows => rows.length), 0, 'vendor-only plan has no market stops');
+    assert.match(await page.$eval('[data-testid="vendor-plan-summary"]', e => e.textContent), /included/);
+    const copied = await page.$eval('aside button[aria-label^="Copy "]', e => e.getAttribute('aria-label'));
+    assert.match(copied, /NPC vendor:.*gil each/);
+    assert.match(copied, /#vendor-sources/);
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForSelector(npcSection);
+    assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), true, 'NPC selection survives shared URL reload');
+    const npcShare = await page.$eval('header button[aria-label^="Copy https://ultros.app/recipe/"]', e => e.getAttribute('aria-label'));
+    assert.equal(new URL(npcShare.replace(/^Copy /, '').replace(/ to clipboard$/, '')).searchParams.get('include-vendors'), 'true');
+    // Gathered logs cannot be HQ, so an HQ preference must still allow them.
+    await page.$$eval('label', labels => labels.find(l => l.textContent === 'HQ ingredients only').querySelector('input').click());
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('require-hq') === 'true');
+    assert.ok(await page.$('[data-testid="vendor-5380"]'), 'non-HQ-capable ingredients remain vendor eligible');
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: 1000 });
+      // Load at the target width so the sidebar resize transition cannot
+      // obscure the mobile screenshot or capture partially painted panels.
+      await page.reload({ waitUntil: 'networkidle2' });
+      await page.waitForSelector(npcSection);
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})));
+      });
+      await page.screenshot({ path: path.join(OUT, `npc-vendors-${width}.png`), fullPage: true });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth) <= 1);
+    }
+    await page.click('[aria-label="Include NPC vendors"]');
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('include-vendors') === 'false' && !document.querySelector('section[aria-label="NPC vendor purchases"]'));
+    assert.equal(await page.$eval('[data-testid="plan-total"]', e => Number(e.textContent.replace(/\D/g, ''))), marketTotal);
+    // Bronze Hatchet uses HQ-capable Maple Lumber. With only NQ market
+    // fixtures, requiring HQ leaves a shortage instead of buying NPC lumber.
+    await page.goto(`${BASE}/recipe/2?world=Gilgamesh&shards-exclude=true&include-vendors=true&require-hq=true&route=home`, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => window.__recipeHydrated && document.querySelector('[data-testid="plan-total"]')?.textContent.includes('gil'));
+    assert.equal(await page.$('[data-testid="vendor-5361"]'), null, 'NPC lumber cannot fulfill HQ demand');
+    assert.match(await page.$eval('[aria-label="Plan summary"]', e => e.textContent), /missing/);
+    await page.$$eval('label', labels => labels.find(l => l.textContent === 'HQ ingredients only').querySelector('input').click());
+    await page.waitForSelector('[data-testid="vendor-5361"]');
+    assert.deepEqual(errors, [], 'browser errors');
+    fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ passed: true, href, first, shared, subcraft: source }, null, 2));
+    console.log('Recipe planner: SSR, hydration, quantities, owned inventory, shared links and layouts passed.');
+  } catch (error) {
+    if (page && !page.isClosed()) {
+      await page.screenshot({ path: path.join(OUT, 'failure.png'), fullPage: true }).catch(() => {});
+    }
+    throw error;
+  } finally { await browser.close(); }
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

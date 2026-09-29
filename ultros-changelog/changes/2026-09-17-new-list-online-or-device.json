@@ -1,0 +1,8 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Choose Online or On this device when creating a list",
+  "blurb": "Signed-in players now pick where a new list lives right in the New list dialog. Online lists are backed by your account and shareable; On this device keeps the list in this browser only, and you can still make it online later from the list page.",
+  "link": "/list",
+  "labs": true
+}

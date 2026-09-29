@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Lists that are easier to use on your phone",
+  "blurb": "Keep your items in view with a collapsible add panel, preview recipes before adding them, and change shopping routes without losing sight of your trip. Notification settings now fit on smaller screens.",
+  "link": "/list?labs=lists-sync",
+  "labs": true
+}

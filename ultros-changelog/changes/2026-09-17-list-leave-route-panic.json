@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Leaving a list page no longer breaks the app",
+  "blurb": "Moving from an online list to the Lists page and then opening or creating a device list could freeze the page on the next navigation. The list page no longer rebuilds itself on the way out, and a subscription to a deleted list no longer drops your live connection.",
+  "link": "/list",
+  "labs": true
+}

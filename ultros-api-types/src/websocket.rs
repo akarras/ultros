@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveListing, SaleHistory, UnknownCharacter,
+    alert::AlertEvent,
     retainer::Retainer,
     world_helper::{AnySelector, WorldHelper},
 };
@@ -233,6 +234,33 @@ pub struct SaleEventData {
     pub sales: Vec<(SaleHistory, UnknownCharacter)>,
 }
 
+/// Document bytes inside the JSON socket framing. Updates are small, so the
+/// base64 overhead is accepted (spec section 5).
+pub mod base64_bytes {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        STANDARD.decode(text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The server's answer to `SubscribeListDoc`.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+pub enum ListDocPayload {
+    /// The client had no usable version: here is the whole document.
+    Snapshot(#[serde(with = "base64_bytes")] Vec<u8>),
+    /// What the client's version lacks.
+    Updates(#[serde(with = "base64_bytes")] Vec<u8>),
+    UpToDate,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum ListEventData {
     List(crate::list::List),
@@ -245,6 +273,20 @@ pub enum ServerClient {
     Sales(EventType<SaleEventData>),
     Listings(EventType<ListingEventData>),
     ListUpdate(EventType<ListEventData>),
+    ListDocSubscribed {
+        subscription_id: u64,
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        version: Vec<u8>,
+        payload: ListDocPayload,
+    },
+    /// Another peer's update, relayed. Wrapped in `SubscriptionEvent` by the
+    /// server so the client routes it to the right handler.
+    ListDocUpdate {
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        update: Vec<u8>,
+    },
     SubscriptionEvent {
         subscription_id: u64,
         event: Box<ServerClient>,
@@ -263,6 +305,10 @@ pub enum ServerClient {
     },
     SubscriptionCreated,
     SocketConnected,
+    /// A fired alert, broadcast to the owner's other sessions. Always sent
+    /// wrapped in `SubscriptionEvent` so the client routes it to the
+    /// notification-inbox subscription.
+    Notification(AlertEvent),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -286,6 +332,27 @@ pub enum ClientMessage {
         #[serde(default)]
         subscription_id: Option<u64>,
         list_id: i32,
+    },
+    /// Subscribe to a list's document (spec section 5). `version` is the
+    /// client's encoded version vector; empty on a first visit.
+    SubscribeListDoc {
+        #[serde(default)]
+        subscription_id: Option<u64>,
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        version: Vec<u8>,
+    },
+    /// The bytes of one local commit.
+    ListDocUpdate {
+        list_id: i32,
+        #[serde(with = "base64_bytes")]
+        update: Vec<u8>,
+    },
+    /// Subscribe to the caller's notification inbox: fired alerts are relayed
+    /// back as `ServerClient::Notification` wrapped in `SubscriptionEvent`.
+    SubscribeNotifications {
+        #[serde(default)]
+        subscription_id: Option<u64>,
     },
 }
 
@@ -716,5 +783,109 @@ mod tests {
         let message = ServerClient::Stale { subscription_id: 1 };
 
         assert!(is_list_market_update_relevant(&message, &[42]));
+    }
+
+    #[test]
+    fn list_doc_messages_round_trip_bytes_as_base64() {
+        let bytes = vec![0u8, 1, 127, 255];
+        let subscribe = ClientMessage::SubscribeListDoc {
+            subscription_id: Some(3),
+            list_id: 9,
+            version: bytes.clone(),
+        };
+        let text = serde_json::to_string(&subscribe).unwrap();
+        assert!(text.contains("\"version\":\"AAF//w==\""), "{text}");
+        let back: ClientMessage = serde_json::from_str(&text).unwrap();
+        assert!(
+            matches!(back, ClientMessage::SubscribeListDoc { version, list_id: 9, .. } if version == bytes)
+        );
+
+        let subscribed = ServerClient::ListDocSubscribed {
+            subscription_id: 3,
+            list_id: 9,
+            version: bytes.clone(),
+            payload: ListDocPayload::Updates(bytes.clone()),
+        };
+        let text = serde_json::to_string(&subscribed).unwrap();
+        let back: ServerClient = serde_json::from_str(&text).unwrap();
+        assert!(
+            matches!(back, ServerClient::ListDocSubscribed { payload: ListDocPayload::Updates(u), .. } if u == bytes)
+        );
+
+        let update = ServerClient::ListDocUpdate {
+            list_id: 9,
+            update: bytes.clone(),
+        };
+        let back: ServerClient =
+            serde_json::from_str(&serde_json::to_string(&update).unwrap()).unwrap();
+        assert!(matches!(back, ServerClient::ListDocUpdate { update, .. } if update == bytes));
+
+        let up_to_date: ListDocPayload =
+            serde_json::from_str(&serde_json::to_string(&ListDocPayload::UpToDate).unwrap())
+                .unwrap();
+        assert_eq!(up_to_date, ListDocPayload::UpToDate);
+        assert!(
+            serde_json::from_str::<ClientMessage>(
+                r#"{"ListDocUpdate":{"list_id":1,"update":"not base64!"}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn notification_messages_round_trip() {
+        let subscribe = ClientMessage::SubscribeNotifications {
+            subscription_id: Some(3),
+        };
+        let text = serde_json::to_string(&subscribe).unwrap();
+        let back: ClientMessage = serde_json::from_str(&text).unwrap();
+        assert!(matches!(
+            back,
+            ClientMessage::SubscribeNotifications {
+                subscription_id: Some(3)
+            }
+        ));
+
+        // subscription_id defaults when omitted.
+        let back: ClientMessage = serde_json::from_str(r#"{"SubscribeNotifications":{}}"#).unwrap();
+        assert!(matches!(
+            back,
+            ClientMessage::SubscribeNotifications {
+                subscription_id: None
+            }
+        ));
+
+        let event = AlertEvent {
+            id: 1,
+            alert_id: 2,
+            fired_at: chrono::DateTime::<chrono::Utc>::default(),
+            item_id: 42,
+            matched_listing_id: None,
+            matched_price: Some(100),
+            delivered: true,
+            delivery_error: None,
+            read_at: None,
+            title: Some("Eternity Ring dropped".into()),
+            body: Some("Threshold: 100000 gil".into()),
+            click_url: Some("/item/Seraph/36687".into()),
+        };
+        let wrapped = ServerClient::SubscriptionEvent {
+            subscription_id: 3,
+            event: Box::new(ServerClient::Notification(event.clone())),
+        };
+        let text = serde_json::to_string(&wrapped).unwrap();
+        let back: ServerClient = serde_json::from_str(&text).unwrap();
+        let debug = format!("{back:?}");
+        let ServerClient::SubscriptionEvent {
+            subscription_id: 3,
+            event: inner,
+        } = back
+        else {
+            panic!("expected SubscriptionEvent{{subscription_id: 3, ..}}, got {debug}");
+        };
+        let ServerClient::Notification(notification) = *inner else {
+            panic!("expected Notification inside SubscriptionEvent, got {debug}");
+        };
+        assert_eq!(notification, event);
     }
 }

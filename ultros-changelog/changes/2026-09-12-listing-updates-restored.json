@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "Market board listings update again",
+  "blurb": "On 2026-09-12 the internal id counter behind listing storage ran out of room, so new listings stopped appearing site-wide while sales and removals kept flowing. The counter now has years of headroom again and listings are back to live."
+}

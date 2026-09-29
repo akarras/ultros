@@ -1,0 +1,991 @@
+//! Typed column queries, independent of cell markup and market-data providers.
+use crate::units::{self, Unit};
+use serde::{Deserialize, Serialize};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridValue {
+    Number(f64),
+    Text(String),
+    Set(Vec<String>),
+    Missing,
+    Pending,
+    /// The provider finished with an error; no verdict about this row exists.
+    Unavailable,
+}
+
+impl GridValue {
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Self::Missing | Self::Pending | Self::Unavailable)
+            || matches!(self, Self::Number(n) if !n.is_finite())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    Number,
+    Text,
+    Mixed,
+}
+
+pub type ValueExtractor<T> = Arc<dyn Fn(&T) -> GridValue + Send + Sync>;
+pub type TierExtractor<T> = Arc<dyn Fn(&T) -> u8 + Send + Sync>;
+pub type RowComparator<T> = Arc<dyn Fn(&T, &T, bool) -> Ordering + Send + Sync>;
+
+pub struct GridMetric<T> {
+    pub id: &'static str,
+    pub kind: ValueKind,
+    /// How the editor reads typed bounds and chips print them.
+    pub unit: Unit,
+    /// Incomplete data may filter known values, but cannot rank all rows.
+    pub partial: bool,
+    pub value: ValueExtractor<T>,
+    pub tier: Option<TierExtractor<T>>,
+    /// Domain ordering (including missing values and deterministic ties).
+    /// Filters still use the metric value and partial feeds remain unsortable.
+    pub comparator: Option<RowComparator<T>>,
+}
+
+impl<T> Clone for GridMetric<T> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            kind: self.kind,
+            unit: self.unit,
+            partial: self.partial,
+            value: self.value.clone(),
+            tier: self.tier.clone(),
+            comparator: self.comparator.clone(),
+        }
+    }
+}
+
+impl<T> GridMetric<T> {
+    pub fn number(
+        id: &'static str,
+        value: impl Fn(&T) -> GridValue + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            id,
+            kind: ValueKind::Number,
+            unit: Unit::Plain,
+            partial: false,
+            value: Arc::new(value),
+            tier: None,
+            comparator: None,
+        }
+    }
+    pub fn text(id: &'static str, value: impl Fn(&T) -> GridValue + Send + Sync + 'static) -> Self {
+        Self {
+            id,
+            kind: ValueKind::Text,
+            unit: Unit::Plain,
+            partial: false,
+            value: Arc::new(value),
+            tier: None,
+            comparator: None,
+        }
+    }
+    pub fn partial(mut self) -> Self {
+        self.partial = true;
+        self
+    }
+    pub fn unit(mut self, unit: Unit) -> Self {
+        self.unit = unit;
+        self
+    }
+    pub fn mixed(
+        id: &'static str,
+        value: impl Fn(&T) -> GridValue + Send + Sync + 'static,
+    ) -> Self {
+        let mut metric = Self::number(id, value);
+        metric.kind = ValueKind::Mixed;
+        metric
+    }
+    /// Keep incompletely priced rows below fully priced rows under either direction.
+    pub fn tier(mut self, value: impl Fn(&T) -> u8 + Send + Sync + 'static) -> Self {
+        self.tier = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_comparator(
+        mut self,
+        compare: impl Fn(&T, &T, bool) -> Ordering + Send + Sync + 'static,
+    ) -> Self {
+        self.comparator = Some(Arc::new(compare));
+        self
+    }
+}
+
+/// Assign units by metric id, so a page states what its numbers mean in one
+/// table beside its metric list. Unlisted ids keep their unit.
+pub fn with_units<T>(metrics: Vec<GridMetric<T>>, units: &[(&str, Unit)]) -> Vec<GridMetric<T>> {
+    metrics
+        .into_iter()
+        .map(
+            |metric| match units.iter().find(|(id, _)| *id == metric.id) {
+                Some((_, unit)) => metric.unit(*unit),
+                None => metric,
+            },
+        )
+        .collect()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FilterOp {
+    #[default]
+    Eq,
+    Ne,
+    Contains,
+    Gte,
+    Lte,
+    Lt,
+    /// Inclusive numeric bounds, encoded as `lower,upper` in `value`.
+    Between,
+    Missing,
+    Present,
+    /// Inclusive bounds where either side may be empty: `100,` is at least
+    /// 100, `,500` at most 500. A side is a number or, on a timestamp, a
+    /// relative token like `-7d`. Every edit writes this; `Gte`, `Lte`, `Lt`
+    /// and `Between` remain readable from old links and saved views.
+    Range,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetricFilter {
+    pub op: FilterOp,
+    #[serde(default)]
+    pub value: String,
+}
+
+pub type MetricFilters = BTreeMap<String, MetricFilter>;
+
+pub fn parse_filters(raw: Option<&str>) -> MetricFilters {
+    raw.filter(|s| s.len() <= 16_384)
+        .and_then(|s| serde_json::from_str::<MetricFilters>(s).ok())
+        .filter(|m| m.len() <= 128)
+        .unwrap_or_default()
+}
+
+pub fn active_metric_columns(raw: Option<&str>) -> HashSet<String> {
+    parse_filters(raw).into_keys().collect()
+}
+
+impl MetricFilter {
+    pub fn bounds(&self) -> Option<(f64, f64)> {
+        let (low, high) = self.value.split_once(',')?;
+        let (low, high) = (
+            low.trim().parse::<f64>().ok()?,
+            high.trim().parse::<f64>().ok()?,
+        );
+        (low.is_finite() && high.is_finite()).then_some((low, high))
+    }
+
+    /// An open-ended range with its sides as URL tokens.
+    pub fn range(min: Option<String>, max: Option<String>) -> Self {
+        Self {
+            op: FilterOp::Range,
+            value: format!("{},{}", min.unwrap_or_default(), max.unwrap_or_default()),
+        }
+    }
+
+    /// Any threshold filter, old or new, as its `(min, max)` sides.
+    pub fn range_sides(&self) -> Option<(Option<&str>, Option<&str>)> {
+        fn side(s: &str) -> Option<&str> {
+            let s = s.trim();
+            (!s.is_empty()).then_some(s)
+        }
+        match self.op {
+            FilterOp::Gte => Some((side(&self.value), None)),
+            FilterOp::Lte | FilterOp::Lt => Some((None, side(&self.value))),
+            FilterOp::Between | FilterOp::Range => {
+                let (low, high) = self.value.split_once(',')?;
+                Some((side(low), side(high)))
+            }
+            _ => None,
+        }
+    }
+
+    /// This filter with relative timestamp sides replaced by absolute times.
+    pub fn resolved(&self, now: f64) -> Self {
+        if self.op != FilterOp::Range || !self.value.contains(|c: char| c.is_ascii_alphabetic()) {
+            return self.clone();
+        }
+        let side = |s: Option<&str>| {
+            s.map(|s| {
+                units::resolve_token(s, now)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| s.to_string())
+            })
+        };
+        let (low, high) = self.range_sides().unwrap_or_default();
+        Self::range(side(low), side(high))
+    }
+
+    pub fn has_relative(&self) -> bool {
+        self.op == FilterOp::Range
+            && self
+                .range_sides()
+                .is_some_and(|(a, b)| a.into_iter().chain(b).any(units::is_relative))
+    }
+
+    pub fn valid(&self, kind: ValueKind) -> bool {
+        if matches!(self.op, FilterOp::Missing | FilterOp::Present) {
+            return true;
+        }
+        if self.op == FilterOp::Range {
+            let Some((low, high)) = self.range_sides() else {
+                return false;
+            };
+            let side =
+                |s: &str| s.parse::<f64>().is_ok_and(f64::is_finite) || units::is_relative(s);
+            return kind != ValueKind::Text
+                && (low.is_some() || high.is_some())
+                && low.is_none_or(side)
+                && high.is_none_or(side);
+        }
+        if self.op == FilterOp::Between {
+            return kind != ValueKind::Text && self.bounds().is_some();
+        }
+        match kind {
+            ValueKind::Number => {
+                !matches!(self.op, FilterOp::Contains)
+                    && self.value.parse::<f64>().is_ok_and(f64::is_finite)
+            }
+            ValueKind::Text => {
+                !matches!(self.op, FilterOp::Gte | FilterOp::Lte | FilterOp::Lt)
+                    && !self.value.trim().is_empty()
+            }
+            ValueKind::Mixed => {
+                if matches!(self.op, FilterOp::Gte | FilterOp::Lte | FilterOp::Lt) {
+                    self.value.parse::<f64>().is_ok_and(f64::is_finite)
+                } else {
+                    !self.value.trim().is_empty()
+                }
+            }
+        }
+    }
+
+    /// `None` means this row cannot yet be evaluated. Keep it visible and count
+    /// it in the coverage notice, so a lazy feed can still fetch its subject.
+    pub fn matches(&self, value: &GridValue, partial: bool) -> Option<bool> {
+        if matches!(value, GridValue::Pending | GridValue::Unavailable) {
+            return None;
+        }
+        if matches!(self.op, FilterOp::Missing) {
+            return Some(value.is_unknown());
+        }
+        if matches!(self.op, FilterOp::Present) {
+            return Some(!value.is_unknown());
+        }
+        if value.is_unknown() {
+            return if partial { None } else { Some(false) };
+        }
+        if self.op == FilterOp::Range {
+            let GridValue::Number(n) = value else {
+                return Some(false);
+            };
+            let (low, high) = self.range_sides().unwrap_or_default();
+            // Unresolved relative sides compare as NaN and exclude the row;
+            // callers resolve them with `resolved(now)` first.
+            let side = |s: &str| s.parse::<f64>().unwrap_or(f64::NAN);
+            return Some(low.is_none_or(|l| *n >= side(l)) && high.is_none_or(|h| *n <= side(h)));
+        }
+        if self.op == FilterOp::Between {
+            return Some(match (value, self.bounds()) {
+                (GridValue::Number(n), Some((low, high))) => *n >= low && *n <= high,
+                _ => false,
+            });
+        }
+        let equal = match value {
+            GridValue::Number(n) => {
+                let Some(rhs) = self.value.parse::<f64>().ok().filter(|v| v.is_finite()) else {
+                    return Some(self.op == FilterOp::Ne);
+                };
+                return Some(match self.op {
+                    FilterOp::Eq => *n == rhs,
+                    FilterOp::Ne => *n != rhs,
+                    FilterOp::Gte => *n >= rhs,
+                    FilterOp::Lte => *n <= rhs,
+                    FilterOp::Lt => *n < rhs,
+                    _ => false,
+                });
+            }
+            GridValue::Text(text) => text.to_lowercase() == self.value.to_lowercase(),
+            GridValue::Set(values) => values
+                .iter()
+                .any(|v| v.to_lowercase() == self.value.to_lowercase()),
+            _ => return None,
+        };
+        Some(match self.op {
+            FilterOp::Eq => equal,
+            FilterOp::Ne => !equal,
+            FilterOp::Contains => {
+                let needle = self.value.to_lowercase();
+                match value {
+                    GridValue::Text(text) => text.to_lowercase().contains(&needle),
+                    GridValue::Set(values) => {
+                        values.iter().any(|v| v.to_lowercase().contains(&needle))
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
+    }
+}
+
+/// Missing values stay last in either direction. Equal values retain upstream
+/// stable ordering; changing enrichment never changes row identities.
+pub fn compare_values(a: &GridValue, b: &GridValue, ascending: bool) -> Ordering {
+    match (a.is_unknown(), b.is_unknown()) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        _ => {}
+    }
+    let order = match (a, b) {
+        (GridValue::Number(a), GridValue::Number(b)) => a.total_cmp(b),
+        (GridValue::Text(a), GridValue::Text(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+        (GridValue::Set(a), GridValue::Set(b)) => a.cmp(b),
+        (GridValue::Number(_), _) => Ordering::Less,
+        (_, GridValue::Number(_)) => Ordering::Greater,
+        (GridValue::Text(_), _) => Ordering::Less,
+        (_, GridValue::Text(_)) => Ordering::Greater,
+        _ => Ordering::Equal,
+    };
+    if ascending { order } else { order.reverse() }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryResult<T> {
+    /// None borrows the upstream rows unchanged; Some owns an active query's result.
+    pub rows: Option<Vec<T>>,
+    pub lacking_data: usize,
+    pub sort_pending: bool,
+}
+
+pub fn query_rows<T: Clone>(
+    rows: &[T],
+    metrics: &[GridMetric<T>],
+    filters: &MetricFilters,
+    sort_id: Option<&str>,
+    ascending: bool,
+) -> QueryResult<T> {
+    query_rows_with_tiebreak(rows, metrics, filters, sort_id, ascending, |_, _| {
+        Ordering::Equal
+    })
+}
+
+/// Query with a stable identity tiebreak, independent of the upstream native
+/// sort. Identity is always ascending, including for descending value sorts.
+pub fn query_rows_with_tiebreak<T: Clone>(
+    rows: &[T],
+    metrics: &[GridMetric<T>],
+    filters: &MetricFilters,
+    sort_id: Option<&str>,
+    ascending: bool,
+    tiebreak: impl Fn(&T, &T) -> Ordering,
+) -> QueryResult<T> {
+    let active: Vec<_> = metrics
+        .iter()
+        .filter_map(|m| {
+            filters
+                .get(m.id)
+                .filter(|f| f.valid(m.kind))
+                .map(|f| (m, f))
+        })
+        .collect();
+    let sort_metric = metrics.iter().find(|m| Some(m.id) == sort_id && !m.partial);
+    if active.is_empty() && sort_metric.is_none() {
+        return QueryResult {
+            rows: None,
+            lacking_data: 0,
+            sort_pending: false,
+        };
+    }
+    let mut lacking_data = 0;
+    let mut kept = Vec::new();
+    for row in rows {
+        let mut unknown = false;
+        let mut keep = true;
+        for (metric, filter) in &active {
+            match filter.matches(&(metric.value)(row), metric.partial) {
+                Some(false) => keep = false,
+                None => unknown = true,
+                _ => {}
+            }
+        }
+        if keep {
+            lacking_data += usize::from(unknown);
+            kept.push(row.clone());
+        }
+    }
+    let mut sort_pending = false;
+    if let Some(metric) = sort_metric {
+        // Compute each key once: never re-read a reactive provider O(n log n).
+        let mut decorated: Vec<_> = kept
+            .into_iter()
+            .map(|row| {
+                let value = (metric.value)(&row);
+                (row, value)
+            })
+            .collect();
+        sort_pending = decorated
+            .iter()
+            .any(|(_, value)| matches!(value, GridValue::Pending | GridValue::Unavailable));
+        if !sort_pending {
+            decorated.sort_by(|(row_a, a), (row_b, b)| {
+                metric
+                    .tier
+                    .as_ref()
+                    .map(|tier| tier(row_a).cmp(&tier(row_b)))
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| {
+                        metric
+                            .comparator
+                            .as_ref()
+                            .map(|compare| compare(row_a, row_b, ascending))
+                            .unwrap_or_else(|| compare_values(a, b, ascending))
+                    })
+                    .then_with(|| tiebreak(row_a, row_b))
+            });
+        }
+        kept = decorated.into_iter().map(|(row, _)| row).collect();
+    }
+    QueryResult {
+        rows: Some(kept),
+        lacking_data,
+        sort_pending,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn identity_ties_ignore_upstream_sort_and_do_not_reverse_with_values() {
+        let rows = vec![
+            (3, Some(20)),
+            (2, Some(10)),
+            (1, Some(10)),
+            (5, None),
+            (4, None),
+        ];
+        let metrics = vec![GridMetric::number("price", |row: &(i32, Option<i32>)| {
+            row.1
+                .map(|value| GridValue::Number(value as f64))
+                .unwrap_or(GridValue::Missing)
+        })];
+        let mut other_order = rows.clone();
+        other_order.reverse();
+        for (ascending, expected) in [(true, vec![1, 2, 3, 4, 5]), (false, vec![3, 1, 2, 4, 5])] {
+            for upstream in [&rows, &other_order] {
+                let result = query_rows_with_tiebreak(
+                    upstream,
+                    &metrics,
+                    &MetricFilters::new(),
+                    Some("price"),
+                    ascending,
+                    |a, b| a.0.cmp(&b.0),
+                );
+                assert_eq!(
+                    result
+                        .rows
+                        .unwrap()
+                        .iter()
+                        .map(|row| row.0)
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn domain_comparators_preserve_tiers_and_ties_in_both_directions() {
+        let rows = vec![(2, 9, false), (1, 9, false), (3, 1, true)];
+        let metrics = vec![
+            GridMetric::number("price", |row: &(i32, i32, bool)| {
+                GridValue::Number(row.1 as f64)
+            })
+            .with_comparator(|a, b, ascending| {
+                a.2.cmp(&b.2)
+                    .then_with(|| {
+                        if ascending {
+                            a.1.cmp(&b.1)
+                        } else {
+                            b.1.cmp(&a.1)
+                        }
+                    })
+                    .then_with(|| a.0.cmp(&b.0))
+            }),
+        ];
+        for ascending in [true, false] {
+            let result = query_rows(
+                &rows,
+                &metrics,
+                &MetricFilters::new(),
+                Some("price"),
+                ascending,
+            );
+            assert_eq!(
+                result
+                    .rows
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.0)
+                    .collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+        }
+        let partial = vec![metrics[0].clone().partial()];
+        assert!(
+            query_rows(&rows, &partial, &MetricFilters::new(), Some("price"), true)
+                .rows
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ranges_validate_both_bounds_and_preserve_unknown_coverage() {
+        for raw in ["NaN,20", "10,inf", "10,", "10", "a,b"] {
+            assert!(
+                !MetricFilter {
+                    op: FilterOp::Between,
+                    value: raw.into()
+                }
+                .valid(ValueKind::Number),
+                "{raw}"
+            );
+        }
+        let filter = MetricFilter {
+            op: FilterOp::Between,
+            value: "10,20".into(),
+        };
+        assert!(!filter.valid(ValueKind::Text));
+        let rows = vec![
+            GridValue::Number(5.0),
+            GridValue::Number(15.0),
+            GridValue::Pending,
+            GridValue::Missing,
+            GridValue::Unavailable,
+        ];
+        let result = query_rows(
+            &rows,
+            &[GridMetric::number("price", |v: &GridValue| v.clone()).partial()],
+            &BTreeMap::from([("price".into(), filter)]),
+            None,
+            true,
+        );
+        assert_eq!(result.rows, Some(rows[1..].to_vec()));
+        assert_eq!(result.lacking_data, 3);
+    }
+
+    #[test]
+    fn untouched_queries_never_clone_rows_or_read_providers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountedRow(Arc<AtomicUsize>);
+        impl Clone for CountedRow {
+            fn clone(&self) -> Self {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Self(self.0.clone())
+            }
+        }
+        let clones = Arc::new(AtomicUsize::new(0));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let rows = (0..600)
+            .map(|_| CountedRow(clones.clone()))
+            .collect::<Vec<_>>();
+        let bulk_reads = reads.clone();
+        let partial_reads = reads.clone();
+        let metrics = vec![
+            GridMetric::number("value", move |_: &CountedRow| {
+                bulk_reads.fetch_add(1, Ordering::Relaxed);
+                GridValue::Number(1.0)
+            }),
+            GridMetric::number("partial", move |_: &CountedRow| {
+                partial_reads.fetch_add(1, Ordering::Relaxed);
+                GridValue::Pending
+            })
+            .partial(),
+        ];
+        let ignored_filters = BTreeMap::from([
+            (
+                "value".into(),
+                MetricFilter {
+                    op: FilterOp::Gte,
+                    value: "invalid".into(),
+                },
+            ),
+            (
+                "unregistered".into(),
+                MetricFilter {
+                    op: FilterOp::Eq,
+                    value: "1".into(),
+                },
+            ),
+        ]);
+        for filters in [&BTreeMap::new(), &ignored_filters] {
+            for sort in [None, Some("unregistered"), Some("partial")] {
+                let result = query_rows(&rows, &metrics, filters, sort, true);
+                assert!(result.rows.is_none());
+                assert_eq!(result.lacking_data, 0);
+                assert!(!result.sort_pending);
+            }
+        }
+        assert_eq!(clones.load(Ordering::Relaxed), 0);
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn sorting_and_filtering_preserve_every_match_beyond_former_result_caps() {
+        let rows = (0..600).rev().collect::<Vec<_>>();
+        let metric =
+            GridMetric::number("value", |value: &i32| GridValue::Number(f64::from(*value)));
+        for minimum in [None, Some(250)] {
+            let filters = minimum
+                .map(|minimum| {
+                    BTreeMap::from([(
+                        "value".into(),
+                        MetricFilter {
+                            op: FilterOp::Gte,
+                            value: minimum.to_string(),
+                        },
+                    )])
+                })
+                .unwrap_or_default();
+            for ascending in [true, false] {
+                let result = query_rows(
+                    &rows,
+                    std::slice::from_ref(&metric),
+                    &filters,
+                    Some("value"),
+                    ascending,
+                );
+                let mut expected = (minimum.unwrap_or(0)..600).collect::<Vec<_>>();
+                if !ascending {
+                    expected.reverse();
+                }
+                assert!(expected.len() > 250);
+                assert_eq!(result.rows, Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_hop_values_support_status_and_numeric_filters() {
+        let rows = vec![
+            GridValue::Number(0.0),
+            GridValue::Text("needed".into()),
+            GridValue::Number(1_000.0),
+            GridValue::Missing,
+        ];
+        let metric = GridMetric::mixed("hop", |value: &GridValue| value.clone());
+        for (op, value, expected) in [
+            (FilterOp::Eq, "NEEDED", vec![rows[1].clone()]),
+            (FilterOp::Contains, "need", vec![rows[1].clone()]),
+            (
+                FilterOp::Ne,
+                "needed",
+                vec![rows[0].clone(), rows[2].clone()],
+            ),
+            (FilterOp::Gte, "500", vec![rows[2].clone()]),
+            (FilterOp::Lte, "0", vec![rows[0].clone()]),
+            (FilterOp::Eq, "1000", vec![rows[2].clone()]),
+        ] {
+            let filter = MetricFilter {
+                op,
+                value: value.into(),
+            };
+            assert!(filter.valid(ValueKind::Mixed));
+            let result = query_rows(
+                &rows,
+                std::slice::from_ref(&metric),
+                &BTreeMap::from([("hop".into(), filter)]),
+                None,
+                true,
+            );
+            assert_eq!(result.rows, Some(expected), "{op:?} {value}");
+            assert_eq!(result.lacking_data, 0);
+        }
+        assert!(
+            !MetricFilter {
+                op: FilterOp::Gte,
+                value: "needed".into(),
+            }
+            .valid(ValueKind::Mixed)
+        );
+    }
+
+    #[test]
+    fn provider_failure_keeps_rows_without_claiming_their_values_are_missing() {
+        let rows = vec![
+            GridValue::Number(1.0),
+            GridValue::Unavailable,
+            GridValue::Missing,
+            GridValue::Number(10.0),
+        ];
+        let metric = GridMetric::number("median", |value: &GridValue| value.clone());
+        for (op, value, expected) in [
+            (FilterOp::Gte, "5", vec![rows[1].clone(), rows[3].clone()]),
+            (
+                FilterOp::Missing,
+                "",
+                vec![rows[1].clone(), rows[2].clone()],
+            ),
+            (
+                FilterOp::Present,
+                "",
+                vec![rows[0].clone(), rows[1].clone(), rows[3].clone()],
+            ),
+        ] {
+            let result = query_rows(
+                &rows,
+                std::slice::from_ref(&metric),
+                &BTreeMap::from([(
+                    "median".into(),
+                    MetricFilter {
+                        op,
+                        value: value.into(),
+                    },
+                )]),
+                None,
+                true,
+            );
+            assert_eq!(result.rows, Some(expected), "{op:?}");
+            assert_eq!(result.lacking_data, 1, "{op:?}");
+        }
+        let result = query_rows(&rows, &[metric], &BTreeMap::new(), Some("median"), true);
+        assert!(result.sort_pending);
+        assert_eq!(
+            result.rows,
+            Some(rows),
+            "failed bulk data must not rank only known rows"
+        );
+    }
+
+    #[test]
+    fn coverage_tiers_stay_first_and_equal_values_stay_stable_in_both_directions() {
+        // (identity, coverage tier, cost): incomplete recipes must stay behind
+        // fully priced recipes even when their reported cost is smaller.
+        let rows = vec![
+            ("partial", 1, 1.0),
+            ("tie-a", 0, 10.0),
+            ("low", 0, 5.0),
+            ("tie-b", 0, 10.0),
+        ];
+        let metric = GridMetric::number("cost", |row: &(&str, u8, f64)| GridValue::Number(row.2))
+            .tier(|row| row.1);
+        for (ascending, expected) in [
+            (true, vec!["low", "tie-a", "tie-b", "partial"]),
+            (false, vec!["tie-a", "tie-b", "low", "partial"]),
+        ] {
+            let result = query_rows(
+                &rows,
+                std::slice::from_ref(&metric),
+                &BTreeMap::new(),
+                Some("cost"),
+                ascending,
+            );
+            assert_eq!(
+                result
+                    .rows
+                    .unwrap()
+                    .into_iter()
+                    .map(|row| row.0)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn filters_search_beyond_old_caps_and_preserve_partial_unknowns() {
+        let metric = GridMetric::number("value", |n: &i32| {
+            if *n == 151 {
+                GridValue::Pending
+            } else {
+                GridValue::Number(*n as f64)
+            }
+        })
+        .partial();
+        let filters = BTreeMap::from([(
+            "value".into(),
+            MetricFilter {
+                op: FilterOp::Gte,
+                value: "150".into(),
+            },
+        )]);
+        let result = query_rows(
+            &(0..153).collect::<Vec<_>>(),
+            &[metric],
+            &filters,
+            Some("value"),
+            false,
+        );
+        assert_eq!(result.rows, Some(vec![150, 151, 152]));
+        assert_eq!(result.lacking_data, 1);
+    }
+    #[test]
+    fn missing_is_distinct_from_zero_and_stays_last_in_both_directions() {
+        let m = GridMetric::number("n", |v: &GridValue| v.clone());
+        for ascending in [true, false] {
+            let r = query_rows(
+                &[
+                    GridValue::Missing,
+                    GridValue::Number(0.0),
+                    GridValue::Number(5.0),
+                ],
+                std::slice::from_ref(&m),
+                &BTreeMap::new(),
+                Some("n"),
+                ascending,
+            );
+            assert_eq!(r.rows.as_ref().unwrap().last(), Some(&GridValue::Missing));
+        }
+        let f = MetricFilter {
+            op: FilterOp::Missing,
+            value: String::new(),
+        };
+        assert_eq!(f.matches(&GridValue::Number(0.0), false), Some(false));
+        assert_eq!(f.matches(&GridValue::Missing, false), Some(true));
+        assert_eq!(f.matches(&GridValue::Pending, true), None);
+    }
+    #[test]
+    fn bulk_pending_does_not_produce_a_partial_global_sort() {
+        let rows = vec![
+            GridValue::Number(10.0),
+            GridValue::Pending,
+            GridValue::Number(1.0),
+        ];
+        let r = query_rows(
+            &rows,
+            &[GridMetric::number("n", |v: &GridValue| v.clone())],
+            &BTreeMap::new(),
+            Some("n"),
+            true,
+        );
+        assert!(r.sort_pending);
+        assert_eq!(r.rows, Some(rows));
+    }
+    #[test]
+    fn world_sets_filter_by_membership_and_malformed_queries_are_ignored() {
+        let f = MetricFilter {
+            op: FilterOp::Eq,
+            value: "cactuar".into(),
+        };
+        assert_eq!(
+            f.matches(
+                &GridValue::Set(vec!["Gilgamesh".into(), "Cactuar".into()]),
+                false
+            ),
+            Some(true)
+        );
+        assert!(parse_filters(Some("invalid")).is_empty());
+        assert!(
+            !MetricFilter {
+                op: FilterOp::Gte,
+                value: "NaN".into()
+            }
+            .valid(ValueKind::Number)
+        );
+    }
+    #[test]
+    fn ranges_take_either_side_and_bound_inclusively() {
+        let rows: Vec<_> = [5.0, 10.0, 15.0, 20.0, 25.0]
+            .map(GridValue::Number)
+            .into_iter()
+            .chain([GridValue::Missing, GridValue::Text("n/a".into())])
+            .collect();
+        let metric = GridMetric::number("n", |v: &GridValue| v.clone());
+        for (min, max, expected) in [
+            (Some("10"), None, vec![10.0, 15.0, 20.0, 25.0]),
+            (None, Some("15"), vec![5.0, 10.0, 15.0]),
+            (Some("10"), Some("20"), vec![10.0, 15.0, 20.0]),
+            (Some("30"), Some("10"), vec![]),
+        ] {
+            let filter = MetricFilter::range(min.map(Into::into), max.map(Into::into));
+            assert!(filter.valid(ValueKind::Number), "{filter:?}");
+            let result = query_rows(
+                &rows,
+                std::slice::from_ref(&metric),
+                &BTreeMap::from([("n".into(), filter)]),
+                None,
+                true,
+            );
+            assert_eq!(
+                result.rows.unwrap(),
+                expected
+                    .into_iter()
+                    .map(GridValue::Number)
+                    .collect::<Vec<_>>()
+            );
+        }
+        for value in [",", "a,", ",inf", "10", "NaN,1"] {
+            let filter = MetricFilter {
+                op: FilterOp::Range,
+                value: value.into(),
+            };
+            assert!(!filter.valid(ValueKind::Number), "{value}");
+        }
+        assert!(!MetricFilter::range(Some("1".into()), None).valid(ValueKind::Text));
+        assert!(MetricFilter::range(Some("1".into()), None).valid(ValueKind::Mixed));
+    }
+
+    #[test]
+    fn legacy_thresholds_read_as_range_sides() {
+        let sides = |op, value: &str| {
+            MetricFilter {
+                op,
+                value: value.into(),
+            }
+            .range_sides()
+            .map(|(a, b)| (a.map(str::to_string), b.map(str::to_string)))
+        };
+        assert_eq!(sides(FilterOp::Gte, "5"), Some((Some("5".into()), None)));
+        assert_eq!(sides(FilterOp::Lte, "5"), Some((None, Some("5".into()))));
+        assert_eq!(sides(FilterOp::Lt, "5"), Some((None, Some("5".into()))));
+        assert_eq!(
+            sides(FilterOp::Between, "1,2"),
+            Some((Some("1".into()), Some("2".into())))
+        );
+        assert_eq!(sides(FilterOp::Range, ",2"), Some((None, Some("2".into()))));
+        assert_eq!(sides(FilterOp::Eq, "2"), None);
+        // Old links keep their exact meaning, including a strict `lt`.
+        let lt = MetricFilter {
+            op: FilterOp::Lt,
+            value: "10".into(),
+        };
+        assert_eq!(lt.matches(&GridValue::Number(10.0), false), Some(false));
+        let parsed = parse_filters(Some(r#"{"a":{"op":"range","value":"-7d,"}}"#));
+        assert_eq!(parsed["a"].op, FilterOp::Range);
+    }
+
+    #[test]
+    fn relative_sides_resolve_against_the_supplied_now() {
+        let now = 1_000_000.0;
+        let filter = MetricFilter::range(Some("-1d".into()), None);
+        assert!(filter.valid(ValueKind::Number) && filter.has_relative());
+        // Unresolved, a relative side cannot match anything.
+        assert_eq!(filter.matches(&GridValue::Number(now), false), Some(false));
+        let resolved = filter.resolved(now);
+        assert!(!resolved.has_relative());
+        assert_eq!(
+            resolved.matches(&GridValue::Number(now - 3_600.0), false),
+            Some(true)
+        );
+        assert_eq!(
+            resolved.matches(&GridValue::Number(now - 2.0 * 86_400.0), false),
+            Some(false)
+        );
+        let absolute = MetricFilter::range(Some("5".into()), None);
+        assert_eq!(absolute.resolved(now), absolute);
+    }
+}

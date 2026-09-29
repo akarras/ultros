@@ -1,4 +1,5 @@
 use super::{Context, Error};
+use crate::character_claim::CharacterClaimService;
 use std::time::Duration;
 
 #[poise::command(slash_command, prefix_command, subcommands("register"))]
@@ -8,10 +9,10 @@ pub(crate) async fn character(ctx: Context<'_>) -> Result<(), Error> {
             poise::serenity_prelude::CreateEmbed::new()
                 .title("FFXIV Characters")
                 .description(
-                    "Look up your character on the Lodestone.\n\n\
+                    "Look up your character on the Lodestone and add it to your account.\n\n\
                      `/ffxiv character register name:<First Last>` — search and select.\n\n\
-                     **To verify a character (required for retainer claims),** \
-                     visit https://ultros.app and complete the Lodestone bio challenge.",
+                     Characters group your retainers; adding one doesn't claim it \
+                     exclusively, so several accounts can add the same character.",
                 ),
         ),
     )
@@ -26,7 +27,6 @@ pub(crate) async fn register(
     #[description = "world your character is on"] home_world: Option<String>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    // TODO check if the user has a pending registration
     let mut search = lodestone::search::SearchBuilder::new().character(&name);
 
     if let Some(world) = home_world {
@@ -41,7 +41,7 @@ pub(crate) async fn register(
                 format!("{}\n{}", search_result.name, search_result.world),
                 search_result.user_id.to_string(),
             )
-            .description("test")
+            .description(search_result.world.clone())
         })
         .collect();
 
@@ -65,14 +65,25 @@ pub(crate) async fn register(
             &msg.data.kind
         {
             let selected_user_id = values[0].parse::<u32>()?;
-            let selected_profile = profiles
-                .iter()
-                .find(|p| p.user_id == selected_user_id)
-                .ok_or_else(|| anyhow::anyhow!("Selected profile not found"))?;
+            let data = ctx.data();
+            // The Discord login already establishes who the user is, so the
+            // selection is the whole flow — there's no Lodestone bio challenge
+            // to complete any more.
+            data.db
+                .get_or_create_discord_user(ctx.author().id.get(), ctx.author().name.clone())
+                .await?;
+            let claim = CharacterClaimService {
+                db: data.db.clone(),
+                client: data.lodestone_client.clone(),
+                world_cache: data.world_cache.clone(),
+            };
+            let character = claim
+                .claim_character(selected_user_id, ctx.author().id.get() as i64)
+                .await?;
 
             ctx.say(format!(
-                "Selected {} from {}",
-                selected_profile.name, selected_profile.world
+                "Added {} {} to your characters.",
+                character.first_name, character.last_name
             ))
             .await?;
         }

@@ -3,7 +3,22 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
+/// One materia slotted into a listed item, as reported by Universalis.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Materia {
+    pub slot_id: Option<i32>,
+    pub materia_id: i32,
+}
+
+/// The full materia loadout of a listing, stored as a jsonb column.
+///
+/// Universalis' change diff compares only (listingID, price, quantity), so
+/// materia mutations emit no websocket events — this field is only as fresh as
+/// the last REST board fetch for the item.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult, Default)]
+pub struct MateriaList(pub Vec<Materia>);
+
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize, Default)]
 #[sea_orm(table_name = "active_listing")]
 pub struct Model {
     #[sea_orm(primary_key, unique)]
@@ -15,6 +30,16 @@ pub struct Model {
     pub quantity: i32,
     pub hq: bool,
     pub timestamp: DateTime,
+    /// Universalis' stable listing identity (`listingID`). Null on rows
+    /// ingested before the identity migration and on payloads lacking the id;
+    /// unique per (world_id, item_id) when present.
+    pub listing_id: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub materia: Option<MateriaList>,
+    pub stain_id: Option<i32>,
+    pub creator_name: Option<String>,
+    pub is_crafted: bool,
+    pub on_mannequin: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

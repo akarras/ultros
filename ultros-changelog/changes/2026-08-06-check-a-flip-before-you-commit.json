@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "Check a flip before you commit",
+  "blurb": "Flip Finder rows now open a comparison view on the item page: the cheapest listing where you would buy, the expected sale price where you would sell, and the profit per unit and per stack after tax.",
+  "link": "/flip-finder",
+  "importance": "medium"
+}

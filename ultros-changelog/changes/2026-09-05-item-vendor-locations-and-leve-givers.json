@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Find vendors and levequest givers from item pages",
+  "blurb": "See known vendor locations and levequest givers alongside item sources, with zone names and map coordinates to help you find them."
+}

@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Item page leads with market data again",
+  "blurb": "The sell and craft-or-buy cards and the bulk basket now sit below the listings and sales tables. Their one-line answers stay at the top as small summary chips that jump down to the full cards."
+}

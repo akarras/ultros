@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Pages load with over a megabyte less embedded data",
+  "blurb": "Every page used to ship the full cheapest-listings table (about 1.2 MB of JSON) inside its HTML, even pages such as lists, alerts and settings that never show a price. Pages now only fetch that table when a price cell needs it, and the fetch itself is about half the size on the wire, so the home page HTML shrinks from about 1.3 MB to under 100 KB."
+}

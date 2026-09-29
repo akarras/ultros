@@ -37,7 +37,7 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v4
               with:
-                  submodules: recursive
+                  lfs: true
 
             - name: Verify GlitchTip secrets are present
               env:

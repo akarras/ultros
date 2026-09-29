@@ -1,0 +1,68 @@
+[package]
+name = "ultros-ui-lists"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+chrono = { workspace = true }
+icondata = { workspace = true }
+icondata_core = { workspace = true }
+leptos = { workspace = true, features = [
+    "nightly",
+] }
+leptos_i18n = { workspace = true }
+leptos_router = { workspace = true }
+log = "0.4.29"
+thiserror = { workspace = true }
+time = "0.3.47"
+ultros-api-types = { path = "../../ultros-api-types" }
+ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
+ultros-i18n = { path = "../ultros-i18n", default-features = false }
+ultros-ui = { path = "../ultros-ui", default-features = false }
+ultros-ui-alerts = { path = "../ultros-ui-alerts", default-features = false }
+ultros-ui-game = { path = "../ultros-ui-game", default-features = false }
+ultros-ui-market = { path = "../ultros-ui-market", default-features = false }
+wasm-bindgen-futures = { version = "0.4" }
+web-sys = { version = "0.3", features = [
+    "Clipboard",
+    "Window",
+    "Location",
+    "Navigator",
+    "Storage",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+] }
+xiv-gen = { workspace = true }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "leptos_router/ssr",
+    "ultros-frontend-core/ssr",
+    "ultros-i18n/ssr",
+    "ultros-ui/ssr",
+    "ultros-ui-alerts/ssr",
+    "ultros-ui-game/ssr",
+    "ultros-ui-market/ssr",
+]
+hydrate = [
+    "leptos/hydrate",
+    "leptos_i18n/hydrate",
+    "time/wasm-bindgen",
+    "ultros-frontend-core/hydrate",
+    "ultros-i18n/hydrate",
+    "ultros-ui/hydrate",
+    "ultros-ui-alerts/hydrate",
+    "ultros-ui-game/hydrate",
+    "ultros-ui-market/hydrate",
+]
+
+[dev-dependencies]
+any_spawner = { version = "0.3", features = [
+    "futures-executor",
+] }
+insta = "1"

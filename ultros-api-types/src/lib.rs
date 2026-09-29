@@ -1,23 +1,30 @@
 pub mod alert;
+pub mod app_version;
 pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
+pub mod floor_history;
 pub mod freshness;
+pub mod game_history;
 pub mod icon_size;
 pub mod item_stats;
 pub mod list;
+pub mod listing_stats;
 mod listings;
 pub mod market_heat;
 pub mod market_pulse;
+pub mod price_density;
 pub mod price_series;
 pub mod recent_sales;
 pub mod resale_quality;
 pub mod result;
 pub mod retainer;
 mod sale_history;
+pub mod sale_stats;
 pub mod search;
 pub mod sparklines;
 pub mod trends;
+pub mod undercut_pressure;
 pub mod user;
 pub mod websocket;
 pub mod world;
@@ -30,12 +37,29 @@ pub use retainer::Retainer;
 pub use sale_history::{CompactSale, ExtendedSaleHistory, SaleHistory};
 
 use crate::websocket::{EventType, ListingEventData, SaleEventData};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// When Ultros last ingested market-board data for an item on a specific world.
+///
+/// This is the real ingest time (the `listing_last_updated` marker written when
+/// listings/sales for the item are stored), *not* Universalis' `last_review_time`
+/// which [`ActiveListing::timestamp`] carries (when the seller last touched the
+/// listing in-game).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldItemLastUpdated {
+    pub world_id: i32,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurrentlyShownItem {
     pub listings: Vec<(ActiveListing, Retainer)>,
     pub sales: Vec<SaleHistory>,
+    /// Per-world ingest timestamps for the queried scope. Additive field:
+    /// defaults to empty when deserializing payloads from older servers.
+    #[serde(default)]
+    pub last_updated: Vec<WorldItemLastUpdated>,
 }
 
 impl CurrentlyShownItem {
@@ -93,9 +117,14 @@ impl CurrentlyShownItem {
                 }
             }
         }
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        if self.sales.len() > 200 {
+            self.sales
+                .select_nth_unstable_by_key(200, |sale| std::cmp::Reverse(sale.sold_date));
+            self.sales.truncate(200);
+        }
         self.sales
-            .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-        self.sales.truncate(200);
+            .sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
     }
 
     fn upsert_sales(&mut self, sales: Vec<SaleHistory>) {
@@ -163,6 +192,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![],
+            last_updated: vec![],
         };
         let event = EventType::Added(ListingEventData {
             item_id: 1,
@@ -180,6 +210,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![test_listing(1, 1, 100)],
             sales: vec![],
+            last_updated: vec![],
         };
         let event = EventType::Updated(ListingEventData {
             item_id: 1,
@@ -197,6 +228,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![test_listing(1, 1, 100)],
             sales: vec![],
+            last_updated: vec![],
         };
         let event = EventType::Removed(ListingEventData {
             item_id: 1,
@@ -213,6 +245,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![test_listing(1, 1, 100)],
             sales: vec![],
+            last_updated: vec![],
         };
         let event = EventType::Updated(ListingEventData {
             item_id: 2,
@@ -232,6 +265,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![],
+            last_updated: vec![],
         };
         let event = EventType::Added(SaleEventData {
             sales: vec![test_sale(1, 1, 100, NaiveDateTime::default())],
@@ -248,6 +282,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![sale],
+            last_updated: vec![],
         };
         let event = EventType::Updated(SaleEventData {
             sales: vec![test_sale(1, 1, 150, NaiveDateTime::default())],
@@ -264,6 +299,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![sale],
+            last_updated: vec![],
         };
         let event = EventType::Removed(SaleEventData {
             sales: vec![test_sale(1, 1, 100, NaiveDateTime::default())],
@@ -279,6 +315,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![sale],
+            last_updated: vec![],
         };
         // Add event for wrong item
         let event = EventType::Added(SaleEventData {
@@ -301,6 +338,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![],
+            last_updated: vec![],
         };
         let date_early = DateTime::from_timestamp(1000, 0).unwrap().naive_utc();
         let date_late = DateTime::from_timestamp(2000, 0).unwrap().naive_utc();
@@ -323,6 +361,7 @@ mod tests {
         let mut data = CurrentlyShownItem {
             listings: vec![],
             sales: vec![],
+            last_updated: vec![],
         };
         let mut sales = vec![];
         for i in 0..205 {

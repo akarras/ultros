@@ -3,10 +3,13 @@
 #[cfg(feature = "csv_to_rkyv")]
 pub mod csv_to_rkyv;
 
+pub mod browser;
 mod deserialize_custom;
+pub mod id_map;
 pub mod subrow_key;
 
 use deserialize_custom::*;
+pub use id_map::{IdMap, RowId};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -87,6 +90,12 @@ macro_rules! define_id {
         // in archived `Data`, so it has to implement Hash + Eq.
         #[archive_attr(derive(PartialEq, Eq, Hash))]
         pub struct $name(pub i32);
+
+        impl $crate::id_map::RowId for $name {
+            fn row_id(&self) -> i32 {
+                self.0
+            }
+        }
     };
 }
 
@@ -103,6 +112,7 @@ define_id!(SpecialShopId);
 define_id!(RetainerTaskId);
 define_id!(RetainerTaskNormalId);
 define_id!(RecipeLevelTableId);
+define_id!(CollectablesShopId);
 define_id!(CollectablesShopItemId);
 define_id!(CollectablesShopRewardScripId);
 define_id!(CraftLeveId);
@@ -120,6 +130,9 @@ define_id!(CompanyCraftSupplyItemId);
 define_id!(CompanyCraftDraftCategoryId);
 define_id!(CompanyCraftTypeId);
 define_id!(CompanyCraftDraftId);
+define_id!(MapId);
+define_id!(PlaceNameId);
+define_id!(TerritoryTypeId);
 
 #[derive(
     Debug,
@@ -393,6 +406,10 @@ pub struct SpecialShop {
     pub item_receive_1: Vec<u16>,
     #[xiv_gen(column = "Item[{}].ReceiveCount[1]", count = 60)]
     pub count_receive_1: Vec<u32>,
+    /// The item paid, as an item id. In the sheet a tomestone or scrip cost is
+    /// not an item id but an index (`Item[n].CostType[k]` 2 or 3, see
+    /// `csv_to_rkyv::resolve_currency_costs`); the pack generator rewrites
+    /// those to the item they stand for, so every value here is an `Item` key.
     #[xiv_gen(column = "Item[{}].ItemCost[0]", count = 60)]
     pub item_cost_0: Vec<u16>,
     #[xiv_gen(column = "Item[{}].CurrencyCost[0]", count = 60)]
@@ -405,6 +422,68 @@ pub struct SpecialShop {
     pub item_cost_2: Vec<u16>,
     #[xiv_gen(column = "Item[{}].CurrencyCost[2]", count = 60)]
     pub count_cost_2: Vec<u32>,
+}
+
+/// One line of a special shop: what is handed over and what it costs, with
+/// the empty slots of the sheet's fixed-width layout already dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecialShopEntry {
+    /// Slot index within the shop, for stable keys.
+    pub slot: usize,
+    pub receive: Vec<(ItemId, u32)>,
+    pub cost: Vec<(ItemId, u32)>,
+}
+
+impl SpecialShop {
+    /// The shop's trades in slot order, skipping slots that hand over nothing.
+    /// A trade with no cost at all is kept (a handful of quest hand-outs are
+    /// modelled that way).
+    pub fn entries(&self) -> impl Iterator<Item = SpecialShopEntry> + '_ {
+        let pair = |items: &[u16], counts: &[u32], slot: usize| -> Option<(ItemId, u32)> {
+            let item = *items.get(slot)?;
+            (item != 0).then(|| (ItemId(item as i32), counts.get(slot).copied().unwrap_or(0)))
+        };
+        (0..self.item_receive_0.len().max(self.item_receive_1.len())).filter_map(move |slot| {
+            let receive: Vec<_> = [
+                pair(&self.item_receive_0, &self.count_receive_0, slot),
+                pair(&self.item_receive_1, &self.count_receive_1, slot),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if receive.is_empty() {
+                return None;
+            }
+            let cost = [
+                pair(&self.item_cost_0, &self.count_cost_0, slot),
+                pair(&self.item_cost_1, &self.count_cost_1, slot),
+                pair(&self.item_cost_2, &self.count_cost_2, slot),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            Some(SpecialShopEntry {
+                slot,
+                receive,
+                cost,
+            })
+        })
+    }
+}
+
+/// The scrip a `CollectablesShopRewardScrip.Currency` value (or a
+/// `SpecialShop` scrip-index cost) stands for. The numbering is the game's
+/// own and has no sheet: `2`/`4` are the purple crafter/gatherer pair and
+/// `6`/`7` the orange (level 100) pair; `2`/`4` were the white scrips until
+/// 7.0 retired them, and the rows still using them are purple exchanges now.
+pub fn scrip_item(currency: u32) -> Option<ItemId> {
+    match currency {
+        2 => Some(ItemId(33913)), // Purple Crafters' Scrip
+        4 => Some(ItemId(33914)), // Purple Gatherers' Scrip
+        6 => Some(ItemId(41784)), // Orange Crafters' Scrip
+        7 => Some(ItemId(41785)), // Orange Gatherers' Scrip
+        _ => None,
+    }
 }
 
 #[derive(
@@ -583,6 +662,11 @@ pub struct ENpcResident {
     pub key_id: ENpcResidentId,
     #[xiv_gen(column = "Singular")]
     pub singular: String,
+    /// The game's own hint for which map of a multi-map city the NPC belongs
+    /// to (Ul'dah's Merchant Strip), or 0. Used when placing NPCs from the
+    /// client's layout files.
+    #[xiv_gen(column = "Map", default_if_missing = "0")]
+    pub map: i32,
 }
 
 #[derive(
@@ -603,6 +687,18 @@ pub struct GilShop {
     pub key_id: GilShopId,
     #[xiv_gen(column = "Name")]
     pub name: String,
+    /// The seasonal-event occurrence this shop belongs to, or 0 for a shop
+    /// that stands year-round.
+    ///
+    /// Kept as the raw id rather than folded away entirely: naming an event
+    /// needs a hand-kept table (`Festival.Name` is blank for all 262 rows) and
+    /// shipping the id means that table can be added without regenerating the
+    /// packs. [`GilShopItem::availability`] already carries the derived verdict.
+    ///
+    /// Filled in after parsing, from the English sheet — the CN/KO/TC forks use
+    /// the SaintCoinach header layout, where this column has no name to match.
+    #[xiv_gen(skip)]
+    pub festival_id: i32,
 }
 
 #[derive(
@@ -623,6 +719,214 @@ pub struct GilShopItem {
     pub key_id: crate::subrow_key::SubrowKey<GilShopId>,
     #[xiv_gen(column = "Item")]
     pub item: i32,
+    /// Whether a player can actually walk up and buy this row today.
+    ///
+    /// Resolved at pack-generation time from the row's own `QuestRequired` /
+    /// `AchievementRequired` and its shop's `FestivalId` / `Quest`, plus the
+    /// category of whatever quest or achievement those name. Not a CSV column
+    /// — see [`VendorAvailability`].
+    #[xiv_gen(skip)]
+    pub availability: VendorAvailability,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
+#[xiv_gen(sheet = "PlaceName")]
+pub struct PlaceName {
+    #[xiv_gen(column = "#")]
+    pub key_id: PlaceNameId,
+    #[xiv_gen(column = "Name")]
+    pub name: String,
+}
+
+/// One in-game map image and the transform from world space onto it.
+///
+/// Read from the English sheet whatever the pack's language: every column is
+/// an id or a number, and the CN/KO/TC forks' SaintCoinach header layout does
+/// not name them all.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
+#[xiv_gen(sheet = "Map")]
+pub struct Map {
+    #[xiv_gen(column = "#")]
+    pub key_id: MapId,
+    /// Texture path stem, e.g. `f1t1/00`: the image lives at
+    /// `ui/map/f1t1/00/f1t100_m.tex` in the client.
+    #[xiv_gen(column = "Id")]
+    pub id: String,
+    /// Map scale in percent; 100 for a field zone, 200 for a city.
+    #[xiv_gen(column = "SizeFactor")]
+    pub size_factor: i32,
+    #[xiv_gen(column = "PlaceNameRegion")]
+    pub place_name_region: i32,
+    #[xiv_gen(column = "PlaceName")]
+    pub place_name: i32,
+    /// Sub-area name for a multi-map territory (`Merchant Strip`), else 0.
+    #[xiv_gen(column = "PlaceNameSub")]
+    pub place_name_sub: i32,
+    #[xiv_gen(column = "TerritoryType")]
+    pub territory_type: i32,
+    #[xiv_gen(column = "OffsetX")]
+    pub offset_x: i32,
+    #[xiv_gen(column = "OffsetY")]
+    pub offset_y: i32,
+}
+
+impl Map {
+    /// Fraction (0..1) across the map image where map coordinate `coord`
+    /// (the `X: 11.8` a player reads off the in-game map) lands.
+    ///
+    /// Inverse of [`map_coordinate`] up to the world offset, which the image
+    /// already absorbs.
+    pub fn fraction(&self, coord: f32) -> f32 {
+        (coord - 1.0) * (self.size_factor as f32 / 100.0) / 41.0
+    }
+}
+
+/// World X/Z -> the map coordinate players see, per
+/// <https://github.com/xivapi/ffxiv-datamining/blob/master/docs/MapCoordinates.md>.
+///
+/// `size_factor` and `offset` come from the [`Map`] row; world Y is elevation
+/// and never takes part.
+pub fn map_coordinate(position: f32, size_factor: i32, offset: i32) -> f32 {
+    let factor = size_factor as f32 / 100.0;
+    41.0 / factor * (((position + offset as f32) * factor + 1024.0) / 2048.0) + 1.0
+}
+
+/// Read from the English sheet, like [`Map`]: only ids are used.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
+#[xiv_gen(sheet = "TerritoryType")]
+pub struct TerritoryType {
+    #[xiv_gen(column = "#")]
+    pub key_id: TerritoryTypeId,
+    /// Zone code such as `f1t1`; instanced copies of a zone carry other names.
+    #[xiv_gen(column = "Name")]
+    pub name: String,
+    /// Layout path stem (`ffxiv/fst_f1/twn/f1t1/level/f1t1`); its directory
+    /// holds the `.lgb` files that place the zone's NPCs.
+    #[xiv_gen(column = "Bg")]
+    pub bg: String,
+    #[xiv_gen(column = "PlaceName")]
+    pub place_name: i32,
+    /// The territory's main map; multi-map cities have more in [`Map`].
+    #[xiv_gen(column = "Map")]
+    pub map: i32,
+}
+
+/// Where an NPC stands, extracted from the client's `.lgb` layout files at
+/// pack generation (see `game-data-pack`). Not a CSV sheet.
+///
+/// The `Level` sheet only places NPCs that quests reference; the layout files
+/// place every vendor that stands in the world. NPCs spawned inside player
+/// estates (housing servants) have no placement at all.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Archive, RkyvDeserialize, RkyvSerialize,
+)]
+#[archive(check_bytes)]
+pub struct NpcPlacement {
+    pub map: MapId,
+    pub territory: TerritoryTypeId,
+    /// Map coordinates as the player reads them (`X: 11.8, Y: 13.4`).
+    pub x: f32,
+    pub y: f32,
+    /// Seasonal event whose layer places the NPC, or 0 for a year-round spot.
+    pub festival_id: u16,
+}
+
+/// How reachable a gil-shop row is, ordered from least to most restricted.
+///
+/// The game gates shop rows in two places — `GilShop` carries `FestivalId` and
+/// `Quest`, `GilShopItem` carries `QuestRequired` and `AchievementRequired` —
+/// and neither column says how hard the gate is. A row gated on an achievement
+/// may be a sightseeing-log entry anyone can still earn, or a 2013 seasonal
+/// quest that will never be offered again; the difference is only visible in
+/// the *category* of the referenced row. That resolution happens once during
+/// pack generation (see `csv_to_rkyv::classify_availability`), because the
+/// sheets it needs are far too large to ship.
+///
+/// `Ord` runs least- to most-restricted, so the easiest way to obtain an item
+/// sold by several shops is the `min` over its rows.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
+#[archive(check_bytes)]
+#[repr(u8)]
+pub enum VendorAvailability {
+    /// No gate: any character can buy it right now.
+    #[default]
+    Open,
+    /// Behind a quest or achievement that is still obtainable — main-scenario
+    /// progress, a guild supplier unlock, a sightseeing-log entry. Restricted,
+    /// but not a dead end: a player who wants the item can go get access.
+    Unlockable,
+    /// The shop itself is bound to a seasonal event (`GilShop.FestivalId`), so
+    /// the vendor is only present while that event runs.
+    ///
+    /// Note `FestivalId` identifies an *occurrence*, not an event: the fireworks
+    /// vendor has a different id for each year's Rising. So a row marked here is
+    /// buyable only if this particular occurrence is the live one, which for the
+    /// overwhelming majority of ids means never again. Whether an id maps to a
+    /// recurring event is not in the sheets and would need a hand-kept table.
+    SeasonalShop,
+    /// Gated on a quest or achievement belonging to a seasonal event, i.e. the
+    /// player had to take part while it was running. The vendor may stand there
+    /// year-round — the Calamity Salvager does — but only ever sells to those
+    /// who already qualified.
+    SeasonalUnlock,
+}
+
+impl VendorAvailability {
+    /// Whether a player who does not already have access can go and buy this.
+    ///
+    /// False for both seasonal cases, which is what resale and crafting-cost
+    /// surfaces should key on: pricing a flip against a vendor the buyer cannot
+    /// reach is the bug in <https://github.com/akarras/ultros/issues/1362>.
+    pub fn is_obtainable(self) -> bool {
+        matches!(self, Self::Open | Self::Unlockable)
+    }
 }
 
 #[derive(
@@ -963,6 +1267,38 @@ pub struct RecipeLevelTable {
     FromCsv,
 )]
 #[archive(check_bytes)]
+#[xiv_gen(sheet = "CollectablesShop")]
+pub struct CollectablesShop {
+    #[xiv_gen(column = "#")]
+    pub key_id: CollectablesShopId,
+    /// Named for the material exchanges; the scrip counters' rows carry a
+    /// Japanese label in every locale, so never title those by it.
+    #[xiv_gen(column = "Name")]
+    pub name: String,
+    /// The `CollectablesShopItem` groups this shop offers, i.e. the integer half
+    /// of that sheet's `<group>.<index>` key. Trailing slots are `0`.
+    #[xiv_gen(column = "ShopItems[{}]", count = 11)]
+    pub shop_items: [i32; 11],
+    /// `1` for the turn-in counters that pay scrip, `2` for the material
+    /// exchanges that hand back items. Both kinds fill in
+    /// `CollectablesShopRewardScrip.Currency`, so this is the only column that
+    /// separates them.
+    #[xiv_gen(column = "RewardType")]
+    pub reward_type: i32,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CollectablesShopItem")]
 pub struct CollectablesShopItem {
     #[xiv_gen(column = "#")]
@@ -1032,39 +1368,75 @@ pub struct CraftLeve {
 )]
 #[archive(check_bytes)]
 pub struct Data {
-    pub items: HashMap<ItemId, Item>,
-    pub recipes: HashMap<RecipeId, Recipe>,
-    pub class_jobs: HashMap<ClassJobId, ClassJob>,
-    pub class_job_categorys: HashMap<ClassJobCategoryId, ClassJobCategory>,
-    pub base_params: HashMap<BaseParamId, BaseParam>,
-    pub special_shops: HashMap<SpecialShopId, SpecialShop>,
-    pub leves: HashMap<LeveId, Leve>,
-    pub leve_reward_items: HashMap<LeveRewardItemId, LeveRewardItem>,
-    pub leve_reward_item_groups: HashMap<LeveRewardItemGroupId, LeveRewardItemGroup>,
-    pub e_npc_bases: HashMap<ENpcBaseId, ENpcBase>,
-    pub e_npc_residents: HashMap<ENpcResidentId, ENpcResident>,
-    pub gil_shops: HashMap<GilShopId, GilShop>,
-    pub gil_shop_items: HashMap<GilShopId, Vec<GilShopItem>>,
-    pub topic_selects: HashMap<TopicSelectId, TopicSelect>,
-    pub pre_handlers: HashMap<PreHandlerId, PreHandler>,
-    pub item_search_categorys: HashMap<ItemSearchCategoryId, ItemSearchCategory>,
-    pub item_ui_categorys: HashMap<ItemUiCategoryId, ItemUiCategory>,
-    pub item_sort_categorys: HashMap<ItemSortCategoryId, ItemSortCategory>,
-    pub company_craft_sequences: HashMap<CompanyCraftSequenceId, CompanyCraftSequence>,
-    pub company_craft_parts: HashMap<CompanyCraftPartId, CompanyCraftPart>,
-    pub company_craft_processs: HashMap<CompanyCraftProcessId, CompanyCraftProcess>,
-    pub company_craft_supply_items: HashMap<CompanyCraftSupplyItemId, CompanyCraftSupplyItem>,
+    pub items: IdMap<ItemId, Item>,
+    pub recipes: IdMap<RecipeId, Recipe>,
+    pub class_jobs: IdMap<ClassJobId, ClassJob>,
+    pub class_job_categorys: IdMap<ClassJobCategoryId, ClassJobCategory>,
+    pub base_params: IdMap<BaseParamId, BaseParam>,
+    pub special_shops: IdMap<SpecialShopId, SpecialShop>,
+    pub leves: IdMap<LeveId, Leve>,
+    pub leve_reward_items: IdMap<LeveRewardItemId, LeveRewardItem>,
+    pub leve_reward_item_groups: IdMap<LeveRewardItemGroupId, LeveRewardItemGroup>,
+    pub e_npc_residents: IdMap<ENpcResidentId, ENpcResident>,
+    pub gil_shops: IdMap<GilShopId, GilShop>,
+    pub gil_shop_items: IdMap<GilShopId, Vec<GilShopItem>>,
+    /// Which NPCs offer each gil shop, resolved at pack-generation time.
+    ///
+    /// The game models this the other way round: `ENpcBase.ENpcData` lists the
+    /// things an NPC offers, and a shop is reachable from that list directly,
+    /// through a `TopicSelect` menu, or through a `PreHandler` that points at
+    /// one. Answering "who sells this?" from the raw sheets therefore means
+    /// scanning all ~60k NPCs' 32-slot data arrays on every lookup, and it
+    /// forced `ENpcBase`, `TopicSelect` and `PreHandler` into the shipped pack
+    /// — `ENpcBase` alone was ~34% of its decoded size, for this one query.
+    ///
+    /// The reverse index is built once in `csv_to_rkyv` and the three source
+    /// sheets are dropped. Values are the ids of NPCs that have an
+    /// `ENpcResident` row (the ones that can actually be displayed), sorted
+    /// ascending so render order is stable between SSR and hydration.
+    pub gil_shop_npcs: IdMap<GilShopId, Vec<ENpcResidentId>>,
+    /// Which NPCs offer each special shop (currency and item exchanges), built
+    /// the same way as [`Data::gil_shop_npcs`] and by the same walk. Special
+    /// shops sit behind two more kinds of handler than gil shops do: the
+    /// tabbed scrip/tomestone exchanges are `InclusionShop`s (category ->
+    /// series -> special shop), and a few dozen sit in a `CustomTalk` script's
+    /// arguments or nested handlers. See `csv_to_rkyv::ShopRoutes`.
+    pub special_shop_npcs: IdMap<SpecialShopId, Vec<ENpcResidentId>>,
+    /// Which NPCs run each collectables shop. The material exchanges reference
+    /// their shop from an NPC data slot like any other; the scrip turn-in
+    /// counters (Collectable Appraisers) are all one `CustomTalk` script, so
+    /// they are attributed to every `RewardType = 1` shop by rule.
+    pub collectables_shop_npcs: IdMap<CollectablesShopId, Vec<ENpcResidentId>>,
+    pub item_search_categorys: IdMap<ItemSearchCategoryId, ItemSearchCategory>,
+    pub item_ui_categorys: IdMap<ItemUiCategoryId, ItemUiCategory>,
+    pub item_sort_categorys: IdMap<ItemSortCategoryId, ItemSortCategory>,
+    pub company_craft_sequences: IdMap<CompanyCraftSequenceId, CompanyCraftSequence>,
+    pub company_craft_parts: IdMap<CompanyCraftPartId, CompanyCraftPart>,
+    pub company_craft_processs: IdMap<CompanyCraftProcessId, CompanyCraftProcess>,
+    pub company_craft_supply_items: IdMap<CompanyCraftSupplyItemId, CompanyCraftSupplyItem>,
     pub company_craft_draft_categorys:
-        HashMap<CompanyCraftDraftCategoryId, CompanyCraftDraftCategory>,
-    pub company_craft_types: HashMap<CompanyCraftTypeId, CompanyCraftType>,
-    pub company_craft_drafts: HashMap<CompanyCraftDraftId, CompanyCraftDraft>,
-    pub retainer_tasks: HashMap<RetainerTaskId, RetainerTask>,
-    pub retainer_task_normals: HashMap<RetainerTaskNormalId, RetainerTaskNormal>,
-    pub recipe_level_tables: HashMap<RecipeLevelTableId, RecipeLevelTable>,
-    pub collectables_shop_items: HashMap<CollectablesShopItemId, Vec<CollectablesShopItem>>,
+        IdMap<CompanyCraftDraftCategoryId, CompanyCraftDraftCategory>,
+    pub company_craft_types: IdMap<CompanyCraftTypeId, CompanyCraftType>,
+    pub company_craft_drafts: IdMap<CompanyCraftDraftId, CompanyCraftDraft>,
+    pub retainer_tasks: IdMap<RetainerTaskId, RetainerTask>,
+    pub retainer_task_normals: IdMap<RetainerTaskNormalId, RetainerTaskNormal>,
+    pub recipe_level_tables: IdMap<RecipeLevelTableId, RecipeLevelTable>,
+    pub collectables_shops: IdMap<CollectablesShopId, CollectablesShop>,
+    pub collectables_shop_items: IdMap<CollectablesShopItemId, Vec<CollectablesShopItem>>,
     pub collectables_shop_reward_scrips:
-        HashMap<CollectablesShopRewardScripId, CollectablesShopRewardScrip>,
-    pub craft_leves: HashMap<CraftLeveId, CraftLeve>,
+        IdMap<CollectablesShopRewardScripId, CollectablesShopRewardScrip>,
+    pub craft_leves: IdMap<CraftLeveId, CraftLeve>,
+    pub place_names: IdMap<PlaceNameId, PlaceName>,
+    pub maps: IdMap<MapId, Map>,
+    pub territory_types: IdMap<TerritoryTypeId, TerritoryType>,
+    /// Placements of the NPCs the app can show: gil-shop vendors, exchange
+    /// and collectables NPCs, and leve issuers. Sorted by (territory, x, y)
+    /// so render order is stable between SSR and hydration.
+    pub npc_placements: IdMap<ENpcResidentId, Vec<NpcPlacement>>,
+    /// Which NPCs offer each leve, from Teamcraft's hand-kept levemete table
+    /// (`data/npc-locations/leve-issuers.json`). `Leve.LevelLevemete` is the
+    /// *delivery* NPC, not the issuer, so this cannot be derived from sheets.
+    pub leve_issuers: IdMap<LeveId, Vec<ENpcResidentId>>,
 }
 
 impl HasId for Item {
@@ -1075,6 +1447,12 @@ impl HasId for Item {
 }
 impl HasId for RecipeLevelTable {
     type Id = RecipeLevelTableId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
+impl HasId for CollectablesShop {
+    type Id = CollectablesShopId;
     fn get_id(&self) -> Self::Id {
         self.key_id
     }
@@ -1247,6 +1625,24 @@ impl HasId for CompanyCraftDraft {
         self.key_id
     }
 }
+impl HasId for PlaceName {
+    type Id = PlaceNameId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
+impl HasId for Map {
+    type Id = MapId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
+impl HasId for TerritoryType {
+    type Id = TerritoryTypeId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
 
 fn ok_or_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
@@ -1257,4 +1653,98 @@ where
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    #[test]
+    fn special_shop_entries_skip_empty_slots_and_keep_free_trades() {
+        let mut shop = SpecialShop {
+            key_id: SpecialShopId(1),
+            name: String::new(),
+            item: vec![0; 60],
+            item_receive_0: vec![0; 60],
+            count_receive_0: vec![0; 60],
+            item_receive_1: vec![0; 60],
+            count_receive_1: vec![0; 60],
+            item_cost_0: vec![0; 60],
+            count_cost_0: vec![0; 60],
+            item_cost_1: vec![0; 60],
+            count_cost_1: vec![0; 60],
+            item_cost_2: vec![0; 60],
+            count_cost_2: vec![0; 60],
+        };
+        // slot 0: two items received for two costs; slot 2: one item for nothing
+        shop.item_receive_0[0] = 100;
+        shop.count_receive_0[0] = 3;
+        shop.item_receive_1[0] = 101;
+        shop.count_receive_1[0] = 1;
+        shop.item_cost_0[0] = 33913;
+        shop.count_cost_0[0] = 250;
+        shop.item_cost_2[0] = 5;
+        shop.count_cost_2[0] = 9;
+        shop.item_receive_0[2] = 102;
+        shop.count_receive_0[2] = 1;
+        // a cost with nothing received is not a trade
+        shop.item_cost_0[3] = 7;
+        shop.count_cost_0[3] = 1;
+        let entries: Vec<_> = shop.entries().collect();
+        assert_eq!(
+            entries,
+            vec![
+                SpecialShopEntry {
+                    slot: 0,
+                    receive: vec![(ItemId(100), 3), (ItemId(101), 1)],
+                    cost: vec![(ItemId(33913), 250), (ItemId(5), 9)],
+                },
+                SpecialShopEntry {
+                    slot: 2,
+                    receive: vec![(ItemId(102), 1)],
+                    cost: vec![],
+                },
+            ]
+        );
+        assert_eq!(scrip_item(2), Some(ItemId(33913)));
+        assert_eq!(scrip_item(7), Some(ItemId(41785)));
+        assert_eq!(scrip_item(0), None);
+    }
+
+    fn new_gridania() -> Map {
+        Map {
+            key_id: MapId(2),
+            id: "f1t1/00".into(),
+            size_factor: 200,
+            place_name_region: 23,
+            place_name: 52,
+            place_name_sub: 0,
+            territory_type: 132,
+            offset_x: 0,
+            offset_y: 0,
+        }
+    }
+
+    #[test]
+    fn map_coordinate_matches_the_level_sheet() {
+        // Gontrant's Level row (1140471) in New Gridania: world X 25.04,
+        // Z 108.11, which the game shows as X 11.8, Y 13.4.
+        let map = new_gridania();
+        let x = map_coordinate(25.04, map.size_factor, map.offset_x);
+        let y = map_coordinate(108.11, map.size_factor, map.offset_y);
+        assert!((x - 11.75).abs() < 0.05, "{x}");
+        assert!((y - 13.41).abs() < 0.05, "{y}");
+    }
+
+    #[test]
+    fn fraction_spans_the_image_for_any_scale() {
+        // Coordinate 1 is the image's left/top edge; the far edge is
+        // 41 / (scale / 100) + 1, i.e. 42 on a field map and 21.5 in a city.
+        let city = new_gridania();
+        assert!((city.fraction(1.0)).abs() < 1e-6);
+        assert!((city.fraction(21.5) - 1.0).abs() < 1e-6);
+        let field = Map {
+            size_factor: 100,
+            ..new_gridania()
+        };
+        assert!((field.fraction(42.0) - 1.0).abs() < 1e-6);
+        assert!((field.fraction(21.5) - 0.5).abs() < 1e-6);
+    }
+}

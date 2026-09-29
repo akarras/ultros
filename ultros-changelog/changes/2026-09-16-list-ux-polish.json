@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Lists: one storage action, a wider Build layout and copy buttons",
+  "blurb": "A device list with an online copy shows a single Open online copy action; wide screens keep the item composer beside your rows; adding an item confirms with a toast; every Build row can copy its name for the in-game search.",
+  "link": "/list",
+  "labs": true
+}

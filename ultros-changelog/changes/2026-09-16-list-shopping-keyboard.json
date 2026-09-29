@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Keep your place while shopping",
+  "blurb": "Live list updates now keep your purchase quantity, keyboard focus and scroll position in Shop and the shopping companion.",
+  "link": "/list",
+  "labs": true
+}

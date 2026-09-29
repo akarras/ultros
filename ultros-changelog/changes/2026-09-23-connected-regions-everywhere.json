@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Buy from connected regions in more tools",
+  "blurb": "Vendor Sell, Scrip Sources, FC Crafting and the Leve Analyzer can now price what you buy across your region plus the regions you can travel to (Oceania, or every region from Oceania), just like Flip Finder. Turn it on with + Connected regions on the price chip, then click a region to leave it out. Sale prices always stay in your home region.",
+  "link": "/vendor-sell"
+}

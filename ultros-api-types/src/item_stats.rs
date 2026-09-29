@@ -24,7 +24,11 @@ pub struct ItemStatsVariant {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ItemStatsResponse {
-    pub world_id: i32,
+    /// The world these stats are scoped to, or `None` when the request named
+    /// a datacenter or region — the rollup is per-world, so a multi-world
+    /// scope has no single id to report and the variants below are folded
+    /// across every member world instead.
+    pub world_id: Option<i32>,
     pub item_id: i32,
     pub variants: Vec<ItemStatsVariant>,
 }

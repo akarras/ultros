@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Copy item names from job set pages",
+  "blurb": "Every piece of gear and every crafting material on a job set page now has a copy-to-clipboard button next to its name, so you can paste it straight into the in-game market board search while working through a set.",
+  "link": "/items/jobset/SAM/set/770"
+}

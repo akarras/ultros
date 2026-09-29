@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Dialogs keep your place",
+  "blurb": "Keyboard focus stays inside an open dialog and returns to its opener when you close it. Mobile navigation no longer covers dialogs."
+}
