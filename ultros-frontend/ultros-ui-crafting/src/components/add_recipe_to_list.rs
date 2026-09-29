@@ -165,7 +165,7 @@ pub fn AddRecipeToListModal(
                         <ItemIcon item_id={recipe.item_result} icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">
+                        <div data-dialog-title="" class="text-xl font-extrabold text-[color:var(--brand-fg)]">
                             {t!(i18n, add_recipe_title)}
                         </div>
                         <div class="text-[color:var(--color-text-muted)] truncate">

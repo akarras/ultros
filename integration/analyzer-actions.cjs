@@ -70,13 +70,18 @@ async function main() {
       for (const [name, route] of routes) {
         console.log(`${width}: ${name}`);
         await navigate(route);
-        const controls = await page.$$eval('[data-item-actions]', groups => groups.map(group => {
-          const cell = group.closest('[role="gridcell"]');
+        const controls = await page.$$eval('[data-item-actions]', groups => groups.filter(group => group.checkVisibility()).map(group => {
+          const cell = group.closest('[role="gridcell"], .mobile-grid-field');
+          // Cards reuse the table's column labels without claiming gridcell semantics.
+          const label = cell?.classList.contains('mobile-grid-field') && cell.firstElementChild.textContent.trim();
+          const heading = label && [...group.closest('.virtual-grid-shell').querySelectorAll('.virtual-grid-heading')]
+            .find(header => header.querySelector('.grid-heading-content')?.textContent.trim().startsWith(label));
           const buttons = [...group.querySelectorAll('button')];
           const rect = group.getBoundingClientRect(), bounds = cell?.getBoundingClientRect();
           return {
-            column: cell?.dataset.column,
+            column: cell?.dataset.column || heading?.dataset.column,
             first: buttons[0]?.classList.contains('clipboard'),
+            extraTooltipStops: group.querySelectorAll('button [tabindex="0"], [tabindex="0"]:has(button:not(:disabled))').length,
             labels: buttons.map(b => b.getAttribute('aria-label')),
             fits: bounds && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
           };
@@ -85,6 +90,7 @@ async function main() {
         for (const control of controls) {
           assert(['item', 'market-ingredient', 'cost'].includes(control.column), `${name}: controls outside item identity`);
           assert(control.first, `${name}: Copy must be first`);
+          assert.equal(control.extraTooltipStops, 0, `${name}: tooltip adds a redundant keyboard stop`);
           assert(control.labels.every(Boolean), `${name}: unnamed action`);
           assert(control.fits, `${name}: actions overflow their item cell`);
         }

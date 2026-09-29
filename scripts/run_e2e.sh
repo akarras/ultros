@@ -472,5 +472,12 @@ if [ "${LISTS_ACCEPTANCE:-0}" = "1" ]; then
     fi
 fi
 
+if [ "${E2E_RELEASE:-0}" != "1" ]; then
+    log "running shared accessibility E2E"
+    accessibility_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:accessibility ) || accessibility_exit=$?
+    if [ "$accessibility_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$accessibility_exit"; fi
+fi
+
 log "screenshots in integration/artifacts/ (exit=$test_exit)"
 exit "$test_exit"
