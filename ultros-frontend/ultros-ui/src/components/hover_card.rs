@@ -184,7 +184,11 @@ where
         }
     });
 
-    let is_open = Signal::derive(move || !disabled.get() && (hover_open.get() || is_focused.get()));
+    // Entering the portal sets hover_open even when it is already true (or
+    // focus is keeping the card open). Preserve the mounted overlay in that
+    // case: rebuilding it under the pointer loses its subsequent mouseleave
+    // and can strand a tooltip for every cell the pointer passes over.
+    let is_open = Memo::new(move |_| !disabled.get() && (hover_open.get() || is_focused.get()));
     // Suppress unused warnings on the server build, where the overlay closure
     // below compiles to `None`.
     #[cfg(not(feature = "hydrate"))]
