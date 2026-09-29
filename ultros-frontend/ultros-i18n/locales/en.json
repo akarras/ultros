@@ -2747,6 +2747,7 @@
     "npc_map_zoom_in": "Zoom in",
     "npc_map_zoom_out": "Zoom out",
     "npc_map_reset": "Reset view",
+    "npc_other_catalog_items": "{{ count }} other items sold or exchanged",
     "vendor_sell": "Vendor Sell",
     "vendor_sell_desc": "Find market listings that sell to an NPC vendor for more than they cost",
     "vendor_sell_meta_title": "Vendor Sell - Ultros",
