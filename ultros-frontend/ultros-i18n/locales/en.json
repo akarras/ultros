@@ -1,4 +1,6 @@
 {
+    "analyzer_project_materials": "Review project materials, excluding on-hand items and crystals omitted by your filters",
+    "analyzer_add_ingredients": "Add ingredients…",
     "lists_price_scope": "Prices in",
     "lists_composer_close": "Done adding",
     "lists_recipe_preview_named": "Preview {{name}}",

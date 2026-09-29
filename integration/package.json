@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "test:accessibility": "node ./accessibility.cjs",
+    "test:analyzer-actions": "node ./analyzer-actions.cjs",
     "test:game-data-startup": "node ./game-data-startup.cjs",
     "test:search-responsiveness": "node ./search-responsiveness.cjs",
     "test:virtual-grid": "node ./virtual-grid.cjs",

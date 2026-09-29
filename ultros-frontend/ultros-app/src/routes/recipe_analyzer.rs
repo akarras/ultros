@@ -37,6 +37,7 @@ use crate::components::crafting_cost::{
     CostBreakdown, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode, compute_cost,
     vendor_price_map,
 };
+use crate::components::item_actions::ItemActions;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::shard_item_ids;
@@ -958,7 +959,7 @@ const RECIPE_ENRICHMENT: EnrichmentConfig = EnrichmentConfig {
     max_keys_per_request: 200,
 };
 
-const RECIPE_ROW_HEIGHT: f64 = 60.0;
+const RECIPE_ROW_HEIGHT: f64 = 80.0;
 
 // Labels: one fn per column so the table can be a `static`.
 fn label_item(i18n: I18nContext<Locale, I18nKeys>) -> String {
@@ -1002,9 +1003,6 @@ fn label_world(i18n: I18nContext<Locale, I18nKeys>) -> String {
 }
 fn label_dc(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, analyzer_col_datacenter).to_string()
-}
-fn label_actions(i18n: I18nContext<Locale, I18nKeys>) -> String {
-    t_string!(i18n, actions).to_string()
 }
 fn label_listing_min(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, price_basis_listing_min).to_string()
@@ -1130,11 +1128,6 @@ static SPEC_DC: ColumnSpec = ColumnSpec {
     kind: ColumnKind::ListingDc,
     label: label_dc,
     group: PickerGroup::Location,
-};
-static SPEC_ACTIONS: ColumnSpec = ColumnSpec {
-    kind: ColumnKind::Actions,
-    label: label_actions,
-    group: PickerGroup::Other,
 };
 
 static SPEC_REV_LISTING_MIN: ColumnSpec = ColumnSpec {
@@ -1593,7 +1586,7 @@ const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
 /// The recipe table, column by column, classes copied verbatim from the
 /// markup this replaced. `id` = the `?cols=` token (always-on columns
 /// have none); `sort_id` = the `?sort=` token.
-static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 33] = [
+static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 32] = [
     ToolColumnMeta {
         spec: &SPEC_ITEM,
         header_class: "w-64 md:w-80 shrink-0 p-4",
@@ -1958,11 +1951,6 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 33] = [
         cell_class: CELL_28_NUM_MD,
         default_on: false,
         cell: cell_cost_gil,
-        ..RECIPE_BASE
-    },
-    ToolColumnMeta {
-        spec: &SPEC_ACTIONS,
-        header_class: "w-20 shrink-0 p-4",
         ..RECIPE_BASE
     },
 ];
@@ -4040,17 +4028,17 @@ fn RecipeAnalyzerTable(
                 let unverified = data.listing_assessment == ListingAssessment::Unverified;
                 let item_name = item.to_string();
                 view! {
-                    <div  class=class>
+                    <div class="flex flex-col w-full min-w-0 gap-1">
                         <div class="flex flex-row items-center gap-1 w-full min-w-0">
                          <a
-                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip flex-1 min-w-0"
+                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                             href=crate::routes::recipe_view::recipe_href(data.recipe.key_id.0, &world(), &recipe_query.get())
                         >
                             <div class="shrink-0">
                                 <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
                             </div>
-                            <div class="flex flex-col">
-                                <span>{item}</span>
+                            <div class="flex flex-col min-w-0">
+                                <span class="truncate" title=item>{item}</span>
                                 <span class="text-xs text-[color:var(--color-text-muted)]">
                                     {t_string!(i18n, recipe_analyzer_item_level_label, level = data.required_level, ilvl = item_level).to_string()}
                                     " " {job_abbrev}
@@ -4063,7 +4051,11 @@ fn RecipeAnalyzerTable(
                                 })}
                             </div>
                         </a>
-                        <BreakdownToggle selected=breakdown_selected recipe_id=data.recipe.key_id.0 item_name=item_name />
+                        <ItemActions item_id=item_id.0 item_name=item hq=data.stat_hq />
+                        </div>
+                        <div class="flex items-center gap-2 pl-8">
+                            <AddRecipeToList recipe=data.recipe initial_hq=require_hq.get_untracked().unwrap_or(false) show_label=true />
+                            <BreakdownToggle selected=breakdown_selected recipe_id=data.recipe.key_id.0 item_name=item_name />
                         </div>
                     </div>
                 }
@@ -4294,12 +4286,6 @@ fn RecipeAnalyzerTable(
                 }
                 .into_any()
             }
-            ColumnKind::Actions => view! {
-                <div  class=format!("{class} ")>
-                    <AddRecipeToList recipe=data.recipe initial_hq=require_hq.get_untracked().unwrap_or(false) />
-                </div>
-            }
-            .into_any(),
             other => unreachable!("no custom cell for column {other:?}"),
         }
     });
@@ -6001,7 +5987,7 @@ mod test {
         assert_eq!(OPTIONAL_COLUMN_ORDER[22], COL_SCOPE_VS_HOME);
         assert_eq!(&OPTIONAL_COLUMN_ORDER[23..], &[COL_REV_GIL, COL_COST_GIL]);
         assert_eq!(DEFAULT_COLS.as_slice(), &["confidence"]);
-        assert_eq!(RECIPE_COLUMNS.len(), 33);
+        assert_eq!(RECIPE_COLUMNS.len(), 32);
         let col = RECIPE_COLUMNS
             .iter()
             .find(|c| c.id == COL_SCOPE_VS_HOME)
@@ -10930,11 +10916,11 @@ mod test {
     fn the_recipe_window_is_one_request_per_scroll_settle() {
         let rendered = row_range(6000.0, 600.0, RECIPE_ROW_HEIGHT, 500, GRID_OVERSCAN);
         let rendered = rendered.1 - rendered.0;
-        assert_eq!(rendered, 18);
+        assert_eq!(rendered, 16);
         let keys: Vec<SparkKey> = (0..rendered + 2 * PREFETCH_MARGIN)
             .map(|i| (i as i32, false))
             .collect();
-        assert_eq!(keys.len(), 78);
+        assert_eq!(keys.len(), 76);
         assert_eq!(
             chunk_keys(&keys, RECIPE_ENRICHMENT.max_keys_per_request).len(),
             1
@@ -10969,10 +10955,10 @@ mod test {
     #[test]
     fn the_visible_range_follows_the_scroll_and_bounds_the_fetch() {
         let at = |scroll, count| row_range(scroll, 600.0, RECIPE_ROW_HEIGHT, count, GRID_OVERSCAN);
-        assert_eq!(at(0.0, 500), (0, 14));
-        assert_eq!(at(6000.0, 500), (96, 114));
-        assert_eq!(at(12000.0, 500), (196, 214));
-        assert_eq!(at(29800.0, 500), (492, 500));
+        assert_eq!(at(0.0, 500), (0, 12));
+        assert_eq!(at(6000.0, 500), (71, 87));
+        assert_eq!(at(12000.0, 500), (146, 162));
+        assert_eq!(at(39800.0, 500), (493, 500));
         assert_eq!(at(0.0, 4), (0, 4));
         assert_eq!(at(0.0, 0), (0, 0));
         let rows = window_rows();
@@ -10984,12 +10970,12 @@ mod test {
             &HashSet::new(),
             recipe_spark_key,
         );
-        let expected: Vec<SparkKey> = rows[66..144]
+        let expected: Vec<SparkKey> = rows[41..117]
             .iter()
             .map(|(_, r)| (r.recipe.item_result, r.stat_hq))
             .collect();
         assert_eq!(keys, expected);
-        assert_eq!(keys.len(), 78);
+        assert_eq!(keys.len(), 76);
         assert!(
             keys.len() < rows.len(),
             "a scroll settle must not fetch the whole table"

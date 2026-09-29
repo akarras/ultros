@@ -193,6 +193,23 @@ where
     }
 
     let target = NodeRef::<Div>::new();
+    #[cfg(feature = "hydrate")]
+    target.on_load(move |element| {
+        // Native controls already supply the keyboard stop. Keep standalone
+        // help focusable without inserting a second stop around or inside a
+        // button/link (including the tooltip inside a clipboard button).
+        if description.is_some() {
+            let inside_control = element.parent_element().and_then(|parent| {
+                parent.closest("button,a[href],input,select,textarea").ok().flatten()
+            }).is_some();
+            let contains_control = element.query_selector(
+                "button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled)",
+            ).ok().flatten().is_some();
+            if inside_control || contains_control {
+                let _ = element.remove_attribute("tabindex");
+            }
+        }
+    });
 
     let overlay = {
         cfg_if! {

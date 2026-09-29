@@ -17,6 +17,7 @@ use crate::components::virtual_grid::saved_views::{
 };
 use crate::components::virtual_grid::{metrics::FilterOp, registry::FilterAlias};
 use crate::components::virtual_grid::{metrics::with_units, units::Unit};
+use crate::components::{add_recipe_to_list::AddRecipeToList, item_actions::ItemActions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
@@ -736,10 +737,10 @@ fn ScripSourceTable(
 
      let _ = index;
      match id {
-    "market-ingredient" => view! { <a class="truncate hover:text-brand-300" href=format!("/item/{}/{}", world(), data.market_item_id) title=t_string!(i18n, market_ingredient_cost_title).to_string()>{data.market_item_name.clone()}</a> }.into_any(),
-    "item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
+    "market-ingredient" => view! { <div class="flex items-center gap-1 min-w-0"><a class="truncate hover:text-brand-300" href=format!("/item/{}/{}", world(), data.market_item_id) title=t_string!(i18n, market_ingredient_cost_title).to_string()>{data.market_item_name.clone()}</a><ItemActions item_id=data.market_item_id item_name=data.market_item_name.clone() hq=data.market_hq /></div> }.into_any(),
+    "item" => view! {<div class="flex flex-col gap-1 w-full min-w-0"><div class="flex items-center gap-1 min-w-0">
                                          <a
-                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=format!("/item/{}/{}", world(), item_id.0)
                                         >
                                             <div class="shrink-0">
@@ -763,6 +764,9 @@ fn ScripSourceTable(
                                                 </span>
                                             </div>
                                         </a>
+                                        <ItemActions item_id=item_id.0 item_name=data.item_name.clone() allow_list=false />
+                                    </div>
+                                    {data.recipe.map(|recipe| view! { <AddRecipeToList recipe show_label=true /> })}
                                     </div>}.into_any(),
     "cost-per-scrip" => view! {<div  class="text-right font-bold text-brand-300 w-full min-w-0">
                                         // One decimal below 10 gil/scrip: whole-gil

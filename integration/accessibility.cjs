@@ -51,6 +51,18 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
     await page.keyboard.press('Escape');
     await page.waitForSelector('[role=tooltip]', {hidden: true});
     assert(await page.$('dialog[open]'), 'closing tooltip help does not close its dialog');
+    await page.click('#fixture-dialog-error');
+    await page.waitForSelector('dialog[open] .toast-error[role=alert]');
+    const toastSession = await page.createCDPSession();
+    const toastTree = await toastSession.send('Accessibility.getFullAXTree');
+    assert(toastTree.nodes.some(node => !node.ignored && node.name?.value === 'Dialog fixture error'),
+      'a modal error remains in the accessibility tree');
+    await toastSession.detach();
+    await page.focus('dialog[open] .toast-error button');
+    assert(await page.evaluate(() => !!document.activeElement.closest('dialog[open] .toast-error')),
+      'modal notifications can receive keyboard focus');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.toast-error', {hidden: true});
     for (let i = 0; i < 12; i++) {
       await page.keyboard.press('Tab');
       assert(await page.evaluate(() => !!document.activeElement.closest('dialog[open]')), 'Tab stays in the task dialog');

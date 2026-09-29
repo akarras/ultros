@@ -14,10 +14,9 @@ use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
-use crate::components::add_to_list::AddToList;
-use crate::components::clipboard::Clipboard;
 use crate::components::control_bar::ControlBar;
 use crate::components::icon::Icon;
+use crate::components::item_actions::ItemActions;
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::MetaDescription;
 use crate::components::meta::MetaTitle;
@@ -91,7 +90,7 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
     item_amount
         .map(|item_amount| {
             view! {
-                <div class="flex flex-row gap-1">
+                <div class="flex flex-row items-center gap-1 min-w-0">
                     <AppLink
                         attr:class="flex flex-row gap-1 min-w-0"
                         href=format!("/item/{}", item_amount.item.key_id.0)
@@ -100,12 +99,7 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
                         <span class="truncate" title=item_amount.item.name.as_str()>{item_amount.item.name.as_str()}</span>
                     </AppLink>
                     <div>{t!(i18n, currency_exchange_quantity_x)} {item_amount.amount}</div>
-                    <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
-                        <AddToList item_id=item_amount.item.key_id.0 />
-                    </span>
-                    <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
-                        <Clipboard clipboard_text=item_amount.item.name.as_str() />
-                    </span>
+                    <ItemActions item_id=item_amount.item.key_id.0 item_name=item_amount.item.name.as_str() quantity=i32::try_from(item_amount.amount).unwrap_or(i32::MAX) />
                 </div>
             }
         })

@@ -1,4 +1,6 @@
 {
+    "analyzer_project_materials": "보유 아이템과 필터에서 제외한 크리스탈을 뺀 프로젝트 재료 확인",
+    "analyzer_add_ingredients": "재료 추가…",
   "fc_crafting_missing_prices": "일부 필요한 재료에 가격이 없습니다. 비용과 수익을 계산할 수 없습니다.",
   "grid_view_recommended": "추천",
   "grid_view_unrestricted": "제한 없음",

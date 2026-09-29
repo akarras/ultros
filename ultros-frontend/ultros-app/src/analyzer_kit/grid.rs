@@ -343,9 +343,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     };
     let metrics = columns
         .iter()
-        .filter(|col| {
-            (col.lab.is_none() || lab_columns) && !matches!(col.spec.kind, ColumnKind::Actions)
-        })
+        .filter(|col| col.lab.is_none() || lab_columns)
         .map(|col| {
             let custom_value = custom_value.clone();
             let value = move |(_, row): &(usize, T)| match (col.cell)(row, &ctx.get()) {
@@ -536,8 +534,7 @@ fn column_unit(kind: ColumnKind) -> Unit {
         | ColumnKind::Trend
         | ColumnKind::ListingWorld
         | ColumnKind::ListingDc
-        | ColumnKind::HopWorlds
-        | ColumnKind::Actions => Unit::Plain,
+        | ColumnKind::HopWorlds => Unit::Plain,
     }
 }
 
@@ -628,7 +625,6 @@ fn grid_id<T, M>(col: &ToolColumnMeta<T, M>) -> &'static str {
         ColumnKind::CostSlot => "cost",
         ColumnKind::RevenueSlot => "price",
         ColumnKind::SalesPerDay7 => "daily-sales",
-        ColumnKind::Actions => "actions",
         _ => col.sort_id,
     }
 }

@@ -1,4 +1,6 @@
 {
+    "analyzer_project_materials": "Projektmaterialien prüfen, ohne vorhandene Gegenstände und ausgefilterte Kristalle",
+    "analyzer_add_ingredients": "Zutaten hinzufügen…",
   "fc_crafting_missing_prices": "Für einige benötigte Materialien gibt es keinen Preis. Kosten und Gewinn sind nicht verfügbar.",
   "grid_view_recommended": "Empfohlen",
   "grid_view_unrestricted": "Uneingeschränkt",

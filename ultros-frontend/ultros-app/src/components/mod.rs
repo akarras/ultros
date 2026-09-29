@@ -11,6 +11,7 @@ pub use ultros_ui_shell::components::ad;
 pub mod accessibility_fixture;
 pub mod app_shell;
 pub mod cart;
+pub mod item_actions;
 pub use ultros_frontend_core::components::guest_alert_evaluator;
 pub use ultros_frontend_core::components::inbox_live;
 pub use ultros_ui::components::clipboard;

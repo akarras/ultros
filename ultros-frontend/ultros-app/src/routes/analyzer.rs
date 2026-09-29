@@ -23,6 +23,7 @@ use crate::analyzer_kit::{
 };
 use crate::columnar_wire::columnar_resource;
 use crate::components::crafting_cost::vendor_price_map;
+use crate::components::item_actions::ItemActions;
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
@@ -36,8 +37,6 @@ use crate::{
         get_cheapest_listings_live, get_recent_sales_for_world, get_resale_quality, post_sparklines,
     },
     components::{
-        add_to_list::AddToList,
-        clipboard::*,
         confidence_badge::ConfidenceBadge,
         control_bar::{ControlBar, ControlBarPopovers},
         gil::*,
@@ -2363,8 +2362,7 @@ COL_LAST_SOLD => (view! {
                                                     })
                                             }}
                                         </a>
-                                        <Clipboard clipboard_text=item.to_string() />
-                                        <AddToList item_id />
+                                        <ItemActions item_id item_name=item hq=hq />
                                     </div> }).into_any(),
 "profit" => (view! { <div class="px-3 py-2   text-right flex items-center justify-end">
                                         <Gil amount=data.profit />

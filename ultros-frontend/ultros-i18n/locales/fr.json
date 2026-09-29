@@ -1,4 +1,6 @@
 {
+    "analyzer_project_materials": "Vérifier les matériaux du projet, sans les objets possédés ni les cristaux exclus par vos filtres",
+    "analyzer_add_ingredients": "Ajouter les ingrédients…",
   "fc_crafting_missing_prices": "Certains matériaux requis n'ont pas de prix. Le coût et le profit ne sont pas disponibles.",
   "grid_view_recommended": "Recommandée",
   "grid_view_unrestricted": "Sans restriction",

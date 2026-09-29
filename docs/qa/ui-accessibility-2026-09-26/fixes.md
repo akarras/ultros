@@ -53,3 +53,22 @@ The before captures came from the public build at the audit baseline. After capt
 ## Manual follow-up
 
 Automated DOM/keyboard checks are not a screen-reader certification. Before a release, spot-check NVDA/VoiceOver announcements, physical iOS/Android keyboards, forced colors, and 400% zoom. The chart table exposes the shared time-bucket aggregates; it is not a transcription of every density bin or candlestick field.
+
+## Merge review (2026-09-28)
+
+The review resolved the `integration/package.json` conflict with current main while retaining both accessibility and analyzer-action test commands. It also found a modal notification regression: native `showModal()` makes the app-level toast container inert, so errors raised from a dialog could not be read or dismissed there. `DialogSurface` now renders the shared notification state inside the modal. The new browser regression checks the accessibility tree, keyboard focus, and dismissal of a modal error.
+
+The review also found redundant keyboard stops on tooltip wrappers around and inside native controls. Standalone help remains focusable, while wrappers containing or inside a native control defer to that control. The analyzer-action probe now covers this regression and recognizes the mobile card layout without assigning grid semantics to cards.
+
+Validation of the repaired tree:
+
+- Client compilation, JS/WASM generation, and the native server build passed with `test-auth`.
+- The focused accessibility suite and real list-dialog keyboard suite passed, including the added modal-error regression, nested dialogs, focus restoration, and mobile notification sizing.
+- The complete `./check_ci.sh` gate passed after both repairs, including the feature-gated CSV tests and reactive-graph regressions.
+- All 170 JavaScript regression tests passed.
+- Analyzer inline actions passed across ten routes at desktop and mobile widths, including the new redundant-tab-stop assertion and copy/dialog behavior. The assertion failed on the preceding build and passed after the shared tooltip fix.
+- The broad route assertions were updated for the existing verdict/basket anchors, the compact `5% tax` summary, and the signed-out `User groups` heading. Desktop and mobile passes succeeded with the updated assertions. The wide pass exposed the separate metadata race described below.
+
+The full E2E driver is not represented as green. The review also ran it on the preload PR, which does not contain the accessibility changes. Existing analyzer filter/operator/menu selectors, list/group navigation or persistence checks, and fixture-dependent assertions failed there too. Empty sale-statistics data initially caused intentional HTTP 503 responses; a minimal synthetic fixture in the disposable local database allowed strict route checks to exercise initialized-market behavior. Priced Lists acceptance and the production soak were not performed by this review.
+
+A repeated-load probe additionally found intermittent missing social metadata in the server HTML for `/cookie-policy`, followed by a client metadata hydration panic. The omission reproduced on both independently built branches (including one response in a 95-request preload-build probe). `social_meta.rs` is unchanged from main in both branches. This existing race remains unresolved and is not hidden by a successful retry. The focused modal repair does not change that metadata implementation.

@@ -1,6 +1,8 @@
 //! Native modal surface shared by search and task dialogs.
 use leptos::{html, prelude::*, reactive::wrappers::write::SignalSetter};
 
+use super::toast::ToastContainer;
+
 fn contain_tab(event: web_sys::KeyboardEvent, panel: NodeRef<html::Dialog>) {
     #[cfg(feature = "hydrate")]
     {
@@ -99,6 +101,12 @@ pub fn DialogSurface(
             aria-modal="true" data-ultros-modal=""
             on:keydown=move |event| contain_tab(event, panel)
             on:cancel=move |event: web_sys::Event| { event.prevent_default(); set_visible(false); }
-        >{children()}</dialog>
+        >
+            {children()}
+            // Native modality makes the app-level notification area inert.
+            // Keep the shared notifications readable and dismissible inside
+            // this modal too; with nested dialogs only the top one is active.
+            <ToastContainer />
+        </dialog>
     }
 }

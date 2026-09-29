@@ -25,6 +25,7 @@ pub fn AccessibilityFixture() -> impl IntoView {
         <Show when=move || open.get()>
             <Modal set_visible=open.write_only()>
                 <h2>"Choose worlds"</h2>
+                <button id="fixture-dialog-error" on:click=move |_| toasts.error("Dialog fixture error")>"Show dialog error"</button>
                 <Tooltip tooltip_text="Pick a world for each market"><span id="fixture-help">"World help"</span></Tooltip>
                 <label for="fixture-buy-world">"Buy world"</label>
                 <Select input_id=Some("fixture-buy-world".to_string()) label="Buy world" items=choices choice=chosen.into() set_choice=chosen.write_only().into()
