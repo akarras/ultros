@@ -5,6 +5,8 @@
   "description": "Puppeteer-based E2E tests for the Ultros Leptos app",
   "license": "MIT",
   "scripts": {
+    "test:npc-map-preview": "node ./npc-map-preview.cjs",
+    "test:accessibility": "node ./accessibility.cjs",
     "test:analyzer-actions": "node ./analyzer-actions.cjs",
     "test:game-data-startup": "node ./game-data-startup.cjs",
     "test:search-responsiveness": "node ./search-responsiveness.cjs",

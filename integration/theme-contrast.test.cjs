@@ -33,3 +33,14 @@ test('all twelve palettes keep primary and secondary ink legible on their surfac
   }
   assert.deepEqual(failures, []);
 });
+
+ test('semantic status ink stays legible across every palette in both themes', () => {
+  const statusRules = [...css.matchAll(/([^{}]+)\{([^{}]*--status-success:[^{}]+)\}/g)];
+  const ink = Object.fromEntries(statusRules.map(([, selector, body]) => [selector.includes('light') ? 'light' : 'dark', [...body.matchAll(/--status-(?:success|warning|error): (#[\da-f]{6})/g)].map(m => m[1])]));
+  assert.equal(ink.dark.length, 3); assert.equal(ink.light.length, 3);
+  for (const [, name, body] of palettes) for (const mode of ['dark', 'light']) {
+    const page = rgb(body.match(new RegExp('--palette-page-' + mode + ': (#[\\da-f]{6});'))[1]);
+    const surface = page.map(x => mode === 'dark' ? x * 0.91 + 0.09 : x * 0.96);
+    for (const color of ink[mode]) assert.ok(contrast(rgb(color), surface) >= 4.5, name + ' ' + mode + ' ' + color);
+  }
+ });

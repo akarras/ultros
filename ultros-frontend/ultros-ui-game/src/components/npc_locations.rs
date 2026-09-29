@@ -92,6 +92,19 @@ fn other_catalog_item_count(
     items.len()
 }
 
+const PREVIEW_SCALE: f64 = 2.5;
+const PREVIEW_ASPECT_RATIO: f64 = 16.0 / 9.0;
+
+fn preview_offsets(fx: f64, fy: f64) -> (f64, f64) {
+    // The square map is scaled in viewport widths, but CSS top percentages
+    // use viewport heights. Clamp each axis in its own units.
+    let vertical_scale = PREVIEW_SCALE * PREVIEW_ASPECT_RATIO;
+    (
+        (0.5 - fx * PREVIEW_SCALE).clamp(1.0 - PREVIEW_SCALE, 0.0),
+        (0.5 - fy * vertical_scale).clamp(1.0 - vertical_scale, 0.0),
+    )
+}
+
 /// A non-interactive, zoomed map for a hover card. The full NPC page owns the
 /// pannable map; this preview deliberately has no controls because moving the
 /// pointer off the anchor closes the overlay.
@@ -99,20 +112,18 @@ fn other_catalog_item_count(
 fn NpcMapPreview(placement: NpcPlacement, label: String) -> impl IntoView {
     let data = tracked_data();
     let map = data.maps.get(&placement.map)?;
-    let scale = 2.5_f64;
     let fx = f64::from(map.fraction(placement.x));
     let fy = f64::from(map.fraction(placement.y));
-    let min_offset = 1.0 - scale;
-    let left = (0.5 - fx * scale).clamp(min_offset, 0.0);
-    let top = (0.5 - fy * scale).clamp(min_offset, 0.0);
+    let (left, top) = preview_offsets(fx, fy);
     Some(view! {
         <div
             data-npc-map-preview=placement.map.0
-            class="relative aspect-[16/9] w-full overflow-hidden rounded-md border border-[color:var(--color-outline)] bg-black/40"
+            class="relative w-full overflow-hidden rounded-md border border-[color:var(--color-outline)] bg-black/40"
+            style=format!("aspect-ratio:{PREVIEW_ASPECT_RATIO}")
         >
             <div
-                class="absolute"
-                style=format!("width:{}%;left:{}%;top:{}%", scale * 100.0, left * 100.0, top * 100.0)
+                class="absolute aspect-square"
+                style=format!("width:{}%;left:{}%;top:{}%", PREVIEW_SCALE * 100.0, left * 100.0, top * 100.0)
             >
                 <img
                     src=map_image_href(placement.map)
@@ -234,6 +245,27 @@ pub fn LeveIssuers(leve_id: i32) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_centres_interior_pins_and_keeps_edges_in_view() {
+        let vertical_scale = PREVIEW_SCALE * PREVIEW_ASPECT_RATIO;
+        for (fx, fy) in [(0.5, 0.5), (0.3, 0.7), (0.7, 0.3)] {
+            let (left, top) = preview_offsets(fx, fy);
+            assert!((left + fx * PREVIEW_SCALE - 0.5).abs() < 1e-9);
+            assert!((top + fy * vertical_scale - 0.5).abs() < 1e-9);
+        }
+        for fx in [0.0, 0.01, 0.99, 1.0] {
+            for fy in [0.0, 0.01, 0.99, 1.0] {
+                let (left, top) = preview_offsets(fx, fy);
+                let x = left + fx * PREVIEW_SCALE;
+                let y = top + fy * vertical_scale;
+                assert!((-1e-9..=1.0 + 1e-9).contains(&x), "x={x}");
+                assert!((-1e-9..=1.0 + 1e-9).contains(&y), "y={y}");
+                assert!(left <= 0.0 && left + PREVIEW_SCALE >= 1.0);
+                assert!(top <= 0.0 && top + vertical_scale >= 1.0);
+            }
+        }
+    }
 
     #[test]
     fn ssr_renders_giver_coordinates_and_unknown_fallbacks() {

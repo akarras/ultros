@@ -7,6 +7,21 @@ const puppeteer = require('puppeteer');
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const hash = (directory, lang) => createHash('sha256').update(readFileSync(path.join(__dirname, `../data/${directory}/${lang}.rkyv`))).digest('hex').slice(0, 16);
 
+async function assertStartupPreloaded(page, requests, lang) {
+  const url = `/static/startup/${hash('xiv-startup', lang)}/${lang}.rkyv`;
+  const link = await page.$eval('head #game-data-preload', el => ({
+    url: new URL(el.href).pathname, as: el.as, crossorigin: el.crossOrigin,
+  }));
+  assert.deepEqual(link, { url, as: 'fetch', crossorigin: 'anonymous' });
+  assert.equal(requests.filter(path => path === url).length, 1, 'preload must be reused by the client fetch');
+  const timing = await page.evaluate(url => ({
+    start: performance.getEntriesByType('resource').find(entry => new URL(entry.name).pathname === url)?.startTime,
+    wasmLoaded: window.__wasmLoadedAt,
+  }), url);
+  assert.ok(Number.isFinite(timing.start) && timing.start < timing.wasmLoaded,
+    `startup pack must begin loading before WASM is ready: ${JSON.stringify(timing)}`);
+}
+
 (async () => {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
@@ -24,6 +39,8 @@ const hash = (directory, lang) => createHash('sha256').update(readFileSync(path.
     });
     await page.evaluateOnNewDocument(() => {
       window.__hydrated = false;
+      window.__wasmLoadedAt = null;
+      window.addEventListener('ultros:wasm-loaded', () => { window.__wasmLoadedAt = performance.now(); });
       window.addEventListener('ultros:hydrated', () => { window.__hydrated = true; });
       const open = IDBFactory.prototype.open;
       IDBFactory.prototype.open = function (name, ...args) {
@@ -33,6 +50,7 @@ const hash = (directory, lang) => createHash('sha256').update(readFileSync(path.
     });
     await page.goto(`${BASE}/item/Gilgamesh/5333?lang=en`, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await page.waitForFunction(() => window.__hydrated);
+    await assertStartupPreloaded(page, requests, 'en');
     assert.ok(requests.includes(`/static/startup/${hash('xiv-startup', 'en')}/en.rkyv`));
     assert.ok(!requests.some(url => url.startsWith('/static/data/')), 'full catalog downloaded');
     assert.ok(!requests.some(url => url.includes('/description/')), 'description fetched before hover');
@@ -63,8 +81,10 @@ const hash = (directory, lang) => createHash('sha256').update(readFileSync(path.
     await page.waitForFunction(() => window.__hydrated);
     await page.waitForFunction(name => document.querySelector('h1')?.textContent.includes(name), {}, npc.name);
     assert.ok((await page.$eval('meta[property="og:title"]', el => el.content)).includes(npc.name), 'NPC social metadata lost on hydration');
+    const japaneseStart = requests.length;
     await page.goto(`${BASE}/item/Gilgamesh/5333?lang=ja`, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await page.waitForFunction(() => window.__hydrated);
+    await assertStartupPreloaded(page, requests.slice(japaneseStart), 'ja');
     assert.ok(requests.includes(`/static/startup/${hash('xiv-startup', 'ja')}/ja.rkyv`));
     await page.hover('img.icon-large');
     await page.waitForSelector('[data-testid="item-description"]');

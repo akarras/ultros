@@ -102,6 +102,9 @@ pub fn QueryGrid<T, K, KF, H, F, M>(
     #[prop(optional)] metrics: Vec<GridMetric<T>>,
     #[prop(optional)] on_rows: Option<Callback<Vec<T>>>,
     #[prop(default = true)] show_saved_views: bool,
+    /// Opt in for analyzer result cards; editable grids retain their table interaction.
+    #[prop(optional)]
+    mobile_cards: bool,
     #[prop(default = 40.0)] row_height: f64,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
     /// Forwarded to [`VirtualGrid`]: data-row index to scroll into view.
@@ -365,7 +368,7 @@ where
             </div>
         })}
         {move || result.with(|r|r.sort_pending).then(||view! {<div class="px-3 py-2 text-xs" role="status">{t!(i18n,grid_query_pending)}</div>})}
-        <VirtualGrid each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
+        <VirtualGrid mobile_cards each=queried columns=resolved layout on_change reset_scroll=reset visible_range=range
             reveal_index key=move |row: &T| key.with_value(|key| key(row)) header view measure measure_version row_height id label/>
     }
 }

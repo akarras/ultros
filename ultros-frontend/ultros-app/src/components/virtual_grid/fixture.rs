@@ -7,6 +7,7 @@ pub fn GridFixtureRoutes() -> leptos_router::any_nested_route::AnyNestedRoute {
         use leptos::prelude::*;
         use leptos_router::{components::Route, path};
         (
+            view! { <Route path=path!("__test/accessibility") view=crate::components::accessibility_fixture::AccessibilityFixture/> }.into_inner(),
             view! { <Route path=path!("__test/virtual-grid") view=GridFixture/> }.into_inner(),
             view! { <Route path=path!("__test/shared-analyzer-data") view=QueryFixture/> }
                 .into_inner(),
@@ -295,7 +296,7 @@ mod development {
             <button id="fixture-restore" on:click=move |_|size.set(10_000)>"Restore results"</button>
             <button id="fixture-enrich" on:click=move |_|enriched.update(|value| *value = !*value)>"Toggle late enrichment"</button>
             <span id="fixture-sorts">{move || sorts.get()}</span>
-            <QueryGrid id="fixture-grid" label="Grid fixture" each=rows columns measure_version
+            <QueryGrid mobile_cards=query.with_untracked(|q| q.get("cards").as_deref() == Some("true")) id="fixture-grid" label="Grid fixture" each=rows columns measure_version
                 key=|r:&(usize,u32)|r.0
                 header=move |id|view!{<button on:click=move |_|sorts.update(|s|*s+=1)>{id}</button>}.into_any()
                 view=move |row,id|view!{<div>{move || text(&row,id)}</div>}.into_any()
@@ -355,7 +356,7 @@ mod tests {
         let routes = GridFixtureRoutes();
         assert_eq!(
             routes.generate_routes().into_iter().count(),
-            2 * usize::from(cfg!(debug_assertions))
+            3 * usize::from(cfg!(debug_assertions))
         );
         assert_eq!(
             routes.match_nested("/__test/virtual-grid").0.is_some(),

@@ -9,6 +9,7 @@ const dialog = '[role="dialog"]';
 async function main() {
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 900 });
   const errors = [];
   let listId;
   page.setDefaultTimeout(30000);

@@ -16,6 +16,7 @@ where
     let disabled = Signal::derive(move || tooltip_text.with(|t| t.is_empty()));
     view! {
         <HoverCard
+            description=tooltip_text
             disabled=disabled
             class=format!("inline-block {}", class.unwrap_or_default())
             content=move || {

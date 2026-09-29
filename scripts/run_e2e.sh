@@ -176,6 +176,9 @@ fi
 log "running projected game-data startup and deferred detail E2E"
 ( cd integration && BASE_URL="$BASE_URL" npm run test:game-data-startup ) || test_exit=$?
 
+log "running NPC map-preview geometry and keyboard E2E"
+( cd integration && BASE_URL="$BASE_URL" npm run test:npc-map-preview ) || test_exit=$?
+
 if [ "${RUN_ITEM_VIEW_LAYOUT:-1}" != "0" ]; then
     log "running item-view wide-layout E2E (issue #1234)"
     item_view_layout_exit=0
@@ -470,6 +473,13 @@ if [ "${LISTS_ACCEPTANCE:-0}" = "1" ]; then
     if [ "$lists_acceptance_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
         test_exit="$lists_acceptance_exit"
     fi
+fi
+
+if [ "${E2E_RELEASE:-0}" != "1" ]; then
+    log "running shared accessibility E2E"
+    accessibility_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:accessibility ) || accessibility_exit=$?
+    if [ "$accessibility_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$accessibility_exit"; fi
 fi
 
 log "screenshots in integration/artifacts/ (exit=$test_exit)"

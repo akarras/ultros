@@ -89,6 +89,7 @@ pub fn HoverCard<T>(
     /// Overlay content, rendered into a body portal while open.
     #[prop(into)]
     content: ViewFn,
+    #[prop(optional, into)] description: Option<Signal<String>>,
     /// Milliseconds of sustained hover before opening. Focus opens instantly.
     #[prop(default = 0)]
     open_delay_ms: u32,
@@ -103,6 +104,8 @@ pub fn HoverCard<T>(
 where
     T: Sized + Render + RenderHtml + Send + 'static,
 {
+    let description_id = RwSignal::new(String::new());
+    Effect::new(move |_| description_id.set(format!("help-{}", uuid::Uuid::new_v4())));
     let (hover_open, set_hover_open) = signal(false);
     let (is_focused, set_is_focused) = signal(false);
     // Pending open-delay timer (`TimeoutHandle` wraps an i32, so plain
@@ -110,6 +113,32 @@ where
     // SSR arena drops it from a different tokio worker thread).
     let pending = StoredValue::new(None::<TimeoutHandle>);
 
+    let close_pending = StoredValue::new(None::<TimeoutHandle>);
+    let cancel_close = move || {
+        if let Some(handle) = close_pending.get_value() {
+            handle.clear();
+            close_pending.set_value(None);
+        }
+    };
+    let request_close = move || {
+        cancel_close();
+        close_pending.set_value(
+            set_timeout_with_handle(
+                move || {
+                    set_hover_open.set(false);
+                    close_pending.set_value(None);
+                },
+                Duration::from_millis(200),
+            )
+            .ok(),
+        );
+    };
+    on_cleanup(move || {
+        cancel_close();
+        if let Some(handle) = pending.get_value() {
+            handle.clear();
+        }
+    });
     let clear_pending = move || {
         if let Some(handle) = pending.get_value() {
             handle.clear();
@@ -117,6 +146,7 @@ where
         }
     };
     let request_open = move || {
+        cancel_close();
         if disabled.get_untracked() {
             return;
         }
@@ -163,6 +193,23 @@ where
     }
 
     let target = NodeRef::<Div>::new();
+    #[cfg(feature = "hydrate")]
+    target.on_load(move |element| {
+        // Native controls already supply the keyboard stop. Keep standalone
+        // help focusable without inserting a second stop around or inside a
+        // button/link (including the tooltip inside a clipboard button).
+        if description.is_some() {
+            let inside_control = element.parent_element().and_then(|parent| {
+                parent.closest("button,a[href],input,select,textarea").ok().flatten()
+            }).is_some();
+            let contains_control = element.query_selector(
+                "button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled)",
+            ).ok().flatten().is_some();
+            if inside_control || contains_control {
+                let _ = element.remove_attribute("tabindex");
+            }
+        }
+    });
 
     let overlay = {
         cfg_if! {
@@ -210,12 +257,14 @@ where
                                 use_window(),
                                 leptos::ev::keydown,
                                 move |ev| {
-                                    if ev.key() == "Escape" {
+                                    if ev.key() == "Escape" && is_open.get_untracked() {
+                                        ev.prevent_default();
+                                        ev.stop_propagation();
                                         set_hover_open.set(false);
                                         set_is_focused.set(false);
                                     }
                                 },
-                                UseEventListenerOptions::default().capture(false).passive(true),
+                                UseEventListenerOptions::default().capture(false).passive(false),
                             );
                             let node_ref = NodeRef::<Div>::new();
                             let UseElementSizeReturn {
@@ -262,10 +311,12 @@ where
                             // i.e. the layout viewport) keeps long text
                             // wrapping inside the edge margins.
                             view! {
-                                <Portal mount=document().body().unwrap()>
+                                <Portal mount=target.get_untracked().and_then(|el| el.closest("dialog").ok().flatten()).unwrap_or_else(|| document().body().expect("document body").into())>
                                     <div
                                         node_ref=node_ref
                                         role="tooltip"
+                                        on:mouseenter=move |_| { cancel_close(); set_hover_open.set(true); }
+                                        on:mouseleave=move |_| request_close()
                                         class="fixed z-50 w-max max-w-[calc(100%_-_1rem)] transition-opacity duration-150 animate-fade-in"
                                         style=style
                                     >
@@ -290,15 +341,20 @@ where
     view! {
         <div
             class=class.unwrap_or_default()
+            tabindex=description.map(|_| "0")
+            aria-describedby=move || description.and_then(|_| { let id = description_id.get(); (!id.is_empty()).then_some(id) })
+            on:click=move |_| { if description.is_some() { set_hover_open.update(|open| *open = !*open); } }
             on:mouseenter=move |_| request_open()
             on:mouseleave=move |_| {
                 clear_pending();
-                set_hover_open.set(false);
+                request_close();
             }
             on:focusin=move |_| set_is_focused.set(true)
             on:focusout=move |_| set_is_focused.set(false)
             on:keydown=move |ev| {
-                if ev.key() == "Escape" {
+                if ev.key() == "Escape" && is_open.get_untracked() {
+                    ev.prevent_default();
+                    ev.stop_propagation();
                     clear_pending();
                     set_hover_open.set(false);
                     set_is_focused.set(false);
@@ -307,6 +363,7 @@ where
             node_ref=target
         >
             {children()}
+            {description.map(|text| view! { <span hidden id=move || { let id = description_id.get(); (!id.is_empty()).then_some(id) }>{move || text.get()}</span> })}
             {overlay}
         </div>
     }

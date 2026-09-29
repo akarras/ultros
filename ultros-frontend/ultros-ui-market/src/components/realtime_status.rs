@@ -35,12 +35,8 @@ pub fn get_status_info(status: &str) -> StatusInfo {
 pub fn RealtimeStatus(
     #[prop(into)] status: Signal<String>,
     #[prop(into)] last_update: Signal<Option<DateTime<Utc>>>,
-    /// Drop the text label below `md`, leaving just the colored dot.
-    ///
-    /// For callers in a height-locked row that has no horizontal slack on a
-    /// phone — the Flip Finder's control bar, where "Reconnecting" alone is
-    /// a quarter of a 375px row. The dot already carries the state, and the
-    /// label comes back at `md`.
+    /// Use a state symbol below `md` in space-constrained rows, while keeping
+    /// the text label available to assistive technology at every width.
     #[prop(optional)]
     compact: bool,
 ) -> impl IntoView {
@@ -71,57 +67,29 @@ pub fn RealtimeStatus(
         }
     });
 
-    move || {
-        let status_key = status.get();
-        let StatusInfo {
-            dot_class,
-            label_key,
-        } = get_status_info(status_key.as_str());
-
-        let status_label = match label_key {
-            "list_view_live_status_live" => t_string!(i18n, list_view_live_status_live).to_string(),
-            "list_view_live_status_reconnecting" => {
-                t_string!(i18n, list_view_live_status_reconnecting).to_string()
-            }
-            "list_view_live_status_offline" => {
-                t_string!(i18n, list_view_live_status_offline).to_string()
-            }
-            _ => t_string!(i18n, list_view_live_status_connecting).to_string(),
-        };
-
-        let status_key_for_view = status_key.clone();
-        let status_label_clone = status_label.clone();
-        let label_class = if compact { "hidden md:inline" } else { "" };
-        let tooltip_text = Signal::derive(move || {
-            let updated = updated_label.get();
-            if updated.is_empty() {
-                status_label_clone.clone()
-            } else {
-                format!("{status_label_clone} · {updated}")
-            }
-        });
-        view! {
-            <Tooltip tooltip_text=tooltip_text>
-                <span
-                    class="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text-muted)]"
-                    data-testid="realtime-status-indicator"
-                    data-status=status_key_for_view.clone()
-                >
-                    <span class="relative flex h-2 w-2">
-                        {if status_key == "live" {
-                            view! {
-                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                            }
-                                .into_any()
-                        } else {
-                            ().into_any()
-                        }}
-                        <span class=format!("relative inline-flex rounded-full h-2 w-2 {}", dot_class)></span>
-                    </span>
-                    <span class=label_class>{status_label.clone()}</span>
-                </span>
-            </Tooltip>
+    let status_label = Signal::derive(move || match status.get().as_str() {
+        "live" => t_string!(i18n, list_view_live_status_live).to_string(),
+        "reconnecting" => t_string!(i18n, list_view_live_status_reconnecting).to_string(),
+        "offline" => t_string!(i18n, list_view_live_status_offline).to_string(),
+        _ => t_string!(i18n, list_view_live_status_connecting).to_string(),
+    });
+    let tooltip_text = Signal::derive(move || {
+        let updated = updated_label.get();
+        if updated.is_empty() {
+            status_label.get()
+        } else {
+            format!("{} · {updated}", status_label.get())
         }
+    });
+    view! {
+        <Tooltip tooltip_text>
+            <span class="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text-muted)]"
+                role="status" aria-atomic="true" data-testid="realtime-status-indicator" data-status=move || status.get()>
+                <span aria-hidden="true" class=move || format!("relative inline-flex rounded-full h-2 w-2 {}", get_status_info(&status.get()).dot_class)></span>
+                {compact.then(|| view! { <span class="md:hidden" aria-hidden="true">{move || match status.get().as_str() { "live" => "✓", "offline" => "×", _ => "↻" }}</span> })}
+                <span class=if compact { "sr-only md:not-sr-only" } else { "" }>{move || status_label.get()}</span>
+            </span>
+        </Tooltip>
     }
 }
 

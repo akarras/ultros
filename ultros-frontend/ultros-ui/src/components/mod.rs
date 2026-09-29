@@ -1,6 +1,7 @@
 pub mod app_link;
 pub mod clipboard;
 pub mod confidence_badge;
+pub mod dialog;
 pub mod dismissable;
 pub mod filter_chip;
 pub mod gil;

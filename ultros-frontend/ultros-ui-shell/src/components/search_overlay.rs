@@ -9,15 +9,14 @@
 //! not the layout viewport when the keyboard opens, so a bottom-anchored
 //! input ends up behind the keyboard with no pure-CSS remedy.
 
-use crate::components::icon::Icon;
 use crate::components::search_box::SearchBox;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::i18n::{t_string, use_i18n};
-use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_hotkeys::use_hotkeys;
 use leptos_router::hooks::use_location;
+use ultros_ui::components::dialog::DialogSurface;
 
 #[component]
 pub fn SearchOverlay() -> impl IntoView {
@@ -38,25 +37,10 @@ pub fn SearchOverlay() -> impl IntoView {
         state.close();
     });
 
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Escape" {
-            state.close();
-        }
-    };
-
     view! {
         <Show when=move || open.get()>
-            // No `aria-modal="true"`: focus is not trapped and background
-            // content is not inert, so claiming it would tell assistive tech
-            // to ignore a page it can still tab into. Add the attribute when
-            // a real focus trap lands — the existing `Modal` component has
-            // the same gap and should get one at the same time.
-            <div
-                class="search-overlay"
-                role="dialog"
-                aria-label=t_string!(i18n, search).to_string()
-                on:keydown=on_keydown
-            >
+            <DialogSurface class="search-overlay" set_visible=open.write_only()
+                aria_label=Some(Signal::derive(move || t_string!(i18n, search).to_string()))>
                 <div
                     class="search-overlay-backdrop"
                     on:click=move |_| state.close()
@@ -90,27 +74,17 @@ pub fn SearchOverlay() -> impl IntoView {
                         <div class="search-overlay-searchbox">
                             <SearchBox autofocus=true />
                         </div>
-                        // Explicit close affordance. Visible on desktop only:
-                        // at 375px it sat 20px from the input's own clear-X —
-                        // two adjacent X's meaning different things (#1067) —
-                        // and cost 52px of a 351px row. Below 1024px the CSS
-                        // collapses it to a visually-hidden control (it comes
-                        // back at full size on :focus-visible) and tap-off
-                        // takes over as the pointer path. It stays in the DOM
-                        // at every width so keyboard and assistive-tech users
-                        // always have a reachable, labelled exit — tap-off is
-                        // a plain div and Escape needs a hardware keyboard.
                         <button
                             type="button"
                             class="search-overlay-close"
                             aria-label=t_string!(i18n, close).to_string()
                             on:click=move |_| state.close()
                         >
-                            <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
+                            {t_string!(i18n, close)}
                         </button>
                     </div>
                 </div>
-            </div>
+            </DialogSurface>
         </Show>
     }
     .into_any()

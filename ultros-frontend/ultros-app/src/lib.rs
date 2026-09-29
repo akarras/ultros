@@ -663,6 +663,18 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
 
     view! {
         <Title text="Ultros" />
+        // Start the hydration data download while WASM is loading. Resolve
+        // this after query/cookie/region locale selection so the preload and
+        // the client's fetch use the same content-addressed language pack.
+        // Fetch preloads need CORS mode even for same-origin URLs to be reused.
+        <Link
+            id="game-data-preload"
+            rel="preload"
+            as_="fetch"
+            crossorigin="anonymous"
+            fetchpriority="low"
+            href=xiv_gen_db::startup_url(i18n.get_locale_untracked().as_str())
+        />
         // Background gradient
         <div class="fixed inset-0 -z-10" style="background-color: var(--color-background);">
             <div class="absolute inset-0" style="background-image: radial-gradient(80% 60% at 50% 30%, var(--decor-spot), transparent 60%);" />

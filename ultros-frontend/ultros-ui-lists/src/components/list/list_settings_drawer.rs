@@ -74,17 +74,19 @@ pub fn ListSettingsDrawer(
                                     </h3>
                                     <div class="grid gap-3 md:grid-cols-2">
                                         <div class="flex flex-col gap-1">
-                                            <label class="label text-sm font-semibold">{t!(i18n, list_view_settings_rename_label)}</label>
+                                            <label for="list-settings-name" class="label text-sm font-semibold">{t!(i18n, list_view_settings_rename_label)}</label>
                                             <input
                                                 class="input w-full"
                                                 prop:value=details_name
                                                 on:input=move |ev| set_details_name(event_target_value(&ev))
-                                                data-testid="drawer-rename-input"
+                                                id="list-settings-name" data-testid="drawer-rename-input"
                                             />
                                         </div>
                                         <div class="flex flex-col gap-1">
-                                            <label class="label text-sm font-semibold">{t!(i18n, list_view_settings_world_label)}</label>
+                                            <label for="list-settings-world" class="label text-sm font-semibold">{t!(i18n, list_view_settings_world_label)}</label>
                                             <WorldPicker
+                                                input_id="list-settings-world".to_string()
+                                                label=Signal::derive(move || t_string!(i18n, list_view_settings_world_label).to_string())
                                                 current_world=details_world.into()
                                                 set_current_world=set_details_world.into()
                                             />
