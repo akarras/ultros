@@ -32,6 +32,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "Document",
     "DomRect",
     "Element",
+    "NodeList",
     # VirtualScroller window-scroll mode reads Element::get_bounding_client_rect.
     "DomRect",
     # FilterChip tells "the user cleared this" from "the number input holds

@@ -460,6 +460,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
             }
         }
     });
+    provide_context(ActiveTooltip(RwSignal::new(None)));
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
