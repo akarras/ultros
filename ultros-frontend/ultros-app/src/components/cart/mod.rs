@@ -1,13 +1,5 @@
-//! The redesigned Build cart (Track B of #1427), mounted behind the
-//! `lists-sync` Labs experiment for account and device lists alike.
-//!
-//! Presentation only: the [`ListWorkspaceSource`] it consumes carries the
-//! rows, capabilities and edit callbacks, and the route that built the
-//! source keeps the document, sync, authorization and guest storage
-//! lifecycles. Each part of the cart lives in its own file so the follow-on
-//! tickets can change rows, summary, details, selection and feedback
-//! independently. The legacy Labs grid, `ListBuildWorkspace`, stays in
-//! `routes::list_view_sync` untouched.
+//! The Build cart for account and device lists.
+//! Document, authorization and storage lifecycles belong to the route.
 
 pub mod details;
 pub mod estimate;
@@ -125,15 +117,6 @@ fn editor_drafting(target: Option<web_sys::EventTarget>) -> bool {
                 .get_attribute("data-committed")
                 .is_some_and(|committed| input.value().trim() != committed.trim())
         })
-}
-
-/// `?cart=legacy` mounts the previous Labs grid (`ListBuildWorkspace`) so a
-/// tester can compare the two presentations on the same list. The
-/// redesigned cart is the default under the experiment; no cookie or Labs
-/// token changes here.
-pub fn use_legacy_cart() -> Signal<bool> {
-    let query = ultros_ui::components::app_link::use_query_map_or_default();
-    Memo::new(move |_| query.with(|q| q.get("cart").is_some_and(|v| v == "legacy"))).into()
 }
 
 /// Deterministic, total ordering for the cart. `Price` sorts by the line

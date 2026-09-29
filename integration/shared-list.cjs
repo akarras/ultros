@@ -271,7 +271,7 @@ async function main() {
     );
 
     await inviteWriterPage.waitForFunction(
-      () => Array.from(document.querySelectorAll(".list-toolbar button")).some((button) => button.innerText.includes("Add Item")),
+      () => !!document.querySelector('[data-testid="inline-list-add"]'),
       { timeout: TIMEOUT_MS },
     );
 
@@ -289,8 +289,8 @@ async function main() {
 
     console.log("[step] owner deletes invite via UI");
     await ownerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "networkidle0" });
-    await ownerPage.click('[data-testid="list-settings-btn"]');
-    await ownerPage.waitForSelector('[data-testid="list-settings-drawer"]', { timeout: 10000 });
+    await ownerPage.click('[data-testid="list-access-btn"]');
+    await ownerPage.waitForSelector('[data-testid="list-invite-create"]', { timeout: 10000 });
 
     // Find the row containing our new invite ID (first 10 chars)
     const shortId = deleteInviteId.substring(0, 10);
@@ -339,7 +339,7 @@ async function main() {
     console.log("[step] reader leaves the shared list via UI");
     await readerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "networkidle0" });
     await readerPage.click('[data-testid="list-settings-btn"]');
-    await readerPage.waitForSelector('[data-testid="list-settings-drawer"]', { timeout: 10000 });
+    await readerPage.waitForSelector('[data-testid="list-leave-btn"]', { timeout: 10000 });
     await readerPage.click('[data-testid="list-leave-btn"]');
 
     // Wait for redirect to /list

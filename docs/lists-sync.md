@@ -1,6 +1,6 @@
 # Lists local-first sync
 
-`/list/:id` behind the `lists-sync` Labs toggle runs on a Loro CRDT document
+`/list/:id` runs on a Loro CRDT document
 stored in the browser and merged through the server. Spec:
 `docs/superpowers/specs/2026-09-07-lists-local-first-sync-design.md`.
 
@@ -210,8 +210,7 @@ the final integrated build or complete the production soak.
 
 ## Promotion
 
-Lists 2.0 adds guest Build/Shop and account adoption under the same Labs
-preference; its product contract is in
+Lists 2.0 provides guest Build/Shop and account adoption by default; its product contract is in
 [`2026-09-10-lists-2-product-design.md`](superpowers/specs/2026-09-10-lists-2-product-design.md).
 The Shop and companion requirements from that contract are tracked item by
 item, with the checks that exercised each one, in
@@ -226,19 +225,26 @@ remain translated in all seven supported locales. Verify keyboard focus
 through a committed row edit on both device and account lists before promotion.
 
 The existing root service worker also serves push notifications. Worker
-activation and control of open tabs are site-wide; only guest offline cache
-preparation is Labs opt-in. Its fetch handler can use an anonymous guest shell
+activation and control of open tabs are site-wide; guest offline cache
+preparation starts when a player visits the Lists directory or a device list.
+Its fetch handler can use an anonymous guest shell
 and public assets only after a cache generation has been prepared. It never
 caches authenticated page HTML, account APIs, or market responses. The guest
 store, offline helper, and companion modules ship with the versioned WASM
 package so an older cached static helper cannot change a deployed module API.
 
-Promotion out of Labs deletes `LAB_LISTS_SYNC`, the `LabsSettings` section
-when the registry is empty, the legacy `ListView`, and the REST-driven
-actions it owns. It requires the soak below to pass. Promotion requires decoded
-projection-checker evidence, a controlled bundle comparison and the production
-soak. Phase 4 validation is recorded below. This document does not record a
-completed production soak.
+The promotion change removes the Lists Labs gate, the empty Labs settings
+section, the legacy REST-driven list page and directory, and the temporary
+`?cart=legacy` comparison grid. Plain account/device URLs now open the same
+workspace as old preview links; stale `LABS` cookies and `?labs=lists-sync`
+parameters no longer select a different implementation. Shared REST APIs,
+projections, list data, browser storage keys and account adoption remain intact.
+
+Release gate: [#1510](https://github.com/akarras/ultros/issues/1510). Keep the
+promotion PR in draft until its deployed seven-day soak evidence and promotion
+decision are recorded. Related delivery: #1372; integrated acceptance: #1439.
+This code preparation does not record a completed production soak. The
+observation checklist below describes the pre-promotion deployment.
 
 ## Production soak
 

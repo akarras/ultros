@@ -154,7 +154,7 @@ async function main() {
     console.log("[step] client-side navigation to a second device list");
     const token = `undo-nav-${Date.now()}`;
     await page.evaluate(token => { window.__undoDocument = token; }, token);
-    await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
+    await page.$eval('a[href="/list"]', link => link.click());
     await page.waitForSelector(testId("list-new"));
     const listB = await createList(`Undo navigated ${Date.now()}`);
     assert.equal(await page.evaluate(() => window.__undoDocument), token,
@@ -264,7 +264,7 @@ async function main() {
     await saved();
 
     await page.evaluate(token => { window.__undoDocument = token; }, token);
-    await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
+    await page.$eval('a[href="/list"]', link => link.click());
     await page.waitForSelector(testId("list-new"));
     await page.$eval(`a[href^="${new URL(listA).pathname}"]`, link => link.click());
     await waitValue(NEEDED, 8);

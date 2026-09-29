@@ -90,7 +90,6 @@ async function main() {
   page.setDefaultTimeout(timeout);
   await page.setViewport({ width: 1280, height: 900 });
   await page.setCookie(
-    { name: "LABS", value: "lists-sync", url: base, path: "/" },
     { name: "HIDE_ADS", value: "true", url: base, path: "/" },
     { name: "i18n_pref_locale", value: "en", url: base, path: "/" },
   );
@@ -497,7 +496,7 @@ async function main() {
     // Use the router link rather than a document navigation: component
     // cleanup must close the companion even when pagehide never fires.
     await page.bringToFront();
-    await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
+    await page.$eval('a[href="/list"]', link => link.click());
     await page.waitForFunction(() => location.pathname === "/list");
     const closedByDeadline = await Promise.race([
       popup.isClosed() ? Promise.resolve(true) : new Promise(resolve => popup.once("close", () => resolve(true))),

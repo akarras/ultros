@@ -103,7 +103,7 @@ pub fn ListWorkspaceShell(
     };
     view! {
         <div class="space-y-3" data-testid="list-workspace-shell">
-            <a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline" href="/list?labs=lists-sync">{t!(i18n, guest_workspace_back)}</a>
+            <a class="inline-block text-sm text-[color:var(--color-text-muted)] hover:underline" href="/list">{t!(i18n, guest_workspace_back)}</a>
             <header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div class="min-w-0 flex-1 basis-56">
                     <h1 class="sr-only">{move || name.get()}</h1>

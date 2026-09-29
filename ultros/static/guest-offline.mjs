@@ -1,4 +1,4 @@
-// Preparation is opt-in from the hydrated Labs device-list experience.
+// Prepare offline support when the hydrated Lists directory or device editor opens.
 // No server HTML or account state is sent to the worker.
 let preparing;
 
@@ -80,13 +80,6 @@ export function prepare_guest_offline(catalogUrl, lang) {
   const prepare = () => {
     const path = location.pathname.replace(/\/$/, '');
     if (path !== '/list' && !path.startsWith('/list/device/')) return;
-    let cookie = '';
-    try {
-        cookie = decodeURIComponent((document.cookie.split(';').map(s => s.trim()).find(s => s.startsWith('LABS=')) || '').slice(5));
-    } catch (_) { /* an invalid cookie cannot enable an experiment */ }
-    const query = new URL(location.href).searchParams.get('labs') || '';
-    const enabled = [cookie, query].some(value => value.split(',').some(token => token.trim() === 'lists-sync'));
-    if (!enabled && !window.__ULTROS_OFFLINE_GUEST__) return;
     prepareGuestOffline(catalogUrl, lang)
         .catch(() => { window.__ULTROS_GUEST_OFFLINE_READY__ = false; });
   };

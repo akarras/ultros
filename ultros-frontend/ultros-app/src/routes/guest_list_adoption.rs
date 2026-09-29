@@ -162,7 +162,7 @@ mod browser {
                         },
                         _ => view! {
                             <a class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-make-online-sign-in" rel="external" href=move || {
-                                let next = continuation.map(|next| next.get()).unwrap_or_else(|| handle.with_value(|h| format!("/list/device/{}?labs=lists-sync&make_online=1", h.id())));
+                                let next = continuation.map(|next| next.get()).unwrap_or_else(|| handle.with_value(|h| format!("/list/device/{}?make_online=1", h.id())));
                                 format!("/login?next={}", String::from(js_sys::encode_uri_component(&next)))
                             }><Icon icon=i::BsCloudArrowUp aria_hidden=true />{t!(i18n, online_make)}</a>
                         }.into_any(),

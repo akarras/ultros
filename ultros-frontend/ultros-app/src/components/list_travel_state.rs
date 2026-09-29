@@ -125,7 +125,6 @@ impl ListTravelState {
 #[cfg(any(feature = "hydrate", test))]
 fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
     let mut query = ParamsMap::new();
-    query.replace("labs", "lists-sync".to_string());
     if shop {
         query.replace("buy", "true".to_string());
     }
@@ -192,6 +191,7 @@ mod tests {
         source.replace("excluded-worlds", "1,9".to_string());
         source.replace("excluded-datacenters", "Other & DC".to_string());
         source.replace("recovery", "1".to_string());
+        source.replace("labs", "lists-sync".to_string());
         source.replace("make_online", "1".to_string());
         let href = online_href(42, true, &source);
         assert!(href.starts_with("/list/42?"));
@@ -204,6 +204,7 @@ mod tests {
             "DC names remain one encoded query value"
         );
         assert!(!href.contains("recovery"));
+        assert!(!href.contains("labs="));
         assert!(!has_param(&href, "make_online", ""));
         assert!(!online_href(42, false, &source).contains("buy="));
         let continuation = device_continue_href("local-id", true, &source);

@@ -26,7 +26,7 @@ const USERS = {
   owner: { id: 990000000001, username: "ListFlowOwner" },
   reader: { id: 990000000002, username: "ListFlowReader" },
 };
-const LISTS_V2 = (process.env.LABS_COOKIE || "").split(",").includes("lists-sync");
+const LISTS_V2 = true;
 
 async function login(page, baseUrl, user) {
   const url = new URL("/test/login", baseUrl);
@@ -202,23 +202,9 @@ async function main() {
     await ownerPage.goto(listUrl, { waitUntil: "domcontentloaded" });
     await waitForHydration(ownerPage, TIMEOUT_MS);
 
-    // `ListRoute` picks `ListViewSync` (marked with data-testid="list-view-sync")
-    // or plain `ListView` based on the LABS cookie — assert the flow actually
-    // exercised the branch it thinks it did.
-    const hasSyncMarker = await ownerPage.evaluate(
-      () => !!document.querySelector('[data-testid="list-view-sync"]'),
-    );
-    if (process.env.LABS_COOKIE) {
-      if (!hasSyncMarker) {
-        fail(failures, "expected [data-testid=list-view-sync] under LABS_COOKIE");
-      } else {
-        pass("Labs list page rendered under LABS_COOKIE");
-      }
-    } else if (hasSyncMarker) {
-      fail(failures, "did not expect [data-testid=list-view-sync] without LABS_COOKIE");
-    } else {
-      pass("legacy list page rendered without LABS_COOKIE");
-    }
+    const hasSyncMarker = await ownerPage.$('[data-testid="list-view-sync"]');
+    if (!hasSyncMarker) fail(failures, "default list route must render Lists 2.0");
+    else pass("Lists 2.0 rendered without an opt-in requirement");
 
     if (LISTS_V2) {
       await ownerPage.type('input[aria-label="Add an item"]', "Maple Log");
