@@ -68,6 +68,7 @@ async function runCompanionLifecycle({ base, userId, createList, ownerApi, recor
       await page.click(tid("guest-shop-mode"));
       await page.waitForSelector((tid("shop-route-option") + '[data-route-cheapest="true"]'), { visible: true });
       if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+      if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
       await page.waitForSelector(tid("shop-stack-bought"));
       assert(await page.$$eval(tid("shop-stack-bought"), buttons => buttons.some(button => !button.disabled)), `${event}: priced purchase available before event`);
       const popupPromise = new Promise((resolve, reject) => {

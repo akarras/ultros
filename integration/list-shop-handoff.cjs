@@ -150,6 +150,14 @@ async function main() {
       "the handoff names the home world the trip starts from");
     assert.equal(await visible(testId("shop-no-prices")), !priced, "unknown prices are called out only when nothing is priced");
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
+    await page.waitForSelector(testId("shop-confirm-route"), { visible: true });
+    assert.equal(await visible(testId("shop-route-picker")), true, "preview keeps route choices visible");
+    assert.equal(await page.$(testId("shop-change-route")), null, "preview does not confirm a route");
+    await page.waitForSelector(testId("shop-stack-bought"));
+    assert(await page.$$eval(testId("shop-stack-bought"), buttons => buttons.every(button => button.disabled)), "preview cannot record purchases");
+    await click(testId("shop-confirm-route"));
+    await page.waitForSelector(testId("shop-change-route"), { visible: true });
+    assert.equal(await visible(testId("shop-route-picker")), false, "confirmation hides route choices");
     await page.waitForSelector(testId("shop-totals"));
     const planned = await text(testId("shop-totals"));
     assert.equal(await page.$eval(testId("shop-undo-purchase"), button => button.disabled), true,

@@ -442,6 +442,7 @@ async function main() {
     assert.equal(await visible(testId("shop-no-prices")), true, "unknown prices are called out before a trip exists");
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(testId("shop-totals"));
     assert.equal(await page.$eval(testId("shop-undo-purchase"), button => button.disabled), true,
       "manual Owned edits do not become Shop purchases on a device list");
@@ -482,6 +483,7 @@ async function main() {
 
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((testId("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(testId("open-shopping-companion"));
     const popupPromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Shopping companion did not open")), timeout);

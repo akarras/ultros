@@ -6,6 +6,7 @@
     "lists_recipe_preview_named": "Preview {{name}}",
     "lists_recipe_preview_action": "Preview",
     "lists_shop_change_route": "Change route",
+  "lists_shop_confirm_route": "Confirm",
     "lists_shop_current_route": "Your shopping trip",
     "lists_shop_no_home_cost": "Set a starting world",
     "lists_online_local_saved": "Online list · Local copy saved",
