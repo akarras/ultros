@@ -120,66 +120,59 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
             .unwrap_or(Locale::en)
     });
     let data_revision = use_context::<crate::global_state::xiv_data::DataRevision>();
-    let card = Resource::new_blocking(
-        move || {
-            (
-                locale.get(),
-                location.pathname.get(),
-                data_revision.map(|rev| rev.0.get()).unwrap_or_default(),
-            )
-        },
-        |(locale, path, _)| async move {
-            let kind = SocialCardKind::from_route(&path);
-            let world = item_world(&path);
-            let npc = if let SocialCardKind::Npc(id) = &kind {
-                crate::global_state::xiv_data::npc_detail(locale, *id)
-                    .await
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-            let content = crate::social_card::social_card_content_with_npc(
-                locale,
-                &kind,
-                world.as_deref(),
-                npc.as_ref(),
-            );
-            let (kind, content) = match content {
-                Some(content) => (kind, content),
-                None => resolved_card(locale, SocialCardKind::Home, None),
-            };
-            (
-                social_image_url(locale, &kind, world.as_deref()),
-                social_page_url(&path, locale, &kind),
-                content,
-            )
-        },
-    );
-    let card = move || {
-        card.get().unwrap_or_else(|| {
-            let (kind, content) = resolved_card(locale.get(), SocialCardKind::Home, None);
-            (
-                social_image_url(locale.get(), &kind, None),
-                social_page_url("/", locale.get(), &kind),
-                content,
+    let npc = social_npc(locale, location.pathname);
+    // Synchronous, and deliberately NOT inside a <Suspense>. leptos_meta
+    // hydrates head tags by walking one shared cursor through the <head> in
+    // the order the client view tree reaches them, while the server emits them
+    // in the order they were *registered*. Behind a Suspense these tags
+    // registered only after the resource resolved — i.e. after the page's own
+    // synchronous <Meta>s — yet hydrated before them (this component sits
+    // above Routes). Every tag was then bound to its neighbour's element, so
+    // the first reactive update wrote og:title onto <meta name=description>
+    // and duplicated og:* keys; and any time the Suspense's tags were missing
+    // from the SSR head, the client walked 19 tags past the end of <head> and
+    // trapped in tachys (GlitchTip #7964/#7976). Rendering them synchronously
+    // registers them in view order on the server and keeps them in the head
+    // regardless of streaming timing.
+    //
+    // The first value comes from the server. Hydration keeps the SSR attribute
+    // text and only writes a tag once its value *changes*, so a first client
+    // value that differs from the server's (the browser holds only its own
+    // locale's game-data pack, so an English card computes a translated item
+    // name) would leave a stale tag behind after the next update.
+    let server_card = StoredValue::new(Some(
+        SharedValue::new(move || {
+            card_for(
+                locale.get_untracked(),
+                &location.pathname.get_untracked(),
+                npc.get_untracked().as_ref(),
             )
         })
-    };
-    let title = move || format!("{} · Ultros", card().2.title);
-    let description = move || card().2.description;
+        .into_inner(),
+    ));
+    let card = Memo::new(move |_| {
+        if let Some(rev) = data_revision {
+            rev.0.track();
+        }
+        let card = card_for(locale.get(), &location.pathname.get(), npc.get().as_ref());
+        server_card
+            .try_update_value(Option::take)
+            .flatten()
+            .unwrap_or(card)
+    });
+    let title = move || card.with(|card| format!("{} · Ultros", card.2.title));
+    let description = move || card.with(|card| card.2.description.clone());
 
     view! {
-        <Suspense>
         <Meta property="og:title" content=title />
         <Meta name="twitter:title" content=title />
         <Meta property="og:description" content=description />
         <Meta name="twitter:description" content=description />
-        <Meta property="og:url" content=move || card().1 />
+        <Meta property="og:url" content=move || card.with(|card| card.1.clone()) />
         <Meta property="og:locale" content=move || og_locale(locale.get()) />
         <MetaImage
-            url=move || card().0
-            alt=move || { let content = card().2; format!("Ultros. {}. {}", content.title, content.subtitle) }
+            url=move || card.with(|card| card.0.clone())
+            alt=move || card.with(|card| format!("Ultros. {}. {}", card.2.title, card.2.subtitle))
         />
         {move || {
             [Locale::en, Locale::ja, Locale::de, Locale::fr, Locale::ko, Locale::cn, Locale::tc]
@@ -188,7 +181,67 @@ pub(crate) fn SocialMetadata() -> impl IntoView {
                 .map(|alternate| view! { <Meta property="og:locale:alternate" content=og_locale(alternate) /> })
                 .collect_view()
         }}
-        </Suspense>
+    }
+}
+
+/// Image URL, page URL and preview copy for the route at `path`.
+fn card_for(
+    locale: Locale,
+    path: &str,
+    npc: Option<&xiv_gen::ENpcResident>,
+) -> (String, String, SocialCardContent) {
+    let kind = SocialCardKind::from_route(path);
+    let world = item_world(path);
+    let content =
+        crate::social_card::social_card_content_with_npc(locale, &kind, world.as_deref(), npc);
+    let (kind, content) = match content {
+        Some(content) => (kind, content),
+        None => resolved_card(locale, SocialCardKind::Home, None),
+    };
+    (
+        social_image_url(locale, &kind, world.as_deref()),
+        social_page_url(path, locale, &kind),
+        content,
+    )
+}
+
+/// The NPC an `/npc/:id` social card names. The server reads it straight from
+/// the embedded game data so the SSR head carries it; the browser fetches it
+/// after hydration and the tags update in place (hydration keeps the server's
+/// attribute values until then).
+fn social_npc(
+    locale: Memo<Locale>,
+    pathname: Memo<String>,
+) -> Signal<Option<xiv_gen::ENpcResident>> {
+    let npc_id = Memo::new(move |_| match SocialCardKind::from_route(&pathname.get()) {
+        SocialCardKind::Npc(id) => Some(id),
+        _ => None,
+    });
+    #[cfg(feature = "ssr")]
+    {
+        use futures::FutureExt;
+        Signal::derive(move || {
+            let id = npc_id.get()?;
+            // The SSR branch of npc_detail never awaits.
+            crate::global_state::xiv_data::npc_detail(locale.get(), id)
+                .now_or_never()?
+                .ok()
+                .flatten()
+        })
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let npc = LocalResource::new(move || {
+            let key = npc_id.get().map(|id| (locale.get(), id));
+            async move {
+                let (locale, id) = key?;
+                crate::global_state::xiv_data::npc_detail(locale, id)
+                    .await
+                    .ok()
+                    .flatten()
+            }
+        });
+        Signal::derive(move || npc.get().flatten())
     }
 }
 
