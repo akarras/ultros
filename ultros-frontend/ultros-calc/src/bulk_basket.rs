@@ -28,7 +28,7 @@ pub struct Basket {
 }
 
 impl Basket {
-    fn new(purchase: Purchase, retainer_of: &BTreeMap<i32, i32>) -> Self {
+    fn new(purchase: Purchase, retainer_of: &BTreeMap<i64, i32>) -> Self {
         Basket {
             worlds: purchase.offers.iter().map(|o| o.world).collect(),
             listings: purchase.offers.len(),
@@ -167,7 +167,7 @@ mod tests {
 
     fn listing(id: i32, world: i32, retainer: i32, quantity: i32, price: i32) -> ActiveListing {
         ActiveListing {
-            id,
+            id: id.into(),
             world_id: world,
             item_id: 5057,
             retainer_id: retainer,

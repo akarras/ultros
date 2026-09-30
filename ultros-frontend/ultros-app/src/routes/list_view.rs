@@ -1463,7 +1463,7 @@ mod tests {
         }
     }
 
-    fn listing(id: i32, world_id: i32) -> ActiveListing {
+    fn listing(id: i64, world_id: i32) -> ActiveListing {
         ActiveListing {
             id,
             world_id,
@@ -1624,7 +1624,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, price)| {
-                let mut listing = listing(index as i32, 100);
+                let mut listing = listing(index as i64, 100);
                 listing.price_per_unit = *price;
                 listing
             })

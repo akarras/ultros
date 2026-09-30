@@ -782,7 +782,7 @@ mod tests {
             hq: 0,
             world_id: 1,
             listing_id: retainer.to_string(),
-            pg_listing_id: retainer,
+            pg_listing_id: retainer.into(),
             retainer_id: retainer,
             price_per_unit: 100,
             quantity: 2,

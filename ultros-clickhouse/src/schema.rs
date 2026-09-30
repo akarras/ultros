@@ -55,7 +55,7 @@ async fn apply_listing_events_table(client: &Client) -> Result<(), ClickHouseErr
                 hq              UInt8,
                 world_id        Int32,
                 listing_id      String,
-                pg_listing_id   Int32,
+                pg_listing_id   Int64,
                 retainer_id     Int32,
                 price_per_unit  UInt32,
                 quantity        UInt16,
@@ -72,6 +72,36 @@ async fn apply_listing_events_table(client: &Client) -> Result<(), ClickHouseErr
         )
         .execute()
         .await?;
+    widen_listing_events_pg_listing_id(client).await
+}
+
+/// `pg_listing_id` was created as `Int32`; `active_listing.id` is now `bigint`
+/// and issues ids above `i32::MAX`, which the insert would reject against the
+/// old column type. It is not a sorting-key column, so ClickHouse can retype it
+/// in place: the metadata changes at once and the existing parts are rewritten
+/// by a background mutation (reads convert unmutated parts on the fly). Both
+/// sync settings are off so startup does not wait out that rewrite, which
+/// scales with the table and would blow the writer's 30s migration timeout.
+/// The type is checked first so a restart never queues a second mutation.
+async fn widen_listing_events_pg_listing_id(client: &Client) -> Result<(), ClickHouseError> {
+    let current = client
+        .query(
+            "SELECT type FROM system.columns
+             WHERE database = currentDatabase()
+               AND table = 'listing_events'
+               AND name = 'pg_listing_id'",
+        )
+        .fetch_optional::<String>()
+        .await?;
+    if current.as_deref() == Some("Int32") {
+        client
+            .query(
+                "ALTER TABLE listing_events MODIFY COLUMN pg_listing_id Int64
+                 SETTINGS mutations_sync = 0, alter_sync = 0",
+            )
+            .execute()
+            .await?;
+    }
     Ok(())
 }
 

@@ -18,7 +18,7 @@ pub fn lines_by_id(estimate: &CartEstimate) -> HashMap<i32, LineEstimate> {
 /// Test fixture: `quantity` units of `item_id` at `price` gil per unit.
 #[cfg(test)]
 pub fn fixture_listing(
-    id: i32,
+    id: i64,
     item_id: i32,
     price: i32,
     quantity: i32,

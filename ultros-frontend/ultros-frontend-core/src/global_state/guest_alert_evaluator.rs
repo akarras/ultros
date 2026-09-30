@@ -99,7 +99,7 @@ pub struct GuestHit {
 /// rule's `last_fired_at` at evaluation time — `None` before it has ever
 /// fired). See the [`DedupeWindow`] docs for why `last_fired_at` is part of
 /// the key.
-fn dedupe_key(rule_id: &str, listing_id: i32, last_fired_at: Option<DateTime<Utc>>) -> String {
+fn dedupe_key(rule_id: &str, listing_id: i64, last_fired_at: Option<DateTime<Utc>>) -> String {
     match last_fired_at {
         Some(last_fired_at) => format!(
             "{rule_id}:{listing_id}:{}",
@@ -231,7 +231,7 @@ mod tests {
         }
     }
 
-    fn listing(id: i32, world_id: i32, item_id: i32, price: i32, hq: bool) -> ActiveListing {
+    fn listing(id: i64, world_id: i32, item_id: i32, price: i32, hq: bool) -> ActiveListing {
         ActiveListing {
             id,
             world_id,

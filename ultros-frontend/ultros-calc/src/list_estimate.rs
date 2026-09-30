@@ -93,7 +93,7 @@ impl LineStatus {
 /// price part of a stack; these units are neither a reservation nor a purchase.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListingAllocation {
-    pub id: i32,
+    pub id: i64,
     pub world_id: i32,
     pub price_per_unit: i32,
     pub hq: bool,
@@ -257,7 +257,7 @@ where
     // A listing is repeated in each matching row's fetched offers. Keep one
     // capacity per physical id, using the newest observation if copies differ.
     // The remaining tie-breakers make even inconsistent copies deterministic.
-    let mut unique: BTreeMap<(i32, i32), &ActiveListing> = BTreeMap::new();
+    let mut unique: BTreeMap<(i32, i64), &ActiveListing> = BTreeMap::new();
     let observation = |listing: &ActiveListing| {
         (
             listing.timestamp,
@@ -491,7 +491,7 @@ pub mod fixtures {
     use chrono::NaiveDateTime;
 
     /// A listing with only the fields the estimator reads set meaningfully.
-    pub fn listing(id: i32, item_id: i32, hq: bool, price: i32, quantity: i32) -> ActiveListing {
+    pub fn listing(id: i64, item_id: i32, hq: bool, price: i32, quantity: i32) -> ActiveListing {
         ActiveListing {
             id,
             world_id: 1,
@@ -858,7 +858,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, &(_, _, stock))| {
                     let id = index as i32 + 1;
-                    vec![listing(id, id, false, 10, stock)]
+                    vec![listing(id.into(), id, false, 10, stock)]
                 })
                 .collect();
             let cart = estimate_cart(rows.iter().enumerate().map(
@@ -939,7 +939,7 @@ mod tests {
     fn cart_sum_saturates_instead_of_wrapping() {
         // Independent physical supply, rather than counting one stack again.
         let listings: Vec<_> = (1..=3)
-            .map(|id| vec![listing(id, id, false, i32::MAX, i32::MAX)])
+            .map(|id| vec![listing(id.into(), id, false, i32::MAX, i32::MAX)])
             .collect();
         let rows: Vec<_> = listings
             .iter()

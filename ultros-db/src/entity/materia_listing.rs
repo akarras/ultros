@@ -11,7 +11,7 @@ pub struct Model {
     pub materia_id: Option<i32>,
     pub slot: Option<i16>,
     #[sea_orm(unique)]
-    pub active_listing_id: i32,
+    pub active_listing_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
