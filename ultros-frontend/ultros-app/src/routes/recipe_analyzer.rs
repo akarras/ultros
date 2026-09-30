@@ -6656,7 +6656,17 @@ mod test {
         owner.with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
             let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
-            let first = rows.first().expect("a priced fixture row").clone();
+            let first = rows
+                .iter()
+                .find(|row| {
+                    row.recipe.ingredient.iter().any(|id| {
+                        crate::global_state::xiv_data::tracked_data()
+                            .items
+                            .contains_key(&ItemId(*id))
+                    })
+                })
+                .expect("a priced fixture row with known ingredients")
+                .clone();
             let id = first.recipe.key_id.0;
             let expected_lines = first.breakdown.ingredient_lines.len();
             let profit = first.profit().expect("priced");
