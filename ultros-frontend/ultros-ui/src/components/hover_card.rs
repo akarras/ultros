@@ -435,7 +435,7 @@ where
             class=class.unwrap_or_default()
             tabindex=description.map(|_| "0")
             aria-describedby=move || description.and_then(|_| { let id = description_id.get(); (!id.is_empty()).then_some(id) })
-            attr:data-hover-card-trigger=""
+            data-hover-card-trigger=""
             on:click=move |_| {
                 if description.is_some() && !disabled.get_untracked() {
                     let opening = !hover_open.get_untracked();
