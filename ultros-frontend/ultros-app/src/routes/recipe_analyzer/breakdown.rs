@@ -228,14 +228,38 @@ pub(super) fn RecipeBreakdownDrawer(
             focus_selector(&format!("[data-recipe-breakdown-toggle=\"{id}\"]"));
         }
     };
+    // Keep Close visible while the cost details and ingredient editor scroll.
+    let header = move || {
+        let recipe = row.get()?.recipe;
+        let name = tracked_data()
+            .items
+            .get(&ItemId(recipe.item_result))
+            .map(|item| item.name.to_string())
+            .unwrap_or_default();
+        Some(view! {
+                <header class="recipe-breakdown-header">
+                    <ItemIcon item_id=recipe.item_result icon_size=IconSize::Medium />
+                    <div class="min-w-0 flex-1">
+                        <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                            {t!(i18n, recipe_breakdown_title)}
+                        </div>
+                        <div class="font-bold truncate">{name}</div>
+                    </div>
+                    <button
+                        type="button"
+                        class="recipe-breakdown-close"
+                        aria-label=t_string!(i18n, recipe_breakdown_close_aria).to_string()
+                        on:click=move |_| close()
+                    >
+                        <Icon icon=i::AiCloseOutlined />
+                    </button>
+                </header>
+        })
+    };
     let drawer = move || {
         let row = row.get()?;
         let items = &tracked_data().items;
         let recipe = row.recipe;
-        let name = items
-            .get(&ItemId(recipe.item_result))
-            .map(|i| i.name.to_string())
-            .unwrap_or_default();
         let model = breakdown_model(&row.breakdown, recipe.amount_result, shards.get());
         let lines = model
             .lines
@@ -360,23 +384,6 @@ pub(super) fn RecipeBreakdownDrawer(
 
         Some(view! {
             <div>
-                <header class="recipe-breakdown-header">
-                    <ItemIcon item_id=recipe.item_result icon_size=IconSize::Medium />
-                    <div class="min-w-0 flex-1">
-                        <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                            {t!(i18n, recipe_breakdown_title)}
-                        </div>
-                        <div class="font-bold truncate">{name}</div>
-                    </div>
-                    <button
-                        type="button"
-                        class="recipe-breakdown-close"
-                        aria-label=t_string!(i18n, recipe_breakdown_close_aria).to_string()
-                        on:click=move |_| close()
-                    >
-                        <Icon icon=i::AiCloseOutlined />
-                    </button>
-                </header>
                 <div class="recipe-breakdown-body">
                     <section>
                         <h3 class="recipe-breakdown-heading">{t!(i18n, recipe_breakdown_ingredients)}</h3>
@@ -418,8 +425,10 @@ pub(super) fn RecipeBreakdownDrawer(
                 data-recipe-breakdown=move || selected.get()
                 aria-label=t_string!(i18n, recipe_breakdown_title).to_string()
                 on:keydown=move |e| { if e.key() == "Escape" { e.stop_propagation(); close(); } }>
+                {header}
                 <div class="recipe-breakdown-scroll">
                     {drawer}
+                    // Key only by recipe: repricing must not replace the ingredient draft.
                     <For
                         each=move || { selected.get().into_iter().collect::<Vec<_>>() }
                         key=|id| *id

@@ -6648,7 +6648,7 @@ mod test {
     }
 
     /// Server-rendered, so no hydration: the drawer names the recipe, one
-    /// row per ingredient, the add-to-list button and the ledger's profit.
+    /// row per ingredient, the inline ingredient editor and the ledger's profit.
     #[test]
     fn the_breakdown_drawer_renders_the_selected_row() {
         let _ = any_spawner::Executor::init_futures_executor();
@@ -6684,8 +6684,11 @@ mod test {
                 "{html}"
             );
             assert_eq!(html.matches("data-breakdown-line=").count(), expected_lines);
-            assert!(html.contains("data-recipe-breakdown-add"));
-            assert!(html.contains("Add to craft list"));
+            assert!(html.contains("data-recipe-list-form"));
+            assert!(html.contains("Add ingredients"));
+            assert!(html.contains("craft-qty-"));
+            assert!(html.contains("ingredient-qty-"));
+            assert!(!html.contains("role=\"dialog\""));
             assert!(html.contains(&format!("data-breakdown-profit=\"{profit}\"")));
             assert!(
                 html.contains("Gilgamesh"),
