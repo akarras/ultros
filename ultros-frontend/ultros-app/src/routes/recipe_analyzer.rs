@@ -6648,15 +6648,28 @@ mod test {
     }
 
     /// Server-rendered, so no hydration: the drawer names the recipe, one
-    /// row per ingredient, the add-to-list button and the ledger's profit.
+    /// row per ingredient, the inline ingredient editor and the ledger's profit.
     #[test]
     fn the_breakdown_drawer_renders_the_selected_row() {
         let _ = any_spawner::Executor::init_futures_executor();
         let owner = Owner::new();
         owner.with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            provide_context(axum::http::Request::new(()).into_parts().0);
+            provide_context(crate::global_state::cookies::Cookies::new());
             let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
-            let first = rows.first().expect("a priced fixture row").clone();
+            let first = rows
+                .iter()
+                .find(|row| {
+                    row.recipe.ingredient.iter().any(|id| {
+                        *id != 0
+                            && crate::global_state::xiv_data::tracked_data()
+                                .items
+                                .contains_key(&ItemId(*id))
+                    })
+                })
+                .expect("a priced fixture row with known ingredients")
+                .clone();
             let id = first.recipe.key_id.0;
             let expected_lines = first.breakdown.ingredient_lines.len();
             let profit = first.profit().expect("priced");
@@ -6684,8 +6697,11 @@ mod test {
                 "{html}"
             );
             assert_eq!(html.matches("data-breakdown-line=").count(), expected_lines);
-            assert!(html.contains("data-recipe-breakdown-add"));
-            assert!(html.contains("Add to craft list"));
+            assert!(html.contains("data-recipe-list-form"));
+            assert!(html.contains("Add ingredients"));
+            assert!(html.contains("craft-qty-"));
+            assert!(html.contains("ingredient-qty-"), "{html}");
+            assert!(!html.contains("role=\"dialog\""));
             assert!(html.contains(&format!("data-breakdown-profit=\"{profit}\"")));
             assert!(
                 html.contains("Gilgamesh"),
