@@ -6655,14 +6655,17 @@ mod test {
         let owner = Owner::new();
         owner.with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            provide_context(axum::http::Request::new(()).into_parts().0);
+            provide_context(crate::global_state::cookies::Cookies::new());
             let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
             let first = rows
                 .iter()
                 .find(|row| {
                     row.recipe.ingredient.iter().any(|id| {
-                        crate::global_state::xiv_data::tracked_data()
-                            .items
-                            .contains_key(&ItemId(*id))
+                        *id != 0
+                            && crate::global_state::xiv_data::tracked_data()
+                                .items
+                                .contains_key(&ItemId(*id))
                     })
                 })
                 .expect("a priced fixture row with known ingredients")
@@ -6697,7 +6700,7 @@ mod test {
             assert!(html.contains("data-recipe-list-form"));
             assert!(html.contains("Add ingredients"));
             assert!(html.contains("craft-qty-"));
-            assert!(html.contains("ingredient-qty-"));
+            assert!(html.contains("ingredient-qty-"), "{html}");
             assert!(!html.contains("role=\"dialog\""));
             assert!(html.contains(&format!("data-breakdown-profit=\"{profit}\"")));
             assert!(

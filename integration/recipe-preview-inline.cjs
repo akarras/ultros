@@ -41,7 +41,7 @@ async function main() {
     return response ? r.respond(response) : r.continue();
   });
   const form = '[data-recipe-list-form]';
-  const craft = form+' input[id^="craft-qty"]', qty = form+' input[id^="ingredient-qty"]:not(:disabled)';
+  const craft = form+' input[id^="craft-qty"]';
   const select = form+' select', submit = form+' button[type="submit"]';
   async function input(selector,value) {
     await page.$eval(selector,(el,v) => {el.value=String(v);el.dispatchEvent(new Event('input',{bubbles:true}));},value);
@@ -63,6 +63,8 @@ async function main() {
       assert.equal(await page.$eval(submit,el=>el.disabled),true,'Choose destination before submitting');
       await page.select(select,'902');
       await input(craft,3);
+      const ingredientId = await page.$eval(form+' input[id^="ingredient-qty"]:not(:disabled)',el=>el.id);
+      const qty = '#'+ingredientId;
       await input(qty,17);
       await input(craft,4);
       assert.equal(await page.$eval(qty,el=>el.value),'17','Craft count preserves manual override');
