@@ -180,6 +180,21 @@ fn MoverRow(item: MoverItem, world_name: String, tab: MoverTab) -> impl IntoView
     }
 }
 
+/// Snapshot the world + tab the Suspense body renders against, or `None`
+/// once this component has been disposed.
+///
+/// Setting a home world on the landing page swaps the whole home-page branch,
+/// disposing this component — but `world` belongs to the page and changes in
+/// the same tick, so the Suspense body's async render effect is already
+/// queued. When it polls, `tab` (owned by this component) is gone and a plain
+/// `.get()` traps the wasm module. `try_get` turns that into "render nothing".
+fn render_inputs(
+    world: Signal<Option<String>>,
+    tab: ReadSignal<MoverTab>,
+) -> Option<(Option<String>, MoverTab)> {
+    Some((world.try_get()?, tab.try_get()?))
+}
+
 #[component]
 pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
     let i18n = use_i18n();
@@ -266,9 +281,8 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
                 </div>
             }>
                 {move || {
-                    let w = world.get();
-                    let current_tab = tab.get();
-                    movers.get().map(|maybe| {
+                    let (w, current_tab) = render_inputs(world, tab)?;
+                    movers.try_get().flatten().map(|maybe| {
                         let world_name = w.unwrap_or_default();
                         // LocalResource here resolves to `Option<MoversResponse>`
                         // (Some on success, None on missing world / fetch error).
@@ -313,6 +327,36 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
                 }}
             </Suspense>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod test_render_inputs {
+    use super::*;
+
+    #[test]
+    fn live_signals_are_read() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let (tab, _) = signal(MoverTab::Gil);
+            let world = Signal::derive(|| Some("Gilgamesh".to_string()));
+            assert_eq!(
+                render_inputs(world, tab),
+                Some((Some("Gilgamesh".to_string()), MoverTab::Gil))
+            );
+        });
+    }
+
+    /// The home page disposes `MarketMovers` when a home world is set while
+    /// its Suspense body is still queued to re-render.
+    #[test]
+    fn disposed_component_renders_nothing_instead_of_panicking() {
+        let page = Owner::new();
+        let world = page.with(|| Signal::derive(|| Some("Gilgamesh".to_string())));
+        let component = page.with(Owner::new);
+        let (tab, _) = component.with(|| signal(MoverTab::Rising));
+        component.cleanup();
+        assert_eq!(render_inputs(world, tab), None);
     }
 }
 
