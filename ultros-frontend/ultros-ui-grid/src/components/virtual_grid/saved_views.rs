@@ -287,6 +287,7 @@ pub fn GridSavedViews(
                                 class="input input-sm"
                                 maxlength="100"
                                 required
+                                placeholder=t_string!(i18n, grid_view_name).to_string()
                                 prop:value=move || name.get()
                                 on:input=move |event| name.set(event_target_value(&event))
                             />
