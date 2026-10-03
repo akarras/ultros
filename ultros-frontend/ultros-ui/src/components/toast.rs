@@ -53,6 +53,7 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
             <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
             <div class="flex-1">{message}</div>
             <button
+                type="button"
                 class="opacity-70 hover:opacity-100 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
                 aria-label=t_string!(i18n, close)
                 on:click=move |_| {
