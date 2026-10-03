@@ -46,6 +46,7 @@
   "lists_recipe_preview_named": "預覽{{name}}",
   "lists_recipe_preview_action": "預覽",
   "lists_shop_change_route": "變更路線",
+  "lists_shop_confirm_route": "確認",
   "lists_shop_current_route": "你的購物行程",
   "lists_shop_no_home_cost": "設定出發伺服器",
   "lists_online_local_saved": "線上清單 · 本機副本已儲存",

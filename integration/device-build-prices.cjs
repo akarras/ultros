@@ -167,6 +167,7 @@ async function main() {
     await page.click(tid("guest-shop-mode"));
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /10 gil/);
     assert.equal(await text(tid("shop-build-coverage")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");
@@ -248,6 +249,7 @@ async function main() {
     await page.waitForSelector((tid("shop-route-option") + '[data-route-cheapest="true"]'));
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(tid("shop-stack-bought"));
     assert.match(await text(tid("shop-build-reference")), /20 gil/, "readable snapshot mounts the shared-price Shop workspace");
     await page.click(tid("guest-build-mode"));
@@ -260,6 +262,7 @@ async function main() {
     await page.click(tid("guest-shop-mode"));
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]');
     await page.click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(tid("shop-build-reference"));
     assert.match(await text(tid("shop-build-reference")), /40 gil/);
     assert.equal(await text(tid("shop-build-coverage")), "Known subtotal only · Price lookup needed: 1 · Unpriced units: 1.");

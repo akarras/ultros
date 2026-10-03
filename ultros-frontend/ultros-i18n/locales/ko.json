@@ -46,6 +46,7 @@
   "lists_recipe_preview_named": "{{name}} 미리 보기",
   "lists_recipe_preview_action": "미리 보기",
   "lists_shop_change_route": "경로 변경",
+  "lists_shop_confirm_route": "확인",
   "lists_shop_current_route": "쇼핑 경로",
   "lists_shop_no_home_cost": "출발 서버 설정",
   "lists_online_local_saved": "온라인 목록 · 로컬 사본 저장됨",

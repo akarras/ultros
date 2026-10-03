@@ -46,6 +46,7 @@
   "lists_recipe_preview_named": "Aperçu de {{name}}",
   "lists_recipe_preview_action": "Aperçu",
   "lists_shop_change_route": "Changer d’itinéraire",
+  "lists_shop_confirm_route": "Confirmer",
   "lists_shop_current_route": "Votre parcours d’achat",
   "lists_shop_no_home_cost": "Choisir un Monde de départ",
   "lists_online_local_saved": "Liste en ligne · Copie locale enregistrée",
