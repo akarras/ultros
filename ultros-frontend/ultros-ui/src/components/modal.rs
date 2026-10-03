@@ -45,6 +45,7 @@ where
                 >
                     <div class="flex justify-end mb-2">
                         <button
+                            type="button"
                             class="p-2 rounded-lg hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_20%,_transparent)]
                             text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]
                             transition-colors duration-200

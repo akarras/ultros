@@ -33,3 +33,6 @@
 ## 2026-09-12 - Add type="button" and disabled prop to MakePlaceImporter button
 **Learning:** Some buttons handling component state logic (like adding items from a textarea list) missed a reactive disabled state, letting the user accidentally click them repeatedly or when there is an invalid input string.
 **Action:** Always add `type="button"` for interactive buttons that execute JS and provide a `prop:disabled` state for better user feedback and interaction blocking.
+## 2026-09-15 - Adding type="button" to UI close buttons
+**Learning:** The close buttons in `Modal` and `ToastItem` lacked an explicit `type="button"` attribute. Since the default type for HTML buttons is `submit`, omitting it can cause unintentional form submissions and page reloads when these components are rendered within or near a `<form>`.
+**Action:** Always explicitly set `type="button"` for interactive UI control buttons (like 'Close', 'Dismiss', or 'Cancel') that trigger JavaScript actions to prevent unintended form submissions.
