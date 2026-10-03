@@ -7,7 +7,7 @@ use leptos::portal::Portal;
 use leptos::{html::Div, prelude::*};
 #[cfg(feature = "hydrate")]
 use leptos_use::{
-    UseElementSizeReturn, UseEventListenerOptions, use_element_size,
+    UseElementBoundingReturn, UseEventListenerOptions, use_element_bounding,
     use_event_listener_with_options, use_window,
 };
 use std::time::Duration;
@@ -64,6 +64,68 @@ pub fn overlay_position(
     (top, left)
 }
 
+/// One active overlay per application, shared by text and item hover cards.
+#[derive(Clone, Copy)]
+pub struct ActiveHoverCard(RwSignal<Option<uuid::Uuid>>);
+
+pub fn provide_hover_card_context() {
+    provide_context(ActiveHoverCard(RwSignal::new(None)));
+}
+
+impl ActiveHoverCard {
+    fn claim(self, id: uuid::Uuid) {
+        if self.0.get_untracked() != Some(id) {
+            self.0.set(Some(id));
+        }
+    }
+
+    fn release(self, id: uuid::Uuid) {
+        if self.0.try_get_untracked() == Some(Some(id)) {
+            self.0.set(None);
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+fn overlay_position_avoiding(
+    anchor: AnchorRect,
+    overlay: OverlaySize,
+    viewport: OverlaySize,
+    obstacles: &[AnchorRect],
+) -> (f64, f64) {
+    let preferred = overlay_position(anchor, overlay, viewport);
+    let center_left = anchor.left + anchor.width / 2.0 - overlay.width / 2.0;
+    let center_top = anchor.top + anchor.height / 2.0 - overlay.height / 2.0;
+    let candidates = [
+        preferred,
+        (anchor.top + anchor.height + ANCHOR_GAP, center_left),
+        (center_top, anchor.left + anchor.width + ANCHOR_GAP),
+        (center_top, anchor.left - overlay.width - ANCHOR_GAP),
+        (anchor.top - overlay.height - ANCHOR_GAP, center_left),
+    ];
+    let max_top = (viewport.height - overlay.height - EDGE_MARGIN).max(EDGE_MARGIN);
+    let max_left = (viewport.width - overlay.width - EDGE_MARGIN).max(EDGE_MARGIN);
+    candidates
+        .into_iter()
+        .map(|(top, left)| {
+            let y = top.clamp(EDGE_MARGIN, max_top);
+            let x = left.clamp(EDGE_MARGIN, max_left);
+            let overlap: f64 = obstacles
+                .iter()
+                .map(|rect| {
+                    ((rect.left + rect.width).min(x + overlay.width) - rect.left.max(x)).max(0.0)
+                        * ((rect.top + rect.height).min(y + overlay.height) - rect.top.max(y))
+                            .max(0.0)
+                })
+                .sum();
+            let clipping = (top - y).abs() * overlay.width + (left - x).abs() * overlay.height;
+            ((y, x), overlap, clipping)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.total_cmp(&b.2)))
+        .expect("placement candidates")
+        .0
+}
+
 /// Shared chrome for hover overlays: palette-driven gradient body, accent
 /// hairline slot, glow shadow. Consumers append their own padding/sizing and
 /// render `<AccentHairline/>` as their first child. Every color rides the
@@ -104,6 +166,10 @@ pub fn HoverCard<T>(
 where
     T: Sized + Render + RenderHtml + Send + 'static,
 {
+    // Standalone consumers can opt into the shared context at their root.
+    let active =
+        use_context::<ActiveHoverCard>().unwrap_or_else(|| ActiveHoverCard(RwSignal::new(None)));
+    let id = uuid::Uuid::new_v4();
     let description_id = RwSignal::new(String::new());
     Effect::new(move |_| description_id.set(format!("help-{}", uuid::Uuid::new_v4())));
     let (hover_open, set_hover_open) = signal(false);
@@ -135,6 +201,7 @@ where
     };
     on_cleanup(move || {
         cancel_close();
+        active.release(id);
         if let Some(handle) = pending.get_value() {
             handle.clear();
         }
@@ -151,12 +218,16 @@ where
             return;
         }
         if open_delay_ms == 0 {
+            active.claim(id);
             set_hover_open.set(true);
         } else if pending.get_value().is_none() {
             let handle = set_timeout_with_handle(
                 move || {
                     pending.set_value(None);
-                    set_hover_open.set(true);
+                    if !disabled.get_untracked() {
+                        active.claim(id);
+                        set_hover_open.set(true);
+                    }
                 },
                 Duration::from_millis(u64::from(open_delay_ms)),
             )
@@ -188,7 +259,9 @@ where
     // focus is keeping the card open). Preserve the mounted overlay in that
     // case: rebuilding it under the pointer loses its subsequent mouseleave
     // and can strand a tooltip for every cell the pointer passes over.
-    let is_open = Memo::new(move |_| !disabled.get() && (hover_open.get() || is_focused.get()));
+    let is_open = Memo::new(move |_| {
+        !disabled.get() && active.0.get() == Some(id) && (hover_open.get() || is_focused.get())
+    });
     // Suppress unused warnings on the server build, where the overlay closure
     // below compiles to `None`.
     #[cfg(not(feature = "hydrate"))]
@@ -271,10 +344,11 @@ where
                                 UseEventListenerOptions::default().capture(false).passive(false),
                             );
                             let node_ref = NodeRef::<Div>::new();
-                            let UseElementSizeReturn {
+                            let UseElementBoundingReturn {
                                 width: overlay_width,
                                 height: overlay_height,
-                            } = use_element_size(node_ref);
+                                ..
+                            } = use_element_bounding(node_ref);
                             let style = move || {
                                 let overlay = OverlaySize {
                                     width: overlay_width.get(),
@@ -292,8 +366,22 @@ where
                                         height: f64::from(root.client_height()),
                                     })
                                     .unwrap_or_default();
-                                let (top, left) =
-                                    overlay_position(anchor_rect.get(), overlay, viewport);
+                                let mut obstacles = Vec::new();
+                                if let Ok(nodes) = document().query_selector_all("[data-hover-card-trigger]") {
+                                    use wasm_bindgen::JsCast;
+                                    for index in 0..nodes.length() {
+                                        if let Some(element) = nodes.item(index).and_then(|node| node.dyn_into::<web_sys::Element>().ok()) {
+                                            let rect = element.get_bounding_client_rect();
+                                            obstacles.push(AnchorRect {
+                                                top: rect.top(), left: rect.left(),
+                                                width: rect.width(), height: rect.height(),
+                                            });
+                                        }
+                                    }
+                                }
+                                let (top, left) = overlay_position_avoiding(
+                                    anchor_rect.get(), overlay, viewport, &obstacles,
+                                );
                                 // Keep hidden until measured so the first
                                 // paint can't flash at the wrong position.
                                 let visibility =
@@ -321,7 +409,7 @@ where
                                         role="tooltip"
                                         on:mouseenter=move |_| { cancel_close(); set_hover_open.set(true); }
                                         on:mouseleave=move |_| request_close()
-                                        class="fixed z-50 w-max max-w-[calc(100%_-_1rem)] transition-opacity duration-150 animate-fade-in"
+                                        class="fixed z-50 w-max max-w-[calc(100%_-_1rem)] max-h-[calc(100%_-_1rem)] overflow-auto transition-opacity duration-150 animate-fade-in"
                                         style=style
                                     >
                                         {content.run()}
@@ -347,13 +435,22 @@ where
             class=class.unwrap_or_default()
             tabindex=description.map(|_| "0")
             aria-describedby=move || description.and_then(|_| { let id = description_id.get(); (!id.is_empty()).then_some(id) })
-            on:click=move |_| { if description.is_some() { set_hover_open.update(|open| *open = !*open); } }
+            data-hover-card-trigger=""
+            on:click=move |_| {
+                if description.is_some() && !disabled.get_untracked() {
+                    let opening = !hover_open.get_untracked();
+                    if opening { active.claim(id); }
+                    set_hover_open.set(opening);
+                }
+            }
             on:mouseenter=move |_| request_open()
             on:mouseleave=move |_| {
                 clear_pending();
                 request_close();
             }
-            on:focusin=move |_| set_is_focused.set(true)
+            on:focusin=move |_| {
+                if !disabled.get_untracked() { active.claim(id); set_is_focused.set(true); }
+            }
             on:focusout=move |_| set_is_focused.set(false)
             on:keydown=move |ev| {
                 if ev.key() == "Escape" && is_open.get_untracked() {
@@ -444,5 +541,94 @@ mod tests {
         let (top, left) = overlay_position(anchor(10.0, 10.0), OVERLAY, viewport);
         assert_eq!(top, 8.0);
         assert_eq!(left, 8.0);
+    }
+    #[test]
+    fn opening_another_card_hides_the_previous_hovered_card() {
+        Owner::new().with(|| {
+            let active = ActiveHoverCard(RwSignal::new(None));
+            let first = uuid::Uuid::new_v4();
+            let second = uuid::Uuid::new_v4();
+            let first_open = Memo::new(move |_| active.0.get() == Some(first));
+            let second_open = Memo::new(move |_| active.0.get() == Some(second));
+            active.claim(first);
+            assert!(first_open.get());
+            assert!(!second_open.get());
+            active.claim(second);
+            assert!(!first_open.get());
+            assert!(second_open.get());
+            // Re-entering the same portal must not notify or rebuild it.
+            active.claim(second);
+            assert!(second_open.get());
+        });
+    }
+
+    #[test]
+    fn releasing_an_old_card_does_not_close_the_current_card() {
+        Owner::new().with(|| {
+            let active = ActiveHoverCard(RwSignal::new(None));
+            let first = uuid::Uuid::new_v4();
+            let second = uuid::Uuid::new_v4();
+            active.claim(first);
+            active.claim(second);
+            active.release(first);
+            assert_eq!(active.0.get_untracked(), Some(second));
+            active.release(second);
+            assert_eq!(active.0.get_untracked(), None);
+        });
+    }
+
+    #[test]
+    fn hover_card_avoids_neighbor_above() {
+        let trigger = anchor(400.0, 600.0);
+        let obstacles = [
+            trigger,
+            AnchorRect {
+                top: 280.0,
+                left: 500.0,
+                width: 140.0,
+                height: 110.0,
+            },
+        ];
+        assert_eq!(
+            overlay_position_avoiding(trigger, OVERLAY, VIEWPORT, &obstacles),
+            (428.0, 520.0)
+        );
+    }
+
+    #[test]
+    fn hover_card_uses_side_when_vertical_neighbors_block_placement() {
+        let trigger = anchor(400.0, 600.0);
+        let obstacles = [
+            trigger,
+            AnchorRect {
+                top: 280.0,
+                left: 500.0,
+                width: 140.0,
+                height: 110.0,
+            },
+            AnchorRect {
+                top: 425.0,
+                left: 500.0,
+                width: 140.0,
+                height: 110.0,
+            },
+        ];
+        assert_eq!(
+            overlay_position_avoiding(trigger, OVERLAY, VIEWPORT, &obstacles),
+            (360.0, 648.0)
+        );
+    }
+
+    #[test]
+    fn hover_card_avoiding_neighbors_handles_tiny_viewport() {
+        let viewport = OverlaySize {
+            width: 100.0,
+            height: 60.0,
+        };
+        let trigger = anchor(10.0, 10.0);
+        assert_eq!(
+            overlay_position_avoiding(trigger, OVERLAY, viewport, &[trigger]),
+            (8.0, 8.0)
+        );
     }
 }

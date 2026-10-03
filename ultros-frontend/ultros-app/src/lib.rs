@@ -623,6 +623,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
             }
         }
     }
+    ultros_ui::components::hover_card::provide_hover_card_context();
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
