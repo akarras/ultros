@@ -64,7 +64,8 @@ pub enum ClickHouseErrorKind {
     /// ceiling allows. Usually a capacity problem (container limit, thread
     /// count, missing spill-to-disk) rather than a bug in the query.
     MemoryLimitExceeded,
-    /// The request did not complete in time.
+    /// The request did not complete in time — either the client gave up, or
+    /// the server enforced the query's `max_execution_time` (`Code: 159`).
     Timeout,
     /// The server could not be reached at all.
     Unavailable,
@@ -160,6 +161,10 @@ fn classify_client_error(text: &str) -> ClickHouseErrorKind {
         || text.contains("TimedOut")
         // `clickhouse::error::Error::TimedOut`'s own `Display`.
         || text.contains("timeout expired")
+        // Server-side `Code: 159`: the query ran past its own
+        // `max_execution_time`. ClickHouse words it "Timeout exceeded".
+        || text.contains("Code: 159.")
+        || text.contains("TIMEOUT_EXCEEDED")
     {
         ClickHouseErrorKind::Timeout
     } else {
@@ -286,6 +291,27 @@ mod error_kind_tests {
     fn client_timeout_is_a_timeout() {
         let err = ClickHouseError::Client(clickhouse::error::Error::TimedOut);
         assert_eq!(err.kind(), ClickHouseErrorKind::Timeout);
+    }
+
+    /// Verbatim from the 2026-10 `undercut_pressure` / `floor_history` reports:
+    /// the server enforcing a query's own `max_execution_time`. ClickHouse
+    /// spells it "Timeout exceeded", which matched none of the client-side
+    /// wordings, so a slow-query incident was filed as `other`.
+    #[test]
+    fn server_side_timeout_exceeded_is_a_timeout() {
+        assert_eq!(
+            classify_client_error(
+                "bad response: Code: 159. DB::Exception: Timeout exceeded: elapsed \
+                 10358.24619 ms, maximum: 10000 ms. (TIMEOUT_EXCEEDED) (version 25.4.13.22 \
+                 (official build))"
+            ),
+            ClickHouseErrorKind::Timeout
+        );
+        // The tracker sometimes keeps only the head of the message.
+        assert_eq!(
+            classify_client_error("bad response: Code: 159. DB::Exception: Timeout exceeded"),
+            ClickHouseErrorKind::Timeout
+        );
     }
 
     /// A connect that gave up waiting is a reachability problem, not a slow
