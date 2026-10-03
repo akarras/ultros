@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Setting a home world from the home page no longer crashes it",
+  "blurb": "Picking a home world while the home page's Market Movers list was loading could stop the page from responding. It now switches over cleanly."
+}
