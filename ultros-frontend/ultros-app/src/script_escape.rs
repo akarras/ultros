@@ -13,6 +13,7 @@ pub fn escape_for_script_tag(json: &str) -> String {
             '<' => out.push_str("\\u003c"),
             '>' => out.push_str("\\u003e"),
             '&' => out.push_str("\\u0026"),
+            '\'' => out.push_str("\\u0027"),
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
             other => out.push(other),
@@ -31,17 +32,17 @@ mod tests {
         let escaped = escape_for_script_tag(json);
         assert_eq!(
             escaped,
-            r#"{"name": "test", "value": "\u003cscript\u003ealert('xss')\u003c/script\u003e\u0026amp;\u2028\u2029"}"#
+            r#"{"name": "test", "value": "\u003cscript\u003ealert(\u0027xss\u0027)\u003c/script\u003e\u0026amp;\u2028\u2029"}"#
         );
 
         // verify no characters are dropped
-        let s = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$^*()_-+={}[]|:;\"',.?/~`\\";
+        let s = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$^*()_-+={}[]|:;\",.?/~`\\";
         assert_eq!(escape_for_script_tag(s), s);
 
-        let c = "<\n>\n&\n\u{2028}\n\u{2029}";
+        let c = "<\n>\n&\n\u{2028}\n\u{2029}\n'";
         assert_eq!(
             escape_for_script_tag(c),
-            "\\u003c\n\\u003e\n\\u0026\n\\u2028\n\\u2029"
+            "\\u003c\n\\u003e\n\\u0026\n\\u2028\n\\u2029\n\\u0027"
         );
     }
 }
