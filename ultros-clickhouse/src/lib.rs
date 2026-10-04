@@ -142,7 +142,7 @@ fn error_chain_text(error: &(dyn std::error::Error + 'static)) -> String {
 /// error's `Display` — several of the substrings below only ever appear on a
 /// nested cause.
 fn classify_client_error(text: &str) -> ClickHouseErrorKind {
-    if text.contains("Code: 241") || text.contains("MEMORY_LIMIT_EXCEEDED") {
+    if has_error_code(text, 241) || text.contains("MEMORY_LIMIT_EXCEEDED") {
         ClickHouseErrorKind::MemoryLimitExceeded
     } else if text.contains("Connection refused")
         || text.contains("tcp connect error")
@@ -163,13 +163,29 @@ fn classify_client_error(text: &str) -> ClickHouseErrorKind {
         || text.contains("timeout expired")
         // Server-side `Code: 159`: the query ran past its own
         // `max_execution_time`. ClickHouse words it "Timeout exceeded".
-        || text.contains("Code: 159.")
+        || has_error_code(text, 159)
         || text.contains("TIMEOUT_EXCEEDED")
     {
         ClickHouseErrorKind::Timeout
     } else {
         ClickHouseErrorKind::Other
     }
+}
+
+/// Whether `text` carries ClickHouse server error `Code: {code}`, as a whole
+/// number. When the exception arrives mid-stream (headers already sent with a
+/// 200) the client keeps only the head of the body, so the message can end
+/// right after the digits — `"bad response: Code: 159"`, no trailing `.` and no
+/// `TIMEOUT_EXCEEDED` name. The digit check stops `Code: 15` from claiming
+/// `Code: 159`.
+fn has_error_code(text: &str, code: u32) -> bool {
+    let needle = format!("Code: {code}");
+    text.match_indices(&needle).any(|(at, _)| {
+        !text[at + needle.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+    })
 }
 
 #[cfg(test)]
@@ -311,6 +327,36 @@ mod error_kind_tests {
         assert_eq!(
             classify_client_error("bad response: Code: 159. DB::Exception: Timeout exceeded"),
             ClickHouseErrorKind::Timeout
+        );
+    }
+
+    /// Verbatim from the 2026-10-04 `floor_history` reports that kept landing
+    /// on `other` after the fix above: when the timeout fires mid-stream the
+    /// body is cut right after the code, so neither `"Code: 159."` nor
+    /// `TIMEOUT_EXCEEDED` is in the text.
+    #[test]
+    fn truncated_code_159_is_a_timeout() {
+        assert_eq!(
+            classify_client_error("bad response: Code: 159"),
+            ClickHouseErrorKind::Timeout
+        );
+        assert_eq!(
+            classify_client_error("bad response: Code: 241"),
+            ClickHouseErrorKind::MemoryLimitExceeded
+        );
+    }
+
+    /// The bare-code match must not swallow a longer code that merely starts
+    /// with the same digits.
+    #[test]
+    fn code_match_is_whole_number() {
+        assert_eq!(
+            classify_client_error("bad response: Code: 1590"),
+            ClickHouseErrorKind::Other
+        );
+        assert_eq!(
+            classify_client_error("bad response: Code: 2410. DB::Exception: x"),
+            ClickHouseErrorKind::Other
         );
     }
 
