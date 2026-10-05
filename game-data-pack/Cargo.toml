@@ -23,7 +23,7 @@ rkyv = { version = "0.7.42", features = [
 ], default-features = false }
 # Pure-Rust brotli encoder for the packs; `xiv-gen-db` decodes them with the
 # matching `brotli-decompressor`.
-brotli = "8"
+brotli = "9"
 zstd = "0.13"
 tar = "0.4"
 image = { workspace = true, features = ["webp", "png"] }
@@ -34,5 +34,5 @@ icon-extract = { path = "../icon-extract" }
 
 [dev-dependencies]
 # tests/pack_sanity.rs mirrors xiv-gen-db's decode of the committed pack.
-brotli-decompressor = { version = "5", default-features = false, features = ["std"] }
+brotli-decompressor = { version = "6", default-features = false, features = ["std"] }
 tempfile = "3"

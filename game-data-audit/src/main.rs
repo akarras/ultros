@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, io::Read, path::PathBuf};
+use std::{collections::HashSet, fmt::Write as _, io::Read, path::PathBuf};
 use xiv_gen::Data;
 
 const USAGE: &str = "game-data-audit --pack PATH --encoding brotli|zlib [--quality 0..11] [--columns] [--table NAME] [--experiment NAME|all] [--output PATH]\n\
@@ -125,7 +125,15 @@ struct Report {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    // sha2 0.11 returns a `digest::Array` newtype, which — unlike the old
+    // `GenericArray` — does not implement `LowerHex`, so format the bytes
+    // ourselves. Same output as the previous `format!("{:x}", ..)`: 64
+    // lowercase hex digits.
+    let mut hex = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
 }
 
 fn compress(bytes: &[u8], quality: u32) -> Result<Vec<u8>> {

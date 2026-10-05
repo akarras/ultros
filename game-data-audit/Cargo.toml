@@ -10,9 +10,9 @@ serde.workspace = true
 serde_json.workspace = true
 xiv-gen.workspace = true
 rkyv = { version = "0.7.42", features = ["validation", "size_32", "std", "hashbrown"], default-features = false }
-brotli = "8.0.4"
+brotli = "9.0.0"
 flate2 = "1.1.9"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [build-dependencies]
 syn = { version = "2", features = ["full"] }
