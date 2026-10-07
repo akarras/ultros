@@ -36,6 +36,6 @@
 ## 2026-09-15 - Adding type="button" to UI close buttons
 **Learning:** The close buttons in `Modal` and `ToastItem` lacked an explicit `type="button"` attribute. Since the default type for HTML buttons is `submit`, omitting it can cause unintentional form submissions and page reloads when these components are rendered within or near a `<form>`.
 **Action:** Always explicitly set `type="button"` for interactive UI control buttons (like 'Close', 'Dismiss', or 'Cancel') that trigger JavaScript actions to prevent unintended form submissions.
-## 2026-10-06 - Modal close and Toggle focus rings use focus-visible
+## 2024-10-06 - Modal Close Button Missing Focus Style
 **Learning:** Found that the modal component's close button has some hardcoded focus styling `focus:ring-2 focus:ring-[color:var(--brand-ring)]`, but some other components like `Clipboard` use `focus-visible:` for their focus states. It's better to use `focus-visible:` so mouse users don't get the focus ring when they click, but keyboard users do.
 **Action:** Let's find places using `focus:ring` on buttons and change them to `focus-visible:ring`.
