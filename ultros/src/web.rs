@@ -3569,6 +3569,23 @@ async fn delete_user(
     Ok((cookie_jar, Redirect::to("/")))
 }
 
+/// The pack locale a `/static/{data,startup}/{version}/{lang}` URL names.
+///
+/// Anything else is a file that doesn't exist, not a server fault: scanners
+/// probe these prefixes for `.env` and the like, and a 500 would page us.
+fn pack_language(lang_code: &str) -> Result<xiv_gen::Language, WebError> {
+    Ok(match lang_code {
+        "en" => xiv_gen::Language::En,
+        "ja" => xiv_gen::Language::Ja,
+        "de" => xiv_gen::Language::De,
+        "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
+        _ => return Err(WebError::NotFound),
+    })
+}
+
 /// Serves the game-data pack the client decodes with `xiv_gen_db::try_init`.
 ///
 /// `version` is the pack's content hash (`xiv_gen_db::pack_version`), so a
@@ -3581,16 +3598,7 @@ async fn get_xiv_data_bytes(
     Path((version, lang)): Path<(String, String)>,
 ) -> Result<axum::response::Response, WebError> {
     let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
-    let lang = match lang_code {
-        "en" => xiv_gen::Language::En,
-        "ja" => xiv_gen::Language::Ja,
-        "de" => xiv_gen::Language::De,
-        "fr" => xiv_gen::Language::Fr,
-        "cn" => xiv_gen::Language::Cn,
-        "ko" => xiv_gen::Language::Ko,
-        "tc" => xiv_gen::Language::Tc,
-        _ => return Err(anyhow::anyhow!("Unsupported language").into()),
-    };
+    let lang = pack_language(lang_code)?;
     let cache_control = if version == xiv_gen_db::pack_version(lang_code) {
         "public, max-age=31536000, immutable"
     } else {
@@ -3612,16 +3620,7 @@ async fn get_xiv_startup_bytes(
     Path((version, lang)): Path<(String, String)>,
 ) -> Result<axum::response::Response, WebError> {
     let lang_code = lang.strip_suffix(".rkyv").unwrap_or(&lang);
-    let lang = match lang_code {
-        "en" => xiv_gen::Language::En,
-        "ja" => xiv_gen::Language::Ja,
-        "de" => xiv_gen::Language::De,
-        "fr" => xiv_gen::Language::Fr,
-        "cn" => xiv_gen::Language::Cn,
-        "ko" => xiv_gen::Language::Ko,
-        "tc" => xiv_gen::Language::Tc,
-        _ => return Err(anyhow::anyhow!("Unsupported language").into()),
-    };
+    let lang = pack_language(lang_code)?;
     let cache_control = if version == xiv_gen_db::startup_version(lang_code) {
         "public, max-age=31536000, immutable"
     } else {
@@ -4230,6 +4229,24 @@ mod app_commit_header_tests {
 mod game_detail_tests {
     use super::*;
     use axum::body::to_bytes;
+
+    /// Vulnerability scanners walk every route prefix looking for dotfiles
+    /// (`/static/startup/backend/.env`). An unknown locale is a missing file,
+    /// so it must be a 404 — a 500 is logged at `error!` and lands in
+    /// GlitchTip as "Returning web error".
+    #[tokio::test]
+    async fn unknown_pack_locale_is_not_found() {
+        let startup = get_xiv_startup_bytes(Path(("backend".into(), ".env".into())))
+            .await
+            .unwrap_err()
+            .into_response();
+        assert_eq!(startup.status(), axum::http::StatusCode::NOT_FOUND);
+        let data = get_xiv_data_bytes(Path(("backend".into(), ".env".into())))
+            .await
+            .unwrap_err()
+            .into_response();
+        assert_eq!(data.status(), axum::http::StatusCode::NOT_FOUND);
+    }
 
     #[tokio::test]
     async fn startup_and_details_are_versioned_and_locale_specific() {
