@@ -232,18 +232,13 @@ async fn run_socket_listener(
     socket
         .update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None)
         .await;
-    let receiver = socket.get_receiver();
-    loop {
-        tokio::select! {
-            _ = token.cancelled() => {
-                info!("socket listener cancelled");
-                break;
-            }
-            msg = receiver.recv() => {
-                if let Some(msg) = msg {
-                    // create a new task for each message
-                    let db = db.clone();
-            // hopefully this is cheap to clone
+    let max_in_flight = websocket_max_in_flight();
+    info!(
+        max_in_flight = max_in_flight.get(),
+        "starting bounded websocket ingest"
+    );
+    ultros_ingest::bounded::run(socket.get_receiver(), max_in_flight, token, |msg| {
+            let db = db.clone();
             let listings_tx = listings_tx.clone();
             let sales_tx = sales_tx.clone();
             let listing_events = listing_events.clone();
@@ -256,7 +251,7 @@ async fn run_socket_listener(
                 metrics::counter!("ultros_websocket_rx", "WorldId" => world_id.0.to_string())
                     .increment(1);
             }
-            tokio::spawn(async move {
+            async move {
                 let db = &db;
                 match msg {
                     SocketRx::Event(Ok(WSMessage::ListingsAdd {
@@ -340,10 +335,22 @@ async fn run_socket_listener(
                         error!(error = ?e, "Error");
                     }
                 }
-            });
-                }
             }
-        }
+    }).await;
+    info!("socket listener drained");
+}
+
+fn websocket_max_in_flight() -> std::num::NonZeroUsize {
+    const DEFAULT: usize = 25;
+    match std::env::var("ULTROS_WEBSOCKET_MAX_IN_FLIGHT") {
+        Ok(value) => match value.parse::<std::num::NonZeroUsize>() {
+            Ok(limit) => limit,
+            Err(error) => {
+                warn!(?error, "invalid ULTROS_WEBSOCKET_MAX_IN_FLIGHT; using 25");
+                std::num::NonZeroUsize::new(DEFAULT).unwrap()
+            }
+        },
+        Err(_) => std::num::NonZeroUsize::new(DEFAULT).unwrap(),
     }
 }
 
@@ -395,8 +402,8 @@ const DISABLE_WEBSOCKET_ENV: &str = "ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET";
 ///
 /// QA/staging deploys generally point at a database shared with other testers,
 /// where nobody is exercising live market data. The websocket fans every
-/// inbound event out into its own `tokio::spawn`ed write (see
-/// [`run_socket_listener`]), so turning it off drops the write churn several
+/// inbound event into a bounded write worker (see [`run_socket_listener`]),
+/// so turning it off drops the write churn several
 /// replicas otherwise pile onto that one database.
 ///
 /// This is not a fix for connection-pool exhaustion, and must not be sold as
@@ -666,7 +673,8 @@ async fn main() -> Result<()> {
     >::spawn_recovering(ch_client.clone(), CancellationToken::new());
     let socket_sale_receipts = sale_receipts.clone();
     let socket_listing_events = listing_events_writer.clone();
-    let socket_token = token.clone();
+    let socket_token = token.child_token();
+    let listener_token = socket_token.clone();
     let websocket_disabled = universalis_websocket_disabled();
     #[cfg(feature = "test-auth")]
     let websocket_disabled = {
@@ -689,7 +697,7 @@ async fn main() -> Result<()> {
     init_db(&init, world_data)
         .await
         .expect("Unable to populate worlds datacenters- is universalis down?");
-    tokio::spawn(async move {
+    let socket_worker = tokio::spawn(async move {
         if websocket_disabled {
             // World/datacenter data above is still primed — the app needs it to
             // serve anything at all — we just never open the market feed.
@@ -703,7 +711,7 @@ async fn main() -> Result<()> {
             history_sender,
             socket_listing_events,
             socket_sale_receipts,
-            socket_token,
+            listener_token,
         )
         .await;
     });
@@ -870,8 +878,15 @@ async fn main() -> Result<()> {
             true
         }
     };
-    token.cancel();
+    socket_token.cancel();
     let shutdown = async {
+        // Accepted websocket writes must finish while the analyzer and mirror
+        // consumers are still running, including receipt-only analytics that
+        // cannot be reconstructed from Postgres after restart.
+        if let Err(error) = socket_worker.await {
+            error!(?error, "Websocket ingest shutdown failed");
+        }
+        token.cancel();
         let drain_analytics = async {
             if let Err(e) = analyzer_shutdown.await {
                 error!("Analyzer shutdown failed: {e:?}");
@@ -904,6 +919,7 @@ async fn main() -> Result<()> {
         .await
         .is_err()
     {
+        token.cancel();
         error!("Graceful shutdown exceeded 30 seconds; unfinished work may require recovery");
     }
     info!("Exiting");
