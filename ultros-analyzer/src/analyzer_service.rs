@@ -1,11 +1,10 @@
-use anyhow::{Result, anyhow};
-use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use anyhow::Result;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, btree_map::Entry},
     fmt::Display,
-    io::{Read, Write},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -33,6 +32,8 @@ use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 pub const SALE_HISTORY_SIZE: usize = 6;
+
+mod snapshot;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -312,7 +313,7 @@ impl CheapestListings {
     }
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize)]
+#[derive(Debug, Archive, RkyvDeserialize, RkyvSerialize)]
 #[archive(check_bytes)]
 struct AnalyzerState {
     recent_sale_history: BTreeMap<i32, SaleHistory>,
@@ -499,7 +500,7 @@ fn is_snapshot_name(file_name: &str) -> bool {
 }
 
 /// Age of a snapshot from its filename, which `serialize_state` writes as
-/// `snapshot-<unix seconds>.bin.gz`.
+/// `snapshot-<unix seconds>.columns.gz` (or a legacy `.bin.gz`).
 ///
 /// `None` means the name didn't match — callers treat that as "unknown age",
 /// which is not the same as "fresh".
@@ -664,19 +665,18 @@ impl AnalyzerService {
     }
 
     async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
+        self.serialize_state_in(Path::new("analyzer-data"), is_shutdown)
+            .await
+    }
+
+    async fn serialize_state_in(&self, directory: &Path, is_shutdown: bool) -> Result<()> {
         if !self.initiated.load(Ordering::Relaxed) {
             info!("Analyzer not initialized, skipping serialization");
             return Ok(());
         }
-        let state = self.get_analyzer_state().await;
-        let bytes = rkyv::to_bytes::<_, 256>(&state).map_err(|e| anyhow!(e.to_string()))?;
-
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&bytes)?;
-        let compressed_bytes = encoder.finish()?;
-
+        let started = std::time::Instant::now();
         let timestamp = Utc::now().timestamp();
-        let filename = format!("analyzer-data/snapshot-{}.bin.gz", timestamp);
+        let filename = directory.join(format!("snapshot-{timestamp}.columns.gz"));
         // Write somewhere the restore path cannot see, then rename into place.
         //
         // `fs::write` straight to `filename` is not atomic, and the shutdown
@@ -692,12 +692,37 @@ impl AnalyzerService {
         // `snapshot_age` parses everything up to the first `.`, so a
         // `snapshot-<ts>.bin.gz.part` would still look like a legitimate,
         // freshest-on-disk snapshot to the restore scan.
-        let temp_filename = format!("analyzer-data/.partial-snapshot-{}.bin.gz", timestamp);
-        fs::write(&temp_filename, &compressed_bytes).await?;
+        let temp_filename = directory.join(format!(".partial-snapshot-{timestamp}.columns.gz"));
+        let this = self.clone();
+        let path = temp_filename.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            snapshot::write(&path, &this.cheapest_items, &this.recent_sale_history)
+        })
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result);
+        let stats = match result {
+            Ok(stats) => stats,
+            Err(error) => {
+                let _ = fs::remove_file(&temp_filename).await;
+                return Err(error);
+            }
+        };
         fs::rename(&temp_filename, &filename).await?;
-        info!("Wrote snapshot to {}", filename);
+        metrics::gauge!("ultros_analyzer_snapshot_uncompressed_bytes")
+            .set(stats.uncompressed_bytes as f64);
+        metrics::gauge!("ultros_analyzer_snapshot_compressed_bytes")
+            .set(stats.compressed_bytes as f64);
+        metrics::gauge!("ultros_analyzer_snapshot_write_duration_seconds")
+            .set(started.elapsed().as_secs_f64());
+        info!(
+            ?filename,
+            uncompressed_bytes = stats.uncompressed_bytes,
+            compressed_bytes = stats.compressed_bytes,
+            "wrote columnar analyzer snapshot"
+        );
         if !is_shutdown {
-            let mut dir = fs::read_dir("analyzer-data").await?;
+            let mut dir = fs::read_dir(directory).await?;
             let mut entries = vec![];
             while let Ok(Some(entry)) = dir.next_entry().await {
                 entries.push(entry);
@@ -716,30 +741,18 @@ impl AnalyzerService {
         Ok(())
     }
 
-    async fn get_analyzer_state(&self) -> AnalyzerState {
-        let mut cheapest_items = BTreeMap::new();
-        for (key, value) in self.cheapest_items.iter() {
-            let value = value.read().await;
-            cheapest_items.insert(*key, value.clone());
-        }
-        let mut recent_sale_history = BTreeMap::new();
-        for (key, value) in self.recent_sale_history.iter() {
-            let value = value.read().await;
-            recent_sale_history.insert(*key, value.clone());
-        }
-        AnalyzerState {
-            cheapest_items,
-            recent_sale_history,
-        }
-    }
-
     async fn try_restore_from_snapshot(&self) -> bool {
-        self.try_restore_from_snapshot_at(Utc::now()).await
+        self.try_restore_from_snapshot_in(Path::new("analyzer-data"), Utc::now())
+            .await
     }
 
     /// `now` is injected so the age check can be tested without sleeping.
-    async fn try_restore_from_snapshot_at(&self, now: chrono::DateTime<Utc>) -> bool {
-        let mut dir = match fs::read_dir("analyzer-data").await {
+    async fn try_restore_from_snapshot_in(
+        &self,
+        directory: &Path,
+        now: chrono::DateTime<Utc>,
+    ) -> bool {
+        let mut dir = match fs::read_dir(directory).await {
             Ok(dir) => dir,
             Err(_) => return false,
         };
@@ -758,7 +771,7 @@ impl AnalyzerService {
         for entry in entries.iter().rev() {
             let path = entry.path();
 
-            // Filenames are `snapshot-<unix seconds>.bin.gz`, so age comes
+            // Filenames are `snapshot-<unix seconds>.<format>.gz`, so age comes
             // straight off the name — no stat, and no chance of a file copy
             // resetting mtime and making a stale snapshot look fresh.
             let file_name = entry.file_name();
@@ -804,32 +817,15 @@ impl AnalyzerService {
                 return false;
             }
 
-            let file = match fs::read(&path).await {
-                Ok(f) => f,
-                Err(e) => {
-                    error!("Error reading file {e:?}");
-                    continue;
-                }
-            };
-
-            let decompressed_data = if path.to_string_lossy().ends_with(".gz") {
-                let mut decoder = GzDecoder::new(&file[..]);
-                let mut s = Vec::new();
-                if let Err(e) = decoder.read_to_end(&mut s) {
-                    error!("Error decompressing file {path:?}: {e}");
-                    metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "corrupt")
-                        .increment(1);
-                    continue;
-                }
-                s
-            } else {
-                file
-            };
-
-            let state: AnalyzerState = match rkyv::from_bytes(&decompressed_data) {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("Error deserializing state {e}");
+            let read_path = path.clone();
+            let state = match tokio::task::spawn_blocking(move || snapshot::read(&read_path))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result)
+            {
+                Ok(state) => state,
+                Err(error) => {
+                    error!(?path, ?error, "error reading analyzer snapshot");
                     metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "corrupt")
                         .increment(1);
                     continue;
@@ -3189,9 +3185,8 @@ mod tests {
     #[tokio::test]
     async fn test_persistence() {
         let dir = tempdir().unwrap();
-        let data_dir = dir.path();
-        std::env::set_current_dir(data_dir).unwrap();
-        tokio::fs::create_dir_all("analyzer-data").await.unwrap();
+        let data_dir = dir.path().join("analyzer-data");
+        tokio::fs::create_dir_all(&data_dir).await.unwrap();
 
         // Part 1: Serialization and Deserialization
         let mut cheapest_items = BTreeMap::new();
@@ -3232,30 +3227,36 @@ mod tests {
         };
 
         // Serialize the state
-        analyzer_service.serialize_state(false).await.unwrap();
+        analyzer_service
+            .serialize_state_in(&data_dir, false)
+            .await
+            .unwrap();
 
-        // Verify .bin.gz does not exist because we aren't initiated
-        let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
+        // Verify no snapshot exists because we aren't initiated.
+        let mut entries = tokio::fs::read_dir(&data_dir).await.unwrap();
         let mut found = false;
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_name().to_string_lossy().ends_with(".bin.gz") {
+            if entry.file_name().to_string_lossy().ends_with(".columns.gz") {
                 found = true;
             }
         }
-        assert!(!found, "Should not have created a .bin.gz file");
+        assert!(!found, "Should not have created a column snapshot");
 
         analyzer_service.initiated.store(true, Ordering::Relaxed);
-        analyzer_service.serialize_state(false).await.unwrap();
+        analyzer_service
+            .serialize_state_in(&data_dir, false)
+            .await
+            .unwrap();
 
-        // Verify .bin.gz exists
-        let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
+        // Verify a column snapshot exists.
+        let mut entries = tokio::fs::read_dir(&data_dir).await.unwrap();
         let mut found = false;
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_name().to_string_lossy().ends_with(".bin.gz") {
+            if entry.file_name().to_string_lossy().ends_with(".columns.gz") {
                 found = true;
             }
         }
-        assert!(found, "Should have created a .bin.gz file");
+        assert!(found, "Should have created a column snapshot");
 
         // Create a new service and restore from the snapshot
         let mut new_cheapest_items_map = BTreeMap::new();
@@ -3278,7 +3279,11 @@ mod tests {
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
-        assert!(new_analyzer_service.try_restore_from_snapshot().await);
+        assert!(
+            new_analyzer_service
+                .try_restore_from_snapshot_in(&data_dir, Utc::now())
+                .await
+        );
 
         // Check that the data was restored correctly.
         //
@@ -3312,7 +3317,10 @@ mod tests {
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         // Serialize
-        dc_analyzer_service.serialize_state(false).await.unwrap();
+        dc_analyzer_service
+            .serialize_state_in(&data_dir, false)
+            .await
+            .unwrap();
         // Restore
         let mut restore_dc_cheapest_items = BTreeMap::new();
         restore_dc_cheapest_items.insert(
@@ -3331,7 +3339,7 @@ mod tests {
         };
         assert!(
             restore_dc_analyzer_service
-                .try_restore_from_snapshot()
+                .try_restore_from_snapshot_in(&data_dir, Utc::now())
                 .await
         );
         let restored_listings = restore_dc_cheapest_items
@@ -3344,13 +3352,16 @@ mod tests {
         // Part 2: Snapshot Rotation
         // Create 5 more snapshots (total 6)
         for _ in 0..5 {
-            analyzer_service.serialize_state(false).await.unwrap();
+            analyzer_service
+                .serialize_state_in(&data_dir, false)
+                .await
+                .unwrap();
             // Sleep for a second to ensure the timestamps are different
             sleep(Duration::from_secs(1)).await;
         }
 
         // Check that only 4 snapshots remain
-        let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
+        let mut entries = tokio::fs::read_dir(&data_dir).await.unwrap();
         let mut count = 0;
         while entries.next_entry().await.unwrap().is_some() {
             count += 1;
@@ -3384,13 +3395,14 @@ mod tests {
         };
         assert!(
             restore_target
-                .try_restore_from_snapshot_at(Utc::now())
+                .try_restore_from_snapshot_in(&data_dir, Utc::now())
                 .await,
             "a snapshot written seconds ago must still be restorable"
         );
         assert!(
             !restore_target
-                .try_restore_from_snapshot_at(
+                .try_restore_from_snapshot_in(
+                    &data_dir,
                     Utc::now() + MAX_SNAPSHOT_AGE + chrono::Duration::minutes(1)
                 )
                 .await,
@@ -3398,7 +3410,7 @@ mod tests {
         );
         assert!(
             !restore_target
-                .try_restore_from_snapshot_at(Utc::now() - chrono::Duration::hours(1))
+                .try_restore_from_snapshot_in(&data_dir, Utc::now() - chrono::Duration::hours(1))
                 .await,
             "a future-dated snapshot (clock skew / copied file) must be rejected, \
              not treated as fresh because its negative age passes the max-age check"
@@ -3410,7 +3422,7 @@ mod tests {
         // could mistake for a snapshot, and a truncated file that predates
         // this fix must be stepped over rather than taken as the newest.
         let leftovers: Vec<String> = {
-            let mut dir = tokio::fs::read_dir("analyzer-data").await.unwrap();
+            let mut dir = tokio::fs::read_dir(&data_dir).await.unwrap();
             let mut names = vec![];
             while let Ok(Some(e)) = dir.next_entry().await {
                 names.push(e.file_name().to_string_lossy().into_owned());
@@ -3424,16 +3436,13 @@ mod tests {
 
         // Plant a torn gzip under a name *newer* than every good snapshot —
         // exactly what a SIGKILL partway through the shutdown write produced.
-        let torn = format!(
-            "analyzer-data/snapshot-{}.bin.gz",
-            Utc::now().timestamp() + 1
-        );
+        let torn = data_dir.join(format!("snapshot-{}.bin.gz", Utc::now().timestamp() + 1));
         tokio::fs::write(&torn, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
             .await
             .unwrap();
         assert!(
             restore_target
-                .try_restore_from_snapshot_at(Utc::now() + chrono::Duration::seconds(2))
+                .try_restore_from_snapshot_in(&data_dir, Utc::now() + chrono::Duration::seconds(2))
                 .await,
             "a truncated newest snapshot must be skipped, not abort the restore"
         );
@@ -3442,16 +3451,16 @@ mod tests {
         // A leftover partial must never be picked up as the freshest snapshot,
         // which is why the temp name does not start with `snapshot-`: the
         // extension-stripping in `snapshot_age` would happily parse it.
-        let partial = format!(
-            "analyzer-data/.partial-snapshot-{}.bin.gz",
+        let partial = data_dir.join(format!(
+            ".partial-snapshot-{}.bin.gz",
             Utc::now().timestamp() + 1
-        );
+        ));
         tokio::fs::write(&partial, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
             .await
             .unwrap();
         assert!(
             restore_target
-                .try_restore_from_snapshot_at(Utc::now() + chrono::Duration::seconds(2))
+                .try_restore_from_snapshot_in(&data_dir, Utc::now() + chrono::Duration::seconds(2))
                 .await,
             "a leftover partial write must be invisible to the restore scan"
         );
