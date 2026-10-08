@@ -871,43 +871,76 @@ async fn main() -> Result<()> {
         }
     };
     token.cancel();
+    let stages = ShutdownStages::default();
     let shutdown = async {
         let drain_analytics = async {
-            if let Err(e) = analyzer_shutdown.await {
+            if let Err(e) = stages.run("analyzer", analyzer_shutdown).await {
                 error!("Analyzer shutdown failed: {e:?}");
             }
             // Independent tables, independent tasks. Draining them in sequence
             // spent two drain budgets back to back against the one 30 second
             // budget below (GlitchTip #7310).
             tokio::join!(
-                ch_writer.shutdown(),
-                sale_receipts.shutdown(),
-                floor_writer.shutdown()
+                stages.run("clickhouse_sales", ch_writer.shutdown()),
+                stages.run("clickhouse_sale_receipts", sale_receipts.shutdown()),
+                stages.run("clickhouse_floor", floor_writer.shutdown())
             );
         };
         let drain_web = async {
-            if !web_finished && let Err(e) = web_task.await {
+            if !web_finished && let Err(e) = stages.run("web", web_task).await {
                 error!("Web shutdown failed: {e:?}");
             }
         };
         let drain_snapshots = async {
-            if let Err(error) = listing_snapshot_worker.await {
+            if let Err(error) = stages
+                .run("listing_snapshots", listing_snapshot_worker)
+                .await
+            {
                 error!(?error, "Listing snapshot worker shutdown failed");
             }
         };
         tokio::join!(drain_analytics, drain_web, drain_snapshots);
         // Every listing_events producer (socket task, update service, web) has
         // been cancelled or drained by now.
-        listing_events_writer.shutdown().await;
+        stages
+            .run(
+                "clickhouse_listing_events",
+                listing_events_writer.shutdown(),
+            )
+            .await;
     };
     if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
         .await
         .is_err()
     {
-        error!("Graceful shutdown exceeded 30 seconds; unfinished work may require recovery");
+        // `pending` names the stalled stages so the report says where to look;
+        // the message stays fixed so GlitchTip keeps grouping it under #7310.
+        let pending = stages.pending();
+        error!(
+            ?pending,
+            "Graceful shutdown exceeded 30 seconds; unfinished work may require recovery"
+        );
     }
     info!("Exiting");
     Ok(())
+}
+
+/// Records which shutdown stages are still running, so a shutdown that blows
+/// its budget can say which part stalled instead of only that something did.
+#[derive(Default)]
+struct ShutdownStages(std::sync::Mutex<Vec<&'static str>>);
+
+impl ShutdownStages {
+    async fn run<F: std::future::Future>(&self, name: &'static str, stage: F) -> F::Output {
+        self.0.lock().unwrap().push(name);
+        let output = stage.await;
+        self.0.lock().unwrap().retain(|running| *running != name);
+        output
+    }
+
+    fn pending(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
 }
 
 /// Docker and service managers use SIGTERM rather than the interactive Ctrl-C
@@ -934,6 +967,26 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_timeout_names_the_stalled_stages() {
+        let stages = super::ShutdownStages::default();
+        let shutdown = async {
+            tokio::join!(
+                stages.run("clickhouse_sales", async {}),
+                stages.run("web", std::future::pending::<()>()),
+                stages.run(
+                    "analyzer",
+                    tokio::time::sleep(std::time::Duration::from_secs(5))
+                ),
+            );
+        };
+        let timed_out = tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
+            .await
+            .is_err();
+        assert!(timed_out);
+        assert_eq!(stages.pending(), vec!["web"]);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn stalled_world_refresh_releases_startup_to_use_persisted_data() {
         let started = tokio::time::Instant::now();
