@@ -83,7 +83,7 @@ fn ToolChip(
     view! {
         <AppLink
             href=href
-            attr:class="group flex items-start gap-3 p-3 rounded-xl hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors min-w-0"
+            attr:class="group flex items-start gap-3 p-3 rounded-xl hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)]/40 transition-colors min-w-0"
         >
             <span class="text-[color:var(--accent)] group-hover:text-[color:var(--color-text)] transition-colors shrink-0 pt-0.5" aria-hidden="true">
                 {children().into_view()}
@@ -109,7 +109,7 @@ fn FeatureCard(
     view! {
         <AppLink
             href=href
-            attr:class="panel group flex flex-col gap-2 p-4 rounded-2xl hover:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors"
+            attr:class="panel group flex flex-col gap-2 p-4 rounded-2xl hover:border-[color:var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)]/40 transition-colors"
         >
             <span class="text-[color:var(--accent)]" aria-hidden="true">
                 <Icon icon=icon width="1.5em" height="1.5em" />
@@ -270,7 +270,7 @@ pub fn HomePage() -> impl IntoView {
                                 // is the most common reason to land here.
                                 <button
                                     type="button"
-                                    class="flex w-full max-w-xl items-center gap-3 rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] px-4 py-3 text-left text-[color:var(--color-text-muted)] hover:border-[color:var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors"
+                                    class="flex w-full max-w-xl items-center gap-3 rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] px-4 py-3 text-left text-[color:var(--color-text-muted)] hover:border-[color:var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)]/40 transition-colors"
                                     on:click=move |_| search_overlay.open.set(true)
                                 >
                                     <Icon icon=i::AiSearchOutlined width="1.25em" height="1.25em" />
