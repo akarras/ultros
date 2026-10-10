@@ -1916,16 +1916,26 @@ mod tests {
     #[test]
     fn item_sort_option_from_str_unknown_fallback() {
         // Test that unknown, empty, or bogus URL parameters fallback to an error explicitly.
+        // This ensures the parameter parsing correctly catches invalid params without panics.
         assert_eq!(ItemSortOption::from_str("unknown"), Err(()));
         assert_eq!(ItemSortOption::from_str(""), Err(()));
         assert_eq!(ItemSortOption::from_str("bogus"), Err(()));
 
         // Test that well known parameters resolve to proper sort modes.
-        assert_eq!(ItemSortOption::from_str("ilvl"), Ok(ItemSortOption::ItemLevel));
-        assert_eq!(ItemSortOption::from_str("lv"), Ok(ItemSortOption::EquipLevel));
+        assert_eq!(
+            ItemSortOption::from_str("ilvl"),
+            Ok(ItemSortOption::ItemLevel)
+        );
+        assert_eq!(
+            ItemSortOption::from_str("lv"),
+            Ok(ItemSortOption::EquipLevel)
+        );
         assert_eq!(ItemSortOption::from_str("price"), Ok(ItemSortOption::Price));
         assert_eq!(ItemSortOption::from_str("hq"), Ok(ItemSortOption::HqPrice));
-        assert_eq!(ItemSortOption::from_str("vendor"), Ok(ItemSortOption::Vendor));
+        assert_eq!(
+            ItemSortOption::from_str("vendor"),
+            Ok(ItemSortOption::Vendor)
+        );
         assert_eq!(ItemSortOption::from_str("world"), Ok(ItemSortOption::World));
         assert_eq!(ItemSortOption::from_str("name"), Ok(ItemSortOption::Name));
         assert_eq!(ItemSortOption::from_str("key"), Ok(ItemSortOption::Key));
