@@ -175,8 +175,11 @@ decision above stays **blocked**.
   list. A dated checklist is the evidence; screenshots are optional.
 - **B4, reduced — projection checker over every production account
   list.** Run `list_projection_check` once before #1627 merges, and again
-  3–7 days after deploy. A retained manifest is not required: the run
-  covers all `list` rows at that moment. Pass bar: every row is `equal`
+  3–7 days after deploy. A retained manifest is not required. The
+  checker has no implicit "all lists" mode, so build the ID file from the
+  database at run time (`SELECT id FROM list ORDER BY id` into
+  `all-ids.txt`) and pass `--ids-file all-ids.txt`. A list deleted between
+  the export and the check reports as deleted, which is fine. Pass bar: every row is `equal`
   or `missing_document` (never opened through sync). Any `divergent` or
   `malformed` result blocks the merge, or after the merge triggers
   `ULTROS_LISTS_READONLY`. The post-deploy run is the check on the mass
