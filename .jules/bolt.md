@@ -90,3 +90,12 @@ Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only 
 In `ultros-frontend/ultros-charts/src/data/stats.rs`, the `quantile` function used to fully sort the `Vec<f64>` just to linearly interpolate a single value using two neighbors. Because full sorting is `O(N log N)`, it incurs unnecessary overhead. The two target neighbors can instead be found efficiently in `O(N)` by using `select_nth_unstable_by` to partition around the upper index, and then using `.iter().max_by(...)` on the lower slice to find the preceding adjacent element if they aren't the same.
 **Action:**
 When fetching single quantile or median values from an array, use `select_nth_unstable_by` rather than fully sorting it.
+## 2026-10-05 - Use select_nth_unstable_by_key instead of take(n).collect()
+**Learning:**
+In `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs`'s `fixture_recipes`, the vector was being fully sorted and then `.into_iter().take(300).collect()` was called to retrieve only the top 300 entries. This results in $O(N \log N)$ sorting behavior across a large dataset when only the top 300 are needed, and performs a secondary allocation step to gather them.
+**Action:** Use `.select_nth_unstable_by_key(300)` instead to partition the array in $O(N)$ time. Afterwards, use `.truncate(300)` in-place, and then perform the more expensive $O(N \log N)$ sort purely on the remaining 300 items without an extra allocation layer.
+## 2026-10-18 - Replacing sort_by with select_nth_unstable_by when computing median
+**Learning:**
+In `ultros-clickhouse/src/undercut_pressure.rs`, the `median` function was fully sorting a large vector of `f64` values to compute the median using `f64::total_cmp`. Fully sorting scales at $O(N \log N)$ but can be easily optimized to linear time $O(N)$ using `select_nth_unstable_by` and extracting the top value from the partitioned lower bound for even length vectors. This matches optimizations previously found and resolved throughout the codebase.
+**Action:**
+When fetching median values, use `select_nth_unstable_by` (handling odds/even slices correctly) rather than `sort_by(f64::total_cmp)`. Ensure that we compute max linearly for the left side of an even split.

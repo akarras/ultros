@@ -6327,8 +6327,12 @@ mod test {
     fn fixture_recipes() -> Vec<&'static Recipe> {
         let data = xiv_gen_db::data();
         let mut all: Vec<&'static Recipe> = data.recipes.values().collect();
-        all.sort_by_key(|r| r.key_id.0);
-        all.into_iter().take(300).collect()
+        if all.len() > 300 {
+            all.select_nth_unstable_by_key(300, |r| r.key_id.0);
+            all.truncate(300);
+        }
+        all.sort_unstable_by_key(|r| r.key_id.0);
+        all
     }
 
     struct RunOpts {

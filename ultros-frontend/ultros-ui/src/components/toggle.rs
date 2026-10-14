@@ -29,8 +29,8 @@ pub fn Toggle(
             hover:border-[color:color-mix(in_srgb,var(--brand-ring)_30%,var(--color-outline))]
             peer-checked:bg-[color:color-mix(in_srgb,var(--brand-ring)_28%,transparent)]
             peer-checked:border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]
-            peer-focus:outline-none peer-focus:ring-2
-            peer-focus:ring-[color:color-mix(in_srgb,var(--brand-ring)_35%,transparent)]
+            peer-focus-visible:outline-none peer-focus-visible:ring-2
+            peer-focus-visible:ring-[color:color-mix(in_srgb,var(--brand-ring)_35%,transparent)]
             ">
 
                 <div

@@ -411,8 +411,10 @@ mod tests {
             let spec: SortSpec = encoded.parse().unwrap();
             assert_eq!(spec.to_string(), encoded);
         }
-        assert!("bogus".parse::<SortSpec>().is_err());
-        assert!("".parse::<SortSpec>().is_err());
+        // Test unknown fallbacks explicitly
+        assert_eq!("bogus".parse::<SortSpec>(), Err(()));
+        assert_eq!("unknown".parse::<SortSpec>(), Err(()));
+        assert_eq!("".parse::<SortSpec>(), Err(()));
     }
 
     /// The full SSR markup of the row, pinned. A layout regression — a group
