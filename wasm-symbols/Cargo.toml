@@ -18,7 +18,7 @@ wasmparser = { version = "0.259", default-features = false, features = ["std"] }
 # Same encoders the rest of the pipeline uses: cargo-leptos `--precompress`
 # writes brotli/gzip siblings, and this tool has to replace them for the files
 # it rewrites.
-brotli = "8"
+brotli = "9"
 flate2 = "1"
 
 [dev-dependencies]
