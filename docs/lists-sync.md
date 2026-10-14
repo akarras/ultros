@@ -247,6 +247,108 @@ without opting in. The list-flow suite now runs once against the default editor.
 The historical soak plan and Phase 4 evidence below are retained for context;
 this promotion does not claim new production-soak or bundle measurements.
 
+## Rollback
+
+The promotion deleted the Labs toggle and the legacy editor, so rollback is
+deliberately two-tiered. Tier 1 needs no rebuild; tier 2 is a full revert.
+Neither tier touches list data.
+
+### Tier 1: read-only kill-switch (`ULTROS_LISTS_READONLY`)
+
+Set `ULTROS_LISTS_READONLY=true` in the server environment and restart the
+process (`ultros-server-core/src/lists_readonly.rs`; same boolean spellings
+as `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET`). No image rebuild, no migration.
+While it is on:
+
+- The SSR bootstrap carries `lists_readonly` to the browser. `/list/:id`
+  renders the REST projection read-only (`routes/list_readonly.rs`),
+  `/list` renders a read-only account directory, and `/list/device/:id`
+  shows only the paused banner. No list document is opened on any route.
+- The realtime socket refuses `SubscribeListDoc` handshakes and rejects
+  `ListDocUpdate` merges with a scoped `lists are temporarily read-only`
+  error. The restart drops every live socket, so a tab loaded before the
+  flip cannot resubscribe or keep writing after it reconnects.
+- Guest offline-cache preparation is skipped, so no new service-worker
+  generation staging an editor shell is published while paused.
+- REST list writers (Discord bot, imports, sharing) keep working through
+  `ListSync`: they predate the promotion and are not the layer it changed.
+  If the incident implicates the server merge itself, go to tier 2 — the
+  switch only stops the browser surfaces the promotion exposed.
+
+Limits to know during an incident: the switch takes effect on each
+browser's next full page load (already-hydrated tabs keep their in-memory
+editor until reload, but their writes stop at the socket refusal above),
+and a previously prepared offline guest generation can still boot the
+device editor *offline* — device documents are local-only and use the
+unchanged store format, so those edits merge normally once editing
+resumes. To restore editing, unset the variable (or set it to `false`)
+and restart; no data step is needed in either direction.
+
+Verify after flipping: load `/list` and one account `/list/:id` — both
+show the “temporarily paused” banner and the account list's projected
+rows; the browser console shows no `SubscribeListDoc` handshake; and
+`localStorage` snapshots (`ultros.listdoc.v1.*`) are untouched.
+
+### Tier 2: revert the promotion
+
+The promotion is two commits on `codex/lists-promotion`:
+`6d60bf49 feat(lists): promote Lists 2.0 and retire legacy UI` and its
+tip `25994a5e Update Lists 2.0 promotion with main and complete legacy
+cleanup`, plus the kill-switch commit(s) stacked on top. Roll back by
+deploying the previous production image if one is retained; otherwise
+revert in reverse order (`git revert 25994a5e`, then the stacked
+kill-switch commits, then `6d60bf49` — or check out the pre-promotion
+`main` tip the branch forked from) and deploy through the normal
+pipeline. There is no database migration to undo: the promotion contains
+no migration or entity changes.
+
+### Why downgrade is data-safe
+
+Verified against `main...codex/lists-promotion` (25994a5e):
+
+- **Documents**: `ultros-list-doc`, `ultros-lists`, `ultros-db`, and
+  `ultros/static/guest-list-store.mjs` are byte-identical before and
+  after the promotion. The schema-1 snapshot boundary
+  (`ListDocument::from_snapshot`), the guest IndexedDB
+  (`ultros-device-lists-v1`, version 1), and the account localStorage
+  snapshots (`ultros.listdoc.v1.*`) are unchanged, so documents written
+  by the new UI open in the pre-promotion build unchanged.
+- **Projections / REST**: the legacy editor read only REST
+  (`get_list_items_with_listings` over `list_item`), and every accepted
+  document update still maintains that projection (`project_rows` /
+  `project_meta` in `ultros-db/src/list_doc.rs`, covered by
+  `a_peer_update_projects_into_rows_and_back_again`). Lists edited only
+  in the new UI therefore appear complete in the old build. Confirm with
+  the decoded [projection checker](list-projection-checker.md) over the
+  incident's list IDs before and after a tier-2 deploy.
+- **Service worker**: the promotion changed one comment in
+  `service-worker.js` and removed the Labs gate from
+  `guest-offline.mjs` cache preparation. Fetch handling is
+  network-first with cache fallback only on network failure, and
+  generations are never modified in place. After a downgrade the browser
+  installs the old worker script and claims tabs as usual; online
+  navigations serve the old build immediately. A generation prepared by
+  the new build can still answer *offline* device-list navigations with
+  the new build's shell until the old build prepares its own (which, for
+  a never-Labs user, it will not) — that shell reads the same IndexedDB
+  format and caches no account data, so the worst case is the new device
+  editor remaining available offline, not data loss.
+
+### Alternatives considered
+
+Resurrecting the full legacy editor behind a flag was rejected: it is
+~1,800 lines of route plus ~2,000 lines of deleted components, and its
+REST write paths were partly removed with it — re-adding it would ship a
+second editor to maintain for an incident-only surface. A cookie/query
+flag in the Labs style was rejected because it is per-browser (an
+incident switch must cover every client at once, including ones that
+never opted in) and it reads as a permanent user-facing toggle. A
+gradual cohort was rejected for the same reason the promotion deleted
+Labs: the document layer underneath both UIs is identical, so a cohort
+would roll out only the editor skin while complicating every route. The
+env switch covers the failure the promotion actually introduces — the
+new browser surfaces misbehaving — at the smallest surface area.
+
 ## Historical production soak plan
 
 The deployed seven-day observation and promotion decision are tracked in
