@@ -5,31 +5,50 @@ use leptos::prelude::*;
 #[component]
 pub fn DeviceLists() -> impl IntoView {
     let i18n = use_i18n();
+    // Kill-switch: render the read-only directory in both SSR and hydrate
+    // trees (the flag comes from the same bootstrap on both sides) and
+    // never open a device document.
+    if crate::global_state::lists_readonly::use_lists_readonly() {
+        return view! { <crate::routes::list_readonly::ListsReadOnlyDirectory /> }.into_any();
+    }
     let ready = RwSignal::new(false);
     Effect::new(move |_| ready.set(true));
-    move || {
+    (move || {
         ready.track();
         #[cfg(feature = "hydrate")]
         if ready.get() {
             return view! { <browser::DeviceDirectory /> }.into_any();
         }
         view! { <p>{t!(i18n, guest_workspace_loading)}</p> }.into_any()
-    }
+    })
+    .into_any()
 }
 
 #[component]
 pub fn GuestListRoute() -> impl IntoView {
     let i18n = use_i18n();
+    if crate::global_state::lists_readonly::use_lists_readonly() {
+        return view! {
+            <div class="space-y-4">
+                <crate::routes::list_readonly::ListsPausedBanner />
+                <p class="text-sm text-[color:var(--color-text-muted)]">
+                    {t!(i18n, lists_paused_device_body)}
+                </p>
+            </div>
+        }
+        .into_any();
+    }
     let ready = RwSignal::new(false);
     Effect::new(move |_| ready.set(true));
-    move || {
+    (move || {
         ready.track();
         #[cfg(feature = "hydrate")]
         if ready.get() {
             return view! { <browser::DeviceEditorLoader /> }.into_any();
         }
         view! { <p>{t!(i18n, guest_workspace_opening)}</p> }.into_any()
-    }
+    })
+    .into_any()
 }
 
 /// Editor URL for a freshly created device list. `online` appends the
