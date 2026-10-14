@@ -19,10 +19,26 @@ Search for items directly in the list and add the quantity and quality you need.
 Switch the composer to **Recipes** to preview finished items or ingredients.
 You can also use **Add to List** from an item page or other tools.
 
-Edit **Needed** and **Quality** in each row. Open **Details** to change **Owned**
-or a target price. Select rows for bulk changes, and use **Undo** or **Redo** to
-correct edits. The Build estimate prices the remaining units in your chosen
-world, datacenter, or region and calls out incomplete price coverage.
+Edit **Needed** and **Quality** in each row. The row's check button marks the
+whole row acquired (or back to unacquired) in one click; open **Details** to
+set an exact **Owned** amount or a target price. The bell button creates a
+price alert for that row's item without leaving the list. Items that cannot
+be sold on the market board are labelled **Unavailable on market board**
+instead of looking merely out of stock.
+
+Select rows for bulk changes. **Select all shown** selects the rows the
+current filter displays, and **Delete selected** asks for a second click to
+confirm; **Undo** is still offered right after a removal, and **Undo**/**Redo**
+correct other edits. Sorting by **Est. cost** orders rows by their full
+remaining line cost (the number in the column), and **Qty** sorts by
+**Needed**.
+
+The Build estimate prices only the units you still need — not whole
+market-board stacks — in your chosen world, datacenter, or region, so its
+total can be lower than the old whole-stack estimate; **Shop** below still
+plans whole stacks. It calls out incomplete price coverage, and **Cost by
+datacenter and world** breaks the total down by where the priced units are
+listed.
 
 ## Shopping
 
