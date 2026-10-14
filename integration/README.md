@@ -13,6 +13,12 @@ This folder contains a lightweight Puppeteer harness for screenshot-driven E2E c
 
 ## Prerequisites
 
+Lists 2.0 runs by default. `npm run test:lists-default` checks account SSR,
+hydration, client navigation and compatibility with old Labs bookmarks (requires
+`test-auth`). `npm run test:lists-help` and `npm run test:lists-v2` exercise device
+lists without signing in or setting a Labs cookie. `npm run test:list-flow`
+covers inline editing, recipes, sharing and deletion on the account editor.
+
 - Rust toolchain and cargo-leptos installed
 - Node.js 22.12+ and npm installed (Puppeteer 25 requires it)
 - Internet access (Puppeteer will download a compatible Chromium on first install)

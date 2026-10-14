@@ -1,4 +1,3 @@
-pub mod add_recipe_to_current_list;
 pub mod add_recipe_to_list;
 pub mod add_set_to_list;
 pub mod crafter_settings;

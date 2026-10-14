@@ -54,7 +54,7 @@ async function run(browser) {
     });
   }
   await configure(page);
-  await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
+  await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
     .map(([name, value]) => ({ name, value, url: base, path: "/" })));
   const api = (method, route, body) => page.evaluate(async ({ method, route, body }) => {
     const response = await fetch(route, { method, headers: { "Content-Type": "application/json" },

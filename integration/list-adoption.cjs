@@ -56,7 +56,7 @@ async function main() {
   }
   const load=async(p,route)=>{await p.bringToFront();await p.goto(new URL(route,base).href,{waitUntil:'domcontentloaded'});await p.waitForFunction(()=>window.__onlineHydrated);};
   let signedIn=false;
-  const login=async(p,id,next='/list?labs=lists-sync')=>{signedIn=true;return load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);};
+  const login=async(p,id,next='/list')=>{signedIn=true;return load(p,`/test/login?user_id=${id}&username=Online${id}&redirect=${encodeURIComponent(next)}`);};
   const api=async(p,method,route,body)=>p.evaluate(async({method,route,body})=>{
     const r=await fetch(route,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
     const text=await r.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:r.status,data};
@@ -66,7 +66,7 @@ async function main() {
   const saved=async p=>{await p.bringToFront();await p.waitForFunction(()=>document.querySelector('[data-testid="device-list-status"]')?.textContent==='Saved on this device');};
   const details=async p=>{await p.bringToFront();const sel='button[aria-label="Details for Bronze Ingot"]';await p.waitForSelector(sel);if(await p.$eval(sel,b=>b.getAttribute('aria-expanded'))!=='true')await p.click(sel);await p.waitForSelector(owned,{visible:true});};
   async function createDevice(name, clearSearch=true) {
-    await load(page,'/list?labs=lists-sync');
+    await load(page,'/list');
     await page.waitForSelector(tid('list-new'));
     assert.equal(await page.$$eval('h1',nodes=>nodes.filter(n=>n.textContent.trim()==='Lists').length),1);
     assert.equal(await page.$$(tid('list-new')).then(a=>a.length),1);
@@ -93,7 +93,7 @@ async function main() {
   const artifacts=path.join(__dirname,'artifacts/list-online');fs.mkdirSync(artifacts,{recursive:true});
   try {
     await configure(page);
-    await page.setCookie(...[['LABS','lists-sync'],['HIDE_ADS','true'],['PRICE_ZONE','North-America'],['i18n_pref_locale','en']].map(([name,value])=>({name,value,url:base,path:'/'})));
+    await page.setCookie(...[['HIDE_ADS','true'],['PRICE_ZONE','North-America'],['i18n_pref_locale','en']].map(([name,value])=>({name,value,url:base,path:'/'})));
     // Sign-in continuation uses exactly the return target produced by Make online.
     const first=await createDevice(`Online first ${Date.now()}`);
     const signIn=await page.$eval(tid('device-list-make-online-sign-in'),a=>a.href);
@@ -117,26 +117,35 @@ async function main() {
     await page.evaluate(selector=>[...document.querySelectorAll(`${selector} button`)].find(b=>b.textContent==='Invite link').click(),inviteMethods);
     await page.waitForFunction(()=>document.querySelector('[role="dialog"] select[aria-label="Permission"]')?.checkVisibility());
     const inviteLimit=tid('list-invite-max-uses'), inviteCreate=tid('list-invite-create');
+    const createInvite=async()=>{
+      await page.$eval(inviteCreate,button=>button.scrollIntoView({block:'center'}));
+      await page.waitForFunction(selector=>{
+        const button=document.querySelector(selector);if(!button||button.disabled)return false;
+        const box=button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));
+      },{},inviteCreate);
+      await page.locator(inviteCreate).click();
+    };
     const initialInvites=inviteRequests;
     for(const invalid of ['0','-1','1.5','abc','2147483648']) {
-      await replace(page,inviteLimit,invalid);await page.click(inviteCreate);
+      await replace(page,inviteLimit,invalid);await createInvite();
       await page.waitForSelector('#list-invite-error',{visible:true});
       assert.equal(await page.$eval(inviteLimit,input=>input.getAttribute('aria-invalid')),'true');
       assert.equal(inviteRequests,initialInvites,'invalid limit cannot create an unlimited invite');
     }
     await page.select(tid('list-invite-permission'),'Write');
-    failInvite=true;await replace(page,inviteLimit,2);await page.click(inviteCreate);
+    failInvite=true;await replace(page,inviteLimit,2);await createInvite();
     await page.waitForFunction(()=>document.querySelector('#list-invite-error')?.textContent.includes('Try again'));
     assert.equal(await page.$eval(inviteLimit,input=>input.value),'2','failed invite retains the intended limit');
     assert.equal(inviteRequests,initialInvites+1);
-    failInvite=false;await page.click(inviteCreate);
+    failInvite=false;await createInvite();
     await page.waitForFunction(()=>document.querySelector('[data-testid="list-invite-max-uses"]')?.value==='');
     const newInvites=(await api(page,'GET',`/api/v1/list/${firstId}/invites`)).data;
     assert.equal(newInvites.length,1);assert.equal(newInvites[0].max_uses,2);assert.equal(newInvites[0].permission,'Write');
     await page.waitForFunction(()=>document.querySelector('[data-testid="list-invite-permission"]')?.value==='Write');
     // The action refetch rebuilds this section; displayed permission must still
     // agree with the retained signal, and the next explicit Read grant.
-    await page.select(tid('list-invite-permission'),'Read');await replace(page,inviteLimit,1);await page.click(inviteCreate);
+    await page.select(tid('list-invite-permission'),'Read');await replace(page,inviteLimit,1);await createInvite();
     await page.waitForFunction(()=>document.querySelector('[data-testid="list-invite-max-uses"]')?.value==='');
     const allInvites=(await api(page,'GET',`/api/v1/list/${firstId}/invites`)).data;
     assert.equal(allInvites.length,2);assert(allInvites.some(invite=>invite.permission==='Read'&&invite.max_uses===1));
@@ -148,20 +157,20 @@ async function main() {
     await replace(page,needed,5);await page.keyboard.press('Enter');await waitValue(page,needed,5);
     await page.click(tid('list-undo'));await waitValue(page,needed,3);
     await page.click(tid('list-redo'));await waitValue(page,needed,5);
-    await page.waitForFunction(()=>document.querySelector('[data-testid="account-list-save-state"]')?.textContent==='Saved on this device');
-    await load(page,first+'?labs=lists-sync');assert.equal(await online(page),firstId);await waitValue(page,needed,5);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes('Local copy saved'));
+    await load(page,first+'');assert.equal(await online(page),firstId);await waitValue(page,needed,5);
     // GlitchTip #7389: leaving /list/:id client-side re-runs the route view with
     // the next match's params before the old page is dropped. The stale rebuild
     // used to register a title closure over disposed signals, which panicked the
     // client on the following navigation (creating a device list here).
-    await page.evaluate(()=>{history.pushState({},'','/list?labs=lists-sync');dispatchEvent(new PopStateEvent('popstate',{state:{}}));});
+    await page.evaluate(()=>{history.pushState({},'','/list');dispatchEvent(new PopStateEvent('popstate',{state:{}}));});
     await page.waitForSelector(tid('list-new'));
     await page.click(tid('list-new'));await replace(page,tid('device-list-name'),`Leave online ${Date.now()}`);await page.click(tid('device-list-create'));
     await page.waitForFunction(()=>location.pathname.startsWith('/list/device/'));
     await page.waitForSelector('input[aria-label="Add an item"]');
     assert.deepEqual(errors,[],'client-side navigation away from an online list must not panic');
     console.log('[ok] leaving an online list client-side and creating a device list keeps the app alive');
-    await load(page,'/list?labs=lists-sync');await page.waitForSelector(tid('lists-grid'));
+    await load(page,'/list');await page.waitForSelector(tid('lists-grid'));
     await page.waitForFunction(id=>document.querySelectorAll(`a[href="/list/${id}"]`).length>0,{},firstId);
     assert.equal((await api(page,'GET','/api/v1/list')).data.filter(l=>l.list.id===firstId).length,1);
     await page.screenshot({path:path.join(artifacts,'directory-desktop.png'),fullPage:true});
@@ -207,7 +216,7 @@ async function main() {
     mode='fail';await page.click(tid('device-list-adopt'));
     await page.waitForFunction(()=>document.querySelector('[data-testid="list-online-controls"] [role="alert"]')?.textContent.includes('saved on this device'));
     const after=await record(failed);assert.deepEqual(after.snapshot,before.snapshot);assert.equal(after.online.owner,String(owner));
-    await load(page,failed+'?labs=lists-sync');await page.waitForSelector(tid('device-list-adopt'));
+    await load(page,failed+'');await page.waitForSelector(tid('device-list-adopt'));
     assert.deepEqual((await record(failed)).snapshot,before.snapshot,'reload during a failed transition preserves original bytes');
     mode='normal';
     if (new URL(page.url()).pathname.startsWith('/list/device/')) {
@@ -219,7 +228,7 @@ async function main() {
     const retryBinding=await record(failed);
     assert.equal(retryBinding.online.list_id,retryId);
     assert.equal(retryBinding.online.acknowledged,retryBinding.revision);
-    await load(page,failed+'?labs=lists-sync');assert.equal(await online(page),retryId);
+    await load(page,failed+'');assert.equal(await online(page),retryId);
     console.log('[ok] failed transfer preserves the source and retry continues into one destination');
 
     const lost=await createDevice(`Online lost response ${Date.now()}`);
@@ -231,13 +240,13 @@ async function main() {
       await page.click(tid('device-list-adopt'));
     }
     const lostId=await online(page);
-    await load(page,lost+'?labs=lists-sync');assert.equal(await online(page),lostId);
+    await load(page,lost+'');assert.equal(await online(page),lostId);
     const lostBinding=await record(lost);assert.equal(lostBinding.online.acknowledged,lostBinding.revision);
     console.log('[ok] a lost response after commit retries into the same destination');
 
     // Both tabs keep their changes while the first requests are in flight.
     const concurrent=await createDevice(`Online concurrent ${Date.now()}`);
-    const second=await browser.newPage();await configure(second);await load(second,concurrent+'?labs=lists-sync');await details(second);
+    const second=await browser.newPage();await configure(second);await load(second,concurrent+'');await details(second);
     console.log('[progress] both device tabs ready');
     await page.bringToFront();
     mode='hold';await page.click(tid('device-list-adopt'));
@@ -307,7 +316,7 @@ async function main() {
     const legacyRequest={expected_owner:owner,adoption_key:`legacy-${Date.now()}`,device_list_id:oldId,source_revision:String(old.revision),name:`Legacy destination ${Date.now()}`,wdr_filter:{Region:1},items:[{item_id:5056,hq:null,quantity:3,acquired:0,target_price:null}]};
     const receipt=(await api(page,'POST','/api/v1/list/adopt',legacyRequest)).data;created.add(receipt.list_id);
     await page.evaluate(({owner,id,receipt})=>localStorage.setItem(`ultros:device-adoption:v1:${owner}:${id}:receipt`,JSON.stringify(receipt)),{owner,id:oldId,receipt});
-    await load(page,legacy+'?labs=lists-sync');await page.waitForSelector(tid('device-list-open-online'));
+    await load(page,legacy+'');await page.waitForSelector(tid('device-list-open-online'));
     promotionResponded=true;holdFinalLogin=true;
     await page.click(tid('device-list-open-online'));
     const legacyDeadline=Date.now()+60000;while(!heldLogin.length&&Date.now()<legacyDeadline)await new Promise(r=>setTimeout(r,50));
@@ -317,7 +326,7 @@ async function main() {
     assert.equal(new URL(page.url()).pathname,legacy);await waitValue(page,needed,9);
     await page.keyboard.press('Escape');
     assert.equal(await online(page),receipt.list_id);assert.deepEqual((await record(legacy)).snapshot,old.snapshot);
-    await load(page,legacy+'?labs=lists-sync&recovery=1');await page.waitForSelector(tid('device-list-export'));await page.click(tid('device-list-export'));
+    await load(page,legacy+'?recovery=1');await page.waitForSelector(tid('device-list-export'));await page.click(tid('device-list-export'));
     await page.waitForFunction(()=>document.querySelector('[data-testid="device-list-backup"]')?.value.length>0);
     assert.equal(new URL(page.url()).pathname,legacy,'recovery URL stays on original bytes');
     console.log('[ok] legacy copy choice retains an accessible recovery backup');
@@ -328,7 +337,7 @@ async function main() {
     created.add(separateReceipt.list_id);
     await page.evaluate(({owner,id,receipt})=>localStorage.setItem(`ultros:device-adoption:v1:${owner}:${id}:receipt`,JSON.stringify(receipt)),{owner,id:separateDevice,receipt:separateReceipt});
     await replace(page,needed,8);await page.keyboard.press('Enter');await saved(page);
-    await load(page,separate+'?labs=lists-sync');await page.waitForSelector(tid('device-list-open-online'));
+    await load(page,separate+'');await page.waitForSelector(tid('device-list-open-online'));
     // The separate upload is a secondary path behind the storage menu.
     await page.click(tid('device-list-storage-toggle'));await page.waitForSelector(tid('device-list-upload-separate'));await page.click(tid('device-list-upload-separate'));
     const separateId=await online(page);assert.notEqual(separateId,separateReceipt.list_id);await waitValue(page,needed,8);
@@ -348,29 +357,29 @@ async function main() {
     assert.equal(new URL(page.url()).pathname,changing);
     assert.equal((await record(changing)).online.owner,String(owner));
     assert.equal((await api(accountTab,'GET','/api/v1/list')).data.length,0);
-    await accountTab.close();await login(page,owner,changing+'?labs=lists-sync');await online(page);
+    await accountTab.close();await login(page,owner,changing+'');await online(page);
     console.log('[ok] account switch during a request preserves the original binding and prevents wrong-account navigation');
 
     // Switching accounts cannot repurpose an explicitly bound failed transition.
     const switched=await createDevice(`Online account boundary ${Date.now()}`);mode='fail';await page.click(tid('device-list-adopt'));
     await page.waitForFunction(()=>document.querySelector('[data-testid="list-online-controls"] [role="alert"]'));
-    mode='normal';await login(page,other,switched+'?labs=lists-sync');await page.waitForSelector(tid('list-online-account-required'));
+    mode='normal';await login(page,other,switched+'');await page.waitForSelector(tid('list-online-account-required'));
     assert.equal((await page.$$(needed)).length,0,'a bound device editor is not exposed to another account');
     assert.equal((await record(switched)).online.owner,String(owner));
     assert.equal((await api(page,'GET','/api/v1/list')).data.length,0);
     const denied=await api(page,'GET',`/api/v1/list/${firstId}/listings`);assert([403,404].includes(denied.status));
-    await login(page,owner,switched+'?labs=lists-sync');await online(page);
+    await login(page,owner,switched+'');await online(page);
     await api(page,'POST',`/api/v1/list/${firstId}/share/user`,{user_id:other,permission:'Read'});
-    await login(page,other,`/list/${firstId}?labs=lists-sync`);
+    await login(page,other,`/list/${firstId}`);
     await page.waitForSelector(tid('list-settings-btn'));
     assert.equal((await page.$$(tid('list-access-btn'))).length,0,'viewers cannot manage access');
     await page.click(tid('list-settings-btn'));await page.waitForSelector('[role="dialog"]');
     assert.equal((await page.$$(tid('list-delete-btn'))).length,0,'viewers cannot delete');
     assert.equal((await page.$$(tid('list-leave-btn'))).length,1,'viewers can leave from the More menu');
     await page.keyboard.press('Escape');await page.waitForSelector('[role="dialog"]',{hidden:true});
-    await login(page,owner,`/list/${firstId}?labs=lists-sync`);
+    await login(page,owner,`/list/${firstId}`);
     await api(page,'POST',`/api/v1/list/${firstId}/share/user`,{user_id:other,permission:'Write'});
-    await login(page,other,`/list/${firstId}?labs=lists-sync`);await page.waitForSelector(needed);
+    await login(page,other,`/list/${firstId}`);await page.waitForSelector(needed);
     assert.equal(await page.$eval(needed,input=>input.disabled),false,'editors retain editing capability');
     assert.equal((await page.$$(tid('list-access-btn'))).length,0,'editors cannot grant access');
     await login(page,owner);
@@ -379,6 +388,13 @@ async function main() {
     console.log('Make online regression passed.');
   } catch(error) {
     console.error('Scenario failed before cleanup:',error);
+    console.error('Invite requests:', inviteRequests);
+    console.error('Access dialog:', await page.evaluate(() => ({
+      text: document.querySelector('[role="dialog"]')?.innerText,
+      limit: document.querySelector('[data-testid="list-invite-max-uses"]')?.value,
+      permission: document.querySelector('[data-testid="list-invite-permission"]')?.value,
+      disabled: document.querySelector('[data-testid="list-invite-create"]')?.disabled,
+    })).catch(String));
     for(const tab of await browser.pages()) {
       if(!tab.url().startsWith(base))continue;
       console.error('Failure page:',tab.url());

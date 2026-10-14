@@ -1,6 +1,6 @@
 # Lists local-first sync
 
-`/list/:id` behind the `lists-sync` Labs toggle runs on a Loro CRDT document
+`/list/:id` runs on a Loro CRDT document by default
 stored in the browser and merged through the server. Spec:
 `docs/superpowers/specs/2026-09-07-lists-local-first-sync-design.md`.
 
@@ -210,8 +210,15 @@ the final integrated build or complete the production soak.
 
 ## Promotion
 
-Lists 2.0 adds guest Build/Shop and account adoption under the same Labs
-preference; its product contract is in
+Lists 2.0 is the default for account and device lists as of 2026-10-12.
+The Labs switch, original REST-driven list editor and directory, and
+`?cart=legacy` comparison grid have been removed. Old `LABS` cookies and
+`?labs=lists-sync` bookmarks no longer select a different implementation.
+Existing account lists use the same document bootstrap and REST projections;
+device lists keep their existing browser storage and IDs. REST endpoints
+remain available for the Discord bot, imports, sharing and other callers.
+
+The guest Build/Shop and account adoption product contract is in
 [`2026-09-10-lists-2-product-design.md`](superpowers/specs/2026-09-10-lists-2-product-design.md).
 The Shop and companion requirements from that contract are tracked item by
 item, with the checks that exercised each one, in
@@ -223,24 +230,24 @@ The Build side (compact cart, estimates, undo) is reconciled the same way in
 which also records the deployed build and the browser verification still owed.
 New UI strings, including companion labels and offline boot messages, must
 remain translated in all seven supported locales. Verify keyboard focus
-through a committed row edit on both device and account lists before promotion.
+through a committed row edit on both device and account lists when changing them.
 
 The existing root service worker also serves push notifications. Worker
 activation and control of open tabs are site-wide; only guest offline cache
-preparation is Labs opt-in. Its fetch handler can use an anonymous guest shell
+preparation starts on the Lists directory or a device-list route. Its fetch handler can use an anonymous guest shell
 and public assets only after a cache generation has been prepared. It never
 caches authenticated page HTML, account APIs, or market responses. The guest
 store, offline helper, and companion modules ship with the versioned WASM
 package so an older cached static helper cannot change a deployed module API.
 
-Promotion out of Labs deletes `LAB_LISTS_SYNC`, the `LabsSettings` section
-when the registry is empty, the legacy `ListView`, and the REST-driven
-actions it owns. It requires the soak below to pass. Promotion requires decoded
-projection-checker evidence, a controlled bundle comparison and the production
-soak. Phase 4 validation is recorded below. This document does not record a
-completed production soak.
+`integration/lists-default.cjs` verifies default SSR, hydration and client-side
+navigation, including stale Labs cookies and comparison bookmarks.
+`integration/lists-help.cjs` and `lists-v2.cjs` cover anonymous device lists
+without opting in. The list-flow suite now runs once against the default editor.
+The historical soak plan and Phase 4 evidence below are retained for context;
+this promotion does not claim new production-soak or bundle measurements.
 
-## Production soak
+## Historical production soak plan
 
 The deployed seven-day observation and promotion decision are tracked in
 [#1510](https://github.com/akarras/ultros/issues/1510).

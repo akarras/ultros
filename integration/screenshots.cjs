@@ -7,7 +7,7 @@
  *   1. Empty owner list                       — empty-state
  *   2. List with mixed items + mark acquired  — populated + completed row
  *   3. Read-only viewer of same list          — write affordances hidden
- *   4. Owner settings drawer open             — full drawer
+ *   4. Owner Access dialog open             — full drawer
  *
  * Writes to integration/artifacts/.
  */
@@ -64,15 +64,12 @@ async function snap(page, name) {
 
 async function waitForHydration(page) {
   await page.waitForFunction(
-    () => !!document.querySelector('[data-testid="list-settings-btn"]'),
+    () => !!document.querySelector('[data-testid="list-access-btn"]'),
     { timeout: 30000 },
   );
   // Wait for the view_caps Effect to fire (owner-gated Add Item button).
   await page.waitForFunction(
-    () =>
-      Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
-        (b.innerText || "").includes("Add Item"),
-      ),
+    () => !!document.querySelector('[data-testid="inline-list-add"]'),
     { timeout: 15000 },
   );
   // Brief settle for any async layout.
@@ -139,46 +136,29 @@ async function waitForHydration(page) {
     // Wait for at least one row + progress text.
     await owner
       .waitForFunction(
-        () => /units acquired/.test(document.body.innerText) &&
-          document.querySelectorAll("tbody tr").length >= 4,
+        () => document.querySelectorAll('[data-testid="cart-rows"] [data-item-id]').length >= 4,
         { timeout: 30000 },
       )
       .catch(() => {});
     await new Promise((r) => setTimeout(r, 800));
     await snap(owner, "02-populated-owner");
 
-    // --- Shot 3: owner settings drawer open.
+    // --- Shot 3: owner Access dialog open.
     await owner.evaluate(() => {
-      const b = document.querySelector('[data-testid="list-settings-btn"]');
+      const b = document.querySelector('[data-testid="list-access-btn"]');
       b && b.click();
     });
-    await owner.waitForSelector('[data-testid="list-settings-drawer"]', {
+    await owner.waitForSelector('[data-testid="list-invite-create"]', {
       visible: true,
       timeout: 10000,
     });
-    // Wait for sharing section to render its Suspense.
-    await owner
-      .waitForFunction(
-        () => {
-          const sec = document.querySelector('[data-testid="list-settings-sharing"]');
-          return (
-            sec &&
-            Array.from(sec.querySelectorAll("button")).some((b) =>
-              /copy/i.test((b.innerText || "").trim()),
-            )
-          );
-        },
-        { timeout: 10000 },
-      )
-      .catch(() => {});
-    await new Promise((r) => setTimeout(r, 500));
-    await snap(owner, "03-settings-drawer");
+    await snap(owner, "03-access-dialog");
 
     // Close drawer.
     await owner.keyboard.press("Escape");
     await owner
       .waitForFunction(
-        () => !document.querySelector('[data-testid="list-settings-drawer"]'),
+        () => !document.querySelector('[data-testid="list-invite-create"]'),
         { timeout: 5000 },
       )
       .catch(() => {});

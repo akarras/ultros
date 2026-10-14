@@ -6,7 +6,7 @@ use crate::{
     components::list_travel_controls::ListTravelControls,
     global_state::{home_world::use_home_world, use_world_helper},
     query_defaults::filter_query_signal,
-    routes::list_view::{IdList, NameList},
+    routes::list_common::{IdList, NameList},
 };
 use leptos::prelude::*;
 #[cfg(any(feature = "hydrate", test))]
@@ -125,7 +125,6 @@ impl ListTravelState {
 #[cfg(any(feature = "hydrate", test))]
 fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
     let mut query = ParamsMap::new();
-    query.replace("labs", "lists-sync".to_string());
     if shop {
         query.replace("buy", "true".to_string());
     }

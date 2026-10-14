@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 
-// Fresh anonymous Settings -> Labs -> device-list journey. No test-auth required.
-// BASE_URL=http://127.0.0.1:8080 node integration/lists-preview-help.cjs
+// Fresh anonymous Settings -> device-list journey. No test-auth required.
+// BASE_URL=http://127.0.0.1:8080 node integration/lists-help.cjs
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -11,7 +11,7 @@ const { capture } = require("./capture.cjs");
 async function main() {
   const { default: puppeteer } = await import("puppeteer");
   const base = process.env.BASE_URL || "http://127.0.0.1:8080";
-  const artifacts = path.join(__dirname, "artifacts", "lists-preview-help");
+  const artifacts = path.join(__dirname, "artifacts", "lists-help");
   fs.mkdirSync(artifacts, { recursive: true });
   const copy = lang => JSON.parse(fs.readFileSync(path.join(__dirname,
     "../ultros-frontend/ultros-i18n/locales", `${lang}.json`), "utf8"));
@@ -34,7 +34,6 @@ async function main() {
     }
   });
   const id = value => `[data-testid="${value}"]`;
-  const toggle = `${id("lab-lists-sync")} input[role="switch"]`;
   async function load(route) {
     const response = await page.goto(new URL(route, base).href, { waitUntil: "domcontentloaded" });
     assert(response?.ok(), `${route}: ${response?.status()}`);
@@ -58,33 +57,16 @@ async function main() {
   try {
     for (const lang of ["de", "fr", "ja", "cn", "ko", "tc", "en"]) {
       await load(`/settings?lang=${lang}`);
-      await visibleText(copy(lang).labs_lists_sync_desc);
-      assert.equal(await page.$eval(toggle, input => input.checked), false,
-        `${lang}: preview stays off until explicitly enabled`);
-      await page.$eval(id("labs-settings"), element => element.scrollIntoView());
-      await capture(page, { path: path.join(artifacts, `labs-${lang}.png`), fullPage: true });
+      assert.equal(await page.$(id("labs-settings")), null, `${lang}: retired Labs settings are absent`);
     }
-    await page.setViewport({ width: 390, height: 844 });
-    await page.$eval(id("labs-settings"), element => element.scrollIntoView());
-    await capture(page, { path: path.join(artifacts, "labs-en-mobile.png"), fullPage: true });
-    await page.setViewport({ width: 1280, height: 900 });
     assert(!(await page.cookies()).some(cookie => cookie.name === "LABS"));
-    await load("/list?lang=en");
-    assert.equal(await page.$(id("list-new")), null, "anonymous default does not enable device lists");
-    await load("/settings?lang=en");
-    await page.$eval(toggle, input => input.click());
-    await page.waitForFunction(() => document.cookie.includes("LABS=lists-sync"));
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => window.__previewHelpHydrated);
-    assert.equal(await page.$eval(toggle, input => input.checked), true);
-
     const token = `preview-${Date.now()}`;
     await page.evaluate(token => { window.__previewHelpDocument = token; }, token);
     await page.evaluate(() => Array.from(document.querySelectorAll("a[href]"))
       .find(link => new URL(link.href).pathname === "/list").click());
     await page.waitForSelector(id("list-new"));
     assert.equal(await page.evaluate(() => window.__previewHelpDocument), token,
-      "Settings -> Lists uses the hydrated document and current Labs choice");
+      "Settings -> Lists opens device lists in the same hydrated document");
     await capture(page, { path: path.join(artifacts, "device-directory-help.png"), fullPage: true });
     await page.click(id("list-new"));
     await replace(id("device-list-name"), `Preview help ${Date.now()}`);
@@ -108,21 +90,26 @@ async function main() {
     await capture(page, { path: path.join(artifacts, "device-build-undo-help.png"), fullPage: true });
     await page.click('button[aria-label="Close modal"]');
     await page.click(id("guest-shop-mode"));
-    await visibleText(en.guest_workspace_shop_intro);
+    await visibleText(en.list_shop_handoff_intro);
     await page.waitForSelector(id("shop-cart-summary"), { visible: true });
     await capture(page, { path: path.join(artifacts, "device-shop-help.png"), fullPage: true });
     await page.click(id("guest-build-mode"));
     await page.waitForSelector(needed, { visible: true });
     await saved();
     await load("/settings?lang=en");
-    await page.$eval(toggle, input => input.click());
-    await page.waitForFunction(() => !document.cookie.split(";").some(part => part.trim().startsWith("LABS=")));
     await load(`${devicePath}?lang=en`);
-    await visibleText(en.guest_workspace_enable);
-    assert.equal(await page.$(id("list-build-workspace")), null, "disabling restores the device-list opt-in gate");
-    assert.deepEqual(accountWrites, [], "anonymous preview makes no account-list writes");
+    await page.waitForSelector(needed, { visible: true });
+    assert.equal(await page.$eval(needed, input => input.value), "1", "device list remains available after returning from Settings");
+    assert.deepEqual(accountWrites, [], "anonymous device editing makes no account-list writes");
     assert.deepEqual(errors, [], "no uncaught browser errors");
-    console.log("PASS: seven localized Labs descriptions, anonymous off/enable/reload/SPA/create/edit/Undo/Build/Shop/help/disable journey");
+    console.log("PASS: no Labs settings, anonymous SPA/create/edit/Undo/Build/Shop/help/reload journey");
+  } catch (error) {
+    console.error("Device list state:", await page.evaluate(() => ({
+      url: location.href,
+      dialog: document.querySelector('[role="dialog"]')?.innerText,
+      text: document.body.innerText.slice(0, 2500),
+    })), errors);
+    throw error;
   } finally {
     await browser.close();
   }
