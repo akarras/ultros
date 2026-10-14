@@ -49,7 +49,7 @@ where
                             class="p-2 rounded-lg hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_20%,_transparent)]
                             text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]
                             transition-colors duration-200
-                            focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)]"
+                            focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]"
                             on:click=move |_| set_visible(false)
                             aria-label=t_string!(i18n, modal_aria_close)
                         >

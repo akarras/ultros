@@ -929,6 +929,8 @@ mod error_filter_wiring {
         // ultros.app / the pkg bundle, or a real Ultros bug could be swept up.
         assert!(FILTER_JS.contains("isThirdPartyScriptError"));
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
+        // Cloudflare's edge scripts under /cdn-cgi/ on our own origin (#7996).
+        assert!(FILTER_JS.contains("ULTROS_CLOUDFLARE_EDGE_PATH_RE"));
     }
 
     /// Same contract for the wasm symbolicator: beforeSend calls
