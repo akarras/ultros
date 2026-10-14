@@ -27,6 +27,7 @@ pub mod item_view_verdicts;
 pub mod job_set_detail;
 pub mod leve_analyzer;
 pub mod list_common;
+pub mod list_readonly;
 pub mod list_view_sync;
 pub mod lists;
 pub mod not_found;

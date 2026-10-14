@@ -2289,9 +2289,13 @@ pub fn ListViewSync() -> impl IntoView {
 #[component]
 pub fn ListRoute() -> impl IntoView {
     let params = use_params_map();
+    let readonly = crate::global_state::lists_readonly::use_lists_readonly();
     let id = Memo::new(move |_| params.with(|p| p.get("id").unwrap_or_default()));
-    move || match list_route_view(id.try_get()) {
+    move || match list_route_view(id.try_get(), readonly) {
         ListRouteView::Sync => view! { <ListViewSync /> }.into_any(),
+        ListRouteView::ReadOnly => {
+            view! { <crate::routes::list_readonly::ListReadOnly /> }.into_any()
+        }
         ListRouteView::Leaving => ().into_any(),
     }
 }
@@ -2300,6 +2304,9 @@ pub fn ListRoute() -> impl IntoView {
 #[derive(Debug, PartialEq, Eq)]
 enum ListRouteView {
     Sync,
+    /// The operator kill-switch (`ULTROS_LISTS_READONLY`) is on: show the
+    /// REST projection read-only and never open the list document.
+    ReadOnly,
     /// The router is on its way out of this route: its params already
     /// describe the next match (no `id`), or the route's own memo is gone.
     /// Rebuilding a list page here is wasted work at best; at worst it
@@ -2307,8 +2314,9 @@ enum ListRouteView {
     Leaving,
 }
 
-fn list_route_view(id: Option<String>) -> ListRouteView {
+fn list_route_view(id: Option<String>, readonly: bool) -> ListRouteView {
     match id {
+        Some(id) if !id.is_empty() && readonly => ListRouteView::ReadOnly,
         Some(id) if !id.is_empty() => ListRouteView::Sync,
         _ => ListRouteView::Leaving,
     }
@@ -2322,9 +2330,30 @@ mod tests {
     /// params before the old page is dropped; that run must not build a page.
     #[test]
     fn list_route_builds_nothing_once_the_router_is_leaving() {
-        assert_eq!(list_route_view(Some("24".into())), ListRouteView::Sync);
-        assert_eq!(list_route_view(Some(String::new())), ListRouteView::Leaving);
-        assert_eq!(list_route_view(None), ListRouteView::Leaving);
+        assert_eq!(
+            list_route_view(Some("24".into()), false),
+            ListRouteView::Sync
+        );
+        assert_eq!(
+            list_route_view(Some(String::new()), false),
+            ListRouteView::Leaving
+        );
+        assert_eq!(list_route_view(None, false), ListRouteView::Leaving);
+    }
+
+    /// The kill-switch swaps the editor for the read-only projection view,
+    /// but leaving still wins so no page is built on the way out.
+    #[test]
+    fn list_route_is_readonly_while_the_kill_switch_is_on() {
+        assert_eq!(
+            list_route_view(Some("24".into()), true),
+            ListRouteView::ReadOnly
+        );
+        assert_eq!(list_route_view(None, true), ListRouteView::Leaving);
+        assert_eq!(
+            list_route_view(Some(String::new()), true),
+            ListRouteView::Leaving
+        );
     }
 
     fn permission_reply(permission: ListPermission) -> ListViewResult {
