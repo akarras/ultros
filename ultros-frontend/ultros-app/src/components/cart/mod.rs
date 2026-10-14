@@ -668,6 +668,8 @@ pub fn ListCart(
                     {sort_header(SortKey::Price, cost_label, true)}
                     <div></div>
                     <div></div>
+                    <div></div>
+                    <div></div>
                 </div>
                 </Show>
                 <ul id="cart-row-list" class="text-sm" data-testid="cart-rows">
