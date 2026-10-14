@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Rebuild the committed social-card fonts from pinned, OFL-licensed sources.
 
-Requires fonttools==4.60.1. Downloads happen only with --download; normal builds
-are offline. The source cache is outside the repository by default.
+Requires fonttools==4.60.1 and brotli==1.2.0. Downloads happen only with
+--download; normal builds are offline. The source cache is outside the
+repository by default.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from urllib.request import urlopen
-import zlib
+import brotli
 
 import fontTools
 from fontTools import subset
@@ -71,7 +72,7 @@ def digest(data: bytes) -> str:
 
 
 def coverage(locale: str) -> set[int]:
-    # The .rkyv packs are zlib compressed (xiv-gen-db::decompress_data). Once
+    # The .rkyv packs are Brotli compressed (xiv-gen-db::decompress_data). Once
     # decompressed, archived strings preserve their UTF-8 bytes. Scanning them
     # retains a conservative superset of the item/job names, including inline
     # short strings, without requiring a second rkyv parser or a Rust build.
@@ -84,13 +85,12 @@ def coverage(locale: str) -> set[int]:
         archive_bytes = archive.read_bytes()
         if archive_bytes.startswith(b"version https://git-lfs.github.com/spec/"):
             raise RuntimeError(f"{archive}: run git lfs pull before regenerating fonts")
-        # Match flate2's streaming reader: the existing packs yield their full
-        # archive without a terminal zlib stream marker. The one-shot Python
-        # zlib.decompress requires that marker and rejects those valid inputs.
-        decoder = zlib.decompressobj()
-        decompressed = decoder.decompress(archive_bytes) + decoder.flush()
-        if not decompressed or decoder.unconsumed_tail or decoder.unused_data:
-            raise RuntimeError(f"{archive}: unexpected compressed game-data format")
+        try:
+            decompressed = brotli.decompress(archive_bytes)
+        except brotli.error as error:
+            raise RuntimeError(f"{archive}: unexpected compressed game-data format") from error
+        if not decompressed:
+            raise RuntimeError(f"{archive}: decoded archive is empty")
         codepoints.update(map(ord, decompressed.decode("utf-8", errors="ignore")))
     for path in sorted((ROOT / "ultros-frontend" / "ultros-i18n" / "locales").glob("*.json")):
         # Decode JSON so escaped Unicode is covered too.
