@@ -156,6 +156,57 @@ and date in this file and on #1510 — not silence:
 Until that text (or equivalent) is signed, the disposition of this gate
 is **blocked**, and #1510 stays open.
 
+## Scoped waiver (chosen 2026-10-14 — awaiting signature)
+
+On 2026-10-14 the owner chose a **scoped** waiver over the full waiver
+above. It keeps the two checks that can find real defects and waives the
+rest. It takes effect only when signed below and on #1510. Until then the
+decision above stays **blocked**.
+
+**Kept, as merge preconditions for #1627** (evidence goes on #1510):
+
+- **B2 — deployed hands-on exercise.** Run against production with Labs
+  on, before #1627 merges, because #1627 deletes the legacy view and the
+  comparison becomes impossible afterwards. Cover two browsers and a
+  phone, one list shared by two Discord accounts, offline edits followed
+  by a reconnect, both accounts purchasing within about a second of each
+  other with no lost change, bot `/list add_item` and `remove_item`
+  landing live, and the legacy and Labs views agreeing on the shared
+  list. A dated checklist is the evidence; screenshots are optional.
+- **B4, reduced — projection checker over every production account
+  list.** Run `list_projection_check` once before #1627 merges, and again
+  3–7 days after deploy. A retained manifest is not required: the run
+  covers all `list` rows at that moment. Pass bar: every row is `equal`
+  or `missing_document` (never opened through sync). Any `divergent` or
+  `malformed` result blocks the merge, or after the merge triggers
+  `ULTROS_LISTS_READONLY`. The post-deploy run is the check on the mass
+  first-open bootstrap risk (waiver item 1).
+
+**Replaced by a lighter check:**
+
+- **B6 → bundle sanity check.** One wasm-release gzip measurement of the
+  merge candidate against `main`, on the same current toolchain. It is
+  recorded on #1510 and judged against the 750,000-byte budget. It is
+  not comparable with the historical pair, which stays as it is.
+- **B1, B3, B5 → one week of monitoring after deploy.** Daily look at
+  GlitchTip (`list_doc` / `ListDocError` / `sync_payload` / hydration
+  on `/list/`) and the `ultros::lists::sync` warnings. A one-line #1510
+  comment per day, "none" included. Any data-loss signal means flipping
+  `ULTROS_LISTS_READONLY` first and investigating second.
+
+**Waived outright:** the declared ≥7-day pre-merge soak window and cohort
+(B1), the retained append-only manifest (B4's ledger), the per-list
+snapshot/compaction time series (B5), and the frozen-toolset bundle pair
+(B6 as written).
+
+**Rollback for the waived risks:** `ULTROS_LISTS_READONLY` (#1658), an
+env flip and restart of the same image, then the tier-2 revert runbook in
+`docs/lists-sync.md`.
+
+> I accept the scoped waiver above for the Lists 2.0 promotion in #1627,
+> including risks (1)–(4) named in the full waiver text, with the kept
+> checks as merge preconditions. Signed: ________, ________.
+
 ## Draft #1510 comment (paste-ready; does not close the issue)
 
 > Promotion decision for #1627 is recorded in
