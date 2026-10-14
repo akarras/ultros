@@ -28,66 +28,66 @@
     "NotoSansJP-Bold.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
       "source_sha256": "e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76",
-      "unicode_codepoints": 19852,
-      "codepoint_sha256": "6598b9fa8a82392474f9ab54bb175cdc5759dfd7a2c032e6b6269691df8998cb",
-      "bytes": 2958544,
-      "sha256": "3459063b3c75119b60b68ef1231a33c2b44102b83d2d34018638e6c541877303"
+      "unicode_codepoints": 20131,
+      "codepoint_sha256": "d9a4cfbe02666d65a2eccc321e9c9d940d6026c8867ca13e24e448bb7722cd29",
+      "bytes": 3018272,
+      "sha256": "e4ea4bed322d808bcedb627710d264140bcf180c1ccb0aecd5d858cc1558a98c"
     },
     "NotoSansJP-Regular.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
       "source_sha256": "68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5",
-      "unicode_codepoints": 19852,
-      "codepoint_sha256": "6598b9fa8a82392474f9ab54bb175cdc5759dfd7a2c032e6b6269691df8998cb",
-      "bytes": 2941328,
-      "sha256": "299fc75d639cb1476ae75576a8d6a0215cbd9c0a53bf0c25639484b8a2b9b0c5"
+      "unicode_codepoints": 20131,
+      "codepoint_sha256": "d9a4cfbe02666d65a2eccc321e9c9d940d6026c8867ca13e24e448bb7722cd29",
+      "bytes": 3001284,
+      "sha256": "906916627f5e985ee73ec08f8d0a888b81181e7c0f6abf57d5ec061188e70090"
     },
     "NotoSansKR-Bold.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Korean/NotoSansCJKkr-Bold.otf",
       "source_sha256": "26d0c6748500a0444844280b308f5b62c7ae92ac6c6ac88148e502dd211eb52a",
-      "unicode_codepoints": 14342,
-      "codepoint_sha256": "80addbbbc6e1398ba5877baf1edad31a1e0a50f3800506ad035357a0ef036766",
-      "bytes": 1660476,
-      "sha256": "c8be7f96ffd78fb0b5ad483926ecdcf964af4f18cff0608d9fd14aa29393c984"
+      "unicode_codepoints": 14476,
+      "codepoint_sha256": "dc642ccae2008884a2d5f58b6b2da66fed0297cc8ae244d2a0a260663e9c0acc",
+      "bytes": 1694160,
+      "sha256": "86a37ebbff9d6ddd2db9ecb7c163f2f520aff029fff0d4db60ec5eae06e5889f"
     },
     "NotoSansKR-Regular.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf",
       "source_sha256": "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a",
-      "unicode_codepoints": 14342,
-      "codepoint_sha256": "80addbbbc6e1398ba5877baf1edad31a1e0a50f3800506ad035357a0ef036766",
-      "bytes": 1639724,
-      "sha256": "d9a2a9b649803264980c21d86a081b90b2b41e4cc6135dd6f900941a71542481"
+      "unicode_codepoints": 14476,
+      "codepoint_sha256": "dc642ccae2008884a2d5f58b6b2da66fed0297cc8ae244d2a0a260663e9c0acc",
+      "bytes": 1673700,
+      "sha256": "857d2b3e1aefa07b2130945740084024617c030ba650a5b60c2eec0b9fb85ac0"
     },
     "NotoSansSC-Bold.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
       "source_sha256": "b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a",
-      "unicode_codepoints": 6080,
-      "codepoint_sha256": "436821ac653fb004cc03f987f23577a5a6f31ceac3a119e577f1a1c0e914b286",
-      "bytes": 1157652,
-      "sha256": "ca665733ffa903a3a2b0ae792093d4f8d8c340abafb397858791d486e8a3db9c"
+      "unicode_codepoints": 6202,
+      "codepoint_sha256": "132f24d8639e9111487d21169c55869218e4aa08ced86f283d768a8edcaf8390",
+      "bytes": 1177824,
+      "sha256": "a927333d7e9912b4391a06b516a90ab5d91dcec1366cabd05c215c8df1ebf4d4"
     },
     "NotoSansSC-Regular.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
       "source_sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
-      "unicode_codepoints": 6080,
-      "codepoint_sha256": "436821ac653fb004cc03f987f23577a5a6f31ceac3a119e577f1a1c0e914b286",
-      "bytes": 1162440,
-      "sha256": "406078f9166d41f4ad673fd07ad401320c32f5605a28cfff524ac1bad106d910"
+      "unicode_codepoints": 6202,
+      "codepoint_sha256": "132f24d8639e9111487d21169c55869218e4aa08ced86f283d768a8edcaf8390",
+      "bytes": 1182932,
+      "sha256": "85e469076b82b0153f1fd87935507df5b631cd8aa8f09cd04937d872561a1163"
     },
     "NotoSansTC-Bold.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf",
       "source_sha256": "3ee160e5015106e3ec1a394301df54fa9bbbf8a251519984aec5c0abc50840c0",
-      "unicode_codepoints": 5925,
-      "codepoint_sha256": "e4005e36fd6872fc6fb674d2391985f8cdcd3ce1924780937a61ebfc25e4df00",
-      "bytes": 1204556,
-      "sha256": "8c79f2a934adf75939b2bf82c64ac81f1744c3443e8ea3d167bfedd024dc5319"
+      "unicode_codepoints": 6085,
+      "codepoint_sha256": "223863831b6a5b24b0ba792c184549b7df97a4f1d7e7af4699852e1255be5009",
+      "bytes": 1235944,
+      "sha256": "978e091a3a50b537a9f7891572d33e45cf7675d2f8c58023a9ade451e1e4aa15"
     },
     "NotoSansTC-Regular.otf": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf",
       "source_sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
-      "unicode_codepoints": 5925,
-      "codepoint_sha256": "e4005e36fd6872fc6fb674d2391985f8cdcd3ce1924780937a61ebfc25e4df00",
-      "bytes": 1209616,
-      "sha256": "04f636587e6c6eae8f8a923801dbab56c33c763387f57c2d1c043feadea71aad"
+      "unicode_codepoints": 6085,
+      "codepoint_sha256": "223863831b6a5b24b0ba792c184549b7df97a4f1d7e7af4699852e1255be5009",
+      "bytes": 1240652,
+      "sha256": "cf46b1ae1557257ba62a912ab7527c2715bea5c2be2e380885a33bd512271dd4"
     }
   }
 }
