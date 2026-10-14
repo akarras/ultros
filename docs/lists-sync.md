@@ -210,8 +210,17 @@ the final integrated build or complete the production soak.
 
 ## Promotion
 
-Lists 2.0 is the default for account and device lists as of 2026-10-12.
-The Labs switch, original REST-driven list editor and directory, and
+> **Gate status (2026-10-13): BLOCKED.** The #1510 production-soak audit
+> in [`lists-promotion-decision.md`](lists-promotion-decision.md) found
+> the promotion **not promotion-ready**: most soak checkboxes are
+> missing or only locally evidenced, and the final integrated bundle
+> measurement does not exist. The branch state described below is
+> **not deployed** (production verified as `main` @ `d09d761` on
+> 2026-10-13, Lists still behind Labs). Do not merge the promotion
+> until that record’s blockers are evidenced or its waiver is signed.
+
+In the promotion branch, Lists 2.0 is the default for account and device
+lists. The Labs switch, original REST-driven list editor and directory, and
 `?cart=legacy` comparison grid have been removed. Old `LABS` cookies and
 `?labs=lists-sync` bookmarks no longer select a different implementation.
 Existing account lists use the same document bootstrap and REST projections;
@@ -359,6 +368,10 @@ acceptance and readiness assessment; local fixtures do not close the soak.
 Run after the branch is deployed, over at least a week with the toggle on
 for the maintainer's own shared lists. Retain the authoritative list-ID manifest
 and reconcile deletions using the [checker workflow](list-projection-checker.md).
+Note this plan can only run on a **pre-promotion** build: the promotion
+branch deletes the Labs toggle and legacy view that steps 1 and 3 use, so
+the soak (or a signed waiver) must precede that merge. Current gate
+disposition: [`lists-promotion-decision.md`](lists-promotion-decision.md).
 
 1. Turn it on under Settings › Labs on two browsers and one phone, and
    share one list between two Discord accounts.
