@@ -180,9 +180,12 @@ decision above stays **blocked**.
   database at run time (`SELECT id FROM list ORDER BY id` into
   `all-ids.txt`) and pass `--ids-file all-ids.txt`. A list deleted between
   the export and the check reports as deleted, which is fine. Pass bar: every row is `equal`
-  or `missing_document` (never opened through sync). Any `divergent` or
-  `malformed` result blocks the merge, or after the merge triggers
-  `ULTROS_LISTS_READONLY`. The post-deploy run is the check on the mass
+  or `missing_document` (never opened through sync). Any `different` or
+  `decode_error` result blocks the merge, or after the merge triggers
+  `ULTROS_LISTS_READONLY`. Exit code 1 is expected while any
+  `missing_document` remains, so judge the run by the statuses in the
+  report, not by the exit code. (Local dry run on 2026-10-14 against the
+  dev database: 85 lists, 25 `equal`, 60 `missing_document`, nothing else.) The post-deploy run is the check on the mass
   first-open bootstrap risk (waiver item 1).
 
 **Replaced by a lighter check:**
