@@ -187,7 +187,7 @@
     "lists_estimate_refresh_failed": "The latest refresh failed, so these prices may be out of date.",
     "lists_estimate_scope": "Prices for {{scope}}",
     "lists_estimate_breakdown": "Cost by datacenter and world",
-    "lists_estimate_breakdown_units": "{{units}} units priced",
+    "lists_estimate_breakdown_units": "Units priced: {{units}}",
     "adoption_invalid_account": "Invalid account identity",
     "adoption_account_changed": "Your account changed. Reload before adding this list.",
     "adoption_quantity_large": "A quantity is too large to transfer",

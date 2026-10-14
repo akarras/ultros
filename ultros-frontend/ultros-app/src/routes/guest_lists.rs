@@ -232,7 +232,7 @@ mod browser {
             });
         });
         let go = StoredValue::new_local(use_navigate());
-        let create = move |_| {
+        let create = move || {
             if busy.get_untracked() || name.get_untracked().trim().is_empty() {
                 return;
             }
@@ -436,7 +436,8 @@ mod browser {
                 </Show>
                 <Show when=move || user_id.get().is_none()><p class="text-sm"><a class="underline" rel="external" href="/login?next=/list">{t!(i18n,lists_device_sign_in)}</a></p></Show>
                 <Show when=creating><Modal set_visible=set_creating aria_label=Signal::derive(move || t_string!(i18n,online_new).to_string())>
-                    <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_new)}</h2>
+                    // A form, so Enter in the name field creates the list like the button does.
+                    <form class="space-y-3" on:submit=move |ev| { ev.prevent_default(); create(); }><h2 class="text-xl font-bold">{t!(i18n,online_new)}</h2>
                     <input class="input w-full" data-testid="device-list-name" aria-label=move || t_string!(i18n,list_name).to_string() placeholder=move || t_string!(i18n,guest_workspace_placeholder).to_string() prop:value=move || name.get() on:input=move |ev| name.set(event_target_value(&ev)) maxlength="100" />
                     <Show when=move || user_id.get().is_some()>
                         <div class="space-y-2" data-testid="device-list-storage">
@@ -449,7 +450,7 @@ mod browser {
                         </div>
                     </Show>
                     <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
-                    <button class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty() on:click=create>{t!(i18n,create_list)}</button></div>
+                    <button type="submit" class="btn-primary" data-testid="device-list-create" disabled=move || busy.get() || name.get().trim().is_empty()>{t!(i18n,create_list)}</button></form>
                 </Modal></Show>
                 <Show when=restoring><Modal set_visible=set_restoring aria_label=Signal::derive(move || t_string!(i18n,online_restore).to_string())>
                     <div class="space-y-3"><h2 class="text-xl font-bold">{t!(i18n,online_restore)}</h2>
