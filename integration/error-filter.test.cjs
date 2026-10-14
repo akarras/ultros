@@ -1184,6 +1184,120 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Cloudflare's bot-management precursor script, injected into our HTML at
+  // the edge and served on OUR origin under /cdn-cgi/. Some visitors get an
+  // HTML challenge/block page instead of JS, so it throws at line 1 col 2 —
+  // GlitchTip #7996 (24k events). The edge answers /cdn-cgi/ itself; never ours.
+  {
+    name: "Cloudflare /cdn-cgi/ challenge-platform SyntaxError on our origin is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "SyntaxError",
+            value: "Unexpected token '<'",
+            mechanism: {
+              type: "auto.browser.global_handlers.onerror",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename:
+                    "https://www.ultros.app/cdn-cgi/challenge-platform/scripts/precursor/main.js",
+                  function: "?",
+                  lineno: 1,
+                  colno: 2,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // The same shape as GlitchTip stores it (path-only filename + absPath).
+  {
+    name: "a /cdn-cgi/ frame given as a bare path + absPath is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "SyntaxError",
+            value: "Unexpected token '<'",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/cdn-cgi/challenge-platform/scripts/precursor/main.js",
+                  absPath:
+                    "https://www.ultros.app/cdn-cgi/challenge-platform/scripts/precursor/main.js",
+                  function: "?",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // SAFETY: `cdn-cgi` anywhere other than the start of the path (an item page
+  // or our own bundle) is not a Cloudflare edge script and must still report.
+  {
+    name: "a frame whose path merely CONTAINS cdn-cgi (not at the root) is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "SyntaxError",
+            value: "Unexpected token '<'",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "https://www.ultros.app/item/cdn-cgi/4790",
+                  function: "?",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // SAFETY: a /cdn-cgi/ frame plus one of OUR pkg frames is preserved.
+  {
+    name: "a /cdn-cgi/ frame + an app/pkg frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "x is not a function",
+            stacktrace: {
+              frames: [
+                {
+                  filename:
+                    "https://www.ultros.app/cdn-cgi/challenge-platform/scripts/precursor/main.js",
+                  function: "?",
+                },
+                {
+                  filename: "https://www.ultros.app/pkg/d09d761/ultros.js",
+                  function: "J",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   // The Cloudflare beacon calling addEventListener on a page where a headless
   // crawler (UA "pc", Baidu referer, `[jshost]` console breadcrumbs) had
   // monkey-patched it with an injected `addEL_hook` — GlitchTip #7971. The two

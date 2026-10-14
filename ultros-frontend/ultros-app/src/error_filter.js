@@ -113,7 +113,10 @@
 //      fresh count=1 issue. Dropped ONLY when the exception has stack frames and
 //      EVERY one is on a known third-party host — any app/pkg frame (our bundle,
 //      an inline page script, or SSR HTML on ultros.app) preserves the event, so
-//      a real Ultros bug is never swept up.
+//      a real Ultros bug is never swept up. Cloudflare's edge scripts under
+//      `/cdn-cgi/` on our own origin (the challenge-platform precursor that
+//      throws "Unexpected token '<'" when Cloudflare answers it with HTML,
+//      GlitchTip #7996) count as third-party: the edge serves that path itself.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -126,6 +129,14 @@
   // and the whole event is preserved (see isThirdPartyScriptError).
   var ULTROS_THIRD_PARTY_SCRIPT_HOST_RE =
     /\/\/(?:static\.cloudflareinsights\.com|(?:www\.)?google-analytics\.com|(?:www\.)?googletagmanager\.com|pagead2\.googlesyndication\.com|[a-z0-9-]+\.googlesyndication\.com|[a-z0-9.-]*\.doubleclick\.net|fundingchoicesmessages\.google\.com|[a-z0-9.-]*\.adtrafficquality\.google|adservice\.google\.[a-z.]+)\//i;
+  // Cloudflare edge scripts served on OUR origin under /cdn-cgi/ (bot-
+  // management's challenge-platform precursor, email-decode, rocket-loader).
+  // Cloudflare injects the <script> into the HTML at the edge and answers
+  // /cdn-cgi/ itself, so the path never reaches the Ultros server and none of
+  // its code is ours. Matched against a frame's absPath / filename: either a
+  // bare `/cdn-cgi/...` path or a URL whose path starts with `/cdn-cgi/`.
+  var ULTROS_CLOUDFLARE_EDGE_PATH_RE =
+    /^(?:[a-z][a-z0-9+.-]*:\/\/[^\/?#]+)?\/cdn-cgi\//i;
   var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
   // Leptos's streaming-hydration bootstrap globals. The SSR shell ALWAYS emits
   // `window.__RESOLVED_RESOURCES = []` plus `__INCOMPLETE_CHUNKS` /
@@ -689,7 +700,12 @@
   // headless crawler's monkey-patched addEventListener the beacon calls into,
   // GlitchTip #7971) are neutral: Ultros never evals, so they are not ours,
   // but they prove nothing either, so at least one frame must still be on a
-  // third-party host.
+  // third-party host. Cloudflare's own edge scripts under /cdn-cgi/ on our
+  // origin count as third-party too: the challenge-platform precursor script
+  // gets an HTML challenge/block page instead of JS for some visitors and
+  // throws "SyntaxError: Unexpected token '<'" at line 1 (GlitchTip #7996,
+  // 24k events in 3 days). That is a Cloudflare zone behaviour, not an Ultros
+  // bug.
   function isThirdPartyScriptError(event) {
     try {
       var ex = firstException(event);
@@ -703,7 +719,9 @@
         var fname = typeof f.filename === "string" ? f.filename : "";
         if (
           ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(abs) ||
-          ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(fname)
+          ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(fname) ||
+          ULTROS_CLOUDFLARE_EDGE_PATH_RE.test(abs) ||
+          ULTROS_CLOUDFLARE_EDGE_PATH_RE.test(fname)
         ) {
           sawThirdParty = true;
         } else if (abs !== "<anonymous>" || fname !== "<anonymous>") {
