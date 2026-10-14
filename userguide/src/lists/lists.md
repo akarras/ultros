@@ -24,6 +24,11 @@ or a target price. Select rows for bulk changes, and use **Undo** or **Redo** to
 correct edits. The Build estimate prices the remaining units in your chosen
 world, datacenter, or region and calls out incomplete price coverage.
 
+Use **Buy from** to limit prices to your home world or datacenter, and open
+**Exclude** next to it to leave out individual worlds or whole datacenters.
+Exclusions apply to both the Build estimate and Shop trips, travel with the
+list's link, and can be removed chip by chip or with **Clear**.
+
 ## Shopping
 
 Switch to **Shop** to compare trips that buy whole market-board stacks. Choose

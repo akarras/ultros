@@ -3,7 +3,7 @@
 #[cfg(feature = "hydrate")]
 use crate::components::app_link::use_query_map_or_default;
 use crate::{
-    components::list_travel_controls::ListTravelControls,
+    components::list_travel_controls::{ListExclusionControls, ListTravelControls},
     global_state::{home_world::use_home_world, use_world_helper},
     query_defaults::filter_query_signal,
     routes::list_common::{IdList, NameList},
@@ -12,7 +12,7 @@ use leptos::prelude::*;
 #[cfg(any(feature = "hydrate", test))]
 use leptos_router::params::ParamsMap;
 use std::collections::BTreeSet;
-use ultros_api_types::world_helper::AnySelector;
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 use ultros_calc::list_travel::{TravelBlocked, TravelLimit, TravelPolicy};
 
 #[derive(Clone, Copy)]
@@ -24,6 +24,19 @@ pub struct ListTravelState {
     pub home_datacenter: Signal<Option<String>>,
     pub blocked: Signal<Option<TravelBlocked>>,
     pub clear_unresolved: Callback<()>,
+    /// The `excluded-worlds` / `excluded-datacenters` URL settings, decoded.
+    /// Both list editors render these through [`ListExclusionControls`], so
+    /// a legacy bookmark's exclusions are visible and removable instead of
+    /// silently filtering prices.
+    pub excluded_worlds: Signal<BTreeSet<i32>>,
+    pub excluded_datacenters: Signal<BTreeSet<String>>,
+    /// Replace the whole exclusion set; an empty set clears the URL param.
+    pub set_excluded_worlds: Callback<BTreeSet<i32>>,
+    pub set_excluded_datacenters: Callback<BTreeSet<String>>,
+    /// Every datacenter name and `(world id, name)` in the catalog, for the
+    /// exclusion chips and the add-world select.
+    pub datacenter_options: StoredValue<Vec<String>>,
+    pub world_options: StoredValue<Vec<(i32, String)>>,
     // Only the browser-side handoff links read the live query map.
     #[cfg(feature = "hydrate")]
     query: Memo<ParamsMap>,
@@ -34,23 +47,32 @@ pub fn use_list_travel() -> ListTravelState {
     #[cfg(feature = "hydrate")]
     let query = use_query_map_or_default();
     let (limit, set_limit) = filter_query_signal::<TravelLimit>("travel");
-    let (excluded_worlds, _) = filter_query_signal::<IdList>("excluded-worlds");
-    let (excluded_datacenters, set_excluded_datacenters) =
+    let (excluded_worlds_param, set_excluded_worlds_param) =
+        filter_query_signal::<IdList>("excluded-worlds");
+    let (excluded_datacenters_param, set_excluded_datacenters_param) =
         filter_query_signal::<NameList>("excluded-datacenters");
+    let excluded_worlds = Signal::derive(move || {
+        excluded_worlds_param
+            .get()
+            .map(|ids| ids.0.into_iter().collect())
+            .unwrap_or_default()
+    });
+    let excluded_datacenters = Signal::derive(move || {
+        excluded_datacenters_param
+            .get()
+            .map(|names| names.0.into_iter().collect())
+            .unwrap_or_default()
+    });
     let (home, _) = use_home_world();
     let worlds = StoredValue::new(use_world_helper().ok());
+    let (datacenter_options, world_options) =
+        worlds.with_value(|worlds| exclusion_catalog(worlds.as_deref()));
     let limit = Signal::derive(move || limit.get().unwrap_or_default());
     let policy = Signal::derive(move || {
         let limit = limit.get();
         let home = home.get().map(|world| world.id);
-        let excluded_worlds = excluded_worlds
-            .get()
-            .map(|ids| ids.0.into_iter().collect())
-            .unwrap_or_default();
-        let excluded_names: BTreeSet<_> = excluded_datacenters
-            .get()
-            .map(|names| names.0.into_iter().collect())
-            .unwrap_or_default();
+        let excluded_worlds = excluded_worlds.get();
+        let excluded_names = excluded_datacenters.get();
         worlds.with_value(|worlds| match worlds {
             Some(worlds) => TravelPolicy::from_world_helper(
                 limit,
@@ -88,11 +110,21 @@ pub fn use_list_travel() -> ListTravelState {
         blocked: Signal::derive(move || policy.with(TravelPolicy::blocked)),
         clear_unresolved: Callback::new(move |()| {
             let unresolved = policy.get_untracked().unresolved_datacenters;
-            set_excluded_datacenters.set(clear_unresolved_names(
-                excluded_datacenters.get_untracked(),
+            set_excluded_datacenters_param.set(clear_unresolved_names(
+                excluded_datacenters_param.get_untracked(),
                 &unresolved,
             ));
         }),
+        excluded_worlds,
+        excluded_datacenters,
+        set_excluded_worlds: Callback::new(move |worlds| {
+            set_excluded_worlds_param.set(id_list_param(worlds))
+        }),
+        set_excluded_datacenters: Callback::new(move |names| {
+            set_excluded_datacenters_param.set(name_list_param(names))
+        }),
+        datacenter_options: StoredValue::new(datacenter_options),
+        world_options: StoredValue::new(world_options),
         #[cfg(feature = "hydrate")]
         query,
     }
@@ -109,6 +141,37 @@ fn clear_unresolved_names(
         .filter(|name| !unresolved.contains(name))
         .collect();
     (!retained.is_empty()).then_some(NameList(retained))
+}
+
+/// Encode an exclusion set for its URL param. An empty set clears the param
+/// entirely, so a cleared exclusion leaves no `excluded-worlds=` residue a
+/// later reader could mistake for an active filter.
+fn id_list_param(worlds: BTreeSet<i32>) -> Option<IdList> {
+    (!worlds.is_empty()).then(|| IdList(worlds.into_iter().collect()))
+}
+
+fn name_list_param(names: BTreeSet<String>) -> Option<NameList> {
+    (!names.is_empty()).then(|| NameList(names.into_iter().collect()))
+}
+
+/// Every datacenter name (catalog order) and world `(id, name)` (by name,
+/// so the add-world select reads alphabetically). Without world data both
+/// are empty; already-excluded worlds and datacenters still render as
+/// removable chips from the URL values themselves.
+fn exclusion_catalog(worlds: Option<&WorldHelper>) -> (Vec<String>, Vec<(i32, String)>) {
+    let Some(worlds) = worlds else {
+        return (Vec::new(), Vec::new());
+    };
+    let datacenters = worlds
+        .iter()
+        .filter_map(|value| value.as_datacenter().map(|dc| dc.name.clone()))
+        .collect();
+    let mut world_list: Vec<(i32, String)> = worlds
+        .iter()
+        .filter_map(|value| value.as_world().map(|world| (world.id, world.name.clone())))
+        .collect();
+    world_list.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    (datacenters, world_list)
 }
 
 #[cfg(feature = "hydrate")]
@@ -155,7 +218,19 @@ fn device_continue_href(device_id: &str, shop: bool, source: &ParamsMap) -> Stri
 
 #[component]
 pub fn ListTravelPanel(state: ListTravelState) -> impl IntoView {
-    view! { <ListTravelControls limit=state.limit on_change=state.set_limit home_world=state.home_world home_datacenter=state.home_datacenter blocked=state.blocked on_clear_unresolved=state.clear_unresolved /> }
+    view! {
+        <div class="flex min-w-0 flex-col gap-2">
+            <ListTravelControls limit=state.limit on_change=state.set_limit home_world=state.home_world home_datacenter=state.home_datacenter blocked=state.blocked on_clear_unresolved=state.clear_unresolved />
+            <ListExclusionControls
+                excluded_worlds=state.excluded_worlds
+                set_excluded_worlds=state.set_excluded_worlds
+                excluded_datacenters=state.excluded_datacenters
+                set_excluded_datacenters=state.set_excluded_datacenters
+                datacenters=state.datacenter_options.get_value()
+                worlds=state.world_options.get_value()
+            />
+        </div>
+    }
 }
 
 #[cfg(test)]
@@ -213,5 +288,73 @@ mod tests {
         assert!(has_param(&continuation, "excluded-worlds", ""));
         assert!(continuation.contains("%26"));
         assert!(!continuation.contains("recovery"));
+    }
+
+    #[test]
+    fn exclusion_params_clear_when_the_set_empties() {
+        // The regression this guards: an exclusion a bookmark carried in
+        // could be read but never written, so removing it in the UI must
+        // drop the whole param, not leave an empty `excluded-worlds=`.
+        assert_eq!(id_list_param(BTreeSet::new()), None);
+        assert_eq!(
+            id_list_param(BTreeSet::from([9, 1])),
+            Some(IdList(vec![1, 9]))
+        );
+        assert_eq!(name_list_param(BTreeSet::new()), None);
+        assert_eq!(
+            name_list_param(BTreeSet::from(["Primal".into(), "Aether".into()])),
+            Some(NameList(vec!["Aether".into(), "Primal".into()]))
+        );
+    }
+
+    #[test]
+    fn exclusion_catalog_lists_datacenters_and_worlds_by_name() {
+        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+        let helper = WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".into(),
+                datacenters: vec![
+                    Datacenter {
+                        id: 10,
+                        name: "Aether".into(),
+                        region_id: 1,
+                        worlds: vec![
+                            World {
+                                id: 101,
+                                name: "Gilgamesh".into(),
+                                datacenter_id: 10,
+                            },
+                            World {
+                                id: 100,
+                                name: "Adamantoise".into(),
+                                datacenter_id: 10,
+                            },
+                        ],
+                    },
+                    Datacenter {
+                        id: 11,
+                        name: "Primal".into(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 110,
+                            name: "Behemoth".into(),
+                            datacenter_id: 11,
+                        }],
+                    },
+                ],
+            }],
+        });
+        let (datacenters, worlds) = exclusion_catalog(Some(&helper));
+        assert_eq!(datacenters, vec!["Aether", "Primal"]);
+        assert_eq!(
+            worlds,
+            vec![
+                (100, "Adamantoise".to_string()),
+                (110, "Behemoth".to_string()),
+                (101, "Gilgamesh".to_string()),
+            ]
+        );
+        assert_eq!(exclusion_catalog(None), (Vec::new(), Vec::new()));
     }
 }
